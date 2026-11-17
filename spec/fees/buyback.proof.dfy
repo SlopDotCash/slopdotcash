@@ -207,73 +207,67 @@ lemma Shrinks(a: seq<int>, b: seq<int>)
 }
 
 // A larger acquisition has a half no smaller than before.
-lemma selectSource_ensures(b: Buyback, sourceNetwork: fees__runtime_Network)
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysSourcesOnce(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysRuntimeSound(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysShareBounded(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysWindowLimits(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysJournalPastAndPositive(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysPendingOrderReserved(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysPoolNonNegative(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysLocalShareBounded(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysSourceLegsOnly(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysBurnBounded(selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> stepNewSourceUnseen(b, selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> stepOrderOutcomeOnce(b, selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> stepIncomeMonotonic(b, selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> stepJournalRetained(b, selectSource(b, sourceNetwork)))
-  ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> stepSignaturesNeedLiveBuyback(b, "selectSource", selectSource(b, sourceNetwork)))
+lemma selectSource_ensures(b: Buyback, sourceNetwork: fees__runtime_Network, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysSourcesOnce(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysRuntimeSound(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysDecisionsSignNothing(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysOutcomesOfOrders(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysShareBounded(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysWindowLimits(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysJournalPastAndPositive(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> alwaysPendingOrderReserved(selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> stepNewSourceUnseen(b, selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> stepOrderOutcomeOnce(b, selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> stepIncomeMonotonic(b, selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> stepJournalRetained(b, selectSource(b, sourceNetwork, by_)))
+  ensures (inv(b) ==> canSelectSource(b, sourceNetwork, by_) ==> stepSignaturesNeedLiveBuyback(b, "selectSource", selectSource(b, sourceNetwork, by_)))
 {
-  if inv(b) && canSelectSource(b, sourceNetwork) {
-    var after := selectSource(b, sourceNetwork);
+  if inv(b) && canSelectSource(b, sourceNetwork, by_) {
+    var after := selectSource(b, sourceNetwork, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma advanceClock_ensures(b: Buyback, now: int)
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysSourcesOnce(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysRuntimeSound(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysShareBounded(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysWindowLimits(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysJournalPastAndPositive(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysPendingOrderReserved(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysPoolNonNegative(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysLocalShareBounded(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysSourceLegsOnly(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> alwaysBurnBounded(advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> stepNewSourceUnseen(b, advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> stepOrderOutcomeOnce(b, advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> stepIncomeMonotonic(b, advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> stepJournalRetained(b, advanceClock(b, now)))
-  ensures (inv(b) ==> canAdvanceClock(b, now) ==> stepSignaturesNeedLiveBuyback(b, "advanceClock", advanceClock(b, now)))
+lemma advanceClock_ensures(b: Buyback, now: int, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysSourcesOnce(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysRuntimeSound(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysDecisionsSignNothing(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysOutcomesOfOrders(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysShareBounded(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysWindowLimits(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysJournalPastAndPositive(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> alwaysPendingOrderReserved(advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> stepNewSourceUnseen(b, advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> stepOrderOutcomeOnce(b, advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> stepIncomeMonotonic(b, advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> stepJournalRetained(b, advanceClock(b, now, by_)))
+  ensures (inv(b) ==> canAdvanceClock(b, now, by_) ==> stepSignaturesNeedLiveBuyback(b, "advanceClock", advanceClock(b, now, by_)))
 {
-  if inv(b) && canAdvanceClock(b, now) {
-    var after := advanceClock(b, now);
+  if inv(b) && canAdvanceClock(b, now, by_) {
+    var after := advanceClock(b, now, by_);
     UnchangedCumulative(b, after);
     WindowAfter(b.bridgeSpends, b.clock, now);
     DayAfter(b.bridgeNative, b.clock, now);
   }
 }
 
-lemma recordIncome_ensures(b: Buyback, key: IncomeKey, incomeAmount: seq<int>, chainTime: int)
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysSourcesOnce(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysRuntimeSound(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysShareBounded(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysWindowLimits(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysJournalPastAndPositive(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysPendingOrderReserved(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysPoolNonNegative(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysLocalShareBounded(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysSourceLegsOnly(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> alwaysBurnBounded(recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> stepNewSourceUnseen(b, recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> stepOrderOutcomeOnce(b, recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> stepIncomeMonotonic(b, recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> stepJournalRetained(b, recordIncome(b, key, incomeAmount, chainTime)))
-  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime) ==> stepSignaturesNeedLiveBuyback(b, "recordIncome", recordIncome(b, key, incomeAmount, chainTime)))
+lemma recordIncome_ensures(b: Buyback, key: IncomeKey, incomeAmount: seq<int>, chainTime: int, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysSourcesOnce(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysRuntimeSound(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysDecisionsSignNothing(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysOutcomesOfOrders(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysShareBounded(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysWindowLimits(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysJournalPastAndPositive(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> alwaysPendingOrderReserved(recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> stepNewSourceUnseen(b, recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> stepOrderOutcomeOnce(b, recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> stepIncomeMonotonic(b, recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> stepJournalRetained(b, recordIncome(b, key, incomeAmount, chainTime, by_)))
+  ensures (inv(b) ==> canRecordIncome(b, key, incomeAmount, chainTime, by_) ==> stepSignaturesNeedLiveBuyback(b, "recordIncome", recordIncome(b, key, incomeAmount, chainTime, by_)))
 {
-  if inv(b) && canRecordIncome(b, key, incomeAmount, chainTime) {
-    var after := recordIncome(b, key, incomeAmount, chainTime);
+  if inv(b) && canRecordIncome(b, key, incomeAmount, chainTime, by_) {
+    var after := recordIncome(b, key, incomeAmount, chainTime, by_);
     Grows(b.income, incomeAmount);
     ShareUnderLargerIncome(b.committed, b.income, after.income);
   }
@@ -282,14 +276,12 @@ lemma recordIncome_ensures(b: Buyback, key: IncomeKey, incomeAmount: seq<int>, c
 lemma publishWorker_ensures(b: Buyback, config: fees__runtime_WorkerConfig, by_: fees__runtime_Sender)
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysSourcesOnce(publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysRuntimeSound(publishWorker(b, config, by_)))
+  ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysDecisionsSignNothing(publishWorker(b, config, by_)))
+  ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysOutcomesOfOrders(publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysShareBounded(publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysWindowLimits(publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysJournalPastAndPositive(publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysPendingOrderReserved(publishWorker(b, config, by_)))
-  ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysPoolNonNegative(publishWorker(b, config, by_)))
-  ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysLocalShareBounded(publishWorker(b, config, by_)))
-  ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysSourceLegsOnly(publishWorker(b, config, by_)))
-  ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> alwaysBurnBounded(publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> stepNewSourceUnseen(b, publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> stepOrderOutcomeOnce(b, publishWorker(b, config, by_)))
   ensures (inv(b) ==> canPublishWorker(b, config, by_) ==> stepIncomeMonotonic(b, publishWorker(b, config, by_)))
@@ -305,14 +297,12 @@ lemma publishWorker_ensures(b: Buyback, config: fees__runtime_WorkerConfig, by_:
 lemma setReleaseVariable_ensures(b: Buyback, variable: bool, by_: fees__runtime_Sender)
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysSourcesOnce(setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysRuntimeSound(setReleaseVariable(b, variable, by_)))
+  ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysDecisionsSignNothing(setReleaseVariable(b, variable, by_)))
+  ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysOutcomesOfOrders(setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysShareBounded(setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysWindowLimits(setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysJournalPastAndPositive(setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysPendingOrderReserved(setReleaseVariable(b, variable, by_)))
-  ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysPoolNonNegative(setReleaseVariable(b, variable, by_)))
-  ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysLocalShareBounded(setReleaseVariable(b, variable, by_)))
-  ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysSourceLegsOnly(setReleaseVariable(b, variable, by_)))
-  ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> alwaysBurnBounded(setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> stepNewSourceUnseen(b, setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> stepOrderOutcomeOnce(b, setReleaseVariable(b, variable, by_)))
   ensures (inv(b) ==> canSetReleaseVariable(b, variable, by_) ==> stepIncomeMonotonic(b, setReleaseVariable(b, variable, by_)))
@@ -325,94 +315,86 @@ lemma setReleaseVariable_ensures(b: Buyback, variable: bool, by_: fees__runtime_
   }
 }
 
-lemma verifyReadiness_ensures(b: Buyback, readyNetwork: fees__runtime_Network, listedWallet: int, by_: fees__runtime_Sender)
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysSourcesOnce(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysRuntimeSound(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysShareBounded(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysWindowLimits(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysJournalPastAndPositive(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysPendingOrderReserved(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysPoolNonNegative(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysLocalShareBounded(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysSourceLegsOnly(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysBurnBounded(verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepNewSourceUnseen(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepOrderOutcomeOnce(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepIncomeMonotonic(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepJournalRetained(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepSignaturesNeedLiveBuyback(b, "verifyReadiness", verifyReadiness(b, readyNetwork, listedWallet, by_)))
+lemma verifyReadiness_ensures(b: Buyback, readyNetwork: fees__runtime_Network, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysSourcesOnce(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysRuntimeSound(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysDecisionsSignNothing(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysOutcomesOfOrders(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysShareBounded(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysWindowLimits(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysJournalPastAndPositive(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysPendingOrderReserved(verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepNewSourceUnseen(b, verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepOrderOutcomeOnce(b, verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepIncomeMonotonic(b, verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepJournalRetained(b, verifyReadiness(b, readyNetwork, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepSignaturesNeedLiveBuyback(b, "verifyReadiness", verifyReadiness(b, readyNetwork, by_)))
 {
-  if inv(b) && canVerifyReadiness(b, readyNetwork, listedWallet, by_) {
-    var after := verifyReadiness(b, readyNetwork, listedWallet, by_);
+  if inv(b) && canVerifyReadiness(b, readyNetwork, by_) {
+    var after := verifyReadiness(b, readyNetwork, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma approveOrder_ensures(b: Buyback, request: BridgeOrder)
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysSourcesOnce(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysRuntimeSound(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysShareBounded(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysWindowLimits(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysJournalPastAndPositive(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysPendingOrderReserved(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysPoolNonNegative(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysLocalShareBounded(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysSourceLegsOnly(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> alwaysBurnBounded(approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> stepNewSourceUnseen(b, approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> stepOrderOutcomeOnce(b, approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> stepIncomeMonotonic(b, approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> stepJournalRetained(b, approveOrder(b, request)))
-  ensures (inv(b) ==> canApproveOrder(b, request) ==> stepSignaturesNeedLiveBuyback(b, "approveOrder", approveOrder(b, request)))
+lemma approveOrder_ensures(b: Buyback, request: BridgeOrder, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysSourcesOnce(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysRuntimeSound(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysDecisionsSignNothing(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysOutcomesOfOrders(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysShareBounded(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysWindowLimits(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysJournalPastAndPositive(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysPendingOrderReserved(approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> stepNewSourceUnseen(b, approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> stepOrderOutcomeOnce(b, approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> stepIncomeMonotonic(b, approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> stepJournalRetained(b, approveOrder(b, request, by_)))
+  ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> stepSignaturesNeedLiveBuyback(b, "approveOrder", approveOrder(b, request, by_)))
 {
-  if inv(b) && canApproveOrder(b, request) {
-    var after := approveOrder(b, request);
+  if inv(b) && canApproveOrder(b, request, by_) {
+    var after := approveOrder(b, request, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma settleApproval_ensures(b: Buyback, receipt: SendReceipt)
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysSourcesOnce(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysRuntimeSound(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysShareBounded(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysWindowLimits(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysJournalPastAndPositive(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysPendingOrderReserved(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysPoolNonNegative(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysLocalShareBounded(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysSourceLegsOnly(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysBurnBounded(settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> stepNewSourceUnseen(b, settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> stepOrderOutcomeOnce(b, settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> stepIncomeMonotonic(b, settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> stepJournalRetained(b, settleApproval(b, receipt)))
-  ensures (inv(b) ==> canSettleApproval(b, receipt) ==> stepSignaturesNeedLiveBuyback(b, "settleApproval", settleApproval(b, receipt)))
+lemma settleApproval_ensures(b: Buyback, receipt: BridgeReceipt, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysSourcesOnce(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysRuntimeSound(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysDecisionsSignNothing(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysOutcomesOfOrders(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysShareBounded(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysWindowLimits(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysJournalPastAndPositive(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> alwaysPendingOrderReserved(settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> stepNewSourceUnseen(b, settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> stepOrderOutcomeOnce(b, settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> stepIncomeMonotonic(b, settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> stepJournalRetained(b, settleApproval(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleApproval(b, receipt, by_) ==> stepSignaturesNeedLiveBuyback(b, "settleApproval", settleApproval(b, receipt, by_)))
 {
-  if inv(b) && canSettleApproval(b, receipt) {
-    var after := settleApproval(b, receipt);
+  if inv(b) && canSettleApproval(b, receipt, by_) {
+    var after := settleApproval(b, receipt, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma order_ensures(b: Buyback, request: BridgeOrder)
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysSourcesOnce(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysRuntimeSound(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysShareBounded(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysWindowLimits(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysJournalPastAndPositive(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysPendingOrderReserved(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysPoolNonNegative(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysLocalShareBounded(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysSourceLegsOnly(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> alwaysBurnBounded(order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> stepNewSourceUnseen(b, order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> stepOrderOutcomeOnce(b, order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> stepIncomeMonotonic(b, order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> stepJournalRetained(b, order(b, request)))
-  ensures (inv(b) ==> canOrder(b, request) ==> stepSignaturesNeedLiveBuyback(b, "order", order(b, request)))
+lemma order_ensures(b: Buyback, request: BridgeOrder, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysSourcesOnce(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysRuntimeSound(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysDecisionsSignNothing(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysOutcomesOfOrders(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysShareBounded(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysWindowLimits(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysJournalPastAndPositive(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> alwaysPendingOrderReserved(order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> stepNewSourceUnseen(b, order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> stepOrderOutcomeOnce(b, order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> stepIncomeMonotonic(b, order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> stepJournalRetained(b, order(b, request, by_)))
+  ensures (inv(b) ==> canOrder(b, request, by_) ==> stepSignaturesNeedLiveBuyback(b, "order", order(b, request, by_)))
 {
-  if inv(b) && canOrder(b, request) {
-    var after := order(b, request);
+  if inv(b) && canOrder(b, request, by_) {
+    var after := order(b, request, by_);
     UnchangedCumulative(b, after);
     SmallAmountNonnegativeValid(request.amount);
     Grows(b.committed, settlement__money_smallAmount(request.amount));
@@ -424,48 +406,44 @@ lemma order_ensures(b: Buyback, request: BridgeOrder)
   }
 }
 
-lemma loseSend_ensures(b: Buyback, tx: int)
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysSourcesOnce(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysRuntimeSound(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysShareBounded(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysWindowLimits(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysJournalPastAndPositive(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysPendingOrderReserved(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysPoolNonNegative(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysLocalShareBounded(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysSourceLegsOnly(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> alwaysBurnBounded(loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> stepNewSourceUnseen(b, loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> stepOrderOutcomeOnce(b, loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> stepIncomeMonotonic(b, loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> stepJournalRetained(b, loseSend(b, tx)))
-  ensures (inv(b) ==> canLoseSend(b, tx) ==> stepSignaturesNeedLiveBuyback(b, "loseSend", loseSend(b, tx)))
+lemma loseSend_ensures(b: Buyback, tx: int, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysSourcesOnce(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysRuntimeSound(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysDecisionsSignNothing(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysOutcomesOfOrders(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysShareBounded(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysWindowLimits(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysJournalPastAndPositive(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> alwaysPendingOrderReserved(loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> stepNewSourceUnseen(b, loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> stepOrderOutcomeOnce(b, loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> stepIncomeMonotonic(b, loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> stepJournalRetained(b, loseSend(b, tx, by_)))
+  ensures (inv(b) ==> canLoseSend(b, tx, by_) ==> stepSignaturesNeedLiveBuyback(b, "loseSend", loseSend(b, tx, by_)))
 {
-  if inv(b) && canLoseSend(b, tx) {
-    var after := loseSend(b, tx);
+  if inv(b) && canLoseSend(b, tx, by_) {
+    var after := loseSend(b, tx, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma settleOrder_ensures(b: Buyback, receipt: SendReceipt)
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysSourcesOnce(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysRuntimeSound(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysShareBounded(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysWindowLimits(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysJournalPastAndPositive(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysPendingOrderReserved(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysPoolNonNegative(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysLocalShareBounded(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysSourceLegsOnly(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysBurnBounded(settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> stepNewSourceUnseen(b, settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> stepOrderOutcomeOnce(b, settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> stepIncomeMonotonic(b, settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> stepJournalRetained(b, settleOrder(b, receipt)))
-  ensures (inv(b) ==> canSettleOrder(b, receipt) ==> stepSignaturesNeedLiveBuyback(b, "settleOrder", settleOrder(b, receipt)))
+lemma settleOrder_ensures(b: Buyback, receipt: BridgeReceipt, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysSourcesOnce(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysRuntimeSound(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysDecisionsSignNothing(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysOutcomesOfOrders(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysShareBounded(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysWindowLimits(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysJournalPastAndPositive(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> alwaysPendingOrderReserved(settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> stepNewSourceUnseen(b, settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> stepOrderOutcomeOnce(b, settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> stepIncomeMonotonic(b, settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> stepJournalRetained(b, settleOrder(b, receipt, by_)))
+  ensures (inv(b) ==> canSettleOrder(b, receipt, by_) ==> stepSignaturesNeedLiveBuyback(b, "settleOrder", settleOrder(b, receipt, by_)))
 {
-  if inv(b) && canSettleOrder(b, receipt) {
-    var after := settleOrder(b, receipt);
+  if inv(b) && canSettleOrder(b, receipt, by_) {
+    var after := settleOrder(b, receipt, by_);
     UnchangedCumulative(b, after);
     SmallAmountNonnegativeValid(b.orderAmount);
     settlement__half_lawHalfValid_ensures(b.income);
@@ -479,71 +457,65 @@ lemma settleOrder_ensures(b: Buyback, receipt: SendReceipt)
   }
 }
 
-lemma observeArrival_ensures(b: Buyback, arrival: ArrivalEvidence)
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysSourcesOnce(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysRuntimeSound(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysShareBounded(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysWindowLimits(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysJournalPastAndPositive(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysPendingOrderReserved(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysPoolNonNegative(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysLocalShareBounded(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysSourceLegsOnly(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> alwaysBurnBounded(observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> stepNewSourceUnseen(b, observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> stepOrderOutcomeOnce(b, observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> stepIncomeMonotonic(b, observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> stepJournalRetained(b, observeArrival(b, arrival)))
-  ensures (inv(b) ==> canObserveArrival(b, arrival) ==> stepSignaturesNeedLiveBuyback(b, "observeArrival", observeArrival(b, arrival)))
+lemma observeArrival_ensures(b: Buyback, arrival: ArrivalEvidence, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysSourcesOnce(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysRuntimeSound(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysDecisionsSignNothing(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysOutcomesOfOrders(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysShareBounded(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysWindowLimits(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysJournalPastAndPositive(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> alwaysPendingOrderReserved(observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> stepNewSourceUnseen(b, observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> stepOrderOutcomeOnce(b, observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> stepIncomeMonotonic(b, observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> stepJournalRetained(b, observeArrival(b, arrival, by_)))
+  ensures (inv(b) ==> canObserveArrival(b, arrival, by_) ==> stepSignaturesNeedLiveBuyback(b, "observeArrival", observeArrival(b, arrival, by_)))
 {
-  if inv(b) && canObserveArrival(b, arrival) {
-    var after := observeArrival(b, arrival);
+  if inv(b) && canObserveArrival(b, arrival, by_) {
+    var after := observeArrival(b, arrival, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma observeCancelling_ensures(b: Buyback, order: int)
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysSourcesOnce(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysRuntimeSound(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysShareBounded(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysWindowLimits(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysJournalPastAndPositive(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysPendingOrderReserved(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysPoolNonNegative(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysLocalShareBounded(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysSourceLegsOnly(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> alwaysBurnBounded(observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> stepNewSourceUnseen(b, observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> stepOrderOutcomeOnce(b, observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> stepIncomeMonotonic(b, observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> stepJournalRetained(b, observeCancelling(b, order)))
-  ensures (inv(b) ==> canObserveCancelling(b, order) ==> stepSignaturesNeedLiveBuyback(b, "observeCancelling", observeCancelling(b, order)))
+lemma observeCancelling_ensures(b: Buyback, cancellation: CancellationEvidence, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysSourcesOnce(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysRuntimeSound(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysDecisionsSignNothing(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysOutcomesOfOrders(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysShareBounded(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysWindowLimits(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysJournalPastAndPositive(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> alwaysPendingOrderReserved(observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> stepNewSourceUnseen(b, observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> stepOrderOutcomeOnce(b, observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> stepIncomeMonotonic(b, observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> stepJournalRetained(b, observeCancelling(b, cancellation, by_)))
+  ensures (inv(b) ==> canObserveCancelling(b, cancellation, by_) ==> stepSignaturesNeedLiveBuyback(b, "observeCancelling", observeCancelling(b, cancellation, by_)))
 {
-  if inv(b) && canObserveCancelling(b, order) {
-    var after := observeCancelling(b, order);
+  if inv(b) && canObserveCancelling(b, cancellation, by_) {
+    var after := observeCancelling(b, cancellation, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma observeRefund_ensures(b: Buyback, refund: RefundEvidence)
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysSourcesOnce(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysRuntimeSound(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysShareBounded(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysWindowLimits(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysJournalPastAndPositive(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysPendingOrderReserved(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysPoolNonNegative(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysLocalShareBounded(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysSourceLegsOnly(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> alwaysBurnBounded(observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> stepNewSourceUnseen(b, observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> stepOrderOutcomeOnce(b, observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> stepIncomeMonotonic(b, observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> stepJournalRetained(b, observeRefund(b, refund)))
-  ensures (inv(b) ==> canObserveRefund(b, refund) ==> stepSignaturesNeedLiveBuyback(b, "observeRefund", observeRefund(b, refund)))
+lemma observeRefund_ensures(b: Buyback, refund: RefundEvidence, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysSourcesOnce(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysRuntimeSound(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysDecisionsSignNothing(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysOutcomesOfOrders(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysShareBounded(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysWindowLimits(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysJournalPastAndPositive(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> alwaysPendingOrderReserved(observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> stepNewSourceUnseen(b, observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> stepOrderOutcomeOnce(b, observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> stepIncomeMonotonic(b, observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> stepJournalRetained(b, observeRefund(b, refund, by_)))
+  ensures (inv(b) ==> canObserveRefund(b, refund, by_) ==> stepSignaturesNeedLiveBuyback(b, "observeRefund", observeRefund(b, refund, by_)))
 {
-  if inv(b) && canObserveRefund(b, refund) {
-    var after := observeRefund(b, refund);
+  if inv(b) && canObserveRefund(b, refund, by_) {
+    var after := observeRefund(b, refund, by_);
     UnchangedCumulative(b, after);
     SmallAmountNonnegativeValid(b.orderAmount);
     settlement__half_lawHalfValid_ensures(b.income);
@@ -553,48 +525,44 @@ lemma observeRefund_ensures(b: Buyback, refund: RefundEvidence)
   }
 }
 
-lemma reportUnfilled_ensures(b: Buyback)
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysSourcesOnce(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysRuntimeSound(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysShareBounded(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysWindowLimits(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysJournalPastAndPositive(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysPendingOrderReserved(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysPoolNonNegative(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysLocalShareBounded(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysSourceLegsOnly(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> alwaysBurnBounded(reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> stepNewSourceUnseen(b, reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> stepOrderOutcomeOnce(b, reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> stepIncomeMonotonic(b, reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> stepJournalRetained(b, reportUnfilled(b)))
-  ensures (inv(b) ==> canReportUnfilled(b) ==> stepSignaturesNeedLiveBuyback(b, "reportUnfilled", reportUnfilled(b)))
+lemma reportUnfilled_ensures(b: Buyback, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysSourcesOnce(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysRuntimeSound(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysDecisionsSignNothing(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysOutcomesOfOrders(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysShareBounded(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysWindowLimits(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysJournalPastAndPositive(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> alwaysPendingOrderReserved(reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> stepNewSourceUnseen(b, reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> stepOrderOutcomeOnce(b, reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> stepIncomeMonotonic(b, reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> stepJournalRetained(b, reportUnfilled(b, by_)))
+  ensures (inv(b) ==> canReportUnfilled(b, by_) ==> stepSignaturesNeedLiveBuyback(b, "reportUnfilled", reportUnfilled(b, by_)))
 {
-  if inv(b) && canReportUnfilled(b) {
-    var after := reportUnfilled(b);
+  if inv(b) && canReportUnfilled(b, by_) {
+    var after := reportUnfilled(b, by_);
     UnchangedCumulative(b, after);
   }
 }
 
-lemma closeOrder_ensures(b: Buyback)
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysSourcesOnce(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysRuntimeSound(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysShareBounded(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysWindowLimits(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysJournalPastAndPositive(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysPendingOrderReserved(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysPoolNonNegative(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysLocalShareBounded(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysSourceLegsOnly(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> alwaysBurnBounded(closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> stepNewSourceUnseen(b, closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> stepOrderOutcomeOnce(b, closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> stepIncomeMonotonic(b, closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> stepJournalRetained(b, closeOrder(b)))
-  ensures (inv(b) ==> canCloseOrder(b) ==> stepSignaturesNeedLiveBuyback(b, "closeOrder", closeOrder(b)))
+lemma closeOrder_ensures(b: Buyback, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysSourcesOnce(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysRuntimeSound(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysDecisionsSignNothing(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysOutcomesOfOrders(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysShareBounded(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysWindowLimits(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysJournalPastAndPositive(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> alwaysPendingOrderReserved(closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> stepNewSourceUnseen(b, closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> stepOrderOutcomeOnce(b, closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> stepIncomeMonotonic(b, closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> stepJournalRetained(b, closeOrder(b, by_)))
+  ensures (inv(b) ==> canCloseOrder(b, by_) ==> stepSignaturesNeedLiveBuyback(b, "closeOrder", closeOrder(b, by_)))
 {
-  if inv(b) && canCloseOrder(b) {
-    var after := closeOrder(b);
+  if inv(b) && canCloseOrder(b, by_) {
+    var after := closeOrder(b, by_);
     UnchangedCumulative(b, after);
   }
 }

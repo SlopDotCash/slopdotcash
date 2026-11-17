@@ -8,7 +8,8 @@ answers `GET` and `HEAD` for `/projects/<id>/<artifact>` and
 `/.well-known/slop/projects.json` from the current D1 revision, the
 project's [public read](../backend/listing.md), its admission clearance and
 the build's template index, rendering each skill per request
-([rendering](./rendering.md)). The site build (`scripts/prepare-site.mjs`)
+([rendering](./skillRendering.md), after the
+[substitution checks](./rendering.md)). The site build (`scripts/prepare-site.mjs`)
 publishes the template index, the bootstrap skill, the agent discovery files
 and the protocol documents. This library holds the response and build
 predicates; it keeps no state.

@@ -16,19 +16,21 @@ or audience authority reader (security, Slopbot appeal and dispute
 authority), evaluated immediately before the step that uses it; it is a
 verified-evidence record, never a caller flag. `ProviderEvidence` comes only
 from the separate operator reconciliation path that reads independent
-provider records. `InboxUnsubscribeToken` is a token whose keyed digest the
-transport verified; it names the recipient and the destination version it was
-issued for, and no category. `NotifyConfig` is the recipient configuration of the
+provider records. `NotifyConfig` is the recipient configuration of the
 reviewed notification Worker release (`SLOP_NOTIFY_RELEASE`): each
 operator-verified pilot destination of the restricted security pilot
 (PRD SEC-16), its effective time, the configured backup of each recipient,
 and whether registered account destinations (`SLOP_NOTIFY_GENERAL_EMAIL`)
 are in use. The shell supplies it only from that release.
 
-The destination version and the two consents here are this outbox's
-projection of the account [email enrollment](../backend/email.md); that
-machine owns verification mail, its expiry and cancellation, and closure.
-Binding the two is a composition obligation.
+Each notice has a category. Security mail (private case notices, report
+receipts and essential wallet notices) needs security consent; every other
+notice is activity mail. Consent and the destination version are never set
+here: the outbox reads the recipient's snapshot of the account
+[email enrollment](../backend/email.md), which owns verification,
+consent, unsubscribe and closure. The [account service](../backend/accounts.md)
+(`accountService`) commits each consent change and each account closure in
+the same write as the outbox update below.
 
 ## Story: Save each notice once with its source change
 
@@ -42,26 +44,27 @@ the destination version consented for its channel. Enabling email never
 queues history.
 
 ```quint
+import email as E from "../backend/email"
 type Kind = ApplicationApproved | ApplicationRejected | ProjectRevision | AwardReserved | PaymentPaid | PayoutHeld
   | WalletChanged | ProjectQuarantined | ProjectBanned | ReinstatementRequested | ProjectReinstated | ReinstatementDenied
   | ReinstatementReview | PayoutException | SecurityCase | ProjectReady | ProjectScanFailed | ProjectInstallationLost
   | SecurityReportReceived | SlopbotAppealReview | SlopbotScamReview
 type Channel = NoEmail | SecurityOutbox | ActivityOutbox
 type Template = CaseTemplate | ReceiptTemplate | ActivityTemplate
-type DeliveryState = NotQueued | Queued | Retrying | Sending | ProviderAccepted | Delivered | Bounced | Suppressed | Exhausted | Ambiguous
+type DeliveryState = NotQueued | Queued | Retrying | Sending | ProviderAccepted | Delivered | Bounced | Suppressed
+  | Exhausted | Ambiguous | Cancelled
+type Category = ActivityMail | SecurityMail
 type Notice = { id: int, key: int, kind: Kind, recipient: int, createdAt: int, readAt: int, acknowledgedAt: int,
-  channel: Channel, template: Template, essential: bool, state: DeliveryState, attempts: int, nextAt: int,
-  claimedAt: int, prepared: bool, boundVersion: int, digest: int, everBound: bool, providerSuppressed: bool, escalationOf: int,
-  escalated: bool }
-type Preference = { recipient: int, activity: bool, security: bool, saved: bool, version: int, effectiveAt: int, revision: int }
+  channel: Channel, category: Category, template: Template, essential: bool, state: DeliveryState, attempts: int,
+  nextAt: int, claimedAt: int, prepared: bool, boundVersion: int, digest: int, providerSuppressed: bool,
+  escalationOf: int, escalated: bool }
 type Route = { recipient: int, backup: int, pilotDigest: int, pilotEffectiveAt: int }
 type NotifyConfig = { routes: List[Route], generalEmail: bool }
-type Inbox = { clock: int, notices: List[Notice], prefs: List[Preference], evidence: List[int], nextVersion: int,
+type Inbox = { clock: int, notices: List[Notice], enrollments: List[E::Enrollment], evidence: List[int],
   config: NotifyConfig, configs: int }
-pure val noPreference: Preference = { recipient: 0, activity: false, security: false, saved: false, version: 0, effectiveAt: 0, revision: 0 }
+pure val accountService = -8
 pure val noRoute: Route = { recipient: 0, backup: 0, pilotDigest: 0, pilotEffectiveAt: 0 }
-pure val initial: Inbox = { clock: 1, notices: List(), evidence: List(), nextVersion: 1,
-  prefs: List({ ...noPreference, recipient: 1 }, { ...noPreference, recipient: 2 }, { ...noPreference, recipient: 3 }),
+pure val initial: Inbox = { clock: 1, notices: List(), evidence: List(), enrollments: List(),
   config: { routes: List(), generalEmail: false }, configs: 0 }
 pure def routeOf(i: Inbox, recipient: int): Route =
   i.config.routes.foldl(noRoute, (found, r) => if (found.recipient == 0 and r.recipient == recipient) r else found)
@@ -74,21 +77,28 @@ pure def canPublishConfig(i: Inbox, config: NotifyConfig): bool = validConfig(co
 pure def publishConfig(i: Inbox, config: NotifyConfig): Inbox = { ...i, config: config, configs: i.configs + 1 }
 pure def alwaysConfigValid(i: Inbox): bool = validConfig(i.config)
 pure val noNotice: Notice = { id: 0, key: 0, kind: ProjectRevision, recipient: 0, createdAt: 0, readAt: 0, acknowledgedAt: 0,
-  channel: NoEmail, template: ActivityTemplate, essential: false, state: NotQueued, attempts: 0, nextAt: 0, claimedAt: 0,
-  prepared: false, boundVersion: 0, digest: 0, everBound: false, providerSuppressed: false, escalationOf: 0, escalated: false }
-pure def pref(i: Inbox, recipient: int): Preference = i.prefs.foldl(noPreference, (found, p) => if (p.recipient == recipient) p else found)
+  channel: NoEmail, category: ActivityMail, template: ActivityTemplate, essential: false, state: NotQueued, attempts: 0, nextAt: 0, claimedAt: 0,
+  prepared: false, boundVersion: 0, digest: 0, providerSuppressed: false, escalationOf: 0, escalated: false }
+pure def enrollmentOf(i: Inbox, recipient: int): E::Enrollment =
+  i.enrollments.foldl(E::newEnrollment(recipient, 0), (found, e) => if (e.actor == recipient) e else found)
+pure def mailConsent(e: E::Enrollment, category: Category): bool =
+  e.preference.version > 0 and e.preference.version == E::currentVersion(e) and
+  (if (category == SecurityMail) e.preference.security else e.preference.activity)
 pure def notice(i: Inbox, id: int): Notice = i.notices.nthOr(id - 1, noNotice)
 pure def securityKind(kind: Kind): bool = kind == SecurityCase or kind == SecurityReportReceived
 pure def noticeExists(i: Inbox, key: int, recipient: int): bool = i.notices.some(n => n.key == key and n.recipient == recipient)
+pure def categoryOf(kind: Kind): Category = if (securityKind(kind) or kind == WalletChanged) SecurityMail else ActivityMail
 pure def newNotice(i: Inbox, key: int, kind: Kind, recipient: int, escalationOf: int): Notice =
-  val p = pref(i, recipient)
-  val channel = if (securityKind(kind)) SecurityOutbox else if (kind == WalletChanged or p.activity) ActivityOutbox else NoEmail
-  val usesSecurity = channel == SecurityOutbox or kind == WalletChanged
+  val e = enrollmentOf(i, recipient)
+  val category = categoryOf(kind)
+  val channel = if (securityKind(kind)) SecurityOutbox
+    else if (kind == WalletChanged or mailConsent(e, ActivityMail)) ActivityOutbox else NoEmail
   { ...noNotice, id: i.notices.length() + 1, key: key, kind: kind, recipient: recipient, createdAt: i.clock, channel: channel,
+    category: category,
     template: if (kind == SecurityReportReceived) ReceiptTemplate else if (kind == SecurityCase) CaseTemplate else ActivityTemplate,
     essential: channel == ActivityOutbox and kind == WalletChanged, state: if (channel == NoEmail) NotQueued else Queued,
     nextAt: i.clock, escalationOf: escalationOf,
-    boundVersion: if (usesSecurity) (if (p.security) p.version else 0) else if (p.activity) p.version else 0 }
+    boundVersion: if (mailConsent(e, category)) E::currentVersion(e) else 0 }
 pure def canSave(i: Inbox, key: int, kind: Kind, recipient: int): bool = key > 0 and key < 1000 and recipient > 0
 pure def save(i: Inbox, key: int, kind: Kind, recipient: int): Inbox =
   if (noticeExists(i, key, recipient)) i else { ...i, notices: i.notices.append(newNotice(i, key, kind, recipient, 0)) }
@@ -99,7 +109,7 @@ pure def stepNoticeFresh(before: Inbox, after: Inbox): bool =
     or (after.notices.length() == before.notices.length() + 1 and not(noticeExists(before, added.key, added.recipient)))
 pure def alwaysChannelByKind(i: Inbox): bool = i.notices.every(n =>
   (securityKind(n.kind) iff n.channel == SecurityOutbox) and (n.essential iff (n.channel == ActivityOutbox and n.kind == WalletChanged))
-    and (n.kind == WalletChanged implies n.channel == ActivityOutbox)
+    and (n.kind == WalletChanged implies n.channel == ActivityOutbox) and n.category == categoryOf(n.kind)
     and (n.channel == NoEmail implies n.state == NotQueued and n.attempts == 0)
     and (n.channel != NoEmail implies n.state != NotQueued)
     and ((n.template == CaseTemplate) iff n.kind == SecurityCase) and ((n.template == ReceiptTemplate) iff n.kind == SecurityReportReceived))
@@ -107,103 +117,73 @@ pure def stepNoticesPermanent(before: Inbox, after: Inbox): bool = after.notices
   and before.notices.every(n => after.notices.some(a => a.id == n.id and a.key == n.key and a.kind == n.kind
     and a.recipient == n.recipient and a.channel == n.channel and a.createdAt == n.createdAt and a.escalationOf == n.escalationOf
     and (n.readAt > 0 implies a.readAt == n.readAt) and (n.acknowledgedAt > 0 implies a.acknowledgedAt == n.acknowledgedAt)
-    and (n.escalated implies a.escalated) and (n.everBound implies a.everBound)))
+    and (n.escalated implies a.escalated)))
 pure def sometimesReplayKeptOne(i: Inbox): bool = i.notices.length() == 1 and i.notices.some(n => n.state == Queued)
 ```
 
-## Story: Control future email with consent bound to a verified destination
+## Story: Follow the account's email enrollment and closure
 
-### Consent binds one verified destination version and opt-out suppresses waiting mail
+### A committed enrollment change suppresses waiting mail that lost its consent
 
-Verifying a new address issues a new destination version, takes effect at
-verification and needs fresh consent; waiting mail bound to the earlier
-version is suppressed. Activity consent governs optional notices; security
-consent governs private case notices, report receipts and essential wallet
-notices. Enabling either requires a verified destination. Turning a channel
-off in settings suppresses its queued and retrying rows without erasing the
-Inbox; a provider call already in flight cannot be recalled. An unsubscribe
-token carries no category: a verified token for the current destination
-version withdraws both activity and security consent, as the account
-enrollment does (`spec/backend/email.md`, "Unsubscribe withdraws both
-categories only for the destination version its token was issued for"), and
-suppresses every queued and retrying row of that recipient. A token for an
-earlier version changes nothing. Every preference save increments a revision.
+The account service supplies the recipient's enrollment as committed by a
+verification, consent save or unsubscribe. A new destination version, or a
+category turned off, suppresses that recipient's queued and retrying rows
+whose bound version or category consent no longer holds, without erasing the
+Inbox; a provider call already in flight cannot be recalled. A snapshot older
+than the stored one in revision or destination version is refused. Enabling
+consent never queues history.
 
 ```quint
-pure def updatePref(i: Inbox, recipient: int, p: Preference): List[Preference] =
-  i.prefs.listMap(x => if (x.recipient == recipient) p else x)
-pure def canVerifyDestination(i: Inbox, by: int): bool = pref(i, by).recipient == by and by > 0
-pure def verifyDestination(i: Inbox, by: int): Inbox =
-  { ...i, nextVersion: i.nextVersion + 1, prefs: updatePref(i, by, { ...pref(i, by), version: i.nextVersion, effectiveAt: i.clock,
-    activity: false, security: false, saved: true, revision: pref(i, by).revision + 1 }),
-    notices: i.notices.listMap(n => if (n.recipient == by and waiting(n) and n.boundVersion > 0) { ...n, state: Suppressed } else n) }
 pure def waiting(n: Notice): bool = n.state == Queued or n.state == Retrying
-pure def canSetConsent(i: Inbox, activity: bool, security: bool, by: int): bool =
-  val p = pref(i, by)
-  p.recipient == by and by > 0 and ((activity or security) implies p.version > 0)
-pure def setConsent(i: Inbox, activity: bool, security: bool, by: int): Inbox =
-  { ...i, prefs: updatePref(i, by, { ...pref(i, by), activity: activity, security: security, saved: true, revision: pref(i, by).revision + 1 }),
-    notices: i.notices.listMap(n => if (n.recipient == by and waiting(n) and (
-      (not(activity) and n.channel == ActivityOutbox and not(n.essential))
-      or (not(security) and (n.channel == SecurityOutbox or n.essential)))) { ...n, state: Suppressed } else n) }
-type InboxUnsubscribeToken = { recipient: int, version: int }
-pure def canUnsubscribe(i: Inbox, token: InboxUnsubscribeToken): bool =
-  val p = pref(i, token.recipient)
-  token.recipient > 0 and p.recipient == token.recipient and token.version > 0 and token.version == p.version
-pure def unsubscribe(i: Inbox, token: InboxUnsubscribeToken): Inbox =
-  val p = pref(i, token.recipient)
-  { ...i, prefs: updatePref(i, token.recipient, { ...p, saved: true, revision: p.revision + 1, activity: false, security: false }),
-    notices: i.notices.listMap(n => if (n.recipient == token.recipient and waiting(n)) { ...n, state: Suppressed } else n) }
-pure def stepUnsubscribeWithdrawsBoth(before: Inbox, via: str, after: Inbox): bool =
-  via == "unsubscribe" implies after.prefs.every(p => before.prefs.includes(p) or (not(p.activity) and not(p.security)))
-pure def stepConsentNeverQueuesHistory(before: Inbox, via: str, after: Inbox): bool =
-  (via == "setConsent" or via == "verifyDestination" or via == "unsubscribe") implies after.notices.length() == before.notices.length()
-    and before.notices.every(n => after.notices.some(a => a.id == n.id and (a.state == n.state or a.state == Suppressed)))
-pure def alwaysConsentNeedsDestination(i: Inbox): bool = i.nextVersion > 0
-  and i.prefs.every(p => (p.activity or p.security) implies p.version > 0)
+pure def boundConsent(e: E::Enrollment, n: Notice): bool =
+  n.boundVersion > 0 and E::currentVersion(e) == n.boundVersion and mailConsent(e, n.category)
+pure def withdrawn(e: E::Enrollment, n: Notice): bool =
+  (n.boundVersion > 0 and not(boundConsent(e, n))) or
+  (e.preference.stored and not(if (n.category == SecurityMail) e.preference.security else e.preference.activity))
+pure def withSnapshot(i: Inbox, e: E::Enrollment): List[E::Enrollment] =
+  if (i.enrollments.some(x => x.actor == e.actor)) i.enrollments.listMap(x => if (x.actor == e.actor) e else x)
+  else i.enrollments.append(e)
+pure def canObserveEnrollment(i: Inbox, by: int, enrollment: E::Enrollment): bool =
+  val prior = enrollmentOf(i, enrollment.actor)
+  by == accountService and enrollment.actor > 0 and enrollment.preference.revision >= prior.preference.revision and
+  enrollment.destination.version >= prior.destination.version
+pure def observeEnrollment(i: Inbox, by: int, enrollment: E::Enrollment): Inbox =
+  { ...i, enrollments: withSnapshot(i, enrollment),
+    notices: i.notices.listMap(n => if (n.recipient == enrollment.actor and waiting(n) and withdrawn(enrollment, n))
+      { ...n, state: Suppressed } else n) }
+pure def alwaysOneSnapshotPerRecipient(i: Inbox): bool =
+  i.enrollments.every(e => e.actor > 0 and i.enrollments.select(x => x.actor == e.actor).length() == 1)
+pure def lawEnrollmentDecidesConsent(e: E::Enrollment, category: Category): bool =
+  mailConsent(e, category) implies (e.preference.version > 0 and
+    (if (category == SecurityMail) e.preference.security else e.preference.activity))
 pure def sometimesOptOutSuppressed(i: Inbox): bool = i.notices.some(n => n.state == Suppressed and n.attempts == 0)
-pure def sometimesUnsubscribed(i: Inbox): bool = i.prefs.some(p => p.saved and p.version > 0 and not(p.security) and not(p.activity) and p.revision > 1)
+pure def sometimesUnsubscribed(i: Inbox): bool =
+  i.enrollments.some(e => e.preference.stored and not(e.preference.security) and not(e.preference.activity))
 ```
 
-### A notice's destination version and consents are the recipient's current email enrollment
+### Account closure cancels every waiting notice of the account in the same write
 
-The owner's decision on which service owns enrollment is pending (O26,
-OD5). Modelled meanwhile, as the old notify Worker behaved: the backend
-account service enrolls and the operations outbox delivers. The machine's
-`prefs` stand for this projection of the account
-[email enrollment](../backend/email.md): before each `prepare` the shell
-loads the recipient's preference as
-`enrolledPreference(enrollment.actor, enrollment)` from the backend
-email-consent port and keeps no other copy; binding the two is a composition
-obligation (see the introduction). The destination version is the current
-verified destination's, effective from its verification; consent counts only
-when it was saved for that same version. A stored choice counts as saved
-when it is for the current version or turned security mail off, so the
-pilot destination is withheld exactly when the stored security choice is
-off, whatever version it was saved for, as the old notify Worker did. The
-alternative is that operations owns enrollment and the backend reads consent
-from it.
+Closing an account withdraws both consents in the enrollment and, in the same
+commit, cancels each of the account's queued and retrying notices. The Inbox
+rows remain; a send already claimed is not recalled.
 
 ```quint
-import email as E from "../backend/email"
-pure def enrolledPreference(recipient: int, enrollment: E::Enrollment): Preference =
-  val currentDestination = enrollment.destination.version > 0 and enrollment.preference.version == enrollment.destination.version
-  { recipient: recipient, activity: currentDestination and enrollment.preference.activity,
-    security: currentDestination and enrollment.preference.security,
-    saved: enrollment.preference.stored and (currentDestination or not(enrollment.preference.security)),
-    version: enrollment.destination.version, effectiveAt: enrollment.destination.verifiedAt,
-    revision: enrollment.preference.revision }
-pure def lawEnrolledConsentNeedsCurrentDestination(recipient: int, enrollment: E::Enrollment): bool =
-  val p = enrolledPreference(recipient, enrollment)
-  (p.activity or p.security) implies (p.version > 0 and enrollment.preference.version == p.version)
-pure def lawPilotBlockedOnlyByExplicitOptOut(recipient: int, enrollment: E::Enrollment): bool =
-  val p = enrolledPreference(recipient, enrollment)
-  (p.saved and not(p.security)) iff (enrollment.preference.stored and not(enrollment.preference.security))
-pure val enrollmentValues = Set(E::newEnrollment(1, 0)).union(Set({ ...E::newEnrollment(1, 0),
-  destination: { address: "a", version: 2, verifiedAt: 5 },
-  preference: { stored: true, activity: true, security: true, version: 2, revision: 1 } }))
-  .union(Set({ ...E::newEnrollment(2, 0), destination: { address: "b", version: 3, verifiedAt: 7 },
-    preference: { stored: true, activity: true, security: false, version: 2, revision: 2 } }))
+pure def canCloseAccount(i: Inbox, by: int, enrollment: E::Enrollment): bool =
+  by == accountService and enrollment.actor > 0 and not(enrollment.preference.activity) and
+  not(enrollment.preference.security)
+pure def closeAccount(i: Inbox, by: int, enrollment: E::Enrollment): Inbox =
+  { ...i, enrollments: withSnapshot(i, enrollment),
+    notices: i.notices.listMap(n => if (n.recipient == enrollment.actor and waiting(n)) { ...n, state: Cancelled } else n) }
+pure def noWaitingMail(i: Inbox, recipient: int): bool = i.notices.every(n => n.recipient == recipient implies not(waiting(n)))
+pure def lawClosedAccountHasNoWaitingMail(i: Inbox, enrollment: E::Enrollment): bool =
+  noWaitingMail(closeAccount(i, accountService, enrollment), enrollment.actor)
+pure def stepConsentNeverQueuesHistory(before: Inbox, via: str, after: Inbox): bool =
+  (via == "observeEnrollment" or via == "closeAccount") implies after.notices.length() == before.notices.length()
+    and before.notices.every(n => after.notices.some(a => a.id == n.id and
+      (a.state == n.state or (waiting(n) and (a.state == Suppressed or a.state == Cancelled)))))
+pure def alwaysCancelledNeverPrepared(i: Inbox): bool = i.notices.every(n => n.state == Cancelled implies not(n.prepared))
+pure def anyCancelled(i: Inbox): bool = i.notices.some(n => n.state == Cancelled)
+pure def sometimesClosedCancelled(i: Inbox): bool = anyCancelled(i)
 ```
 
 ## Story: Deliver each attempt once and never resend an uncertain one
@@ -260,19 +240,16 @@ other thrown send is ambiguous.
 ```quint
 type AccessCheck = Allowed({ acknowledgeHours: int }) | Denied | Unavailable
 type ProviderResult = Accepted | QuotaRejected | Thrown
-pure def consentHolds(i: Inbox, n: Notice): bool =
-  val p = pref(i, n.recipient)
-  n.boundVersion > 0 and p.version == n.boundVersion
-    and (if (n.channel == SecurityOutbox or n.essential) p.security else p.activity)
+pure def consentHolds(i: Inbox, n: Notice): bool = boundConsent(enrollmentOf(i, n.recipient), n)
 pure def allowed(access: AccessCheck): bool = match access { | Allowed(a) => a.acknowledgeHours >= 0 | _ => false }
 pure def unavailable(access: AccessCheck): bool = match access { | Unavailable => true | _ => false }
-pure def registered(i: Inbox, n: Notice): bool = i.config.generalEmail and pref(i, n.recipient).version > 0
+pure def registered(i: Inbox, n: Notice): bool = i.config.generalEmail and enrollmentOf(i, n.recipient).destination.version > 0
 pure def pilotUsable(i: Inbox, n: Notice): bool =
-  val p = pref(i, n.recipient)
+  val e = enrollmentOf(i, n.recipient)
   n.channel == SecurityOutbox and not(registered(i, n)) and routeOf(i, n.recipient).pilotDigest > 0
-    and not(p.saved and not(p.security))
+    and not(e.preference.stored and not(e.preference.security))
 pure def destinationEffectiveAt(i: Inbox, n: Notice): int =
-  if (registered(i, n)) pref(i, n.recipient).effectiveAt else routeOf(i, n.recipient).pilotEffectiveAt
+  if (registered(i, n)) enrollmentOf(i, n.recipient).destination.verifiedAt else routeOf(i, n.recipient).pilotEffectiveAt
 pure def destinationDigest(i: Inbox, n: Notice): int =
   if (registered(i, n)) n.boundVersion else 1000 + routeOf(i, n.recipient).pilotDigest
 pure def canPrepare(i: Inbox, id: int, attempt: int, access: AccessCheck): bool = val n = notice(i, id)
@@ -282,7 +259,7 @@ pure def prepare(i: Inbox, id: int, attempt: int, access: AccessCheck): Inbox = 
   val updated = if (unavailable(access)) retried(i, n)
     else if (not(allowed(access)) or not(usable)) { ...n, state: Suppressed }
     else if (destinationEffectiveAt(i, n) > i.clock) retried(i, n)
-    else { ...n, prepared: true, digest: destinationDigest(i, n), everBound: true }
+    else { ...n, prepared: true, digest: destinationDigest(i, n) }
   { ...i, notices: setNotice(i, id, updated) }
 pure def canFailPreparation(i: Inbox, id: int, attempt: int): bool = val n = notice(i, id)
   id > 0 and n.id == id and owns(n, attempt)
@@ -327,20 +304,20 @@ Private case notices and report receipts keep the case authority reader.
 
 ```quint
 type AppealSource = NoAppeal | EscalatedAppeal | DisputeOpened | DisputeResolved
-type Audience = { steward: bool, owner: bool, affectedContributor: bool, administrator: bool, moderator: bool,
+type NoticeAudience = { steward: bool, owner: bool, affectedContributor: bool, administrator: bool, moderator: bool,
   vettingBan: bool, staffPath: bool, appeal: AppealSource, appellant: bool, escalated: bool, resolved: bool,
   scamPenaltyStands: bool, author: bool }
 pure def ownerKind(kind: Kind): bool = kind == ProjectReady or kind == ProjectRevision or kind == ProjectScanFailed
   or kind == ProjectInstallationLost or kind == ProjectQuarantined or kind == ProjectBanned
   or kind == ReinstatementRequested or kind == ProjectReinstated or kind == ReinstatementDenied
-pure def appealAudience(audience: Audience): bool =
+pure def appealAudience(audience: NoticeAudience): bool =
   if (audience.appeal == EscalatedAppeal)
     audience.moderator and audience.escalated and not(audience.resolved) and not(audience.appellant)
   else if (audience.appeal == DisputeOpened)
     audience.appellant or (audience.moderator and audience.escalated and not(audience.resolved))
   else if (audience.appeal == DisputeResolved) audience.appellant and audience.resolved
   else false
-pure def audienceHolds(kind: Kind, audience: Audience): bool =
+pure def audienceHolds(kind: Kind, audience: NoticeAudience): bool =
   val staff = audience.administrator or audience.moderator
   if (kind == PayoutException) audience.steward
   else if (kind == ProjectBanned and audience.vettingBan) audience.owner or audience.affectedContributor or staff
@@ -349,14 +326,14 @@ pure def audienceHolds(kind: Kind, audience: Audience): bool =
   else if (kind == SlopbotScamReview) audience.moderator and audience.scamPenaltyStands and not(audience.author)
   else if (kind == SlopbotAppealReview) appealAudience(audience)
   else true
-pure def activityAccess(kind: Kind, audience: Audience): AccessCheck =
+pure def activityAccess(kind: Kind, audience: NoticeAudience): AccessCheck =
   if (audienceHolds(kind, audience)) Allowed({ acknowledgeHours: 0 }) else Denied
-pure def lawFormerOwnerLosesOwnerNotices(noticeKind: Kind, audience: Audience): bool =
+pure def lawFormerOwnerLosesOwnerNotices(noticeKind: Kind, audience: NoticeAudience): bool =
   (ownerKind(noticeKind) and not(audience.vettingBan) and not(audience.owner) and not(audience.staffPath))
     implies not(audienceHolds(noticeKind, audience))
-pure def lawScamReviewNeverReachesAuthorOrAfterReversal(audience: Audience): bool =
+pure def lawScamReviewNeverReachesAuthorOrAfterReversal(audience: NoticeAudience): bool =
   (audience.author or not(audience.scamPenaltyStands)) implies not(audienceHolds(SlopbotScamReview, audience))
-pure def lawPayoutExceptionOnlyToSteward(audience: Audience): bool =
+pure def lawPayoutExceptionOnlyToSteward(audience: NoticeAudience): bool =
   audienceHolds(PayoutException, audience) iff audience.steward
 pure val audienceValues = Set(
   { steward: true, owner: false, affectedContributor: false, administrator: false, moderator: false, vettingBan: false,
@@ -411,6 +388,49 @@ pure def sometimesNotAcceptedRetried(i: Inbox): bool = i.notices.some(n => n.sta
 pure def sometimesExhausted(i: Inbox): bool = i.notices.some(n => n.state == Exhausted)
 ```
 
+### The Inbox shows one delivery word and never the address, digest, provider reference or attempt count
+
+An Inbox item carries the notice's identity, kind, read and acknowledgment
+times and one email word, and no other outbox field. Queued, retrying and
+sending rows read `queued`; provider acceptance reads `sent`, never
+delivered; independent delivery evidence reads `delivered`; a bounce, or an
+exhausted row whose attempt bound a destination, reads `failed`; an
+ambiguous row reads `uncertain`. A row that sent nothing (suppressed for
+consent, access or destination, cancelled by account closure, never queued,
+or exhausted without a bound destination) shows no email word, so the Inbox
+never reveals why private mail was withheld. Whether an exhausted row bound a destination is read from
+its destination digest, which each claim clears, so it is the binding of its
+last attempt. Only case notices show an acknowledgment time.
+
+The stored kinds are the 21 of `Kind`. A Slopbot appeal review whose appeal
+or points dispute has since been resolved is shown as resolved, the 22nd
+kind the Inbox parser accepts; titles and links stay a presentation table.
+Which moderator and steward rows a viewer may list or open is the
+[moderator and steward Inbox](./moderation.md).
+
+```quint
+type EmailWord = NoEmailWord | QueuedWord | SentWord | DeliveredWord | FailedWord | UncertainWord
+type InboxItem = { id: int, key: int, kind: Kind, appealResolved: bool, readAt: int, acknowledgedAt: int,
+  asksAcknowledgment: bool, email: EmailWord }
+pure def emailWord(delivery: DeliveryState, bound: bool): EmailWord =
+  if (delivery == Queued or delivery == Retrying or delivery == Sending) QueuedWord
+  else if (delivery == ProviderAccepted) SentWord
+  else if (delivery == Delivered) DeliveredWord
+  else if (delivery == Bounced or (delivery == Exhausted and bound)) FailedWord
+  else if (delivery == Ambiguous) UncertainWord
+  else NoEmailWord
+pure def inboxItem(n: Notice, appealResolved: bool): InboxItem =
+  { id: n.id, key: n.key, kind: n.kind, appealResolved: n.kind == SlopbotAppealReview and appealResolved,
+    readAt: n.readAt, acknowledgedAt: if (n.template == CaseTemplate) n.acknowledgedAt else 0,
+    asksAcknowledgment: n.template == CaseTemplate, email: emailWord(n.state, n.digest > 0) }
+pure def lawEmailWordNeverOverstates(delivery: DeliveryState, bound: bool): bool =
+  val word = emailWord(delivery, bound)
+  (word == SentWord iff delivery == ProviderAccepted) and (word == DeliveredWord iff delivery == Delivered)
+    and ((delivery == Suppressed or delivery == NotQueued or delivery == Cancelled) implies word == NoEmailWord)
+pure def lawOnlyAppealReviewsShowResolved(noticeKind: Kind, appealResolved: bool): bool =
+  inboxItem({ ...noNotice, id: 1, kind: noticeKind }, appealResolved).appealResolved implies noticeKind == SlopbotAppealReview
+```
+
 ## Story: Read, acknowledge and escalate private case notices
 
 ### Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment
@@ -427,61 +447,6 @@ pure def canAcknowledge(i: Inbox, id: int, by: int, access: AccessCheck): bool =
 pure def acknowledge(i: Inbox, id: int, by: int, access: AccessCheck): Inbox =
   { ...i, notices: setNotice(i, id, { ...notice(i, id), acknowledgedAt: i.clock }) }
 pure def alwaysAcknowledgmentForCases(i: Inbox): bool = i.notices.every(n => n.acknowledgedAt > 0 implies n.template == CaseTemplate)
-```
-
-### The Inbox shows one delivery word and never the address, digest, provider reference or attempt count
-
-An Inbox item carries the notice's identity, kind, read and acknowledgment
-times and one email word, and no other outbox field. Queued, retrying and
-sending rows read `queued`; provider acceptance reads `sent`, never
-delivered; independent delivery evidence reads `delivered`; a bounce, or an
-exhausted row any of whose attempts ever bound a destination, reads
-`failed`; an ambiguous row reads `uncertain`. A row that sent nothing
-(suppressed for consent, access or destination, never queued, or exhausted
-without ever binding a destination) shows no email word, so the Inbox never
-reveals why private mail was withheld. Each claim clears the current
-attempt's destination digest, but whether any attempt bound one is kept for
-good, as the old notify Worker kept the digest of an earlier attempt: an
-exhaustion whose last attempt never reached the provider, or whose
-preparation failed after binding, still reads `failed` once some attempt
-bound a destination. Only case notices show an acknowledgment time.
-
-The stored kinds are the 21 of `Kind`. A Slopbot appeal review whose appeal
-or points dispute has since been resolved is shown as resolved, the 22nd
-kind the Inbox parser accepts; titles and links stay a presentation table.
-Appeal and scam reviews are listed only to current moderators, a points
-dispute's notices also to its appellant, and a scam review only while its
-penalty stands, by the audience of "Each notice kind names the role its
-recipient must still hold when the attempt is prepared".
-
-```quint
-type EmailWord = NoEmailWord | QueuedWord | SentWord | DeliveredWord | FailedWord | UncertainWord
-type InboxItem = { id: int, key: int, kind: Kind, appealResolved: bool, readAt: int, acknowledgedAt: int,
-  asksAcknowledgment: bool, email: EmailWord }
-pure def emailWord(delivery: DeliveryState, everBound: bool): EmailWord =
-  if (delivery == Queued or delivery == Retrying or delivery == Sending) QueuedWord
-  else if (delivery == ProviderAccepted) SentWord
-  else if (delivery == Delivered) DeliveredWord
-  else if (delivery == Bounced or (delivery == Exhausted and everBound)) FailedWord
-  else if (delivery == Ambiguous) UncertainWord
-  else NoEmailWord
-pure def inboxItem(n: Notice, appealResolved: bool): InboxItem =
-  { id: n.id, key: n.key, kind: n.kind, appealResolved: n.kind == SlopbotAppealReview and appealResolved,
-    readAt: n.readAt, acknowledgedAt: if (n.template == CaseTemplate) n.acknowledgedAt else 0,
-    asksAcknowledgment: n.template == CaseTemplate, email: emailWord(n.state, n.everBound) }
-pure def listedInInbox(kind: Kind, audience: Audience): bool =
-  if (kind == SlopbotScamReview) audience.moderator and audience.scamPenaltyStands
-  else if (kind == SlopbotAppealReview) audience.moderator
-    or (audience.appellant and (audience.appeal == DisputeOpened or audience.appeal == DisputeResolved))
-  else true
-pure def lawEmailWordNeverOverstates(delivery: DeliveryState, everBound: bool): bool =
-  val word = emailWord(delivery, everBound)
-  (word == SentWord iff delivery == ProviderAccepted) and (word == DeliveredWord iff delivery == Delivered)
-    and ((delivery == Suppressed or delivery == NotQueued) implies word == NoEmailWord)
-pure def lawOnlyAppealReviewsShowResolved(noticeKind: Kind, appealResolved: bool): bool =
-  inboxItem({ ...noNotice, id: 1, kind: noticeKind }, appealResolved).appealResolved implies noticeKind == SlopbotAppealReview
-pure def sometimesEarlierBindingOutlivesTheClaim(i: Inbox): bool =
-  i.notices.some(n => n.everBound and n.digest == 0 and n.attempts > 1)
 ```
 
 ### A failed or overdue case notice escalates once to a backup with current access
@@ -540,13 +505,19 @@ These sets bound simulation only.
 pure val keyValues = Set(1, 2)
 pure val kindValues = Set(SecurityCase, SecurityReportReceived, WalletChanged, PayoutHeld)
 pure val recipientValues = Set(1, 2)
-pure val byValues = Set(1, 2, 4)
+pure val byValues = Set(1, 2, 4, accountService)
 pure val idValues = Set(1, 2, 3)
 pure val attemptValues = Set(1, 2, 3, 4, 5)
 pure val elapsedValues = Set(60000, 400000, 3600000)
 pure val weight_advanceClock = 8
-pure val activityValues = Set(true, false)
-pure val securityValues = Set(true, false)
+pure val consentedEnrollment: E::Enrollment = { ...E::newEnrollment(1, 0), destination: { address: "a", version: 1, verifiedAt: 1 },
+  preference: { stored: true, activity: true, security: true, version: 1, revision: 0 } }
+pure val enrollmentValues = Set(consentedEnrollment, { ...consentedEnrollment, preference: { ...consentedEnrollment.preference,
+    activity: false, revision: 1 } }, { ...consentedEnrollment, preference: { ...consentedEnrollment.preference,
+    activity: false, security: false, revision: 2 } }, { ...consentedEnrollment, actor: 2,
+    destination: { address: "b", version: 2, verifiedAt: 1 }, preference: { ...consentedEnrollment.preference, version: 2 } },
+  { ...consentedEnrollment, destination: { address: "c", version: 3, verifiedAt: 1 },
+    preference: { ...consentedEnrollment.preference, activity: false, security: false, version: 0, revision: 3 } })
 pure val accessValues = Set(Allowed({ acknowledgeHours: 1 }), Denied, Unavailable)
 pure val primaryAccessValues = Set(Allowed({ acknowledgeHours: 1 }), Denied)
 pure val backupAccessValues = Set(Allowed({ acknowledgeHours: 1 }), Unavailable)
@@ -562,13 +533,12 @@ pure val weight_send = 8
 pure val weight_failPreparation = 8
 pure val weight_reconcile = 6
 pure val weight_escalate = 6
-pure val weight_setConsent = 4
-pure val weight_verifyDestination = 4
+pure val weight_observeEnrollment = 5
+pure val weight_closeAccount = 3
 pure val weight_publishConfig = 4
 pure val configValues = Set(
   { routes: List({ recipient: 1, backup: 2, pilotDigest: 0, pilotEffectiveAt: 0 }, { recipient: 2, backup: 3, pilotDigest: 0, pilotEffectiveAt: 0 },
     { recipient: 3, backup: 0, pilotDigest: 0, pilotEffectiveAt: 0 }), generalEmail: true },
   { routes: List({ recipient: 1, backup: 2, pilotDigest: 7, pilotEffectiveAt: 0 }, { recipient: 2, backup: 1, pilotDigest: 8, pilotEffectiveAt: 5000000 }),
     generalEmail: false })
-pure val tokenValues = Set({ recipient: 1, version: 1 }, { recipient: 1, version: 2 }, { recipient: 2, version: 2 })
 ```

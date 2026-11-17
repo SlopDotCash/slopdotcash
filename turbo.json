@@ -121,6 +121,7 @@
         "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "tsconfig.json",
+        "formal/check.ts",
         "spec/**",
         "src/**",
         "test/**"
@@ -240,6 +241,7 @@
         "package.json",
         "pnpm-workspace.yaml",
         "tsconfig.json",
+        "formal/check.ts",
         "*.config.js",
         "*.config.ts"
       ],
@@ -272,6 +274,7 @@
         "package.json",
         "pnpm-workspace.yaml",
         "tsconfig.json",
+        "formal/check.ts",
         "*.config.js",
         "*.config.ts",
         ".madgerc",
@@ -516,6 +519,16 @@
       "outputs": [
         ".cache/test-result-*.json"
       ]
+    },
+    "//#formal:check": {
+      "inputs": [
+        "formal/**",
+        "spec/**",
+        "reference/**",
+        "docs/**",
+        "!**/{gen,.spec-cache,.turbo}/**"
+      ],
+      "outputs": []
     }
   },
   "remoteCache": {

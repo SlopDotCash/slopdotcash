@@ -18,10 +18,12 @@ obligation.
 
 - [Contributor command completion](./commandCompletion.md)
 - [Discovery lock and child ownership](./discoveryLock.md)
+- [Discovery lock directory publication and release](./lockPublication.md)
 - [Discovery snapshot](./discoverySnapshot.md)
 - [Frozen review frontier](./reviewEpoch.md)
 - [Live project terms preflight](./termsPreflight.md)
-- [Generated project skill rendering](./rendering.md)
+- [Generated project skill rendering](./skillRendering.md)
+- [Skill template substitution and refusals](./rendering.md)
 - [Project skill publication and site discovery files](./publication.md)
 - [Commit and registry authority for skill bytes](./skillAuthority.md)
 - [Skill package validation runtime](./skillValidation.md)
@@ -34,3 +36,4 @@ obligation.
 - [Contributor session exchange](./sessionExchange.md)
 - [Server-side trace run and progress events](./traceServer.md)
 - [Opened pull request record](./openedRun.md)
+- [Authenticated pull_request_opened evidence](./prOpened.md)

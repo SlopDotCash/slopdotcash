@@ -1,27 +1,25 @@
 # @repo/app
 
-Hello world: a page that greets a name, typed or carried by a link, says hello and counts the greetings. It is small
-on purpose, and it uses one of each thing Vibestack offers, so that every stage of `pnpm check` has something to
-check. Start a new application by replacing it.
+The Slop application: the route shell every page renders in. It reads the address the browser loaded, opens the one
+page that address names (or the unknown page), and renders the header, that page's heading and the footer on
+`@repo/ui` and the design tokens. The pages themselves, their reads and their actions are the
+[frontend specs](../../spec/frontend/index.md) and arrive in the business-logic phase.
 
 Its requirements are [`spec/app/`](../../spec/app/index.md), in the one spec tree at the repository root.
-`pnpm check` there generates `gen/app.ts`, `gen/app.effect.vibe` and `gen/app.react.ts` here, one module per spec it
-imports beside them, and checks this package's types, proofs, tests and traces (SPEC.md, "One spec tree").
+`pnpm check` there generates `gen/app.ts`, `gen/app.effect.vibe` and `gen/app.react.ts` here, and checks this
+package's types, tests and traces (SPEC.md, "One spec tree").
 
-| Piece | Shows | Checked by |
+| Piece | Is | Checked by |
 |---|---|---|
-| `spec/app/index.md` | a story; a state, `initial`, a guarded transition that returns `{ state, out }`, a sender `by`, `nameValues`, an `always`, two `step` rules (one on `out`), a `sometimes` rule, a law, and `refinesT` | `model`, `always`, `sometimes`, `replay`, `proof` |
-| `spec/app/tally.md` | a machine imported under a name (`T`), which the greeter refines | `always`, `proof` |
-| `spec/app/words.md` | a library imported with `.*`: the effect the greeter outputs | `model`, `proof` |
-| `spec/app/echo.md`, `echo.proof.dfy` | a model no shell runs: `std/net` imported, a `Secret` type and its `declassify`, an opaque `const` and its law, `weight_`, `iValues`, a `leadsTo` rule with its `fair_` events, and a proof file for what Dafny cannot see alone | `model`, `always`, `sometimes`, `replay`, `proof` |
-| `src/greeter.vibe` | the VibeLang shell: the generated `stored("greeter")` layer, and the sender of each input from where the page read it | `types`, `traces`, `tests` |
-| `src/link.ts`, `link.contract.ts` | a link that greets a name, and the contract that it carries any name back | the property test `pnpm test` derives from the contract |
-| `src/greeting.ts`, `greeting.proof.dfy` | hand-written verified logic: a `//@` contract and the lemma that proves it | `proof`, `review` |
-| `src/App.tsx` | React over the generated `useMachine`: Greet is offered exactly when `can` allows it, each `out` is said to a screen reader, on `@repo/ui` and the design tokens | `types`, lint, `test:browser` |
-| `test/drivers/app.ts` | the conformance driver: the shell against the spec, its store and its effects, by journeys, malformed inputs and random walks | `traces` |
-| `test/traces/app.jsonl` | a trace recorded from the shell, replayed against the spec | `traces` |
-| `test/app.test.vibe` | the journey the driver cannot see: the greeter read back from its store, and a store that holds no greeter | `tests` |
-| `test/app.browser.test.tsx` | what only a browser shows: a link opened twice, focus after greeting, and a full localStorage | `pnpm test:browser` |
+| `spec/app/index.md` | the route kinds of development's `ROUTES`, the parser from an address to one of them, the legacy addresses, and the laws that each address names exactly one kind | `model`, `always`, `sometimes`, `replay`, `proof` |
+| `src/routes.vibe` | the VibeLang shell: the route in memory (`machine()`), opened from an untrusted event | `types`, `traces`, `tests` |
+| `src/address.ts`, `address.contract.ts` | the address as the opening event, and the contract that a path made from segments opens those segments | the property test `pnpm test` derives from the contract |
+| `src/App.tsx` | React over the generated `useMachine`: the header, the page the route names and the footer; an empty busy `main` until the opening, dispatched in the first render's effects, has been applied, so the home page it starts on never shows first | `types`, lint, `test:browser` |
+| `src/head.ts` | each route's document title and canonical link, or `noindex` for a missing page, as development's `routeHead`; a project's pages name it by its id until the registry read arrives | `test:browser` |
+| `test/drivers/app.ts` | the conformance driver: the shell against the spec, by journeys, malformed inputs and random walks | `traces` |
+| `test/traces/app.jsonl` | a trace of openings through the shell's generated machine, replayed against the spec | `traces` |
+| `test/app.test.vibe` | what the driver cannot see: paths and queries turned into openings | `tests` |
+| `test/app.browser.test.tsx` | what only a browser shows: each page's one heading and head, the unknown page, the served domain and keyboard order | `pnpm test:browser` |
 
 | Command | Does |
 |---|---|

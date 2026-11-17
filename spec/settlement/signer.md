@@ -27,7 +27,7 @@ verification adapter.
 
 ```quint
 type BindingPhase = Unbound | Authorized | BindingPending | CancellationPending | Bound | Cancelled | Retired
-type WalletSignature = { wallet: str, signer: str, intent: int, expiresAt: int }
+type WalletSignature = { wallet: str, signer: str, intent: int }
 type FinalizedOutcome = { attempt: int, reverted: bool, block: int, canonicalBlock: int }
 type Binding = { phase: BindingPhase, actor: int, wallet: str, authority: int, intent: int, latestIntent: int,
   signedAuthority: int, nonce: int, bindingAttempt: int, cancellationAttempt: int,
@@ -37,12 +37,12 @@ pure val initial: Binding = { phase: Unbound, actor: 1, wallet: "wallet", author
   canonical: 0, finalizedHeight: 0, retired: List(), consentExpiry: 0, finalizedTime: 0 }
 pure def canRecordIntent(b: Binding, intent: int, by: str): bool = by == "account" and intent > b.latestIntent
 pure def recordIntent(b: Binding, intent: int, by: str): Binding = { ...b, latestIntent: intent }
-pure def canAuthorize(b: Binding, actor: int, signature: WalletSignature, by: str): bool =
+pure def canAuthorize(b: Binding, actor: int, signature: WalletSignature, expiresAt: int, by: str): bool =
   (b.phase == Unbound or b.phase == Retired) and actor == b.actor and signature.wallet == b.wallet
     and signature.signer == signature.wallet and signature.intent == b.latestIntent and signature.intent > b.intent and by == "account"
-pure def authorize(b: Binding, actor: int, signature: WalletSignature, by: str): Binding =
+pure def authorize(b: Binding, actor: int, signature: WalletSignature, expiresAt: int, by: str): Binding =
   { ...b, phase: Authorized, intent: signature.intent, bindingAttempt: 0, cancellationAttempt: 0, signedAuthority: 0,
-    consentExpiry: signature.expiresAt }
+    consentExpiry: expiresAt }
 ```
 
 ### Only the identity authority in force signs; a rotated-out authority cannot sign or cancel
@@ -87,7 +87,8 @@ pure def finalizeCancellation(b: Binding, attempt: int, height: int): Binding =
 ### A pending binding is obsolete only when a newer intent or a successor claim replaced it, or finalized chain time passed its consent expiry
 
 The account's newer intent stands for a successor wallet claim. The consent
-expiry is the `expiresAt` the wallet signed; the contract refuses the binding
+expiry is the `expiresAt` the wallet signed, passed to `authorize` beside the
+signature; the contract refuses the binding
 after it, so the pending transaction can no longer bind. Only a finalized
 block's timestamp later than that expiry proves it; a latest or confirmed
 block time, or missing evidence, does not. The finalized time is reported
@@ -405,9 +406,9 @@ pure val heightValues = Set(0, 1, 2)
 pure val nonceValues = Set(0, 1, 2)
 pure val valueValues = Set(0, 1, 2)
 pure val intentValues = Set(1, 2, 3)
-pure val signatureValues = Set({ wallet: "wallet", signer: "wallet", intent: 1, expiresAt: 5 }, { wallet: "wallet", signer: "wallet", intent: 2, expiresAt: 5 },
-  { wallet: "wallet", signer: "other", intent: 1, expiresAt: 5 }, { wallet: "wrong", signer: "wrong", intent: 1, expiresAt: 5 },
-  { wallet: "wallet", signer: "wallet", intent: 1, expiresAt: 0 })
+pure val signatureValues = Set({ wallet: "wallet", signer: "wallet", intent: 1 }, { wallet: "wallet", signer: "wallet", intent: 2 },
+  { wallet: "wallet", signer: "other", intent: 1 }, { wallet: "wrong", signer: "wrong", intent: 1 })
+pure val expiresAtValues = Set(0, 5)
 pure val receiptValues = Set({ attempt: 1, reverted: true, block: 5, canonicalBlock: 5 }, { attempt: 1, reverted: true, block: 5, canonicalBlock: 6 },
   { attempt: 1, reverted: false, block: 5, canonicalBlock: 5 }, { attempt: 2, reverted: true, block: 5, canonicalBlock: 5 })
 ```

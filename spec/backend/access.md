@@ -8,13 +8,16 @@ establishes responsibility. A moderator decides each account ban on a
 project's confirmed-malicious result. Each ban is its own permanent record and
 is released only by a moderator's account reinstatement decision on its open
 appeal, by a moderator other than the one who banned; one decision may
-release several bans. Project reinstatement never releases an account.
+release several bans. Project reinstatement never releases an account. Each
+ban appeal runs the shared [appeal lifecycle](../slopbot/appeals.md): Slopbot
+triages it first, a participation ban always escalates it, and only a
+moderator decides it.
 
 The authenticated sender `by` is a GitHub actor ID the shell established
 from a live session, or one of two service senders the shell established
 from a signed service request: `vettingService` for the vetting service's
 signed project result and `allocationService` for the monthly allocation and
-award reservation job. Moderators are the fixed configured actors of PRD
+award reservation job, and `slopbotService` for Slopbot's appeal triage. Moderators are the fixed configured actors of PRD
 section 9; changing them is a deployment change, not an event.
 
 ## Story: Ban an account from new participation while preserving funded awards and appeals
@@ -37,22 +40,26 @@ confirmed-malicious result; a project may go through several such cycles.
 Project reinstatement never changes an account ban.
 
 ```quint
+import appeals as AP from "../slopbot/appeals"
+import categories as F from "../slopbot/categories"
 type Ban = { enforcement: int, project: int, target: int, decidedBy: int }
+type Identification = { enforcement: int, target: int, moderator: int }
 type Release = { decision: int, enforcement: int, target: int, decidedBy: int }
 type AppealStatus = AppealOpen | AppealDenied | AppealGranted
-type Appeal = { id: int, enforcement: int, target: int, status: AppealStatus, decidedBy: int }
+type BanAppeal = { id: int, enforcement: int, target: int, status: AppealStatus, decidedBy: int, lifecycle: AP::Appeal }
 type ProjectState = ProjectClear | ProjectBanned
 type EnforcementRole = VettingRole | ModeratorRole
 type EnforcementAction = BanAction | ReinstateAction
 type Enforcement = { id: int, project: int, sequence: int, kind: EnforcementAction, role: EnforcementRole,
   stateAfter: ProjectState, decidedBy: int }
 type Award = { id: int, recipient: int, funded: bool, paid: bool }
-type Access = { enforcements: List[Enforcement], bans: List[Ban], releases: List[Release],
-  appeals: List[Appeal], awards: List[Award], decisions: List[int], lastAppeal: int }
+type Access = { enforcements: List[Enforcement], identified: List[Identification], bans: List[Ban], releases: List[Release],
+  appeals: List[BanAppeal], awards: List[Award], decisions: List[int], lastAppeal: int }
 pure val moderators: List[int] = List(18633264, 202660855)
 pure val vettingService = -1
 pure val allocationService = -2
-pure val initial: Access = { enforcements: List(), bans: List(), releases: List(), appeals: List(),
+pure val slopbotService = -3
+pure val initial: Access = { enforcements: List(), identified: List(), bans: List(), releases: List(), appeals: List(),
   awards: List(), decisions: List(), lastAppeal: 0 }
 pure val absentEnforcement: Enforcement = { id: 0, project: 0, sequence: 0, kind: ReinstateAction, role: ModeratorRole,
   stateAfter: ProjectClear, decidedBy: 0 }
@@ -94,19 +101,29 @@ pure def alwaysProjectBansConfirmed(a: Access): bool = a.enforcements.every(p =>
     and v.sequence == p.sequence - 1 and v.role == VettingRole and v.kind == BanAction))
 ```
 
-### A moderator bans each responsible account on that confirmed-malicious decision
+### A moderator bans each responsible account the investigation identified
 
-The ban rides on the moderator's project ban decision and names the account
-by its immutable GitHub ID. A moderator cannot ban their own account. A
-banned account may receive further bans from other decisions. Ban records
+The moderator who decided the project ban records each account the
+investigation's evidence identifies as responsible, one immutable GitHub ID
+at a time; current stewardship or the original application never identifies
+one. The ban rides on that decision and names only an identified account. A
+moderator cannot identify or ban their own account. A banned account may
+receive further bans from other decisions. Identification and ban records
 are permanent and immutable.
 
 ```quint
 pure def projectDecision(a: Access, enforcement: int): Enforcement =
   a.enforcements.select(e => e.id == enforcement and e.role == ModeratorRole and e.kind == BanAction).nthOr(0, absentEnforcement)
+pure def canIdentify(a: Access, by: int, enforcement: int, target: int): bool =
+  val p = projectDecision(a, enforcement)
+  isModerator(by) and p.id > 0 and p.decidedBy == by and target > 0 and target != by
+    and not(a.identified.some(i => i.enforcement == enforcement and i.target == target))
+pure def identify(a: Access, by: int, enforcement: int, target: int): Access =
+  { ...a, identified: a.identified.append({ enforcement: enforcement, target: target, moderator: by }) }
 pure def canBan(a: Access, by: int, enforcement: int, target: int): bool =
   val p = projectDecision(a, enforcement)
   isModerator(by) and p.id > 0 and p.decidedBy == by and target > 0 and target != by
+    and a.identified.some(i => i.enforcement == enforcement and i.target == target)
     and not(a.bans.some(b => b.enforcement == enforcement and b.target == target))
 pure def ban(a: Access, by: int, enforcement: int, target: int): Access =
   { ...a, bans: a.bans.append({ enforcement: enforcement, project: projectDecision(a, enforcement).project, target: target, decidedBy: by }) }
@@ -115,9 +132,13 @@ pure def banned(a: Access, actor: int): bool = a.bans.some(b => b.target == acto
 pure def alwaysBansDecidedOnConfirmedMalice(a: Access): bool = a.bans.every(b =>
   projectDecision(a, b.enforcement).project == b.project and projectDecision(a, b.enforcement).decidedBy == b.decidedBy
     and isModerator(b.decidedBy) and b.target != b.decidedBy
-    and a.bans.select(o => o.enforcement == b.enforcement and o.target == b.target).length() == 1)
+    and a.bans.select(o => o.enforcement == b.enforcement and o.target == b.target).length() == 1
+    and a.identified.some(i => i.enforcement == b.enforcement and i.target == b.target and i.moderator == b.decidedBy))
+pure def alwaysIdentificationsDecided(a: Access): bool = a.identified.every(i =>
+  projectDecision(a, i.enforcement).decidedBy == i.moderator and isModerator(i.moderator) and i.target > 0 and i.target != i.moderator)
 pure def stepBanRecordsPermanent(before: Access, after: Access): bool =
   before.bans.every(b => after.bans.includes(b)) and before.releases.every(r => after.releases.includes(r))
+    and before.identified.every(i => after.identified.includes(i))
     and before.enforcements.every(e => after.enforcements.includes(e))
     and before.decisions.every(d => after.decisions.includes(d))
 pure def stepProjectReinstatementKeepsAccountBans(before: Access, via: str, after: Access): bool =
@@ -129,7 +150,8 @@ pure def stepProjectReinstatementKeepsAccountBans(before: Access, via: str, afte
 A reinstatement decision names one project and the accounts to release
 (migration 0072, `reinstate_accounts`). For each selected account it
 releases every unreleased ban of that account from that project, and each of
-those bans must have an open appeal (`no_open_appeal`). The deciding
+those bans must have an open appeal that Slopbot triaged and escalated
+(`no_open_appeal`); the decision upholds each such appeal. The deciding
 moderator may not have decided any of those bans, nor be a selected account
 (`independent_review_required`). One decision may therefore release several
 accounts and several bans; every other unreleased ban stays in force.
@@ -139,17 +161,21 @@ pure def selectedBans(a: Access, project: int, targets: List[int]): List[Ban] =
   a.bans.select(b => b.project == project and targets.includes(b.target) and not(released(a, b)))
 pure def hasOpenAppeal(a: Access, b: Ban): bool =
   a.appeals.some(p => p.enforcement == b.enforcement and p.target == b.target and p.status == AppealOpen)
+pure def awaitsModerator(a: Access, b: Ban, by: int): bool =
+  a.appeals.some(p => p.enforcement == b.enforcement and p.target == b.target and p.status == AppealOpen and
+    AP::canModeratorDecide(p.lifecycle, by, true))
 pure def canReinstateAccounts(a: Access, by: int, decision: int, project: int, targets: List[int]): bool =
   isModerator(by) and freshDecision(a, decision) and project > 0 and targets.length() > 0
     and targets.every(t => t > 0 and t != by and targets.select(u => u == t).length() == 1
       and selectedBans(a, project, List(t)).length() > 0)
-    and selectedBans(a, project, targets).every(b => hasOpenAppeal(a, b) and b.decidedBy != by)
+    and selectedBans(a, project, targets).every(b => awaitsModerator(a, b, by) and b.decidedBy != by)
 pure def reinstateAccounts(a: Access, by: int, decision: int, project: int, targets: List[int]): Access =
   { ...a, decisions: a.decisions.append(decision),
     releases: a.releases.concat(selectedBans(a, project, targets).listMap(b =>
       { decision: decision, enforcement: b.enforcement, target: b.target, decidedBy: by })),
     appeals: a.appeals.listMap(p => if (p.status == AppealOpen and selectedBans(a, project, targets).some(b =>
-      b.enforcement == p.enforcement and b.target == p.target)) { ...p, status: AppealGranted, decidedBy: by } else p) }
+      b.enforcement == p.enforcement and b.target == p.target))
+      { ...p, status: AppealGranted, decidedBy: by, lifecycle: AP::moderatorDecide(p.lifecycle, by, true) } else p) }
 pure def banFor(a: Access, enforcement: int, target: int): Ban =
   a.bans.select(b => b.enforcement == enforcement and b.target == target).nthOr(0, { enforcement: 0, project: 0, target: 0, decidedBy: 0 })
 pure def alwaysReleasesIndependent(a: Access): bool = a.releases.every(r =>
@@ -167,38 +193,65 @@ pure def lawUnselectedAccountStaysBanned(a: Access, by: int, decision: int, proj
     implies banned(reinstateAccounts(a, by, decision, project, targets), actor)
 ```
 
-### A banned account keeps its appeal and a moderator decides it
+### A banned account keeps its appeal, Slopbot triages it and a moderator decides it
 
-The banned account appeals one ban at a time. A moderator denies it, which
-keeps the ban, or grants it by the reinstatement decision above. Appeal
-access needs no other permission and survives project transfer.
+The banned account appeals one ban at a time; appeal access needs no other
+permission and survives project transfer. The appeal opens the shared
+lifecycle with the ban as its subject: a confirmed-malicious finding with no
+Points debit. Slopbot records its draft and, in the same write, the active
+participation ban, which escalates the appeal to the moderators; it never
+decides a ban appeal. A moderator then denies it, which keeps the ban, or
+grants it by the reinstatement decision above; neither the moderator who
+banned the account nor the account itself decides it.
 
 ```quint
+pure def banSubject(target: int): AP::AppealSubject =
+  { item: "account-ban", revision: "ban", author: target, category: F::Scam, tableVersion: 1, debit: 0, scope: AP::ScopeActive }
 pure def canAppeal(a: Access, by: int, enforcement: int): bool =
   val b = banFor(a, enforcement, by)
   by > 0 and b.enforcement > 0 and not(released(a, b))
     and not(a.appeals.some(p => p.enforcement == enforcement and p.target == by and p.status == AppealOpen))
 pure def appeal(a: Access, by: int, enforcement: int): Access =
   { ...a, lastAppeal: a.lastAppeal + 1,
-    appeals: a.appeals.append({ id: a.lastAppeal + 1, enforcement: enforcement, target: by, status: AppealOpen, decidedBy: 0 }) }
-pure def appealById(a: Access, appealId: int): Appeal =
-  a.appeals.select(p => p.id == appealId).nthOr(0, { id: 0, enforcement: 0, target: 0, status: AppealDenied, decidedBy: 0 })
+    appeals: a.appeals.append({ id: a.lastAppeal + 1, enforcement: enforcement, target: by, status: AppealOpen, decidedBy: 0,
+      lifecycle: AP::open(AP::initial, by, banSubject(by)) }) }
+pure val absentAppeal: BanAppeal = { id: 0, enforcement: 0, target: 0, status: AppealDenied, decidedBy: 0, lifecycle: AP::initial }
+pure def appealById(a: Access, appealId: int): BanAppeal = a.appeals.select(p => p.id == appealId).nthOr(0, absentAppeal)
+pure def triaged(l: AP::Appeal, uphold: bool, confidenceHundredths: int): AP::Appeal =
+  AP::escalateByCriteria(AP::observeBan(AP::draft(l, uphold, confidenceHundredths), AP::Banned))
+pure def canTriageAppeal(a: Access, by: int, appealId: int, uphold: bool, confidenceHundredths: int): bool =
+  val p = appealById(a, appealId)
+  by == slopbotService and p.id > 0 and p.status == AppealOpen and AP::canDraft(p.lifecycle, uphold, confidenceHundredths)
+pure def triageAppeal(a: Access, by: int, appealId: int, uphold: bool, confidenceHundredths: int): Access =
+  { ...a, appeals: a.appeals.listMap(p => if (p.id == appealId) { ...p, lifecycle: triaged(p.lifecycle, uphold, confidenceHundredths) } else p) }
 pure def canDenyAppeal(a: Access, by: int, appealId: int, decision: int): bool =
   val p = appealById(a, appealId)
   isModerator(by) and p.id > 0 and p.status == AppealOpen and by != p.target and freshDecision(a, decision)
+    and banFor(a, p.enforcement, p.target).decidedBy != by and AP::canModeratorDecide(p.lifecycle, by, false)
 pure def denyAppeal(a: Access, by: int, appealId: int, decision: int): Access =
   { ...a, decisions: a.decisions.append(decision),
-    appeals: a.appeals.listMap(p => if (p.id == appealId) { ...p, status: AppealDenied, decidedBy: by } else p) }
+    appeals: a.appeals.listMap(p => if (p.id == appealId)
+      { ...p, status: AppealDenied, decidedBy: by, lifecycle: AP::moderatorDecide(p.lifecycle, by, false) } else p) }
 pure def appealAccess(a: Access, actor: int): bool = a.bans.some(b => b.target == actor)
 pure def alwaysAppealsDecidedByModerators(a: Access): bool = a.lastAppeal >= 0 and a.appeals.every(p =>
   p.id > 0 and p.id <= a.lastAppeal and banFor(a, p.enforcement, p.target).enforcement > 0
     and (p.status == AppealOpen iff p.decidedBy == 0) and (p.status != AppealOpen implies isModerator(p.decidedBy))
     and (p.status == AppealGranted implies released(a, banFor(a, p.enforcement, p.target)))
     and (p.status == AppealOpen implies not(released(a, banFor(a, p.enforcement, p.target)))))
+pure def alwaysBanAppealsRunTheLifecycle(a: Access): bool = a.appeals.every(p =>
+  p.lifecycle.opened and p.lifecycle.appellant == p.target and p.lifecycle.subject == banSubject(p.target)
+    and (p.status == AppealOpen iff p.lifecycle.resolution == AP::Unresolved)
+    and (p.status == AppealGranted iff p.lifecycle.resolution == AP::Upheld)
+    and (p.status != AppealOpen implies (p.lifecycle.via == AP::ModeratorDecision and p.lifecycle.resolvedBy == p.decidedBy
+      and p.lifecycle.draft != AP::NoDraft and p.lifecycle.escalation == AP::ParticipationBan))
+    and (AP::escalated(p.lifecycle) implies p.lifecycle.escalation == AP::ParticipationBan and p.lifecycle.draft != AP::NoDraft))
 pure def lawEveryBannedAccountCanAppealOrHasOpenAppeal(a: Access, actor: int, enforcement: int): bool =
   (actor > 0 and banFor(a, enforcement, actor).enforcement > 0 and not(released(a, banFor(a, enforcement, actor))))
     implies (canAppeal(a, actor, enforcement)
       or a.appeals.some(p => p.enforcement == enforcement and p.target == actor and p.status == AppealOpen))
+pure def lawSlopbotNeverDecidesBanAppeal(a: Access, appealId: int, uphold: bool, confidenceHundredths: int): bool =
+  canTriageAppeal(a, slopbotService, appealId, uphold, confidenceHundredths) implies
+    appealById(triageAppeal(a, slopbotService, appealId, uphold, confidenceHundredths), appealId).status == AppealOpen
 ```
 
 ### A ban blocks new awards while funded awards stay payable
@@ -250,9 +303,12 @@ pure def sometimesBannedTwice(a: Access): bool = a.bans.select(b => b.target == 
 pure def sometimesStillBannedAfterOneRelease(a: Access): bool = a.releases.some(r => r.target == 7) and banned(a, 7)
 pure def sometimesFullyReleased(a: Access): bool = a.releases.some(r => r.target == 7) and not(banned(a, 7))
 pure def sometimesAppealDenied(a: Access): bool = a.appeals.some(p => p.status == AppealDenied) and banned(a, 7)
+pure def sometimesAppealAwaitsModerator(a: Access): bool = a.appeals.some(p => p.status == AppealOpen and AP::escalated(p.lifecycle))
 pure def sometimesAppealGranted(a: Access): bool = a.appeals.some(p => p.status == AppealGranted)
 pure def sometimesPaidWhileBanned(a: Access): bool = a.awards.some(w => w.recipient == 7 and w.paid) and banned(a, 7)
-pure val byValues = Set(18633264, 202660855, 7, vettingService, allocationService)
+pure val byValues = Set(18633264, 202660855, 7, vettingService, allocationService, slopbotService)
+pure val upholdValues = Set(true, false)
+pure val confidenceHundredthsValues = Set(95)
 pure val projectValues = Set(1, 2)
 pure val enforcementValues = Set(2, 3, 4, 5)
 pure val decisionValues = Set(1, 2, 3, 4, 5, 6, 7)
@@ -262,12 +318,14 @@ pure val actorValues = Set(7, 8)
 pure val appealIdValues = Set(1, 2)
 pure val awardIdValues = Set(1, 2)
 pure val recipientValues = Set(7, 8)
+pure val weight_identify = 8
+pure val weight_triageAppeal = 6
 pure val weight_ban = 8
 pure val weight_appeal = 6
 pure val weight_reinstateAccounts = 6
 pure val weight_decideProjectBan = 6
 pure val weight_recordVettingBan = 4
 pure val sampleConfirmed: Access = decideProjectBan(recordVettingBan(initial, vettingService, 1, 1), 18633264, 1, 2)
-pure val sampleBanned: Access = ban(sampleConfirmed, 18633264, 2, 7)
+pure val sampleBanned: Access = ban(identify(sampleConfirmed, 18633264, 2, 7), 18633264, 2, 7)
 pure val aValues = Set(initial).union(Set(sampleConfirmed)).union(Set(sampleBanned))
 ```

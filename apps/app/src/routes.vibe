@@ -1,0 +1,18 @@
+// spec/app/index.md, "Story: Open a page by its address"
+// The shell: the route of spec/app/index.md, held in memory for as long as the page is loaded. Loading another
+// address starts it again, and the page opens it from that address (address.ts).
+import { Machine, machine } from "../gen/app.effect.vibe"
+
+/** The route of the loaded page. */
+export const routes = machine()
+
+/** An opening read from the address; like any input, it is decoded before the rules see it. */
+export effect function opened(input: unknown) {
+  const shell = try Machine
+  return try shell.receive(input)
+}
+
+/** The route the page shows now. */
+export effect function current() {
+  return try (try Machine).get()
+}

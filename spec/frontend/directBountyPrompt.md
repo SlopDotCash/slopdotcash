@@ -24,19 +24,20 @@ prepared cancellation uses only its own slot in a separately scoped key.
 Each live view has at most one awaiting wallet call. Before prompting, the
 shell verifies the live user and action, expected wallet and chain, exact
 available nonce and gas simulation. A synchronous reread rejects a conflicting
-entry, even when the view observed an earlier empty slot. A failed marker
+entry, even when the view observed an earlier empty slot: each slot follows
+the [wallet attempt storage](./walletAttempt.md) protocol. A failed marker
 write acquires no prompt. IDs are opaque and fresh for this journal, with no
 production count cap.
 
 ```quint
+import walletAttempt as WA from "./walletAttempt"
 type Slot = FirstLeg | SecondLeg
 type Surface = FirstView | SecondView
 type Mode = Pay | Cancel
 type Scope = { caseId: int, generation: int, actor: int, purpose: Mode, payer: str, network: str }
 type Plan = { nonce: int, bytesId: str }
 type Plans = { firstPlan: Plan, secondPlan: Plan }
-type Entry = { identity: str, bytesId: str, hash: str, candidate: str }
-type Entries = { first: Entry, second: Entry }
+type Entries = { first: WA::Attempt, second: WA::Attempt }
 type Pending = { slot: Slot, identity: str, bytesId: str }
 type Hashes = { firstHash: str, secondHash: str }
 type View = { mounted: bool, local: Entries, pending: Pending, warning: bool, checks: Hashes }
@@ -48,7 +49,7 @@ type CheckOutcome = { state: Prompt, out: List[Verification] }
 type Prompt = { opened: bool, scope: Scope, plans: Plans, store: Entries, firstView: View, secondView: View, used: List[str] }
 pure val noScope: Scope = { caseId: 0, generation: 0, actor: 0, purpose: Pay, payer: "", network: "" }
 pure val noPlan: Plan = { nonce: -1, bytesId: "" }
-pure val noEntry: Entry = { identity: "", bytesId: "", hash: "", candidate: "" }
+pure val noEntry: WA::Attempt = { identity: "", bytesId: "", hash: "", candidate: "" }
 pure val noEntries: Entries = { first: noEntry, second: noEntry }
 pure val noPending: Pending = { slot: FirstLeg, identity: "", bytesId: "" }
 pure val noHashes: Hashes = { firstHash: "", secondHash: "" }
@@ -57,9 +58,9 @@ pure val noCandidate: Candidate = { supplied: false, hash: "" }
 pure val initial: Prompt = { opened: false, scope: noScope, plans: { firstPlan: noPlan, secondPlan: noPlan }, store: noEntries,
   firstView: noView, secondView: noView, used: List() }
 pure def plan(plans: Plans, slot: Slot): Plan = if (slot == FirstLeg) plans.firstPlan else plans.secondPlan
-pure def entry(entries: Entries, slot: Slot): Entry = if (slot == FirstLeg) entries.first else entries.second
+pure def entry(entries: Entries, slot: Slot): WA::Attempt = if (slot == FirstLeg) entries.first else entries.second
 pure def view(p: Prompt, surface: Surface): View = if (surface == FirstView) p.firstView else p.secondView
-pure def writeEntry(entries: Entries, slot: Slot, updated: Entry): Entries =
+pure def writeEntry(entries: Entries, slot: Slot, updated: WA::Attempt): Entries =
   if (slot == FirstLeg) { ...entries, first: updated } else { ...entries, second: updated }
 pure def writeView(surface: Surface, p: Prompt, updated: View): Prompt =
   if (surface == FirstView) { ...p, firstView: updated } else { ...p, secondView: updated }
@@ -77,16 +78,16 @@ pure def mount(p: Prompt, surface: Surface, by: int): Prompt =
 pure def canDepart(p: Prompt, surface: Surface): bool = view(p, surface).mounted
 pure def depart(p: Prompt, surface: Surface): Prompt =
   writeView(surface, p, { ...view(p, surface), mounted: false })
-pure def blocksSend(plan: Plan, row: Entry): bool = row != noEntry and (row.bytesId != plan.bytesId or row.hash == "")
+pure def blocksSend(plan: Plan, row: WA::Attempt): bool = row != noEntry and (row.bytesId != plan.bytesId or row.hash == "")
 pure def canReserve(p: Prompt, surface: Surface, slot: Slot, identity: str, walletReady: bool, stored: bool, by: int): bool =
   p.opened and p.scope.actor == by and walletReady and validPlan(plan(p.plans, slot))
     and view(p, surface).mounted and view(p, surface).pending == noPending and identity != "" and not(p.used.includes(identity))
     and not(blocksSend(p.plans.firstPlan, view(p, surface).local.first))
     and not(blocksSend(p.plans.secondPlan, view(p, surface).local.second))
-    and entry(view(p, surface).local, slot) == noEntry and entry(p.store, slot) == noEntry
+    and entry(view(p, surface).local, slot) == noEntry and WA::mayCreate(entry(p.store, slot))
 pure def reserve(p: Prompt, surface: Surface, slot: Slot, identity: str, walletReady: bool, stored: bool, by: int): Prompt =
   val digest = plan(p.plans, slot).bytesId
-  val marked = writeEntry(p.store, slot, { identity: identity, bytesId: digest, hash: "", candidate: "" })
+  val marked = writeEntry(p.store, slot, WA::createIfEmpty(entry(p.store, slot), { identity: identity, bytesId: digest, hash: "", candidate: "" }))
   val activeView = view(p, surface)
   if (stored) writeView(surface, { ...p, store: marked, used: p.used.append(identity) },
     { ...activeView, local: marked, pending: { slot: slot, identity: identity, bytesId: digest }, warning: false })
@@ -103,7 +104,7 @@ own marker when no hash or candidate has been recorded. An uncertain result
 keeps the marker and cannot start another signature for that nonce.
 
 ```quint
-pure def samePrompt(row: Entry, pending: Pending): bool = row.identity == pending.identity and row.bytesId == pending.bytesId
+pure def samePrompt(row: WA::Attempt, pending: Pending): bool = row.identity == pending.identity and row.bytesId == pending.bytesId
 pure def canResolve(p: Prompt, surface: Surface, identity: str, walletResult: WalletResult, hash: str, stored: bool): bool =
   identity != "" and view(p, surface).pending.identity == identity and (walletResult != Returned or hash != "")
 pure def resolve(p: Prompt, surface: Surface, identity: str, walletResult: WalletResult, hash: str, stored: bool): Prompt =
@@ -114,7 +115,9 @@ pure def resolve(p: Prompt, surface: Surface, identity: str, walletResult: Walle
   val owns = samePrompt(latest, waiting)
   val clear = walletResult == Declined and latest.hash == "" and latest.candidate == ""
   val shouldWrite = owns and stored and (walletResult == Returned or clear)
-  val updated = if (walletResult == Returned) { ...latest, hash: hash } else noEntry
+  val expected = { identity: waiting.identity, bytesId: waiting.bytesId, hash: "", candidate: "" }
+  val updated = if (walletResult == Returned) WA::compareAndSet(latest, expected, { ...latest, hash: hash })
+    else WA::compareAndClear(latest, expected)
   val saved = if (shouldWrite) writeEntry(p.store, waiting.slot, updated) else p.store
   val localKnown = walletResult == Returned and owns and samePrompt(local, waiting)
   val forView = if (not(activeView.mounted)) activeView.local else if (shouldWrite) saved
@@ -137,16 +140,16 @@ or an externally resolved marker being removed. The form has no automatic
 remove or resend of an uncertain marker.
 
 ```quint
-pure def sameEntryOwner(a: Entry, b: Entry): bool = a.identity == b.identity and a.bytesId == b.bytesId
-pure def conflicts(latest: Entry, expected: Entry, ready: Plan, candidate: Candidate): bool =
+pure def sameEntryOwner(a: WA::Attempt, b: WA::Attempt): bool = a.identity == b.identity and a.bytesId == b.bytesId
+pure def conflicts(latest: WA::Attempt, expected: WA::Attempt, ready: Plan, candidate: Candidate): bool =
   validPlan(ready) and ((latest != noEntry and latest.bytesId != ready.bytesId)
     or (expected.hash != "" and latest.hash == "" and (expected.identity == "" or not(sameEntryOwner(latest, expected))))
     or (latest != noEntry and candidate.hash != "" and (expected == noEntry or not(sameEntryOwner(latest, expected)))))
-pure def recoveredEntry(latest: Entry, expected: Entry, ready: Plan, candidate: Candidate): Entry =
+pure def recoveredEntry(latest: WA::Attempt, expected: WA::Attempt, ready: Plan, candidate: Candidate): WA::Attempt =
   if (latest == noEntry or not(validPlan(ready))) latest
   else { ...latest, hash: if (latest.hash == "") expected.hash else latest.hash,
     candidate: if (candidate.hash == "") latest.candidate else candidate.hash }
-pure def verifiedCandidate(row: Entry, ready: Plan, candidate: Candidate): str =
+pure def verifiedCandidate(row: WA::Attempt, ready: Plan, candidate: Candidate): str =
   if (row == noEntry or not(validPlan(ready)) or row.bytesId != ready.bytesId) ""
   else if (candidate.supplied) candidate.hash else if (row.candidate != "") row.candidate else row.hash
 pure def canCheck(p: Prompt, surface: Surface, candidates: Candidates, storageReady: bool, authorized: bool, by: int): bool =
@@ -190,7 +193,7 @@ only candidate hashes; the durable receipt journal still checks finality,
 exact amounts, replay and independently authorized case action.
 
 ```quint
-pure def wellScopedEntry(row: Entry, ready: Plan, known: List[str]): bool = row == noEntry
+pure def wellScopedEntry(row: WA::Attempt, ready: Plan, known: List[str]): bool = row == noEntry
   or (validPlan(ready) and row.bytesId == ready.bytesId
     and (if (row.identity == "") row.candidate != "" else known.includes(row.identity)))
 pure def wellScopedView(activeView: View, plans: Plans, known: List[str]): bool =
@@ -209,7 +212,7 @@ pure def stepNoOtherSlotChanges(before: Prompt, via: str, after: Prompt): bool =
   before.store.first == after.store.first or before.store.second == after.store.second
 pure def stepCheckKeepsOwnership(before: Prompt, via: str, after: Prompt): bool = via == "check" implies
   sameEntryOwner(before.store.first, after.store.first) and sameEntryOwner(before.store.second, after.store.second)
-pure def keepsStoredResult(before: Entry, after: Entry): bool = before.hash != "" implies after.hash == before.hash
+pure def keepsStoredResult(before: WA::Attempt, after: WA::Attempt): bool = before.hash != "" implies after.hash == before.hash
 pure def stepCheckKeepsStoredHashes(before: Prompt, via: str, after: Prompt): bool = via == "check" implies
   keepsStoredResult(before.store.first, after.store.first) and keepsStoredResult(before.store.second, after.store.second)
 pure def stepCompletionKeepsReplacement(before: Prompt, via: str, after: Prompt): bool = via == "resolve" implies

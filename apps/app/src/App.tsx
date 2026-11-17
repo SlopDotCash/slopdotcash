@@ -1,60 +1,81 @@
-// spec/app/index.md, "Story: Say hello"
-import { Alert, Button, Input } from "@repo/ui";
-import { Cause, Exit, type ManagedRuntime } from "effect";
-import { useEffect, useRef, useState } from "react";
-import type { Greeted, Machine } from "../gen/app.effect.vibe";
+// spec/app/index.md, "Story: Open a page by its address"
+import { Alert, Button, cn, ExternalLink, focusRing, Logo, NavTab, NavTabs, NotFound, PageHeader, SiteFooter, SiteHeader } from "@repo/ui";
+import type { ManagedRuntime } from "effect";
+import { useEffect } from "react";
+import type { Machine } from "../gen/app.effect.vibe";
 import { useMachine } from "../gen/app.react.ts";
-import { linked, typed } from "./greeter.vibe";
-import { greeting } from "./greeting.ts";
-import { linkTo, nameIn } from "./link.ts";
+import type { Route, RouteKind } from "../gen/app.ts";
+import { openingOf } from "./address.ts";
+import { applyHead, domainOf, routeHead } from "./head.ts";
+import { opened } from "./routes.vibe";
 
 export interface AppProps {
-  /** Provides the greeter: `greeter` of greeter.vibe over a store. */
+  /** Provides the route: `routes` of routes.vibe. */
   runtime: ManagedRuntime.ManagedRuntime<Machine, unknown>;
-  /** The query of the address the page was opened with, which may carry a name to greet (link.ts). */
+  /** The path, the query and the hash of the address the page was loaded at, and the host that served it. */
+  path: string;
   search: string;
+  hash: string;
+  hostname: string;
 }
 
+/** Each page's heading, as development's pages name it; a page that shows one thing is named by it. */
+const headings: Record<Exclude<RouteKind, "Unknown">, (route: Route) => string> = {
+  Home: () => "Make money shipping open source.",
+  HowItWorks: () => "How Slop works",
+  Sponsors: () => "Fund a project",
+  CycleArchive: () => "Payment cycles",
+  Cycle: (route) => route.cycleId,
+  Points: () => "Leaderboard",
+  Account: () => "Settings",
+  Login: () => "Log in",
+  Earnings: () => "Payouts",
+  Inbox: () => "Inbox",
+  Admin: () => "Admin",
+  NewProject: () => "Add a project",
+  VettingEvidence: () => "Private vetting evidence",
+  SecurityCases: () => "Security cases",
+  Project: (route) => route.projectId,
+  ManageProject: () => "Manage project",
+  SecurityProgram: (route) => `${route.projectId} security bounty`,
+  Profile: (route) => route.login,
+};
+
+const page = "mx-auto w-full max-w-(--breakpoint-lg) flex-1 px-4 py-8";
+
 /**
- * The greeter: Greet is offered exactly when the rules allow greeting the name typed, a link greets the name it
- * carries, and each greeting is said to a screen reader as the spec's `out` says it.
+ * The route shell: the header, the page the address opened and the footer. Until the address has been opened, in the
+ * effects of the first render, it shows an empty busy page rather than the home page it starts on.
  * @model spec/app/index.md
  */
-export function App({ runtime, search }: AppProps) {
-  const { state, cause, can } = useMachine(runtime);
-  const [name, setName] = useState("");
-  /** What the last event did: what the rules had the page say, or why it failed. */
-  const [last, setLast] = useState<Exit.Exit<Greeted, unknown>>();
-  const nameRef = useRef<HTMLInputElement>(null);
+export function App({ runtime, path, search, hash, hostname }: AppProps) {
+  const { state, cause } = useMachine(runtime);
+  const route = state && state.opened > 0 ? state.route : undefined;
 
-  // A reload of the same link is refused by the rules, and so is StrictMode's second run of this effect.
   useEffect(() => {
-    const carried = nameIn(search);
-    if (carried) void runtime.runPromiseExit(linked({ type: "greet", name: carried })).then(setLast);
-  }, [runtime, search]);
+    void runtime.runPromiseExit(opened(openingOf(path, search, hash)));
+  }, [runtime, path, search, hash]);
+  useEffect(() => {
+    if (route) applyHead(routeHead(route));
+  }, [route]);
 
-  if (cause) return <Alert variant="destructive" className="m-6">Cannot read the saved greeter</Alert>;
-  if (!state) return null;
-
-  const submit = async () => {
-    const exit = await runtime.runPromiseExit(typed({ type: "greet", name }));
-    setLast(exit);
-    if (Exit.isFailure(exit)) return;
-    setName("");
-    nameRef.current?.focus();
-  };
+  if (cause) return <Alert variant="destructive" className="m-6">Slop could not load.</Alert>;
+  if (!route) return <main aria-busy="true" className="min-h-dvh" />;
 
   return (
-    <main className="mx-auto flex max-w-md flex-col gap-6 p-6">
-      <h1 className="text-2xl font-semibold">{greeting(state)}</h1>
-      {state.count > 0 && <a className="text-sm text-muted-foreground underline" href={linkTo(state.name)}>Link that greets {state.name}</a>}
-      <output aria-label="Greetings" className="text-5xl font-semibold tabular-nums">{state.count}</output>
-      <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        <Input ref={nameRef} aria-label="Name" value={name} onChange={(event) => setName(event.target.value)} />
-        <Button type="submit" disabled={!can({ type: "greet", name }, "Typed")}>Greet</Button>
-      </form>
-      <p role="status" className="sr-only">{last && Exit.isSuccess(last) && last.value.out.map((hello) => `Hello, ${hello.to}!`).join(" ")}</p>
-      {last && Exit.isFailure(last) && Cause.hasDies(last.cause) && <Alert variant="destructive">Not saved</Alert>}
-    </main>
+    <div className="flex min-h-dvh flex-col">
+      <SiteHeader
+        brand={<a href="/" aria-label="Slop home" className={cn(focusRing, "rounded-sm")}><Logo wordmark label={domainOf(hostname)} /></a>}
+        nav={<NavTabs label="Main"><NavTab href="/how-it-works" current={route.kind === "HowItWorks"}>How It Works</NavTab></NavTabs>}
+        account={<Button asChild variant="outline" size="sm"><a href="/login">Log in</a></Button>}
+      />
+      {route.kind === "Unknown" ? <NotFound className={page} /> : <main className={page}><PageHeader title={headings[route.kind](route)} /></main>}
+      <SiteFooter compact={route.kind !== "Home"} brand={<Logo variant="inverse" size={route.kind === "Home" ? "xl" : "lg"} />}>
+        <ExternalLink href="https://github.com/SlopDotCash/slopdotcash">GitHub</ExternalLink>
+        <ExternalLink href="https://x.com/SlopCash">X</ExternalLink>
+        <ExternalLink href="https://www.linkedin.com/company/slop-cash">LinkedIn</ExternalLink>
+        <a href="mailto:hello@slop.cash">hello@slop.cash</a>
+      </SiteFooter>
+    </div>
   );
 }

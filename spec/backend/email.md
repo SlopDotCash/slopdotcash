@@ -46,9 +46,9 @@ other accounts' recent requests for the same address key. Enrollment is
 refused while the mail service reports enrollment unavailable.
 
 ```quint
-type DeliveryState = Queued | Sending | Sent | DeliveryUnknown
+type VerificationDelivery = Queued | Sending | Sent | DeliveryUnknown
 type Verification = { id: int, requestKey: int, address: str, addressKey: str, tokenDigest: int,
-  activity: bool, security: bool, delivery: DeliveryState, createdAt: int, expiresAt: int,
+  activity: bool, security: bool, delivery: VerificationDelivery, createdAt: int, expiresAt: int,
   cancelled: bool, consumed: bool, version: int }
 type Destination = { address: str, version: int, verifiedAt: int }
 type Preference = { stored: bool, activity: bool, security: bool, version: int, revision: int }
@@ -111,11 +111,11 @@ The private mail service claims a queued request (`sending`) and records
 queued request becomes `unknown`. Delivery state never verifies anything.
 
 ```quint
-pure def canMarkDelivery(e: Enrollment, now: int, id: int, nextState: DeliveryState): bool =
+pure def canMarkDelivery(e: Enrollment, now: int, id: int, nextState: VerificationDelivery): bool =
   e.verifications.some(v => v.id == id and pending(v, now) and
     ((v.delivery == Queued and (nextState == Sending or nextState == DeliveryUnknown))
       or (v.delivery == Sending and (nextState == Sent or nextState == DeliveryUnknown))))
-pure def markDelivery(e: Enrollment, now: int, id: int, nextState: DeliveryState): Enrollment =
+pure def markDelivery(e: Enrollment, now: int, id: int, nextState: VerificationDelivery): Enrollment =
   { ...e, verifications: e.verifications.listMap(v => if (v.id == id) { ...v, delivery: nextState } else v) }
 ```
 

@@ -63,8 +63,8 @@ tasks wait for its `gen` and the root's, and its `check` for all of them, since 
 as `@repo/app`'s are. `pnpm lint:js` on its own needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`);
 `pnpm lint` runs them first.
 
-Tooling pull requests target `vibestack`; production releases remain `development` to `main`. What this branch's CI runs is in
-[CI](#ci).
+Tooling pull requests target `vibestack`; production releases remain `development` to `main`. This branch's CI runs
+on all three, as [CI](#ci) lists.
 
 ## Changing the tools
 
@@ -243,9 +243,8 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 
 | When | Runs |
 |---|---|
-| Pull request or push to `vibestack` | `pnpm verify --continue`: build, types, tests, browser tests, all checks, ESLint, Stylelint, Knip, Madge, jscpd and selftest |
+| Pull request or push to `vibestack`, `development` or `main` | `pnpm verify --continue`: build, types, tests, browser tests, all checks, ESLint, Stylelint, Knip, Madge, jscpd, selftest and the formal inventory check (`pnpm formal:check`) |
 | Nightly | Every check fresh under the fixed nightly profile; saved counterexamples become a pull request into `vibestack` |
-| A `v*` tag (`release.yml`) | Build, `pnpm pack`, `pnpm selftest`, and the tarball attached to a GitHub release |
 
 Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
 run keeps `test/counterexamples/` and `test/__traces__/`, where a broken

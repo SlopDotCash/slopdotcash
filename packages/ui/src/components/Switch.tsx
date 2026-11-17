@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import * as SwitchPrimitive from "@radix-ui/react-switch";
-import { cn, focusRing, inactive } from "../lib/cn.ts";
+import { cn, focusRing, inactive, target } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { StatusIcon } from "./Status.tsx";
 
@@ -18,6 +18,7 @@ export function Switch({ loading = false, disabled = false, className, ...props 
       className={cn(
         focusRing,
         inactive,
+        target,
         "peer inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-input bg-muted p-0.5 transition-colors duration-fast data-[state=checked]:border-primary data-[state=checked]:bg-primary motion-reduce:transition-none",
         className,
       )}

@@ -34,7 +34,6 @@ left queued. The bound scope is the one the routing decision derived.
 ```quint
 import routing as R from "./routing"
 import repositoryScope as RS from "./repositoryScope"
-import closure as C from "./closure"
 type Provider = OrbioSonnet | SurplusSonnet | SurplusTerra
 type CallKind = Triage | Confirm
 type CallOutcome = CallOk | CallFailed | CallBudgetDenied
@@ -276,9 +275,10 @@ of each group `AGENTS.md`/`agents.md`; `CONTRIBUTING.md`/`contributing.md`/
 `.github/CONTRIBUTING.md`/`docs/CONTRIBUTING.md`; `README.md`/`readme.md`. A
 present file over 64 KiB, or one GitHub returns without base64 file
 content, is truncated: guidance with any truncated file is incomplete, and
-no file at all is missing. The reading is closure's policy read
-(`guidanceOf` returns its `PolicyRead`), so truncated or missing guidance
-grounds no quoted-rule category ([closure](./closure.md)). The diff compares the
+no file at all is missing. The shell passes the reading to closure as its
+policy read (`GuidanceMissing` as `PolicyMissing`, `GuidanceTruncated` as
+`PolicyTruncated`, `GuidanceComplete` as `PolicyComplete`), so truncated or
+missing guidance grounds no quoted-rule category ([closure](./closure.md)). The diff compares the
 current target branch tip with the head commit. The files are taken in
 GitHub's order, at most 300; each contributes the chunk
 `--- <name> (<status>)` with its patch, and is included only when GitHub
@@ -293,6 +293,7 @@ and its coverage is its text.
 type ComparedFile = { chunkChars: int, patched: bool }
 type DiffTally = { includedChars: int, omitted: int, considered: int }
 type GuidanceRead = { found: bool, bytes: int, readable: bool }
+type GuidanceStatus = GuidanceMissing | GuidanceTruncated | GuidanceComplete
 pure val maxDiffChars = 120000
 pure val comparisonFileLimit = 300
 pure val maxGuidanceBytes = 65536
@@ -310,10 +311,10 @@ pure def coverageComplete(files: List[ComparedFile]): bool =
   files.length() < comparisonFileLimit and files.every(f => f.patched and f.chunkChars > 0) and
   diffChars(files) <= maxDiffChars
 pure def guidanceTruncated(g: GuidanceRead): bool = not(g.readable) or g.bytes > maxGuidanceBytes
-pure def guidanceOf(reads: List[GuidanceRead]): C::PolicyRead =
-  if (reads.every(g => not(g.found))) C::PolicyMissing
-  else if (reads.some(g => g.found and guidanceTruncated(g))) C::PolicyTruncated
-  else C::PolicyComplete
+pure def guidanceOf(reads: List[GuidanceRead]): GuidanceStatus =
+  if (reads.every(g => not(g.found))) GuidanceMissing
+  else if (reads.some(g => g.found and guidanceTruncated(g))) GuidanceTruncated
+  else GuidanceComplete
 pure def lawFileLimitNeverComplete(sampleDiff: List[ComparedFile]): bool =
   sampleDiff.length() >= comparisonFileLimit implies not(coverageComplete(sampleDiff))
 pure def lawMissingPatchNeverComplete(sampleDiff: List[ComparedFile]): bool =
@@ -321,9 +322,9 @@ pure def lawMissingPatchNeverComplete(sampleDiff: List[ComparedFile]): bool =
 pure def lawOverBudgetNeverComplete(sampleDiff: List[ComparedFile]): bool =
   diffChars(sampleDiff) > maxDiffChars implies not(coverageComplete(sampleDiff))
 pure def lawTruncatedGuidanceIncomplete(sampleGuidance: List[GuidanceRead]): bool =
-  sampleGuidance.some(g => g.found and guidanceTruncated(g)) implies guidanceOf(sampleGuidance) == C::PolicyTruncated
+  sampleGuidance.some(g => g.found and guidanceTruncated(g)) implies guidanceOf(sampleGuidance) == GuidanceTruncated
 pure def lawNoGuidanceIsMissing(sampleGuidance: List[GuidanceRead]): bool =
-  sampleGuidance.every(g => not(g.found)) implies guidanceOf(sampleGuidance) == C::PolicyMissing
+  sampleGuidance.every(g => not(g.found)) implies guidanceOf(sampleGuidance) == GuidanceMissing
 pure val smallPatch: ComparedFile = { chunkChars: 40, patched: true }
 pure val sampleDiffValues = Set(List(), List(smallPatch), List(smallPatch, { chunkChars: 40, patched: false }),
   List({ chunkChars: 120001, patched: true }), List({ chunkChars: 119990, patched: true }, smallPatch))

@@ -32,42 +32,50 @@ import admission as A from "./admission"
 type Restriction = Clear | FlagQuarantine | ModeratorQuarantine | ServiceBan | ModeratorBan
 type Appeal = NoAppeal | AppealRequested | AppealGranted | AppealDenied
 type AState = NotAssessed | APending | AIncomplete | AClean | AMalicious
-type Assessment = { id: int, state: AState, revision: int, requestSeq: int, requestEpoch: int, reused: bool, verified: bool, snapshot: List[int] }
+type Assessment = { id: int, repository: int, identity: int, state: AState, revision: int, requestedAt: int, requestEpoch: int,
+  requeued: bool, reused: bool, verified: bool, snapshot: List[int] }
 type Flag = { receipt: int, actor: int, filedDay: int }
-type Grant = { id: int, repository: int, seq: int, approver: int, steward: int, revision: int, decision: int,
-  branch: int, head: int, scope: int, limitations: int }
+type ExemptionKind = OwnerApproved | CursoryReview
+type ReviewedBranch = IntegrationBranch | OwnerSelectedDevelop | OtherBranch
+type Grant = { id: int, kind: ExemptionKind, repository: int, identity: int, revision: int, manifestDigest: int, steward: int,
+  approver: int, at: int, decision: int, reason: int, branch: ReviewedBranch, head: int, scope: int, limitations: int }
+type Revocation = { grant: int, administrator: int, decision: int, reason: int, at: int }
 type RecordAction = RecordQuarantine | RecordBan | RecordAppeal | RecordReinstate | RecordDeny
 type Issuer = ByModerator | ByVettingService | ByContributorFlags | ByAppellant
 type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan }
 type Recipient = ListingAccount | StewardAccount | IndependentModerators
 type Notice = { entry: int, to: Recipient }
-type ScanNotice = { assessment: int, to: Recipient }
-type TemplateReplacement = { assessment: int, replaces: int, repository: int }
-type Enforcement = { projectId: int, repositories: List[int], original: Set[int], frozen: Set[int],
+type Enforcement = { projectId: int, repositories: List[int], original: Set[int], frozen: Set[int], identities: int -> int,
   creator: int, steward: int, revision: int, administrators: Set[int], moderators: Set[int],
   restriction: Restriction, epoch: int, restrictedBy: Set[int], appeal: Appeal, appellants: Set[int],
   revisionPending: bool, findings: Set[int], reviewedFindings: Set[int], accountBans: List[int],
-  seq: int, assessmentIds: Set[int], latest: int -> Assessment,
+  seq: int, assessmentIds: Set[int], latest: int -> Assessment, recorded: List[Assessment],
   flags: List[Flag], withdrawn: Set[int], resolved: List[int], clockDay: int,
-  grants: List[Grant], grantSeq: int -> int, exempt: Set[int], exemptSteward: int -> int, revocations: List[int],
-  journal: List[JournalEntry], notices: List[Notice], scanNotices: List[ScanNotice], replacements: List[TemplateReplacement] }
-pure val unassessed: Assessment = { id: 0, state: NotAssessed, revision: 0, requestSeq: 0, requestEpoch: 0, reused: false, verified: false, snapshot: List() }
-pure val initial: Enforcement = { projectId: 1, repositories: List(1), original: Set(1), frozen: Set(),
+  grants: List[Grant], activeGrant: int -> int, exempt: Set[int], revocations: List[Revocation],
+  journal: List[JournalEntry], notices: List[Notice] }
+pure val unassessed: Assessment = { id: 0, repository: 0, identity: 0, state: NotAssessed, revision: 0, requestedAt: 0, requestEpoch: 0,
+  requeued: false, reused: false, verified: false, snapshot: List() }
+pure val noGrant: Grant = { id: 0, kind: OwnerApproved, repository: 0, identity: 0, revision: 0, manifestDigest: 0, steward: 0,
+  approver: 0, at: 0, decision: 0, reason: 0, branch: OtherBranch, head: 0, scope: 0, limitations: 0 }
+pure val initial: Enforcement = { projectId: 1, repositories: List(1), original: Set(1), frozen: Set(), identities: Map(),
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
   restriction: Clear, epoch: 0, restrictedBy: Set(), appeal: NoAppeal, appellants: Set(),
   revisionPending: false, findings: Set(), reviewedFindings: Set(), accountBans: List(),
-  seq: 0, assessmentIds: Set(), latest: Map(),
+  seq: 0, assessmentIds: Set(), latest: Map(), recorded: List(),
   flags: List(), withdrawn: Set(), resolved: List(), clockDay: 0,
-  grants: List(), grantSeq: Map(), exempt: Set(), exemptSteward: Map(), revocations: List(),
-  journal: List(), notices: List(), scanNotices: List(), replacements: List() }
+  grants: List(), activeGrant: Map(), exempt: Set(), revocations: List(),
+  journal: List(), notices: List() }
 pure val vettingService = 0
 pure val platform = -1
 pure def latestOf(e: Enforcement, repository: int): Assessment =
   if (e.latest.keys().contains(repository)) e.latest.get(repository) else unassessed
-pure def grantSeqOf(e: Enforcement, repository: int): int =
-  if (e.grantSeq.keys().contains(repository)) e.grantSeq.get(repository) else 0
-pure def exemptStewardOf(e: Enforcement, repository: int): int =
-  if (e.exemptSteward.keys().contains(repository)) e.exemptSteward.get(repository) else 0
+pure def identityOf(e: Enforcement, repository: int): int =
+  if (e.identities.keys().contains(repository)) e.identities.get(repository) else 1
+pure def grantById(e: Enforcement, grantId: int): Grant = e.grants.select(g => g.id == grantId).nthOr(0, noGrant)
+pure def activeGrantOf(e: Enforcement, repository: int): int =
+  if (e.activeGrant.keys().contains(repository)) e.activeGrant.get(repository) else 0
+pure def grantOf(e: Enforcement, repository: int): Grant = grantById(e, activeGrantOf(e, repository))
+pure def exemptStewardOf(e: Enforcement, repository: int): int = grantOf(e, repository).steward
 type Fence = { revision: int, sequence: int }
 pure def fenced(e: Enforcement, fence: Fence): bool = fence.revision == e.revision and fence.sequence == e.journal.length() + 1
 pure val fenceValues = tuples(1.to(4), 1.to(4)).map(x => { revision: x._1, sequence: x._2 })
@@ -78,45 +86,69 @@ pure def alwaysRepositoriesRegistered(e: Enforcement): bool =
 
 ### Each repository clears on its own admission, exemption or retained clean scan
 
-The latest actual assessment of the same immutable repository controls normal
-admission. Routine source, dependency, skill, Markdown and presentation
-changes queue nothing and keep it. An existing row, a pending or incomplete
-investigation, a malicious result, or a clean result whose retained evidence
-fails its read is not clearance. The migration-0075 set covers only the
-repositories a project listed when it was recorded, ignores pending or
-incomplete investigations, and never covers malice (CLAUDE.md: explicit
-investigations control nonexempt admission). An owner-approved grant covers
-its repository only while the project's current steward is the steward the
-grant bound (`g.steward_id` in `backend/vetting/persistence.ts`), and only
-until an assessment is requested after the grant; that later assessment then
-controls. The project clears only when every repository clears.
+The latest actual assessment in the uninterrupted history of the same
+immutable repository id and node id (its identity epoch) controls normal
+admission; an assessment of an earlier identity controls nothing, and no
+other repository inherits it. Routine source, dependency, skill, Markdown and
+presentation changes queue nothing and keep it. An existing row, a pending or
+incomplete investigation, a malicious result, or a clean result whose
+retained evidence fails its read is not clearance. The migration-0075 set
+covers only the repositories a project listed when it was recorded, ignores
+pending or incomplete investigations and identity changes, and never covers
+malice. An owner-approved grant covers its repository only for the identity
+and steward it bound (`g.steward_id` in `backend/vetting/persistence.ts`), and
+only until an assessment of that identity is requested on or after the day of
+the grant: a request at the same timestamp controls too. The project clears
+only when every repository clears. Each repository shows one clearance state
+(`backend/vetting/README.md`); public views label a grant "Owner-approved
+exemption" and never a passed scan.
 
 ```quint
 type Basis = Scanned | FrozenExemption | OwnerApprovedExemption | NotCleared
+type ClearanceState = Unscanned | Unverified | Stale | Queued | Quarantined | Cleared | Banned
+pure def controlling(e: Enforcement, repository: int): bool =
+  latestOf(e, repository).state != NotAssessed and latestOf(e, repository).identity == identityOf(e, repository)
 pure def assessedClean(e: Enforcement, repository: int): bool =
-  latestOf(e, repository).state == AClean and latestOf(e, repository).verified
+  controlling(e, repository) and latestOf(e, repository).state == AClean and latestOf(e, repository).verified
 pure def frozenCovers(e: Enforcement, repository: int): bool =
   e.frozen.contains(repository) and latestOf(e, repository).state != AMalicious
 pure def grantCovers(e: Enforcement, repository: int): bool =
-  e.exempt.contains(repository) and latestOf(e, repository).state != AMalicious and
-  latestOf(e, repository).requestSeq < grantSeqOf(e, repository) and exemptStewardOf(e, repository) == e.steward
+  val g = grantOf(e, repository)
+  e.exempt.contains(repository) and latestOf(e, repository).state != AMalicious and g.identity == identityOf(e, repository) and
+  g.steward == e.steward and (not(controlling(e, repository)) or latestOf(e, repository).requestedAt < g.at)
 pure def repositoryCleared(e: Enforcement, repository: int): bool =
   assessedClean(e, repository) or frozenCovers(e, repository) or grantCovers(e, repository)
 pure def cleared(e: Enforcement): bool = e.repositories.every(r => repositoryCleared(e, r))
 pure def basis(e: Enforcement, repository: int): Basis =
   if (assessedClean(e, repository)) Scanned else if (frozenCovers(e, repository)) FrozenExemption
   else if (grantCovers(e, repository)) OwnerApprovedExemption else NotCleared
+pure def basisLabel(b: Basis): str =
+  if (b == Scanned) "Admission scan" else if (b == FrozenExemption) "Existing-project exemption"
+  else if (b == OwnerApprovedExemption) "Owner-approved exemption" else "Not cleared"
+pure def clearanceState(e: Enforcement, repository: int): ClearanceState =
+  val a = latestOf(e, repository)
+  if (e.restriction == ServiceBan or e.restriction == ModeratorBan or a.state == AMalicious) Banned
+  else if (if (e.restriction == Clear) repositoryCleared(e, repository) else freshClean(e, repository)) Cleared
+  else if (not(controlling(e, repository))) Unscanned
+  else if (a.state == APending) Queued
+  else if (a.state == AIncomplete) Quarantined
+  else if (not(a.verified)) Unverified
+  else Stale
 pure def mayContribute(e: Enforcement): bool = e.restriction == Clear and cleared(e)
 pure def lawExemptionNeverShownAsScan(e: Enforcement, repository: int): bool =
-  ((e.exempt.contains(repository) or e.frozen.contains(repository)) and latestOf(e, repository).state != AClean)
-    implies basis(e, repository) != Scanned
+  basisLabel(basis(e, repository)) == "Admission scan" iff assessedClean(e, repository)
 pure def lawExemptionLapsesWithSteward(e: Enforcement, repository: int): bool =
   (exemptStewardOf(e, repository) != e.steward and not(e.frozen.contains(repository)) and not(assessedClean(e, repository)))
     implies not(repositoryCleared(e, repository))
 pure def lawRestrictionsBlockWork(e: Enforcement): bool = e.restriction != Clear implies not(mayContribute(e))
-pure def lawIncompleteInvestigationBlocksGrant(e: Enforcement, repository: int): bool =
-  (latestOf(e, repository).requestSeq >= grantSeqOf(e, repository) and latestOf(e, repository).state != AClean and
-    not(e.frozen.contains(repository))) implies not(repositoryCleared(e, repository))
+pure def lawLaterRequestOverridesGrant(e: Enforcement, repository: int): bool =
+  (controlling(e, repository) and latestOf(e, repository).requestedAt >= grantOf(e, repository).at and
+    latestOf(e, repository).state != AClean and not(e.frozen.contains(repository))) implies not(repositoryCleared(e, repository))
+pure def lawEarlierIdentityControlsNothing(e: Enforcement, repository: int): bool =
+  (latestOf(e, repository).identity != identityOf(e, repository) and not(e.frozen.contains(repository)) and not(e.exempt.contains(repository)))
+    implies not(repositoryCleared(e, repository))
+pure def lawContributionNeedsClearedState(e: Enforcement): bool =
+  mayContribute(e) implies e.repositories.every(r => clearanceState(e, r) == Cleared)
 ```
 
 ### Assessments are queued by setup, owner rescan, administrator investigation or flag recovery
@@ -132,13 +164,15 @@ investigation of any listed repository at any time; it controls clearance
 even after an owner-approved grant. During a flag-only pause the signed
 refresh queues a fresh scan when the latest one is not fresh or does not
 cover every active flag. A repository has at most one pending assessment.
-The request captures the active flag receipts and the restriction epoch, and
-needs a readable live pin of its repository (see "An unavailable live pin
-queues nothing and leaves the repository's clearance unchanged").
+The request captures the day, the repository's identity epoch, the active
+flag receipts and the restriction epoch. When a release replaces the scanner
+template before a pending scan finishes, the signed refresh requeues it as a
+new assessment with the original request: same day, identity, revision and
+flags, so a template-only replacement of a request a grant covers stays
+covered.
 
 ```quint
 type RequestOrigin = SetupCheck | OwnerRescan | AdminInvestigation | FlagRecovery
-type LivePin = LiveTemplateCurrent | LiveTemplateReleased | LivePinUnavailable
 pure def activeFlag(e: Enforcement, f: Flag): bool =
   not(e.withdrawn.contains(f.receipt)) and not(e.resolved.includes(f.receipt)) and e.clockDay - f.filedDay < 90
 pure def activeReceipts(e: Enforcement): List[int] = e.flags.select(f => activeFlag(e, f)).listMap(f => f.receipt)
@@ -146,9 +180,8 @@ pure def freshClean(e: Enforcement, repository: int): bool =
   assessedClean(e, repository) and not(latestOf(e, repository).reused) and latestOf(e, repository).requestEpoch == e.epoch
 pure def coversActiveFlags(e: Enforcement, repository: int): bool =
   e.flags.every(f => activeFlag(e, f) implies latestOf(e, repository).snapshot.includes(f.receipt))
-pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int, livePin: LivePin): bool =
+pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): bool =
   e.revision > 0 and e.repositories.includes(repository) and assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and
-  livePin != LivePinUnavailable and
   latestOf(e, repository).state != APending and
   (if (requestOrigin == SetupCheck) by >= 0 and e.restriction == Clear and latestOf(e, repository).state == NotAssessed and
      not(repositoryCleared(e, repository))
@@ -157,79 +190,23 @@ pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestO
    else if (requestOrigin == AdminInvestigation) e.administrators.contains(by)
    else by == vettingService and e.restriction == FlagQuarantine and
      (not(freshClean(e, repository)) or not(coversActiveFlags(e, repository))))
-pure def pendingAssessment(id: int, revision: int, requestSeq: int, requestEpoch: int, snapshot: List[int]): Assessment =
-  { id: id, state: APending, revision: revision, requestSeq: requestSeq, requestEpoch: requestEpoch, reused: false, verified: false, snapshot: snapshot }
-pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int, livePin: LivePin): Enforcement =
+pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): Enforcement =
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, pendingAssessment(assessmentId, e.revision, e.seq + 1, e.epoch, activeReceipts(e))) }
-pure def alwaysLatestIdsRequested(e: Enforcement): bool =
-  e.repositories.every(r => latestOf(e, r).state == NotAssessed or e.assessmentIds.contains(latestOf(e, r).id))
-pure def alwaysSequencedRequests(e: Enforcement): bool =
-  e.repositories.every(r => latestOf(e, r).requestSeq <= e.seq and latestOf(e, r).requestEpoch <= e.epoch and
-    latestOf(e, r).revision <= e.revision)
-```
-
-### A template-replacement retry queues one new assessment that names the pending assessment it replaces
-
-The template endpoint serves only the deployed skill-template bundle, so a
-pending assessment assigned to an older bundle cannot be acquired after a
-release. During the signed refresh of a clear project (not flag-paused, not
-retired and with no banned repository, `refreshQueue` in
-`backend/vetting/handler.ts`), the vetting service queues one replacement for
-the repository's latest pending assessment when the live pin shows a newer
-template digest. The replacement keeps the replaced request's revision,
-manifest, content digest, commit and repository, takes the live template
-digest, captures the currently active flag receipts and records the replaced
-assessment's id (`replaces_assessment_id`, migration `0103`, immutable once
-written). The insert happens only while the named assessment is still the
-latest pending row of that repository, so a concurrent result or a second
-retry creates nothing. The replaced row stays pending and is never the
-repository's latest again. Because the replacement continues the replaced
-request rather than starting a new one, it keeps the replaced request's
-sequence: an owner-approved grant that covered the replaced request covers its
-replacement (`replacesTemplate` in `backend/vetting/persistence.ts`), while a
-free-form request reason alone never does.
-
-```quint
-pure def canReplaceTemplateAssessment(e: Enforcement, by: int, repository: int, replaces: int, assessmentId: int, livePin: LivePin): bool =
-  by == vettingService and e.restriction == Clear and e.repositories.includes(repository) and replaces > 0 and
-  latestOf(e, repository).state == APending and latestOf(e, repository).id == replaces and
-  assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and livePin == LiveTemplateReleased
-pure def replaceTemplateAssessment(e: Enforcement, by: int, repository: int, replaces: int, assessmentId: int, livePin: LivePin): Enforcement =
-  val replaced = latestOf(e, repository)
+    latest: e.latest.put(repository, { id: assessmentId, repository: repository, identity: identityOf(e, repository), state: APending,
+      revision: e.revision, requestedAt: e.clockDay, requestEpoch: e.epoch, requeued: false, reused: false, verified: false,
+      snapshot: activeReceipts(e) }) }
+pure def canRequeueTemplate(e: Enforcement, by: int, repository: int, assessmentId: int): bool =
+  by == vettingService and e.repositories.includes(repository) and latestOf(e, repository).state == APending and
+  assessmentId > 0 and not(e.assessmentIds.contains(assessmentId))
+pure def requeueTemplate(e: Enforcement, by: int, repository: int, assessmentId: int): Enforcement =
   { ...e, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, pendingAssessment(assessmentId, replaced.revision, replaced.requestSeq, e.epoch, activeReceipts(e))),
-    replacements: e.replacements.append({ assessment: assessmentId, replaces: replaces, repository: repository }) }
-pure val replacesValues = Set(1, 2, 3)
-pure def sometimesTemplateReplaced(e: Enforcement): bool =
-  e.replacements.length() > 0 and latestOf(e, 1).state == APending
-pure def sometimesReplacementKeepsGrant(e: Enforcement): bool =
-  e.replacements.length() > 0 and e.exempt.contains(1) and latestOf(e, 1).state == APending and cleared(e)
-```
-
-### An unavailable live pin queues nothing and leaves the repository's clearance unchanged
-
-Every request reads the live pin (the integration-branch head on GitHub and
-the deployed skill-template digest, `backend/vetting/live-pin.ts`) of the
-repository it queues, and an unreadable pin queues nothing for that
-repository. The owner's setup check, an automatic scan and the administrator
-route read every pin before writing any row (`queueRepositories` in
-`backend/vetting/handler.ts`), so one unreadable pin queues nothing for any
-repository of the request: the setup check and an automatic scan answer
-`unavailable`, the administrator route answers 503 `pin_unavailable`. The
-signed refresh reads each repository's pin as it queues it, so an unreadable
-pin queues nothing for that repository and is reported as `pin_unavailable`;
-rows already queued in that refresh stand. Its flag-pause recovery and its
-template-replacement check read every pin they compare before planning any
-row, and skip the whole project with `pin_unavailable` when one is
-unreadable. The caller's change stands and the next signed refresh tries
-again. A pin is never guessed or read from a cache that the read failed to refresh.
-
-```quint
-pure def lawUnavailablePinQueuesNothing(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): bool =
-  not(canRequestAssessment(e, by, repository, requestOrigin, assessmentId, LivePinUnavailable))
-pure def lawUnavailablePinReplacesNothing(e: Enforcement, by: int, repository: int, replaces: int, assessmentId: int): bool =
-  not(canReplaceTemplateAssessment(e, by, repository, replaces, assessmentId, LivePinUnavailable))
+    latest: e.latest.put(repository, { ...latestOf(e, repository), id: assessmentId, requeued: true }) }
+pure def alwaysLatestIdsRequested(e: Enforcement): bool =
+  e.repositories.every(r => latestOf(e, r).state == NotAssessed or
+    (e.assessmentIds.contains(latestOf(e, r).id) and latestOf(e, r).repository == r))
+pure def alwaysSequencedRequests(e: Enforcement): bool =
+  e.repositories.every(r => latestOf(e, r).requestedAt <= e.clockDay and latestOf(e, r).requestEpoch <= e.epoch and
+    latestOf(e, r).revision <= e.revision and latestOf(e, r).identity <= identityOf(e, r))
 ```
 
 ### A recorded result updates its repository once and confirmed malice bans at once
@@ -238,7 +215,9 @@ Only the authenticated vetting service records a result, and only the
 scanOutcome of the repository's pending assessment at the revision it was
 requested for is accepted, once. A malicious outcome needs its trusted
 confirmation (`A::validOutcome`).
-A clean result resolves exactly the flags its request captured, and only
+Every recorded result is also kept in the assessment history, which no later
+assessment, grant or revocation changes. A clean result resolves exactly the
+flags its request captured, and only
 when every repository's latest clean assessment captured them (migrations
 `0060` and `0123`); a reused clean result resolves flags but never lifts a
 pause. An incomplete result blocks clearance. A signed malicious result
@@ -253,8 +232,9 @@ type RevisionPlan = RevisionAppended | RevisionNotNeeded | RevisionPending
 pure def resultState(o: A::Outcome): AState =
   if (o.disposition == A::DClean) AClean else if (o.disposition == A::DMalicious) AMalicious else AIncomplete
 pure def withResult(o: A::Outcome, e: Enforcement): Enforcement =
-  { ...e, latest: e.latest.put(o.repository, { ...latestOf(e, o.repository), state: resultState(o), reused: o.reused,
-    verified: o.disposition != A::DIncomplete and o.retained }) }
+  val after = { ...latestOf(e, o.repository), state: resultState(o), reused: o.reused,
+    verified: o.disposition != A::DIncomplete and o.retained }
+  { ...e, latest: e.latest.put(o.repository, after), recorded: e.recorded.append(after) }
 pure def newlyResolved(e: Enforcement): List[int] =
   e.flags.select(f => not(e.resolved.includes(f.receipt)) and
     e.repositories.every(r => latestOf(e, r).state == AClean and latestOf(e, r).snapshot.includes(f.receipt))).listMap(f => f.receipt)
@@ -280,7 +260,7 @@ pure def recordResult(e: Enforcement, by: int, scanOutcome: A::Outcome, plan: Re
       revisionPending: if (e.restriction == Clear) plan == RevisionPending else e.revisionPending or plan == RevisionPending,
       findings: e.findings.union(Set(scanOutcome.assessment)),
       journal: restrictionEntry(e, ByVettingService, 0, RecordBan, plan), notices: owners(e) }
-  else withScanFailure(scanOutcome.assessment, updated)
+  else updated
 pure val scanOutcomeValues = Set(
   { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true },
   { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: true, retained: true },
@@ -296,33 +276,6 @@ pure val scanOutcomeValues = Set(
 pure def alwaysMaliceBanned(e: Enforcement): bool =
   e.repositories.some(r => latestOf(e, r).state == AMalicious) implies (e.restriction == ServiceBan or e.restriction == ModeratorBan)
 pure def alwaysServiceBanFindings(e: Enforcement): bool = e.restriction == ServiceBan implies e.findings.size() > 0
-```
-
-### A recorded incomplete result, an acquisition refusal included, notifies the listing account and the steward once
-
-Every incomplete result tells the project's owners, in the same D1 batch that
-records it, that the scan could not establish clearance
-(`notifyProjectScanFailed` in `backend/notifications/events.ts`, kind
-`project_scan_failed`). The recipients are the listing account and the
-current steward (`PROJECT_OWNERS`); the notice key is the assessment
-(`project-scan:<assessment id>`), so a replay adds nothing (the operations
-[notification](../operations/notifications.md) rule "A replay of the same
-source change and recipient adds nothing"). An acquisition refusal (a missing
-or moved repository, or a path-policy refusal of the exact pin,
-`publishAcquisitionRefusal` in `workers/vetting/run.ts`) is published as an
-incomplete result with every surface unsupported, so it notifies the same
-way. A clean or malicious result sends no scan-failed notice; a malicious one
-notifies through its Ban entry.
-
-```quint
-pure def withScanFailure(assessment: int, e: Enforcement): Enforcement =
-  if (e.scanNotices.some(n => n.assessment == assessment)) e
-  else { ...e, scanNotices: e.scanNotices.append({ assessment: assessment, to: ListingAccount })
-    .append({ assessment: assessment, to: StewardAccount }) }
-pure def lawScanFailureNotifiesOnce(assessment: int, e: Enforcement): bool =
-  withScanFailure(assessment, withScanFailure(assessment, e)).scanNotices == withScanFailure(assessment, e).scanNotices
-pure def sometimesScanFailureNoticed(e: Enforcement): bool =
-  e.scanNotices.length() > 0 and latestOf(e, 1).state == AIncomplete
 ```
 
 ### Retained evidence is checked when clearance relies on it
@@ -347,7 +300,10 @@ pure val evidenceReadValues = Set({ assessment: 1, present: false }, { assessmen
 The composition appends the repository here and in the registry in one batch,
 and mirrors each new registry revision, its steward and the listing account
 (the creator of revision 1, or the applicant who published it). The migration-0075 set
-never grows to an appended repository.
+never grows to an appended repository. The project API's repository read
+observes a new node id for a listed repository id (deleted and recreated, or
+transferred) as a new identity epoch; the earlier identity's assessments and
+grants then control nothing.
 
 ```quint
 pure def canAppendRepository(e: Enforcement, repository: int): bool =
@@ -358,10 +314,15 @@ pure def lawMissingAssessmentIsUnassessed(e: Enforcement, repository: int): bool
   not(e.latest.keys().contains(repository)) implies
     (latestOf(e, repository).state == NotAssessed and
      (repositoryCleared(e, repository) implies (e.frozen.contains(repository) or e.exempt.contains(repository))))
-pure def canObserveRevision(e: Enforcement, revision: int, steward: int, creator: int): bool =
-  revision > e.revision and steward > 0 and creator > 0 and (e.creator == 0 or creator == e.creator)
-pure def observeRevision(e: Enforcement, revision: int, steward: int, creator: int): Enforcement =
+pure def canObserveRevision(e: Enforcement, by: int, revision: int, steward: int, creator: int): bool =
+  by == platform and revision > e.revision and steward > 0 and creator > 0 and (e.creator == 0 or creator == e.creator)
+pure def observeRevision(e: Enforcement, by: int, revision: int, steward: int, creator: int): Enforcement =
   { ...e, revision: revision, steward: steward, creator: creator }
+pure def canObserveIdentity(e: Enforcement, by: int, repository: int, identity: int): bool =
+  by == platform and e.repositories.includes(repository) and identity > identityOf(e, repository)
+pure def observeIdentity(e: Enforcement, by: int, repository: int, identity: int): Enforcement =
+  { ...e, seq: e.seq + 1, identities: e.identities.put(repository, identity) }
+pure val identityValues = Set(2)
 pure val revisionValues = Set(1, 2)
 pure val stewardValues = Set(1, 4)
 pure val creatorValues = Set(1, 2)
@@ -384,60 +345,92 @@ pure val rowValues = Set({ projectId: 1, repository: 1 }, { projectId: 2, reposi
 pure def alwaysFrozenOriginalOnly(e: Enforcement): bool = e.frozen.subseteq(e.original)
 ```
 
-### An administrator records an owner-approved exemption only for a current authorized steward
+### An administrator records an audited exemption only for a current authorized steward
 
-The Umia fork decision (27 October 2026) and the cursory-review decision
-(11 November 2026) use this audited record. The approving administrator
-need not have repository access. The registered creator or individual
-steward must currently hold write or maintain authority read through the
-Slopbot installation on that repository (`workers/slopbot/repository-access.ts`);
-an organization is never the collaborator identity. The grant records the
-branch and head observed, the review scope and limitations, the approver and
-the owner decision, and binds the current revision, repository and steward.
-A restriction, a malicious latest result, missing installation, unavailable
-or denied authority, a changed revision, an enforcement record written since
-the administrator's preview (`stale_revision`) or a second active grant
-refuses it.
-Revocation needs a new decision, keeps the grant and restores ordinary
-admission.
+The Umia fork decision (27 October 2026, `OwnerApproved`) and the
+cursory-review decision (11 November 2026, `CursoryReview`) use this record
+(`POST /api/v1/admin/vetting/exemptions`, migration `0102`). The approving
+administrator need not have repository access, and an ordinary owner never
+grants themselves one: the approver is neither the steward nor the listing
+account. The registered creator or individual steward must currently hold
+write or maintain authority read through the Slopbot installation on that
+repository (`workers/slopbot/repository-access.ts`); an organization is never
+the collaborator identity. The record binds the current revision and its
+canonical manifest digest, the repository's identity and the steward, and
+keeps the reviewed branch (the registered integration branch, or `develop`
+when the owner selected it) with its observed head, the review scope and
+limitations, the approver, the owner decision reference, the reason and the
+grant day. An older pin or an unproven source-to-binary match does not block
+it. A restriction, a malicious latest result, missing installation,
+unavailable or denied authority, a changed revision, a missing confirmation,
+an enforcement record written since the administrator's preview
+(`stale_revision`) or a second active grant refuses it. Grants and
+revocations are separate append-only lists; earlier assessments stay. The
+development branch has no cursory-review source yet (no reviewed branch,
+scope or limitation fields in `backend/vetting`), so its conformance is
+pending.
 
 ```quint
 type Access = AccessVerified | AccessDenied | AccessUnavailable | InstallationMissing | InstallationSuspended
 type StewardCheck = { actor: int, repository: int, access: Access }
-type GrantRequest = { id: int, repository: int, revision: int, steward: int, check: StewardCheck, decision: int,
-  branch: int, head: int, scope: int, limitations: int }
+type GrantRequest = { id: int, kind: ExemptionKind, repository: int, revision: int, manifestDigest: int, steward: int,
+  check: StewardCheck, decision: int, reason: int, branch: ReviewedBranch, head: int, scope: int, limitations: int, confirmed: bool }
 pure def canGrantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): bool =
-  e.administrators.contains(by) and fenced(e, fence) and e.restriction == Clear and e.repositories.includes(request.repository) and
-  request.id > 0 and not(e.grants.some(g => g.id == request.id)) and not(e.exempt.contains(request.repository)) and
-  request.revision == e.revision and request.steward == e.steward and
+  e.administrators.contains(by) and by != e.steward and by != e.creator and fenced(e, fence) and e.restriction == Clear and
+  e.repositories.includes(request.repository) and request.id > 0 and not(e.grants.some(g => g.id == request.id)) and
+  not(e.exempt.contains(request.repository)) and request.revision == e.revision and request.steward == e.steward and
   (request.check.actor == e.steward or request.check.actor == e.creator) and request.check.repository == request.repository and
   request.check.access == AccessVerified and e.repositories.every(r => latestOf(e, r).state != AMalicious) and
-  request.decision > 0 and request.branch > 0 and request.head > 0 and request.scope > 0 and request.limitations > 0
+  request.confirmed and request.manifestDigest > 0 and request.decision > 0 and request.reason > 0 and
+  request.branch != OtherBranch and request.head > 0 and request.scope > 0 and request.limitations > 0
 pure def grantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): Enforcement =
-  { ...e, seq: e.seq + 1, exempt: e.exempt.union(Set(request.repository)), grantSeq: e.grantSeq.put(request.repository, e.seq + 1),
-    exemptSteward: e.exemptSteward.put(request.repository, request.steward),
-    grants: e.grants.append({ id: request.id, repository: request.repository, seq: e.seq + 1, approver: by,
-      steward: request.steward, revision: request.revision, decision: request.decision, branch: request.branch,
-      head: request.head, scope: request.scope, limitations: request.limitations }) }
+  { ...e, seq: e.seq + 1, exempt: e.exempt.union(Set(request.repository)), activeGrant: e.activeGrant.put(request.repository, request.id),
+    grants: e.grants.append({ id: request.id, kind: request.kind, repository: request.repository,
+      identity: identityOf(e, request.repository), revision: request.revision, manifestDigest: request.manifestDigest,
+      steward: request.steward, approver: by, at: e.clockDay, decision: request.decision, reason: request.reason,
+      branch: request.branch, head: request.head, scope: request.scope, limitations: request.limitations }) }
 pure val verifiedCheck: StewardCheck = { actor: 1, repository: 1, access: AccessVerified }
-pure val goodGrant: GrantRequest = { id: 11, repository: 1, revision: 1, steward: 1, check: verifiedCheck, decision: 1,
-  branch: 1, head: 1, scope: 1, limitations: 1 }
-pure val requestValues = Set(goodGrant, { ...goodGrant, id: 12 },
-  { ...goodGrant, check: { ...verifiedCheck, access: InstallationMissing } },
+pure val goodGrant: GrantRequest = { id: 11, kind: CursoryReview, repository: 1, revision: 1, manifestDigest: 1, steward: 1,
+  check: verifiedCheck, decision: 1, reason: 1, branch: OwnerSelectedDevelop, head: 1, scope: 1, limitations: 1, confirmed: true }
+pure val lostAuthorityGrant: GrantRequest = { ...goodGrant, check: { ...verifiedCheck, access: AccessDenied } }
+pure val requestValues = Set(goodGrant, { ...goodGrant, id: 12, kind: OwnerApproved, branch: IntegrationBranch },
+  lostAuthorityGrant, { ...goodGrant, check: { ...verifiedCheck, access: InstallationMissing } },
   { ...goodGrant, check: { ...verifiedCheck, access: AccessUnavailable } },
-  { ...goodGrant, check: { ...verifiedCheck, actor: 3 } }, { ...goodGrant, revision: 2 }, { ...goodGrant, head: 0 })
-pure def canRevokeExemption(e: Enforcement, by: int, repository: int, grantId: int, decision: int): bool =
-  e.administrators.contains(by) and decision > 0 and e.exempt.contains(repository) and
-  e.grants.some(g => g.id == grantId and g.repository == repository and g.seq == grantSeqOf(e, repository))
-pure def revokeExemption(e: Enforcement, by: int, repository: int, grantId: int, decision: int): Enforcement =
-  { ...e, exempt: e.exempt.exclude(Set(repository)), revocations: e.revocations.append(grantId) }
-pure val grantIdValues = Set(11, 12)
-pure val decisionValues = Set(0, 1)
+  { ...goodGrant, check: { ...verifiedCheck, actor: 3 } }, { ...goodGrant, revision: 2 }, { ...goodGrant, head: 0 },
+  { ...goodGrant, branch: OtherBranch }, { ...goodGrant, confirmed: false })
 pure def alwaysExemptionGranted(e: Enforcement): bool =
-  e.exempt.forall(r => e.repositories.includes(r) and grantSeqOf(e, r) > 0 and grantSeqOf(e, r) <= e.seq and exemptStewardOf(e, r) > 0 and
-    e.grants.some(g => g.repository == r and g.seq == grantSeqOf(e, r)))
+  e.exempt.forall(r => e.repositories.includes(r) and grantOf(e, r).id > 0 and grantOf(e, r).repository == r and
+    grantOf(e, r).steward > 0)
 pure def alwaysGrantsAudited(e: Enforcement): bool =
-  e.grants.every(g => g.approver > 0 and g.decision > 0 and g.branch > 0 and g.head > 0 and g.scope > 0 and g.limitations > 0)
+  e.grants.every(g => g.id > 0 and e.administrators.contains(g.approver) and g.manifestDigest > 0 and g.decision > 0 and
+    g.reason > 0 and g.branch != OtherBranch and g.head > 0 and g.scope > 0 and g.limitations > 0 and g.at <= e.clockDay and
+    g.identity <= identityOf(e, g.repository))
+```
+
+### Revocation is its own audited record and restores ordinary admission
+
+An administrator revokes an active grant with a new confirmation, reason and
+decision reference (`POST /api/v1/admin/vetting/exemptions/:id/revoke`). The
+grant stays in its list; the revocation is appended to its own, and the
+repository needs ordinary admission again. A revoked grant never covers
+again; a later exemption is a new grant.
+
+```quint
+type RevokeRequest = { grant: int, decision: int, reason: int, confirmed: bool }
+pure def canRevokeExemption(e: Enforcement, by: int, revoke: RevokeRequest): bool =
+  val g = grantById(e, revoke.grant)
+  e.administrators.contains(by) and revoke.confirmed and revoke.decision > 0 and revoke.reason > 0 and
+  g.id > 0 and e.exempt.contains(g.repository) and activeGrantOf(e, g.repository) == g.id
+pure def revokeExemption(e: Enforcement, by: int, revoke: RevokeRequest): Enforcement =
+  { ...e, seq: e.seq + 1, exempt: e.exempt.exclude(Set(grantById(e, revoke.grant).repository)),
+    revocations: e.revocations.append({ grant: revoke.grant, administrator: by, decision: revoke.decision,
+      reason: revoke.reason, at: e.clockDay }) }
+pure val revokeValues = Set({ grant: 11, decision: 1, reason: 1, confirmed: true }, { grant: 12, decision: 1, reason: 1, confirmed: true },
+  { grant: 11, decision: 1, reason: 1, confirmed: false })
+pure def alwaysRevocationsAudited(e: Enforcement): bool =
+  e.revocations.every(v => grantById(e, v.grant).id > 0 and e.administrators.contains(v.administrator) and v.decision > 0 and
+    v.reason > 0 and v.at <= e.clockDay and
+    not(e.exempt.contains(grantById(e, v.grant).repository) and activeGrantOf(e, grantById(e, v.grant).repository) == v.grant))
 ```
 
 ## Story: Two eligible contributors pause a project and a fresh clean scan resumes it
@@ -471,9 +464,11 @@ pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 }, { ...
 Each flag counts for 90 days. In the same transaction as the second distinct
 active reporter's flag on a clear project, a `contributor-flags` quarantine
 is journaled and the listing account, the steward and the moderators are
-notified. It appends no registry revision. A flag on an already restricted
-project is recorded without another pause. Withdrawal stops a flag counting
-and keeps its history.
+notified. It appends no registry revision. One flag remains private: until a
+second distinct reporter's flag pauses the project, filing writes no journal
+entry and no notice. A flag on an already restricted project is recorded
+without another pause. Withdrawal stops a flag counting and keeps its
+history.
 
 ```quint
 pure def canFlag(e: Enforcement, by: int, receipt: int, standing: FlagStanding): bool =
@@ -499,6 +494,9 @@ pure def alwaysActiveActorsUnique(e: Enforcement): bool =
   e.flags.every(first => e.flags.every(second =>
     (activeFlag(e, first) and activeFlag(e, second) and first.actor == second.actor) implies first.receipt == second.receipt))
 pure def alwaysResolvedFlagsExist(e: Enforcement): bool = e.resolved.every(receipt => e.flags.some(f => f.receipt == receipt))
+pure def lawOneFlagStaysPrivate(e: Enforcement, by: int, receipt: int, standing: FlagStanding): bool =
+  (canFlag(e, by, receipt, standing) and not(twoActiveFlaggers(flag(e, by, receipt, standing)))) implies
+    (flag(e, by, receipt, standing).journal == e.journal and flag(e, by, receipt, standing).notices == e.notices)
 ```
 
 ### Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction
@@ -672,9 +670,9 @@ pure def alwaysAccountBansDecided(e: Enforcement): bool = e.accountBans.every(a 
 
 ### Journals only append and lifting a human restriction needs its decision
 
-Each journal entry, flag and grant has a unique key (sequence, receipt, grant
-id), so keeping every earlier element with a list no shorter means no earlier
-record is rewritten. The vetting service lifts only a flag-only pause. A clean scan never lifts a
+Each journal entry, flag, grant, revocation and recorded assessment has a
+unique key (sequence, receipt, grant id, assessment id), so keeping every
+earlier element with a list no shorter means no earlier record is rewritten. The vetting service lifts only a flag-only pause. A clean scan never lifts a
 moderator or service restriction. A recorded assessment is never upgraded.
 
 ```quint
@@ -685,8 +683,9 @@ pure def stepJournalsOnlyAppend(before: Enforcement, after: Enforcement): bool =
   after.notices.length() >= before.notices.length() and before.notices.every(n => after.notices.includes(n)) and
   after.flags.length() >= before.flags.length() and before.flags.every(f => after.flags.includes(f)) and
   after.grants.length() >= before.grants.length() and before.grants.every(g => after.grants.includes(g)) and
-  keeps(before.revocations, after.revocations) and keeps(before.accountBans, after.accountBans) and
-  keeps(before.resolved, after.resolved)
+  after.revocations.length() >= before.revocations.length() and before.revocations.every(v => after.revocations.includes(v)) and
+  after.recorded.length() >= before.recorded.length() and before.recorded.every(a => after.recorded.includes(a)) and
+  keeps(before.accountBans, after.accountBans) and keeps(before.resolved, after.resolved)
 pure def stepCountersMonotone(before: Enforcement, after: Enforcement): bool =
   after.epoch >= before.epoch and after.seq >= before.seq and after.clockDay >= before.clockDay and
   before.withdrawn.subseteq(after.withdrawn) and before.findings.subseteq(after.findings) and
@@ -694,7 +693,8 @@ pure def stepCountersMonotone(before: Enforcement, after: Enforcement): bool =
   after.administrators.subseteq(before.administrators) and before.administrators.subseteq(after.administrators) and
   after.moderators.subseteq(before.moderators) and before.moderators.subseteq(after.moderators) and
   after.original.subseteq(before.original) and before.original.subseteq(after.original) and
-  (before.creator > 0 implies after.creator == before.creator) and after.projectId == before.projectId and after.revision >= before.revision
+  (before.creator > 0 implies after.creator == before.creator) and after.projectId == before.projectId and after.revision >= before.revision and
+  before.repositories.every(r => identityOf(after, r) >= identityOf(before, r))
 pure def stepRepositoriesOnlyAppend(before: Enforcement, after: Enforcement): bool =
   keeps(before.repositories, after.repositories)
 pure def stepOnlyDecisionsLiftRestrictions(before: Enforcement, via: str, after: Enforcement): bool =
@@ -716,12 +716,29 @@ pure def sometimesAwaitingMaliceDecision(e: Enforcement): bool = e.restriction =
 pure def sometimesBannedWithAccounts(e: Enforcement): bool = e.restriction == ModeratorBan and e.accountBans.length() > 0
 pure def sometimesReinstatedAfterMalice(e: Enforcement): bool = e.restriction == Clear and e.findings.size() > 0
 pure def sometimesAppealDenied(e: Enforcement): bool = e.appeal == AppealDenied and e.restriction == ModeratorQuarantine
-pure def sometimesExemptWithoutScan(e: Enforcement): bool = cleared(e) and e.exempt.size() > 0 and latestOf(e, 1).state == NotAssessed
+pure def sometimesExemptWithoutScan(e: Enforcement): bool =
+  cleared(e) and e.exempt.size() > 0 and latestOf(e, 1).state == NotAssessed and basisLabel(basis(e, 1)) == "Owner-approved exemption"
+pure def sometimesCursoryReviewOfDevelop(e: Enforcement): bool =
+  grantCovers(e, 1) and grantOf(e, 1).kind == CursoryReview and grantOf(e, 1).branch == OwnerSelectedDevelop
+pure def sometimesGrantRefusedAfterAuthorityLoss(e: Enforcement): bool =
+  e.revision == 1 and e.steward == 1 and canGrantExemption(e, 7, { revision: 1, sequence: e.journal.length() + 1 }, goodGrant) and
+  not(canGrantExemption(e, 7, { revision: 1, sequence: e.journal.length() + 1 }, lostAuthorityGrant))
 pure def sometimesInvestigationOverridesGrant(e: Enforcement): bool =
   e.exempt.contains(1) and latestOf(e, 1).state == APending and not(cleared(e))
-pure def sometimesRevokedGrant(e: Enforcement): bool = e.revocations.length() > 0 and not(cleared(e))
+pure def sometimesSameDayRequestControls(e: Enforcement): bool =
+  e.exempt.contains(1) and latestOf(e, 1).state == APending and latestOf(e, 1).requestedAt == grantOf(e, 1).at and not(grantCovers(e, 1))
+pure def sometimesRequeuedStaysCovered(e: Enforcement): bool =
+  latestOf(e, 1).requeued and latestOf(e, 1).state == APending and grantCovers(e, 1)
+pure def sometimesGrantKeepsEarlierAssessment(e: Enforcement): bool =
+  grantCovers(e, 1) and e.recorded.some(a => a.repository == 1 and a.state == AIncomplete)
+pure def sometimesRevokedGrant(e: Enforcement): bool =
+  e.revocations.length() > 0 and not(cleared(e)) and clearanceState(e, 1) == Unscanned
+pure def sometimesNewIdentityUncleared(e: Enforcement): bool =
+  identityOf(e, 1) == 2 and latestOf(e, 1).state == AClean and clearanceState(e, 1) == Unscanned
 pure def sometimesFrozenDespiteInvestigation(e: Enforcement): bool = e.frozen.contains(1) and latestOf(e, 1).state == APending and cleared(e)
-pure def sometimesUnverifiedEvidence(e: Enforcement): bool = latestOf(e, 1).state == AClean and not(cleared(e))
+pure def sometimesUnverifiedEvidence(e: Enforcement): bool = clearanceState(e, 1) == Unverified
+pure def sometimesStaleDuringRestriction(e: Enforcement): bool = clearanceState(e, 1) == Stale
+pure def sometimesQuarantinedByIncomplete(e: Enforcement): bool = e.restriction == Clear and clearanceState(e, 1) == Quarantined
 pure def sometimesSingleFlagResolved(e: Enforcement): bool = e.resolved.length() > 0 and e.restriction == Clear and e.journal.length() == 0
 pure def sometimesRevisionPending(e: Enforcement): bool = e.revisionPending
 pure def sometimesCleared(e: Enforcement): bool = mayContribute(e) and latestOf(e, 1).state == AClean
@@ -738,5 +755,6 @@ pure val weight_flag = 4
 pure val weight_requestAppeal = 2
 pure val weight_reinstate = 3
 pure val weight_reinstateFlagPause = 3
+pure val weight_grantExemption = 3
 pure val eValues = Set(initial)
 ```

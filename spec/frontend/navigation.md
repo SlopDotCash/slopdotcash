@@ -107,34 +107,19 @@ pure val requestEpochValues = Set(0, 1, 2)
 
 ### Every existing product route is one Page and only private destinations need an account
 
-The router reads the existing URLs: `/` Home, `/how-it-works`, `/sponsors`,
-`/cycles` (the cycle archive), `/points` (Rankings), `/account` (Settings),
-`/login`, `/earnings` (Payouts), `/inbox`, `/admin`, `/projects/new`,
-`/vetting-evidence`, `/security` (security cases), `/projects/<id>`,
-`/projects/<id>/manage`, `/projects/<id>/security` (the security program),
-`/cycles/<project>/<cycle>` and `/contributors/<login>`; anything else, or a
-segment that does not decode, is Gone. `/points?x` opens Settings. Three
-pages have no address of their own: Projects is the project list on Home,
-Report is the report form inside the security program, and Recovery is the
-payout consent section of Payouts. Login is public. Only the private pages
-need a signed-in account; every other destination opens signed out.
+Which route an address opens, old addresses included, is decided by the
+[app shell](../app/index.md) ("Each address names exactly one route kind, and
+an address that names none is unknown"); each of its route kinds is one Page
+here (`pageOf` in [fragments and document heads](./routes.md)), and the
+unknown route is Gone. Three pages have no address of their own: Projects is
+the project list on Home, Report is the report form inside the security
+program, and Recovery is the payout consent section of Payouts. Login is
+public. Only the private pages need a signed-in account; every other
+destination opens signed out.
 
 ```quint
 pure def routedPage(page: Page): Page =
   if (page == Projects) Home else if (page == Report) SecurityProgram else if (page == Recovery) Payouts else page
-pure def routePattern(page: Page): str =
-  val routed = routedPage(page)
-  match routed {
-  | Home => "/" | HowItWorks => "/how-it-works" | Sponsors => "/sponsors" | CycleArchive => "/cycles"
-  | Rankings => "/points" | Settings => "/account" | Login => "/login" | Payouts => "/earnings"
-  | Inbox => "/inbox" | Administration => "/admin" | AddProject => "/projects/new"
-  | VettingEvidence => "/vetting-evidence" | SecurityCases => "/security" | Project => "/projects/:project"
-  | ManageProject => "/projects/:project/manage" | SecurityProgram => "/projects/:project/security"
-  | Cycle => "/cycles/:project/:cycle" | Profile => "/contributors/:login" | _ => ""
-}
-pure def lawEachAddressNamesOnePage(page: Page, other: Page): bool =
-  (routePattern(page) == routePattern(other) and routePattern(page) != "") implies routedPage(page) == routedPage(other)
-pure def lawEveryRoutedPageHasAddress(page: Page): bool = routedPage(page) != Gone implies routePattern(page) != ""
 pure def lawPublicDestinationOpensSignedOut(destination: Page): bool =
   not(privatePage(destination)) implies navigate(initial, destination).page == destination
 pure def lawPrivateDestinationWaitsForAccount(destination: Page): bool =

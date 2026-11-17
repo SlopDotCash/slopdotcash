@@ -1,7 +1,12 @@
 # Buyback finalized RPC observation
 
 PRD sections 6 and 11 require read-only Robinhood Chain RPC qualification as
-one part of buyback readiness. Main revision
+one part of buyback readiness. On 15 November 2026 UTC the readiness check
+verified the deployed configuration, finalized-state reads through the
+Worker's Robinhood Chain endpoint and fee-wallet balances covering one cycle
+of the configured native ceilings; these are recorded evidence observations.
+Operational qualification stays pending until finalized production receipts
+exist for the first real order's fill, purchase and burn. Main revision
 `ee1a4b2cd2672245537928380e425f5bd9ecb994` promotes the probe from development.
 The pinned ownership is `workers/fee-converter/evm.ts:1887–1933`,
 `workers/fee-converter/buyback.ts:902–930`,
@@ -157,4 +162,52 @@ pure val independentValues = Set(independentMatch, { ...independentMatch, summar
   { ...independentMatch, headHeight: { ...independentMatch.headHeight, exactDecode: false } },
   { ...independentMatch, finalizedHead: { ...observedBlock, height: "9007199254740992" },
     headHeight: { decimal: "9007199254740992", limbs: List(992, 740, 254, 199, 7, 9), exactDecode: true } })
+```
+
+## Story: Qualify the production buyback from finalized receipts
+
+### Readiness observations are recorded; qualification waits for the first fill, purchase and burn receipts
+
+The three observations of 15 November 2026 UTC (epoch millisecond
+`1794700800000`) start satisfied. Only the fee Worker records a receipt,
+each from finalized successful chain evidence, in the order fill, purchase,
+burn, once. Missing fee income leaves qualification pending; nothing here
+creates a fee record or spends unrelated wallet funds. A burn is published
+only after its finalized burn receipt, and only once.
+
+```quint
+type FinalizedReceipt = { tx: int, height: int, finalized: bool, succeeded: bool }
+type Readiness = { configurationVerified: bool, finalizedReadVerified: bool, gasCoverageVerified: bool, observedAt: int,
+  fill: int, purchase: int, burn: int, burnPublished: bool }
+pure val readinessObservedAt = 1794700800000
+pure val initial: Readiness = { configurationVerified: true, finalizedReadVerified: true, gasCoverageVerified: true,
+  observedAt: readinessObservedAt, fill: 0, purchase: 0, burn: 0, burnPublished: false }
+pure def exactReceipt(r: Readiness, receipt: FinalizedReceipt): bool = receipt.tx > 0 and receipt.height > 0
+  and receipt.finalized and receipt.succeeded and receipt.tx != r.fill and receipt.tx != r.purchase and receipt.tx != r.burn
+pure def canRecordFill(r: Readiness, receipt: FinalizedReceipt, by: str): bool = by == "worker" and r.fill == 0 and exactReceipt(r, receipt)
+pure def recordFill(r: Readiness, receipt: FinalizedReceipt, by: str): Readiness = { ...r, fill: receipt.tx }
+pure def canRecordPurchase(r: Readiness, receipt: FinalizedReceipt, by: str): bool =
+  by == "worker" and r.fill > 0 and r.purchase == 0 and exactReceipt(r, receipt)
+pure def recordPurchase(r: Readiness, receipt: FinalizedReceipt, by: str): Readiness = { ...r, purchase: receipt.tx }
+pure def canRecordBurn(r: Readiness, receipt: FinalizedReceipt, by: str): bool =
+  by == "worker" and r.purchase > 0 and r.burn == 0 and exactReceipt(r, receipt)
+pure def recordBurn(r: Readiness, receipt: FinalizedReceipt, by: str): Readiness = { ...r, burn: receipt.tx }
+pure def canPublishBurn(r: Readiness, by: str): bool = by == "worker" and r.burn > 0 and not(r.burnPublished)
+pure def publishBurn(r: Readiness, by: str): Readiness = { ...r, burnPublished: true }
+pure def operationallyQualified(r: Readiness): bool = r.configurationVerified and r.finalizedReadVerified and r.gasCoverageVerified
+  and r.fill > 0 and r.purchase > 0 and r.burn > 0
+pure def alwaysObservationsRetained(r: Readiness): bool = r.configurationVerified and r.finalizedReadVerified
+  and r.gasCoverageVerified and r.observedAt == readinessObservedAt
+pure def alwaysReceiptsInOrder(r: Readiness): bool = (r.purchase > 0 implies r.fill > 0) and (r.burn > 0 implies r.purchase > 0)
+  and r.fill >= 0 and r.purchase >= 0 and r.burn >= 0
+pure def alwaysBurnPublishedOnlyWithFinalizedReceipt(r: Readiness): bool = r.burnPublished implies r.burn > 0
+pure def stepReceiptsPermanent(before: Readiness, after: Readiness): bool = (before.fill > 0 implies after.fill == before.fill)
+  and (before.purchase > 0 implies after.purchase == before.purchase) and (before.burn > 0 implies after.burn == before.burn)
+  and (before.burnPublished implies after.burnPublished)
+pure def sometimesQualificationPending(r: Readiness): bool = r.fill > 0 and not(operationallyQualified(r))
+pure def sometimesQualifiedAndPublished(r: Readiness): bool = operationallyQualified(r) and r.burnPublished
+pure val receiptValues = Set({ tx: 1, height: 5, finalized: true, succeeded: true }, { tx: 2, height: 6, finalized: true, succeeded: true },
+  { tx: 3, height: 7, finalized: true, succeeded: true }, { tx: 4, height: 7, finalized: false, succeeded: true },
+  { tx: 5, height: 7, finalized: true, succeeded: false })
+pure val byValues = Set("worker", "other")
 ```

@@ -6,4 +6,4 @@
     ok retiredParentCannotForkAndUnrelatedRootRefusesTest passed 1 test(s)
     ok completeEvidenceKindsStayDistinctTest passed 1 test(s)
 
-  5 passing (2221ms)
+  5 passing (895ms)

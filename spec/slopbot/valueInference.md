@@ -141,6 +141,9 @@ Alerts-only holds no numeric amount. Capped mode requires the explicit
 operator cap and route maximum, includes current-month usage and outstanding
 reservations, and refuses while any uncapped attempt remains outstanding.
 External usage of the same global budget enters admission as trusted amounts.
+Every amount here is integer micro-USD, the unit of the shared
+[cost ledger](./spendAlerts.md), which alone owns the $500 milestone alerts;
+review attempts have no budget of their own.
 The budget settings are read from the deployed Worker's environment at
 each run, never from a request. That the environment is the reviewed
 release's configuration is a deployment obligation of the release

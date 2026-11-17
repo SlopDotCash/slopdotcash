@@ -19,6 +19,7 @@ the submitting maintainer, project steward, administrator or moderator.
 
 ```quint
 import money as M from "./money"
+import referrals as RF from "./referrals"
 type Attribution = { project: int, applicant: int, steward: int, referrer: int }
 type Rate = { fromPeriod: int, numerator: M::Amount, denominator: M::Amount }
 type CalendarDate = { year: int, month: int, day: int, millis: int }
@@ -135,8 +136,8 @@ pure def projectAccrued(a: Accrual, project: int): M::Amount = allRecords(a).fol
   (sum, r) => M::addAmounts(sum, if (r.payout.project == project) r.amount else M::zero))
 pure def actorAccrued(a: Accrual, actor: int): M::Amount = allRecords(a).foldl(M::zero,
   (sum, r) => M::addAmounts(sum, if (r.referrer == actor) r.amount else M::zero))
-pure def poolCap(a: Accrual): M::Amount = M::multiplyAmounts(a.tokenUnit, M::smallAmount(2000000))
-pure def projectCap(a: Accrual): M::Amount = M::multiplyAmounts(a.tokenUnit, M::smallAmount(250000))
+pure def poolCap(a: Accrual): M::Amount = M::multiplyAmounts(a.tokenUnit, M::smallAmount(RF::referralPoolTokens))
+pure def projectCap(a: Accrual): M::Amount = M::multiplyAmounts(a.tokenUnit, M::smallAmount(RF::referralProjectTokens))
 pure def smaller(left: M::Amount, right: M::Amount): M::Amount =
   if (M::compareAmounts(left, right) <= 0) left else right
 pure def payoutEligible(a: Accrual, p: Payout): bool = p.paid and p.stablecoin
@@ -210,10 +211,9 @@ as one atomic operation, including
 in dry-run mode. This follows `workers/referral-accrual/store.ts:258–306`.
 The public projection includes the complete immutable record and cumulative
 referrer totals. A missing wallet changes root inclusion only; it never deletes
-or reallocates accrued tokens. Discovered by the proof: the empty wallet used for
-a missing pin could satisfy the historical entry check and then invalidate an
-old file when the actor gained a real pin. Every filed entry has a nonempty
-wallet matching a retained exact actor-and-wallet pair. The recorded rate is
+or reallocates accrued tokens. Every filed entry has a nonempty wallet
+matching a retained exact actor-and-wallet pair, so a later real pin never
+invalidates an old file. The recorded rate is
 an integer number of token base units per stablecoin micro-unit. Multiplication is exact; no per-payout rounding occurs. This
 matches pinned `workers/referral-accrual/core.ts:365` and `config.ts:73–80`.
 The approved initial rate is three tokens per USDC; configuration refuses a
@@ -264,12 +264,6 @@ pure def sometimesMultiProject(a: Accrual): bool = a.records.some(r => a.records
 ### Simulation distinguishes eligible, excluded and repeated payout evidence
 
 ```quint
-pure val dateValues = Set({ year: 2028, month: 2, day: 29, millis: 0 }, { year: 2029, month: 2, day: 28, millis: 0 })
-pure val firstValues = dateValues
-pure val earlierDateValues = dateValues
-pure val laterDateValues = dateValues
-pure val yearValues = Set(2028, 2029)
-pure val monthValues = Set(2, 11)
 pure val leaseIdValues = Set("leaseId", "wrong")
 pure val walletsValues = Set(List({ actor: 3, wallet: "wallet", authorized: true }), List())
 pure val projectValues = Set(1, 2)

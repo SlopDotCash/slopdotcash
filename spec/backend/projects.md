@@ -62,13 +62,13 @@ type Project = { creator: int, steward: int, referrer: int, administrators: List
   application: ApplicationPhase, applicant: int, update: UpdatePhase, updateApplicant: int, updateBase: int,
   revision: int, history: List[Revision], status: Status, tier: Tier, retirement: Retirement,
   repositories: List[int], starts: List[RepositoryStart], fieldsComplete: bool, branch: int, license: License,
-  consent: C::SavedConsent, month: int, economic: List[EconomicTerm], asset: int, assetReading: AssetReading, funded: bool }
+  consent: C::SavedConsent, month: int, economic: List[EconomicTerm], network: int, asset: int, funded: bool }
 pure val noLicense: License = { terms: UnknownTerms, url: 0, commit: 0, digest: 0 }
 pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrators: List(5, 6, 7), participation: OpenParticipation,
   application: ApplicationPending, applicant: 1, update: UpdatePending, updateApplicant: 2, updateBase: 1,
   revision: 0, history: List(), status: Paused, tier: Community, retirement: NotRetired,
   repositories: List(1), starts: List({ repositoryId: 1, month: 202611 }), fieldsComplete: false, branch: 0,
-  license: noLicense, consent: C::Absent, month: 202611, economic: List(), asset: 1, assetReading: noAssetReading, funded: false }
+  license: noLicense, consent: C::Absent, month: 202611, economic: List(), network: 1, asset: 1, funded: false }
 pure val platform = -1
 pure val noRevision: Revision = { number: 0, kind: Created, status: Paused, tier: Retired, by: 0 }
 pure def currentRevision(p: Project): Revision = p.history.nthOr(p.revision - 1, noRevision)
@@ -120,17 +120,16 @@ never controls creation.
 ```quint
 type RepositoryFacts = { repository: int, owner: int, public: bool, archived: bool, fork: bool, branch: int }
 type Creation = { authority: AuthorityRead, facts: RepositoryFacts, fieldsComplete: bool, license: License,
-  fundingChoice: C::FundingChoice, closureChecked: bool, referrer: int, assetReading: AssetReading }
+  fundingChoice: C::FundingChoice, closureChecked: bool, referrer: int }
 pure def licenseRecorded(l: License): bool = l.url > 0 and l.commit > 0 and l.digest > 0
 pure def creationValid(p: Project, by: int, creation: Creation): bool =
   p.revision == 0 and currentAuthority(p, by, creation.authority) and creation.facts.repository == primary(p) and
   creation.facts.owner > 0 and creation.facts.public and creation.facts.branch > 0 and
-  creation.fieldsComplete and licenseRecorded(creation.license) and assetVerified(p.asset, creation.assetReading)
+  creation.fieldsComplete and licenseRecorded(creation.license)
 pure def created(by: int, creation: Creation, p: Project): Project =
   { ...revised(Created, by, Paused, Community, p), creator: by, steward: creation.facts.owner,
     starts: List({ repositoryId: primary(p), month: p.month }), fieldsComplete: true, branch: creation.facts.branch,
-    license: creation.license, consent: C::newProjectConsent(creation.fundingChoice, creation.closureChecked),
-    assetReading: creation.assetReading }
+    license: creation.license, consent: C::newProjectConsent(creation.fundingChoice, creation.closureChecked) }
 pure def canCreate(p: Project, by: int, creation: Creation): bool =
   (p.application == NoApplication or p.application == ApplicationCancelled) and creationValid(p, by, creation) and
   creation.referrer >= 0 and creation.referrer != by
@@ -142,9 +141,8 @@ pure def publishApplication(p: Project, by: int, creation: Creation): Project =
 pure val facts1: RepositoryFacts = { repository: 1, owner: 1, public: true, archived: false, fork: false, branch: 1 }
 pure val license1: License = { terms: SpdxLicense, url: 1, commit: 1, digest: 1 }
 pure val creation1: Creation = { authority: owner1, facts: facts1, fieldsComplete: true, license: license1,
-  fundingChoice: C::OrdinarySetup, closureChecked: false, referrer: 0, assetReading: reading1 }
+  fundingChoice: C::OrdinarySetup, closureChecked: false, referrer: 0 }
 pure val creationValues = Set(creation1, { ...creation1, closureChecked: true },
-  { ...creation1, assetReading: { ...reading1, result: ChainReadUnreachable } }, { ...creation1, assetReading: reading2 },
   { ...creation1, license: { ...license1, terms: MixedTerms } }, { ...creation1, fundingChoice: C::BountyOnly, closureChecked: true },
   { ...creation1, authority: { ...owner1, permission: PermissionUnavailable } }, { ...creation1, fieldsComplete: false },
   { ...creation1, license: { ...license1, digest: 0 } }, { ...creation1, facts: { ...facts1, public: false } })
@@ -227,22 +225,26 @@ project when its admission clearance is not retained (`scanRequired` in
 or delisted project accepts owner revisions and stays paused and retired, as
 the project API does.
 Financial policy applies from the next UTC calendar month; earlier months keep
-their terms. A funded project keeps its reward asset.
+their terms. An unfunded project may change its network and asset; a funded
+one keeps them. A change to the payout exclusions is financial; the
+[composition](./projectComposition.md) checks that it is only prospective.
 
 ```quint
 type Clearance = ClearanceRetained | ClearanceMissing
 type OwnerChange = { authority: AuthorityRead, expectedRevision: int, presentation: bool, executable: bool,
-  financial: bool, restrictedField: bool, fieldsComplete: bool, asset: int, clearance: Clearance, assetReading: AssetReading }
+  financial: bool, restrictedField: bool, fieldsComplete: bool, network: int, asset: int, exclusionsChanged: bool,
+  clearance: Clearance }
 pure def changeValid(p: Project, by: int, change: OwnerChange): bool =
   p.revision > 0 and p.retirement != RestrictionRetired and change.expectedRevision == p.revision and
   currentAuthority(p, by, change.authority) and not(change.restrictedField) and
   (change.fieldsComplete or p.status == Paused) and
-  (change.presentation or change.executable or change.financial) and change.asset > 0 and
-  (change.asset != p.asset implies change.financial and not(p.funded) and assetVerified(change.asset, change.assetReading))
+  (change.presentation or change.executable or change.financial) and change.network > 0 and change.asset > 0 and
+  ((change.network != p.network or change.asset != p.asset) implies change.financial and not(p.funded)) and
+  (change.exclusionsChanged implies change.financial)
 pure def changed(by: int, change: OwnerChange, p: Project): Project =
   val pauses = change.executable and change.clearance == ClearanceMissing
-  { ...revised(OwnerUpdate, by, if (pauses) Paused else p.status, p.tier, p), fieldsComplete: change.fieldsComplete, asset: change.asset,
-    assetReading: if (change.asset != p.asset) change.assetReading else p.assetReading,
+  { ...revised(OwnerUpdate, by, if (pauses) Paused else p.status, p.tier, p), fieldsComplete: change.fieldsComplete,
+    network: change.network, asset: change.asset,
     economic: if (change.financial) p.economic.append({ fromMonth: p.month + 1, revision: p.revision + 1 }) else p.economic }
 pure def canPublishOwnerRevision(p: Project, by: int, change: OwnerChange): bool = changeValid(p, by, change)
 pure def publishOwnerRevision(p: Project, by: int, change: OwnerChange): Project = changed(by, change, p)
@@ -251,11 +253,11 @@ pure def canPublishUpdate(p: Project, by: int, change: OwnerChange): bool =
 pure def publishUpdate(p: Project, by: int, change: OwnerChange): Project = { ...changed(by, change, p), update: UpdatePublished }
 pure def updatePublishable(p: Project): bool = p.update == UpdatePending and p.revision == p.updateBase
 pure val change1: OwnerChange = { authority: owner1, expectedRevision: 2, presentation: true, executable: false, financial: false,
-  restrictedField: false, fieldsComplete: true, asset: 1, clearance: ClearanceRetained, assetReading: noAssetReading }
+  restrictedField: false, fieldsComplete: true, network: 1, asset: 1, exclusionsChanged: false, clearance: ClearanceRetained }
 pure val changeValues = Set(change1, { ...change1, expectedRevision: 1 }, { ...change1, expectedRevision: 3 },
-  { ...change1, presentation: false, financial: true }, { ...change1, presentation: false, financial: true, asset: 2, assetReading: reading2 },
-  { ...change1, presentation: false, financial: true, asset: 2 },
-  { ...change1, presentation: false, financial: true, asset: 2, assetReading: { ...reading2, result: ChainReadRefused } },
+  { ...change1, presentation: false, financial: true }, { ...change1, presentation: false, financial: true, asset: 2 },
+  { ...change1, presentation: false, financial: true, network: 2 },
+  { ...change1, presentation: false, financial: true, exclusionsChanged: true }, { ...change1, exclusionsChanged: true },
   { ...change1, executable: true, clearance: ClearanceMissing }, { ...change1, fieldsComplete: false },
   { ...change1, restrictedField: true }, { ...change1, presentation: false },
   { ...change1, authority: { ...owner1, actor: 2 } }, { ...change1, authority: { ...owner1, actor: 2 }, expectedRevision: 1 })
@@ -264,55 +266,8 @@ pure def alwaysEconomicTermsPrecedeNothing(p: Project): bool =
 pure def alwaysClockStarted(p: Project): bool = p.month >= 202611
 pure def stepEconomicTermsRetained(before: Project, after: Project): bool =
   after.economic.length() >= before.economic.length() and before.economic.every(t => after.economic.includes(t))
-pure def stepFundedAssetFixed(before: Project, after: Project): bool = before.funded implies after.asset == before.asset
-```
-
-### The reward asset's decimals come from one chain read when it is submitted or changed, never from the request, and an unchanged asset keeps its stored reading
-
-The project API reads the reward asset once, at creation, at an owner
-revision that changes the asset and at an administrator manifest replacement
-that changes it (`verifiedRewardAsset` over `token-metadata.ts`); the result
-is stored in the manifest and page views never read chain. A pending
-application's publication reads no chain and carries the reward asset stored
-with the application: the shell fills `creation.assetReading` from that
-stored asset (its stored decimals, result `ChainReadDone`), after
-`canonicalManifest` has accepted the stored manifest, so publication refuses
-nothing the project API does not already refuse. Decimals in the request are
-never used, and no default (such as six) stands in for a reading. A native
-coin or the network's listed stablecoin takes the network definition's fixed
-decimals, and a manifest without a reward asset pays the listed stablecoin;
-any other token is read from that network's RPC
-(`REWARD_RPC_BASE`, `REWARD_RPC_ETHEREUM`, `REWARD_RPC_ROBINHOOD`,
-`REWARD_RPC_SOLANA`, each defaulting to the public mainnet endpoint) within
-10 seconds and a 64 KiB answer. On an EVM network the RPC's chain ID must
-match, the address must hold code, and `decimals()` must answer at most 255;
-the manifest then accepts at most 36 decimals (`MAX_REWARD_ASSET_DECIMALS`
-in `reward-asset.mjs`, 422 `invalid_manifest`); the symbol is read too, and an unreadable symbol keeps the maintainer's
-display symbol. On Solana the genesis hash must match and the account must
-be a classic SPL mint or the approved Token-2022 subset; Solana gives no
-symbol. A token the chain refuses is refused (`reward_asset_unverified`,
-422); an unreachable or rate-limited RPC is a retry (503), never a default.
-A monthly pool's paid chain and currency follow the verified asset. A
-revision that resubmits the stored asset keeps the stored reading without a
-new read. The administrator exception revisions modelled here change no
-asset; the administrator manifest replacement is not modelled in this file.
-
-```quint
-type ChainRead = ChainReadDone | ChainReadRefused | ChainReadUnreachable
-type AssetReading = { asset: int, decimals: int, result: ChainRead }
-pure val noAssetReading: AssetReading = { asset: 0, decimals: 0, result: ChainReadUnreachable }
-pure val reading1: AssetReading = { asset: 1, decimals: 6, result: ChainReadDone }
-pure val reading2: AssetReading = { asset: 2, decimals: 18, result: ChainReadDone }
-pure def assetVerified(asset: int, reading: AssetReading): bool =
-  asset > 0 and reading.asset == asset and reading.result == ChainReadDone and reading.decimals >= 0 and reading.decimals <= 36
-pure def alwaysAssetReadingCurrent(p: Project): bool = p.revision > 0 implies assetVerified(p.asset, p.assetReading)
-pure def stepUnchangedAssetKeepsReading(before: Project, after: Project): bool =
-  (before.revision > 0 and after.asset == before.asset) implies after.assetReading == before.assetReading
-pure def lawUnreadAssetIsRefused(asset: int, assetReading: AssetReading): bool =
-  assetReading.result != ChainReadDone implies not(assetVerified(asset, assetReading))
-pure def sometimesAssetChangedAndRead(p: Project): bool = p.revision > 0 and p.asset != initial.asset
-pure val assetReadingValues = Set(noAssetReading, reading1, reading2, { ...reading1, result: ChainReadRefused },
-  { ...reading2, decimals: 37 }, { ...reading2, decimals: 256 })
+pure def stepFundedAssetFixed(before: Project, after: Project): bool =
+  before.funded implies after.network == before.network and after.asset == before.asset
 ```
 
 ### Appending a repository pauses the project and its work counts from next month
@@ -406,32 +361,42 @@ pure def stepRemovalAlwaysRetires(before: Project, via: str, after: Project): bo
 
 ### Administrators hold, delist, change the steward or place a project
 
+Every administrator exception (`PUT /api/v1/admin/projects/:id/manifest`)
+appends one revision against the expected revision and needs a reason; a
+changed base refuses it.
 A plain paused hold is reactivated by the owner's next passing setup check
-(D11); a delisting appends a paused, retired revision that setup never
-reactivates. Steward changes use the administrator exception path. Featured
-placement is an administrator decision and never depends on funding. The
-manifest's `participation` state (`archived` with a successor project, or
-`permission-required`) is administrator-only and keeps the project paused.
+(D11), so holding a project needs a quarantine; a delisting appends a paused,
+retired revision that setup never reactivates. Steward changes and the other
+owner-restricted fields use this path. Featured placement is an administrator
+decision and never depends on funding. The manifest's `participation` state
+(`archived` with a successor project, or `permission-required`) is
+administrator-only and keeps the project paused.
 
 ```quint
 type AdminKind = Hold | Delist | ChangeSteward | ArchiveParticipation | RequirePermission | OpenParticipationAgain
-pure def canAdminRevise(p: Project, by: int, kind: AdminKind, steward: int): bool =
+type Exception = { kind: AdminKind, steward: int, expectedRevision: int, reason: int }
+pure def canAdminRevise(p: Project, by: int, exception: Exception): bool =
+  val kind = exception.kind
   p.administrators.includes(by) and p.revision > 0 and p.retirement == NotRetired and
-  (if (kind == ChangeSteward) steward > 0 and steward != p.steward else steward == 0) and
+  exception.expectedRevision == p.revision and exception.reason > 0 and
+  (if (kind == ChangeSteward) exception.steward > 0 and exception.steward != p.steward else exception.steward == 0) and
   (kind == ArchiveParticipation implies p.participation != Archived) and
   (kind == RequirePermission implies p.participation != PermissionRequired) and
   (kind == OpenParticipationAgain implies p.participation != OpenParticipation)
-pure def adminRevise(p: Project, by: int, kind: AdminKind, steward: int): Project =
+pure def adminRevise(p: Project, by: int, exception: Exception): Project =
+  val kind = exception.kind
   if (kind == Hold) revised(AdminHold, by, Paused, p.tier, p)
   else if (kind == Delist) { ...revised(AdminDelist, by, Paused, Retired, p), retirement: AdminDelisted }
   else if (kind == ArchiveParticipation) { ...revised(AdminException, by, Paused, p.tier, p), participation: Archived }
   else if (kind == RequirePermission) { ...revised(AdminException, by, Paused, p.tier, p), participation: PermissionRequired }
   else if (kind == OpenParticipationAgain) { ...revised(AdminException, by, p.status, p.tier, p), participation: OpenParticipation }
-  else { ...revised(AdminException, by, p.status, p.tier, p), steward: steward }
+  else { ...revised(AdminException, by, p.status, p.tier, p), steward: exception.steward }
 pure def canPlace(p: Project, by: int, tier: Tier): bool =
   p.administrators.includes(by) and p.revision > 0 and p.retirement == NotRetired and tier != Retired and tier != p.tier
 pure def place(p: Project, by: int, tier: Tier): Project = revised(Placement, by, p.status, tier, p)
-pure val stewardValues = Set(0, 4)
+pure val exceptionValues = tuples(Set(Hold, Delist, ChangeSteward, ArchiveParticipation, OpenParticipationAgain), Set(0, 4), Set(1, 2, 3))
+  .map(x => { kind: x._1, steward: x._2, expectedRevision: x._3, reason: 1 })
+  .union(Set({ kind: ChangeSteward, steward: 4, expectedRevision: 2, reason: 0 }))
 pure def alwaysRestrictedParticipationPaused(p: Project): bool = p.participation != OpenParticipation implies p.status == Paused
 pure def alwaysRetirementConsistent(p: Project): bool =
   (p.retirement != NotRetired iff p.tier == Retired) and (p.retirement != NotRetired implies p.status == Paused)
@@ -481,7 +446,7 @@ pure def stepEveryManifestChangeAppendsRevision(before: Project, after: Project)
   (before.status != after.status or before.tier != after.tier or before.retirement != after.retirement or
     before.repositories != after.repositories or before.consent != after.consent or before.steward != after.steward or
     before.fieldsComplete != after.fieldsComplete or before.economic != after.economic or before.asset != after.asset or
-    before.participation != after.participation)
+    before.network != after.network or before.participation != after.participation)
     implies after.revision == before.revision + 1
 pure def stepClockMonotone(before: Project, after: Project): bool = after.month >= before.month
 ```
@@ -509,6 +474,7 @@ pure def sometimesAppendedRepositoryDeferred(p: Project): bool =
 pure def sometimesNextMonthTerms(p: Project): bool = p.economic.length() > 0
 pure def sometimesLaterSteward(p: Project): bool = p.steward != p.creator and p.revision > 0
 pure def sometimesClosureEnabled(p: Project): bool = p.consent == C::Enabled
+pure def sometimesAdminHoldWithReason(p: Project): bool = p.history.some(r => r.kind == AdminHold) and p.status == Paused
 pure val byValues = Set(-1, 0, 1, 2, 5)
 pure val pValues = Set(initial, { ...initial, application: ApplicationDecidedLegacy },
   { ...initial, revision: 1, creator: 1, steward: 1, branch: 1, license: license1, tier: Retired, retirement: RestrictionRetired,

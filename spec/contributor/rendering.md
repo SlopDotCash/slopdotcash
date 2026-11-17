@@ -1,85 +1,27 @@
-# Generated project skill rendering
+# Skill template substitution and refusals
 
 PRD section 4 "Skill source and installation" and SKL-03, and CLAUDE.md
-"Project skills are generated, never stored per project". A project's
-contributor and reviewer skills are rendered from the canonical template of
-the role (`skills/project-contributor-template` or
-`skills/project-reviewer-template`), the manifest of the project's approved
-registry revision, and that revision's number and SHA-256 digest. Nothing
-else is an input: not the provenance commit, the request, the clock or the
-site build. The server renderer (`renderProjectSkill` in the frozen
-`src/lib/project-skill.mjs`) and the installer's Python authority
-(`render_project_skill` in the frozen
+"Project skills are generated, never stored per project". The
+[skill rendering](./skillRendering.md) model states what a project skill is
+rendered from (the canonical template of the role at its commit and the
+approved D1 revision) and leaves placeholder substitution, encoding, archive
+layout and file order to the shell. This library states the checks that
+shell applies before it renders: which templates and manifests may be
+rendered, and how the four published placeholders of `SKILL.md` are
+substituted. The canonical templates are `skills/project-contributor-template`
+and `skills/project-reviewer-template`. The server renderer
+(`renderProjectSkill` in the frozen `src/lib/project-skill.mjs`) and the
+installer's Python authority (`render_project_skill` in the frozen
 `skills/project-contributor-template/scripts/skill-authority.mjs`) are two
-implementations of this one function. [Skill authority](./skillAuthority.md)
-admits a generated skill only when this rendering equals the approved
-registry digest, and [publication](./publication.md) serves it.
+implementations of the one rendering. [Skill authority](./skillAuthority.md)
+admits a generated skill only when it equals that rendering, and
+[publication](./publication.md) serves it.
 
-This library models the structure of a rendering: which files it has, which
-text `SKILL.md` receives and which fields `project.json` carries. The parse of
-`SKILL.md` into segments, the code-unit sort of paths and the exact bytes are
-those of the frozen server renderer, checked against the Python authority by
-the renderer parity journey.
+The parse of `SKILL.md` into segments, the code-unit sort of paths and the
+exact bytes are those of the frozen server renderer, checked against the
+Python authority by the renderer parity journey.
 
 ## Story: Render the same skill from the same approved inputs
-
-### The same template files, approved manifest, revision and digest render the same sorted bytes
-
-A rendering is the template's files, with `SKILL.md` replaced by its
-substituted text and `project.json` added, sorted by path in UTF-16 code-unit
-order (Python's code-point order agrees for every committed template path).
-Every other template file is copied byte for byte. `project.json` is
-`JSON.stringify(record, null, 2)` followed by one newline, with keys in this
-order: `schemaVersion` `"1"`, `projectId`, `repositoryId`, `skillName`,
-`skillSourcePath` (the role's template path), `publicOrigin`
-(`https://slop.cash/projects/<projectId>`), `policyAuthority`
-(`https://slop.cash`), `usageAdapters` (`codex` to `codex`, `claude-code` to
-`claude`, `grok-build` to `grok`), `registry` (`revision`, `manifestSha256`)
-and `contribution`, the eight maintainer fields in the order `approvedScope`,
-`contributionGuide`, `supportedTasks`, `requiredTests`,
-`reviewExpectations`, `securityContact`, `closurePolicy`,
-`maintainerNotes`. Because `render` takes no other parameter, equal inputs
-give equal renderings.
-
-```quint
-type Role = ContributorRole | ReviewerRole
-type SegmentKind = Literal | NamedToken | FencedBranchToken | StrayToken
-type Segment = { kind: SegmentKind, text: str }
-type PieceKind = Plain | BranchCodeSpan
-type Piece = { piece: PieceKind, value: str }
-type TemplateFile = { path: str, sha256: str }
-type SkillTemplate = { role: Role, sourcePath: str, files: List[TemplateFile], skillText: List[Segment] }
-type Manifest = { projectId: str, skillName: str, contributorSource: str, reviewerSource: str, repository: str, branch: str,
-  idValid: bool, skillNameMatches: bool, repositoryValid: bool, branchValid: bool, contributionValid: bool,
-  contribution: List[str] }
-type RegistryBinding = { revision: int, manifestSha256: str, digestValid: bool }
-type ProjectRecord = { projectId: str, repositoryId: str, skillName: str, skillSourcePath: str,
-  registryRevision: int, registryDigest: str, contribution: List[str] }
-type RenderOutcome = RenderedSkill | RefusedManifest | RefusedTemplate | RefusedPlaceholder
-type Rendering = { outcome: RenderOutcome, copied: List[TemplateFile], skill: List[Piece], projectJson: ProjectRecord }
-pure val contributorTemplatePath = "skills/project-contributor-template"
-pure val reviewerTemplatePath = "skills/project-reviewer-template"
-pure val contributionFieldCount = 8
-pure def templatePath(role: Role): str = if (role == ContributorRole) contributorTemplatePath else reviewerTemplatePath
-pure def declaredSource(m: Manifest, role: Role): str = if (role == ContributorRole) m.contributorSource else m.reviewerSource
-pure val noProjectRecord: ProjectRecord = { projectId: "", repositoryId: "", skillName: "", skillSourcePath: "",
-  registryRevision: 0, registryDigest: "", contribution: List() }
-pure def projectRecord(t: SkillTemplate, m: Manifest, binding: RegistryBinding): ProjectRecord =
-  { projectId: m.projectId, repositoryId: m.repository, skillName: m.skillName, skillSourcePath: templatePath(t.role),
-    registryRevision: binding.revision, registryDigest: binding.manifestSha256, contribution: m.contribution }
-pure def render(t: SkillTemplate, m: Manifest, binding: RegistryBinding): Rendering =
-  val renderResult = renderOutcome(t, m, binding)
-  if (renderResult == RenderedSkill)
-    { outcome: renderResult, copied: t.files.select(f => f.path != "SKILL.md"), skill: substituted(t, m),
-      projectJson: projectRecord(t, m, binding) }
-  else { outcome: renderResult, copied: List(), skill: List(), projectJson: noProjectRecord }
-pure def lawSameInputsSameRendering(t: SkillTemplate, other: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
-  t == other implies render(t, m, binding) == render(other, m, binding)
-pure def lawRenderingAddsOnlyProjectJson(t: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
-  render(t, m, binding).copied.every(f => t.files.includes(f) and f.path != "SKILL.md" and f.path != "project.json")
-  and t.files.every(f => f.path == "SKILL.md" or render(t, m, binding).outcome != RenderedSkill
-    or render(t, m, binding).copied.includes(f))
-```
 
 ### Substitution is one pass over the four published placeholders and any other SLOP placeholder refuses
 
@@ -100,6 +42,23 @@ template holds such text; the owner's decision is pending, see the renderer
 parity rule).
 
 ```quint
+type Role = ContributorRole | ReviewerRole
+type SegmentKind = Literal | NamedToken | FencedBranchToken | StrayToken
+type Segment = { kind: SegmentKind, text: str }
+type PieceKind = Plain | BranchCodeSpan
+type Piece = { piece: PieceKind, value: str }
+type TemplateFile = { path: str, sha256: str }
+type SkillTemplate = { role: Role, sourcePath: str, files: List[TemplateFile], skillText: List[Segment] }
+type Manifest = { projectId: str, skillName: str, contributorSource: str, reviewerSource: str, repository: str, branch: str,
+  idValid: bool, skillNameMatches: bool, repositoryValid: bool, branchValid: bool, contributionValid: bool,
+  contribution: List[str] }
+type RegistryBinding = { revision: int, manifestSha256: str, digestValid: bool }
+type RenderOutcome = RenderedSkill | RefusedManifest | RefusedTemplate | RefusedPlaceholder
+pure val contributorTemplatePath = "skills/project-contributor-template"
+pure val reviewerTemplatePath = "skills/project-reviewer-template"
+pure val contributionFieldCount = 8
+pure def templatePath(role: Role): str = if (role == ContributorRole) contributorTemplatePath else reviewerTemplatePath
+pure def declaredSource(m: Manifest, role: Role): str = if (role == ContributorRole) m.contributorSource else m.reviewerSource
 pure val placeholderNames = Set("SLOP_SKILL_NAME", "SLOP_PROJECT_ID", "SLOP_REPOSITORY", "SLOP_INTEGRATION_BRANCH")
 pure def knownSegment(s: Segment): bool =
   s.kind == Literal or s.kind == FencedBranchToken or (s.kind == NamedToken and placeholderNames.contains(s.text))
@@ -113,7 +72,7 @@ pure def substitute(s: Segment, m: Manifest): Piece =
 pure def substituted(t: SkillTemplate, m: Manifest): List[Piece] = t.skillText.listMap(s => substitute(s, m))
 pure def placeholdersKnown(t: SkillTemplate): bool = t.skillText.every(s => knownSegment(s))
 pure def lawUnknownPlaceholderRefuses(t: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
-  not(placeholdersKnown(t)) implies render(t, m, binding).outcome != RenderedSkill
+  not(placeholdersKnown(t)) implies renderOutcome(t, m, binding) != RenderedSkill
 pure def lawSubstitutedValueIsNotRescanned(m: Manifest): bool =
   substitute({ kind: NamedToken, text: "SLOP_INTEGRATION_BRANCH" }, m) == { piece: Plain, value: m.branch }
   and substitute({ kind: FencedBranchToken, text: "SLOP_INTEGRATION_BRANCH" }, m) == { piece: BranchCodeSpan, value: m.branch }
@@ -150,29 +109,11 @@ pure def renderOutcome(t: SkillTemplate, m: Manifest, binding: RegistryBinding):
   else if (not(placeholdersKnown(t))) RefusedPlaceholder
   else RenderedSkill
 pure def lawTemplateProjectJsonRefuses(t: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
-  t.files.some(f => f.path == "project.json") implies render(t, m, binding).outcome != RenderedSkill
+  t.files.some(f => f.path == "project.json") implies renderOutcome(t, m, binding) != RenderedSkill
 pure def lawRenderedNeedsCheckedFields(t: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
-  render(t, m, binding).outcome == RenderedSkill implies
+  renderOutcome(t, m, binding) == RenderedSkill implies
     m.idValid and m.skillNameMatches and m.repositoryValid and m.branchValid and m.contributionValid
     and binding.revision >= 1 and binding.digestValid and templateRenders(t)
-```
-
-### Maintainer fields appear only in project.json and never change template text
-
-The eight contribution fields are maintainer-authored data. They are copied
-into `project.json` and nowhere else: they cannot add, remove or reword any
-template rule, and `SKILL.md` and every copied file are the same whatever
-they say.
-
-```quint
-pure def lawContributionOnlyInProjectJson(t: SkillTemplate, m: Manifest, binding: RegistryBinding, contributionFields: List[str]): bool =
-  val changed = { ...m, contribution: contributionFields }
-  (contributionFields.length() == contributionFieldCount and m.contribution.length() == contributionFieldCount) implies
-    (render(t, changed, binding).outcome == render(t, m, binding).outcome
-     and render(t, changed, binding).skill == render(t, m, binding).skill
-     and render(t, changed, binding).copied == render(t, m, binding).copied)
-pure def lawContributionReachesProjectJson(t: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
-  render(t, m, binding).outcome == RenderedSkill implies render(t, m, binding).projectJson.contribution == m.contribution
 ```
 
 ### The server renderer and the installer's Python renderer produce identical bytes for every committed template
@@ -216,7 +157,7 @@ pure def committedInputs(t: SkillTemplate, m: Manifest, binding: RegistryBinding
 pure def lawRenderersAgreeOnCommittedInputs(t: SkillTemplate, m: Manifest, binding: RegistryBinding): bool =
   committedInputs(t, m, binding) implies
     (serverRendererAccepts(t, m, binding) iff installerRendererAccepts(t, m))
-    and (installerRendererAccepts(t, m) iff render(t, m, binding).outcome == RenderedSkill)
+    and (installerRendererAccepts(t, m) iff renderOutcome(t, m, binding) == RenderedSkill)
 ```
 
 ### Simulation samples cover clean, stray, misnamed and project.json templates
@@ -233,7 +174,6 @@ pure val tValues = Set(cleanTemplate, { ...cleanTemplate, role: ReviewerRole, so
   { ...cleanTemplate, files: List(scriptFile) },
   { ...cleanTemplate, skillText: cleanText.append({ kind: NamedToken, text: "SLOP_OTHER" }) },
   { ...cleanTemplate, skillText: cleanText.append({ kind: StrayToken, text: "{{SLOP_x}}" }) })
-pure val otherValues = tValues
 pure val goodManifest: Manifest = { projectId: "p", skillName: "contribute-to-p", contributorSource: contributorTemplatePath,
   reviewerSource: reviewerTemplatePath, repository: "o/r", branch: "x{{SLOP_PROJECT_ID}}", idValid: true,
   skillNameMatches: true, repositoryValid: true, branchValid: true, contributionValid: true,
@@ -242,5 +182,4 @@ pure val mValues = Set(goodManifest, { ...goodManifest, skillNameMatches: false 
   { ...goodManifest, contributorSource: "skills/contribute-to-p" }, { ...goodManifest, contribution: List("a") })
 pure val bindingValues = Set({ revision: 1, manifestSha256: "m1", digestValid: true },
   { revision: 0, manifestSha256: "m1", digestValid: true }, { revision: 2, manifestSha256: "M", digestValid: false })
-pure val contributionFieldsValues = Set(List("a", "b", "c", "d", "e", "f", "g", "h"), List("h", "g", "f", "e", "d", "c", "b", "a"), List())
 ```

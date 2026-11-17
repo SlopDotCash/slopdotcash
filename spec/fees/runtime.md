@@ -129,11 +129,9 @@ Same-nonce EVM fee replacement has its own owner activation, independent of
 source approval.
 
 ```quint
-pure def canVerifyReadiness(r: Runtime, network: Network, listedWallet: int, by: Sender): bool =
+pure def canVerifyReadiness(r: Runtime, network: Network, by: Sender): bool =
   by == Owner and r.published and listed(r.networks, network) and not(readyFor(r.ready, network))
-    and readinessEntryApplies(r, network, listedWallet)
-pure def verifyReadiness(r: Runtime, network: Network, listedWallet: int, by: Sender): Runtime =
-  { ...r, ready: setReady(r.ready, network, true) }
+pure def verifyReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: setReady(r.ready, network, true) }
 pure def canWithdrawReadiness(r: Runtime, network: Network, by: Sender): bool = by == Owner and readyFor(r.ready, network)
 pure def withdrawReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: setReady(r.ready, network, false) }
 pure def canSetReplacement(r: Runtime, active: bool, by: Sender): bool = by == Owner and active != r.replacementActive
@@ -166,11 +164,13 @@ readiness and the replacement activation are reviewed Worker configuration:
 the variable `FEE_READY` lists `network:walletAddress` pairs and
 `FEE_REPLACEMENT_ACTIVE` switches replacement, and either changes only
 through a reviewed pull request and a release. Each listed pair is applied
-as an `Owner` readiness verification carrying the pair's address, which the
-shell sends only after authenticating the owner's approval of the reviewed
-change; the release job's own authority never stands in for it. The
-verification is admitted only when that address equals the published fee
-wallet of that network; a pair naming any other address grants nothing.
+as an `Owner` readiness verification of its network, which the shell sends
+only after authenticating the owner's approval of the reviewed change; the
+release job's own authority never stands in for it. The shell sends it only
+when the pair's address equals the published fee wallet of that network
+(`readinessEntryApplies`); a pair naming any other address grants nothing.
+The verification event itself does not carry the address, so this check is
+the shell's.
 The alternative under review is an owner record kept by the owner console;
 the alternative of letting the release itself grant readiness would replace
 the rule that a publication never grants it and is not modelled. Either way
@@ -211,5 +211,4 @@ pure val configValues = Set(liveAll, { ...liveAll, source: 2, buybackMode: Off }
 pure val environmentValues = Set(Production, Staging)
 pure val networkValues = Set(Base, Robinhood, Solana, Ethereum)
 pure val byValues = Set(ReleaseWorkflow, Owner, Other)
-pure val listedWalletValues = Set(1, 2, 3)
 ```

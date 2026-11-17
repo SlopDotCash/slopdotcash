@@ -51,12 +51,10 @@ pure def canObserveSettings(s: MonthlySettlement, automatic: bool, settingsSeque
   MO::canObserveSettings(s.month, automatic, settingsSequence)
 pure def observeSettings(s: MonthlySettlement, automatic: bool, settingsSequence: int): MonthlySettlement =
   { ...s, month: MO::observeSettings(s.month, automatic, settingsSequence) }
-pure def canAdjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact,
-  reason: str, reasonLength: int): bool =
-  MO::canAdjust(s.month, actor, amount, expectedSequence, fact, reason, reasonLength)
-pure def adjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact,
-  reason: str, reasonLength: int): MonthlySettlement =
-  { ...s, month: MO::adjust(s.month, actor, amount, expectedSequence, fact, reason, reasonLength) }
+pure def canAdjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact): bool =
+  MO::canAdjust(s.month, actor, amount, expectedSequence, fact)
+pure def adjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact): MonthlySettlement =
+  { ...s, month: MO::adjust(s.month, actor, amount, expectedSequence, fact) }
 pure def canFinalize(s: MonthlySettlement, expectedSequence: int, fact: MO::AuthorityFact): bool =
   MO::canFinalize(s.month, expectedSequence, fact)
 pure def finalize(s: MonthlySettlement, expectedSequence: int, fact: MO::AuthorityFact): MonthlySettlement =

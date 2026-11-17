@@ -6,7 +6,9 @@ PRD sections 6 and 7 require exact integer shares and permanent actor-ID tie bre
 
 ### A positive pool requires unique actors and positive accepted-work weight
 
-An empty recipient list is valid only for a zero pool. It produces no obligations.
+Every listed recipient has positive accepted-work weight; a zero-weight entry
+makes the list invalid, so it can never carry a zero share. An empty recipient
+list is valid only for a zero pool. It produces no obligations.
 
 ```quint
 import money as M from "./money"
@@ -17,7 +19,7 @@ pure def totalWeight(weights: List[Weight]): M::Amount =
   if (weights.length() == 1) weights[0].weight
   else weights.foldl(M::zero, (total, recipient) => M::addAmounts(total, recipient.weight))
 pure def validWeights(weights: List[Weight]): bool = weights.length() > 0
-  and weights.every(recipient => recipient.actor > 0 and M::validAmount(recipient.weight)
+  and weights.every(recipient => recipient.actor > 0 and M::validAmount(recipient.weight) and M::positiveAmount(recipient.weight)
     and weights.select(other => other.actor == recipient.actor).length() == 1)
   and M::positiveAmount(totalWeight(weights))
 pure def canAllocate(total: M::Amount, weights: List[Weight]): bool = M::validAmount(total) and
@@ -27,10 +29,6 @@ pure def canAllocate(total: M::Amount, weights: List[Weight]): bool = M::validAm
 ### Each floor and remainder comes from full-width multiplication and division
 
 ```quint
-pure def portion(total: M::Amount, recipient: Weight, weights: List[Weight]): M::Division =
-  M::divideAmounts(M::multiplyAmounts(total, recipient.weight), totalWeight(weights))
-pure def floorTotal(total: M::Amount, weights: List[Weight]): M::Amount =
-  weights.foldl(M::zero, (sum, recipient) => M::addAmounts(sum, portion(total, recipient, weights).quotient))
 pure def weightedPortion(total: M::Amount, weightedRecipient: Weight, denominator: M::Amount): Portion =
   val divided = M::divideAmounts(M::multiplyAmounts(total, weightedRecipient.weight), denominator)
   { actor: weightedRecipient.actor, floor: divided.quotient, remainder: divided.remainder }
@@ -64,20 +62,45 @@ pure def canCommitAllocation(total: M::Amount, weights: List[Weight]): bool = ca
 pure val totalValues = Set(List(0), List(1), List(10), List(0, 1))
 pure val weightsValues = Set(List(), List({ actor: 1, weight: List(1) }),
   List({ actor: 1, weight: List(1) }, { actor: 2, weight: List(3) }),
-  List({ actor: 2, weight: List(5, 1) }, { actor: 1, weight: List(5, 1) }, { actor: 3, weight: List(0) }))
+  List({ actor: 2, weight: List(5, 1) }, { actor: 1, weight: List(5, 1) }, { actor: 3, weight: List(1) }),
+  List({ actor: 1, weight: List(1) }, { actor: 3, weight: List(0) }))
 pure def lawAllocatedSharesValid(total: M::Amount, weights: List[Weight]): bool =
   canAllocate(total, weights) implies allocateAmounts(total, weights).every(s => M::validAmount(s.amount))
 pure def lawAllocationConserves(total: M::Amount, weights: List[Weight]): bool = canAllocate(total, weights) implies
   M::equalAmounts(allocatedTotal(allocateAmounts(total, weights)), total)
 pure def lawSingleRecipient(total: M::Amount, actor: int): bool = (M::validAmount(total) and actor > 0) implies
   M::equalAmounts(allocateAmounts(total, List({ actor: actor, weight: List(1) })).nthOr(0, { actor: actor, amount: M::zero }).amount, total)
+pure val actorValues = Set(0, 1, 2)
 ```
 
-### Simulation samples exercise missing, matching and conflicting evidence
+### Each share is its quota rounded down, or one unit more
 
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+The quota of a recipient is the whole-unit quotient of the pool times its
+weight over the total weight; a sole recipient's quota is the whole pool.
+Every share is a listed recipient's, and equals that quota or one more base
+unit.
 
 ```quint
-pure val actorValues = Set(0, 1, 2)
+pure def quota(total: M::Amount, recipient: Weight, weights: List[Weight]): M::Amount =
+  if (weights.length() == 1) total
+  else M::divideAmounts(M::multiplyAmounts(total, recipient.weight), totalWeight(weights)).quotient
+pure def withinOneUnit(amount: M::Amount, base: M::Amount): bool =
+  M::equalAmounts(amount, base) or M::equalAmounts(amount, M::addAmounts(base, List(1)))
+pure def lawShareWithinOneOfQuota(total: M::Amount, weights: List[Weight]): bool = canAllocate(total, weights) implies
+  allocateAmounts(total, weights).every(s => weights.some(w => w.actor == s.actor and withinOneUnit(s.amount, quota(total, w, weights))))
+```
+
+### Equal weights favour the lower actor ID
+
+Two recipients with the same weight have the same quota and remainder, so a
+leftover unit reaches the higher actor ID only after the lower one.
+
+```quint
+pure def lawTieFavorsLowerActor(total: M::Amount, weights: List[Weight], lower: Weight, higher: Weight): bool =
+  (canAllocate(total, weights) and weights.includes(lower) and weights.includes(higher)
+    and lower.weight == higher.weight and lower.actor < higher.actor) implies
+    allocateAmounts(total, weights).every(a => allocateAmounts(total, weights).every(b =>
+      (a.actor == lower.actor and b.actor == higher.actor) implies M::compareAmounts(a.amount, b.amount) >= 0))
+pure val lowerValues = Set({ actor: 1, weight: List(5, 1) }, { actor: 1, weight: List(1) })
+pure val higherValues = Set({ actor: 2, weight: List(5, 1) }, { actor: 3, weight: List(1) })
 ```

@@ -23,6 +23,31 @@ referral reactivation conditions, custom referral links, public referred
 projects, provisional EVM vault funding and manual release coverage options.
 Earlier snapshots remain in the original project history.
 
+## Vibestack tooling
+
+`vibestack/`, `SPEC.md`, the agent skills and the root engineering
+configuration are vendored from the published `lalalune/vibestack` `develop`
+commit `24160dee4adc6e6e074ab0039b01a101b059e857`. Only commits published there
+are vendored. The readiness audit compared Slop `development` at
+`87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
+`8d62e02c652df461631512e39cb00a2079bcadcc19d75f51799fc047e69cbfd5`. The
+retained PRD snapshot and source manifest keep their recorded pin until the
+requirements catalog is repinned.
+
+These local patches differ from that commit:
+
+| Patch | Files | Reason |
+| --- | --- | --- |
+| Guide and license | `vibestack/README.md`, `vibestack/LICENSE` | The upstream README with links rebased to `../`; the root README describes Slop |
+| `info` color, exported contrast and focus-ring boundary | `vibestack/design/tokens.ts`, `vibestack/design/test/`, root `package.json` export `./design/tokens` | Slop's tokens define `info`, which upstream rejects as an unknown token path; `ring` is held to 3:1 beside `input`; `@repo/ui` tests its colors with the token contrast function |
+| Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`; directories without a `package.json`, such as `packages/contracts`, are no workspace package; Foundry is installed beside Node |
+| Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
+| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
+
+`AGENTS.md` adds only the Slop specification migration section, which names
+`lucide-react` as the single icon library and keeps pull-request narratives
+true to their diff. `.github/workflows/release.yml` is not vendored.
+
 ## Ownership
 
 | Area | Specification | Eventual shell boundary |
@@ -102,7 +127,14 @@ Use Node 26, the pinned pnpm workspace and Dafny 4.11. Run `pnpm install` and
 `pnpm check`. The check parses and typechecks Quint, explores invariant and
 reachability traces, replays the generated core, proves obligations, checks
 types and runs existing journeys. The review stage retains new rules for
-human sign-off. A full toolchain run uses `pnpm verify`.
+human sign-off. A full toolchain run uses `pnpm verify`, which includes
+`pnpm formal:check`. That check fails when a spec has no catalog entry or
+requirement owner, a recorded path or digest is stale, a requirement owner
+names no story or rule heading of its spec's catalog entry, or a legacy model
+has neither a candidate successor naming one of its actions nor a recorded
+`noSuccessor` reason. Each requirement owner is
+`{ "spec": <path>, "rules": [<heading>] }`. The actions `init` and `step`,
+which every module has, do not identify a successor.
 
 The source PRD's former `bun run formal:check` and `bun run formal:verify`
 commands describe the old application's toolchain. This branch uses the

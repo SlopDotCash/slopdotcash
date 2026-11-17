@@ -6,9 +6,9 @@ name: ci
 # installs and checks each standalone example.
 on:
   pull_request:
-    branches: [vibestack]
+    branches: [vibestack, development, main]
   push:
-    branches: [vibestack]
+    branches: [vibestack, development, main]
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event.pull_request.number || github.sha }}

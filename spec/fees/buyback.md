@@ -14,7 +14,7 @@ network's fee journal (`fee_conversions`), sharing its lease, nonce floor,
 native reservation, rebroadcast of unknown sends and one open send per
 token; this machine does not model that sharing, and binding each send here
 to a row of the [conversion journal](./conversion.md) is a composition
-obligation that [the composition](./composition.md) states.
+obligation that [the buyback binding](./buybackBinding.md) states.
 
 One instance follows one source network: Base, Ethereum or Solana. It
 bridges that network's buyback share to the Robinhood Chain fee wallet and
@@ -22,7 +22,7 @@ retains the outcome of every order. The single Robinhood Chain
 [purchase pool](./buybackPool.md) credits each proven arrival once and owns
 every purchase and burn under one set of caps. Evidence records name their
 verified source: income keys come from the owning journals (a composition
-obligation), `SendReceipt`, `ArrivalEvidence`, `RefundEvidence` and
+obligation), `BridgeReceipt`, `ArrivalEvidence`, `RefundEvidence` and
 `CancellationEvidence` from the chain observation adapter at a finalized
 block, and `BridgeQuote` from the pinned deBridge reader after every byte of
 the signed transaction was checked.
@@ -51,10 +51,10 @@ type OrderResult = OrderArrived | OrderRefunded | CreationFailed
 type OrderOutcome = { order: int, amount: int, takeAmount: int, result: OrderResult, height: int }
 type DecisionState = Quoted | Pending | Skipped | NoRoute
 type BridgeReason = NoReason | DayCapReached | BelowMinimum | UnsafeValue | NoRouteFound | NativeFeeAbove | CostAbove
-type Decision = { state: DecisionState, reason: BridgeReason, amount: int, live: bool, at: int }
+type BridgeDecision = { state: DecisionState, reason: BridgeReason, amount: int, live: bool, at: int }
 type Buyback = { runtime: R::Runtime, source: R::Network, clock: int, income: M::Amount, sources: List[IncomeKey], incomeTimes: List[int],
   committed: M::Amount, orderPhase: OrderPhase, order: int, orderAmount: int, takeAmount: int, orderedAt: int,
-  orders: List[int], approval: Send, orderSend: Send, unfilledReported: bool, outcomes: List[OrderOutcome], decisions: List[Decision],
+  orders: List[int], approval: Send, orderSend: Send, unfilledReported: bool, outcomes: List[OrderOutcome], decisions: List[BridgeDecision],
   bridgeSpends: List[Spend], bridgeNative: List[Spend], txs: List[int], finalizedHeight: int }
 pure val buybackStart = 1794441600000
 pure val dayMs = 86400000
@@ -64,18 +64,18 @@ pure val initial: Buyback = { runtime: R::initial, source: R::Base, clock: buyba
   committed: M::zero, orderPhase: NoOrder, order: 0, orderAmount: 0, takeAmount: 0, orderedAt: 0, orders: List(),
   approval: noSend, orderSend: noSend, unfilledReported: false, outcomes: List(), decisions: List(), bridgeSpends: List(), bridgeNative: List(),
   txs: List(), finalizedHeight: 0 }
-pure def canSelectSource(b: Buyback, sourceNetwork: R::Network): bool = b.sources.length() == 0 and b.orders.length() == 0
+pure def canSelectSource(b: Buyback, sourceNetwork: R::Network, by: R::Sender): bool = by == R::Worker and b.sources.length() == 0 and b.orders.length() == 0
   and b.txs.length() == 0 and b.orderPhase == NoOrder and sourceNetwork != b.source and sourceNetwork != R::Robinhood
   and b.decisions.length() == 0
-pure def selectSource(b: Buyback, sourceNetwork: R::Network): Buyback = { ...b, source: sourceNetwork }
+pure def selectSource(b: Buyback, sourceNetwork: R::Network, by: R::Sender): Buyback = { ...b, source: sourceNetwork }
 pure def network(b: Buyback): R::Network = b.source
-pure def canAdvanceClock(b: Buyback, now: int): bool = now > b.clock
-pure def advanceClock(b: Buyback, now: int): Buyback = { ...b, clock: now }
+pure def canAdvanceClock(b: Buyback, now: int, by: R::Sender): bool = by == R::Worker and now > b.clock
+pure def advanceClock(b: Buyback, now: int, by: R::Sender): Buyback = { ...b, clock: now }
 pure def incomeAllowed(b: Buyback, key: IncomeKey): bool = key.kind != RobinhoodFee and key.network == b.source
-pure def canRecordIncome(b: Buyback, key: IncomeKey, incomeAmount: M::Amount, chainTime: int): bool =
-  key.id > 0 and incomeAllowed(b, key) and not(b.sources.includes(key)) and M::validAmount(incomeAmount)
+pure def canRecordIncome(b: Buyback, key: IncomeKey, incomeAmount: M::Amount, chainTime: int, by: R::Sender): bool =
+  by == R::Worker and key.id > 0 and incomeAllowed(b, key) and not(b.sources.includes(key)) and M::validAmount(incomeAmount)
     and M::positiveAmount(incomeAmount) and chainTime >= buybackStart and chainTime <= b.clock
-pure def recordIncome(b: Buyback, key: IncomeKey, incomeAmount: M::Amount, chainTime: int): Buyback =
+pure def recordIncome(b: Buyback, key: IncomeKey, incomeAmount: M::Amount, chainTime: int, by: R::Sender): Buyback =
   { ...b, income: M::addAmounts(b.income, incomeAmount), sources: b.sources.append(key), incomeTimes: b.incomeTimes.append(chainTime) }
 pure def alwaysSourcesOnce(b: Buyback): bool = b.sources.every(k => k.id > 0 and incomeAllowed(b, k))
   and b.incomeTimes.length() == b.sources.length() and b.incomeTimes.every(t => t >= buybackStart and t <= b.clock)
@@ -93,10 +93,8 @@ pure def canPublishWorker(b: Buyback, config: R::WorkerConfig, by: R::Sender): b
 pure def publishWorker(b: Buyback, config: R::WorkerConfig, by: R::Sender): Buyback = { ...b, runtime: R::publish(b.runtime, config, by) }
 pure def canSetReleaseVariable(b: Buyback, variable: bool, by: R::Sender): bool = R::canSetReleaseVariable(b.runtime, variable, by)
 pure def setReleaseVariable(b: Buyback, variable: bool, by: R::Sender): Buyback = { ...b, runtime: R::setReleaseVariable(b.runtime, variable, by) }
-pure def canVerifyReadiness(b: Buyback, readyNetwork: R::Network, listedWallet: int, by: R::Sender): bool =
-  R::canVerifyReadiness(b.runtime, readyNetwork, listedWallet, by)
-pure def verifyReadiness(b: Buyback, readyNetwork: R::Network, listedWallet: int, by: R::Sender): Buyback =
-  { ...b, runtime: R::verifyReadiness(b.runtime, readyNetwork, listedWallet, by) }
+pure def canVerifyReadiness(b: Buyback, readyNetwork: R::Network, by: R::Sender): bool = R::canVerifyReadiness(b.runtime, readyNetwork, by)
+pure def verifyReadiness(b: Buyback, readyNetwork: R::Network, by: R::Sender): Buyback = { ...b, runtime: R::verifyReadiness(b.runtime, readyNetwork, by) }
 pure def signs(b: Buyback): bool = R::buybackSigns(b.runtime, network(b))
 pure def alwaysRuntimeSound(b: Buyback): bool = R::alwaysPublishedPassedPreflight(b.runtime) and R::alwaysUnpublishedInert(b.runtime)
   and R::alwaysBuybackNeedsLiveConverter(b.runtime) and R::alwaysStagingBuybackOff(b.runtime)
@@ -114,28 +112,28 @@ recorded as quoted and signs nothing. A repeated decision with the same
 state, reason, amount and mode adds no record.
 
 ```quint
-type RouteResult = RouteFound | NoRouteResult
-type BridgeQuote = { route: RouteResult, amount: int, takeAmount: int, costBps: int, nativeFee: int }
+type BridgeRoute = RouteFound | NoRouteResult
+type BridgeQuote = { route: BridgeRoute, amount: int, takeAmount: int, costBps: int, nativeFee: int }
 pure val maximumSafeValue = 9007199254740991
 pure def nativeFeeCeiling(b: Buyback): int = if (b.source == R::Solana) 50000000 else 1000000
-pure def decisionOf(b: Buyback, quote: BridgeQuote): Decision =
-  val live = b.runtime.buybackMode == R::Live
-  val base = { state: Skipped, reason: NoReason, amount: quote.amount, live: live, at: b.clock }
-  if (spentInWindow(b.bridgeSpends, b.clock) >= 5000000000) { ...base, reason: DayCapReached }
-  else if (quote.amount < 500000000) { ...base, state: Pending, reason: BelowMinimum }
-  else if (quote.amount > maximumSafeValue) { ...base, reason: UnsafeValue }
-  else if (quote.route == NoRouteResult) { ...base, state: NoRoute, reason: NoRouteFound }
-  else if (quote.nativeFee > nativeFeeCeiling(b)) { ...base, reason: NativeFeeAbove }
-  else if (quote.costBps > 150 or quote.takeAmount > quote.amount or quote.takeAmount <= 0) { ...base, reason: CostAbove }
-  else { ...base, state: Quoted }
-pure def lastDecision(b: Buyback): Decision =
+pure def bridgeDecision(decided: DecisionState, reason: BridgeReason, b: Buyback, quote: BridgeQuote): BridgeDecision =
+  { state: decided, reason: reason, amount: quote.amount, live: b.runtime.buybackMode == R::Live, at: b.clock }
+pure def decisionOf(b: Buyback, quote: BridgeQuote): BridgeDecision =
+  if (spentInWindow(b.bridgeSpends, b.clock) >= 5000000000) bridgeDecision(Skipped, DayCapReached, b, quote)
+  else if (quote.amount < 500000000) bridgeDecision(Pending, BelowMinimum, b, quote)
+  else if (quote.amount > maximumSafeValue) bridgeDecision(Skipped, UnsafeValue, b, quote)
+  else if (quote.route == NoRouteResult) bridgeDecision(NoRoute, NoRouteFound, b, quote)
+  else if (quote.nativeFee > nativeFeeCeiling(b)) bridgeDecision(Skipped, NativeFeeAbove, b, quote)
+  else if (quote.costBps > 150 or quote.takeAmount > quote.amount or quote.takeAmount <= 0) bridgeDecision(Skipped, CostAbove, b, quote)
+  else bridgeDecision(Quoted, NoReason, b, quote)
+pure def lastDecision(b: Buyback): BridgeDecision =
   b.decisions.nthOr(b.decisions.length() - 1, { state: Quoted, reason: NoReason, amount: -1, live: false, at: 0 })
-pure def canDecide(b: Buyback, quote: BridgeQuote): bool =
-  R::runs(b.runtime) and b.runtime.buybackMode != R::Off and b.orderPhase == NoOrder and quote.amount >= 0
+pure def canDecide(b: Buyback, quote: BridgeQuote, by: R::Sender): bool =
+  by == R::Worker and R::runs(b.runtime) and b.runtime.buybackMode != R::Off and b.orderPhase == NoOrder and quote.amount >= 0
     and quote.amount <= 1000000000 and quote.costBps >= 0 and quote.nativeFee >= 0
     and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(quote.amount)), H::half(b.income).quotient) <= 0
     and (decisionOf(b, quote).state != Quoted or b.runtime.buybackMode == R::DryRun)
-pure def decide(b: Buyback, quote: BridgeQuote): Buyback =
+pure def decide(b: Buyback, quote: BridgeQuote, by: R::Sender): Buyback =
   val d = decisionOf(b, quote)
   val previous = lastDecision(b)
   if (previous.state == d.state and previous.reason == d.reason and previous.amount == d.amount and previous.live == d.live) b
@@ -163,7 +161,7 @@ re-check the cost and every term, so a changed cost refuses either.
 
 ```quint
 type BridgeOrder = { orderId: int, tx: int, amount: int, takeAmount: int, costBps: int, receiver: str, authority: str,
-  beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, solana: bool, nativeFee: int, balance: int }
+  beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, solana: bool, nativeFee: int }
 pure def unreleased(spends: List[Spend], now: int): int = spends.foldl(0, (total, spend) =>
   total + (if (not(spend.released) and spend.at > now - dayMs and spend.at <= now) spend.amount else 0))
 pure def spentInWindow(spends: List[Spend], now: int): int = unreleased(spends, now)
@@ -182,55 +180,28 @@ pure def orderTermsValid(b: Buyback, request: BridgeOrder): bool =
     and request.receiver == "fees" and request.authority == "fees" and request.beneficiary == "fees"
     and not(request.externalCall) and request.affiliateFee == 0 and request.reservedTaker == ""
     and spentInWindow(b.bridgeSpends, b.clock) + request.amount <= 5000000000 and bridgeNativeAllowed(b, request)
-    and withinSourceBalance(request)
-pure def canApproveOrder(b: Buyback, request: BridgeOrder): bool =
-  signs(b) and b.orderPhase == NoOrder and not(request.solana) and orderTermsValid(b, request)
+pure def canApproveOrder(b: Buyback, request: BridgeOrder, by: R::Sender): bool =
+  by == R::Worker and signs(b) and b.orderPhase == NoOrder and not(request.solana) and orderTermsValid(b, request)
     and request.tx > 0 and not(b.txs.includes(request.tx))
-pure def approveOrder(b: Buyback, request: BridgeOrder): Buyback =
+pure def approveOrder(b: Buyback, request: BridgeOrder, by: R::Sender): Buyback =
   { ...b, orderPhase: Approving, approval: { tx: request.tx, phase: Submitted, amount: request.amount }, txs: b.txs.append(request.tx) }
-pure def canSettleApproval(b: Buyback, receipt: SendReceipt): bool =
-  b.orderPhase == Approving and (b.approval.phase == Submitted or b.approval.phase == Unknown)
+pure def canSettleApproval(b: Buyback, receipt: BridgeReceipt, by: R::Sender): bool =
+  by == R::Worker and b.orderPhase == Approving and (b.approval.phase == Submitted or b.approval.phase == Unknown)
     and receipt.tx == b.approval.tx and receipt.finalized
-pure def settleApproval(b: Buyback, receipt: SendReceipt): Buyback =
+pure def settleApproval(b: Buyback, receipt: BridgeReceipt, by: R::Sender): Buyback =
   if (receipt.succeeded) { ...b, approval: { ...b.approval, phase: Finalized } }
   else { ...b, orderPhase: NoOrder, approval: { ...b.approval, phase: Failed } }
-pure def canOrder(b: Buyback, request: BridgeOrder): bool =
-  signs(b) and orderTermsValid(b, request) and request.tx > 0 and not(b.txs.includes(request.tx))
+pure def canOrder(b: Buyback, request: BridgeOrder, by: R::Sender): bool =
+  by == R::Worker and signs(b) and orderTermsValid(b, request) and request.tx > 0 and not(b.txs.includes(request.tx))
     and (if (request.solana) b.orderPhase == NoOrder
       else b.orderPhase == Approving and b.approval.phase == Finalized and b.approval.amount == request.amount)
-pure def order(b: Buyback, request: BridgeOrder): Buyback =
+pure def order(b: Buyback, request: BridgeOrder, by: R::Sender): Buyback =
   { ...b, orderPhase: Ordering, committed: M::addAmounts(b.committed, M::smallAmount(request.amount)),
     orderAmount: request.amount, takeAmount: request.takeAmount, order: request.orderId, orders: b.orders.append(request.orderId),
     orderSend: { tx: request.tx, phase: Submitted, amount: request.amount }, txs: b.txs.append(request.tx),
     bridgeSpends: b.bridgeSpends.append({ id: request.orderId, at: b.clock, amount: request.amount, released: false }),
     bridgeNative: if (request.solana) b.bridgeNative.append({ id: request.orderId, at: b.clock, amount: request.nativeFee, released: false }) else b.bridgeNative }
 pure def sometimesApprovalRefusedCostChange(b: Buyback): bool = b.orderPhase == Approving and b.approval.phase == Finalized
-```
-
-### An order never spends more than the source fee wallet's finalized balance of its input, so an owner sweep only lowers the next order
-
-Each run reads the fee wallet's balance of the leg's input (the source
-network's USDC) at a finalized block before it forms an approval or an
-order, and both send at most that balance: the amount is the least of the
-due share, that balance and the remaining value cap. The owner may sweep the
-fee wallet outside the Worker at any time; a sweep changes no income,
-commitment or outcome, so it only lowers the balance the next run reads and
-with it the next order. A committed share stays committed until a proven
-failure or refund releases it.
-
-```quint
-pure def boundedSend(due: int, balance: int, cap: int): int =
-  val held = if (due < balance) due else balance
-  if (held < cap) held else cap
-pure def withinSourceBalance(request: BridgeOrder): bool = request.balance >= 0 and request.amount <= request.balance
-pure def lawBoundedSendWithinEveryBound(due: int, balance: int, cap: int): bool =
-  (due >= 0 and balance >= 0 and cap >= 0) implies
-    boundedSend(due, balance, cap) >= 0 and boundedSend(due, balance, cap) <= due
-      and boundedSend(due, balance, cap) <= balance and boundedSend(due, balance, cap) <= cap
-      and (boundedSend(due, balance, cap) == due or boundedSend(due, balance, cap) == balance or boundedSend(due, balance, cap) == cap)
-pure val dueValues = Set(0, 500000000, 1000000000)
-pure val balanceValues = Set(0, 600000000, 2000000000)
-pure val capValues = Set(0, 700000000, 5000000000)
 ```
 
 ### A deposit is in transit only from its finalized order receipt; a failed order releases its share
@@ -240,16 +211,16 @@ failure of the order transaction releases its commitment and its rolling
 exposure, and the same share may be ordered again.
 
 ```quint
-type SendReceipt = { tx: int, succeeded: bool, finalized: bool }
-pure def canLoseSend(b: Buyback, tx: int): bool =
-  (b.approval.tx == tx and b.approval.phase == Submitted) or (b.orderSend.tx == tx and b.orderSend.phase == Submitted)
+type BridgeReceipt = { tx: int, succeeded: bool, finalized: bool }
+pure def canLoseSend(b: Buyback, tx: int, by: R::Sender): bool =
+  by == R::Worker and ((b.approval.tx == tx and b.approval.phase == Submitted) or (b.orderSend.tx == tx and b.orderSend.phase == Submitted))
 pure def loseResponse(s: Send, tx: int): Send = if (s.tx == tx and s.phase == Submitted) { ...s, phase: Unknown } else s
-pure def loseSend(b: Buyback, tx: int): Buyback = { ...b, approval: loseResponse(b.approval, tx), orderSend: loseResponse(b.orderSend, tx) }
+pure def loseSend(b: Buyback, tx: int, by: R::Sender): Buyback = { ...b, approval: loseResponse(b.approval, tx), orderSend: loseResponse(b.orderSend, tx) }
 pure def release(spends: List[Spend], id: int): List[Spend] = spends.listMap(s => if (s.id == id) { ...s, released: true } else s)
-pure def canSettleOrder(b: Buyback, receipt: SendReceipt): bool =
-  b.orderPhase == Ordering and (b.orderSend.phase == Submitted or b.orderSend.phase == Unknown)
+pure def canSettleOrder(b: Buyback, receipt: BridgeReceipt, by: R::Sender): bool =
+  by == R::Worker and b.orderPhase == Ordering and (b.orderSend.phase == Submitted or b.orderSend.phase == Unknown)
     and receipt.tx == b.orderSend.tx and receipt.finalized
-pure def settleOrder(b: Buyback, receipt: SendReceipt): Buyback =
+pure def settleOrder(b: Buyback, receipt: BridgeReceipt, by: R::Sender): Buyback =
   if (receipt.succeeded) { ...b, orderPhase: InTransit, orderSend: { ...b.orderSend, phase: Finalized }, orderedAt: b.clock }
   else { ...b, orderPhase: NoOrder, orderSend: { ...b.orderSend, phase: Failed },
     committed: M::subtractAmounts(b.committed, M::smallAmount(b.orderAmount)),
@@ -275,27 +246,27 @@ type ArrivalEvidence = { order: int, amount: int, receiver: str, height: int, fi
 type RefundEvidence = { order: int, amount: int, beneficiary: str, height: int, finalized: bool }
 type CancellationEvidence = { order: int, height: int, finalized: bool }
 pure val unfilledAlertMs = 3600000
-pure def canObserveArrival(b: Buyback, arrival: ArrivalEvidence): bool =
-  b.orderPhase == InTransit and arrival.order == b.order and arrival.amount == b.takeAmount
+pure def canObserveArrival(b: Buyback, arrival: ArrivalEvidence, by: R::Sender): bool =
+  by == R::Worker and b.orderPhase == InTransit and arrival.order == b.order and arrival.amount == b.takeAmount
     and arrival.receiver == "fees" and arrival.height > 0 and arrival.finalized
-pure def observeArrival(b: Buyback, arrival: ArrivalEvidence): Buyback =
+pure def observeArrival(b: Buyback, arrival: ArrivalEvidence, by: R::Sender): Buyback =
   { ...b, orderPhase: Arrived, finalizedHeight: arrival.height,
     outcomes: b.outcomes.append({ order: b.order, amount: b.orderAmount, takeAmount: arrival.amount, result: OrderArrived, height: arrival.height }) }
-pure def canObserveCancelling(b: Buyback, cancellation: CancellationEvidence): bool = b.orderPhase == InTransit
+pure def canObserveCancelling(b: Buyback, cancellation: CancellationEvidence, by: R::Sender): bool = by == R::Worker and b.orderPhase == InTransit
   and cancellation.order == b.order and cancellation.height > 0 and cancellation.finalized
-pure def observeCancelling(b: Buyback, cancellation: CancellationEvidence): Buyback = { ...b, orderPhase: Cancelling }
-pure def canObserveRefund(b: Buyback, refund: RefundEvidence): bool =
-  (b.orderPhase == InTransit or b.orderPhase == Cancelling) and refund.order == b.order and refund.amount == b.orderAmount
+pure def observeCancelling(b: Buyback, cancellation: CancellationEvidence, by: R::Sender): Buyback = { ...b, orderPhase: Cancelling }
+pure def canObserveRefund(b: Buyback, refund: RefundEvidence, by: R::Sender): bool =
+  by == R::Worker and (b.orderPhase == InTransit or b.orderPhase == Cancelling) and refund.order == b.order and refund.amount == b.orderAmount
     and refund.beneficiary == "fees" and refund.height > 0 and refund.finalized
-pure def observeRefund(b: Buyback, refund: RefundEvidence): Buyback =
+pure def observeRefund(b: Buyback, refund: RefundEvidence, by: R::Sender): Buyback =
   { ...b, orderPhase: Refunded, committed: M::subtractAmounts(b.committed, M::smallAmount(b.orderAmount)),
     bridgeSpends: release(b.bridgeSpends, b.order), finalizedHeight: refund.height,
     outcomes: b.outcomes.append({ order: b.order, amount: b.orderAmount, takeAmount: 0, result: OrderRefunded, height: refund.height }) }
-pure def canReportUnfilled(b: Buyback): bool = (b.orderPhase == InTransit or b.orderPhase == Cancelling)
+pure def canReportUnfilled(b: Buyback, by: R::Sender): bool = by == R::Worker and (b.orderPhase == InTransit or b.orderPhase == Cancelling)
   and not(b.unfilledReported) and b.clock - b.orderedAt >= unfilledAlertMs
-pure def reportUnfilled(b: Buyback): Buyback = { ...b, unfilledReported: true }
-pure def canCloseOrder(b: Buyback): bool = b.orderPhase == Arrived or b.orderPhase == Refunded
-pure def closeOrder(b: Buyback): Buyback = { ...b, orderPhase: NoOrder, order: 0, orderAmount: 0, takeAmount: 0, orderedAt: 0,
+pure def reportUnfilled(b: Buyback, by: R::Sender): Buyback = { ...b, unfilledReported: true }
+pure def canCloseOrder(b: Buyback, by: R::Sender): bool = by == R::Worker and (b.orderPhase == Arrived or b.orderPhase == Refunded)
+pure def closeOrder(b: Buyback, by: R::Sender): Buyback = { ...b, orderPhase: NoOrder, order: 0, orderAmount: 0, takeAmount: 0, orderedAt: 0,
   unfilledReported: false, approval: noSend, orderSend: noSend }
 pure def sometimesInTransit(b: Buyback): bool = b.orderPhase == InTransit
 pure def sometimesRefunded(b: Buyback): bool = b.orderPhase == Refunded
@@ -317,11 +288,12 @@ pure def stepOrderOutcomeOnce(before: Buyback, after: Buyback): bool =
 ### Cumulative accounting stays within its shares and every journal entry is past and positive
 
 Rolling exposure uses UTC milliseconds and an 86,400,000 millisecond window.
-A released entry no longer counts. Discovered by the proof: cumulative
-amounts keep valid limbs, every journal entry has a positive amount and a
-time no later than the observed clock, and an ordered or in-transit deposit
-stays inside the committed share, so a refund never exceeds the commitment.
-Retained order outcomes and decisions are append-only.
+A released entry no longer counts. Cumulative amounts keep valid limbs,
+every journal entry has a positive amount and a time no later than the
+observed clock, and an ordered or in-transit deposit stays inside the
+committed share, so a refund never exceeds the commitment. Retained order
+outcomes and decisions are append-only. A later order follows only after
+the earlier one closed, failed or was refunded.
 
 ```quint
 pure def openSend(s: Send): bool = s.phase == Submitted or s.phase == Unknown
@@ -344,13 +316,7 @@ pure def stepJournalRetained(before: Buyback, after: Buyback): bool = after.txs.
   and before.sources.every(k => after.sources.includes(k)) and before.incomeTimes.every(t => after.incomeTimes.includes(t))
   and after.outcomes.length() >= before.outcomes.length() and before.outcomes.every(o => after.outcomes.includes(o))
   and after.decisions.length() >= before.decisions.length() and before.decisions.every(d => after.decisions.includes(d))
-```
-
-### Simulation samples exercise matching, refused and failed evidence
-
-These sets bound simulation only.
-
-```quint
+pure def sometimesSecondCycle(b: Buyback): bool = b.orders.length() >= 2
 pure val nowValues = Set(buybackStart + 1, buybackStart + 3600001, buybackStart + 86400001)
 pure val chainTimeValues = Set(buybackStart - 1, buybackStart, buybackStart + 1)
 pure val keyValues = Set({ kind: ConversionOutput, network: R::Base, id: 1 }, { kind: UsdcClaim, network: R::Base, id: 1 },
@@ -358,28 +324,34 @@ pure val keyValues = Set({ kind: ConversionOutput, network: R::Base, id: 1 }, { 
   { kind: ConversionOutput, network: R::Solana, id: 4 })
 pure val incomeAmountValues = Set(List(0, 0, 0, 1), List(0, 0, 500), List(0, 0, 0, 2))
 pure val sourceNetworkValues = Set(R::Robinhood, R::Solana, R::Ethereum)
-pure val txValues = Set(21, 22, 23, 24, 25)
+pure val txValues = Set(21, 22, 23, 24, 25, 26, 27, 28)
 pure val readyNetworkValues = Set(R::Base, R::Robinhood, R::Solana)
 pure val variableValues = Set(true)
-pure val byValues = Set(R::ReleaseWorkflow, R::Owner)
+pure val byValues = Set(R::ReleaseWorkflow, R::Owner, R::Worker)
 pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::DryRun },
   { ...R::liveAll, source: 3, buybackMode: R::Off })
 pure val requestValues = Set(
   { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
   { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 151, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
   { orderId: 2, tx: 24, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "wrong", authority: "fees", beneficiary: "fees",
-    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000, balance: 600000000 },
-  { orderId: 1, tx: 25, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 499999999 })
+    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000 },
+  { orderId: 4, tx: 28, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000 },
+  { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+  { orderId: 3, tx: 27, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 })
 pure val receiptValues = Set({ tx: 21, succeeded: true, finalized: true }, { tx: 22, succeeded: true, finalized: true },
   { tx: 22, succeeded: false, finalized: true }, { tx: 23, succeeded: true, finalized: true }, { tx: 24, succeeded: false, finalized: true },
-  { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false })
+  { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false },
+  { tx: 26, succeeded: true, finalized: true }, { tx: 27, succeeded: true, finalized: true },
+  { tx: 23, succeeded: false, finalized: true }, { tx: 28, succeeded: true, finalized: true })
 pure val arrivalValues = Set({ order: 1, amount: 495000000, receiver: "fees", height: 2, finalized: true },
   { order: 2, amount: 495000000, receiver: "fees", height: 2, finalized: true },
   { order: 1, amount: 500000000, receiver: "fees", height: 2, finalized: true })

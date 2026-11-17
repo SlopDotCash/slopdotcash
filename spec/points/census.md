@@ -4,7 +4,9 @@ PRD section 7 retains every open issue and PR in snapshots for source-count
 integrity, publishes a deterministic selection decision for each item and
 advertises only bounded, unblocked work. Paused projects are not collected,
 and legacy projects are never collected or scored. Missing data is never
-presented as an empty successful census.
+presented as an empty successful census. A complete census is ready for
+publication; the [exact-prefix publication](./publication.md) machine alone
+publishes it.
 
 This machine collects one repository's GitHub inventory for one snapshot. It
 follows `scripts/generate-leaderboard.ts`, `src/lib/github-census.ts` and the
@@ -20,8 +22,13 @@ the [historical import](./historicalImport.md).
 
 ### Collection starts only for a collected project and never moves its window back
 
+The project view excludes paused, retired, quarantined and legacy projects:
+the ids kept in `src/lib/legacy-projects.json` and the retired registry
+listings are never collected, scored or paid.
+
 ```quint
-type CensusPhase = Empty | Collecting | Incomplete | Ready | Published
+import periods as P from "./periods"
+type CensusPhase = Empty | Collecting | Incomplete | ReadyForPublication
 type ProjectView = { registered: bool, paused: bool, retired: bool, legacy: bool, quarantined: bool }
 type AuthorKind = HumanAuthor | BotAuthor | SlopbotAuthor | UnknownAuthor
 type ItemKind = IssueItem | PullRequestItem
@@ -29,18 +36,19 @@ type Item = { id: int, kind: ItemKind, open: bool, author: AuthorKind, diffAvail
   claimed: bool, draft: bool, reviewRequested: bool, approved: bool, changesRequested: bool,
   securityLabel: bool, humanGated: bool, epic: bool, contributorReady: bool, blockedLabel: bool }
 type Page = { cursor: int, next: int, totalCount: int, items: List[Item] }
-type Census = { phase: CensusPhase, lowerDay: int, publishedLower: int, expectedCursor: int, cursorsSeen: List[int],
-  totalCount: int, terminalSeen: bool, countChanges: int, items: List[Item],
-  previousSnapshot: int, publishedSnapshot: int }
-pure val initial: Census = { phase: Empty, lowerDay: 0, publishedLower: 0, expectedCursor: 0, cursorsSeen: List(),
-  totalCount: -1, terminalSeen: false, countChanges: 0, items: List(), previousSnapshot: 1, publishedSnapshot: 1 }
+type Census = { phase: CensusPhase, lowerDay: int, expectedCursor: int, cursorsSeen: List[int],
+  totalCount: int, terminalSeen: bool, countChanges: int, items: List[Item] }
+pure val initial: Census = { phase: Empty, lowerDay: 0, expectedCursor: 0, cursorsSeen: List(),
+  totalCount: -1, terminalSeen: false, countChanges: 0, items: List() }
 pure def collected(p: ProjectView): bool = p.registered and not(p.paused) and not(p.retired) and not(p.legacy) and not(p.quarantined)
 pure def canBegin(c: Census, project: ProjectView, lowerDay: int): bool =
-  c.phase != Collecting and collected(project) and lowerDay >= c.publishedLower and lowerDay >= 0
+  c.phase != Collecting and collected(project) and lowerDay >= c.lowerDay and lowerDay >= 0
 pure def begin(c: Census, project: ProjectView, lowerDay: int): Census =
   { ...c, phase: Collecting, lowerDay: lowerDay, expectedCursor: 0, cursorsSeen: List(), totalCount: -1,
-    terminalSeen: false, countChanges: 0, items: List(), previousSnapshot: c.publishedSnapshot }
-pure def lawPausedNotCollected(project: ProjectView): bool = (project.paused or project.legacy or project.retired) implies not(collected(project))
+    terminalSeen: false, countChanges: 0, items: List() }
+pure def lawPausedNotCollected(project: ProjectView): bool =
+  (project.paused or project.legacy or project.retired or project.quarantined) implies not(collected(project))
+pure def stepWindowNeverRegresses(before: Census, after: Census): bool = after.lowerDay >= before.lowerDay
 ```
 
 ### Pages follow the cursor chain and a changed count stops the pass
@@ -68,7 +76,7 @@ pure def canRecordFailure(c: Census): bool = c.phase == Collecting
 pure def recordFailure(c: Census): Census = { ...c, phase: Incomplete }
 pure def canFinish(c: Census): bool =
   c.phase == Collecting and c.terminalSeen and c.items.length() == c.totalCount
-pure def finish(c: Census): Census = { ...c, phase: Ready }
+pure def finish(c: Census): Census = { ...c, phase: ReadyForPublication }
 ```
 
 ### Every retained item has a deterministic, fail-closed selection decision with all its reasons
@@ -125,24 +133,18 @@ pure def lawEveryReasonListed(i: Item): bool =
   (i.approved implies reasons(i).some(x => x == Approved)) and (i.changesRequested implies reasons(i).some(x => x == ChangesRequested))
 ```
 
-### Publication requires a complete census and keeps the previous snapshot on failure
+### Only a complete census is ready for publication
 
 ```quint
-pure def canPublish(c: Census, snapshot: int): bool = c.phase == Ready and snapshot > c.previousSnapshot
-pure def publish(c: Census, snapshot: int): Census =
-  { ...c, phase: Published, publishedSnapshot: snapshot, publishedLower: c.lowerDay }
 pure def alwaysItemsDistinct(c: Census): bool = c.items.every(i => i.id > 0 and c.items.select(o => o.id == i.id).length() == 1)
 pure def alwaysCursorsDistinct(c: Census): bool = c.cursorsSeen.every(k => c.cursorsSeen.select(o => o == k).length() == 1)
-pure def alwaysCompleteWhenReady(c: Census): bool = (c.phase == Ready or c.phase == Published) implies
+pure def alwaysCompleteWhenReady(c: Census): bool = c.phase == ReadyForPublication implies
   (c.terminalSeen and c.items.length() == c.totalCount)
-pure def alwaysFailedKeepsSnapshot(c: Census): bool =
-  (c.phase == Collecting or c.phase == Ready or c.phase == Incomplete) implies c.publishedSnapshot == c.previousSnapshot
-pure def alwaysWindowForward(c: Census): bool = (c.phase == Collecting or c.phase == Ready) implies c.lowerDay >= c.publishedLower
-pure def stepPublishedWindowNeverRegresses(before: Census, after: Census): bool = after.publishedLower >= before.publishedLower
-pure def sometimesPublished(c: Census): bool = c.phase == Published and c.items.length() > 0
+pure def sometimesReady(c: Census): bool = c.phase == ReadyForPublication and c.items.length() > 0
 pure def sometimesIncomplete(c: Census): bool = c.phase == Incomplete and c.countChanges == 2
-pure def sometimesRetriedComplete(c: Census): bool = c.phase == Ready and c.countChanges == 1
-pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and c.items.some(i => blocked(i)) and c.items.some(i => not(blocked(i)))
+pure def sometimesRetriedComplete(c: Census): bool = c.phase == ReadyForPublication and c.countChanges == 1
+pure def sometimesRetainedButNotOffered(c: Census): bool =
+  c.phase == ReadyForPublication and c.items.some(i => blocked(i)) and c.items.some(i => not(blocked(i)))
 ```
 
 ### A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days
@@ -281,8 +283,43 @@ pure val projectValues = Set({ registered: true, paused: false, retired: false, 
   { registered: true, paused: true, retired: false, legacy: false, quarantined: false },
   { registered: true, paused: false, retired: false, legacy: true, quarantined: false })
 pure val lowerDayValues = Set(0, 1, 2)
-pure val snapshotValues = Set(1, 2, 3)
 pure val iValues = Set(human, { ...human, author: UnknownAuthor }, { ...human, diffAvailable: false }, { ...human, epic: true },
   { ...human, open: false }, { ...human, kind: IssueItem, contributorReady: false }, { ...human, kind: IssueItem },
   { ...human, blockedLabel: true, hasAssignee: true })
+```
+
+## Story: Reapply the current bands to eligible unpaid September and October work only
+
+> As a contributor, I want my unpaid September and October 2026 work scored
+> by the current size and review bands, without anyone's approved or paid
+> award changing.
+
+### The band reapplication touches only eligible unpaid work from 1 September through 31 October 2026
+
+PRD section 7, "Historical scoring and source integrity". The reapplication appends
+a reassessment for eligible unpaid work that occurred in September or
+October 2026. Approved, scheduled, paid and frozen awards keep their
+original Points and terms; work outside those months and ineligible work keep
+their recorded Points. Source IDs, occurrence times and eligibility and
+penalty dates are retained, so the reapplication changes only the Points.
+
+```quint
+type AwardStage = UnpaidAward | ApprovedAward | ScheduledAward | PaidAward | FrozenAward
+type BandedWork = { source: int, occurredAt: int, eligible: bool, stage: AwardStage, points: int }
+pure def septemberOrOctober(at: int): bool = at >= P::september2026Start and at < P::november2026Start
+pure def reapplicable(w: BandedWork): bool = septemberOrOctober(w.occurredAt) and w.eligible and w.stage == UnpaidAward
+pure def reapplyBands(w: BandedWork, currentBandPoints: int): BandedWork =
+  if (reapplicable(w)) { ...w, points: currentBandPoints } else w
+pure def lawReapplicationOnlyUnpaidSeptemberOctober(w: BandedWork, currentBandPoints: int): bool =
+  reapplyBands(w, currentBandPoints) != w implies reapplicable(w)
+pure def lawSettledAwardsUnchanged(w: BandedWork, currentBandPoints: int): bool =
+  w.stage != UnpaidAward implies reapplyBands(w, currentBandPoints) == w
+pure def lawIdentityAndDatesKept(w: BandedWork, currentBandPoints: int): bool =
+  reapplyBands(w, currentBandPoints).source == w.source and reapplyBands(w, currentBandPoints).occurredAt == w.occurredAt
+    and reapplyBands(w, currentBandPoints).eligible == w.eligible and reapplyBands(w, currentBandPoints).stage == w.stage
+pure val workSample: BandedWork = { source: 1, occurredAt: 2432105, eligible: true, stage: UnpaidAward, points: 10 }
+pure val wValues = Set(workSample, { ...workSample, stage: PaidAward }, { ...workSample, stage: FrozenAward },
+  { ...workSample, stage: ApprovedAward }, { ...workSample, stage: ScheduledAward }, { ...workSample, eligible: false },
+  { ...workSample, occurredAt: 2431999 }, { ...workSample, occurredAt: 2432200 })
+pure val currentBandPointsValues = Set(10, 20)
 ```

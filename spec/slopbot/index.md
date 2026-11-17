@@ -27,9 +27,10 @@ Slopbot review remains free.
 - [Close attempts and their recovery](./closeAttempt.md)
 - [Maintainer holds of uncertain findings](./maintainerHold.md)
 - [Appeals and immutable penalties](./appeals.md)
+- [Close, appeal and penalty composition](./composition.md)
 - [Value disputes](./valueDisputes.md)
 - [Points disputes triage](./pointsDisputes.md)
-- [Private reporting readiness and repository access](./reportingReadiness.md)
+- [Private reporting refresh runs and repository access](./reportingReadiness.md)
 - [Public Slopbot feeds](./publicFeeds.md)
 
 The shell verifies GitHub events, repository identity, exact source, current

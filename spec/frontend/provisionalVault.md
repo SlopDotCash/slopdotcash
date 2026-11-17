@@ -29,6 +29,7 @@ An authenticated owner manages this setup surface. The separate registered
 vault deposit surface retains the normal permissionless deposit policy.
 
 ```quint
+import walletAttempt as WA from "./walletAttempt"
 type VaultKind = OrdinaryEvmToken | EvmNative | BountyEvm | SolanaVault
 type Creation = Missing | Included | Finalized | RevertedCreation
 type FundingForm = Hidden | Provisional | Registered
@@ -38,10 +39,10 @@ type DepositPhase = NoDeposit | Prompt | Submitted | IncludedEvent | IncludedNoV
 type DepositView = NoView | Waiting | Received | DepositFailed | NoVault | DepositVerified
  type Setup = { kind: VaultKind, creation: Creation, creationBlock: int, matchingCreation: bool, registered: bool,
   form: FundingForm, notice: CreationNotice, phase: DepositPhase, transaction: int, depositBlock: int,
-  view: DepositView, counted: bool, readUnavailable: bool }
+  view: DepositView, counted: bool, readUnavailable: bool, slot: WA::Attempt, storageBlocked: bool }
 pure val initial: Setup = { kind: OrdinaryEvmToken, creation: Missing, creationBlock: 0, matchingCreation: true,
   registered: false, form: Hidden, notice: NoNotice, phase: NoDeposit, transaction: 0, depositBlock: 0,
-  view: NoView, counted: false, readUnavailable: false }
+  view: NoView, counted: false, readUnavailable: false, slot: WA::noAttempt, storageBlocked: false }
 pure val byValues = Set("owner", "other")
 pure val blockValues = Set(0, 1, 2)
 pure val transactionValues = Set(0, 1, 2)
@@ -95,21 +96,30 @@ pure def reload(s: Setup): Setup = { ...s, form: if (s.registered) Registered el
 
 ## Story: Retain an uncertain deposit through replacement and finality
 
-### Only the owner opens the provisional token deposit prompt
+### Only the owner opens the provisional token deposit prompt, after storage saves its attempt
 
 The provisional review does not offer native funding, Solana funding, bounty
 funding, withdrawals or a different depositor. Prompt admission rechecks the
 live matching deployment. `sign` records the wallet broadcast before any
 subsequently verified replacement. An already broadcast transaction can still
 be mined during an interval with no vault code. The shell authenticates its
-owner and binds the transaction to the saved exact deposit intent.
+owner and binds the transaction to the saved exact deposit intent. The
+intent is the one [wallet attempt](./walletAttempt.md) of this form: the
+prompt opens only after storage creates its empty slot, a storage failure
+blocks the prompt, a decline clears only that attempt, and a terminal check
+settles it.
 
 ```quint
-pure def canOpenPrompt(s: Setup, by: str): bool = s.phase == NoDeposit and by == "owner" and hasVault(s)
+pure val depositAttempt: WA::Attempt = { identity: "owner-deposit", bytesId: "reviewed-deposit", hash: "", candidate: "" }
+pure def canOpenPrompt(s: Setup, by: str, stored: bool): bool = s.phase == NoDeposit and by == "owner" and hasVault(s)
   and (s.form == Registered or (s.form == Provisional and s.kind == OrdinaryEvmToken and not(s.registered)))
-pure def openPrompt(s: Setup, by: str): Setup = { ...s, phase: Prompt, view: NoView }
+  and WA::mayCreate(s.slot)
+pure def openPrompt(s: Setup, by: str, stored: bool): Setup =
+  if (stored) { ...s, phase: Prompt, view: NoView, slot: WA::createIfEmpty(s.slot, depositAttempt), storageBlocked: false }
+  else { ...s, storageBlocked: true }
 pure def canDecline(s: Setup): bool = s.phase == Prompt
-pure def decline(s: Setup): Setup = { ...s, phase: NoDeposit, form: if (hasVault(s)) s.form else Hidden }
+pure def decline(s: Setup): Setup = { ...s, phase: NoDeposit, form: if (hasVault(s)) s.form else Hidden,
+  slot: WA::compareAndClear(s.slot, depositAttempt) }
 pure def canSign(s: Setup, transaction: int, by: str): bool = s.phase == Prompt and transaction > 0 and by == "owner" and hasVault(s)
 pure def sign(s: Setup, transaction: int, by: str): Setup =
   { ...s, phase: Submitted, transaction: transaction, view: Waiting }
@@ -144,9 +154,10 @@ pure def canObserveFailure(s: Setup, transaction: int, block: int): bool =
 pure def observeFailure(s: Setup, transaction: int, block: int): Setup = { ...s, phase: FailedSend, depositBlock: block }
 pure def canCheckDeposit(s: Setup): bool = s.phase != NoDeposit and s.phase != Prompt and s.phase != Verified
 pure def checkDeposit(s: Setup): Setup =
-  if (s.phase == FinalEvent) { ...s, phase: Verified, view: DepositVerified }
-  else if (s.phase == FinalNoVault) { ...s, phase: NoDeposit, view: NoVault, transaction: 0, depositBlock: 0 }
-  else if (s.phase == FailedSend) { ...s, phase: NoDeposit, view: DepositFailed, transaction: 0, depositBlock: 0 }
+  val cleared = WA::compareAndClear(s.slot, depositAttempt)
+  if (s.phase == FinalEvent) { ...s, phase: Verified, view: DepositVerified, slot: cleared }
+  else if (s.phase == FinalNoVault) { ...s, phase: NoDeposit, view: NoVault, transaction: 0, depositBlock: 0, slot: cleared }
+  else if (s.phase == FailedSend) { ...s, phase: NoDeposit, view: DepositFailed, transaction: 0, depositBlock: 0, slot: cleared }
   else { ...s, view: if (s.phase == IncludedEvent) Received else Waiting }
 ```
 
@@ -169,6 +180,9 @@ pure def alwaysCountedFinal(s: Setup): bool = s.counted implies s.registered and
 pure def alwaysDepositFinality(s: Setup): bool = (s.phase == FinalEvent or s.phase == Verified) implies s.creation == Finalized
 pure def alwaysPromptOwnsForm(s: Setup): bool = s.phase == Prompt implies s.form != Hidden
 pure def alwaysVerifiedViewNeedsEvidence(s: Setup): bool = s.view == DepositVerified implies s.phase == Verified
+pure def alwaysOpenDepositIsSaved(s: Setup): bool =
+  if (s.phase == NoDeposit or s.phase == Verified) s.slot == WA::noAttempt else s.slot == depositAttempt
+pure def sometimesStorageBlocksPrompt(s: Setup): bool = s.storageBlocked and s.phase == NoDeposit
 pure def sometimesProvisional(s: Setup): bool = s.form == Provisional
 pure def sometimesReplaced(s: Setup): bool = s.form == Hidden and s.notice == CreationDropped
 pure def sometimesPendingTransfer(s: Setup): bool = s.view == Received and not(s.counted)

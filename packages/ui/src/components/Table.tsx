@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, target } from "../lib/cn.ts";
 
 export type TableProps = ComponentProps<"table"> & {
   /** Names the scrolling region that holds the table, for a person who reaches it by keyboard. */
@@ -50,9 +50,9 @@ export function TableRow({ className, ...props }: TableRowProps) {
 export function TableHead({ sort, onSort, scope = "col", className, children, ...props }: TableHeadProps) {
   const Arrow = arrows[sort ?? "none"];
   return (
-    <th scope={scope} aria-sort={sort ?? (onSort && "none")} className={cn("h-10 px-3 text-left font-medium whitespace-nowrap text-muted-foreground", className)} {...props}>
+    <th scope={scope} aria-sort={sort ?? (onSort && "none")} className={cn(onSort ? "h-11" : "h-10", "px-3 text-left font-medium whitespace-nowrap text-muted-foreground", className)} {...props}>
       {onSort ? (
-        <button type="button" onClick={onSort} className={cn(focusRing, "inline-flex items-center gap-1 rounded-sm hover:text-foreground")}>
+        <button type="button" onClick={onSort} className={cn(focusRing, target, "inline-flex items-center gap-1 rounded-sm hover:text-foreground")}>
           {children}
           <Arrow aria-hidden className="size-3.5" />
         </button>

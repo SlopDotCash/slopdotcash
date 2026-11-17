@@ -208,21 +208,32 @@ pure def sometimesEthereumActive(q: Qualification): bool = q.ethereumActive
 
 Scope approval permits implementation and local testing. Record creation,
 deposits, refunds, reservations, payouts, claims and accounting before
-qualifying these assets. Token-2022 requires an independently present record of
-inspection of the complete conversion path.
+qualifying these assets. A Token-2022 mint qualifies only when it passes the
+[money](../settlement/money.md) admission rule `token2022Admissible` (only
+metadata extensions, disabled authorities, immutable-owner accounts), and it
+requires an independently present record of inspection of the complete
+conversion path. The evidence reader supplies the inspected mint and account
+facts.
 
 ```quint
-type AssetScope = NativeAsset | Token2022
+import money as M from "../settlement/money"
+type TokenFacts = { kind: M::AssetKind, mintBytes: int, mintAuthority: bool, freezeAuthority: bool, pointerAuthority: bool,
+  updateAuthority: bool, selfHosted: bool, mintExtensions: List[str], accountExtensions: List[str] }
 type AssetChecks = { created: bool, deposited: bool, refunded: bool, reserved: bool, paid: bool, claimed: bool, accounted: bool, conversionInspected: bool }
-pure def assetFlowQualified(scope: AssetScope, flow: AssetChecks): bool =
-  flow.created and flow.deposited and flow.refunded and flow.reserved and flow.paid and flow.claimed and flow.accounted
-    and (scope != Token2022 or flow.conversionInspected)
-pure def assetActionAuthorized(scope: AssetScope, flow: AssetChecks, reviewedAction: bool, ownerAuthorizedAction: bool): bool =
-  assetFlowQualified(scope, flow) and reviewedAction and ownerAuthorizedAction
-pure def lawToken2022StricterThanNative(flow: AssetChecks): bool =
-  (assetFlowQualified(NativeAsset, flow) and not(flow.conversionInspected)) implies not(assetFlowQualified(Token2022, flow))
-pure def lawImplementationApprovalIsNotAction(scope: AssetScope, flow: AssetChecks): bool =
-  not(assetActionAuthorized(scope, flow, false, true)) and not(assetActionAuthorized(scope, flow, true, false))
+pure def tokenAdmitted(token: TokenFacts): bool = token.kind != M::Token2022 or M::token2022Admissible(token.mintBytes,
+  token.mintAuthority, token.freezeAuthority, token.pointerAuthority, token.updateAuthority, token.selfHosted,
+  token.mintExtensions, token.accountExtensions)
+pure def assetFlowQualified(token: TokenFacts, flow: AssetChecks): bool = tokenAdmitted(token)
+  and flow.created and flow.deposited and flow.refunded and flow.reserved and flow.paid and flow.claimed and flow.accounted
+    and (token.kind != M::Token2022 or flow.conversionInspected)
+pure def assetActionAuthorized(token: TokenFacts, flow: AssetChecks, reviewedAction: bool, ownerAuthorizedAction: bool): bool =
+  assetFlowQualified(token, flow) and reviewedAction and ownerAuthorizedAction
+pure def lawToken2022StricterThanNative(token: TokenFacts, flow: AssetChecks): bool =
+  not(flow.conversionInspected) implies not(assetFlowQualified({ ...token, kind: M::Token2022 }, flow))
+pure def lawToken2022NeedsAdmission(token: TokenFacts, flow: AssetChecks): bool =
+  (token.kind == M::Token2022 and not(tokenAdmitted(token))) implies not(assetFlowQualified(token, flow))
+pure def lawImplementationApprovalIsNotAction(token: TokenFacts, flow: AssetChecks): bool =
+  not(assetActionAuthorized(token, flow, false, true)) and not(assetActionAuthorized(token, flow, true, false))
 ```
 
 ### Solana upgrade evidence still includes deterministic build, exact on-chain bytes, public testnet and owner authorization
@@ -285,6 +296,12 @@ pure val activationValues = Set(Base, Solana, Robinhood, Ethereum).map(network =
 pure val flowValues = Set(
   { created: true, deposited: true, refunded: true, reserved: true, paid: true, claimed: true, accounted: true, conversionInspected: true },
   { created: true, deposited: true, refunded: true, reserved: true, paid: true, claimed: true, accounted: true, conversionInspected: false })
+pure val admittedMint: TokenFacts = { kind: M::Token2022, mintBytes: 512, mintAuthority: false, freezeAuthority: false,
+  pointerAuthority: false, updateAuthority: false, selfHosted: true, mintExtensions: List("MetadataPointer", "TokenMetadata"),
+  accountExtensions: List("ImmutableOwner") }
+pure val tokenValues = Set(admittedMint, { ...admittedMint, kind: M::Classic }, { ...admittedMint, kind: M::Native },
+  { ...admittedMint, mintExtensions: List("TransferHook") }, { ...admittedMint, freezeAuthority: true },
+  { ...admittedMint, mintBytes: 1025 })
 pure val upgradeValues = Set(
   { deterministicPinnedBuild: true, exactOnChainBytes: true, publicTestnet: true, ownerAuthorized: true },
   { deterministicPinnedBuild: true, exactOnChainBytes: false, publicTestnet: false, ownerAuthorized: true })

@@ -8,7 +8,7 @@ PRD section 6 governs this owner-sent allocation. Slop Cash S.P. sends it from i
 
 Publication reads the reviewed list. A null distribution keeps every row
 unpublished. A published row fixes the actor, amount, network and
-registration deadline. The trusted clock only moves forward.
+registration deadline. Only the trusted clock sender advances time, and only forward.
 
 ```quint
 import money as M from "./money"
@@ -27,9 +27,9 @@ pure def canPublish(a: Allocation, list: PublishedList, by: str): bool =
     and list.rows.every(r => list.rows.select(o => o.actor == r.actor).length() == 1)
 pure def publish(a: Allocation, list: PublishedList, by: str): Allocation =
   { ...a, phase: AwaitingWallet, amount: rowFor(list, a.actor).amount, network: list.network, deadline: list.deadline, listDigest: list.digest }
-pure def canObserveClock(a: Allocation, now: int): bool = now > a.now
-pure def observeClock(a: Allocation, now: int): Allocation = { ...a, now: now }
-pure val byValues = Set("owner", "recipient", "wrong")
+pure def canObserveClock(a: Allocation, now: int, by: str): bool = by == "clock" and now > a.now
+pure def observeClock(a: Allocation, now: int, by: str): Allocation = { ...a, now: now }
+pure val byValues = Set("owner", "recipient", "clock", "wrong")
 pure val transactionValues = Set("tx", "")
 pure val listValues = Set({ present: true, digest: "d", network: "base", deadline: 4, rows: List({ actor: 1, amount: List(5) }) },
   { present: false, digest: "", network: "", deadline: 0, rows: List() },
@@ -69,8 +69,8 @@ pure def canRecordSend(a: Allocation, transaction: str, by: str): bool =
   a.phase == Scheduled and a.wallet != "" and transaction != "" and by == "owner" and not(a.batchClosed)
 pure def recordSend(a: Allocation, transaction: str, by: str): Allocation =
   { ...a, phase: Sent, transaction: transaction }
-pure def canExpire(a: Allocation): bool = a.phase == AwaitingWallet and a.now >= a.deadline
-pure def expire(a: Allocation): Allocation = { ...a, phase: Unclaimed }
+pure def canExpire(a: Allocation, by: str): bool = by == "clock" and a.phase == AwaitingWallet and a.now >= a.deadline
+pure def expire(a: Allocation, by: str): Allocation = { ...a, phase: Unclaimed }
 pure def canCloseBatch(a: Allocation, by: str): bool =
   a.phase != Unpublished and not(a.batchClosed) and by == "owner"
 pure def closeBatch(a: Allocation, by: str): Allocation =
@@ -93,24 +93,17 @@ pure def sometimesSent(a: Allocation): bool = a.phase == Sent
 pure def sometimesUnclaimed(a: Allocation): bool = a.phase == Unclaimed
 ```
 
-### First confirmation is either absent or inside the registration window
+### An unpublished row has no confirmation, wallet or send, and the trusted clock is positive
 
-Discovered by the proof: an arbitrary AwaitingWallet state could retain a
-negative first confirmation. Confirming a valid wallet would preserve that
-invalid timestamp. Every retained first confirmation is now explicitly absent
-or positive and before the fixed deadline, in every phase.
+```quint
+pure def alwaysUnpublishedBlank(a: Allocation): bool = a.now > 0
+  and (a.phase == Unpublished implies (a.firstConfirmation == 0 and a.wallet == "" and a.transaction == ""))
+```
+
+### A retained first confirmation is absent or positive and before the deadline, in every phase
 
 ```quint
 pure def alwaysFirstConfirmationValid(a: Allocation): bool = a.firstConfirmation == 0
   or (a.firstConfirmation > 0 and a.firstConfirmation < a.deadline)
-```
-
-### Simulation samples exercise missing, matching and conflicting evidence
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
-
-```quint
-pure val actorValues = Set(0, 1, 2)
 pure val nowValues = Set(2, 3, 4, 5)
 ```

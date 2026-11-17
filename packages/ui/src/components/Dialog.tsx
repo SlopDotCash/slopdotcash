@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, target } from "../lib/cn.ts";
 import { description, heading, overlay, panel } from "../lib/overlay.ts";
 import { CardFooter } from "./Card.tsx";
 
@@ -35,7 +35,7 @@ export function DialogContent({ closeLabel = "Close", className, children, ...pr
       {/* A `DialogDescription`, when there is one, describes the panel all the same. */}
       <DialogPrimitive.Content aria-describedby={undefined} className={cn(panel, className)} {...props}>
         {children}
-        <DialogPrimitive.Close aria-label={closeLabel} className={cn(focusRing, "absolute top-4 right-4 rounded-sm text-muted-foreground hover:text-foreground")}>
+        <DialogPrimitive.Close aria-label={closeLabel} className={cn(focusRing, target, "absolute top-4 right-4 rounded-sm text-muted-foreground hover:text-foreground")}>
           <X aria-hidden className="size-4" />
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>

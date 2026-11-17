@@ -19,7 +19,7 @@ token readers after the signed bytes were checked, and `SwapReceipt` and
 `SendReceipt` are finalized receipts. As for the bridge legs, every send is
 also a row of the Robinhood Chain fee journal in the implementation; binding
 it to that [journal](./conversion.md) is a composition obligation that
-[the composition](./composition.md) states.
+[the buyback binding](./buybackBinding.md) states.
 
 ## Story: Credit each proven arrival and each Robinhood share once
 
@@ -86,10 +86,8 @@ pure def canPublishWorker(p: Pool, config: R::WorkerConfig, by: R::Sender): bool
 pure def publishWorker(p: Pool, config: R::WorkerConfig, by: R::Sender): Pool = { ...p, runtime: R::publish(p.runtime, config, by) }
 pure def canSetReleaseVariable(p: Pool, variable: bool, by: R::Sender): bool = R::canSetReleaseVariable(p.runtime, variable, by)
 pure def setReleaseVariable(p: Pool, variable: bool, by: R::Sender): Pool = { ...p, runtime: R::setReleaseVariable(p.runtime, variable, by) }
-pure def canVerifyReadiness(p: Pool, listedWallet: int, by: R::Sender): bool =
-  R::canVerifyReadiness(p.runtime, R::Robinhood, listedWallet, by)
-pure def verifyReadiness(p: Pool, listedWallet: int, by: R::Sender): Pool =
-  { ...p, runtime: R::verifyReadiness(p.runtime, R::Robinhood, listedWallet, by) }
+pure def canVerifyReadiness(p: Pool, by: R::Sender): bool = R::canVerifyReadiness(p.runtime, R::Robinhood, by)
+pure def verifyReadiness(p: Pool, by: R::Sender): Pool = { ...p, runtime: R::verifyReadiness(p.runtime, R::Robinhood, by) }
 pure def signs(p: Pool): bool = R::buybackSigns(p.runtime, R::Robinhood)
 pure def alwaysRuntimeSound(p: Pool): bool = R::alwaysPublishedPassedPreflight(p.runtime) and R::alwaysUnpublishedInert(p.runtime)
   and R::alwaysBuybackNeedsLiveConverter(p.runtime) and R::alwaysStagingBuybackOff(p.runtime)
@@ -158,9 +156,9 @@ pure def sometimesPurchaseCapSkipped(p: Pool): bool = p.decisions.some(d => d.le
 ### A purchase never spends more than the Robinhood fee wallet's finalized USDG balance
 
 Each Robinhood Chain run reads the fee wallet's USDG balance at a finalized
-block and quotes at most the least of the pool credit and that balance
-(`B::boundedSend` with the remaining value cap), before the cap fitting that
-may scale the input down further. Neither an evaluation nor a purchase ever
+block and quotes at most the least of the pool credit, that balance and the
+remaining value cap, before the cap fitting that may scale the input down
+further. Neither an evaluation nor a purchase ever
 spends more than that balance, so an owner sweep of the wallet outside the
 Worker only lowers the next purchase and leaves the credit for later runs.
 

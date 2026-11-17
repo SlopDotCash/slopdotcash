@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import { Slot } from "@radix-ui/react-slot";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, target } from "../lib/cn.ts";
 
 export type NavTabsProps = ComponentProps<"nav"> & {
   /** The name of the navigation landmark. */
@@ -29,6 +29,7 @@ export function NavTab({ current = false, asChild = false, className, ...props }
       aria-current={current ? "page" : undefined}
       className={cn(
         focusRing,
+        target,
         "rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap text-muted-foreground hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground motion-safe:transition-colors motion-safe:duration-fast",
         className,
       )}

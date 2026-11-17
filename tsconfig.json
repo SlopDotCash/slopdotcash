@@ -8,7 +8,8 @@
   },
   "include": [
     "vibestack",
-    "gen/*.ts"
+    "gen/*.ts",
+    "formal/check.ts"
   ],
   "exclude": [
     "vibestack/examples",

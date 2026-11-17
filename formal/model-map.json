@@ -4773,7 +4773,9 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/contributor/evidence.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/contributor/sessionExchange.md",
+        "spec/contributor/traceServer.md"
       ]
     },
     {
@@ -5292,7 +5294,8 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/contracts/evmEscrow.md"
       ]
     },
     {
@@ -5692,7 +5695,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/settlement/escrow.md"
       ]
     },
     {
@@ -5805,8 +5809,10 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
-      ]
+        "spec/fees/conversion.md",
+        "spec/operations/localValidator.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (inspectRuntime, rejectRemoteRuntime, inspectImage, rejectImage, requestCreate, acknowledgeCreate, requestStart, acknowledgeStart, mutationUnknown, inspectLoopback, rejectPorts, verifyBinary, acknowledgeReadyWrite, rejectBinary, receiptFailure, stopOwned, confirmRemoved, cleanupUnknown, abruptExit) or cites its source (scripts/local-solana-validator.mjs, scripts/child-environment.mjs, .github/workflows/escrow-tests.yml); its behaviour is mapped to spec/settlement/, spec/fees/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/contracts/solana_direct_fixture.qnt",
@@ -5910,7 +5916,8 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/contracts/solanaEscrow.md"
       ]
     },
     {
@@ -5968,7 +5975,10 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
         "spec/points/allocation.md",
-        "spec/settlement/allocation.md"
+        "spec/settlement/allocation.md",
+        "spec/contracts/solanaEscrow.md",
+        "spec/settlement/escrow.md",
+        "spec/settlement/monthlySettlement.md"
       ]
     },
     {
@@ -6305,7 +6315,8 @@
         "spec/security/enforcement.md",
         "spec/security/privacy.md",
         "spec/contracts/solanaEscrow.md",
-        "spec/settlement/money.md"
+        "spec/settlement/money.md",
+        "spec/settlement/escrow.md"
       ]
     },
     {
@@ -6356,7 +6367,8 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/contracts/solanaEscrow.md"
       ]
     },
     {
@@ -6671,7 +6683,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/contributor/installation.md",
-        "spec/contributor/workflow.md"
+        "spec/contributor/workflow.md",
+        "spec/contributor/discoverySnapshot.md"
       ]
     },
     {
@@ -7415,7 +7428,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/fees/buyback.md"
+        "spec/fees/buyback.md",
+        "spec/fees/buybackPool.md",
+        "spec/fees/buybackRpc.md"
       ]
     },
     {
@@ -7511,7 +7526,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/fees/composition.md",
+        "spec/fees/directBountyIncome.md"
       ]
     },
     {
@@ -7753,7 +7770,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/fees/conversion.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (upgrade) or cites its source (migrations/0076_fee_conversion_pending.sql, migrations/0078_fee_conversion_transaction_size.sql, migrations/0082_fee_claim_journal.sql, migrations/0087_fee_send_replacements.sql, migrations/0088_fee_approval_journal.sql); it models D1 schema migrations, which are carried byte for byte under migrations/. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/fees/fee_value_caps.qnt",
@@ -7923,7 +7941,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/fees/conversion.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names an action of its own (it has only init and step) or cites its source (src/lib/payments/contracts.ts); its behaviour is mapped to spec/fees/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/fees/solana_expiry.qnt",
@@ -8112,8 +8131,10 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
-      ]
+        "spec/settlement/signer.md",
+        "spec/settlement/bindingAuthority.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (expireOrSupersede, codeAccount, costly, prepare, broadcast, observeOriginal, observeCancellation). spec/settlement/signer.md cites its source but names none of those actions; its behaviour is mapped to spec/settlement/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/payments/binding_consent_renewal.qnt",
@@ -8882,8 +8903,10 @@
         "spec/points/allocation.md",
         "spec/points/reviews.md",
         "spec/points/journal.md",
-        "spec/points/census.md"
-      ]
+        "spec/points/census.md",
+        "spec/settlement/evmScan.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (startA, startB, verifyA, verifyB, completeA, completeB, failedA, failedB, wrongChain, correctChain, refuseWrongChain). spec/settlement/evmScan.md cites its source but names none of those actions; its behaviour is mapped to spec/settlement/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/payments/fresh_stack_admission.qnt",
@@ -8956,7 +8979,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/review.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/appeals.md"
+        "spec/slopbot/appeals.md",
+        "spec/settlement/publicRecords.md"
       ]
     },
     {
@@ -9610,7 +9634,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/backend/bindingConsent.md"
       ]
     },
     {
@@ -9699,7 +9724,8 @@
         "spec/settlement/monthly.md",
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
-        "spec/settlement/money.md"
+        "spec/settlement/money.md",
+        "spec/settlement/vaultSnapshots.md"
       ]
     },
     {
@@ -10359,7 +10385,8 @@
         "spec/points/allocation.md",
         "spec/points/reviews.md",
         "spec/points/journal.md",
-        "spec/points/census.md"
+        "spec/points/census.md",
+        "spec/settlement/solanaScan.md"
       ]
     },
     {
@@ -10580,7 +10607,8 @@
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
         "spec/settlement/money.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (trace, verify, choices) or cites its source (backend/security/direct-evm-balances.ts); its behaviour is mapped to spec/settlement/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/payments/unsafe_destination_history.qnt",
@@ -10905,7 +10933,8 @@
         "spec/settlement/monthly.md",
         "spec/points/allocation.md",
         "spec/settlement/allocation.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (choose, allocate, retry, chooseAny) or cites its source (src/lib/implementation-allocation.ts, src/lib/implementation-lines.ts, src/lib/score-units.ts, src/lib/commit-credit.ts, src/lib/leaderboard.ts, src/lib/points.ts); its behaviour is mapped to spec/points/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/points/implementation_credit.qnt",
@@ -11424,7 +11453,9 @@
         "spec/points/allocation.md",
         "spec/points/census.md",
         "spec/points/journal.md",
-        "spec/points/reviews.md"
+        "spec/points/reviews.md",
+        "spec/backend/accounts.md",
+        "spec/points/participation.md"
       ]
     },
     {
@@ -11498,7 +11529,8 @@
         "spec/points/allocation.md",
         "spec/points/census.md",
         "spec/points/journal.md",
-        "spec/points/reviews.md"
+        "spec/points/reviews.md",
+        "spec/points/recovery.md"
       ]
     },
     {
@@ -11574,7 +11606,8 @@
         "spec/points/allocation.md",
         "spec/points/census.md",
         "spec/points/journal.md",
-        "spec/points/reviews.md"
+        "spec/points/reviews.md",
+        "spec/points/corrections.md"
       ]
     },
     {
@@ -11968,7 +12001,8 @@
         "spec/operations/release.md",
         "spec/governance.md",
         "spec/security/evidence.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (normalRun, selectPrivateOutput, privateRun, archive, chooseNormal, choosePrivate). spec/operations/release.md cites its source but names none of those actions; it models the old CI and release scripts. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/release/ci_browser_runtime.qnt",
@@ -12008,7 +12042,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/operations/release.md",
-        "spec/governance.md"
+        "spec/governance.md",
+        "spec/operations/releaseCoverage.md"
       ]
     },
     {
@@ -12050,8 +12085,10 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/operations/release.md",
-        "spec/governance.md"
-      ]
+        "spec/governance.md",
+        "spec/operations/releaseCoverage.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (chooseCoverage, initMainPush, initDevelopmentPush, initSolanaFixture, initModelSource). spec/operations/release.md, spec/operations/releaseCoverage.md cite its source but name none of those actions; it models the old CI and release scripts. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/release/deployment_probe.qnt",
@@ -12186,7 +12223,8 @@
         "spec/points/reviews.md",
         "spec/points/journal.md",
         "spec/points/census.md",
-        "spec/governance.md"
+        "spec/governance.md",
+        "spec/points/profiles.md"
       ]
     },
     {
@@ -12307,7 +12345,8 @@
       "candidateSuccessorSpecs": [
         "spec/operations/release.md",
         "spec/governance.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (applyLabel, synchronize, invalidate) or cites its source (.github/workflows/release-label.yml); it models the old CI and release scripts. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/release/release_proof_gate.qnt",
@@ -12556,7 +12595,8 @@
       "candidateSuccessorSpecs": [
         "spec/operations/release.md",
         "spec/governance.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (initialize, prepare, render, write, finish, failBuild) or cites its source (scripts/generate-sitemap.ts, scripts/render-social-images.mjs, scripts/sync-brand-tokens.mjs); it models the old CI and release scripts. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/release/trusted_base_gate.qnt",
@@ -12712,8 +12752,10 @@
         "spec/points/census.md",
         "spec/points/journal.md",
         "spec/points/reviews.md",
-        "spec/settlement/monthly.md"
-      ]
+        "spec/settlement/monthly.md",
+        "spec/points/rewardWeights.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (aggregate, produce). spec/points/journal.md, spec/points/rewardWeights.md cite its source but name none of those actions; its behaviour is mapped to spec/points/, spec/settlement/monthly.md by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/rewards/contributor_allocation.qnt",
@@ -12917,7 +12959,9 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/settlement/escrow.md",
+        "spec/settlement/signer.md"
       ]
     },
     {
@@ -12954,8 +12998,10 @@
         "spec/points/census.md",
         "spec/points/journal.md",
         "spec/points/reviews.md",
-        "spec/settlement/monthly.md"
-      ]
+        "spec/settlement/monthly.md",
+        "spec/points/evaluations.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (admit). spec/points/evaluations.md cites its source but names none of those actions; its behaviour is mapped to spec/points/, spec/settlement/monthly.md by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/rewards/funding_routes.qnt",
@@ -13126,8 +13172,10 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
-      ]
+        "spec/points/allocation.md",
+        "spec/settlement/monthlyCommitment.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (initWith, pass, runPass, runPassOldestFirst, passAny, reattest, tick) or cites its source (workers/payments/index.ts, migrations/0083_monthly_execution_attempts.sql, workers/payment-executor/monthly.ts, workers/payment-executor/core.ts); its behaviour is mapped to spec/points/, spec/settlement/monthly.md by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/rewards/monthly_coordinator.qnt",
@@ -13273,7 +13321,9 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/monthlyExecution.md",
+        "spec/settlement/monthlySettlement.md"
       ]
     },
     {
@@ -13456,7 +13506,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/monthlySettlement.md"
       ]
     },
     {
@@ -13495,7 +13546,8 @@
         "spec/points/journal.md",
         "spec/points/reviews.md",
         "spec/settlement/monthly.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (inspect, classify) or cites its source (scripts/prior-cycle-accrual.ts); it models an operator or harness script of the old application. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/rewards/review_credit.qnt",
@@ -13537,8 +13589,10 @@
         "spec/points/allocation.md",
         "spec/points/reviews.md",
         "spec/points/journal.md",
-        "spec/points/census.md"
-      ]
+        "spec/points/census.md",
+        "spec/points/scoringPolicy.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (chooseSize, ingest, allocate, chooseAnySize, ingestAny, produce). spec/points/scoringPolicy.md cites its source but names none of those actions; its behaviour is mapped to spec/points/, spec/settlement/monthly.md by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/rewards/reward_metadata.qnt",
@@ -13618,7 +13672,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (prove, returnComplete) or cites its source (workers/slopbot/value-patch-replay.ts); its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_accepted_census.qnt",
@@ -13656,8 +13711,10 @@
         "spec/points/allocation.md",
         "spec/points/reviews.md",
         "spec/points/journal.md",
-        "spec/points/census.md"
-      ]
+        "spec/points/census.md",
+        "spec/slopbot/workUnits.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (addLeft, addRight, finishLeft, finishRight, movingCount, combine). spec/slopbot/workUnits.md cites its source but names none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_appeal.qnt",
@@ -13787,7 +13844,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/budgetBlocks.md"
       ]
     },
     {
@@ -14099,8 +14157,10 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
-      ]
+        "spec/slopbot/review.md",
+        "spec/slopbot/historicalImport.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (admit, collect, reconstruct, publish). spec/slopbot/historicalImport.md cites its source but names none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_inference_reservations.qnt",
@@ -14298,8 +14358,11 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
-      ]
+        "spec/slopbot/review.md",
+        "spec/slopbot/workUnits.md",
+        "spec/points/workUnits.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (prepare, publish). spec/slopbot/workUnits.md, spec/points/workUnits.md cite its source but name none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_moderation.qnt",
@@ -14432,7 +14495,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (ambiguousParent, partialPatch, acceptedDrift, identicalRepeatedEdits, verify) or cites its source (workers/slopbot/value-patch.ts, workers/slopbot/value-patch-replay.ts, workers/slopbot/value-accepted-range.ts, workers/slopbot/value-manifest-identity.ts, workers/slopbot/git-object.ts); its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_penalty_once.qnt",
@@ -14528,7 +14592,9 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/valueInference.md",
+        "spec/slopbot/historicalImport.md"
       ]
     },
     {
@@ -14608,8 +14674,11 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
-      ]
+        "spec/slopbot/review.md",
+        "spec/slopbot/workUnits.md",
+        "spec/slopbot/valueHistory.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (captureA, captureB, commitA, commitB, pause, quarantine, removeSecondary). spec/slopbot/workUnits.md, spec/slopbot/valueHistory.md cite its source but name none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_quality_receipt.qnt",
@@ -14794,7 +14863,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (hint, observeRegisteredBranch, verifyAncestry, verifyRetainedTrees, original, classifyPromotion) or cites its source (workers/slopbot/verified-retained-binding.ts, workers/slopbot/value-retained-copy.ts, workers/slopbot/value-retained-reference.ts, workers/slopbot/value-indirect.ts, workers/slopbot/value-indirect-retention.ts, workers/slopbot/value-no-change-promotion.ts, workers/slopbot/value-branch-policy.ts, workers/slopbot/value-commit-hints.ts); its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_review_admission.qnt",
@@ -14908,8 +14978,10 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
-      ]
+        "spec/slopbot/review.md",
+        "spec/slopbot/valueRequests.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (startA, startB, claimA, claimB, publishA, publishB, tick). spec/slopbot/valueRequests.md cites its source but names none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_value_attempt_recovery.qnt",
@@ -14966,8 +15038,10 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md",
-        "spec/slopbot/valueInference.md"
-      ]
+        "spec/slopbot/valueInference.md",
+        "spec/slopbot/valueRequests.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (expireA, recordA, retainA, completeA, publishA, claimB, firstReadB, admitB, replyB, terminalReadB, reserveB, callB, publishB, dueB). spec/slopbot/valueRequests.md cites its source but names none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_value_budget.qnt",
@@ -15119,7 +15193,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/slopbot/pointsDisputes.md"
       ]
     },
     {
@@ -15457,8 +15532,12 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md",
-        "spec/slopbot/valueInference.md"
-      ]
+        "spec/slopbot/valueInference.md",
+        "spec/slopbot/workUnits.md",
+        "spec/slopbot/valueHistory.md",
+        "spec/slopbot/valueRequests.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (startA, startB, collectA, collectB, incompleteA, holdA, holdB, busyB, partitionA, partitionB, beginPreCallA, beginPreCallB, finishPreCallA, finishPreCallB, assessA, assessB, recordA, recordB, retainA, retainB, reuseA, reuseB, beginPublicationA, beginPublicationB, publishA, publishB, refuseA, refuseB, finishA, finishB, currentA, currentB, tick). spec/slopbot/workUnits.md, spec/slopbot/valueHistory.md, spec/slopbot/valueRequests.md cite its source but name none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/bot_value_precall_authority.qnt",
@@ -15566,7 +15645,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/frontend/composition.md"
+        "spec/frontend/composition.md",
+        "spec/slopbot/valueRequests.md"
       ]
     },
     {
@@ -15827,7 +15907,8 @@
         "spec/slopbot/review.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/appeals.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (inspect, validate, optIn, send, acknowledge) or cites its source (scripts/recover-slopbot-appeal.ts); it models an operator or harness script of the old application. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/qualification_value_budget.qnt",
@@ -15911,7 +15992,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (initialize, collect, bind, discussion, annotate, validate, publish) or cites its source (scripts/collect-quality-census.ts, scripts/collect-quality-discussions.ts, scripts/complete-quality-discussions.ts, scripts/enrich-contribution-quality.ts, scripts/enrich-quality-discussions.ts, scripts/prepare-contribution-quality.ts, scripts/sync-contribution-quality.ts); it models an operator or harness script of the old application. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/quality_simulation.qnt",
@@ -15950,7 +16032,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (validate, recompute, writeProposal, computationFails, writeFails) or cites its source (scripts/simulate-contribution-quality.ts); it models an operator or harness script of the old application. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/retained_copy_bindings.qnt",
@@ -16059,7 +16142,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (inspect, creditOrdinary) or cites its source (scripts/retained-commit-credit.ts, workers/slopbot/value-retained-copy.ts); its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/slopbot/value_feed_deadline.qnt",
@@ -16182,7 +16266,8 @@
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (migrate) or cites its source (migrations/0105_slopbot_value_terminal_states.sql, migrations/0103_slopbot_value_retry_attempts.sql, migrations/0052_slopbot_value_processing.sql); it models D1 schema migrations, which are carried byte for byte under migrations/. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/tooling/dev_identity_bridge.qnt",
@@ -16351,8 +16436,10 @@
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
         "spec/governance.md",
-        "spec/backend/listing.md"
-      ]
+        "spec/backend/listing.md",
+        "spec/backend/projectRegistry.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (inspect, importRegistry, startFlow, beginPoll, expireFlow, issueToken, consumeToken) or cites its source (scripts/dev-project-registry.ts, scripts/dev-identity-bridge.ts); it models development tooling of the old repository, not product state. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/tooling/dev_server_lifecycle.qnt",
@@ -16757,7 +16844,8 @@
         "spec/backend/wallets.md",
         "spec/settlement/signer.md",
         "spec/governance.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (prepareDatabase, startChain, seedWallets, startPages, requestWalletChange, apiResult, finishPages, setupFails, closeChain, removeDirectory, finish) or cites its source (scripts/run-e2e.mjs); it models development tooling of the old repository, not product state. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/tooling/formal_process.qnt",
@@ -16899,7 +16987,8 @@
         "spec/operations/notifications.md",
         "spec/operations/release.md",
         "spec/governance.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (quote, slash, textChar, openBlock, closeBlock, openLine, newline, startFold, nestedLet, inToken, lambda, otherToken) or cites its source (scripts/quint-tla-normalization.mjs, scripts/quint-local-translator.mjs); it models development tooling of the old repository, not product state. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/tooling/formal_toolchain.qnt",
@@ -17623,7 +17712,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/frontend/walletConsent.md"
       ]
     },
     {
@@ -17925,7 +18015,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (grantRole, provideReason, preview, concurrentRevision, apply, conflict, revoke) or cites its source (src/Admin.tsx, src/AdminProjectEnforcement.tsx, src/AdminVetting.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_admin_vetting_requests.qnt",
@@ -18026,8 +18117,10 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
-      ]
+        "spec/security/privacy.md",
+        "spec/security/vettingComposition.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (cookieChanges, identityAvailability, adminRole, editPayload, depart, remount, beginRead, observeReadIdentity, returnReadIdentity, useReadIdentity, readPreflight, dispatchRead, readResponse, readTemporaryFailure, publishRead, readAccessLost, readLocalError, dropRead, beginMutation, observeMutationIdentity, returnMutationIdentity, useMutationIdentity, mutationPreflight, dispatchMutation, admitMutation, mutationTemporaryFailure, mutationAccessLost, mutationLocalError, invokeMutationCallback, finishMutation, dropMutation, loaded, acceptedMutation, oldPassiveDepart). spec/security/admission.md, spec/security/vettingComposition.md cite its source but name none of those actions; it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_artifacts.qnt",
@@ -18187,8 +18280,11 @@
         "spec/security/cases.md",
         "spec/settlement/payment.md",
         "spec/settlement/recovery.md",
-        "spec/security/terms.md"
-      ]
+        "spec/security/terms.md",
+        "spec/frontend/solanaBountyPrompt.md",
+        "spec/frontend/directBountyPrompt.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (initTracking, readCase, caseReply, replaceCase, failedRead, hidePrivateView, confirmActor, storageReply, reviewBeforePrompt, preflightRefused, recordBeforePrompt, walletReturns, walletUnknown, walletDeclined, chooseCaseReply, chooseCaseReplacement, chooseFailedRead, chooseStorageReply). spec/frontend/solanaBountyPrompt.md, spec/frontend/directBountyPrompt.md cite its source but name none of those actions; it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_calendar_views.qnt",
@@ -18234,7 +18330,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (nextDay, refreshMonth, refreshChart, refreshProject, showLifetime, showMonth) or cites its source (src/Points.tsx, src/Profiles.tsx, src/OwnerAwards.tsx, src/ProjectProposalPage.tsx, src/lib/use-time-boundary.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_clipboard_requests.qnt",
@@ -18375,7 +18472,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
         "spec/points/allocation.md",
-        "spec/settlement/allocation.md"
+        "spec/settlement/allocation.md",
+        "spec/settlement/contributorAllocation.md"
       ]
     },
     {
@@ -18550,8 +18648,10 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/frontend/composition.md"
-      ]
+        "spec/frontend/composition.md",
+        "spec/frontend/routes.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (setRoute, mountMissing, unmountMissing, existingRobots, noOpenGraphElement) or cites its source (src/lib/document-head.ts, src/App.tsx, src/Presentation.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_draft_save_progress.qnt",
@@ -18592,7 +18692,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/frontend/composition.md"
+        "spec/frontend/composition.md",
+        "spec/frontend/projectDrafts.md"
       ]
     },
     {
@@ -19007,7 +19108,8 @@
       "candidateSuccessorSpecs": [
         "spec/operations/notifications.md",
         "spec/backend/email.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (parentStarts, childStarts, typeDraft, sessionChanges, parentCompletes, parentFails, childCompletes, childUnauthorized, pointsChanges, localSignout, submit) or cites its source (src/Points.tsx, src/InboxEmail.tsx, src/lib/project-api.ts, src/lib/github-actor.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_email_preference_requests.qnt",
@@ -19124,8 +19226,10 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
-      ]
+        "spec/settlement/signer.md",
+        "spec/settlement/payoutExclusions.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (addExclusion). spec/settlement/payoutExclusions.md cites its source but names none of those actions; it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_explicit_signout.qnt",
@@ -19195,7 +19299,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (beginRead, readReply, disable, enable, privateReadAccepted, beginAction, requestWallet, acceptAction, actionReply, walletReply, beginSignout, refuseSignout, confirmSignout, openMail, beginMail, mailReply, unmount) or cites its source (src/lib/project-api.ts, src/Points.tsx, src/Inbox.tsx, src/Earnings.tsx, src/OwnerAwards.tsx, src/InboxEmail.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_focus_session.qnt",
@@ -19235,7 +19340,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/accounts.md"
+        "spec/backend/accounts.md",
+        "spec/frontend/navigation.md"
       ]
     },
     {
@@ -19281,7 +19387,8 @@
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md",
         "spec/frontend/presentation.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (hashNavigate, targetArrives, align, readerTakeover, scroll, timeout, depart, trustedBack) or cites its source (src/Link.tsx, src/App.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_hero_animation.qnt",
@@ -19323,7 +19430,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (effect, fire, mediaChange, unmount) or cites its source (src/App.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_history_projection.qnt",
@@ -19363,7 +19471,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/frontend/views.md"
       ]
     },
     {
@@ -19521,7 +19630,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (choose, rejectType, decode, decodeReject, invalidImage, encodeCurrent, closeDepartedBitmap, editHeadline, beginPublish, publishCommit, remove, discardDraft, leaveField, returnToField) or cites its source (src/ProjectImageField.tsx, src/ProjectProposalPage.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_inbox.qnt",
@@ -19870,7 +19980,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (click, nativeClick, targetArrives, readerScroll, scrollTimer) or cites its source (src/Link.tsx, src/Points.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_model_outcomes.qnt",
@@ -20493,7 +20604,8 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/frontend/paymentHistory.md"
       ]
     },
     {
@@ -20695,7 +20807,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/frontend/registry.md"
       ]
     },
     {
@@ -20849,8 +20962,10 @@
         "spec/security/cases.md",
         "spec/settlement/payment.md",
         "spec/settlement/recovery.md",
-        "spec/security/terms.md"
-      ]
+        "spec/security/terms.md",
+        "spec/frontend/reportDetails.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (paint, readCase, readReply, readError, startAction, commitAction, refuseStaleAction, actionReply, equalRevisionCallback, projectionChanges, depart) or cites its source (src/SecurityBounty.tsx, backend/security/handler.ts, backend/security/direct-payments.ts, backend/payments/wallet-registration.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_private_intake.qnt",
@@ -20964,7 +21079,8 @@
         "spec/security/cases.md",
         "spec/settlement/payment.md",
         "spec/settlement/recovery.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (openFirst, openSecond, closeFirst, closeSecond, accountChanges) or cites its source (src/SecurityBounty.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_private_report_projection.qnt",
@@ -21119,7 +21235,9 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/frontend/composition.md"
+        "spec/frontend/composition.md",
+        "spec/frontend/views.md",
+        "spec/points/profiles.md"
       ]
     },
     {
@@ -21180,7 +21298,8 @@
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
         "spec/settlement/signer.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (sourceChanges, noActorEffect, requestWallet, walletReply, depart, remount) or cites its source (src/ProfilePage.tsx, src/Profiles.tsx, src/Points.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_project_authority.qnt",
@@ -21237,7 +21356,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (cookieChanges, sessionObserved, focus, begin, dispatch, admit, response, recheck, changeProject, depart, remount) or cites its source (src/lib/project-api.ts, src/ProjectProposalPage.tsx, src/Presentation.tsx, src/EscrowFunding.tsx, backend/projects/handler.ts, backend/http.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_project_discovery.qnt",
@@ -21361,7 +21481,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
         "spec/frontend/presentation.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (customError, changeCustom, ownerError, changeOwner, newProject) or cites its source (src/App.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_project_policy.qnt",
@@ -21406,8 +21527,10 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
-      ]
+        "spec/backend/projects.md",
+        "spec/backend/projectRegistry.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (activateUnverified, verifyAuthority, reviseTerms, omitReceiptBinding, rotate, rewriteHistory, closeWithoutSuccessor, identityDrift, admit) or cites its source (src/lib/project-policy.mjs, src/lib/project-schema.mjs, src/lib/project-revision-changes.ts, src/lib/repositories.mjs); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_project_publication_lifetime.qnt",
@@ -21720,7 +21843,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (publication, viewerChanges, previewOrigin, suppressQuery, changeActorProp, startRead, replaceProfile, normalizedKeyUnchanged, depart, observePublicQuery, queueSuccess, queueMalformed, queueFailure, deliverSuccess, deliverFailure, openPublicLink) or cites its source (src/Points.tsx, src/ProfilePage.tsx, src/App.tsx, backend/points/x.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_record_deadlines.qnt",
@@ -21760,7 +21884,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (passDeadlines, renderReview, renderRetry) or cites its source (src/CyclePages.tsx, src/Presentation.tsx, src/PrivateReportSummary.tsx, src/SecurityBounty.tsx, src/lib/use-time-boundary.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_record_display.qnt",
@@ -21898,8 +22023,11 @@
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
         "spec/settlement/referralPublication.md",
-        "spec/settlement/referralDistributor.md"
-      ]
+        "spec/settlement/referralDistributor.md",
+        "spec/frontend/referralSettings.md",
+        "spec/frontend/walletAttempt.md"
+      ],
+      "noSuccessor": "No candidate successor names its actions (unavailableLocks, storageFails, storageRecovers, restoreLegacy, restoreUnreadable, observe, requestLock, grantLock, beginSend, observePreflight, returnPreflight, dispatchWallet, requestWallet, preflightRefuses, depart, walletHash, walletDeclines, walletUnknown, terminate, reset, refuseBusyOrUnsupported, observeClaimed, clearVerified, externalReplacement, historicalPassiveRemoval). spec/frontend/referralSettings.md, spec/frontend/walletAttempt.md cite its source but name none of those actions; it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_referral_read_ownership.qnt",
@@ -22241,7 +22369,8 @@
         "spec/points/reviews.md",
         "spec/points/journal.md",
         "spec/points/census.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (choose, ingest, allocate, advanceWindow, configure, ingestAny, ingestNext, produce). spec/points/reviews.md, spec/points/journal.md, spec/points/census.md cite its source but name none of those actions; it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_risk_flag.qnt",
@@ -22514,7 +22643,8 @@
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md",
         "spec/frontend/presentation.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (cookieChanges, beginRead, readPreflight, readDispatch, readReply, wrongPermissionViewer, readPostflight, loadSettings, beginPublish, publishPreflight, publishDispatch, serverResult, publishReply, publishPostflight, depart, parentIdentityReply, unavailablePublicationIdentity, remount) or cites its source (src/ProjectSecuritySettings.tsx, src/SecurityProgramEditor.tsx, src/SecurityBounty.tsx, src/lib/project-api.ts, backend/http.ts, backend/projects/handler.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_session.qnt",
@@ -22632,7 +22762,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (emptyInitial, cookieChanges, begin, preflight, dispatch, admit, response, recheck, depart, hide, reveal, remount, oldRevealWithoutAutomaticCheck) or cites its source (src/ProjectSetupStatus.tsx, src/App.tsx, src/PendingProjectApplications.tsx, src/ProjectProposalPage.tsx, src/lib/project-api.ts, backend/projects/handler.ts, backend/http.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_snapshot_cache.qnt",
@@ -23264,7 +23395,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/frontend/composition.md"
+        "spec/frontend/composition.md",
+        "spec/frontend/directBountyPrompt.md"
       ]
     },
     {
@@ -23306,7 +23438,8 @@
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
         "spec/frontend/composition.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (passDeadline, installEffect, fireTimer, unrelatedRender) or cites its source (src/lib/use-time-boundary.ts, src/lib/use-snapshot.ts, src/ContributorAllocation.tsx, src/OwnerAwards.tsx); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/ui/ui_transaction.qnt",
@@ -24551,7 +24684,8 @@
         "spec/security/admission.md",
         "spec/security/enforcement.md",
         "spec/security/privacy.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (authorize, sendVerifiedPart, claimFinish, claimFailure, cancel, auditSuccess, auditFailure). spec/security/privacy.md cites its source but names none of those actions; its behaviour is mapped to spec/security/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/vetting/vetting_evidence_access.qnt",
@@ -24601,7 +24735,8 @@
         "spec/security/enforcement.md",
         "spec/security/privacy.md",
         "spec/security/evidence.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (admit, issue, tick, consume, auditAttempt, verifyBytes, auditRead, deliver). spec/security/privacy.md cites its source but names none of those actions; its behaviour is mapped to spec/security/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/vetting/vetting_evidence_delivery.qnt",
@@ -25430,7 +25565,8 @@
         "spec/security/admission.md",
         "spec/security/enforcement.md",
         "spec/security/privacy.md"
-      ]
+      ],
+      "noSuccessor": "No candidate successor names its actions (originalSymlink, decodeComplete, decodeFailure, reviewPayload, reviewHeader, reviewAllHeaders, discoverGap, publishClean). spec/security/admission.md cites its source but names none of those actions; its behaviour is mapped to spec/security/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
     },
     {
       "sourcePath": "formal/models/vetting/vetting_local_helpers.qnt",

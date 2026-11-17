@@ -7,6 +7,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Local validator funding command](./localCommand.md)
 - [Local Solana validator stages](./localValidator.md)
 - [Notifications](./notifications.md)
+- [Moderator and steward Inbox items](./moderation.md)
 - [Release and operational qualification](./release.md)
 - [Publication lock per environment](./publicationLock.md)
 - [Private-reporting intake health](./intakeHealth.md)

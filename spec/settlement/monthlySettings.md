@@ -28,36 +28,13 @@ pure val initial: Settings = { project: "eliza", revision: 1, automatic: true, s
 pure def mayChange(s: Settings, authority: SettingsAuthority): bool =
   (authority.role == SettingsOwner or authority.role == SettingsSteward or authority.role == SettingsAdmin)
     and not(authority.banned) and authority.actor > 0 and authority.revision == s.revision
-pure def canSetAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority,
-  openCuts: List[CutNotice], now: int): bool =
+pure def canSetAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority): bool =
   mayChange(s, authority) and expectedSequence == s.sequence
-    and not(automatic and openCuts.some(notice => noticeCrossesCutoff(notice, now)))
-pure def setAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority,
-  openCuts: List[CutNotice], now: int): Settings =
+pure def setAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority): Settings =
   { ...s, automatic: automatic, sequence: s.sequence + 1,
     changes: s.changes.append({ sequence: s.sequence + 1, automatic: automatic, actor: authority.actor }) }
 pure def canObserveRevision(s: Settings, revision: int): bool = revision > s.revision
 pure def observeRevision(s: Settings, revision: int): Settings = { ...s, revision: revision }
-```
-
-### Turning the default on is refused while an open cut notice crosses an unfrozen month's cutoff
-
-The automatic freeze must never lock a cut with less than 24 hours of
-notice. For each month of the project with no frozen run, the shell reads the
-time of its latest cut and its cutoff in the same transaction that appends
-the change. Turning the default on is refused (`cut_notice_window`) while one
-of those notices ends after its month's cutoff and has not ended yet; the
-owner may finalize that month by hand once the notice is over. Turning the
-default off is never refused for this reason. Operator decision of
-15 November 2026; development `backend/payments/monthly.ts` (`setAutomatic`).
-
-```quint
-import monthly as MO from "./monthly"
-type CutNotice = { period: int, latestCutAt: int, cutoff: int }
-pure def noticeCrossesCutoff(notice: CutNotice, now: int): bool =
-  notice.latestCutAt + MO::cutNoticeSeconds > notice.cutoff and now < notice.latestCutAt + MO::cutNoticeSeconds
-pure val openCutsValues = Set(List(), List({ period: 202611, latestCutAt: 1796300000, cutoff: 1796342400 }))
-pure val nowValues = Set(1796300000, 1796390000)
 ```
 
 ### The journal is append-only and the current value is its last entry

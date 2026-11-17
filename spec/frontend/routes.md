@@ -1,61 +1,15 @@
-# Addresses, fragments and document heads
+# Fragments and document heads
 
-PRD sections 3 and 9. Old links in emails, skills and bookmarks keep working,
-a fragment opens the section it names, and every route states one title and
-one canonical address. These are pure decisions of the browser router; the
-shell parses the address into them and applies their results.
+PRD sections 3 and 9. A fragment opens the section it names, and every route
+states one title and one canonical address. Which route an address opens,
+old addresses included, is decided by the [app shell](../app/index.md); these
+are pure decisions about the route it shows, and the shell applies their
+results.
 
-## Story: Follow an old link to the page it now lives on
+## Story: Open the section a link names
 
-> As someone opening a link saved before a page moved, I want to land on the
-> section it meant, with my query and fragment intact.
-
-### Legacy paths resolve to one canonical destination and keep search and fragment
-
-Before routing, the shell rewrites the address in place (`history.replaceState`,
-the query string always kept): `/wallet` becomes `/account#wallets`;
-`/projects/<id>/awards` becomes the project page with the request's fragment,
-or `#monthly-awards` when it has none; `/projects/<id>/funding` becomes the
-project page with its fragment, or `#funding`; `/projects/<id>/manage` with the
-fragment `#security-settings` becomes `/projects/<id>/security#security-settings`.
-A trailing slash is accepted on each. Routing then treats
-`/admin/applications/<id>` as Administration and `/points?x` as Settings (see
-"Every existing product route is one Page and only private destinations need
-an account"). Every other address is left as it is.
-
-```quint
-import navigation as N from "./navigation"
-type PathForm = OtherPath | WalletPath | AwardsPath | FundingPath | ManagePath | SecurityPath | ProjectPath | AccountPath
-type Address = { form: PathForm, project: str, hash: str }
-pure def canonicalLocation(address: Address): Address =
-  val form = address.form
-  match form {
-  | WalletPath => { form: AccountPath, project: "", hash: "wallets" }
-  | AwardsPath => { ...address, form: ProjectPath, hash: if (address.hash == "") "monthly-awards" else address.hash }
-  | FundingPath => { ...address, form: ProjectPath, hash: if (address.hash == "") "funding" else address.hash }
-  | ManagePath => if (address.hash == "security-settings") { ...address, form: SecurityPath } else address
-  | _ => address
-}
-pure def legacyLocation(address: Address): bool =
-  address.form == WalletPath or address.form == AwardsPath or address.form == FundingPath or
-    (address.form == ManagePath and address.hash == "security-settings")
-pure def lawCanonicalLocationIsStable(address: Address): bool =
-  canonicalLocation(canonicalLocation(address)) == canonicalLocation(address)
-pure def lawNoLegacyLocationRemains(address: Address): bool = not(legacyLocation(canonicalLocation(address)))
-pure def lawCanonicalKeepsTheProjectAndAGivenFragment(address: Address): bool =
-  (address.form == AwardsPath or address.form == FundingPath) implies
-    canonicalLocation(address).project == address.project and
-    (address.hash != "" implies canonicalLocation(address).hash == address.hash)
-pure val addressValues = Set(
-  { form: WalletPath, project: "", hash: "" },
-  { form: AwardsPath, project: "eliza", hash: "" },
-  { form: AwardsPath, project: "eliza", hash: "history" },
-  { form: FundingPath, project: "eliza", hash: "" },
-  { form: ManagePath, project: "eliza", hash: "security-settings" },
-  { form: ManagePath, project: "eliza", hash: "" },
-  { form: OtherPath, project: "", hash: "x" }
-)
-```
+> As someone opening a link to a section of a page, I want to land on that
+> section, even when the page is still loading around it.
 
 ### A fragment destination opens its section and stays aligned until it settles or the reader takes over
 
@@ -117,35 +71,61 @@ Sponsors, Cycle archive (`/cycles`), Leaderboard (`/points`) and Add a project
 <cycle> cycle" and a profile with the login, each at its canonical slug or
 path. An unknown route, an unknown project, a missing cycle, and any page
 while a not-found view is mounted, are `noindex` with no canonical. The head
-is rendered as hoisted React elements, without an effect hook.
+is rendered as hoisted React elements, without an effect hook. The route is
+the [app shell](../app/index.md)'s; each of its route kinds is one
+[navigation](./navigation.md) page, and only the unknown route is Gone.
 
 ```quint
+import app as A from "../app"
+import navigation as N from "./navigation"
 type RouteHead = { titleName: str, canonical: str, indexed: bool }
-pure def privateTitle(page: N::Page): str =
-  if (page == N::Settings) "Account" else if (page == N::Login) "Log in" else if (page == N::Payouts) "Your payouts"
-  else if (page == N::Inbox) "Inbox" else if (page == N::Administration) "Admin"
-  else if (page == N::VettingEvidence) "Private vetting evidence" else if (page == N::SecurityCases) "Security cases"
+pure def pageOf(kind: A::RouteKind): N::Page =
+  if (kind == A::Home) N::Home else if (kind == A::HowItWorks) N::HowItWorks else if (kind == A::Sponsors) N::Sponsors
+  else if (kind == A::CycleArchive) N::CycleArchive else if (kind == A::Cycle) N::Cycle else if (kind == A::Points) N::Rankings
+  else if (kind == A::Account) N::Settings else if (kind == A::Login) N::Login else if (kind == A::Earnings) N::Payouts
+  else if (kind == A::Inbox) N::Inbox else if (kind == A::Admin) N::Administration else if (kind == A::NewProject) N::AddProject
+  else if (kind == A::VettingEvidence) N::VettingEvidence else if (kind == A::SecurityCases) N::SecurityCases
+  else if (kind == A::Project) N::Project else if (kind == A::ManageProject) N::ManageProject
+  else if (kind == A::SecurityProgram) N::SecurityProgram else if (kind == A::Profile) N::Profile
+  else N::Gone
+pure def privateTitle(kind: A::RouteKind): str =
+  if (kind == A::Account) "Account" else if (kind == A::Login) "Log in" else if (kind == A::Earnings) "Your payouts"
+  else if (kind == A::Inbox) "Inbox" else if (kind == A::Admin) "Admin"
+  else if (kind == A::VettingEvidence) "Private vetting evidence" else if (kind == A::SecurityCases) "Security cases"
   else ""
-pure def staticTitle(page: N::Page): str =
-  if (page == N::Home) "Slop: make money shipping open source" else if (page == N::HowItWorks) "How it works"
-  else if (page == N::Sponsors) "Sponsors" else if (page == N::CycleArchive) "Cycle archive"
-  else if (page == N::Rankings) "Leaderboard" else if (page == N::AddProject) "Add a project"
+pure def staticTitle(kind: A::RouteKind): str =
+  if (kind == A::Home) "Slop: make money shipping open source" else if (kind == A::HowItWorks) "How it works"
+  else if (kind == A::Sponsors) "Sponsors" else if (kind == A::CycleArchive) "Cycle archive"
+  else if (kind == A::Points) "Leaderboard" else if (kind == A::NewProject) "Add a project"
   else ""
-pure def recordPage(page: N::Page): bool =
-  page == N::Project or page == N::ManageProject or page == N::SecurityProgram or page == N::Cycle or page == N::Profile
+pure def canonicalPath(kind: A::RouteKind): str =
+  if (kind == A::Home) "/" else if (kind == A::HowItWorks) "/how-it-works" else if (kind == A::Sponsors) "/sponsors"
+  else if (kind == A::CycleArchive) "/cycles" else if (kind == A::Points) "/points" else if (kind == A::Account) "/account"
+  else if (kind == A::Login) "/login" else if (kind == A::Earnings) "/earnings" else if (kind == A::Inbox) "/inbox"
+  else if (kind == A::Admin) "/admin" else if (kind == A::NewProject) "/projects/new"
+  else if (kind == A::VettingEvidence) "/vetting-evidence" else if (kind == A::SecurityCases) "/security"
+  else if (kind == A::Project) "/projects/:project" else if (kind == A::ManageProject) "/projects/:project/manage"
+  else if (kind == A::SecurityProgram) "/projects/:project/security" else if (kind == A::Cycle) "/cycles/:project/:cycle"
+  else if (kind == A::Profile) "/contributors/:login"
+  else ""
+pure def recordKind(kind: A::RouteKind): bool =
+  kind == A::Project or kind == A::ManageProject or kind == A::SecurityProgram or kind == A::Cycle or kind == A::Profile
 pure val notFoundHead: RouteHead = { titleName: "Page not found", canonical: "", indexed: false }
-pure def routeHead(page: N::Page, recordFound: bool, recordName: str): RouteHead =
-  val routed = N::routedPage(page)
-  if (privateTitle(routed) != "") { titleName: privateTitle(routed), canonical: N::routePattern(routed), indexed: true }
-  else if (staticTitle(routed) != "") { titleName: staticTitle(routed), canonical: N::routePattern(routed), indexed: true }
-  else if (recordPage(routed) and recordFound and recordName != "") { titleName: recordName, canonical: N::routePattern(routed), indexed: true }
+pure def routeHead(route: A::Route, recordFound: bool, recordName: str): RouteHead =
+  val kind = route.kind
+  if (privateTitle(kind) != "") { titleName: privateTitle(kind), canonical: canonicalPath(kind), indexed: true }
+  else if (staticTitle(kind) != "") { titleName: staticTitle(kind), canonical: canonicalPath(kind), indexed: true }
+  else if (recordKind(kind) and recordFound and recordName != "") { titleName: recordName, canonical: canonicalPath(kind), indexed: true }
   else notFoundHead
-pure def lawPrivateHeadNamesNoRecord(page: N::Page, recordName: str, otherName: str): bool =
-  privateTitle(N::routedPage(page)) != "" implies routeHead(page, true, recordName) == routeHead(page, true, otherName)
-pure def lawMissingPageIsNotIndexed(page: N::Page, recordName: str): bool =
-  recordPage(N::routedPage(page)) implies routeHead(page, false, recordName) == notFoundHead
-pure def lawIndexedHeadHasCanonical(page: N::Page, recordFound: bool, recordName: str): bool =
-  routeHead(page, recordFound, recordName).indexed iff routeHead(page, recordFound, recordName).canonical != ""
+pure def lawOnlyTheUnknownRouteIsGone(kind: A::RouteKind): bool = (pageOf(kind) == N::Gone) iff (kind == A::Unknown)
+pure def lawPrivateHeadNamesNoRecord(route: A::Route, recordName: str, otherName: str): bool =
+  privateTitle(route.kind) != "" implies routeHead(route, true, recordName) == routeHead(route, true, otherName)
+pure def lawMissingPageIsNotIndexed(route: A::Route, recordName: str): bool =
+  (recordKind(route.kind) or route.kind == A::Unknown) implies routeHead(route, false, recordName) == notFoundHead
+pure def lawIndexedHeadHasCanonical(route: A::Route, recordFound: bool, recordName: str): bool =
+  routeHead(route, recordFound, recordName).indexed iff routeHead(route, recordFound, recordName).canonical != ""
+pure val routeValues = Set(A::page(A::Account), A::page(A::Home), A::page(A::Unknown), { ...A::page(A::Project), projectId: "eliza" },
+  { ...A::page(A::Profile), login: "alice" }, { ...A::page(A::Cycle), projectId: "eliza", cycleId: "2026-11" })
 pure val recordNameValues = Set("", "eliza", "alice")
 pure val otherNameValues = Set("", "bob")
 ```

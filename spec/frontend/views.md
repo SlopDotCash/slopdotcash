@@ -2,7 +2,9 @@
 
 PRD sections 6, 7 and 9. These are display-only projections over records the
 browser has already read and validated: the registry, the public snapshot, the
-cycle index, merge activity and the Points journal. None of them changes a
+cycle index and the Points journal. The merge activity line is a
+[projection](./projections.md) of the stored
+[merge activity](../backend/mergeActivity.md) rows. None of them changes a
 score, an award, a payment or a project state. The shell parses each source
 at its boundary (lowercasing GitHub logins, converting timestamps to UTC days
 or milliseconds) before these decisions see it.
@@ -10,7 +12,7 @@ or milliseconds) before these decisions see it.
 ## Story: Read a project's rewards and activity at a glance
 
 > As a contributor choosing where to work, I want each project card to say
-> what kind of reward it offers and how promptly it merges outside work.
+> what kind of reward it offers.
 
 ### A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards
 
@@ -55,43 +57,6 @@ pure val policyValues = Set(
   { reward: ExternalPrizeShare, monthlyCapPositive: false, bounty: SeparateBounty, bountyOpen: false, active: true },
   { reward: MonthlyPoolReward, monthlyCapPositive: true, bounty: BountyOnly, bountyOpen: false, active: true }
 )
-```
-
-### Merge activity shows the last merge, outside pull requests waiting seven days for a maintainer, and the 30-day median, keeping the last values when a refresh fails
-
-`GET /api/v1/merge-activity` (schema `slop-merge-activity-v1`, at most 1 MiB)
-serves the rows the daily Slopbot read stored per repository; a failed read
-keeps the last stored values, and the row says when its last attempt failed.
-For a project the line shows the latest merge over its repositories ("no
-merge found" when none), the sum of outside pull requests waiting seven days
-or more without a review or comment from anyone who can merge (with "+" when
-any repository capped its count), the median time to merge of the repository
-that merged the most outside pull requests in 30 days (the first such
-repository on a tie; omitted when it merged none), and the earliest check
-date. A project with no rows shows no line. Durations under an hour read
-"under an hour", under 48 hours in whole hours, otherwise in whole days.
-
-```quint
-type MergeRow = { lastMergedDay: int, waitingOutside: int, waitingCapped: bool, mergedOutside30: int, medianHours: int, observedDay: int }
-type MergeSummary = { shown: bool, lastMerge: int, waiting: int, capped: bool, median: int, checkedDay: int }
-pure val noMergeRow: MergeRow = { lastMergedDay: 0, waitingOutside: 0, waitingCapped: false, mergedOutside30: 0, medianHours: -1, observedDay: 0 }
-pure def mergeSummary(rows: List[MergeRow]): MergeSummary =
-  val leading = rows.nthOr(0, noMergeRow)
-  val busiest = rows.foldl(leading, (best, row) => if (row.mergedOutside30 > best.mergedOutside30) row else best)
-  { shown: rows.length() > 0,
-    lastMerge: rows.foldl(0, (latest, row) => if (row.lastMergedDay > latest) row.lastMergedDay else latest),
-    waiting: rows.foldl(0, (total, row) => total + row.waitingOutside),
-    capped: rows.some(row => row.waitingCapped),
-    median: if (busiest.medianHours >= 0 and busiest.mergedOutside30 > 0) busiest.medianHours else -1,
-    checkedDay: rows.foldl(leading.observedDay, (earliest, row) => if (row.observedDay < earliest) row.observedDay else earliest) }
-pure def lawNoRowsShowNoLine(rows: List[MergeRow]): bool = rows.length() == 0 implies not(mergeSummary(rows).shown)
-pure def lawWaitingSumsEveryRepository(rows: List[MergeRow]): bool =
-  mergeSummary(rows).waiting == rows.foldl(0, (total, row) => total + row.waitingOutside)
-pure def lawMedianNeedsMergedWork(rows: List[MergeRow]): bool =
-  mergeSummary(rows).median >= 0 implies rows.some(row => row.mergedOutside30 > 0)
-pure val rowsValues = Set(List(),
-  List({ lastMergedDay: 20400, waitingOutside: 2, waitingCapped: false, mergedOutside30: 3, medianHours: 30, observedDay: 20405 },
-    { lastMergedDay: 20402, waitingOutside: 1, waitingCapped: true, mergedOutside30: 0, medianHours: -1, observedDay: 20404 }))
 ```
 
 ### A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap
@@ -310,6 +275,9 @@ repeated provider prefix and a dashed single-digit version. A declaration
 counts toward a merged pull request or an accepted review only when its
 declarer is that outcome's actor; an outcome naming several models counts once
 for each and splits its points evenly. Signed runs count once per device run.
+Each work item's own attribution status is the
+[model attribution assessment](../points/modelAttribution.md); these
+statistics only add up declarations across outcomes.
 
 ```quint
 type ModelDeclaration = { declarer: int, outcomeActor: int, exactModel: bool }

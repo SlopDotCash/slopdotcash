@@ -28,7 +28,4 @@ pure def utcPeriod(seconds: int): int =
   val year = yearOfEra + era * 400 + (if (month <= 2) 1 else 0)
   if (seconds < 0) 0 else year * 100 + month
 pure def ordinalPeriod(period: int): int = (period / 100) * 12 + period % 100 - 1
-pure def previousPeriod(period: int): int = if (period % 100 == 1) (period / 100 - 1) * 100 + 12 else period - 1
-pure def withinFirstSeconds(seconds: int, window: int): bool =
-  seconds >= window and utcPeriod(seconds - window) != utcPeriod(seconds)
 ```

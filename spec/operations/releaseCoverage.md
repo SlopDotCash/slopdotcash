@@ -4,8 +4,11 @@ PRD sections 9 and 12 at main `21663f12cd276dfc7b4c913e3b9fbe34c153f99a`
 allow two independent options for an explicit manual release to main or
 development. `skip_proofs` omits the state-model run and static proof run.
 `skip_browser_tests` requires the browser smoke lane against the built bundle.
-Both default to false. They are distinct from retaining a published data
-snapshot. The exact source is `scripts/ci-scope.mjs`,
+Both default to false. They are distinct from the two data options of a
+manual main release: `use_published_data` retains the last published
+snapshot, and `discussion_resume_run` resumes public PR discussion reads from
+a recent trusted main release attempt; the two exclude each other. The exact
+source is `scripts/ci-scope.mjs`,
 `.github/workflows/{deploy,formal,lemmascript}.yml` and
 `formal/models/release/ci_coverage.qnt`. Current Vibestack checked model and
 Dafny stages fill the respective verification roles in the planned rebuild.
@@ -24,22 +27,26 @@ remain separate release admission rules.
 ```quint
 type RunKind = DeployingPush | ManualDispatch | PullRequest | ScheduledNightly
 type Target = Main | Development | OtherBranch
-type Requests = { kind: RunKind, target: Target, skipProofs: bool, skipBrowserTests: bool }
+type Requests = { kind: RunKind, target: Target, skipProofs: bool, skipBrowserTests: bool,
+  resumeDiscussions: bool, usePublishedData: bool }
 type ReleaseChecks = { eligible: bool, stateModels: bool, staticProofs: bool,
   browserSmoke: bool, browserComplete: bool, common: bool }
 pure def releaseTarget(request: Requests): bool = request.target == Main or request.target == Development
 pure def deploying(request: Requests): bool = releaseTarget(request) and
   (request.kind == DeployingPush or request.kind == ManualDispatch)
 pure def explicitManual(request: Requests): bool = deploying(request) and request.kind == ManualDispatch
+pure def dataOptionsAllowed(request: Requests): bool =
+  ((request.resumeDiscussions or request.usePublishedData) implies explicitManual(request) and request.target == Main)
+    and not(request.resumeDiscussions and request.usePublishedData)
 pure def coverage(request: Requests): ReleaseChecks =
-  val allowed = deploying(request)
+  val allowed = deploying(request) and dataOptionsAllowed(request)
   val manual = explicitManual(request)
   { eligible: allowed, stateModels: allowed and not(manual and request.skipProofs),
     staticProofs: allowed and not(manual and request.skipProofs),
     browserSmoke: manual and request.skipBrowserTests,
     browserComplete: allowed and not(manual and request.skipBrowserTests), common: allowed }
 pure def lawPushRunsEverything(request: Requests): bool =
-  (request.kind == DeployingPush and releaseTarget(request)) implies
+  (request.kind == DeployingPush and releaseTarget(request) and not(request.resumeDiscussions or request.usePublishedData)) implies
     coverage(request).eligible and coverage(request).stateModels and coverage(request).staticProofs
       and coverage(request).browserComplete and not(coverage(request).browserSmoke) and coverage(request).common
 pure def lawOnlyManualCanOmit(request: Requests): bool = coverage(request).eligible implies
@@ -49,6 +56,39 @@ pure def lawOnlyManualCanOmit(request: Requests): bool = coverage(request).eligi
 pure def lawSeparateOptions(request: Requests): bool = coverage(request).eligible implies
   coverage(request).browserComplete != coverage(request).browserSmoke and
   coverage(request).stateModels == coverage(request).staticProofs and coverage(request).common
+```
+
+### A resumed collection is a fresh manual main collection that revalidates every reused response
+
+Only a manual main release that does not retain published data may resume
+discussion reads. A reused response enters the ledger only after live
+revalidation; a mismatch is read again live. Resuming changes no lane
+selection: the registry sync, census, scoring inputs and every selected
+check still run. A collection that stops at its checkpoint deadline is not
+publishable whatever its receipts.
+
+```quint
+type CollectionOutcome = CollectionComplete | DeadlineStopped
+type ReusedResponse = { matchesLive: bool, revalidated: bool }
+pure def admittedResponses(responses: List[ReusedResponse]): List[ReusedResponse] =
+  responses.select(x => x.revalidated and x.matchesLive)
+pure def publishable(request: Requests, collection: CollectionOutcome, receipts: CheckReceipts): bool =
+  collection == CollectionComplete and releaseReceiptsPass(request, receipts)
+pure def lawResumeOnlyManualMain(request: Requests): bool =
+  (coverage(request).eligible and request.resumeDiscussions) implies
+    explicitManual(request) and request.target == Main and not(request.usePublishedData)
+pure def lawPushNeverTakesDataOptions(request: Requests): bool =
+  (request.kind == DeployingPush and (request.resumeDiscussions or request.usePublishedData)) implies not(coverage(request).eligible)
+pure def lawPublishedDataOnlyManualMain(request: Requests): bool =
+  (coverage(request).eligible and request.usePublishedData) implies explicitManual(request) and request.target == Main
+pure def lawResumeKeepsChecks(request: Requests): bool =
+  coverage({ ...request, resumeDiscussions: false }).eligible implies
+    (coverage({ ...request, resumeDiscussions: true }).eligible implies
+      coverage({ ...request, resumeDiscussions: true }) == coverage({ ...request, resumeDiscussions: false }))
+pure def lawUnrevalidatedNeverAdmitted(responses: List[ReusedResponse]): bool =
+  admittedResponses(responses).every(x => x.revalidated and x.matchesLive)
+pure def lawDeadlineNeverPublishes(request: Requests, receipts: CheckReceipts): bool =
+  not(publishable(request, DeadlineStopped, receipts))
 ```
 
 ### Source-bound receipts satisfy only the lanes they actually ran
@@ -113,13 +153,21 @@ pure def lawNightlyIsIndependent(request: Requests, defaultBranch: bool): bool =
 ### Simulation includes default, manual, pull request and nightly inputs
 
 ```quint
-pure val defaultReleaseRequest: Requests = { kind: DeployingPush, target: Main, skipProofs: false, skipBrowserTests: false }
+pure val defaultReleaseRequest: Requests = { kind: DeployingPush, target: Main, skipProofs: false, skipBrowserTests: false,
+  resumeDiscussions: false, usePublishedData: false }
 pure val requestValues = Set(defaultReleaseRequest,
   { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, skipProofs: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, skipBrowserTests: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, target: OtherBranch, skipProofs: true, skipBrowserTests: true },
   { ...defaultReleaseRequest, kind: PullRequest, target: OtherBranch },
-  { ...defaultReleaseRequest, kind: ScheduledNightly })
+  { ...defaultReleaseRequest, kind: ScheduledNightly },
+  { ...defaultReleaseRequest, kind: ManualDispatch, resumeDiscussions: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, usePublishedData: true, skipProofs: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, resumeDiscussions: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, resumeDiscussions: true, usePublishedData: true },
+  { ...defaultReleaseRequest, resumeDiscussions: true })
+pure val responsesValues = Set(List(), List({ matchesLive: true, revalidated: true }),
+  List({ matchesLive: false, revalidated: true }, { matchesLive: true, revalidated: false }))
 pure val fullReceipts: CheckReceipts = { common: true, modelInventory: true, proofInventory: true, stateModels: true,
   staticProofs: true, browserSmoke: true, browserComplete: true }
 pure val receiptsValues = Set(fullReceipts, { ...fullReceipts, proofInventory: false },

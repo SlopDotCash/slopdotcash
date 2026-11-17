@@ -1,6 +1,7 @@
 export * from "./lib/cn.ts";
 export * from "./lib/control.ts";
 export * from "./components/AccountMenu.tsx";
+export * from "./components/AgentMark.tsx";
 export * from "./components/Address.tsx";
 export * from "./components/Alert.tsx";
 export * from "./components/Avatar.tsx";
@@ -31,6 +32,7 @@ export * from "./components/Meter.tsx";
 export * from "./components/Metric.tsx";
 export * from "./components/NavTabs.tsx";
 export * from "./components/NetworkMark.tsx";
+export * from "./components/NotFound.tsx";
 export * from "./components/PageHeader.tsx";
 export * from "./components/Pagination.tsx";
 export * from "./components/Progress.tsx";
