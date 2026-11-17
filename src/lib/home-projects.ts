@@ -23,6 +23,14 @@ export function homeProjects() {
   );
 }
 
+export function homeProjectDescription(description: string): string {
+  if (description.length <= 500) return description;
+  const characters = Array.from(description);
+  return characters.length > 500
+    ? `${characters.slice(0, 500).join("").trimEnd()}...`
+    : description;
+}
+
 /**
  * Homepage order, given each project as shown this month: stablecoin
  * pools by monthly amount, largest first, then token pools, then external

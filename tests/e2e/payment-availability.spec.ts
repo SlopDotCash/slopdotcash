@@ -24,6 +24,8 @@ test("monthly targets remain distinct from verified payment records", async ({
   const project = {
     ...original,
     status: "active",
+    listingTier: "featured",
+    escrow: undefined,
     reward: { ...original.reward, paymentMode: "disabled" },
   };
   await page.route(
@@ -46,8 +48,12 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     card.getByText("Payments not active", { exact: true }),
   ).toHaveCount(0);
-  // A monthly target without a vault or a promise reads as Points only.
-  await expect(card.getByText("Points only", { exact: true })).toBeVisible();
+  // An unvaulted target is shown as configured and never as a payment or promise.
+  await expect(card.locator(".project-bounty strong")).toHaveText("$1,000");
+  await expect(card.locator(".project-bounty")).toContainText(
+    "Configured · Not vaulted",
+  );
+  await expect(card.locator(".project-bounty")).not.toContainText("Promised");
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),
     fullPage: true,

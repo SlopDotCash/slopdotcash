@@ -1,6 +1,8 @@
 import {
+  ArrowLeft,
   ArrowRight,
   Check,
+  ChevronRight,
   Clipboard,
   ExternalLink,
   Lock,
@@ -38,6 +40,7 @@ import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
   hasBountyOverview,
+  homeProjectDescription,
   homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
@@ -48,6 +51,7 @@ import {
 } from "./lib/intake-cap.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
+  homePoolReward,
   listedThisMonth,
   loadPoolFunding,
   monthName,
@@ -650,13 +654,9 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funded";
 }
 
-function ProjectCard({
-  project,
-  promise,
-}: {
-  project: ProjectDefinition;
-  promise: string | null;
-}) {
+type HomeProject = ProjectDefinition & { warning: string | null };
+
+function HomeReward({ project }: { project: HomeProject }) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -666,13 +666,41 @@ function ProjectCard({
     : pointsOnly
       ? "Points only"
       : project.reward.kind === "monthly-pool"
-        ? promise
+        ? project.warning
           ? formatRewardCapDisplay(
               project.reward.monthlyCapDisplay,
               project.rewardAsset,
             )
           : monthlyPoolCapLabel(project)
         : "Points";
+  return (
+    <>
+      <strong>{amount}</strong>
+      {bounty ? (
+        <span>
+          {bounty.eligibility === "critical-loss-of-funds"
+            ? "/ Critical"
+            : "/ Finding"}
+        </span>
+      ) : project.reward.kind === "external-prize-share" ? (
+        <span> + external prize</span>
+      ) : !pointsOnly ? (
+        <span>{project.warning ? `/mo · ${project.warning}` : "/mo"}</span>
+      ) : null}
+    </>
+  );
+}
+
+function HomeReviewBudget({ project }: { project: HomeProject }) {
+  const budget = project.reward.reviewBudget;
+  return budget?.fundingState === "committed" ? (
+    <small className="project-review-budget">
+      +{formatMicroUsdc(budget.committedMinor)} reviews
+    </small>
+  ) : null;
+}
+
+function ProjectCard({ project }: { project: HomeProject }) {
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
@@ -681,29 +709,75 @@ function ProjectCard({
         <ArrowRight aria-hidden="true" />
       </div>
       <div className="project-card-content">
-        <p className="project-summary">{project.description}</p>
-        <p className="project-bounty">
-          <strong>{amount}</strong>
-          {bounty ? (
-            <span>
-              {bounty.eligibility === "critical-loss-of-funds"
-                ? "/ Critical"
-                : "/ Finding"}
-            </span>
-          ) : project.reward.kind === "external-prize-share" ? (
-            <span> + external prize</span>
-          ) : !pointsOnly ? (
-            <span>{promise ? `/mo · ${promise}` : "/mo"}</span>
-          ) : null}
+        <p className="project-summary">
+          {homeProjectDescription(project.description)}
         </p>
-        {project.reward.reviewBudget?.fundingState === "committed" ? (
-          <small className="project-review-budget">
-            +{formatMicroUsdc(project.reward.reviewBudget.committedMinor)}{" "}
-            reviews
-          </small>
-        ) : null}
+        <p className="project-bounty">
+          <HomeReward project={project} />
+        </p>
+        <HomeReviewBudget project={project} />
       </div>
     </Link>
+  );
+}
+
+const COMMUNITY_PAGE_SIZE = 10;
+
+function CommunityProjects({ projects }: { projects: HomeProject[] }) {
+  const [page, setPage] = useState(0);
+  const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
+  if (pages === 0) return null;
+  const current = Math.min(page, pages - 1);
+  const start = current * COMMUNITY_PAGE_SIZE;
+  return (
+    <section aria-labelledby="community-projects" className="project-tier">
+      <h3 id="community-projects">Community</h3>
+      <ul className="project-rows">
+        {projects.slice(start, start + COMMUNITY_PAGE_SIZE).map((project) => (
+          <li key={project.id}>
+            <Link className="project-row" href={`/projects/${project.slug}`}>
+              <ProjectImage lazy project={project} />
+              <span className="project-row-name">
+                <strong>{project.name}</strong>
+                <small>{homeProjectDescription(project.description)}</small>
+              </span>
+              <span className="project-row-amount">
+                <span>
+                  <HomeReward project={project} />
+                </span>
+                <HomeReviewBudget project={project} />
+              </span>
+              <ChevronRight aria-hidden="true" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {pages > 1 ? (
+        <nav aria-label="Community project pages" className="pagination">
+          <button
+            aria-label="Previous page"
+            className="button secondary-button icon-button"
+            disabled={current === 0}
+            onClick={() => setPage(current - 1)}
+            type="button"
+          >
+            <ArrowLeft aria-hidden="true" />
+          </button>
+          <span aria-live="polite">
+            {current + 1} / {pages}
+          </span>
+          <button
+            aria-label="Next page"
+            className="button secondary-button icon-button"
+            disabled={current === pages - 1}
+            onClick={() => setPage(current + 1)}
+            type="button"
+          >
+            <ArrowRight aria-hidden="true" />
+          </button>
+        </nav>
+      ) : null}
+    </section>
   );
 }
 
@@ -823,9 +897,15 @@ function HomePage() {
         (project) => !intakePaused(project, mergeIndex?.get(project.id), now),
       )
       .map((project) => {
-        const shown = publicPoolReward(project, fundingIndex, now);
-        return { ...shown.project, promise: shown.promise };
+        const shown = homePoolReward(project, fundingIndex, now);
+        return { ...shown.project, warning: shown.warning };
       }),
+  );
+  const featured = listedProjects.filter(
+    (project) => project.listingTier === "featured",
+  );
+  const community = listedProjects.filter(
+    (project) => project.listingTier === "community",
   );
   return (
     <main>
@@ -860,35 +940,18 @@ function HomePage() {
         </div>
         {listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
-        ) : (
-          (["featured", "community"] as const).map((tier) => {
-            const projects = listedProjects.filter(
-              (project) => project.listingTier === tier,
-            );
-            if (projects.length === 0) return null;
-            const heading = `${tier}-projects`;
-            return (
-              <section
-                aria-labelledby={heading}
-                className="project-tier"
-                key={tier}
-              >
-                <h3 id={heading}>
-                  {tier === "featured" ? "Featured" : "Community"}
-                </h3>
-                <div className="project-grid">
-                  {projects.map((project) => (
-                    <ProjectCard
-                      key={project.id}
-                      project={project}
-                      promise={project.promise}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })
-        )}
+        ) : null}
+        {featured.length > 0 ? (
+          <section aria-labelledby="featured-projects" className="project-tier">
+            <h3 id="featured-projects">Featured</h3>
+            <div className="project-grid">
+              {featured.map((project) => (
+                <ProjectCard key={project.id} project={project} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+        <CommunityProjects projects={community} />
       </section>
       <section
         className="section shell home-leaderboard-section"

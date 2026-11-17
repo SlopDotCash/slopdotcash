@@ -325,15 +325,33 @@ export function publicPoolReward(
   index: PoolFundingIndex | null,
   now: Date,
 ): { project: ProjectDefinition; promise: string | null } {
+  const display = displayedPoolReward(project, index, now, false);
+  return { project: display.project, promise: display.warning };
+}
+
+export function homePoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+): { project: ProjectDefinition; warning: string | null } {
+  return displayedPoolReward(project, index, now, true);
+}
+
+function displayedPoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+  showConfigured: boolean,
+): { project: ProjectDefinition; warning: string | null } {
   const shown = asShown(project, index, now);
   if (
     project.reward.kind !== "monthly-pool" ||
-    project.reward.honorSystem !== true ||
+    (!showConfigured && project.reward.honorSystem !== true) ||
     shown.reward.monthlyCapMinor !== "0"
   )
-    return { project: shown, promise: null };
+    return { project: shown, warning: null };
   const amount = resolveRewardCapMinor(project, utcMonth(now));
-  if (amount === "0") return { project: shown, promise: null };
+  if (amount === "0") return { project: shown, warning: null };
   const unread = payingVaultKeys(project);
   for (const vault of index?.get(project.id) ?? []) {
     if (vault.freeBalance !== null || hasPledgeSupport(vault)) {
@@ -342,9 +360,7 @@ export function publicPoolReward(
   }
   return {
     project: withDisplayedCap(project, amount),
-    promise: unread.size
-      ? "Promised · Vault funding unverified"
-      : "Promised · Not vaulted",
+    warning: `${project.reward.honorSystem === true ? "Promised" : "Configured"} · ${unread.size ? "Vault funding unverified" : "Not vaulted"}`,
   };
 }
 
