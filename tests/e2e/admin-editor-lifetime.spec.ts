@@ -206,6 +206,50 @@ async function savedDescription(page: Page, key: string) {
   }, key);
 }
 
+test("an invalid admin scope explains its range and recovers before saving", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page);
+  try {
+    await fixture.description.fill("A reviewed project description");
+    await fixture.reason.fill(
+      "Correct the project description with valid scope.",
+    );
+    const save = page.getByRole("button", {
+      name: "Save revision 2",
+      exact: true,
+    });
+    await expect(save).toBeEnabled();
+    const scope = page.getByRole("textbox", {
+      name: "Approved scope",
+      exact: true,
+    });
+    const original = await scope.inputValue();
+    await scope.fill("tiny");
+    await expect(scope).toHaveAttribute("aria-invalid", "true");
+    await expect(save).toBeDisabled();
+    await expect(scope).toHaveAccessibleDescription("6–2000 characters");
+    await expect(
+      page.getByText("6–2000 characters", { exact: true }),
+    ).toBeVisible();
+    await expectAccessibleReflow(page, "admin-scope-range-error");
+    await scope.fill(original);
+    await expect(scope).not.toHaveAttribute("aria-invalid", "true");
+    await expect(save).toBeEnabled();
+    await expect(
+      page.getByText("6–2000 characters", { exact: true }),
+    ).toHaveCount(0);
+    fixture.releaseSave();
+    await save.click();
+    await expect.poll(() => fixture.saves.length).toBe(1);
+    expect(fixture.saves[0].manifest.contribution?.approvedScope).toBe(
+      original,
+    );
+  } finally {
+    fixture.releaseSave();
+  }
+});
+
 test("committed clearance departure starts no private GET after preflight", async ({
   page,
 }) => {

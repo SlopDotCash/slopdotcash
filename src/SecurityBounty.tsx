@@ -1002,7 +1002,8 @@ export function SecurityProgramPage({
                   {terms.responseTargets.acknowledgeHours}h ack
                 </StatusBadge>{" "}
                 <StatusBadge>
-                  {terms.responseTargets.triageBusinessDays}d triage
+                  {terms.responseTargets.triageBusinessDays} business days
+                  triage
                 </StatusBadge>{" "}
                 <StatusBadge>
                   {terms.responseTargets.updateIntervalDays}d updates

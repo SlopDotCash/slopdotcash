@@ -1547,6 +1547,16 @@ test("private security bounty programs keep cases restricted from intake to awar
       "href",
       `https://github.com/${a.repository}/security/advisories/new`,
     );
+    await page.locator("#security-trust").focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByText("3 business days triage", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("7d updates", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("bounty-response-terms.png"),
+      fullPage: true,
+    });
     await expectAccessible(page);
     await page.screenshot({ path: test.info().outputPath("intake-ready.png") });
     // An old answer stops the handoff until the check runs again.

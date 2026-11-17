@@ -599,7 +599,7 @@ function ProjectEditor({
                 value={skill[field]}
               />
               <small
-                aria-hidden="true"
+                aria-hidden={skillErrors[field] ? undefined : true}
                 className={skillErrors[field] ? "field-error" : "admin-status"}
                 id={`admin-skill-count-${field}`}
                 title={
@@ -608,7 +608,11 @@ function ProjectEditor({
                     : "Up to 2000 characters"
                 }
               >
-                {skill[field].trim().length} / 2000
+                {skillErrors[field]
+                  ? field === "approvedScope"
+                    ? "6–2000 characters"
+                    : "Up to 2000 characters"
+                  : `${skill[field].trim().length} / 2000`}
               </small>
             </label>
           ))}
