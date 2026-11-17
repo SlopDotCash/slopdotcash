@@ -587,6 +587,7 @@ function ProjectEditor({
             <label key={field}>
               {CONTRIBUTION_LABELS[field].label}
               <textarea
+                aria-label={CONTRIBUTION_LABELS[field].label}
                 aria-describedby={`admin-skill-count-${field}`}
                 aria-invalid={skillErrors[field] ? true : undefined}
                 onChange={(event) =>
