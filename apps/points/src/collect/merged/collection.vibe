@@ -31,7 +31,7 @@ export interface MergedWorkInput {
   readonly recollection: Recollection
 }
 
-export interface RepositoryCollection {
+export interface MergedRepository {
   readonly target: MergedTarget
   readonly preflight: Preflight
   readonly outcomes: ReadonlyArray<MergedOutcome>
@@ -41,8 +41,14 @@ export interface RepositoryCollection {
   readonly closedIssues: ReadonlyArray<IssueRecord>
 }
 
-export interface MergedWork {
-  readonly collections: ReadonlyArray<RepositoryCollection>
+export interface RepositoryCollection<A> extends MergedRepository {
+  readonly open: A
+}
+
+export type AfterRepository<A, E, R> = (repository: MergedRepository, finalReviewCensusCost: number) => A!E!R
+
+export interface MergedWork<A> {
+  readonly collections: ReadonlyArray<RepositoryCollection<A>>
   readonly outcomes: ReadonlyArray<MergedOutcome>
   readonly mergedPullRequests: ReadonlyArray<PullRequestRecord>
   readonly reviewedMergedPullRequests: ReadonlyArray<ReviewRecord>
@@ -115,7 +121,7 @@ effect function listRepository<E, R>(input: MergedWorkInput, target: MergedTarge
   return { listed: { target, preflight, references, closedIssueReferences, closedUnmerged } satisfies Listed, closedIssueCount }
 }
 
-export effect function collectMergedWork<E = never, R = never>(input: MergedWorkInput, commitLines: CommitLineLoader<E, R> = commitLineLoader<E, R>()) {
+export effect function collectMergedWork<A, AE, AR, E = never, R = never>(input: MergedWorkInput, afterRepository: AfterRepository<A, AE, AR>, commitLines: CommitLineLoader<E, R> = commitLineLoader<E, R>()) {
   const stats: SearchStats = { searchSliceCount: 0 }
   if (input.targets.length === 0) try (try Graphql).execute(rateLimitQuery, {})
   const listed: Listed[] = []
@@ -140,7 +146,7 @@ export effect function collectMergedWork<E = never, R = never>(input: MergedWork
   const plan = try planMergedPullRequestHydration(candidates, input.verificationFromMs)
   let reviewCounts: ReviewCensus = plan.reviewCounts
   const finalReviewCensusCost = Math.ceil(candidates.length / reviewDetailBatchSize)
-  const collections: RepositoryCollection[] = []
+  const collections: RepositoryCollection<A>[] = []
   for (const repository of listed) {
     const key = (reference: NodeReference) => `${repository.target.id.toLowerCase()}\u0000${reference.outcome?.number ?? ""}`
     const detailedReferences = repository.references.filter((reference) => plan.detailEligibleIds.has(reference.id) || (reference.outcome !== null && input.evaluatedReviewKeys.has(key(reference))))
@@ -156,16 +162,16 @@ export effect function collectMergedWork<E = never, R = never>(input: MergedWork
     const linkedIssueIds = new Set(detailed.flatMap((pull) => pull.closingIssueIds))
     const linkedClosedIssues = repository.closedIssueReferences.filter((reference) => linkedIssueIds.has(reference.id))
     try ensureEstimatedBudget(try estimateFirstPageDetailCost(0, linkedClosedIssues.length), finalReviewCensusCost)
-    const closedIssues = try hydrateIssues(linkedClosedIssues, "closed")
-    collections.push({
+    const merged = {
       target: repository.target,
       preflight: repository.preflight,
       outcomes: repository.references.flatMap((reference) => reference.outcome === null ? [] : [reference.outcome]),
       detailed,
       reviewed,
       closedUnmerged: repository.closedUnmerged,
-      closedIssues,
-    })
+      closedIssues: try hydrateIssues(linkedClosedIssues, "closed"),
+    } satisfies MergedRepository
+    collections.push({ ...merged, open: try afterRepository(merged, finalReviewCensusCost) })
   }
   return {
     collections,
@@ -179,14 +185,14 @@ export effect function collectMergedWork<E = never, R = never>(input: MergedWork
     plan: { ...plan, reviewCounts },
     unavailableSources,
     searchSliceCount: stats.searchSliceCount,
-  } satisfies MergedWork
+  } satisfies MergedWork<A>
 }
 
 function formalDecisionCount(reviews: ReadonlyArray<{ readonly state: string }>) {
   return reviews.filter((review) => review.state === "APPROVED" || review.state === "CHANGES_REQUESTED").length
 }
 
-export effect function confirmReviewCensus(work: MergedWork) {
+export effect function confirmReviewCensus<A>(work: MergedWork<A>) {
   const final = try collectReviewCensus(work.candidates.map(({ outcome }) => ({ id: outcome.id })))
   try assertReviewCensusStable(work.plan.reviewCounts, final)
   if (work.closedUnmergedPullRequests.length === 0) return

@@ -2,11 +2,13 @@
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { dln, kyberswap } from "../runtime/pins.ts"
 import { decodedApproval } from "./abi.ts"
-import { type Landed, allowanceOf } from "./client.vibe"
+import { type Landed, allowanceOf, tokenBalance } from "./client.vibe"
 
 export error ApprovalRefused { issue: string }
 
 export type Spender = "Router" | "Bridge"
+
+export const unlimitedAmount = 2n ** 256n - 1n
 
 export function spenderAddress(spender: Spender): Address {
   return (spender === "Router" ? kyberswap.router : dln.source) as Address
@@ -24,6 +26,8 @@ export function boundedApproval(data: Hex, value: bigint, spender: Spender, amou
 export effect function approvalNeeded(token: Address, amount: bigint, spender: Spender) {
   if (isNative(token)) throw new ApprovalRefused({ issue: "a native asset carries its input as value and never approves" })
   if (amount <= 0n) throw new ApprovalRefused({ issue: "an approval needs a positive amount" })
+  if (amount >= unlimitedAmount) throw new ApprovalRefused({ issue: "an unlimited approval is never signed" })
+  if (amount > (try tokenBalance(token, "finalized"))) throw new ApprovalRefused({ issue: "the approval exceeds the fee wallet's finalized balance" })
   return (try allowanceOf(token, spenderAddress(spender), "finalized")) < amount
 }
 

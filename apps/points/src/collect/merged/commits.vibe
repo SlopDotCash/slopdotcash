@@ -1,4 +1,4 @@
-// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "A fresh complete re-read resolves a held conflict"
+// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
 import { Graphql, type GraphqlFailure, type JsonRecord, graphqlPageSize } from "../../ingestion/graphql.vibe"
 import type { Actor } from "../../score/facts.vibe"
 import { type MergedOutcome, MergedRecordInvalid, type NodeReference, type OutcomeCommit, type OutcomeCommitIdentity, OutcomeCommitConnection, arrayAt, chunks, commitSha, decoded, moreOutcomeCommitsQuery, outcomeCommitLinesQuery, outcomeCommitsOf, recordAt } from "./wire.vibe"

@@ -24,6 +24,8 @@ interface Stamp {
 
 export type AccountEraser = (actorId: number) => void!!
 
+export type DraftEvent = Extract<CompositionEvent, { readonly type: "beginReport" | "editReport" | "reviewReport" | "submitReport" | "openDetail" | "closeDetail" }>
+
 export const navigationMachine = navigationMachineOf()
 export const compositionMachine = compositionMachineOf()
 
@@ -32,6 +34,7 @@ export service BrowserSession {
   signOut(): void!CallFailure!HttpClient.HttpClient
   sessionEnded(): void!!HttpClient.HttpClient
   navigate(destination: Page): boolean!!
+  compose(event: DraftEvent): boolean!!
   saveReturn(search: string): boolean!!
   returnPath(): string!!
   lifetime(): Lifetime!!
@@ -45,6 +48,7 @@ export const browserSession = Layer.effect(BrowserSession, effect {
   const session = try Session
   const deployment = try Deployment
   const lock = try Semaphore.make(1)
+  const locked = <A>(work: A!!) => Semaphore.withPermit(lock, work)
   const erasers = new Set<AccountEraser>()
 
   effect function stampNow() {
@@ -52,21 +56,25 @@ export const browserSession = Layer.effect(BrowserSession, effect {
   }
 
   effect function settle(actorId: number, stamp: Stamp, ended: boolean) {
-    const shown = try navigation.get()
-    const held = try composition.get()
-    if (!canRefreshIdentity(shown, actorId, stamp.navigation) || !canRefreshAccount(held, actorId, stamp.session)) return false
-    if (actorId === shown.actor && actorId === held.navigation.actor) return false
-    const account: CompositionEvent = ended && actorId === 0 && canServerSessionEnded(held)
-      ? { type: "serverSessionEnded" }
-      : { type: "refreshAccount", refreshedActor: actorId, requestEpoch: stamp.session }
-    try orDie(navigation.send({ type: "refreshIdentity", actorId, requestEpoch: stamp.navigation }))
-    try orDie(composition.send(account))
-    for (const erase of [...erasers]) try erase(actorId)
-    return true
+    uninterruptible {
+      const shown = try navigation.get()
+      const held = try composition.get()
+      if (!canRefreshIdentity(shown, actorId, stamp.navigation) || !canRefreshAccount(held, actorId, stamp.session)) return false
+      if (actorId === shown.actor && actorId === held.navigation.actor) return false
+      const account: CompositionEvent = ended && actorId === 0 && canServerSessionEnded(held)
+        ? { type: "serverSessionEnded" }
+        : { type: "refreshAccount", refreshedActor: actorId, requestEpoch: stamp.session }
+      const routed = navigation.send({ type: "refreshIdentity", actorId, requestEpoch: stamp.navigation }) catch () => undefined
+      if (routed === undefined) return false
+      const composed = composition.send(account) catch () => undefined
+      if (composed === undefined) return false
+      for (const erase of [...erasers]) try erase(actorId)
+      return true
+    }
   }
 
   effect function settled(actorId: number, stamp: Stamp | undefined, ended: boolean) {
-    return try Semaphore.withPermit(lock, effect { return try settle(actorId, stamp ?? (try stampNow()), ended) })
+    return try locked(effect { return try settle(actorId, stamp ?? (try stampNow()), ended) })
   }
 
   effect function observe(reason: ObserveReason) {
@@ -76,9 +84,18 @@ export const browserSession = Layer.effect(BrowserSession, effect {
     return observed.view
   }
 
-  effect function send(event: NavigationEvent) {
-    const sent = navigation.send(event) catch () => undefined
-    return sent !== undefined
+  effect function route(event: NavigationEvent) {
+    return try locked(effect {
+      const sent = navigation.send(event) catch () => undefined
+      return sent !== undefined
+    })
+  }
+
+  effect function compose(event: CompositionEvent) {
+    return try locked(effect {
+      const sent = composition.send(event) catch () => undefined
+      return sent !== undefined
+    })
   }
 
   return {
@@ -92,17 +109,15 @@ export const browserSession = Layer.effect(BrowserSession, effect {
       try settled(0, undefined, true)
       try observe("changed")
     },
-    navigate: (destination: Page) => send({ type: "navigate", destination }),
-    saveReturn: effect (search: string) => {
-      const sent = composition.send({ type: "saveReturn", request: parseNext(search, deployment.pageOrigin) }) catch () => undefined
-      return sent !== undefined
-    },
+    navigate: (destination: Page) => route({ type: "navigate", destination }),
+    compose: (event: DraftEvent) => compose(event),
+    saveReturn: (search: string) => compose({ type: "saveReturn", request: parseNext(search, deployment.pageOrigin) }),
     returnPath: effect () => (try composition.get()).returnPath,
     lifetime: effect () => {
       const shown = try navigation.get()
       return { actorId: shown.actor, epoch: shown.epoch }
     },
-    acceptPrivate: (lifetime: Lifetime, rows: number, authorized: boolean) => send({ type: "receivePrivate", actorId: lifetime.actorId, requestEpoch: lifetime.epoch, rows, authorized }),
+    acceptPrivate: (lifetime: Lifetime, rows: number, authorized: boolean) => route({ type: "receivePrivate", actorId: lifetime.actorId, requestEpoch: lifetime.epoch, rows, authorized }),
     onAccountChange: effect (erase: AccountEraser) => {
       try acquireRelease(sync(() => erasers.add(erase)), () => sync(() => erasers.delete(erase)))
     },

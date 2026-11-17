@@ -1,19 +1,25 @@
 import { assert, layer } from "@effect/vitest"
+import { type Address, encodeFunctionData, parseAbi } from "viem"
 import type { D1Database } from "@repo/platform/bindings"
+import { evmRpc } from "@repo/platform/chain/evm"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, rows, sql } from "@repo/platform/d1"
+import { type Anvil, anvil, artifact, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
-import { lockMs } from "../gen/fees__conversion.ts"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { type RowState, type SignedSend, lockMs } from "../gen/fees__conversion.ts"
 import type { Mode, Network, Runtime, WorkerConfig } from "../gen/fees__runtime.ts"
 import { apply, initial } from "../gen/fees__runtime.effect.vibe"
-import { ConversionChain, type QuoteRead } from "../src/conversion/chain.vibe"
-import { runNetwork } from "../src/conversion/run.vibe"
+import { ChainUnavailable, ConversionChain, FeeCapTooLow, type OpenSend, type QuoteRead, type SendStatus } from "../src/conversion/chain.vibe"
+import { type Claims, runNetwork } from "../src/conversion/run.vibe"
 import { triggerAt } from "../src/conversion/trigger.vibe"
 import type { Instance } from "../src/journal/codec.vibe"
+import { type Income, type Transfer, evmTransfers } from "../src/receipts/discover.vibe"
 import type { EnabledNetwork } from "../src/runtime/config.vibe"
 import { definitions } from "../src/runtime/networks.vibe"
 import type { TokenFact } from "../src/runtime/reviewed.vibe"
-import { generationInstance, journalDatabase } from "./support/journal.ts"
+import { factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
 
 service Fixture { readonly db: D1Database }
 
@@ -24,36 +30,73 @@ const Started = Layer.effect(Fixture, effect {
 
 const tokenA = "0x1111111111111111111111111111111111111111"
 const tokenB = "0x2222222222222222222222222222222222222222"
-const tokens: ReadonlyArray<TokenFact> = [{ address: tokenA, asset: "ProjectToken" }, { address: tokenB, asset: "ProjectToken" }]
+const pair: ReadonlyArray<TokenFact> = [{ address: tokenA, asset: "ProjectToken" }, { address: tokenB, asset: "ProjectToken" }]
 const nativeLimits = { perTransaction: 100000000000000n, perDay: 1000000000000000n, additionalFeeReserve: 0n }
+const deadline = 9000000000
+const signedFees = { maxFee: 50, priority: 2 }
+const none: Readonly<Record<RowState, number>> = { Quoted: 0, DustPending: 0, Skipped: 0, NoRoute: 0, Submitted: 0, Unknown: 0, Finalized: 0, Failed: 0 }
+
+type Answer = "accepted" | "unavailable" | "feeCap"
 
 interface Stand {
   readonly calls: Array<string>
+  readonly signed: Array<string>
+  balances: ReadonlyMap<string, bigint>
+  signing: "forged" | "journaled"
   quote: (token: string, amount: bigint) => QuoteRead
+  broadcast: (rawTx: string) => Answer
+  status: (send: OpenSend) => SendStatus
 }
 
 function found(amount: bigint, output: bigint, gasValue = 1000n): QuoteRead {
   return { kind: "found", route: "kyberswap", amountIn: amount, output, minimumOutput: output - output / 100n, gasValue, impactBps: 50, summary: "{}" }
 }
 
-function chainStand(stand: Stand) {
+function landed(send: OpenSend, succeeded: boolean, output: bigint, actualWei: string): SendStatus {
+  return { kind: "landed", txId: send.attempts[send.attempts.length - 1]?.txId ?? "", succeeded, output, actualWei, blockHash: `0x${"ab".repeat(32)}`, allowance: 0n, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: true }
+}
+
+function label(token: string) {
+  return token === tokenA ? "A" : token === tokenB ? "B" : "T"
+}
+
+function chainStand(stand: Stand, base: Instance) {
   return Layer.succeed(ConversionChain, {
-    balance: (token) => effect { return token === tokenA || token === tokenB ? 4000000000n : 0n },
+    balance: (token) => effect { return stand.balances.get(token) ?? 0n },
     quote: (token, amount) => effect {
-      stand.calls.push(`quote ${token === tokenA ? "A" : "B"} ${amount}`)
+      stand.calls.push(`quote ${label(token)} ${amount}`)
       return stand.quote(token, amount)
     },
     reserve: (intent) => effect {
       stand.calls.push(`reserve ${intent.nonceFloor}`)
-      return { nonce: intent.nonceFloor, maximumWei: "1000000000000", intentHash: "0x5555555555555555555555555555555555555555555555555555555555555555" }
+      const facts = stand.signing === "forged"
+        ? { intentHash: "0x5555555555555555555555555555555555555555555555555555555555555555" }
+        : try promise(() => factsFor({ type: "reserveGas", runId: 1, nonce: intent.nonceFloor, maximum: 50000 }, generationNames(0), base))
+      return { nonce: intent.nonceFloor, maximumWei: "50000000000000", intentHash: facts.intentHash ?? "" }
     },
-    sign: () => effect {
+    sign: (intent, reserved) => effect {
       stand.calls.push("sign")
-      return { kind: "Conversion", txId: "0x6666666666666666666666666666666666666666666666666666666666666666", rawTx: "0x02f8", gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000n, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 0n }
+      const send: SignedSend = { kind: "Conversion", tx: 1, nonce: reserved.nonce, gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline, blockhashSlot: 0, router: 6131, approvedAmount: 0 }
+      const facts = stand.signing === "forged"
+        ? { txId: "0x6666666666666666666666666666666666666666666666666666666666666666", rawTx: "0x02f8", expiresAt: undefined }
+        : try promise(() => factsFor({ type: "sign", runId: 1, send }, generationNames(0), base))
+      stand.signed.push(facts.rawTx ?? "")
+      return { kind: "Conversion", txId: facts.txId ?? "", rawTx: facts.rawTx ?? "", gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: intent.quote.minimumOutput, deadline, blockhashSlot: 0, router: 6131, approvedAmount: 0n, expiresAt: facts.expiresAt }
     },
-    broadcast: () => effect { stand.calls.push("broadcast") },
-    status: () => effect { return { kind: "pending", mined: false } },
-    replacement: () => effect { return undefined },
+    broadcast: (rawTx) => effect {
+      stand.calls.push(`broadcast ${stand.signed.indexOf(rawTx)}`)
+      const answer = stand.broadcast(rawTx)
+      if (answer === "unavailable") throw new ChainUnavailable({ operation: "broadcast", detail: "connection reset" })
+      if (answer === "feeCap") throw new FeeCapTooLow({ operation: "broadcast", detail: "max fee per gas less than block base fee" })
+    },
+    status: (send) => effect {
+      stand.calls.push(`status ${send.attempts.length}`)
+      return stand.status(send)
+    },
+    replacement: () => effect {
+      stand.calls.push("replacement")
+      return { kind: "wait", reason: "the network fee has not risen" }
+    },
   })
 }
 
@@ -65,32 +108,62 @@ effect function runtimeFor(mode: Mode, network: Network) {
   return mode === "Live" ? try apply(runtime, { type: "verifyReadiness", network, listedWallet: 1 }, "Owner") : runtime
 }
 
-interface World { readonly base: Instance; readonly clock: SettableClock; readonly stand: Stand; readonly db: D1Database; readonly network: EnabledNetwork }
+interface World {
+  tokens: ReadonlyArray<TokenFact>
+  income: Income
+  readonly base: Instance
+  readonly clock: SettableClock
+  readonly stand: Stand
+  readonly db: D1Database
+  readonly network: EnabledNetwork
+}
 
-effect function opened(generation: number, mode: Mode, network: Network = "Base") {
-  const { db } = try Fixture
+function incomeOf(transfers: ReadonlyArray<Transfer>): Income {
+  return { transfers, topUps: [], counters: [], allowances: new Map<string, bigint>() }
+}
+
+const pairIncome = incomeOf([{ receipt: "0xaa:0", token: tokenA, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }])
+
+effect function worldOn(db: D1Database, generation: number, mode: Mode, network: Network = "Base") {
   const made = generationInstance(generation, network)
   const base = { ...made, held: { ...made.held, runtime: try runtimeFor(mode, network) } }
   const enabled = { network, definition: definitions[network], feeWallet: made.held.wallets[0] ?? "", allowlist: [], nativeLimits } satisfies EnabledNetwork
-  return { base, clock: settableClock(base.epoch + 10 * lockMs), stand: { calls: [], quote: (_token, amount) => found(amount, amount / 2n) }, db, network: enabled } satisfies World
+  const stand: Stand = {
+    calls: [],
+    signed: [],
+    balances: new Map([[tokenA, 4000000000n], [tokenB, 4000000000n]]),
+    signing: "journaled",
+    quote: (_token, amount) => found(amount, amount / 2n),
+    broadcast: () => "accepted",
+    status: () => ({ kind: "pending", mined: false }),
+  }
+  return { tokens: pair, income: pairIncome, base, clock: settableClock(base.epoch + 10 * lockMs), stand, db, network: enabled } satisfies World
 }
 
-const income = {
-  transfers: [{ receipt: "0xaa:0", token: tokenA, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }],
-  topUps: [],
-  counters: [],
-  allowances: new Map<string, bigint>(),
+effect function opened(generation: number, mode: Mode, network: Network = "Base") {
+  return try worldOn((try Fixture).db, generation, mode, network)
 }
 
-effect function run(world: World, trigger: "Receipts" | "Recovery") {
-  return try Effect.provide(runNetwork({ network: world.network, base: world.base, trigger, tokens, income }), Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer, chainStand(world.stand)))
+effect function run(world: World, trigger: "Receipts" | "Recovery", claims?: Claims) {
+  return try Effect.provide(runNetwork({ network: world.network, base: world.base, trigger, tokens: world.tokens, income: world.income }, claims), Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer, chainStand(world.stand, world.base)))
 }
 
 schema Recorded { token: string; state: string; mode: string; amount_in: string; reason: string | null }
 
 effect function recorded(world: World) {
   const scope = world.base.scope
-  return (try Effect.provide(rows(Recorded, sql`SELECT token, state, mode, amount_in, reason FROM fee_conversions WHERE substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))).map((row) => `${row.token === tokenA ? "A" : "B"} ${row.state} ${row.mode} ${row.amount_in} ${row.reason ?? "-"}`)
+  return (try Effect.provide(rows(Recorded, sql`SELECT token, state, mode, amount_in, reason FROM fee_conversions WHERE substr(run_id, 1, ${scope.length}) = ${scope} AND NOT (state = 'failed' AND reason LIKE 'signed as %') ORDER BY rowid`), d1(world.db))).map((row) => `${label(row.token)} ${row.state} ${row.mode} ${row.amount_in} ${row.reason ?? "-"}`)
+}
+
+effect function states(world: World) {
+  return (try recorded(world)).map((row) => row.split(" ").slice(0, 3).join(" "))
+}
+
+schema GasRow { actual_wei: string | null }
+
+effect function settledGas(world: World) {
+  const scope = world.base.scope
+  return (try Effect.provide(rows(GasRow, sql`SELECT actual_wei FROM fee_native_gas WHERE substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))).map((row) => row.actual_wei)
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -98,39 +171,124 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Dry runs record the pinned outcome order once, a receipts run skips an unchanged token and the run cap rescales the quote (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
+  it.effect('Dry runs record the pinned outcome order once, a receipts run skips an unchanged token, the run cap rescales the quote and only a recovery run claims (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
     const world = try opened(101, "DryRun")
     world.stand.quote = (token, amount) => token === tokenA ? found(amount, amount / 2n) : found(amount, 3000000n)
-    const first = try run(world, "Recovery")
+    const claimed: Array<Mode> = []
+    const claims: Claims = (_session, mode) => effect {
+      claimed.push(mode)
+      return 0
+    }
+    const first = try run(world, "Recovery", claims)
     const afterFirst = try recorded(world)
-    const second = try run(world, "Receipts")
+    const second = try run(world, "Receipts", claims)
     try same({
       triggers: [triggerAt(Date.UTC(2026, 10, 16, 12, 30)), triggerAt(Date.UTC(2026, 10, 16, 12, 31))],
-      first: [first.status, first.records.Quoted, first.records.DustPending, first.leaseLost],
-      second: [second.status, second.records.Quoted, second.records.DustPending],
+      first: [first.status, first.records, first.leaseLost],
+      second: [second.status, second.records],
       calls: world.stand.calls,
+      claimed,
       rows: afterFirst,
       unchanged: try recorded(world),
     }, {
       triggers: ["Recovery", "Receipts"],
-      first: ["ran", 1, 1, false],
-      second: ["ran", 0, 0],
+      first: ["ran", { ...none, Quoted: 1, DustPending: 1 }, false],
+      second: ["ran", none],
       calls: ["quote A 4000000000", "quote A 1960000000", "quote B 4000000000"],
+      claimed: ["DryRun"],
       rows: ["A quoted dry_run 1960000000 -", "B pending dry_run 4000000000 below the minimum conversion value"],
       unchanged: ["A quoted dry_run 1960000000 -", "B pending dry_run 4000000000 below the minimum conversion value"],
     })
   })
 
-  it.effect('Off starts nothing and Robinhood keeps what it received unconverted (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
+  it.effect('J2 and J20: Off starts nothing, Robinhood keeps what it received and claims nothing without its buyback, a held lease and an inexact receipt are refused (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are")', () => effect {
+    const claimed: Array<Mode> = []
+    const claims: Claims = (_session, mode) => effect {
+      claimed.push(mode)
+      return 0
+    }
     const off = try opened(102, "Off")
-    const idle = try run(off, "Recovery")
+    const idle = try run(off, "Recovery", claims)
     const robinhood = try opened(103, "DryRun", "Robinhood")
-    const kept = try run(robinhood, "Recovery")
-    try same({ off: [idle.status, off.stand.calls, try recorded(off)], robinhood: [kept.status, robinhood.stand.calls, try recorded(robinhood)] }, { off: ["off", [], []], robinhood: ["notConverted", [], []] })
+    const kept = try run(robinhood, "Recovery", claims)
+    const holder = try opened(109, "DryRun")
+    const nested: Array<string> = []
+    const outer = try run(holder, "Recovery", (_session, _mode) => effect {
+      nested.push((try run(holder, "Recovery")).status)
+      return 0
+    })
+    const inexact = try opened(111, "DryRun")
+    inexact.income = incomeOf([{ receipt: "0xcc:0", token: tokenA, amount: 9007199254740992n }])
+    const refused = run(inexact, "Recovery") catch (error) => error._tag
+    try same({
+      off: [idle.status, off.stand.calls, try recorded(off)],
+      robinhood: [kept.status, robinhood.stand.calls, try recorded(robinhood)],
+      claimed,
+      lease: [outer.status, nested],
+      refused: [refused, inexact.stand.calls, try recorded(inexact)],
+    }, {
+      off: ["off", [], []],
+      robinhood: ["notConverted", [], []],
+      claimed: [],
+      lease: ["ran", ["locked"]],
+      refused: ["ReceiptUnrepresentable", [], []],
+    })
   })
 
-  it.effect('A forged signed send is refused at the journal, and a run whose lease expired mid-run stops before the next token (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
+  it.effect('J3: a restart rebroadcasts the exact journaled bytes, waits before any replacement, and only finalized receipts settle the send or its expired reservation (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row")', () => effect {
+    const world = try opened(106, "Live")
+    world.stand.quote = (token, amount) => token === tokenA ? found(amount, 450000000n) : found(amount, 3000000n)
+    world.stand.broadcast = () => "unavailable"
+    const lost = try run(world, "Recovery")
+    const afterLost = try states(world)
+    world.stand.broadcast = () => "accepted"
+    const waited = try run(world, "Receipts")
+    world.stand.status = () => ({ kind: "unseen" })
+    const resent = try run(world, "Receipts")
+    const afterResent = try states(world)
+    world.stand.status = (send) => landed(send, true, 450000000n, "40000000000000")
+    const finalized = try run(world, "Receipts")
+
+    const expiring = try opened(107, "Live")
+    expiring.stand.quote = world.stand.quote
+    const sent = try run(expiring, "Recovery")
+    expiring.stand.status = () => ({ kind: "expired", finalizedTime: deadline + 1 })
+    const expired = try run(expiring, "Receipts")
+    expiring.stand.status = (send) => landed(send, false, 0n, "30000000000000")
+    const settled = try run(expiring, "Receipts")
+    const quiet = try run(expiring, "Receipts")
+
+    try same({
+      restart: [lost.records, afterLost, waited.records, waited.reconciled, resent.reconciled, afterResent, finalized.reconciled, try states(world)],
+      calls: world.stand.calls,
+      expiry: [sent.records, expired.reconciled, settled.reconciled, quiet.reconciled, try states(expiring), try settledGas(expiring)],
+      expiryCalls: expiring.stand.calls.filter((call) => call.startsWith("status")),
+    }, {
+      restart: [{ ...none, Unknown: 1, DustPending: 1 }, ["A unknown live", "B pending live"], none, 0, 0, ["A submitted live", "B pending live"], 1, ["A finalized live", "B pending live"]],
+      calls: ["quote A 4000000000", "reserve 0", "sign", "broadcast 0", "quote B 4000000000", "status 1", "status 1", "broadcast 0", "status 1"],
+      expiry: [{ ...none, Submitted: 1, DustPending: 1 }, 1, 1, 0, ["A failed live", "B pending live"], ["30000000000000"]],
+      expiryCalls: ["status 1", "status 1"],
+    })
+  })
+
+  it.effect('The rolling 24-hour value cap skips a token once finalized live sends reach it (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => effect {
+    const world = try opened(108, "Live")
+    world.income = incomeOf([{ receipt: "0xdd:0", token: tokenA, amount: 40000000000n }])
+    world.stand.quote = (_token, amount) => found(amount, 1000000000n)
+    world.stand.status = (send) => landed(send, true, 1000000000n, "40000000000000")
+    const results: Array<Readonly<Record<RowState, number>>> = []
+    for (let index = 0; index < 6; index++) results.push((try run(world, "Recovery")).records)
+    const rows = try recorded(world)
+    try same({ results, last: rows[rows.length - 1], reserved: world.stand.calls.filter((call) => call.startsWith("reserve")) }, {
+      results: [...Array.from({ length: 5 }, () => ({ ...none, Submitted: 1 })), { ...none, Skipped: 1 }],
+      last: "A skipped live 4000000000 daily value cap reached",
+      reserved: ["reserve 0", "reserve 1", "reserve 2", "reserve 3", "reserve 4"],
+    })
+  })
+
+  it.effect('J19: a forged signed send is refused at the journal for each token, and a run whose lease expired mid-run stops before the next token (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
     const world = try opened(104, "Live")
+    world.stand.signing = "forged"
     world.stand.quote = (_token, amount) => found(amount, 450000000n)
     const forged = try run(world, "Recovery")
     const signed = try recorded(world)
@@ -142,15 +300,67 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const lost = try run(late, "Recovery")
     const next = try run(late, "Recovery")
     try same({
-      forged: [forged.records.Failed, world.stand.calls.slice(0, 3)],
+      forged: [forged.records, world.stand.calls],
       reason: signed.map((row) => row.includes(" failed live ") && row.includes("prepare: sign:")),
-      lost: [lost.leaseLost, lost.records.Quoted, try recorded(late)],
+      lost: [lost.leaseLost, lost.records, try recorded(late)],
       next: next.status,
     }, {
-      forged: [1, ["quote A 4000000000", "reserve 0", "sign"]],
+      forged: [{ ...none, Failed: 2 }, ["quote A 4000000000", "reserve 0", "sign", "quote B 4000000000", "reserve 0", "sign"]],
       reason: [true, true],
-      lost: [true, 0, []],
+      lost: [true, none, []],
       next: "ran",
+    })
+  })
+})
+
+service Chain {
+  readonly chain: Anvil
+  readonly token: Address
+  readonly deployer: Address
+  readonly fetch: typeof globalThis.fetch
+  readonly db: D1Database
+}
+
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const tokenAbi = parseAbi(["function mint(address to, uint256 amount)"])
+
+const OnChain = Layer.effect(Chain, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (opened) => promise(() => opened.close()))
+  try promise(() => refuseMainnet({ url: chain.url, family: "evm" }))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["test/FeeConverterFixture.sol"])), (output) => promise(() => output.close()))
+  const deployer = chain.accounts[0]
+  if (deployer === undefined) return try die(new Error("anvil has no accounts"))
+  const { bytecode } = try promise(() => artifact(`${built.out}/FeeConverterFixture.sol/FeeConverterToken.json`))
+  const deployed = try promise(() => chain.transact({ from: deployer.address, data: bytecode }))
+  if (deployed.contractAddress === undefined) return try die(new Error("the fee token was not deployed"))
+  const started = try acquireRelease(promise(() => journalDatabase("fees-conversion-chain")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  const net = try orDie(Effect.try(() => internet({ rpc: { [chain.url]: forward(chain.url) } })))
+  return { chain, token: deployed.contractAddress.toLowerCase() as Address, deployer: deployer.address, fetch: asFetch(net.handler), db: started.db }
+})
+
+layer(OnChain, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Fee income is the finalized ERC-20 Transfer logs to the fee wallet, each counted once by its receipt id (spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
+    const { chain, token, deployer, fetch, db } = try Chain
+    const world = try worldOn(db, 110, "DryRun")
+    const minted = (to: Address, amount: bigint) => promise(() => chain.transact({ from: deployer, to: token, data: encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [to, amount] }) }))
+    const wallet = world.network.feeWallet as Address
+    const first = try minted(wallet, 4000000000n)
+    const second = try minted(wallet, 4000000000n)
+    try minted(deployer, 1000000000n)
+    const unfinalized = try minted(wallet, 7000000000n)
+    try sync(() => chain.setFinalized(unfinalized.blockNumber - 1n))
+    const onChain: ReadonlyArray<TokenFact> = [{ address: token, asset: "ProjectToken" }]
+    const scanned = Effect.provide(evmTransfers(world.network, onChain, { fromBlock: 1n, pageBlocks: 1000n }), evmRpc({ urls: Redacted.make([chain.url]), chainId: 8453n }))
+    const transfers = try Effect.provideService(Effect.provide(scanned, FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+    world.tokens = onChain
+    world.income = incomeOf(transfers)
+    world.stand.balances = new Map([[token, 8000000000n]])
+    world.stand.quote = (_token, amount) => found(amount, 450000000n)
+    const result = try run(world, "Recovery")
+    try same({ transfers, records: result.records, rows: try recorded(world) }, {
+      transfers: [{ receipt: `${first.transactionHash}:0`, token, amount: 4000000000n }, { receipt: `${second.transactionHash}:0`, token, amount: 4000000000n }],
+      records: { ...none, Quoted: 1 },
+      rows: ["T quoted dry_run 8000000000 -"],
     })
   })
 })

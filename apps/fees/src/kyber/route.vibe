@@ -22,9 +22,14 @@ export error KyberUnavailable { path: string; detail: string }
 export error KyberRefused { path: string; status: number; message: string }
 export error RouteMismatch { issue: string }
 
+export interface BuybackSigning {
+  readonly receiver: Address
+  readonly maxBridgeCostBps: bigint
+}
+
 export interface KyberSettings {
   readonly clientId: string
-  readonly buyback: boolean
+  readonly buyback: BuybackSigning | undefined
 }
 
 export const responseLimitBytes = 2_000_000
@@ -135,7 +140,7 @@ export function referenceStable(network: EvmNetwork, settings: KyberSettings): A
   const target = definitions[network].target
   if (target.kind === "usdc") return target.address as Address
   const stable = definitions[network].stable
-  return settings.buyback && stable !== undefined ? stable as Address : undefined
+  return settings.buyback !== undefined && stable !== undefined ? stable as Address : undefined
 }
 
 export effect function nativeValue(network: EvmNetwork, wei: bigint, settings: KyberSettings) {

@@ -1,9 +1,8 @@
 import { assert, layer } from "@effect/vitest"
-import { ExperimentalNodeFileSystem } from "vibelang-runtime/experimental/platform-node"
 import { Response } from "miniflare"
 import { type Address, type Hex, decodeFunctionData, encodeFunctionData, maxUint256, parseAbi } from "viem"
 import type { EvmRpc } from "@repo/platform/chain/evm"
-import { type Handler, bundle } from "@repo/platform/testing"
+import type { Handler } from "@repo/platform/testing"
 import { type Anvil, anvil, artifact, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
 import { internet } from "@repo/platform/testing/internet"
 import { asFetch, kyberNative, parsedJson, quotesFake } from "@repo/platform/testing/quotes"
@@ -15,7 +14,7 @@ import { FeeChain, attemptStatus, broadcast, credited, dataOperatorFee, feeChain
 import { decodedSwap, kyberRouterAbi } from "../src/kyber/swap.ts"
 import { replaceSend, replacementPlan } from "../src/replacement/step.vibe"
 import { type EvmSigned, FeeWallet, type Prepared, evmFeeWallet, modelSend } from "../src/signer/feeWallet.vibe"
-import { evmKey, feeWalletEvmMarker } from "../src/signer/evmKey.ts"
+import { evmKey } from "../src/signer/evmKey.ts"
 import type { EvmNetwork, FeeIntent } from "../src/signer/intents.ts"
 import { circleUsdc, kyberswap } from "../src/runtime/pins.ts"
 import type { NativeLimits } from "../src/runtime/config.vibe"
@@ -42,6 +41,11 @@ const live: Runtime = {
   environment: "Production", variableEnabled: true, published: true, source: 1, converterMode: "Live", buybackMode: "Off",
   networks: ["Base", "Ethereum"], keys: ["Base", "Ethereum"], nativeLimits: ["Base", "Ethereum"], evmWallet: 1, solanaWallet: 2,
   ready: { base: true, ethereum: true, robinhood: false, solana: false }, replacementActive: true, publications: 1,
+}
+
+const buybackLive: Runtime = {
+  ...live, buybackMode: "Live", networks: ["Base", "Ethereum", "Robinhood"], keys: ["Base", "Ethereum", "Robinhood"],
+  nativeLimits: ["Base", "Ethereum", "Robinhood"], ready: { ...live.ready, robinhood: true },
 }
 
 const limitsOf: Readonly<Record<"Base" | "Ethereum", NativeLimits>> = {
@@ -121,7 +125,7 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-interface Signer { readonly network: EvmNetwork; readonly keyIndex?: number; readonly runtime?: Runtime }
+interface Signer { readonly network: EvmNetwork; readonly keyIndex?: number; readonly keyless?: boolean; readonly runtime?: Runtime; readonly buyback?: boolean }
 
 effect function onChain<A, E>(program: A!E!(FeeWallet | FeeChain | EvmRpc | HttpClient.HttpClient), signer: Signer) {
   const chains = try Chains
@@ -133,11 +137,11 @@ effect function onChain<A, E>(program: A!E!(FeeWallet | FeeChain | EvmRpc | Http
   const signing = Layer.provideMerge(evmFeeWallet({
     network: signer.network,
     wallet: wallet.address,
-    key: Redacted.make(key.privateKey),
+    key: signer.keyless === true ? undefined : Redacted.make(key.privateKey),
     runtime: signer.runtime ?? live,
     limits: limitsOf[signer.network === "Base" ? "Base" : "Ethereum"],
     gasMultiple: 10n,
-    kyber: { clientId: kyberswap.clientId, buyback: false },
+    kyber: { clientId: kyberswap.clientId, buyback: signer.buyback === true ? { receiver: wallet.address, maxBridgeCostBps: 150n } : undefined },
   }), chain)
   return try Effect.provideService(Effect.provide(Effect.provide(program, signing), FetchHttpClient.layer), FetchHttpClient.Fetch, chains.fetch)
 }
@@ -152,6 +156,10 @@ function issueOf(error: unknown) {
   return typeof error === "object" && error !== null && "_tag" in error ? { tag: (error as { _tag: string })._tag, issue: (error as { issue?: string }).issue } : { tag: "unexpected", issue: String(error) }
 }
 
+function stepOf(error: unknown) {
+  return typeof error === "object" && error !== null && "step" in error ? (error as { step: unknown }).step : undefined
+}
+
 effect function finalize(chain: Anvil) {
   try promise(() => chain.mine(65))
 }
@@ -162,14 +170,18 @@ effect function walletOf(network: EvmNetwork) {
   return (fixed.chain.accounts[1]?.address ?? "").toLowerCase() as Address
 }
 
-layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('An EVM conversion approves exactly its input, swaps only through the pinned router to the fee wallet, and refuses every tampered build (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/conversion.md, "A conversion approval grants exactly the intent\'s input to the pinned router, and its swap signs only at that finalized allowance"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The fee-wallet signer approves exactly a held input, swaps only through the pinned router to the pinned target in the fee wallet, and refuses unlimited approvals, a missing key, tampered builds and foreign bridge receivers before any reservation (spec/fees/conversion.md, "A conversion approval grants exactly the intent\'s input to the pinned router, and its swap signs only at that finalized allowance"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const chains = try Chains
     const { chain, token, usdc } = chains.ethereum
     const wallet = try walletOf("Ethereum")
     const amount = 1_000n * unit
     const reserved: Prepared[] = []
     const approve = { kind: "KyberApprove", network: "Ethereum", token, amount, nonceFloor: 0n, valueMicro: 500_000_000n } as const
+    try finalize(chain)
+    const unlimited = onChain(signed({ ...approve, amount: maxUint256 }, reserved), { network: "Ethereum" }) catch (error) => issueOf(error)
+    const keyless = onChain(signed(approve, reserved), { network: "Ethereum", keyless: true }) catch (error) => ({ ...issueOf(error), step: stepOf(error) })
+    const reservedBeforeKey = reserved.length
     const approval = try onChain(signed(approve, reserved), { network: "Ethereum" })
     const approvalSent = try onChain(broadcast(approval.rawTx), { network: "Ethereum" })
     try finalize(chain)
@@ -177,7 +189,7 @@ layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServi
     if (landed.kind !== "Landed") return try die(new Error("the approval did not land"))
     const settled = try onChain(approvalSettled(landed, { token, spender: "Router", amount, nonce: 0n }), { network: "Ethereum" })
     const again = onChain(signed(approve, reserved), { network: "Ethereum" }) catch (error) => issueOf(error)
-    const swap = { kind: "KyberSwap", network: "Ethereum", token, target: usdc, amountIn: amount, minimumOutput: 495_000_000n, slippageBps: 100, nonceFloor: 1n, valueMicro: 500_000_000n } as const
+    const swap = { kind: "KyberSwap", network: "Ethereum", token, amountIn: amount, minimumOutput: 495_000_000n, slippageBps: 100, nonceFloor: 1n, valueMicro: 500_000_000n } as const
     const tampered: unknown[] = []
     for (const mode of ["receiver", "router", "feeReceiver"] as const) {
       try (try Chains).tamper(mode)
@@ -194,7 +206,17 @@ layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServi
     if (swapLanded.kind !== "Landed") return try die(new Error("the swap did not land"))
     const output = try onChain(credited(swapLanded.receipt, usdc), { network: "Ethereum" })
     const mismatch = onChain(Effect.succeed("built"), { network: "Ethereum", keyIndex: 2 }) catch (error) => issueOf(error)
+    const order = { giveAmount: 500_000_000n, takeAmount: 495_000_000n, salt: 1n, receiver: attacker, allowedTaker: undefined, metadata: "0x", nativeFee: 1_000_000_000_000_000n, orderId: `0x${"00".repeat(32)}` } as const
+    const reservedBeforeBridge = reserved.length
+    const foreign = onChain(signed({ kind: "DlnCreateOrder", network: "Ethereum", order, preparation: [], nonceFloor: 2n, valueMicro: 500_000_000n }, reserved), { network: "Ethereum", runtime: buybackLive, buyback: true }) catch (error) => issueOf(error)
+    const unconfigured = onChain(signed({ kind: "DlnApprove", network: "Ethereum", amount: 500_000_000n, takeAmount: 495_000_000n, nativeFee: 1_000_000_000_000_000n, preparation: [], nonceFloor: 2n, valueMicro: 500_000_000n }, reserved), { network: "Ethereum", runtime: buybackLive }) catch (error) => issueOf(error)
     try same({
+      unlimited,
+      keyless,
+      reservedBeforeKey,
+      bridgeReserved: reserved.length === reservedBeforeBridge,
+      foreign,
+      unconfigured,
       approval: { reserved: reserved[0]?.family, nonce: modelSend(approval, 1)?.nonce, kind: modelSend(approval, 1)?.kind, approvedAmount: modelSend(approval, 1)?.approvedAmount, calldata: decodedApproval(parsedType2(approval.rawTx)?.data ?? "0x"), to: parsedType2(approval.rawTx)?.to },
       approvalSent: approvalSent.kind,
       settled,
@@ -206,6 +228,12 @@ layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServi
       output,
       mismatch,
     }, {
+      unlimited: { tag: "SignRefused", issue: "an unlimited approval is never signed" },
+      keyless: { tag: "SignRefused", issue: "no fee-wallet key is loaded for Ethereum", step: "key" },
+      reservedBeforeKey: 0,
+      bridgeReserved: true,
+      foreign: { tag: "SignRefused", issue: "Bridge order differs from the fee-wallet intent" },
+      unconfigured: { tag: "SignRefused", issue: "bridge signing needs the reviewed buyback receiver and limits" },
       approval: { reserved: "evm", nonce: 0, kind: "Approval", approvedAmount: undefined, calldata: { spender: router, amount }, to: token },
       approvalSent: "Accepted",
       settled: { succeeded: true, allowance: amount },
@@ -223,7 +251,7 @@ layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServi
     })
   })
 
-  it.effect('A stuck send is replaced at the same nonce with only its fees stepped, after three minutes and journaled before broadcast, and a recorded unlimited approval is never re-signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/conversion.md, "A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
+  it.effect('A stuck send is replaced at the same nonce with exactly the bounded fee step, after three minutes, handed to the journal before broadcast, and neither an oversized step nor a recorded unlimited approval is ever signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/conversion.md, "A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
     const chains = try Chains
     const { chain, token } = chains.ethereum
     const owner = chain.accounts[1]
@@ -232,53 +260,58 @@ layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServi
     if (key === undefined) return try die(new Error("the anvil key is malformed"))
     const counted = try promise(() => chain.rpc("eth_getTransactionCount", [owner.address, "pending"]))
     const nonce = Number(counted)
-    try promise(() => chain.setNextBaseFee(1_000_000_000n))
+    try promise(() => chain.setNextBaseFee(10_000_000_000n))
     try promise(() => chain.mine(1))
     const amount = 7n * unit
-    const stuck = unsignedType2({ chainId: 1, nonce, to: token, data: approveCalldata(router, amount), value: 0n, gas: 100_000n, maxFeePerGas: 500_000_000n, maxPriorityFeePerGas: 400_000_000n })
+    const stuck = unsignedType2({ chainId: 1, nonce, to: token, data: approveCalldata(router, amount), value: 0n, gas: 100_000n, maxFeePerGas: 4_000_000_000n, maxPriorityFeePerGas: 2_000_000_000n })
     const raw = try promise(() => key.sign(stuck.transaction))
     const firstSend = try onChain(broadcast(raw), { network: "Ethereum" })
     const recorded = { kind: "KyberApprove", network: "Ethereum", token, amount, nonceFloor: 0n, valueMicro: 500_000_000n } as const
-    const row: Row = { ...noRow, id: 1, token: 1, kind: "Approval", live: true, state: "Submitted", wallet: 1, amountIn: 7, valueMicro: 500_000_000, nonce, gasLimit: 100_000, deadline: maximumSafeValue, attempts: [{ tx: 1, maxFee: 1, priority: 1, at: 0 }] }
+    const row: Row = { ...noRow, id: 1, token: 1, kind: "Approval", live: true, state: "Submitted", wallet: 1, amountIn: 7, valueMicro: 500_000_000, nonce, gasLimit: 100_000, deadline: maximumSafeValue, attempts: [{ tx: 1, maxFee: 4, priority: 2, at: 0 }] }
     const fee = (clock: number, runtime: Runtime): Fee => ({ ...initial, network: "Ethereum", runtime, clock, rows: [row] })
-    const settings = { limits: limitsOf.Ethereum, kyber: { clientId: kyberswap.clientId, buyback: false } }
-    const input = (clock: number, runtime = live) => ({ fee: fee(clock, runtime), runId: 1, rowId: 1, recorded, attempts: [raw] as const })
-    const early = try onChain(replacementPlan(input(100_000), settings), { network: "Ethereum" })
-    const inactive = try onChain(replacementPlan(input(180_000, { ...live, replacementActive: false }), settings), { network: "Ethereum" })
+    const settings = { limits: limitsOf.Ethereum, kyber: { clientId: kyberswap.clientId, buyback: undefined } }
+    const input = (clock: number, runtime = live) => ({ fee: fee(clock, runtime), runId: 1, rowId: 1, recorded, attempts: [raw] as const, preparation: [] })
+    const noClaim = () => Effect.void
+    const early = try onChain(replacementPlan(input(100_000), settings, noClaim), { network: "Ethereum" })
+    const inactive = try onChain(replacementPlan(input(180_000, { ...live, replacementActive: false }), settings, noClaim), { network: "Ethereum" })
+    const overStep = onChain(signed({ kind: "EvmReplacement", network: "Ethereum", recorded, attempts: [raw], maxFeePerGas: 10_000_000_000n, maxPriorityFeePerGas: 2_500_000_000n, valueMicro: 500_000_000n, preparation: [] }, []), { network: "Ethereum" }) catch (error) => issueOf(error)
     const order: string[] = []
-    const replaced = try onChain(replaceSend(input(180_000), settings, (step) => sync(() => { order.push(`journaled ${step.signed.txId}`) })), { network: "Ethereum" })
+    const replaced = try onChain(replaceSend(input(180_000), settings, noClaim, (step) => sync(() => { order.push(`journaled ${step.signed.txId}`) })), { network: "Ethereum" })
     if (replaced.kind !== "Replaced") return try die(new Error(`no replacement: ${replaced.reason}`))
     order.push(`broadcast ${replaced.broadcast.kind}`)
     const original = parsedType2(raw)
     const next = parsedType2(replaced.signed.rawTx)
     const unlimited = unsignedType2({ ...stuck.transaction, data: approveCalldata(router, maxUint256) })
     const unlimitedRaw = try promise(() => key.sign(unlimited.transaction))
-    const reSigned = onChain(signed({ kind: "EvmReplacement", network: "Ethereum", recorded, attempts: [unlimitedRaw], maxFeePerGas: 1_000_000_001n, maxPriorityFeePerGas: 1_000_000_001n, valueMicro: 500_000_000n }, []), { network: "Ethereum" }) catch (error) => issueOf(error)
+    const reSigned = onChain(signed({ kind: "EvmReplacement", network: "Ethereum", recorded, attempts: [unlimitedRaw], maxFeePerGas: 5_000_000_000n, maxPriorityFeePerGas: 2_500_000_000n, valueMicro: 500_000_000n, preparation: [] }, []), { network: "Ethereum" }) catch (error) => issueOf(error)
     try same({
       firstSend: firstSend.kind === "Accepted" || firstSend.kind === "FeeCapTooLow",
       early,
       inactive,
+      overStep,
       order: order.map((line) => line.split(" ")[0]),
       content: next === undefined || original === undefined ? undefined : { nonce: next.nonce === original.nonce, to: next.to === original.to, data: next.data === original.data, gas: next.gas === original.gas, value: next.value === original.value },
       fees: [next?.maxFeePerGas, next?.maxPriorityFeePerGas],
-      networkFee: { maxFeeNeeded: replaced.networkFee.maxFeeNeeded >= 1, observedAt: replaced.networkFee.observedAt, priced: replaced.networkFee.worstCaseMicro > 0 },
+      networkFee: { aboveLatestUnit: replaced.networkFee.maxFeeNeeded > 4, observedAt: replaced.networkFee.observedAt, worstCaseMicro: replaced.networkFee.worstCaseMicro },
       reSigned,
     }, {
       firstSend: true,
       early: { kind: "Wait", reason: "the latest attempt has waited less than three minutes" },
       inactive: { kind: "Wait", reason: "same-nonce replacement is not activated for this network" },
+      overStep: { tag: "SignRefused", issue: "the replacement fees are outside the bounded step" },
       order: ["journaled", "broadcast"],
       content: { nonce: true, to: true, data: true, gas: true, value: true },
-      fees: [1_000_000_001n, 1_000_000_001n],
-      networkFee: { maxFeeNeeded: true, observedAt: 180_000, priced: true },
+      fees: [5_000_000_000n, 2_500_000_000n],
+      networkFee: { aboveLatestUnit: true, observedAt: 180_000, worstCaseMicro: 1_500_000 },
       reSigned: { tag: "SignRefused", issue: "Recorded send differs from its intent" },
     })
   })
 
-  it.effect('On Base the GasPriceOracle data and operator fees must fit the configured allowance before anything signs (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row")', () => effect {
+  it.effect('On Base the GasPriceOracle data and operator fees must fit the configured allowance before anything signs (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const chains = try Chains
     const { chain, token } = chains.base
     const approve = { kind: "KyberApprove", network: "Base", token, amount: unit, nonceFloor: 0n, valueMicro: 1_000_000_000_000n } as const
+    try finalize(chain)
     const posted = try onChain(dataOperatorFee(200, 60_000n), { network: "Base" })
     const reserved: Prepared[] = []
     const fits = try onChain(signed(approve, reserved), { network: "Base" })
@@ -290,12 +323,5 @@ layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServi
       reserved: 1,
       over: { tag: "SignRefused", issue: "Base data/operator fees exceed the configured allowance" },
     })
-  })
-
-  it.effect('Only the fee Worker bundle carries the EVM fee-wallet signer (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
-    const fs = try FileSystem.FileSystem
-    const fees = try fs.readFileString(try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "feeConverter" })))
-    const backend = try fs.readFileString(try promise(() => bundle(new URL("../../backend", import.meta.url).pathname, { entry: "worker" })))
-    try same({ fees: fees.split(feeWalletEvmMarker).length - 1, backend: backend.includes(feeWalletEvmMarker) }, { fees: 1, backend: false })
   })
 })

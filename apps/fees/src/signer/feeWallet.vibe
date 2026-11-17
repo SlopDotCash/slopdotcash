@@ -9,8 +9,8 @@ import { type ChainRefused, FeeChain, chainPreflight, dataOperatorFee, feesPerGa
 import type { Facts } from "../journal/store.vibe"
 import { type KyberRefused, type KyberSettings, type KyberUnavailable, type RouteMismatch, nativeValue } from "../kyber/route.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
-import { type EvmCall, SignRefused, derivedCall, replacementTransaction } from "./evm.vibe"
-import { evmKey, feeWalletEvmMarker } from "./evmKey.ts"
+import { type EvmCall, SignRefused, bridgeCostWithin, bridgeTermsOf, derivedCall, replacementTransaction } from "./evm.vibe"
+import { type EvmKey, evmKey, feeWalletEvmMarker } from "./evmKey.ts"
 import type { EvmIntent, EvmNetwork, FeeIntent, SolanaIntent } from "./intents.ts"
 
 export { SignRefused } from "./evm.vibe"
@@ -147,6 +147,8 @@ effect function prepared(options: EvmWalletOptions, intent: EvmIntent) {
   if (maximumWei > options.limits.perTransaction) return try refuse("limits", "the worst-case native fee exceeds the per-transaction ceiling")
   const posted = try dataOperatorFee((unsigned.serialized.length - 2) / 2, transaction.gas)
   if (posted.data + posted.operator > extra) return try refuse("limits", "Base data/operator fees exceed the configured allowance")
+  const bridge = bridgeTermsOf(intent)
+  if (bridge !== undefined) try bridgeCostWithin(options.network, bridge, { nonce: transaction.nonce, cost: maximumWei }, options.limits.perTransaction, options.kyber)
   if (transaction.value > 0n && (try nativeBalance("latest")) < transaction.value + maximumWei) return try refuse("limits", "Native conversion cannot cover its input and gas")
   const priced = try nativeValue(options.network, maximumWei, options.kyber)
   if (priced === undefined || priced * options.gasMultiple > intent.valueMicro) return try refuse("limits", "Final prepared native fee exceeds the gas-cost multiple or cannot be priced")
@@ -172,11 +174,15 @@ effect function prepared(options: EvmWalletOptions, intent: EvmIntent) {
   } satisfies EvmPrepared
 }
 
-effect function signedBytes(options: EvmWalletOptions, ready: EvmPrepared) {
+effect function signingKey(options: EvmWalletOptions) {
   if (options.key === undefined) return try refuse("key", `no fee-wallet key is loaded for ${options.network}`)
   const key = evmKey(Redacted.value(options.key))
   if (key === undefined) return try refuse("key", `Fee-wallet key for ${options.network} is malformed`)
   if (key.address !== options.wallet.toLowerCase()) return try refuse("key", `Fee-wallet key for ${options.network} does not control the configured fee wallet`)
+  return key
+}
+
+effect function signedBytes(options: EvmWalletOptions, ready: EvmPrepared, key: EvmKey) {
   const rawTx = try tryPromise({ try: () => key.sign(ready.unsigned.transaction), catch: () => new SignRefused({ step: "sign", issue: "the fee-wallet key could not sign" }) })
   const parsed = parsedType2(rawTx)
   const signer = try tryPromise({ try: () => signerOf(rawTx), catch: () => new SignRefused({ step: "sign", issue: "the signed bytes cannot be recovered" }) })
@@ -192,8 +198,9 @@ type ChainServices = FeeChain | EvmRpc | HttpClient.HttpClient
 effect function signWith<E, R>(options: EvmWalletOptions, services: Context.Context<ChainServices>, intent: FeeIntent, reserve: (prepared: Prepared) => void!E!R): Signed!(SignRefused | E)!R {
   if (intent.network === "Solana") return try refuse("activation", "a Solana intent is signed by the Solana fee wallet")
   const ready = try Effect.provideContext(Effect.mapError(prepared(options, intent), refusalOf), services)
+  const key = try signingKey(options)
   try reserve(ready)
-  return try signedBytes(options, ready)
+  return try signedBytes(options, ready, key)
 }
 
 export function evmFeeWallet(options: EvmWalletOptions) {

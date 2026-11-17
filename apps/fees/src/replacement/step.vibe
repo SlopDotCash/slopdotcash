@@ -1,5 +1,5 @@
 // spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/conversion.md, "A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
-import type { Hex } from "@repo/platform/chain/evm"
+import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
 import { type EvmFees, type Event, type Fee, type NetworkFeeObservation, feesOf, firstAttempt, latestAttempt, nextFees, replacementDeadlineMarginMs, replacementStepValid, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
 import { replacementSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
@@ -9,7 +9,7 @@ import type { Facts } from "../journal/store.vibe"
 import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
 import { type EvmSigned, FeeWallet, SignRefused, signedFacts } from "../signer/feeWallet.vibe"
-import type { EvmNetwork, EvmReplacement, FirstEvmIntent } from "../signer/intents.ts"
+import type { EvmNetwork, EvmReplacement, FirstEvmIntent, PreparationAttempt } from "../signer/intents.ts"
 
 module verified {
   import { nativeUnits as units, nativeWei as wei } from "../journal/amounts.ts"
@@ -26,7 +26,10 @@ export interface ReplacementInput {
   readonly rowId: number
   readonly recorded: FirstEvmIntent
   readonly attempts: readonly [Hex, ...Hex[]]
+  readonly preparation: readonly PreparationAttempt[]
 }
+
+export type ClaimCheck<E, R> = (vault: Address) => void!E!R
 
 export interface ReplacementSettings {
   readonly limits: NativeLimits
@@ -43,16 +46,17 @@ function wait(reason: string): ReplacementPlan {
   return { kind: "Wait", reason }
 }
 
-function fitted(target: bigint, units: number) {
+function withinUnit(target: bigint, units: number) {
   const ceiling = wholeBig(units)
-  if (ceiling === undefined || ceiling <= 0n) return undefined
-  const highest = weiOfGwei(ceiling)
-  const lowest = weiOfGwei(ceiling - 1n) + 1n
-  return target > highest ? highest : target < lowest ? lowest : target
+  return ceiling !== undefined && ceiling > 0n && target > weiOfGwei(ceiling - 1n) && target <= weiOfGwei(ceiling)
 }
 
-export effect function replacementPlan(input: ReplacementInput, settings: ReplacementSettings) {
-  const { fee, rowId, recorded, attempts } = input
+effect function claimVerified<E, R>(recorded: FirstEvmIntent, verifyClaim: ClaimCheck<E, R>) {
+  if (recorded.kind === "EvmClaimFees") try verifyClaim(recorded.vault)
+}
+
+export effect function replacementPlan<E, R>(input: ReplacementInput, settings: ReplacementSettings, verifyClaim: ClaimCheck<E, R>) {
+  const { fee, rowId, recorded, attempts, preparation } = input
   const row = fee.rows[rowId - 1]
   if (row === undefined || row.id !== rowId || fee.network === "Solana") return wait("the row is not an EVM send of this journal")
   const network: EvmNetwork = fee.network
@@ -79,17 +83,17 @@ export effect function replacementPlan(input: ReplacementInput, settings: Replac
     ceiling: original.maxFeePerGas * 3n,
   })
   if (target.kind === "Keep") return wait("fee replacement cap reached")
-  const maxFeePerGas = fitted(target.fees.maxFeePerGas, stepped.maxFee)
-  const maxPriorityFeePerGas = fitted(target.fees.maxPriorityFeePerGas, stepped.priority)
-  if (maxFeePerGas === undefined || maxPriorityFeePerGas === undefined || maxPriorityFeePerGas > maxFeePerGas) return wait("the stepped fees cannot be signed exactly")
+  const { maxFeePerGas, maxPriorityFeePerGas } = target.fees
+  if (!withinUnit(maxFeePerGas, stepped.maxFee) || !withinUnit(maxPriorityFeePerGas, stepped.priority)) return wait("the stepped fees cannot be signed within the bounded step")
   const priced = try nativeValue(network, original.gas * maxFeePerGas + settings.limits.additionalFeeReserve, settings.kyber)
   const worstCaseMicro = priced === undefined ? -1 : exactNumber(priced) ?? -1
   if (worstCaseMicro < 0 || worstCaseMicro * 10 > row.valueMicro) return wait("ten times the replacement fee exceeds the recorded value or cannot be priced")
   const valueMicro = wholeBig(row.valueMicro)
   if (valueMicro === undefined) return wait("the send has no recorded value to bound its fee")
+  try claimVerified(recorded, verifyClaim)
   return {
     kind: "Replace",
-    intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro },
+    intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro, preparation },
     networkFee: { maxFeeNeeded, observedAt: fee.clock, worstCaseMicro },
   } satisfies ReplacementPlan
 }
@@ -102,8 +106,8 @@ export function replaceFacts(signed: EvmSigned): Facts {
   return signedFacts(signed)
 }
 
-export effect function replaceSend<E, R>(input: ReplacementInput, settings: ReplacementSettings, journal: (replaced: { readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation }) => void!E!R) {
-  const plan = try replacementPlan(input, settings)
+export effect function replaceSend<E, R, CE, CR>(input: ReplacementInput, settings: ReplacementSettings, verifyClaim: ClaimCheck<CE, CR>, journal: (replaced: { readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation }) => void!E!R) {
+  const plan = try replacementPlan(input, settings, verifyClaim)
   if (plan.kind === "Wait") return plan
   const signed = try (try FeeWallet).sign(plan.intent, () => Effect.void)
   if (signed.family !== "evm") throw new SignRefused({ step: "sign", issue: "an EVM replacement was not signed as an EVM send" })
@@ -111,6 +115,7 @@ export effect function replaceSend<E, R>(input: ReplacementInput, settings: Repl
   return { kind: "Replaced", signed, networkFee: plan.networkFee, broadcast: try broadcast(signed.rawTx) } satisfies Replaced
 }
 
-export effect function resendLatest(attempts: readonly [Hex, ...Hex[]]) {
+export effect function resendLatest<E, R>(recorded: FirstEvmIntent, attempts: readonly [Hex, ...Hex[]], verifyClaim: ClaimCheck<E, R>) {
+  try claimVerified(recorded, verifyClaim)
   return try broadcast(attempts[attempts.length - 1] ?? attempts[0])
 }

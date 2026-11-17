@@ -19,7 +19,6 @@ export interface KyberApprove extends EvmSend {
 export interface KyberSwap extends EvmSend {
   readonly kind: "KyberSwap";
   readonly token: Address;
-  readonly target: Address;
   readonly amountIn: bigint;
   readonly minimumOutput: bigint;
   readonly slippageBps: number;
@@ -30,9 +29,17 @@ export interface EvmClaimFees extends EvmSend {
   readonly vault: Address;
 }
 
+export interface PreparationAttempt {
+  readonly nonce: number;
+  readonly cost: bigint;
+}
+
 export interface DlnApprove extends EvmSend {
   readonly kind: "DlnApprove";
   readonly amount: bigint;
+  readonly takeAmount: bigint;
+  readonly nativeFee: bigint;
+  readonly preparation: readonly PreparationAttempt[];
 }
 
 export interface DlnOrderTerms {
@@ -49,6 +56,7 @@ export interface DlnOrderTerms {
 export interface DlnCreateOrder extends EvmSend {
   readonly kind: "DlnCreateOrder";
   readonly order: DlnOrderTerms;
+  readonly preparation: readonly PreparationAttempt[];
 }
 
 export interface SlopBurn extends EvmSend {
@@ -66,6 +74,7 @@ export interface EvmReplacement {
   readonly maxFeePerGas: bigint;
   readonly maxPriorityFeePerGas: bigint;
   readonly valueMicro: bigint;
+  readonly preparation: readonly PreparationAttempt[];
 }
 
 export type EvmIntent = FirstEvmIntent | EvmReplacement;

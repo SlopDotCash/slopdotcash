@@ -5,7 +5,7 @@ import { Machine as EmailActions } from "../../gen/frontend__emailAction.effect.
 import { call } from "../../src/platform/api.vibe"
 import { Deployment, originsOf } from "../../src/platform/config.vibe"
 import { type BrowserStore, LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
-import { BrowserSession, compositionState, navigationState, sendComposition, sessionServices } from "../../src/session/browserSession.vibe"
+import { BrowserSession, compositionState, navigationState, sessionServices } from "../../src/session/browserSession.vibe"
 import { EmailLink, emailActionLayer, emailActionMessages } from "../../src/session/emailAction.vibe"
 import { signIn } from "../../src/session/identity.vibe"
 import { Session } from "../../src/session/session.vibe"
@@ -203,6 +203,12 @@ const onSite = Layer.effect(HttpClient.HttpClient, effect {
   return HttpClient.mapRequest(client, (request) => request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, site) : request)
 })
 
+function routedTo(world: World) {
+  return Layer.effect(HttpClient.HttpClient, effect {
+    return HttpClient.transform(try HttpClient.HttpClient, (response) => provideService(response, FetchHttpClient.Fetch, world.fetch))
+  })
+}
+
 effect function tab() {
   return { session: try storeOver("session", undefined), local: try storeOver("local", undefined) }
 }
@@ -212,8 +218,7 @@ function page(world: World, stores: { readonly session: BrowserStore; readonly l
     deployment,
     Layer.succeed(SessionStore, stores.session),
     Layer.succeed(LocalStore, stores.local),
-    Layer.provide(onSite, FetchHttpClient.layer),
-    Layer.succeed(FetchHttpClient.Fetch, world.fetch),
+    Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
   )
   return Layer.provideMerge(sessionServices, platform)
 }
@@ -275,7 +280,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
         const octoView = try viewed()
         const lifetime = try browser.lifetime()
         const received = try browser.acceptPrivate(lifetime, 3, true)
-        try sendComposition({ type: "beginReport", projectId: 1 })
+        const began = try browser.compose({ type: "beginReport", projectId: 1 })
         const writing = try shape()
         try browser.observe("revalidate")
         const refreshed = try shape()
@@ -291,7 +296,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
         const outView = try viewed()
         const cookie = world.cookie()
         try same(
-          { loaded, navigated, foreign, foreignPath, saved, signedOut, octo, asOcto, octoView, received, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased },
+          { loaded, navigated, foreign, foreignPath, saved, signedOut, octo, asOcto, octoView, received, began, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased },
           {
             loaded: "checking",
             navigated: true,
@@ -303,6 +308,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
             asOcto: { navigation: [7, "Inbox", "Inbox", 0], browser: [7, 0, 0, "/inbox"] },
             octoView: "octo:7:true",
             received: true,
+            began: true,
             writing: { navigation: [7, "Inbox", "Inbox", 3], browser: [7, 7, 0, "/inbox"] },
             refreshed: { navigation: [7, "Inbox", "Inbox", 3], browser: [7, 7, 0, "/inbox"] },
             keptText: "private report text",
