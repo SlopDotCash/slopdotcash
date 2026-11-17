@@ -28,6 +28,7 @@ vault implementation must be UUPS-compatible (`proxiableUUID`).
 ```quint
 import ledger as L from "./ledger"
 import money as M from "../settlement/money"
+import monthPledge as MP from "./monthPledge"
 type VaultKey = { owner: str, project: str, token: str, purpose: L::Purpose }
 type Binding = { actor: int, destination: str, version: int, claim: int, activatesAt: int, cancelled: bool,
   attester: str, walletSigned: bool, paidVersion: int, cancels: int }
@@ -38,7 +39,7 @@ type Vault = { key: VaultKey, native: bool, feeRecipient: str, bindingDelay: int
   free: int, pendingMonthly: int, reservedPrincipal: int, reservedFees: int, deposited: int, paid: int, payoutFees: int,
   grossWithdrawn: int, withdrawalFees: int, accruedFees: int, claimedFees: int, ownerRefunded: int,
   balance: int, unsolicited: int, monthlyCap: int, monthlyEnabled: bool, sourceSequence: int,
-  awards: List[L::Award], bindings: List[Binding], months: List[Month] }
+  awards: List[L::Award], bindings: List[Binding], months: List[Month], pledges: List[MP::MonthPledge], openPledged: int }
 type Escrow = { initialized: bool, now: int, factoryImplementation: int, vaultImplementation: int,
   upgradeAuthority: str, pendingUpgradeAuthority: str, registrar: str, feeRecipient: str, bindingDelay: int,
   identityAuthority: str, pendingIdentityAuthority: str, identityEffectiveAt: int,
@@ -50,7 +51,7 @@ pure val emptyVault: Vault = { key: emptyKey, native: false, feeRecipient: "", b
   free: 0, pendingMonthly: 0, reservedPrincipal: 0, reservedFees: 0, deposited: 0, paid: 0, payoutFees: 0,
   grossWithdrawn: 0, withdrawalFees: 0, accruedFees: 0, claimedFees: 0, ownerRefunded: 0,
   balance: 0, unsolicited: 0, monthlyCap: 0, monthlyEnabled: false, sourceSequence: 0,
-  awards: List(), bindings: List(), months: List() }
+  awards: List(), bindings: List(), months: List(), pledges: List(), openPledged: 0 }
 pure val initial: Escrow = { initialized: false, now: 1796342399, factoryImplementation: 0, vaultImplementation: 0,
   upgradeAuthority: "", pendingUpgradeAuthority: "", registrar: "", feeRecipient: "", bindingDelay: 0,
   identityAuthority: "", pendingIdentityAuthority: "", identityEffectiveAt: 0,
@@ -268,11 +269,15 @@ pure def alwaysNonnegative(e: Escrow): bool = e.vault.free >= 0 and e.vault.pend
 ### The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split
 
 `commitAward` is for an ordinary vault and refuses while a monthly reserve
-still has uncommitted leaves (`MonthlyLeavesPending`).
+still has uncommitted leaves (`MonthlyLeavesPending`), while the period whose
+window is open has an open pledge (`PledgedMonthOpen`), since each new award
+would make that period's signed reservation stale, and when it would take
+free funds below the open pledges (`PledgedFunds`).
 `commitBountyAward` is for a bounty vault and needs a gross divisible by
 four. Both reserve the whole gross from the free balance and refuse a zero
 actor, gross or source and a source already consumed. Every award in an
-ordinary vault advances the source sequence.
+ordinary vault advances the source sequence. A bounty vault holds no pledges,
+so the same pledge check never refuses a bounty award.
 
 ```quint
 pure def recordable(v: Vault, source: int, actor: int, gross: int): bool =
@@ -286,6 +291,7 @@ pure def charged(v: Vault, source: int, actor: int, gross: int, now: int): Vault
 pure def canCommitAward(e: Escrow, source: int, actor: int, gross: int, by: str): bool =
   e.created and by == e.vault.key.owner and e.vault.key.purpose == L::Ordinary and e.vault.pendingMonthly == 0
     and recordable(e.vault, source, actor, gross) and gross <= e.vault.free
+    and not(pledgedWindowOpen(e.vault, e.now)) and e.vault.free - gross >= e.vault.openPledged
 pure def commitAward(e: Escrow, source: int, actor: int, gross: int, by: str): Escrow =
   { ...e, vault: charged(e.vault, source, actor, gross, e.now) }
 pure def canCommitBountyAward(e: Escrow, source: int, actor: int, gross: int, by: str): bool =
@@ -325,8 +331,9 @@ pure def sometimesBountyPaid(e: Escrow): bool = e.vault.key.purpose == L::Bounty
 ### The owner sets the cap and turns monthly commitments on or off
 
 `setMonthlyCommitment` is for an ordinary vault and refuses an enabled zero
-cap. Turning commitments off stops new admissions only; a reserve already
-admitted keeps settling.
+cap. Turning commitments off stops new admissions of periods without an open
+pledge only; a reserve already admitted keeps settling, and neither setting
+changes a pledged period's admission.
 
 ```quint
 pure def canSetMonthlyCommitment(e: Escrow, cap: int, on: bool, by: str): bool =
@@ -341,11 +348,15 @@ pure def stepMonthlyPolicyByOwner(before: Escrow, via: str, after: Escrow): bool
 ### A legacy allocation commits all its new awards at once and counts an existing identical award once
 
 `commitMonthly` accepts one period inside its window while commitments are
-on, for a nonempty allocation the identity authority signed, whose gross
-total is within the cap. An entry whose source already has an award must
-match its actor and gross and the ceiling or the earlier floor fee; the
-rest are committed in order from the free balance, so a duplicate new
-source or an uncovered entry reverts the whole allocation.
+on or the period has an open pledge, for a nonempty allocation the identity
+authority signed, whose gross total is within the period's cap: the larger
+of the owner's cap and the open pledge, or the pledge alone with commitments
+off. An entry whose source already has an award must match its actor and
+gross and the ceiling or the earlier floor fee; the rest are committed in
+order from the free balance, so a duplicate new source or an uncovered entry
+reverts the whole allocation. The period's own pledge closes first, and the
+new awards never take free funds below the other periods' open pledges
+(`PledgedFunds`). The month records the cap it was admitted under.
 
 ```quint
 pure val noMonth: Month = { period: 0, version2: false, digest: "", root: "", wholeGross: 0, total: 0, remaining: 0,
@@ -355,33 +366,42 @@ pure def monthFor(ms: List[Month], period: int): Month = ms.foldl(noMonth, (foun
 pure def withMonth(ms: List[Month], m: Month): List[Month] = ms.listMap(x => if (x.period == m.period) m else x)
 pure def sumRemaining(ms: List[Month]): int = ms.foldl(0, (t, m) => t + m.remaining)
 pure def admissionOpen(e: Escrow, period: int): bool = e.created and e.vault.key.purpose == L::Ordinary
-  and e.vault.monthlyEnabled and L::inWindow(period, e.now) and not(hasMonth(e.vault.months, period))
+  and (e.vault.monthlyEnabled or MP::openAmount(e.vault.pledges, period) > 0)
+  and L::inWindow(period, e.now) and not(hasMonth(e.vault.months, period))
+pure def capFor(v: Vault, period: int): int = MP::monthlyLimit(v.monthlyEnabled, v.monthlyCap, MP::openAmount(v.pledges, period))
+pure def otherPledges(v: Vault, period: int): int = v.openPledged - MP::openAmount(v.pledges, period)
+pure def fundedBeside(v: Vault, period: int, gross: int): bool = gross <= v.free and v.free - gross >= otherPledges(v, period)
+pure def pledgeClosed(v: Vault, period: int): Vault =
+  { ...v, pledges: MP::closedPledge(v.pledges, period), openPledged: otherPledges(v, period) }
 pure def existingMatches(v: Vault, l: L::Leaf): bool =
   val a = L::awardFor(v.awards, l.source)
   a.actor == l.actor and a.gross == l.gross and (a.fee == M::ordinaryFee(l.gross) or a.fee == l.gross / 50)
 pure def freshEntries(v: Vault, entries: List[L::Leaf]): List[L::Leaf] = entries.select(l => not(L::hasSource(v.awards, l.source)))
 pure def canCommitMonthly(e: Escrow, period: int, entries: List[L::Leaf], attested: bool): bool =
   val fresh = freshEntries(e.vault, entries)
-  admissionOpen(e, period) and entries.length() > 0 and attested and L::leafTotal(entries) <= e.vault.monthlyCap
+  admissionOpen(e, period) and entries.length() > 0 and attested and L::leafTotal(entries) <= capFor(e.vault, period)
     and entries.every(l => not(L::hasSource(e.vault.awards, l.source)) or existingMatches(e.vault, l))
     and fresh.every(l => l.actor > 0 and l.gross > 0 and l.source > 0 and fresh.select(o => o.source == l.source).length() == 1)
-    and L::leafTotal(fresh) <= e.vault.free
+    and fundedBeside(e.vault, period, L::leafTotal(fresh))
 pure def commitMonthly(e: Escrow, period: int, entries: List[L::Leaf], attested: bool): Escrow =
-  val funded = freshEntries(e.vault, entries).foldl(e.vault, (v, l) => charged(v, l.source, l.actor, l.gross, e.now))
+  val funded = freshEntries(e.vault, entries).foldl(pledgeClosed(e.vault, period), (v, l) => charged(v, l.source, l.actor, l.gross, e.now))
   { ...e, vault: { ...funded, months: funded.months.append({ ...noMonth, period: period, root: "legacy",
-    wholeGross: L::leafTotal(entries), count: entries.length(), admittedAt: e.now, cap: e.vault.monthlyCap, leaves: entries }) } }
+    wholeGross: L::leafTotal(entries), count: entries.length(), admittedAt: e.now, cap: capFor(e.vault, period), leaves: entries }) } }
 pure def sometimesLegacyAllocation(e: Escrow): bool = e.vault.months.some(m => not(m.version2) and m.count > 0)
 ```
 
 ### A version-2 reservation reserves the unfunded remainder against the current source sequence
 
 `reserveMonthly` admits one period inside its window while commitments are
-on. The signed reservation carries a nonzero allocation digest and root, a
+on or the period has an open pledge, under the same cap as `commitMonthly`.
+The signed reservation carries a nonzero allocation digest and root, a
 positive whole gross within the cap, a remaining gross no larger than the
 whole and positive exactly when its leaf count is, and the source sequence
 it was built at: any award committed since then makes it stale
-(`MonthlySourceChanged`). The free balance must cover the remaining gross,
-which moves to the pending monthly reserve.
+(`MonthlySourceChanged`). The period's own pledge closes, and any pledge
+above the reserved gross returns to free funds. The free balance must cover
+the remaining gross without falling below the other periods' open pledges
+(`PledgedFunds`); the remaining gross moves to the pending monthly reserve.
 
 ```quint
 pure def canReserveMonthly(e: Escrow, period: int, reservation: Reservation, sequence: int, attested: bool): bool =
@@ -389,13 +409,15 @@ pure def canReserveMonthly(e: Escrow, period: int, reservation: Reservation, seq
     and reservation.digest != "" and reservation.root != "" and reservation.wholeGross > 0
     and reservation.remainingGross >= 0 and reservation.remainingGross <= reservation.wholeGross
     and (reservation.count == 0) == (reservation.remainingGross == 0) and reservation.count >= 0
-    and reservation.wholeGross <= e.vault.monthlyCap and attested and reservation.remainingGross <= e.vault.free
+    and reservation.wholeGross <= capFor(e.vault, period) and attested
+    and fundedBeside(e.vault, period, reservation.remainingGross)
 pure def reserveMonthly(e: Escrow, period: int, reservation: Reservation, sequence: int, attested: bool): Escrow =
-  { ...e, vault: { ...e.vault, free: e.vault.free - reservation.remainingGross,
-    pendingMonthly: e.vault.pendingMonthly + reservation.remainingGross,
-    months: e.vault.months.append({ period: period, version2: true, digest: reservation.digest, root: reservation.root,
+  val v = pledgeClosed(e.vault, period)
+  { ...e, vault: { ...v, free: v.free - reservation.remainingGross,
+    pendingMonthly: v.pendingMonthly + reservation.remainingGross,
+    months: v.months.append({ period: period, version2: true, digest: reservation.digest, root: reservation.root,
       wholeGross: reservation.wholeGross, total: reservation.remainingGross, remaining: reservation.remainingGross,
-      count: reservation.count, committedGross: 0, released: 0, admittedAt: e.now, cap: e.vault.monthlyCap,
+      count: reservation.count, committedGross: 0, released: 0, admittedAt: e.now, cap: capFor(e.vault, period),
       leaves: reservation.leaves }) } }
 ```
 
@@ -467,6 +489,92 @@ pure def stepMonthsRetained(before: Escrow, after: Escrow): bool = before.vault.
   after.vault.months.some(o => o.period == m.period and o.version2 == m.version2 and o.digest == m.digest and o.root == m.root
     and o.wholeGross == m.wholeGross and o.total == m.total and o.leaves == m.leaves and o.released >= m.released
     and o.committedGross >= m.committedGross))
+```
+
+## Story: Pledge free funds to upcoming months
+
+> As a vault owner, I want to lock free funds to the coming months, so that
+> each pledged month is paid even if I turn monthly commitments off.
+
+### The owner pledges one amount to each of one to twelve consecutive periods from the current one, raising and never lowering
+
+`pledgeMonths(fromPeriod, count, amount)` is the owner's call on an ordinary
+vault. It refuses a count outside 1 to 12, a zero amount, and any period of
+the run that cannot be pledged ([month pledges](./monthPledge.md)) or is
+already admitted (`MonthlyAlreadyCommitted`). Each period's open pledge
+below the amount is raised to it, an equal one is unchanged, and a higher
+one refuses the whole call (`PledgeTooLow`). Every open pledge, this call's
+included, must fit in the free balance (`InsufficientFreeBalance`). Funds
+do not move: a pledge only holds free funds out of reach.
+
+```quint
+pure val pledgeOffsets = List(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+pure def pledgedPeriods(fromPeriod: int, monthCount: int): List[int] =
+  pledgeOffsets.select(i => i < monthCount).listMap(i => MP::periodPlus(fromPeriod, i))
+pure def pledgeAdded(v: Vault, periods: List[int], amount: int): int =
+  periods.foldl(0, (t, period) => t + amount - MP::openAmount(v.pledges, period))
+pure def canPledgeMonths(e: Escrow, fromPeriod: int, monthCount: int, amount: int, by: str): bool =
+  val periods = pledgedPeriods(fromPeriod, monthCount)
+  e.created and by == e.vault.key.owner and e.vault.key.purpose == L::Ordinary
+    and monthCount >= 1 and monthCount <= 12 and amount > 0
+    and periods.every(period => MP::pledgeable(period, e.now) and not(hasMonth(e.vault.months, period))
+      and MP::openAmount(e.vault.pledges, period) <= amount)
+    and e.vault.openPledged + pledgeAdded(e.vault, periods, amount) <= e.vault.free
+pure def pledgeMonths(e: Escrow, fromPeriod: int, monthCount: int, amount: int, by: str): Escrow =
+  val periods = pledgedPeriods(fromPeriod, monthCount)
+  { ...e, vault: { ...e.vault, openPledged: e.vault.openPledged + pledgeAdded(e.vault, periods, amount),
+    pledges: periods.foldl(e.vault.pledges, (ps, period) => MP::raisedTo(ps, period, amount)) } }
+pure val fromPeriodValues = Set(202611, 202612, 202701)
+pure val monthCountValues = Set(0, 1, 2, 12, 13)
+pure val weight_pledgeMonths = 25
+```
+
+### Anyone closes an open pledge whose period was never admitted once the period's window has closed
+
+`expirePledge` refuses a period without an open pledge (`InvalidInput`) and
+one whose window has not closed (`PledgeNotLapsed`), at 00:00 UTC on the
+4th of the second month after the period. The pledge closes unreserved and
+its amount returns to the owner's unpledged free funds.
+
+```quint
+pure def canExpirePledge(e: Escrow, period: int): bool =
+  e.created and e.vault.key.purpose == L::Ordinary and MP::openAmount(e.vault.pledges, period) > 0
+    and e.now >= L::closesAt(period)
+pure def expirePledge(e: Escrow, period: int): Escrow = { ...e, vault: pledgeClosed(e.vault, period) }
+pure val weight_expirePledge = 15
+```
+
+### Open pledges never exceed the free balance, and a pledge stays open only until its period is admitted or lapses
+
+`openPledgedGross` is the sum of the open pledges, and `takeFree` keeps the
+free balance at or above it (the `MonthPledgeInvariant` suite). An open
+pledge's period has no admitted allocation; a closed pledge's period was
+admitted, or its window has closed. Only an ordinary vault holds pledges. While the period whose window is open has an
+open pledge, the owner commits nothing by hand.
+
+```quint
+pure def pledgedWindowOpen(v: Vault, now: int): bool = v.pledges.some(x => x.open and L::inWindow(x.period, now))
+pure def alwaysPledgesWithinFree(e: Escrow): bool =
+  MP::pledgesWellFormed(e.vault.pledges) and e.vault.openPledged == MP::openTotal(e.vault.pledges)
+    and e.vault.openPledged >= 0 and e.vault.openPledged <= e.vault.free
+    and e.vault.pledges.every(x => if (x.open) not(hasMonth(e.vault.months, x.period))
+      else hasMonth(e.vault.months, x.period) or e.now >= L::closesAt(x.period))
+    and (e.vault.pledges.length() > 0 implies e.vault.key.purpose == L::Ordinary)
+pure def sometimesPledgeOpen(e: Escrow): bool = e.vault.pledges.some(x => x.open)
+pure def sometimesPledgedPeriodAdmittedWhileOff(e: Escrow): bool =
+  not(e.vault.monthlyEnabled) and e.vault.months.some(m => MP::hasPledge(e.vault.pledges, m.period))
+pure def sometimesPledgeLapsed(e: Escrow): bool =
+  e.vault.pledges.some(x => not(x.open) and not(hasMonth(e.vault.months, x.period)))
+```
+
+### A pledge is never removed, its open amount never falls, and only admission or a lapse closes it
+
+```quint
+pure def pledgeKept(x: MP::MonthPledge, later: MP::MonthPledge, closers: List[str], via: str): bool =
+  not(x.open) or (if (later.open) later.amount >= x.amount else later.amount == x.amount and closers.includes(via))
+pure def stepPledgesOnlyRise(before: Escrow, via: str, after: Escrow): bool = before.vault.pledges.every(x =>
+  MP::hasPledge(after.vault.pledges, x.period)
+    and pledgeKept(x, MP::pledgeFor(after.vault.pledges, x.period), List("commitMonthly", "reserveMonthly", "expirePledge"), via))
 ```
 
 ## Story: Bind each actor's destination with the attester and the wallet
@@ -567,14 +675,17 @@ pure def stepPaidToLiveBinding(before: Escrow, after: Escrow): bool = after.vaul
 
 ### The owner withdraws free funds to itself less the 2% fee
 
-`withdrawUnused` refuses a zero gross and a gross above the free balance;
-reserved, pending and accrued funds cannot be withdrawn. The fee is
+`withdrawUnused` refuses a zero gross, a gross above the free balance, and
+one that would take the free balance below the open pledges
+(`PledgedFunds`); reserved, pending, accrued and pledged funds cannot be
+withdrawn. The fee is
 `ceil(gross / 50)` and stays in the vault as accrued fees; the rest goes
 only to the owner.
 
 ```quint
 pure def canWithdrawUnused(e: Escrow, gross: int, transferOk: bool, by: str): bool =
   e.created and by == e.vault.key.owner and gross > 0 and gross <= e.vault.free
+    and e.vault.free - gross >= e.vault.openPledged
     and (transferOk or gross - M::ordinaryFee(gross) == 0)
 pure def withdrawUnused(e: Escrow, gross: int, transferOk: bool, by: str): Escrow =
   val fee = M::ordinaryFee(gross)
@@ -603,7 +714,7 @@ pure def sometimesFeesClaimed(e: Escrow): bool = e.vault.claimedFees > 0
 ### Simulation samples cover distinct and colliding keys, windows, allocations and signatures
 
 These sets bound simulation only. Timestamps start just before the November
-2026 window opens and reach the December window.
+2026 window opens and reach the December window and its close.
 
 ```quint
 pure val byValues = Set("owner", "registrar", "attester", "nextAttester", "upgrader", "nextUpgrader", "other")
@@ -645,7 +756,7 @@ pure val destinationValues = Set("wallet", "vault", "")
 pure val expectedVersionValues = Set(0, 1)
 pure val claimValues = Set(0, 7)
 pure val expiresAtValues = Set(1796342399, 1799020801)
-pure val timestampValues = Set(1796342400, 1796342401, 1799020800)
+pure val timestampValues = Set(1796342400, 1796342401, 1799020800, 1801699200)
 pure val weight_initializeFactory = 20
 pure val weight_create = 15
 pure val weight_createWithMonthlyCommitment = 15

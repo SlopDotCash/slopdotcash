@@ -1,0 +1,47 @@
+// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { randomId } from "@repo/platform/crypto"
+import { route } from "@repo/platform/route"
+import { actOnCase, claimCase, listCases, readCase } from "@repo/security/client"
+import { privateCall } from "./private.vibe"
+
+schema Claim { mode: string; projectId: string; advisory: string; idempotencyKey: string }
+
+const ActionBody = Schema.Record(Schema.String, Schema.Unknown)
+
+const claim = route({ ...claimCase, request: Claim })
+const act = route({ ...actOnCase, request: ActionBody })
+const utcMinute = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/u
+
+export interface CaseAction {
+  readonly caseId: string
+  readonly action: string
+  readonly expectedRevision: number
+  readonly idempotencyKey: string
+  readonly fields: Readonly<Record<string, unknown>>
+}
+
+export function utcInput(value: string): string | null {
+  return utcMinute.test(value) ? `${value}:00.000Z` : null
+}
+
+export effect function requestKey() {
+  return try randomId()
+}
+
+export effect function securityCases(owner: string) {
+  return try privateCall(owner, listCases, {}, (list) => list.cases.length, (list) => list.viewer.githubId)
+}
+
+export effect function securityCase(owner: string, caseId: string) {
+  return try privateCall(owner, readCase, { params: { id: caseId } }, () => 1)
+}
+
+export effect function claimAdvisory(owner: string, projectId: string, advisory: string, idempotencyKey: string) {
+  const body = { mode: "claim", projectId, advisory: advisory.trim(), idempotencyKey }
+  return try privateCall(owner, claim, { body }, () => 1)
+}
+
+export effect function actOnSecurityCase(owner: string, request: CaseAction) {
+  const body = { ...request.fields, action: request.action, expectedRevision: request.expectedRevision, idempotencyKey: request.idempotencyKey }
+  return try privateCall(owner, act, { params: { id: request.caseId }, body }, () => 1)
+}

@@ -1,0 +1,133 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"; spec/settlement/payment.md, "A destination requires the current account and wallet consent"
+import { millisOf } from "@repo/platform/clock"
+import type { AccountPayment, AccountWallet, AllocationRecipient, AllocationState, ContributorAllocation, PaymentsAccount, RecipientAllocation } from "@repo/settlement/client"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { type PayoutsRead, loadPayouts } from "../../flows/account/payouts.vibe"
+import { untilTime } from "../../platform/clock.vibe"
+import { allocationFor, loadContributorAllocation } from "../../reads/payments.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { actorNumber } from "../../session/session.vibe"
+import { type BindingView, PayoutBinding, type ReservedPayment, payoutBinding } from "../../wallets/core/binding.vibe"
+import { WalletChoice, type WalletOffer, walletChoiceServices } from "../../wallets/core/discovery.vibe"
+import type { SavedWallet } from "../../wallets/core/registration.vibe"
+
+export type { BindingView, WalletOffer }
+
+export interface PayoutsShown {
+  readonly read: PayoutsRead
+  readonly account: PaymentsAccount | undefined
+}
+
+export interface AllocationShown {
+  readonly allocation: ContributorAllocation
+  readonly recipient: AllocationRecipient
+  readonly state: AllocationState
+}
+
+export function shownAfter(prior: PayoutsShown | undefined, read: PayoutsRead): PayoutsShown {
+  if (read.kind === "ready") return { read, account: read.account }
+  if (read.kind === "failed" && !read.accountChanged) return { read, account: prior?.account }
+  return { read, account: undefined }
+}
+
+export effect function followPayouts(show: (shown: PayoutsShown) => void!!, prior: () => PayoutsShown | undefined) {
+  const read: PayoutsRead = try loadPayouts(false)
+  try show(shownAfter(prior(), read))
+}
+
+export effect function followAllocation(account: PaymentsAccount, show: (shown: AllocationShown | undefined) => void!!) {
+  const allocation = try loadContributorAllocation()
+  if (allocation === undefined) {
+    try show(undefined)
+    return
+  }
+  while (true) {
+    const row: RecipientAllocation | undefined = try allocationFor(allocation, account.githubUserId, account.wallets)
+    if (row === undefined) {
+      try show(undefined)
+      return
+    }
+    try show({ allocation, recipient: row.recipient, state: row.state })
+    if (row.state !== "awaiting-wallet") return
+    try untilTime(millisOf(allocation.registrationClosesAt) + 1_000)
+  }
+}
+
+export function allocationOf(account: PaymentsAccount) {
+  return (show: (shown: AllocationShown | undefined) => void!!) => followAllocation(account, show)
+}
+
+export function reservedPayment(payment: AccountPayment, claim: AccountWallet): ReservedPayment {
+  return { paymentId: payment.id, chain: payment.chain, network: payment.network, vault: payment.vault, claimId: claim.claimId, claimAddress: claim.address }
+}
+
+function consentServices(page: PageRuntime, actorId: string, savedWallet: string) {
+  const followed = Layer.effectDiscard(effect {
+    const binding = try PayoutBinding
+    const browser = try BrowserSession
+    const actor = actorNumber(actorId)
+    try binding.follow(actor, savedWallet)
+    try browser.onAccountChange((changed) => effect {
+      try binding.follow(changed === actor ? actor : 0, changed === actor ? savedWallet : "")
+    })
+  })
+  return Layer.provideMerge(followed, Layer.provideMerge(payoutBinding, Layer.provideMerge(walletChoiceServices, Layer.effectContext(page.contextEffect))))
+}
+
+export type ConsentServices = Layer.Success<ReturnType<typeof consentServices>>
+
+export type ConsentRuntime = ReturnType<typeof makeConsentRuntime>
+
+function makeConsentRuntime(page: PageRuntime, actorId: string, savedWallet: string) {
+  return ManagedRuntime.make(consentServices(page, actorId, savedWallet))
+}
+
+const consents = new WeakMap<PageRuntime, Map<string, ConsentRuntime>>()
+
+export function consentRuntime(page: PageRuntime, actorId: string, claim: AccountWallet): ConsentRuntime {
+  const keyed = consents.get(page) ?? new Map<string, ConsentRuntime>()
+  consents.set(page, keyed)
+  const key = [actorId, claim.chain, claim.claimId, claim.address].join("\n")
+  const known = keyed.get(key)
+  if (known !== undefined) return known
+  const made = makeConsentRuntime(page, actorId, claim.address)
+  keyed.set(key, made)
+  return made
+}
+
+export effect function watchOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
+  const choice = try WalletChoice
+  for try (const offers of choice.offers) try show(offers)
+}
+
+effect function proceed(from: BindingView) {
+  const binding = try PayoutBinding
+  let view = from
+  if (view.consent.phase === "Connected") view = try binding.prepare()
+  if (view.consent.phase === "Prepared") view = try binding.sign()
+  if (view.consent.phase === "Signed") view = try binding.post()
+  return view
+}
+
+export effect function openConsent(payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>) {
+  return try (try PayoutBinding).open(payment, actorId, saved)
+}
+
+export effect function authorize(payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>, offer: number) {
+  const binding = try PayoutBinding
+  const current = try binding.view()
+  if (current.consent.phase !== "Choosing") try binding.open(payment, actorId, saved)
+  return try proceed(try binding.choose(offer))
+}
+
+export effect function decideReplacement(replace: boolean) {
+  return try (try PayoutBinding).replace(replace)
+}
+
+export effect function signConnected() {
+  return try proceed(try (try PayoutBinding).view())
+}
+
+export effect function closeConsent() {
+  return try (try PayoutBinding).close()
+}

@@ -1,0 +1,127 @@
+// spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"
+import { millisOf } from "@repo/platform/clock"
+import { first, rows, sql } from "@repo/platform/d1"
+import { canObserveReopen, canReopenOwnClose } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import type { ReopenEvidence } from "../../gen/slopbot__closure.effect.vibe"
+import { activeInstallation } from "../installation/store.vibe"
+import { categoryLabel, removeLabel, uncertainLabel } from "../publish/labels.vibe"
+import { type ScopedItem, requireScope } from "../publish/scope.vibe"
+import { type Session, closedBySlopbotApp } from "../review/run.vibe"
+import { type CategoryName, categories } from "../review/verdict.vibe"
+import type { RepositoryRef } from "../scope/facts.vibe"
+import { type CurrentItem, type ItemTarget, currentItem, reopenItem } from "./github.vibe"
+import { confirmedReopenFor } from "./penalty.vibe"
+import { type AttemptRecord, attemptState, confirmedAttempt, nextRead, openAttempt, restoredAttempt, sendAttempt, storedOf } from "./store.vibe"
+
+schema ReopenRow { readonly sender_id: number; readonly occurred_at: string }
+schema CategoriesRow { readonly categories: string }
+schema HeldRow { readonly n: number }
+
+export interface ReopenSubject {
+  readonly ref: RepositoryRef
+  readonly projectId: string
+  readonly installationId: number
+  readonly item: ItemTarget
+  readonly itemNodeId: string
+  readonly revision: string
+  readonly appUserId: string
+}
+
+function scopedOf(subject: ReopenSubject): ScopedItem {
+  return { ref: subject.ref, projectId: subject.projectId, number: subject.item.number, itemNodeId: subject.itemNodeId }
+}
+
+function hasLabel(current: CurrentItem, label: string) {
+  return (current.issue.labels ?? []).some((each) => each.name === label)
+}
+
+function categoryOf(text: string): CategoryName | undefined {
+  return categories.find((category) => category === text)
+}
+
+export function subjectOf(session: Session): ReopenSubject {
+  return {
+    ref: session.ref,
+    projectId: session.target.projectId,
+    installationId: session.target.installationId,
+    item: { repositoryId: session.target.repositoryId, itemKind: session.target.itemKind, number: session.target.number },
+    itemNodeId: session.context.issue.node_id,
+    revision: session.context.revision,
+    appUserId: session.settings.appUserId,
+  }
+}
+
+export effect function confirmedReopens(itemNodeId: string, revision: string) {
+  const found = try rows(ReopenRow, sql`SELECT json_extract(reopen_source, '$.senderId') AS sender_id, json_extract(reopen_source, '$.occurredAt') AS occurred_at
+    FROM slopbot_deliveries WHERE reopen_confirmed_at IS NOT NULL AND json_extract(reopen_source, '$.itemNodeId') = ${itemNodeId}
+      AND json_extract(reopen_source, '$.revision') = ${revision} ORDER BY rowid`)
+  return found.map((row) => ({ itemNode: itemNodeId, revision, actor: row.sender_id, role: "ReopenByMaintainer", at: Math.floor(millisOf(row.occurred_at) / 1000) }) satisfies ReopenEvidence)
+}
+
+export effect function observeConfirmedReopens(record: AttemptRecord) {
+  const { identity } = (try attemptState(record)).candidate
+  for (const reopen of try confirmedReopens(identity.itemNode, identity.revision)) {
+    if (canObserveReopen(try attemptState(record), reopen)) try sendAttempt(record, { type: "observeReopen", reopen })
+  }
+}
+
+export effect function observeCurrent(record: AttemptRecord, subject: ReopenSubject, current: CurrentItem) {
+  const closed = current.issue.state === "closed"
+  try sendAttempt(record, {
+    type: "observeItem",
+    itemState: {
+      seq: try nextRead(record),
+      itemNode: current.issue.node_id,
+      revision: current.revision,
+      item: current.merged ? "ItemMerged" : closed ? "ItemClosed" : current.issue.state === "open" ? "ItemOpen" : "ItemUnknown",
+      closedBy: !closed ? "NotClosed" : (try closedBySlopbotApp(current.issue, subject.appUserId)) ? "ClosedBySlopbot" : "ClosedByHuman",
+      installation: (try activeInstallation(subject.installationId)) ? "InstallationActive" : "InstallationRemoved",
+    },
+  })
+}
+
+effect function confirmedRecord(subject: ReopenSubject) {
+  const row = try confirmedAttempt(subject.itemNodeId, subject.revision)
+  const stored = row === undefined ? undefined : storedOf(row)
+  if (row === undefined || stored === undefined) return undefined
+  return try openAttempt((try restoredAttempt(row.recovery_json, stored, false)).state)
+}
+
+effect function reopenedOwnClose(subject: ReopenSubject, current: CurrentItem, given: AttemptRecord | undefined) {
+  const record = given ?? try confirmedRecord(subject)
+  if (record === undefined) return false
+  try observeConfirmedReopens(record)
+  try observeCurrent(record, subject, current)
+  if (!canReopenOwnClose(try attemptState(record))) return false
+  try requireScope(scopedOf(subject), "security")
+  try reopenItem(subject.item)
+  try sendAttempt(record, { type: "reopenOwnClose" })
+  return true
+}
+
+export effect function reconcileConfirmedReopen(subject: ReopenSubject, record?: AttemptRecord) {
+  if (!(try confirmedReopenFor(subject.itemNodeId, subject.revision))) return false
+  const current = try currentItem(subject.item)
+  if (current === undefined || current.issue.node_id !== subject.itemNodeId) return false
+  if (current.revision !== subject.revision || current.merged) return false
+  if (current.issue.state === "closed") {
+    if (!(try closedBySlopbotApp(current.issue, subject.appUserId))) return false
+    if (!(try reopenedOwnClose(subject, current, record))) return false
+  } else if (current.issue.state !== "open") return false
+  const found = try first(CategoriesRow, sql`SELECT json_group_array(DISTINCT a.detail) AS categories
+    FROM slopbot_actions a JOIN slopbot_reviews r ON r.review_key = a.review_key
+    WHERE r.item_node_id = ${subject.itemNodeId} AND r.revision = ${subject.revision} AND a.action = 'comment'`)
+  const listed: unknown = Effect.try(() => JSON.parse(found?.categories ?? "[]") as unknown) catch () => []
+  for (const text of Array.isArray(listed) ? listed : []) {
+    const category = typeof text === "string" ? categoryOf(text) : undefined
+    if (category !== undefined && category !== "none" && hasLabel(current, categoryLabel(category))) try removeLabel(scopedOf(subject), categoryLabel(category))
+  }
+  const held = try first(HeldRow, sql`SELECT 1 AS n FROM slopbot_maintainer_holds WHERE item_node_id = ${subject.itemNodeId} AND revision = ${subject.revision}
+    AND (resolved_at IS NULL OR outcome = 'labeled') LIMIT 1`)
+  if (held !== undefined) try removeLabel(scopedOf(subject), uncertainLabel)
+  return true
+}
+
+export effect function reopenedHook(session: Session) {
+  return try reconcileConfirmedReopen(subjectOf(session))
+}

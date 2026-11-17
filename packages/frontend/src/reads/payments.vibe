@@ -1,7 +1,7 @@
 // spec/frontend/paymentHistory.md, "Pages advance a strictly increasing cursor against the first page's boundary and total"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "The cycle page lists public cuts with distinct loading, error, empty and list states"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/contributorAllocation.md, "An unpublished distribution exposes no recipient row"
 import { millisOf } from "@repo/platform/clock"
 import { exchanged, outgoing } from "@repo/platform/browser"
-import { type AccountWallet, type ContributorAllocation, type DirectTransfer, type MonthlyCut, type ProjectVault, type PublicVaultPayment, type ReceivedTotals, type VaultSnapshot, DirectTransfers, PublicVaultPaymentPage, contributorAllocation, contributorAllocationUrl, directHistoryHeader, monthlyCuts, projectVault, receivedTotals, recipientAllocation } from "@repo/settlement/client"
+import { type AccountWallet, type ContributorAllocation, type DirectTransfer, type MonthlyCut, type ProjectVault, type PublicVaultPayment, type ReceivedTotals, type VaultSnapshot, DirectTransferList, DirectTransferPage, PublicVaultPaymentPage, contributorAllocation, contributorAllocationUrl, directHistoryHeader, monthlyCuts, projectVault, receivedTotals, recipientAllocation } from "@repo/settlement/client"
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
 import { type Event as HistoryEvent, type Failure, type Mode, initial as historyStart, machineOver as historyOver } from "../../gen/frontend__paymentHistory.effect.vibe"
 import { transactionUrl } from "../kernels/explorers.ts"
@@ -11,6 +11,8 @@ import { Deployment } from "../platform/config.vibe"
 import { Unreadable, resource } from "./resource.vibe"
 
 export const paymentsLimitBytes = 1_048_576
+export const vaultLimitBytes = 65_536
+export const pageRowLimit = 100
 export const paymentsTimeoutMs = 30_000
 
 export type PaymentScope =
@@ -50,7 +52,8 @@ export const vaultTexts: HistoryTexts = {
 export const paymentMessages = {
   cutsUnavailable: "Owner cuts unavailable",
   cutsInvalid: "Owner cuts could not be verified",
-  vaultInvalid: "Vault totals could not be verified",
+  vaultUnavailable: "Vault totals are unavailable.",
+  vaultInvalid: "The vault totals could not be verified.",
   receivedInvalid: "Received totals could not be verified",
   allocationInvalid: "The contributor allocation could not be verified.",
 } as const
@@ -80,6 +83,7 @@ export interface VaultTotals {
 
 const browserInit: globalThis.RequestInit = { credentials: "same-origin", redirect: "error", cache: "no-store" }
 const baseUnits = /^(?:0|[1-9][0-9]*)$/u
+const assetAddress = /^[0-9A-Za-z]{32,44}$/u
 const month = /^\d{4}-(?:0[1-9]|1[0-2])$/u
 const githubUser = /^[1-9]\d*$/u
 const githubId = /^[1-9][0-9]{0,19}$/u
@@ -110,7 +114,11 @@ effect function refusalOf(status: number, value: unknown, expectedActor: string 
   return failure
 }
 
-export effect function fetchedJson<A>(answer: Schema.ConstraintCodec<A, unknown>, path: string, headers: Readonly<Record<string, string>>, limitBytes: number, timeoutMs: number = deadlineMs) {
+function unreadableAnswer(status: number) {
+  return new InvalidResponse({ status, message: "The server returned an unreadable response." })
+}
+
+export effect function fetchedValue(path: string, headers: Readonly<Record<string, string>>, limitBytes: number, timeoutMs: number = deadlineMs) {
   const expectedActor = headers["x-slop-expected-github-id"]
   const exchange = provideService(exchanged(outgoing("GET", path, undefined, headers), limitBytes), FetchHttpClient.RequestInit, browserInit)
   const outcome = try Effect.timeoutOrElse(exchange, {
@@ -118,9 +126,15 @@ export effect function fetchedJson<A>(answer: Schema.ConstraintCodec<A, unknown>
     orElse: () => Effect.fail(new NetworkError({ timedOut: true, message: "The request timed out. Try again." })),
   })
   if (outcome.kind === "unreachable") throw new NetworkError({ timedOut: false, message: "The network request failed. Try again." })
-  if (outcome.kind !== "answered") throw new InvalidResponse({ status: outcome.status, message: "The server returned an unreadable response." })
-  if (outcome.status < 200 || outcome.status > 299) throw try refusalOf(outcome.status, outcome.value, expectedActor)
-  return Schema.decodeUnknownEffect(answer)(outcome.value) catch effect () => { throw new InvalidResponse({ status: outcome.status, message: "The server returned an unreadable response." }) }
+  if (outcome.status < 200 || outcome.status > 299) throw try refusalOf(outcome.status, outcome.kind === "answered" ? outcome.value : undefined, expectedActor)
+  if (outcome.kind !== "answered") throw unreadableAnswer(outcome.status)
+  const answered: { readonly status: number; readonly value: unknown } = { status: outcome.status, value: outcome.value }
+  return answered
+}
+
+export effect function fetchedJson<A>(answer: Schema.ConstraintCodec<A, unknown>, path: string, headers: Readonly<Record<string, string>>, limitBytes: number, timeoutMs: number = deadlineMs) {
+  const answered = try fetchedValue(path, headers, limitBytes, timeoutMs)
+  return Schema.decodeUnknownEffect(answer)(answered.value) catch effect () => { throw unreadableAnswer(answered.status) }
 }
 
 effect function productOrigin() {
@@ -170,7 +184,7 @@ export effect function completeHistory<T, R>(mode: Mode, fetchPage: (query: stri
       : answer.kind === "legacy" ? { rows: answer.rows, through: 0, total: answer.rows.length, next: null, amountMatches: answer.amountMatches }
       : { rows: [], through: -1, total: -1, next: null, amountMatches: false }
     legacy = answer.kind === "legacy" && query === ""
-    const through = count(page.through) ?? -1
+    const through = answer.kind === "page" && page.rows.length > pageRowLimit ? -1 : count(page.through) ?? -1
     const total = count(page.total) ?? -1
     const next = page.next === null ? -1 : count(page.next) ?? -2
     const numbered = page.rows.map((row) => {
@@ -189,7 +203,7 @@ export effect function completeHistory<T, R>(mode: Mode, fetchPage: (query: stri
   }
 }
 
-function directValid(row: DirectTransfer): boolean {
+export function directValid(row: DirectTransfer): boolean {
   return month.test(row.contributionMonth) && githubUser.test(row.githubUserId) && baseUnits.test(row.amountMicro) && Number.isFinite(millisOf(row.blockTime))
 }
 
@@ -204,10 +218,18 @@ function sameMicro(rows: ReadonlyArray<DirectTransfer>, totalMicro: string): boo
   return total !== undefined && sum === total
 }
 
-function directAnswer(value: DirectTransfers, first: boolean): HistoryAnswer<DirectTransfer> {
-  if (!value.transfers.every(directValid) || !baseUnits.test(value.totalMicro)) return { kind: "invalid", message: directTexts.records }
-  if (!("through" in value)) return first ? { kind: "legacy", rows: value.transfers, amountMatches: sameMicro(value.transfers, value.totalMicro) } : { kind: "invalid", message: directTexts.history }
-  return { kind: "page", page: { rows: value.transfers, through: value.through, total: value.total, next: value.next, amountMatches: sameMicro(value.transfers, value.totalMicro) } }
+function unpaged(raw: unknown): boolean {
+  return typeof raw === "object" && raw !== null && !["through", "next", "total"].some((key) => Object.hasOwn(raw, key))
+}
+
+effect function directAnswer(raw: unknown, first: boolean) {
+  const list = Schema.decodeUnknownEffect(DirectTransferList)(raw) catch () => undefined
+  if (list === undefined || !list.transfers.every(directValid) || !baseUnits.test(list.totalMicro)) return { kind: "invalid", message: directTexts.records } satisfies HistoryAnswer<DirectTransfer>
+  const amountMatches = sameMicro(list.transfers, list.totalMicro)
+  if (first && unpaged(raw)) return { kind: "legacy", rows: list.transfers, amountMatches } satisfies HistoryAnswer<DirectTransfer>
+  const page = Schema.decodeUnknownEffect(DirectTransferPage)(raw) catch () => undefined
+  if (page === undefined) return { kind: "invalid", message: directTexts.history } satisfies HistoryAnswer<DirectTransfer>
+  return { kind: "page", page: { rows: page.transfers, through: page.through, total: page.total, next: page.next, amountMatches } } satisfies HistoryAnswer<DirectTransfer>
 }
 
 function byBlockTime(left: DirectTransfer, right: DirectTransfer): number {
@@ -217,8 +239,9 @@ function byBlockTime(left: DirectTransfer, right: DirectTransfer): number {
 export effect function loadDirectTransfers(scope: DirectScope) {
   const path = `/api/v1/payments/${scopePath(scope)}direct-transfers`
   const read = try completeHistory("DirectTransfers", (query: string) => effect {
-    const value = try fetchedJson(DirectTransfers, `${path}${query}`, { [directHistoryHeader]: "paged" }, paymentsLimitBytes)
-    return directAnswer(value, query === "")
+    const answered = try fetchedValue(`${path}${query}`, { [directHistoryHeader]: "paged" }, paymentsLimitBytes)
+    const answer: HistoryAnswer<DirectTransfer> = try directAnswer(answered.value, query === "")
+    return answer
   }, (row: DirectTransfer) => `${row.network}:${row.transactionId}`, directTexts)
   return read.legacy ? read.rows : [...read.rows].sort(byBlockTime)
 }
@@ -277,7 +300,8 @@ export effect function monthlyCutReads() {
 
 function snapshotValid(snapshot: VaultSnapshot, projectId: string): boolean {
   const reported = [snapshot.freeBalance, snapshot.reservedPrincipal, snapshot.reservedFees, snapshot.accruedFees, snapshot.reserved]
-  return snapshot.projectId === projectId && [snapshot.totalDeposited, snapshot.totalPaid, snapshot.totalPayoutFees, snapshot.totalGrossWithdrawn, snapshot.totalWithdrawalFees].every((value) => parseBaseUnits(value) !== undefined)
+  return snapshot.projectId === projectId && assetAddress.test(snapshot.assetAddress) && Number.isSafeInteger(snapshot.assetDecimals) && snapshot.assetDecimals >= 0 && snapshot.assetDecimals <= 36
+    && baseUnits.test(snapshot.blockNumber) && Number.isFinite(millisOf(snapshot.blockTime)) && [snapshot.totalDeposited, snapshot.totalPaid, snapshot.totalPayoutFees, snapshot.totalGrossWithdrawn, snapshot.totalWithdrawalFees].every((value) => parseBaseUnits(value) !== undefined)
     && reported.every((value) => value === null || parseBaseUnits(value) !== undefined) && Number.isFinite(millisOf(snapshot.observedAt))
 }
 
@@ -286,8 +310,21 @@ function shownVault(vault: ProjectVault): VaultTotals {
   return { projectId: vault.projectId, servedAt: vault.servedAt, snapshots: vault.snapshots.map((snapshot) => ({ ...snapshot, stale: served - millisOf(snapshot.observedAt) > vault.staleAfterMs })) }
 }
 
+function vaultFailure(failure: CallFailure): CallFailure | Unreadable {
+  switch (failure._tag) {
+    case "InvalidResponse": return new Unreadable({ message: paymentMessages.vaultInvalid })
+    case "Refused": return new Refused({ status: failure.status, error: failure.error, message: paymentMessages.vaultUnavailable })
+    case "NetworkError": return new NetworkError({ timedOut: failure.timedOut, message: paymentMessages.vaultUnavailable })
+    case "ActorChanged": return failure
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
 export effect function loadProjectVault(projectId: string) {
-  const vault = try call(projectVault, { params: { id: projectId } }, { limitBytes: paymentsLimitBytes })
+  const vault = call(projectVault, { params: { id: projectId } }, { limitBytes: vaultLimitBytes }) catch effect (failure) => { throw vaultFailure(failure) }
   if (vault.projectId !== projectId || !Number.isFinite(millisOf(vault.servedAt)) || !Number.isSafeInteger(vault.staleAfterMs) || vault.staleAfterMs <= 0 || !vault.snapshots.every((snapshot) => snapshotValid(snapshot, projectId))) {
     throw new Unreadable({ message: paymentMessages.vaultInvalid })
   }

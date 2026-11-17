@@ -40,7 +40,7 @@ type RecordState = QuotedRecord | DustPendingRecord | SkippedRecord | NoRouteRec
 type BridgeOutcome = NoOutcome | ArrivedOutcome | RefundedOutcome
 type JournalRecord = { id: int, kind: RecordKind, network: R::Network, live: bool, state: RecordState, token: str,
   targetToken: str, amountIn: M::Amount, amountOut: M::Amount, txId: str, landedTxId: str, reason: str, createdAt: int,
-  order: int, outcome: BridgeOutcome, signedBytes: SecretSignedBytes }
+  order: int, outcome: BridgeOutcome, feeWallet: str, projectId: str, vault: str, signedBytes: SecretSignedBytes }
 type ReportLine = { id: int, kind: RecordKind, network: R::Network, live: bool, state: RecordState, token: str,
   targetToken: str, amountIn: M::Amount, amountOut: M::Amount, txId: str, landedTxId: str, reason: str, createdAt: int,
   order: int, outcome: BridgeOutcome }
@@ -112,7 +112,7 @@ type LegTotal = { network: R::Network, kind: RecordKind, token: str, sends: int,
   inTransit: M::Amount, refunded: M::Amount }
 type BuybackBlock = { recent: List[ReportLine], totals: List[LegTotal] }
 type FeeReport = { recent: List[ReportLine], routes: List[NetworkTarget], totals: List[TokenTotal], last24Hours: List[StateCount],
-  buyback: BuybackBlock }
+  buyback: BuybackBlock, claims: ClaimBlock }
 pure val buybackKinds: Set[RecordKind] = Set(BridgeRecord, BuybackRecord, BurnRecord)
 pure def settledLeg(r: JournalRecord): bool = buybackKinds.contains(r.kind) and r.live and r.state == FinalizedRecord
 pure def sameLeg(a: JournalRecord, b: JournalRecord): bool = a.network == b.network and a.kind == b.kind and a.token == b.token
@@ -129,5 +129,51 @@ pure def legTotals(records: List[JournalRecord]): List[LegTotal] =
     else acc)
 pure def feeReport(records: List[JournalRecord], now: int): FeeReport =
   { recent: latestLines(records, Set(ConversionRecord)), routes: reportRoutes, totals: tokenTotals(records),
-    last24Hours: stateCounts(records, now), buyback: { recent: latestLines(records, buybackKinds), totals: legTotals(records) } }
+    last24Hours: stateCounts(records, now), buyback: { recent: latestLines(records, buybackKinds), totals: legTotals(records) },
+    claims: claimBlock(records, now) }
+```
+
+### The claims block shows the latest 100 claim attempts, finalized live claim totals per network, fee wallet and token, and 24-hour claim state counts
+
+The block lists the 100 newest claim records, newest first, with the fee
+wallet, the claim's estimated amount (its input) and, once finalized, the
+amount the receipt proved (its output), and the project and vault the claim
+named, or empty when it named none. Its totals count every live, finalized
+claim per network, fee wallet and token and sum the finalized receipt
+amounts, which can differ from the earlier estimate; the shell orders them
+by network, fee wallet and token. The 24-hour counts group the claim records
+created in the last 86,400,000 milliseconds by network, mode and state.
+Nothing here is computed from the signed bytes.
+
+```quint
+type ClaimLine = { id: int, network: R::Network, live: bool, feeWallet: str, token: str, estimatedAmount: M::Amount,
+  amountClaimed: M::Amount, txId: str, landedTxId: str, state: RecordState, reason: str, createdAt: int, projectId: str, vault: str }
+type ClaimTotal = { network: R::Network, feeWallet: str, token: str, claims: int, amountClaimed: M::Amount }
+type ClaimBlock = { recent: List[ClaimLine], totals: List[ClaimTotal], last24Hours: List[StateCount] }
+pure val claimKinds: Set[RecordKind] = Set(ClaimRecord)
+pure def claimLineOf(r: JournalRecord): ClaimLine = { id: r.id, network: r.network, live: r.live, feeWallet: r.feeWallet, token: r.token,
+  estimatedAmount: r.amountIn, amountClaimed: r.amountOut, txId: r.txId, landedTxId: r.landedTxId, state: r.state, reason: r.reason,
+  createdAt: r.createdAt, projectId: r.projectId, vault: r.vault }
+pure def latestClaimLines(records: List[JournalRecord]): List[ClaimLine] =
+  records.foldl(List(), (acc, r) =>
+    if (r.kind == ClaimRecord and newerOfKinds(records, r, claimKinds) < recentLimit) List(claimLineOf(r)).concat(acc) else acc)
+pure def settledClaim(r: JournalRecord): bool = r.kind == ClaimRecord and r.live and r.state == FinalizedRecord
+pure def sameClaimGroup(a: JournalRecord, b: JournalRecord): bool = a.network == b.network and a.feeWallet == b.feeWallet and a.token == b.token
+pure def claimTotal(records: List[JournalRecord], first: JournalRecord): ClaimTotal =
+  records.foldl({ network: first.network, feeWallet: first.feeWallet, token: first.token, claims: 0, amountClaimed: M::zero },
+    (t, r) => if (settledClaim(r) and sameClaimGroup(r, first)) { ...t, claims: t.claims + 1, amountClaimed: M::addAmounts(t.amountClaimed, r.amountOut) }
+      else t)
+pure def claimTotals(records: List[JournalRecord]): List[ClaimTotal] =
+  records.foldl(List(), (acc, r) =>
+    if (settledClaim(r) and not(records.some(o => settledClaim(o) and o.id < r.id and sameClaimGroup(o, r)))) acc.append(claimTotal(records, r))
+    else acc)
+pure def claimInLastDay(r: JournalRecord, now: int): bool = r.kind == ClaimRecord and r.createdAt >= now - reportDayMs
+pure def claimStateCounts(records: List[JournalRecord], now: int): List[StateCount] =
+  records.foldl(List(), (acc, r) =>
+    if (claimInLastDay(r, now) and not(records.some(o => claimInLastDay(o, now) and o.id < r.id and sameGroup(o, r))))
+      acc.append({ network: r.network, live: r.live, state: r.state,
+        recordCount: records.foldl(0, (t, o) => if (claimInLastDay(o, now) and sameGroup(o, r)) t + 1 else t) })
+    else acc)
+pure def claimBlock(records: List[JournalRecord], now: int): ClaimBlock =
+  { recent: latestClaimLines(records), totals: claimTotals(records), last24Hours: claimStateCounts(records, now) }
 ```

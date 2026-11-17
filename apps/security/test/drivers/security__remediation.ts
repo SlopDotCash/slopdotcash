@@ -8,13 +8,12 @@ import { database, migrate, startWorker, storage } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { Authority as RepositoryAuthority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
-import { VaultTotals } from "@repo/ports/settlement";
 import type { Driver, Options } from "../../gen/security__remediation.conformance.ts";
 import type { Authority } from "../../gen/security__cases.ts";
 import type { Event, Remediation } from "../../gen/security__remediation.ts";
 import type { ReceiptTerms } from "../../gen/security__terms.ts";
 import { privateRoute } from "../../src/analysis/route.vibe";
-import { DirectRoutes, awardClearancesLive } from "../../src/bounty/store.vibe";
+import { awardClearancesLive } from "../../src/bounty/store.vibe";
 import { caseRecord } from "../../src/cases/rows.vibe";
 import { performed } from "../../src/cases/routes.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
@@ -75,8 +74,6 @@ const ports = Layer.mergeAll(
     atReceipt: () => Effect.succeed(undefined),
     unbanned: (id) => Effect.succeed(ids(snapshot.banned).includes(id) ? sql`0` : sql`1`),
   }),
-  Layer.succeed(VaultTotals, { of: () => Effect.succeed(undefined) }),
-  Layer.succeed(DirectRoutes, { route: () => Effect.succeed(undefined) }),
 );
 
 await db.batch([

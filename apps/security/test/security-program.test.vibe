@@ -4,13 +4,14 @@ import { d1, sql } from "@repo/platform/d1"
 import { Refused, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
-import { VaultTotals, type VaultTotalsView } from "@repo/ports/settlement"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { approvedAward } from "../src/bounty/port.vibe"
-import { type DirectRoute, DirectRoutes, awardClearancesLive } from "../src/bounty/store.vibe"
+import { type DirectRoute, DirectRoutes, SecurityProgramFunds } from "../src/bounty/funds.vibe"
+import { awardClearancesLive } from "../src/bounty/store.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
 import { acted } from "../src/cases/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
+import type { ProgramFundsView } from "../src/program/manifest.ts"
 import { publication } from "../src/program/store.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { remediationHandlersLive } from "../src/remediation/routes.vibe"
@@ -23,11 +24,11 @@ interface Box<T> {
 
 service Program {
   readonly world: World
-  readonly funds: Box<VaultTotalsView | undefined>
+  readonly funds: Box<ProgramFundsView | undefined>
   readonly route: Box<DirectRoute | undefined>
 }
 
-const administrator = "801"
+const administrator = "18633264"
 const triager = "703"
 const steward = "900"
 const paid = "intake-fixture"
@@ -43,7 +44,9 @@ const Started = Layer.effect(Program, effect {
   const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
   const at = new Date(Date.now() - 86_400_000).toISOString()
   const manifest = JSON.stringify({ id: "slopdotcash", status: "active", repositories: [{ id: "slop-test/intake" }] })
+  const reviewed = new Date(Date.now() + 86_400_000).toISOString()
   try promise(() => world.db.batch([
+    world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, 3, manifest, manifest_sha256, 'Funding reviewed', ? FROM project_revisions WHERE project_id = 'intake-fixture' AND revision = 1").bind(reviewed),
     world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('slopdotcash',1,?,?,'Program fixture',?)").bind(manifest, "e".repeat(64), at),
     world.db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('slopdotcash','active',1,?,?,?,?)").bind(manifest, "e".repeat(64), at, at),
   ]))
@@ -62,7 +65,7 @@ function shellOf(program: Program.Shape) {
     Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
     Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: read.actorGithubId === administrator ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
     Layer.succeed(Restrictions, { account: () => succeed({ banned: false }), project: () => succeed({ restricted: false }), fence: () => succeed(sql`SELECT 1`), unbanned: () => succeed(sql`1`) } satisfies Restrictions.Shape),
-    Layer.succeed(VaultTotals, { of: () => succeed(program.funds.current) } satisfies VaultTotals.Shape),
+    Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies SecurityProgramFunds.Shape),
     Layer.succeed(DirectRoutes, { route: () => succeed(program.route.current) } satisfies DirectRoutes.Shape),
   )
   const base = Layer.mergeAll(d1(program.world.db), webCrypto, reportBucket(program.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: administrator, PROJECT_MODERATOR_GITHUB_IDS: administrator }), ports, receiptNotices)
@@ -104,8 +107,8 @@ function amount(grossMinor: string) {
   return { decision: "amount", reason: "The finding matches the published offer.", grossMinor, paymentDeadline: "2099-01-01T00:00:00.000Z", confirmation: true }
 }
 
-function vault(free: string, ageMs: number): VaultTotalsView {
-  return { network: "Base", vault: "0x00000000000000000000000000000000000000aa", asset: usdcBase, freeBaseUnits: free, observedAt: new Date(Date.now() - ageMs).toISOString(), stale: false }
+function vault(available: string): ProgramFundsView {
+  return { currency: "USDC", decimals: 6, network: "base", freeMinor: "1500000", availableMinor: available, snapshotAt: new Date(Date.now() - 60_000).toISOString(), assetAddress: usdcBase, deploymentNetwork: "base-mainnet" }
 }
 
 effect function firstQualifying(program: Program.Shape) {
@@ -114,13 +117,13 @@ effect function firstQualifying(program: Program.Shape) {
   const later = try submit(world, other, paid, "Borrowing against a stale price drains the pool")
   try act(maintainer, earlier, "decide", decision("stale-oracle-price"))
   try act(maintainer, later, "decide", decision("stale-oracle-price"))
-  program.funds.current = vault("1500000", 40 * 60_000)
+  program.funds.current = undefined
   const laterFirst = try act(maintainer, later, "award", amount("1000000"))
   const stale = try act(maintainer, earlier, "award", amount("1000000"))
   const pending = try promise(() => rows(world, "SELECT award_state, (SELECT COUNT(*) FROM security_award_reservations WHERE case_id = c.id) AS reservations FROM security_cases c WHERE id = ?", earlier))
-  program.funds.current = vault("500000", 60_000)
+  program.funds.current = vault("500000")
   const short = try act(maintainer, earlier, "award", amount("1000000"))
-  program.funds.current = vault("1500000", 60_000)
+  program.funds.current = vault("1500000")
   const reserved = try act(maintainer, earlier, "award", amount("1000000"))
   const reservations = try promise(() => rows(world, "SELECT case_id, root_cause_key, gross_minor, currency FROM security_award_reservations WHERE project_id = ? ORDER BY case_id", paid))
   const second = try act(maintainer, later, "award", amount("1000000"))
@@ -171,7 +174,7 @@ effect function fullAward(program: Program.Shape) {
   const platform = try publication({ projectId: "slopdotcash", actor: actor(administrator), next: fullTerms(), status: undefined, reward: bountyOnly, canManageContacts: true })
   const held = try submit(world, reporter, full, "Unchecked withdrawal drains the treasury")
   try act(maintainer, held, "decide", decision("unchecked-withdrawal"))
-  program.funds.current = vault("9000000", 60_000)
+  program.funds.current = vault("9000000")
   const approved = try act(maintainer, held, "award", amount("500001"))
   const row = try promise(() => rows(world, "SELECT award_state, payment_state, (SELECT COUNT(*) FROM security_award_reservations WHERE case_id = c.id) AS vault, (SELECT COUNT(*) FROM security_direct_awards WHERE case_id = c.id) AS direct FROM security_cases c WHERE id = ?", held))
   const owed = try approvedAward(held)
@@ -227,6 +230,24 @@ effect function exactDisclosure(program: Program.Shape) {
   })
 }
 
+effect function legacyJournal(program: Program.Shape) {
+  const { world } = program
+  const legacy = try submit(world, reporter, paid, "Legacy remediation recorded without a patch digest")
+  const revision = ((try caseRecord(legacy))?.row.revision ?? 0) + 1
+  try promise(() => world.db.batch([
+    world.db.prepare("UPDATE security_cases SET revision = ?, remediation_state = 'resolved' WHERE id = ?").bind(revision, legacy),
+    world.db.prepare("INSERT INTO security_case_events (case_id, case_revision, kind, actor_github_id, actor_role, idempotency_key, reason, evidence_reference, detail, at) VALUES (?, ?, 'remediation', ?, 'security-maintainer', ?, NULL, 'legacy exact-head test run', ?, ?)")
+      .bind(legacy, revision, maintainer, `legacy-remediation-${legacy}`.padEnd(20, "0"), JSON.stringify({ remediationState: "resolved" }), new Date().toISOString()),
+  ]))
+  const steps = [
+    try act(reporter, legacy, "recognition", { recognition: "opt-in" }),
+    try act(maintainer, legacy, "disclosure", { disclosureState: "redaction-approved", reason: "The fix is deployed everywhere.", evidenceReference: "private redaction review", redactedContentDigest: redacted }),
+    try act(maintainer, legacy, "remediation", { remediationState: "resolved", patchDigest: patch, evidenceReference: "private exact-head test run 43" }),
+    try act(maintainer, legacy, "remediation", { remediationState: "retest", patchDigest: patch }),
+  ]
+  try same(steps, ["done", "done", [409, "action_not_allowed", "The case does not allow remediation in its current state"], "done"])
+}
+
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Earliest confirmed report of a root cause qualifies, the second reserves nothing and a stale snapshot leaves the award pending (spec/security/bounty.md, "The earliest human-confirmed eligible report of a root cause qualifies first"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/bounty.md, "One root cause holds at most one proposal or award obligation")', () => effect {
     const program = try Program
@@ -246,6 +267,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const program = try Program
     provide shellOf(program) {
       try exactDisclosure(program)
+      try legacyJournal(program)
     }
   })
 })

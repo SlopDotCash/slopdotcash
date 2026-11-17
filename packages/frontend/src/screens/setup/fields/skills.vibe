@@ -1,0 +1,6 @@
+// spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"
+import { sha256Hex } from "@repo/platform/crypto"
+
+export effect function draftRegistry(manifestText: string) {
+  return { revision: 1, manifestSha256: try sha256Hex(manifestText) }
+}

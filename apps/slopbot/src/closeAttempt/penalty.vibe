@@ -1,0 +1,154 @@
+// spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
+import { D1, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { currentTableVersion, debitFor, moderatorReview } from "../../gen/slopbot__categories.effect.vibe"
+import { type ConfirmedClose, type Penalties, type PenaltyRow as Debit, type ReversalAuthority, canRecordPenalty, canReversePenalty, decodeState } from "../../gen/points__penalties.effect.vibe"
+import type { PenaltyNotice } from "../publish/comment.vibe"
+import { type CategoryName, categories, findingOf } from "../review/verdict.vibe"
+
+export const penaltyTableVersion = "slopbot-penalties-v1"
+export const pointsPerThird = 10
+
+export type ReversalReason = "appeal_upheld" | "maintainer_reopen"
+
+export schema PenaltyRow {
+  readonly item_node_id: string
+  readonly repository_id: number
+  readonly project_id: string
+  readonly author_github_id: string
+  readonly category: string
+  readonly table_version: string
+  readonly debit_thirds: number
+  readonly period: string
+  readonly moderator_review: number
+  readonly review_key: string
+  readonly recorded_at: string
+  readonly reversed_at: string | null
+  readonly reversal: string | null
+  readonly revision: string | null
+}
+
+schema ReopenRow { readonly revision: string; readonly occurred_at: string; readonly sender_id: number }
+schema CoverageRow { readonly at: string | null }
+
+export interface PenaltyClose {
+  readonly itemNodeId: string
+  readonly repositoryId: number
+  readonly projectId: string
+  readonly authorId: number
+  readonly revision: string
+  readonly category: CategoryName
+  readonly reviewKey: string
+  readonly closedAt: string
+}
+
+export interface Coverage {
+  readonly revision: string
+  readonly occurredAt: string
+}
+
+const versions: Readonly<Record<string, number>> = { [penaltyTableVersion]: currentTableVersion }
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function periodNumber(period: string) {
+  return Number(period.replace("-", ""))
+}
+
+function categoryOf(text: string): CategoryName | undefined {
+  return categories.find((category) => category === text)
+}
+
+function confirmedReopen(itemNodeId: string, revision: string): Statement {
+  return sql`SELECT 1 FROM slopbot_deliveries d WHERE d.reopen_confirmed_at IS NOT NULL
+    AND json_extract(d.reopen_source, '$.itemNodeId') = ${itemNodeId} AND json_extract(d.reopen_source, '$.revision') = ${revision}`
+}
+
+effect function debitOf(row: typeof PenaltyRow.Type) {
+  const category = categoryOf(row.category)
+  if (category === undefined) throw new RowMismatch({ text: "slopbot penalty", issue: `unknown category ${row.category}` })
+  return {
+    item: row.item_node_id,
+    bucket: { actor: Number(row.author_github_id), project: 1, period: periodNumber(row.period) },
+    revision: row.revision ?? "",
+    category: findingOf(category),
+    tableVersion: versions[row.table_version] ?? 0,
+    debit: row.debit_thirds * pointsPerThird,
+    recordedAt: seconds(row.recorded_at),
+    moderatorReview: row.moderator_review === 1,
+    reversed: row.reversed_at !== null,
+    reason: row.reversal === "maintainer_reopen" ? "MaintainerReopen" : "AppealUpheld",
+    reversedAt: row.reversed_at === null ? 0 : seconds(row.reversed_at),
+  } satisfies Debit
+}
+
+effect function penaltiesOf(itemNodeId: string) {
+  const found = try rows(PenaltyRow, sql`SELECT p.*, r.revision FROM slopbot_penalties p LEFT JOIN slopbot_reviews r ON r.review_key = p.review_key WHERE p.item_node_id = ${itemNodeId}`)
+  const reopened = try rows(ReopenRow, sql`SELECT json_extract(reopen_source, '$.revision') AS revision, json_extract(reopen_source, '$.occurredAt') AS occurred_at,
+      json_extract(reopen_source, '$.senderId') AS sender_id
+    FROM slopbot_deliveries WHERE reopen_confirmed_at IS NOT NULL AND json_extract(reopen_source, '$.itemNodeId') = ${itemNodeId} ORDER BY rowid`)
+  const debits = []
+  for (const row of found) debits.push(try debitOf(row))
+  return try decodeState({
+    credits: [],
+    rows: debits,
+    reopens: reopened.map((reopen) => ({ item: itemNodeId, revision: reopen.revision, at: seconds(reopen.occurred_at), actor: reopen.sender_id, role: "VerifiedMaintainer" as const })),
+    frozen: [],
+  } satisfies Penalties)
+}
+
+export effect function recordPenaltyStatements(close: PenaltyClose) {
+  const state = try penaltiesOf(close.itemNodeId)
+  const finding = findingOf(close.category)
+  const confirmed: ConfirmedClose = {
+    item: close.itemNodeId,
+    repository: close.repositoryId,
+    revision: close.revision,
+    author: close.authorId,
+    project: 1,
+    category: finding,
+    closedAt: seconds(close.closedAt),
+    period: periodNumber(close.closedAt.slice(0, 7)),
+  }
+  if (!canRecordPenalty(state, confirmed)) return []
+  return [sql`INSERT OR IGNORE INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category,
+      table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
+    SELECT ${close.itemNodeId}, ${close.repositoryId}, ${close.projectId}, ${String(close.authorId)}, ${close.category},
+      ${penaltyTableVersion}, ${debitFor(currentTableVersion, finding) / pointsPerThird}, ${close.closedAt.slice(0, 7)}, ${moderatorReview(finding) ? 1 : 0},
+      ${close.reviewKey}, ${close.closedAt}
+    WHERE NOT EXISTS (${confirmedReopen(close.itemNodeId, close.revision)})`]
+}
+
+export effect function activePenalty(itemNodeId: string) {
+  const found: typeof PenaltyRow.Type | undefined = try first(PenaltyRow, sql`SELECT p.*, r.revision FROM slopbot_penalties p LEFT JOIN slopbot_reviews r ON r.review_key = p.review_key
+    WHERE p.item_node_id = ${itemNodeId} AND p.reversed_at IS NULL`)
+  return found
+}
+
+export function penaltyNotice(row: typeof PenaltyRow.Type): PenaltyNotice {
+  return { points: row.debit_thirds * pointsPerThird, period: row.period, moderatorReview: row.moderator_review === 1 }
+}
+
+export effect function reversePenalty(itemNodeId: string, reason: ReversalReason, covered: Coverage) {
+  const state = try penaltiesOf(itemNodeId)
+  const authority: ReversalAuthority = { item: itemNodeId, revision: covered.revision, at: seconds(covered.occurredAt), reason: reason === "maintainer_reopen" ? "MaintainerReopen" : "AppealUpheld" }
+  if (!canReversePenalty(state, authority)) return false
+  const changes = try (try D1).run(sql`UPDATE slopbot_penalties SET reversed_at = ${try isoNow()}, reversal = ${reason}
+    WHERE item_node_id = ${itemNodeId} AND reversed_at IS NULL
+      AND (recorded_at <= ${covered.occurredAt} OR EXISTS (SELECT 1 FROM slopbot_reviews r WHERE r.review_key = slopbot_penalties.review_key AND r.revision = ${covered.revision}))`)
+  return changes === 1
+}
+
+export effect function confirmedReopenFor(itemNodeId: string, revision: string) {
+  return (try first(CoverageRow, sql`SELECT '1' AS at FROM (${confirmedReopen(itemNodeId, revision)}) LIMIT 1`)) !== undefined
+}
+
+export effect function confirmedReopenCoverage(itemNodeId: string, revision: string) {
+  const found = try first(CoverageRow, sql`SELECT MAX(json_extract(reopen_source, '$.occurredAt')) AS at FROM slopbot_deliveries
+    WHERE reopen_confirmed_at IS NOT NULL AND json_extract(reopen_source, '$.itemNodeId') = ${itemNodeId} AND json_extract(reopen_source, '$.revision') = ${revision}`)
+  const at = found?.at ?? null
+  if (at === null) return undefined
+  return { revision, occurredAt: try isoAt(millisOf(at)) } satisfies Coverage
+}

@@ -1,5 +1,5 @@
 // spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/frontend/requests.md, "Only the current request may publish its validated result"
-import { type LookedUpMember, type Person, pointsMember, pointsPeople } from "@repo/backend/client"
+import { type LookedUpMember, type Person, type XProfile, pointsMember, pointsPeople } from "@repo/backend/client"
 import { millisOf } from "@repo/platform/clock"
 import { PointsSummary, type ProfileIndex, assembleProjection, maxShardBytes, profileIndexOf, shardCount, shardPath } from "@repo/points/client"
 import { call } from "../platform/api.vibe"
@@ -22,6 +22,7 @@ export const pointsMessages = {
   pathInvalid: "Invalid points path",
   shardUnreadable: "Points shard unavailable",
   profilesInvalid: "Invalid profile census",
+  profileIdentityInvalid: "Invalid profile identity",
   peopleInvalid: "Invalid community page",
   memberInvalid: "Invalid community member",
 } as const
@@ -29,6 +30,10 @@ export const pointsMessages = {
 const digest = /^[a-f0-9]{64}$/u
 const actorId = /^[A-Za-z0-9_=-]{4,256}$/u
 const login = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+const xId = /^[0-9]{1,30}$/u
+const xUsername = /^[A-Za-z0-9_]{1,15}$/u
+const revalidated: globalThis.RequestInit = { cache: "no-cache" }
+const uncached: globalThis.RequestInit = { cache: "no-store" }
 
 schema ShardEntry { readonly path: string }
 schema IndexShards { readonly shards: ReadonlyArray<ShardEntry> }
@@ -65,13 +70,19 @@ effect function utf8Text(bytes: Uint8Array, message: string) {
   return Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => { throw new Unreadable({ message }) }
 }
 
+effect function uncachedBytes(path: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>> = {}) {
+  provide FetchHttpClient.RequestInit = uncached {
+    return try fetchBoundedBytes(path, limitBytes, label, headers)
+  }
+}
+
 effect function shardText(path: string, position: number) {
   if (path !== shardPath(position)) throw new Unreadable({ message: pointsMessages.pathInvalid })
-  return try utf8Text(try fetchBoundedBytes(path, maxShardBytes, "points history"), pointsMessages.shardUnreadable)
+  return try utf8Text(try uncachedBytes(path, maxShardBytes, "points history"), pointsMessages.shardUnreadable)
 }
 
 export effect function loadPointsJournal() {
-  const indexText = try utf8Text(try fetchBoundedBytes(journalIndexPath, journalIndexLimitBytes, "points", { accept: "application/json" }), pointsMessages.journalInvalid)
+  const indexText = try utf8Text(try uncachedBytes(journalIndexPath, journalIndexLimitBytes, "points", { accept: "application/json" }), pointsMessages.journalInvalid)
   const parsed: unknown = Effect.try(() => JSON.parse(indexText) as unknown) catch effect () => { throw new Unreadable({ message: pointsMessages.journalInvalid }) }
   const index = Schema.decodeUnknownEffect(IndexShards)(parsed) catch effect () => { throw new Unreadable({ message: pointsMessages.journalInvalid }) }
   if (index.shards.length !== shardCount) throw new Unreadable({ message: pointsMessages.journalInvalid })
@@ -83,9 +94,26 @@ export effect function pointsJournalReads() {
   return try resource((_key: string) => loadPointsJournal(), (journal: { readonly revisions: ReadonlyArray<unknown> }) => journal.revisions.length)
 }
 
+function identitiesValid(index: ProfileIndex): boolean {
+  const ids = new Set<string>()
+  for (const person of index.people) {
+    if (!actorId.test(person.id) || ids.has(person.id) || !login.test(person.login)) return false
+    ids.add(person.id)
+  }
+  return true
+}
+
+effect function revalidatedJson(path: string, limitBytes: number, label: string) {
+  provide FetchHttpClient.RequestInit = revalidated {
+    return try fetchBounded(path, limitBytes, label)
+  }
+}
+
 export effect function loadProfiles() {
-  const body = try fetchBounded(profilesPath, profilesLimitBytes, "profiles")
+  const body = try revalidatedJson(profilesPath, profilesLimitBytes, "profiles")
   const index: ProfileIndex = profileIndexOf(body) catch effect () => { throw new Unreadable({ message: pointsMessages.profilesInvalid }) }
+  if (!(millisOf(index.startedAt) <= millisOf(index.generatedAt))) throw new Unreadable({ message: pointsMessages.profilesInvalid })
+  if (!identitiesValid(index)) throw new Unreadable({ message: pointsMessages.profileIdentityInvalid })
   return index
 }
 
@@ -96,7 +124,7 @@ export effect function profileReads() {
 export type MemberLookup = { readonly kind: "absent" } | { readonly kind: "member"; readonly member: LookedUpMember }
 
 function memberValid(member: LookedUpMember): boolean {
-  return actorId.test(member.actor.id) && login.test(member.actor.login) && [0, 5].includes(member.welcome) && [0, 10].includes(member.socialPoints)
+  return login.test(member.actor.login) && [0, 5].includes(member.welcome) && [0, 10].includes(member.socialPoints) && Number.isFinite(millisOf(member.joinedAt))
 }
 
 export effect function lookUpMember(name: string) {
@@ -113,8 +141,12 @@ export effect function memberReads() {
   return try resource((name: string) => lookUpMember(name), (lookup: MemberLookup) => lookup.kind === "member" ? 1 : 0)
 }
 
+function xValid(x: XProfile): boolean {
+  return xId.test(x.id) && xUsername.test(x.username) && Number.isFinite(millisOf(x.verifiedAt))
+}
+
 function personValid(person: Person): boolean {
-  return actorId.test(person.actor.id) && login.test(person.actor.login) && [0, 5].includes(person.welcome) && [0, 10].includes(person.socialPoints)
+  return actorId.test(person.actor.id) && login.test(person.actor.login) && [0, 5].includes(person.welcome) && [0, 10].includes(person.socialPoints) && (person.x === null || xValid(person.x))
 }
 
 export effect function loadPeople() {

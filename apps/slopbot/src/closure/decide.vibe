@@ -1,13 +1,12 @@
 // spec/slopbot/closure.md, "Two independent grounded verdicts with the same category are required before any close"; spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closure.md, "A decision is recorded once and keeps its scope, verdicts and outcome"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope and missing evidence are label-only"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/slopbot/closureActivation.md, "Objective closure also needs the qualified profile, a shadow proposal under the current key and the 1 November 2026 effective time"
 import { Registry } from "@repo/ports/backend"
-import type { Category } from "../../gen/slopbot__categories.effect.vibe"
-import { permittedAction, requiresObjectiveVerifier } from "../../gen/slopbot__categories.effect.vibe"
-import { type Closure, type CategoryMode, type GateObservation, type RepositoryScope, type ReviewIdentity, type SourceObservation, canDecide, canLabelFinding, canLabelSecurityScam, canObserveReopen, closePathFor, closePolicyFor, confirms, effectiveClosure, effectiveMode, initiallyUncertain, mayReview as closureMayReview, needsConfirm, participationAuthority, revisionDisputed } from "../../gen/slopbot__closure.effect.vibe"
+import { confident, permittedAction, requiresObjectiveVerifier } from "../../gen/slopbot__categories.effect.vibe"
+import { type Closure, type CategoryMode, type GateObservation, type RepositoryScope, type ReviewIdentity, type SourceObservation, canDecide, canLabelFinding, canLabelSecurityScam, canObserveReopen, Rejected, closePathFor, confirms, effectiveClosure, effectiveMode, initiallyUncertain, mayReview as closureMayReview, needsConfirm, participationAuthority, revisionDisputed } from "../../gen/slopbot__closure.effect.vibe"
 import type { Scope } from "../../gen/slopbot__repositoryScope.effect.vibe"
 import { slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
 import type { Exemption } from "../../gen/slopbot__routing.effect.vibe"
 import { ClosureActivation, activationView } from "../activation/config.vibe"
-import { type CountedReceipt, citedReceipt, countedReceipts, qualitySubject, recordShadow, verifierQualified } from "../activation/quality.vibe"
+import { type CountedReceipt, citedReceipt, countedReceipts, qualitySubject, verifierQualified } from "../activation/quality.vibe"
 import type { ModeName } from "../context/policyFile.vibe"
 import { type ReviewContext, loadContext, sameReviewEvidence } from "../context/load.vibe"
 import { activeInstallation } from "../installation/store.vibe"
@@ -16,7 +15,7 @@ import { recordAction } from "../publish/actions.vibe"
 import { type Composed, commentBody, upsertComment } from "../publish/comment.vibe"
 import { addLabels, categoryLabel } from "../publish/labels.vibe"
 import { requireScope, scopeAllows } from "../publish/scope.vibe"
-import { type Assessed, type Finding, type Session, commentTargetOf, completeReview, confirmFinding, failReview, modelTriage, reviewDetails, scopeOf } from "../review/run.vibe"
+import { type Assessed, type Finding, type Session, commentTargetOf, completeReview, confirmFinding, failReview, modelTriage, reviewDetails, scopeOf, settleFailure } from "../review/run.vibe"
 import { type CategoryName, type Verdict, findingOf } from "../review/verdict.vibe"
 import { exemptionOf } from "../routing/facts.vibe"
 import { type Observed, observe } from "../scope/facts.vibe"
@@ -141,7 +140,7 @@ effect function freshGate(session: Session, triage: Verdict, confirm: Verdict | 
   return try gateOf(session, fresh, observed, exemption, triage, confirm, true)
 }
 
-effect function accepted(record: ClosureRecord, send: Closure!E!R) {
+effect function accepted(send: Closure!Rejected) {
   const done = Effect.as(send, true) catch effect (error) => {
     if (error._tag === "Rejected") return false
     throw error
@@ -163,7 +162,7 @@ effect function confirmed(found: Finding, record: ClosureRecord) {
   const modelled = try confirmFinding(found)
   if (modelled.kind === "settled") return modelled.result
   const confirm = modelled.assessed
-  const recorded = try accepted(record, sendClosure(record, { type: "recordConfirm", verdict: confirm.assessed.verdict, grounding: confirm.grounding, related: confirm.related }))
+  const recorded = try accepted(sendClosure(record, { type: "recordConfirm", verdict: confirm.assessed.verdict, grounding: confirm.grounding, related: confirm.related }))
   return recorded ? confirm : changedBeforeAction
 }
 
@@ -183,7 +182,7 @@ export function uncertainReason(judged: Judged) {
   const { triage, confirm, closure } = judged
   const assessed = triage.assessed
   if (!assessed.grounded) return groundingReason(triage, judged.session.context)
-  if (assessed.verdict.confidenceHundredths < 90) return "confidence below closure threshold"
+  if (!confident(assessed.verdict.confidenceHundredths)) return "confidence below closure threshold"
   if (assessed.verdict.limitations) return "unresolved model limitations"
   if (assessed.verdict.category === "Duplicate" && !assessed.related) return "no verified matching open item by the same author"
   if (assessed.verdict.deterministic) return "two independent model reviews were not performed"
@@ -191,19 +190,22 @@ export function uncertainReason(judged: Judged) {
   return "confidence below closure threshold"
 }
 
-export function blockedReason(judged: Judged, gate: GateObservation) {
+export function blockedReason(judged: Judged, gate: GateObservation, cited: boolean) {
   const { closure } = judged
   const category = closure.triage.verdict.category
   const source = gate.source
   const identity = closure.identity
-  if (effectiveMode(source, category) !== "ModeClose" || permittedAction(category) !== "CloseAllowed") return null
-  if (requiresObjectiveVerifier(category) && closure.triage.verdict.objectiveDefect === "") return "no trusted verification of the cited objective defect"
+  const objective = requiresObjectiveVerifier(category)
+  const closeMode = effectiveMode(source, category) === "ModeClose"
+  if (permittedAction(category) !== "CloseAllowed" || !(closeMode || objective)) return null
+  if (objective && !cited) return "no trusted verification of the cited objective defect"
   if (!gate.activation.enabled) return "closure is disabled for Slopbot (pending production activation)"
   if (source.file === "FileInvalid") return "policy file problem: the repository file is not a valid Slopbot policy"
   if (!effectiveClosure(source)) return "maintainer has not enabled closure"
   if (identity.kind !== "PullRequest" || source.authorRole !== "NonMaintainer" || !participationAuthority(gate.participation, identity)) return "author is not eligible for automatic closure"
+  if (!closeMode) return "objective closure awaits reviewed qualification"
   if (!gate.activation.categoryQualified) return "closure is not qualified for this category"
-  if (requiresObjectiveVerifier(category) && !gate.activation.verifierQualified) return "objective closure awaits reviewed qualification"
+  if (objective && !gate.activation.verifierQualified) return "objective closure awaits reviewed qualification"
   if (source.assignment !== "Unassigned") return "the item was assigned before closure"
   if (revisionDisputed(closure)) return "a human reopened this revision; maintainer decision stands"
   return closePathFor(gate, identity, category) ? null : "source, policy, evidence or eligibility changed before closure"
@@ -237,25 +239,6 @@ effect function disputed(record: ClosureRecord, identity: ReviewIdentity) {
   return revisionDisputed(try closureState(record))
 }
 
-effect function captureShadow(judged: Judged, gate: GateRead) {
-  const { session, closure } = judged
-  const { trust } = try ClosureActivation
-  const cited = citedByBoth(judged.verdict, judged.confirm?.verdict, gate.receipts, try Clock.currentTimeMillis)
-  const observation = { ...gate.observation, seq: closure.gate.seq + 1 }
-  if (cited === undefined || !confirms(closure.triage, closure.confirm) || !closePolicyFor(observation, closure.identity, closure.triage.verdict.category) || !participationAuthority(observation.participation, closure.identity)) return
-  if ((try recordedReopens(closure.identity)).length > 0) return
-  try recordShadow({
-    reviewKey: session.reviewKey,
-    repositoryId: session.target.repositoryId,
-    itemNodeId: session.context.issue.node_id,
-    revision: session.context.revision,
-    policyDigest: session.context.policyDigest,
-    profile: cited.defect.profile,
-    verifierKey: trust.verifierKey,
-    defectId: cited.defect.id,
-  })
-}
-
 effect function securityResult<E, R>(judged: Judged, record: ClosureRecord, hooks: ClosureHooks<E, R>) {
   const { session, category } = judged
   if (initiallyUncertain(judged.closure.triage)) {
@@ -263,7 +246,7 @@ effect function securityResult<E, R>(judged: Judged, record: ClosureRecord, hook
     try sendClosure(record, { type: "commentSecurity" })
     return try finished(judged, "hold", `uncertain; comment only on a restricted project (${category})`)
   }
-  try commented(judged, "label", "security review only")
+  try commented(judged, "label", effectiveMode(judged.closure.gate.source, judged.closure.triage.verdict.category) === "ModeClose" ? "contributor work is paused; security review only" : null)
   try sendClosure(record, { type: "commentSecurity" })
   if (try hooks.reopened(session)) return try finished(judged, "comment", reopenedRevision)
   if (try disputed(record, judged.closure.identity)) return try finished(judged, "comment", disputedRevision)
@@ -274,10 +257,9 @@ effect function securityResult<E, R>(judged: Judged, record: ClosureRecord, hook
   return try finished(judged, "label", `labeled (${category})`)
 }
 
-effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateObservation, hooks: ClosureHooks<E, R>) {
+effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateObservation, cited: boolean, hooks: ClosureHooks<E, R>) {
   const { session, category } = judged
-  const blocked = judged.closure.outcome === "CloseCandidate" ? null : blockedReason(judged, gate)
-  try commented(judged, "label", blocked)
+  try commented(judged, "label", blockedReason(judged, gate, cited))
   try requireScope(commentTargetOf(session), scopeOf(session))
   if (try hooks.reopened(session)) return try finished(judged, "comment", reopenedRevision)
   if (session.related !== undefined) {
@@ -287,15 +269,10 @@ effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateO
   if (try disputed(record, judged.closure.identity)) return try finished(judged, "comment", disputedRevision)
   if (!canLabelFinding(try closureState(record))) return try finished(judged, "comment", `no action (${category})`)
   try addLabels(commentTargetOf(session), [categoryLabel(category)])
-  const closure = try sendClosure(record, { type: "labelFinding" })
+  try sendClosure(record, { type: "labelFinding" })
   try recordAction({ reviewKey: session.reviewKey, repositoryId: session.target.repositoryId, itemNodeId: session.context.issue.node_id, action: "label", detail: category })
   if (try hooks.reopened(session)) return try finished(judged, "label", reopenedRevision)
-  if (closure.outcome !== "CloseCandidate" || judged.confirm === undefined) return try finished(judged, "label", `labeled (${category})`)
-  const key = categoryKeyOf(category)
-  return {
-    kind: "close",
-    request: { ...judged, closure, confirm: judged.confirm, penaltyEligible: session.routed.route === "MayCloseReview", dailyCap: key === undefined ? 0 : session.context.policyFile.config.dailyCloseCap },
-  } satisfies ClosureDecision
+  return try finished(judged, "label", `labeled (${category})`)
 }
 
 export effect function closeStillAllowed(request: CloseRequest) {
@@ -312,7 +289,7 @@ export function closeComment(request: CloseRequest, blockedClose: string) {
   return commentOf(request, "label", blockedClose)
 }
 
-export effect function decideFinding<E, R>(found: Finding, hooks: ClosureHooks<E, R>) {
+effect function deciding<E, R>(found: Finding, hooks: ClosureHooks<E, R>) {
   const finding = try triageOf(found)
   if (typeof finding === "string") return settled(finding)
   const { session } = finding
@@ -321,15 +298,11 @@ export effect function decideFinding<E, R>(found: Finding, hooks: ClosureHooks<E
   const record = try openClosure(identity)
   const handed = try handedGate(session, triage.verdict)
   try observeGate(record, handed.observation)
-  const triaged = try accepted(record, sendClosure(record, { type: "recordTriage", verdict: triage.assessed.verdict, grounding: triage.grounding, related: triage.related }))
+  const triaged = try accepted(sendClosure(record, { type: "recordTriage", verdict: triage.assessed.verdict, grounding: triage.grounding, related: triage.related }))
   if (!triaged) return try abandoned(session, triage.verdict, changedBeforeAction)
   let confirm = try confirmed(finding, record)
   if (typeof confirm === "string") return confirm === changedBeforeAction ? try abandoned(session, triage.verdict, confirm) : settled(confirm)
-  const fresh = try freshGate(session, triage.verdict, confirm?.verdict)
-  if (fresh === undefined) return try abandoned(session, triage.verdict, changedBeforeAction)
-  const judgedBefore: Judged = { session, verdict: triage.verdict, category: triage.verdict.category, triage, confirm, closure: try closureState(record) }
-  if (confirm !== undefined && requiresObjectiveVerifier(findingOf(triage.verdict.category))) try captureShadow(judgedBefore, fresh)
-  const gate = requiresObjectiveVerifier(findingOf(triage.verdict.category)) ? try freshGate(session, triage.verdict, confirm?.verdict) : fresh
+  const gate = try freshGate(session, triage.verdict, confirm?.verdict)
   if (gate === undefined) return try abandoned(session, triage.verdict, changedBeforeAction)
   try observeGate(record, gate.observation)
   if (confirm === undefined) {
@@ -339,7 +312,7 @@ export effect function decideFinding<E, R>(found: Finding, hooks: ClosureHooks<E
   }
   if (!canDecide(try closureState(record))) return try abandoned(session, triage.verdict, changedBeforeAction)
   const closure = try sendClosure(record, { type: "decide" })
-  const judged: Judged = { ...judgedBefore, confirm, closure }
+  const judged: Judged = { session, verdict: triage.verdict, category: triage.verdict.category, triage, confirm, closure }
   if (closure.outcome === "SecurityAdvisory") return try securityResult(judged, record, hooks)
   if (closure.outcome === "Advisory") return try finished(judged, "none", `no action (${judged.category})`)
   if (closure.outcome === "Uncertain") {
@@ -347,5 +320,17 @@ export effect function decideFinding<E, R>(found: Finding, hooks: ClosureHooks<E
     try commented(judged, "hold", blockedClose)
     return { kind: "hold", hold: { ...judged, blockedClose } } satisfies ClosureDecision
   }
-  return try labeled(judged, record, closure.gate, hooks)
+  if (closure.outcome === "CloseCandidate" && confirm !== undefined) {
+    return { kind: "close", request: { ...judged, confirm, penaltyEligible: session.routed.route === "MayCloseReview", dailyCap: session.context.config.dailyCloseCap } } satisfies ClosureDecision
+  }
+  const cited = citedByBoth(triage.verdict, confirm?.verdict, gate.receipts, try Clock.currentTimeMillis) !== undefined
+  return try labeled(judged, record, closure.gate, cited, hooks)
+}
+
+export effect function decideFinding<E, R>(found: Finding, hooks: ClosureHooks<E, R>) {
+  const decision = deciding(found, hooks) catch effect (error) => {
+    try settleFailure(found.session, error)
+    throw error
+  }
+  return decision
 }

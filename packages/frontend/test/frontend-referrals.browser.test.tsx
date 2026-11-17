@@ -105,7 +105,7 @@ afterAll(() => {
   environment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
 });
 
-describe(`Edit and save the current account's referral name (spec/frontend/referralSettings.md, "Story: Edit and save the current account's referral name"; spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")`, () => {
+describe(`Edit and save the current account's referral name (spec/frontend/referralSettings.md, "Story: Edit and save the current account's referral name"; spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")`, () => {
   it("a member names their referral link, sees refusals, and reads the saved link back after a reload", async () => {
     const member: Account = { githubId: "900000098", login: "link-test", code: null };
     const backend = fakeBackend([member]);

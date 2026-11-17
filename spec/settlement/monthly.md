@@ -55,7 +55,7 @@ type Monthly = { project: str, period: int, phase: MonthlyPhase, skip: SkipReaso
   exclusions: List[X::Exclusion], shares: List[A::Share], total: M::Amount, sequence: int, trigger: Trigger, frozenSequence: int, frozenBy: int,
   obligations: List[Obligation], banned: List[BanExclusion], underfundedNotice: bool, coordinatorRetries: int,
   proposedShares: List[A::Share], changes: List[Change], cuts: List[Cut], publicCuts: List[Cut], notices: List[CutNotice],
-  latestCutAt: int, frozenAt: int }
+  latestCutAt: int, frozenAt: int, pledgedVault: str }
 pure val noRevision: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: M::zero, maximum: M::zero, rewardStartAt: 0,
   vault: "", asset: "", feePolicy: "", exclusions: List() }
 pure val noEligibility: Eligibility = { revision: 0, active: false, verifiedPool: false, paused: false, restricted: false,
@@ -65,7 +65,7 @@ pure val initial: Monthly = { project: "eliza", period: 0, phase: Unopened, skip
   snapshotDigest: "", exclusions: List(), shares: List(), total: M::zero, sequence: 0, trigger: NoTrigger, frozenSequence: 0,
   frozenBy: 0, obligations: List(), banned: List(),
   underfundedNotice: false, coordinatorRetries: 0, proposedShares: List(), changes: List(), cuts: List(), publicCuts: List(),
-  notices: List(), latestCutAt: 0, frozenAt: 0 }
+  notices: List(), latestCutAt: 0, frozenAt: 0, pledgedVault: "" }
 pure val firstAutomaticPeriod = 202611
 pure val cutoffSeconds = 259200
 pure val proposalWindowSeconds = 259200
@@ -242,8 +242,11 @@ pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Mo
 
 The owner path needs the same authority and current sequence, and is
 refused until 24 hours after the latest cut (`cut_notice_pending`). The automatic
-path needs the cutoff, the automatic default, a month from 2026-11 on, and a
-project that is not paused or restricted and whose vault network is served.
+path needs the cutoff, a month from 2026-11 on and a served vault network,
+and either the automatic default with a project that is not paused or
+restricted, or the owner's on-chain pledge for the month in the vault that
+pays it while the project is not retired (below), whatever the default, a
+pause or a restriction says.
 Either path writes the single run record with its trigger and the sequence
 it froze; the owner path also records the acting account. Financial terms
 apply prospectively: neither path freezes once the project's vault, asset or
@@ -260,13 +263,46 @@ pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bo
     and cutNoticeElapsed(m)
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
   { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor, frozenAt: m.now }
-pure def automaticMayFreeze(m: Monthly): bool = m.automatic and m.now >= cutoff(m) and m.period >= firstAutomaticPeriod
-  and not(m.eligibility.paused) and not(m.eligibility.restricted) and m.eligibility.networkServed
+pure def automaticMayFreeze(m: Monthly): bool = m.now >= cutoff(m) and m.period >= firstAutomaticPeriod and m.eligibility.networkServed
+  and ((m.automatic and not(m.eligibility.paused) and not(m.eligibility.restricted)) or (pledgeConsents(m) and cutNoticeElapsed(m)))
 pure def canAutoFreeze(m: Monthly): bool = m.phase == Proposed and automaticMayFreeze(m) and financialTermsSame(m.revision, m.currentRevision)
 pure def autoFreeze(m: Monthly): Monthly = { ...m, phase: Frozen, trigger: AutomaticTrigger, frozenSequence: m.sequence, frozenAt: m.now }
 pure val fair_autoFreeze = "weak"
 pure def leadsToCutoffFrozen(m: Monthly, later: Monthly): bool =
   canAutoFreeze(m) implies (later.phase != Proposed or not(canAutoFreeze(later)))
+```
+
+### A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project
+
+The month observes the vault in which the owner's stored on-chain pledge for
+it (an amount above zero, open or since closed) was read, as
+[month pledges](./monthPledges.md) `pledgedIn` finds it; only a pledge in
+the vault the current revision pays the month from is taken, and a pledge
+read never leaves the month unpledged again. A pledge read that failed keeps
+what was stored, so a pledge not yet stored gives no consent. The pledge is
+the owner's consent to reserve the month (operator decision, 15 November
+2026; development `backend/payments/monthly.ts` `coordinateMonthlyPayments`
+and `freezeMonthlyPeriod`, `month-pledges.ts` `pledgeKeepsMonth`, and
+development's model `monthly_month_pledge`): the coordinator freezes it at
+the cutoff with the automatic default off and while the project is paused
+or restricted, but not once it is retired, and a pledge in another vault of
+the project gives no consent. The freeze on a pledge also waits until 24
+hours after the latest cut, as the owner's finalization does: development's
+coordinator does not wait, so a cut made with the default off less than 24
+hours before it runs would otherwise be frozen with a shorter notice than
+"A month with a cut freezes no earlier than 24 hours after the latest cut"
+allows. The owner path is unchanged.
+
+```quint
+pure def canObservePledge(m: Monthly, pledgeVault: str): bool =
+  m.phase != Unopened and pledgeVault != "" and pledgeVault == m.currentRevision.vault and pledgeVault != m.pledgedVault
+pure def observePledge(m: Monthly, pledgeVault: str): Monthly = { ...m, pledgedVault: pledgeVault }
+pure def pledgeConsents(m: Monthly): bool =
+  m.pledgedVault != "" and m.pledgedVault == m.currentRevision.vault and not(m.eligibility.retired)
+pure def stepPledgeKept(before: Monthly, after: Monthly): bool = before.pledgedVault != "" implies after.pledgedVault != ""
+pure def sometimesPledgedMonthFrozen(m: Monthly): bool = m.trigger == AutomaticTrigger and m.pledgedVault != ""
+  and m.eligibility.paused
+pure val pledgeVaultValues = Set("vault", "replaced")
 ```
 
 ## Story: Create obligations only when the whole month is covered
@@ -276,12 +312,17 @@ pure def leadsToCutoffFrozen(m: Monthly, later: Monthly): bool =
 The coordinator reads a finalized vault snapshot no older than 30 minutes.
 Before it creates obligations it excludes accounts with an active moderator
 ban and records the exact ban; excluded amounts do not delay other
-recipients and never become their extra awards. An empty or all-zero month
+recipients and never become their extra awards. Every other month's open
+pledge in the same vault is held back from the free balance, because the
+contract never lets one month take another month's pledge
+(`otherOpenPledges` of [month pledges](./monthPledges.md); zero for a vault
+without pledge support). When nothing is needed the vault is not read for
+funds. An empty or all-zero month
 completes with no obligation. An underfunded month creates nothing and
 records one Inbox exception however often the coordinator retries.
 
 ```quint
-type VaultObservation = { observedAt: int, free: M::Amount, earlierUnreserved: M::Amount }
+type VaultObservation = { observedAt: int, free: M::Amount, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount }
 pure def banFor(bans: List[BanExclusion], actor: int): bool = bans.some(b => b.actor == actor)
 pure def payable(m: Monthly, bans: List[BanExclusion]): List[A::Share] =
   m.shares.select(s => M::positiveAmount(s.amount) and not(banFor(bans, s.actor)))
@@ -289,8 +330,10 @@ pure def payableTotal(shares: List[A::Share]): M::Amount = A::allocatedTotal(sha
 pure def fresh(m: Monthly, observation: VaultObservation): bool =
   observation.observedAt <= m.now and m.now - observation.observedAt <= freshnessSeconds
     and M::validAmount(observation.free) and M::validAmount(observation.earlierUnreserved)
+    and M::validAmount(observation.otherOpenPledges)
 pure def covered(m: Monthly, observation: VaultObservation, bans: List[BanExclusion]): bool =
-  M::compareAmounts(observation.free, M::addAmounts(payableTotal(payable(m, bans)), observation.earlierUnreserved)) >= 0
+  val needed = M::addAmounts(payableTotal(payable(m, bans)), observation.earlierUnreserved)
+  not(M::positiveAmount(needed)) or M::compareAmounts(observation.free, M::addAmounts(needed, observation.otherOpenPledges)) >= 0
 pure def validBans(bans: List[BanExclusion]): bool = bans.every(b => b.actor > 0 and b.ban > 0 and bans.select(o => o.actor == b.actor).length() == 1)
 pure def keyFor(m: Monthly, actor: int): SourceKey = { project: m.project, period: m.period, actor: actor }
 pure def canCreateObligations(m: Monthly, observation: VaultObservation, bans: List[BanExclusion]): bool =
@@ -503,9 +546,11 @@ pure val factValues = Set({ actor: 9, role: ProjectOwner, banned: false, revisio
   { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 })
 pure val automaticValues = Set(true, false)
 pure val settingsSequenceValues = Set(1, 2)
-pure val observationValues = Set({ observedAt: 1796342400, free: List(20), earlierUnreserved: List(0) },
-  { observedAt: 1796342400, free: List(5), earlierUnreserved: List(0) }, { observedAt: 1796340000, free: List(20), earlierUnreserved: List(0) },
-  { observedAt: 1796342600, free: List(20), earlierUnreserved: List(0) })
+pure val observationValues = Set({ observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
+  { observedAt: 1796342400, free: List(5), earlierUnreserved: List(0), otherOpenPledges: List(0) },
+  { observedAt: 1796340000, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
+  { observedAt: 1796342600, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
+  { observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(15) })
 pure val bansValues = Set(List(), List({ actor: 2, ban: 7 }))
 pure def awardFact(actor: int, gross: M::Amount, paid: bool): AwardFact =
   { source: { project: "eliza", period: 202611, actor: actor }, actor: actor, gross: gross, paid: paid }

@@ -1,0 +1,163 @@
+// spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
+import { type ComposeOutcome, type ComposeSlot, draftState, editReport, openCompose, openReceipt, recheckSession, reviewReport, submitReport } from "../../../flows/security/composeDraft.vibe"
+import type { ReportDraft } from "../../../flows/security/private.vibe"
+import { BrowserSession } from "../../../session/browserSession.vibe"
+import { Session } from "../../../session/session.vibe"
+
+export type ComposerPhase =
+  | { readonly kind: "compose"; readonly review: boolean }
+  | { readonly kind: "needsSession" }
+  | { readonly kind: "received"; readonly message: string | null }
+
+export interface ComposeView {
+  readonly owner: string
+  readonly login: string
+  readonly draft: ReportDraft
+  readonly attempted: boolean
+  readonly storageAvailable: boolean
+  readonly phase: ComposerPhase
+  readonly busy: boolean
+  readonly error: string | null
+  readonly revision: number
+}
+
+interface Held {
+  readonly slot: ComposeSlot
+  readonly receipt: string | null
+  readonly phase: ComposerPhase
+  readonly error: string | null
+}
+
+export service ReportCompose {
+  readonly changes: Stream.Stream<ComposeView | undefined>
+  follow(projectId: string): void!!
+  edit(draft: ReportDraft): void!!
+  back(): void!!
+  submit(): (string | undefined)!!
+}
+
+type Needs = Session | Effect.Services<ReturnType<typeof openCompose>> | Effect.Services<ReturnType<typeof editReport>> | Effect.Services<ReturnType<typeof submitReport>> | Effect.Services<ReturnType<typeof recheckSession>> | Effect.Services<ReturnType<typeof openReceipt>>
+
+export const reportCompose = Layer.effect(ReportCompose, effect {
+  const browser = try BrowserSession
+  const context = try Effect.context<Needs>()
+  const scope = try Scope.Scope
+  const shown = try SubscriptionRef.make<ComposeView | undefined>(undefined)
+  const lock = try Semaphore.make(1)
+  let project: string | undefined = undefined
+  let held: Held | undefined = undefined
+  let revision = 0
+
+  effect function writing() {
+    const stage = (try draftState()).stage
+    return { kind: "compose", review: stage === "Reviewing" || stage === "Sending" || stage === "Uncertain" } satisfies ComposerPhase
+  }
+
+  effect function present(next: Held, busy: boolean, typed = false) {
+    held = next
+    if (!typed) revision += 1
+    const now = try Ref.get(next.slot.held)
+    try SubscriptionRef.set(shown, { owner: next.slot.owner, login: next.slot.login, draft: now.saved.draft, attempted: now.saved.attempted, storageAvailable: now.available, phase: next.phase, busy, error: next.error, revision })
+  }
+
+  effect function cleared() {
+    held = undefined
+    try SubscriptionRef.set(shown, undefined)
+  }
+
+  effect function opened() {
+    if (project === undefined) return
+    const view = try (try Session).view()
+    if (view.status === "signedOut") return try cleared()
+    if (view.status !== "signedIn") return
+    if (held !== undefined && held.slot.owner === view.session.githubId) return
+    const result = try openCompose(view.session.githubId, view.session.githubLogin, project)
+    if (result.kind === "accountChanged") return try cleared()
+    try present({ slot: result.slot, receipt: null, phase: try writing(), error: null }, false)
+  }
+
+  effect function locked<A, E>(work: A!E!Needs) {
+    return try Semaphore.withPermit(lock, Effect.orDie(Effect.provideContext(work, context)))
+  }
+
+  effect function settled(now: Held, outcome: ComposeOutcome, typed = false) {
+    switch (outcome.kind) {
+      case "ready": return try present({ ...now, phase: try writing() }, false, typed)
+      case "received": return try present({ ...now, receipt: outcome.submissionId, phase: { kind: "received", message: null }, error: null }, false)
+      case "needsSession": return try present({ ...now, phase: { kind: "needsSession" }, error: outcome.message }, false)
+      default: return try present({ ...now, phase: try writing(), error: outcome.message }, false)
+    }
+  }
+
+  effect function receipt(now: Held, submissionId: string) {
+    const opening = try openReceipt(now.slot, submissionId)
+    if (opening.kind === "open") {
+      try present({ ...now, phase: { kind: "received", message: null } }, true)
+      return opening.href
+    }
+    try present({ ...now, phase: { kind: "received", message: opening.message } }, false)
+    return undefined
+  }
+
+  effect function submitted() {
+    const now = held
+    if (now === undefined) return undefined
+    try present(now, true)
+    if (now.receipt !== null) return try receipt(now, now.receipt)
+    if (now.phase.kind === "needsSession") {
+      try settled(now, try recheckSession(now.slot))
+      return undefined
+    }
+    const outcome = try submitReport(now.slot)
+    try settled({ ...now, error: null }, outcome)
+    const after = held
+    if (outcome.kind !== "received" || after === undefined) return undefined
+    return try receipt(after, outcome.submissionId)
+  }
+
+  try browser.onAccountChange(() => effect {
+    fork.in(scope) locked(opened())
+  })
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    follow: (projectId: string) => locked(effect {
+      if (project === projectId) return
+      project = projectId
+      held = undefined
+      try opened()
+    }),
+    edit: (draft: ReportDraft) => locked(effect {
+      const now = held
+      if (now === undefined || now.phase.kind !== "compose") return
+      try settled(now, try editReport(now.slot, draft), true)
+    }),
+    back: () => locked(effect {
+      const now = held
+      if (now === undefined) return
+      const view = try Ref.get(now.slot.held)
+      try settled(now, try editReport(now.slot, view.saved.draft))
+    }),
+    submit: () => locked(submitted()),
+  }
+})
+
+export effect function watchCompose(show: (view: ComposeView | undefined) => void!!) {
+  for try (const view of (try ReportCompose).changes) try show(view)
+}
+
+export effect function followCompose(projectId: string) {
+  try (try ReportCompose).follow(projectId)
+}
+
+export effect function editCompose(draft: ReportDraft) {
+  try (try ReportCompose).edit(draft)
+}
+
+export effect function backToWriting() {
+  try (try ReportCompose).back()
+}
+
+export effect function submitCompose() {
+  return try (try ReportCompose).submit()
+}

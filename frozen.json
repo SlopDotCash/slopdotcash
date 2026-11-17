@@ -190,6 +190,7 @@
     "packages/contracts/evm/integration/upgrade.ts": "68f2302a92c4697d1c45de534b3a5b54e8ffa2422d112a4719054fcdf5a41b7c",
     "packages/contracts/evm/monthly-reserve.integration.ts": "2783397eaf1cdb3a880698a7cd777be145b3a8cea47f9154682ebff2e3bf0f9f",
     "packages/contracts/evm/native.integration.ts": "0e7d50b862b551a4801b021ff25f2d160bb307b22a95ff3e88a2f8dee8c1fe2b",
+    "packages/contracts/evm/pledge.integration.ts": "a12a5518ed453c2625198550869b8b0ec7ae7ab94fdacb21035803412f6412c0",
     "packages/contracts/solana/integration/confirmation.mjs": "6a6e0a6e9d9e1dc762d9475e82b574264018899a7bb94f22f10e889662660926",
     "packages/contracts/solana/integration/deployment.mjs": "3e683488ee601247753273bbc93cab8b694ae79af11393269f64f86e232ef1ee",
     "packages/contracts/solana/integration/escrow.e2e.mjs": "60be6411806733c89c8e072211f4cb1d4a119782add34f699b37014d89ec5b44",

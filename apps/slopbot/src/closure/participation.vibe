@@ -26,7 +26,7 @@ export effect function participationOf(target: ReviewTarget, context: ReviewCont
   const author = context.issue.user.id
   const copiedMarker = (context.issue.body ?? "").includes(marker)
   const unread: ParticipationEvidence = { member: author, membership: "MemberUnknown", events: [], copiedMarker }
-  if (identity.kind !== "PullRequest" || exemption !== "NotExempt" || !Number.isSafeInteger(author) || author <= 0) return unread
+  if (target.securityOnly || identity.kind !== "PullRequest" || exemption !== "NotExempt" || !Number.isSafeInteger(author) || author <= 0) return unread
   const membership = try (try Memberships).status(String(author))
   if (membership !== "MemberActive") return { ...unread, membership }
   const recorded = try (try RunEvidence).prOpened({

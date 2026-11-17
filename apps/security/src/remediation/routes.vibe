@@ -9,11 +9,10 @@ import { type Observed, type Refusal, notAllowed, refused } from "../cases/store
 import type { ExtraActions } from "../cases/view.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
-import { type Journal, type Recorded, digestFor, disclosureText, journalOf, lookup, recognitionText, recordedChange, stageText, stepped } from "./store.vibe"
+import { type Journal, type Recorded, digestFor, disclosureText, exactStages, journalOf, lookup, recognitionText, recordedChange, stageText, stepped } from "./store.vibe"
 
 const common = ["action", "expectedRevision", "idempotencyKey"]
 const sha256 = /^[0-9a-f]{64}$/u
-const digestStages: ReadonlyArray<Stage> = ["Retest", "Resolved", "MitigationVerified"]
 const evidenceStages: ReadonlyArray<Stage> = ["Resolved", "MitigationVerified"]
 export const remediationKinds: ReadonlyArray<string> = ["remediation", "disclosure", "recognition"]
 
@@ -56,7 +55,7 @@ effect function remediationPlan(input: CaseActionInput, journal: Journal) {
   const evidenceReference = try optional(body, "evidenceReference", 500, actionRows.invalidRequestInvalidEvidenceReference, actionRows.invalidRequestEvidenceReferenceMustBe1)
   if (evidenceStages.includes(stage) && evidenceReference === null) throw refused(actionRows.evidenceRequired)
   const patch = body.patchDigest
-  const needsDigest = digestStages.includes(stage)
+  const needsDigest = exactStages.includes(stage)
   if (needsDigest && (typeof patch !== "string" || !sha256.test(patch))) throw refused(actionRows.evidenceRequired)
   if (!needsDigest && patch !== undefined) throw refused(actionRows.invalidRequestRequestBodyHasUnexpected)
   const reason = try optional(body, "reason", 2000, actionRows.invalidRequestInvalidReason, actionRows.invalidRequestReasonMustBe1)

@@ -1,0 +1,266 @@
+// spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
+import { randomId } from "@repo/platform/crypto"
+import { route } from "@repo/platform/route"
+import { submitReport as submitted } from "@repo/security/client"
+import type { Event } from "../../../gen/frontend__drafts.ts"
+import { Machine, enabled, machine } from "../../../gen/frontend__drafts.effect.vibe"
+import { type CallFailure, InvalidResponse, call } from "../../platform/api.vibe"
+import { type BrowserStore, SessionStore, storageKeys } from "../../platform/storage.vibe"
+import { BrowserSession, type DraftEvent, compositionState } from "../../session/browserSession.vibe"
+import { actorNumber } from "../../session/session.vibe"
+import { ReportBody, type ReportDraft, emptyReport, identityOf, modelNumber, reportBody } from "./private.vibe"
+
+export const composeLimitBytes = 65_536
+
+export const composeMessages = {
+  signInAgain: "Your account changed or signed out. Sign in again before submitting a report.",
+  unverified: "Your current account could not be verified. Your original report is kept privately for recovery.",
+  verified: "Your account is verified. Review and retry the same report.",
+  noReceipt: "The server did not return a usable report receipt. Retry the same report to reconcile it.",
+  receiptUnverified: "This tab could not verify your current account. Try again.",
+} as const
+
+schema StoredDraft { summary: string; description: string; severity: string; cvss: string; cwe: string }
+schema SavedReport { draft: StoredDraft; key: string; attempted: boolean }
+schema Submission { projectId: string; idempotencyKey: string; origin: string; expectedReporterGithubId: string; report: ReportBody }
+
+const sendReport = route({ ...submitted, request: Submission })
+const receiptId = /^ss_[A-Za-z0-9_-]{8,72}$/u
+const accountRefusals: ReadonlyArray<string> = ["reporter_changed", "actor_changed"]
+
+interface Held {
+  readonly saved: SavedReport
+  readonly available: boolean
+  readonly captured: string | null
+}
+
+type Stepped = "applied" | "refused" | "accountChanged"
+
+export interface ComposeSlot {
+  readonly owner: string
+  readonly login: string
+  readonly projectId: string
+  readonly storageKey: string
+  readonly held: Ref.Ref<Held>
+}
+
+export type ComposeOutcome =
+  | { readonly kind: "ready"; readonly draft: ReportDraft; readonly storageAvailable: boolean; readonly attempted: boolean }
+  | { readonly kind: "received"; readonly submissionId: string; readonly replayed: boolean }
+  | { readonly kind: "uncertain"; readonly message: string }
+  | { readonly kind: "corrected"; readonly message: string }
+  | { readonly kind: "needsSession"; readonly message: string }
+  | { readonly kind: "verified"; readonly message: string }
+  | { readonly kind: "accountChanged"; readonly message: string }
+
+export type Opened =
+  | { readonly kind: "opened"; readonly slot: ComposeSlot; readonly view: ComposeOutcome }
+  | { readonly kind: "accountChanged"; readonly message: string }
+
+export type ReceiptOutcome =
+  | { readonly kind: "open"; readonly href: string }
+  | { readonly kind: "unverified"; readonly message: string }
+  | { readonly kind: "accountChanged"; readonly message: string }
+
+export const draftMachine = machine()
+
+export effect function sendDraft(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function receiveDraft(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function draftState() {
+  return try (try Machine).get()
+}
+
+function shared(event: Event): DraftEvent | undefined {
+  switch (event.type) {
+    case "open": return { type: "beginReport", projectId: event.projectId }
+    case "edit": return { type: "editReport", contentDigest: event.contentDigest, storageAvailable: event.storageAvailable }
+    case "review": return { type: "reviewReport" }
+    case "send": return { type: "submitReport", submissionKey: event.submissionKey }
+    default: return undefined
+  }
+}
+
+effect function moved(slot: ComposeSlot) {
+  return (try compositionState()).navigation.actor !== actorNumber(slot.owner)
+}
+
+effect function stepped(slot: ComposeSlot, event: Event) {
+  if (try moved(slot)) return "accountChanged" satisfies Stepped
+  if (!enabled(try draftState(), event)) return "refused" satisfies Stepped
+  const mirrored = shared(event)
+  if (mirrored !== undefined && !(try (try BrowserSession).compose(mirrored))) return "refused" satisfies Stepped
+  try sendDraft(event)
+  return "applied" satisfies Stepped
+}
+
+effect function fresh() {
+  return { draft: emptyReport, key: try randomId(), attempted: false } satisfies SavedReport
+}
+
+function sameReport(left: ReportDraft, right: ReportDraft) {
+  return left.summary === right.summary && left.description === right.description && left.severity === right.severity && left.cvss === right.cvss && left.cwe === right.cwe
+}
+
+effect function contentNumber(draft: ReportDraft) {
+  return try modelNumber(JSON.stringify([draft.summary, draft.description, draft.severity, draft.cvss, draft.cwe]))
+}
+
+effect function restored(store: BrowserStore, owner: string, projectId: string) {
+  const accountPrefix = `${storageKeys.reportCompose.key}${owner}:`
+  const keys = store.values.keys catch () => []
+  for (const key of keys) {
+    if (key.startsWith(storageKeys.reportCompose.key) && !key.startsWith(accountPrefix)) store.values.remove(key) catch () => undefined
+  }
+  const raw = store.values.get(`${accountPrefix}${projectId}`) catch () => undefined
+  if (raw === undefined) return try fresh()
+  const parsed = Effect.try(() => JSON.parse(raw) as unknown) catch () => undefined
+  const saved = Schema.decodeUnknownEffect(SavedReport)(parsed) catch () => undefined
+  return saved ?? (try fresh())
+}
+
+effect function persisted(slot: ComposeSlot, saved: SavedReport, previous: SavedReport) {
+  const store = try SessionStore
+  const bytes = JSON.stringify(saved)
+  const written = Effect.as(store.values.set(slot.storageKey, bytes), true) catch () => false
+  if (written && store.durable) return { available: true, captured: bytes }
+  const found = store.values.get(slot.storageKey) catch () => undefined
+  const captured = found !== undefined && (found === JSON.stringify(previous) || found === bytes) ? found : null
+  return { available: false, captured }
+}
+
+effect function clearCaptured(slot: ComposeSlot, captured: string | null) {
+  if (captured === null) return
+  const values = (try SessionStore).values
+  const found = values.get(slot.storageKey) catch () => undefined
+  if (found === captured) values.remove(slot.storageKey) catch () => undefined
+}
+
+effect function hidden(slot: ComposeSlot, captured: string | null, message: string) {
+  try clearCaptured(slot, captured)
+  try Ref.set(slot.held, { saved: try fresh(), available: true, captured: null })
+  try sendDraft({ type: "leaveAccount" })
+  try (try BrowserSession).observe("changed")
+  return { kind: "accountChanged", message } satisfies ComposeOutcome
+}
+
+function ready(held: Held): ComposeOutcome {
+  return { kind: "ready", draft: held.saved.draft, storageAvailable: held.available, attempted: held.saved.attempted }
+}
+
+export effect function openCompose(owner: string, login: string, projectId: string) {
+  const store = try SessionStore
+  const saved = try restored(store, owner, projectId)
+  const storageKey = `${storageKeys.reportCompose.key}${owner}:${projectId}`
+  const actorId = actorNumber(owner)
+  if ((try compositionState()).navigation.actor !== actorId) return { kind: "accountChanged", message: composeMessages.signInAgain } satisfies Opened
+  const held = try Ref.make<Held>({ saved, available: true, captured: null })
+  const slot: ComposeSlot = { owner, login, projectId, storageKey, held }
+  const written = try persisted(slot, saved, saved)
+  try Ref.set(held, { saved, available: written.available, captured: null })
+  if ((try stepped(slot, { type: "open", actorId, projectId: try modelNumber(projectId) })) === "accountChanged") return { kind: "accountChanged", message: composeMessages.signInAgain } satisfies Opened
+  if (!sameReport(saved.draft, emptyReport) || saved.attempted) {
+    try stepped(slot, { type: "edit", contentDigest: try contentNumber(saved.draft), storageAvailable: written.available })
+    if (saved.attempted) {
+      try stepped(slot, { type: "review" })
+      try stepped(slot, { type: "send", submissionKey: try modelNumber(saved.key) })
+      try stepped(slot, { type: "loseResponse" })
+    }
+  }
+  return { kind: "opened", slot, view: ready(try Ref.get(held)) } satisfies Opened
+}
+
+effect function reopened(slot: ComposeSlot) {
+  const draft = try draftState()
+  if (draft.actor !== 0 && draft.stage !== "Received") return "applied" satisfies Stepped
+  return try stepped(slot, { type: "open", actorId: actorNumber(slot.owner), projectId: try modelNumber(slot.projectId) })
+}
+
+export effect function editReport(slot: ComposeSlot, draft: ReportDraft) {
+  if ((try reopened(slot)) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  const now = try Ref.get(slot.held)
+  const contentDigest = try contentNumber(draft)
+  if (!enabled(try draftState(), { type: "edit", contentDigest, storageAvailable: now.available })) return ready(now)
+  const saved = { ...now.saved, draft }
+  const written = try persisted(slot, saved, now.saved)
+  const next = { saved, available: written.available, captured: null }
+  try Ref.set(slot.held, next)
+  if ((try stepped(slot, { type: "edit", contentDigest, storageAvailable: written.available })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  return ready(next)
+}
+
+export effect function reviewReport(slot: ComposeSlot) {
+  if ((try stepped(slot, { type: "review" })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  return ready(try Ref.get(slot.held))
+}
+
+effect function corrected(slot: ComposeSlot, attempt: SavedReport, captured: string | null, message: string) {
+  const next = { ...attempt, attempted: false, key: try randomId() }
+  const values = (try SessionStore).values
+  const found = values.get(slot.storageKey) catch () => undefined
+  let stored = false
+  if (captured !== null && found === captured) stored = Effect.as(values.set(slot.storageKey, JSON.stringify(next)), true) catch () => false
+  try Ref.set(slot.held, { saved: next, available: stored, captured: null })
+  if ((try stepped(slot, { type: "open", actorId: actorNumber(slot.owner), projectId: try modelNumber(slot.projectId) })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  if ((try stepped(slot, { type: "edit", contentDigest: try contentNumber(next.draft), storageAvailable: stored })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  return { kind: "corrected", message } satisfies ComposeOutcome
+}
+
+effect function failed(slot: ComposeSlot, attempt: SavedReport, captured: string | null, failure: CallFailure) {
+  try stepped(slot, { type: "loseResponse" })
+  const identity = try identityOf(slot.owner)
+  if (identity === "unknown") return { kind: "needsSession", message: composeMessages.unverified } satisfies ComposeOutcome
+  if (identity === "changed") return try hidden(slot, captured, composeMessages.signInAgain)
+  if (failure._tag === "ActorChanged" || (failure._tag === "Refused" && accountRefusals.includes(failure.error))) return try hidden(slot, captured, failure.message)
+  if (failure._tag === "Refused" && failure.status === 400) return try corrected(slot, attempt, captured, failure.message)
+  return { kind: "uncertain", message: failure.message } satisfies ComposeOutcome
+}
+
+export effect function submitReport(slot: ComposeSlot) {
+  const draft = try draftState()
+  if (draft.stage === "Writing") return try reviewReport(slot)
+  const now = try Ref.get(slot.held)
+  const keyNumber = try modelNumber(now.saved.key)
+  const sending: Event = draft.stage === "Uncertain" ? { type: "retry" } : { type: "send", submissionKey: keyNumber }
+  if (!enabled(draft, sending)) return ready(now)
+  const attempt = { ...now.saved, attempted: true }
+  const written = try persisted(slot, attempt, now.saved)
+  try Ref.set(slot.held, { saved: attempt, available: written.available, captured: written.captured })
+  const identity = try identityOf(slot.owner)
+  if (identity === "unknown") return { kind: "needsSession", message: composeMessages.unverified } satisfies ComposeOutcome
+  if (identity === "changed") return try hidden(slot, written.captured, composeMessages.signInAgain)
+  const sent = try stepped(slot, sending)
+  if (sent === "accountChanged") return try hidden(slot, written.captured, composeMessages.signInAgain)
+  if (sent === "refused") return ready(try Ref.get(slot.held))
+  const body = { projectId: slot.projectId, idempotencyKey: attempt.key, origin: "slop", expectedReporterGithubId: slot.owner, report: reportBody(attempt.draft) }
+  const answered = Effect.map(call(sendReport, { body }, { limitBytes: composeLimitBytes, expectedActor: slot.owner }), (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
+  if (!answered.ok) return try failed(slot, attempt, written.captured, answered.failure)
+  const id = answered.value.submission.id
+  if (!receiptId.test(id)) return try failed(slot, attempt, written.captured, new InvalidResponse({ status: 0, message: composeMessages.noReceipt }))
+  try stepped(slot, { type: "receiveReceipt", actorId: actorNumber(slot.owner), projectId: try modelNumber(slot.projectId), contentDigest: try contentNumber(attempt.draft), submissionKey: keyNumber, receiptId: try modelNumber(id) })
+  try clearCaptured(slot, written.captured)
+  try Ref.set(slot.held, { saved: try fresh(), available: true, captured: null })
+  return { kind: "received", submissionId: id, replayed: answered.value.replayed === true } satisfies ComposeOutcome
+}
+
+export effect function recheckSession(slot: ComposeSlot) {
+  const identity = try identityOf(slot.owner)
+  if (identity === "unknown") return { kind: "needsSession", message: composeMessages.unverified } satisfies ComposeOutcome
+  if (identity === "changed") return try hidden(slot, (try Ref.get(slot.held)).captured, composeMessages.signInAgain)
+  return { kind: "verified", message: composeMessages.verified } satisfies ComposeOutcome
+}
+
+export effect function openReceipt(slot: ComposeSlot, submissionId: string) {
+  const identity = try identityOf(slot.owner)
+  if (identity === "unknown") return { kind: "unverified", message: composeMessages.receiptUnverified } satisfies ReceiptOutcome
+  if (identity === "changed") {
+    const left = try hidden(slot, null, `Your account changed or signed out. Sign in as @${slot.login} to open the receipt.`)
+    return { kind: "accountChanged", message: left.message } satisfies ReceiptOutcome
+  }
+  return { kind: "open", href: `/inbox?view=reports&submission=${encodeURIComponent(submissionId)}` } satisfies ReceiptOutcome
+}

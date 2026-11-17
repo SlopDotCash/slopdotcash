@@ -42,14 +42,14 @@ type Grant = { id: int, kind: ExemptionKind, repository: int, identity: int, rev
 type Revocation = { grant: int, administrator: int, decision: int, reason: int, at: int }
 type RecordAction = RecordQuarantine | RecordBan | RecordAppeal | RecordReinstate | RecordDeny
 type Issuer = ByModerator | ByVettingService | ByContributorFlags | ByAppellant
-type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan }
+type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan, assessments: List[int] }
 type Recipient = ListingAccount | StewardAccount | IndependentModerators
 type Notice = { entry: int, to: Recipient }
 type Enforcement = { projectId: int, repositories: List[int], original: Set[int], frozen: Set[int], identities: int -> int,
   creator: int, steward: int, revision: int, administrators: Set[int], moderators: Set[int],
   restriction: Restriction, epoch: int, restrictedBy: Set[int], appeal: Appeal, appellants: Set[int],
   revisionPending: bool, findings: Set[int], reviewedFindings: Set[int], accountBans: List[int],
-  seq: int, assessmentIds: Set[int], latest: int -> Assessment, recorded: List[Assessment],
+  seq: int, assessmentIds: Set[int], latest: int -> Assessment, recorded: List[Assessment], unverified: Set[int],
   flags: List[Flag], withdrawn: Set[int], resolved: List[int], clockDay: int,
   grants: List[Grant], activeGrant: int -> int, exempt: Set[int], revocations: List[Revocation],
   journal: List[JournalEntry], notices: List[Notice] }
@@ -61,7 +61,7 @@ pure val initial: Enforcement = { projectId: 1, repositories: List(1), original:
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
   restriction: Clear, epoch: 0, restrictedBy: Set(), appeal: NoAppeal, appellants: Set(),
   revisionPending: false, findings: Set(), reviewedFindings: Set(), accountBans: List(),
-  seq: 0, assessmentIds: Set(), latest: Map(), recorded: List(),
+  seq: 0, assessmentIds: Set(), latest: Map(), recorded: List(), unverified: Set(),
   flags: List(), withdrawn: Set(), resolved: List(), clockDay: 0,
   grants: List(), activeGrant: Map(), exempt: Set(), revocations: List(),
   journal: List(), notices: List() }
@@ -239,9 +239,9 @@ pure def newlyResolved(e: Enforcement): List[int] =
   e.flags.select(f => not(e.resolved.includes(f.receipt)) and
     e.repositories.every(r => latestOf(e, r).state == AClean and latestOf(e, r).snapshot.includes(f.receipt))).listMap(f => f.receipt)
 pure def entry(e: Enforcement, kind: RecordAction, issuer: Issuer, actor: int): List[JournalEntry] =
-  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: RevisionNotNeeded })
+  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: RevisionNotNeeded, assessments: List() })
 pure def restrictionEntry(e: Enforcement, issuer: Issuer, actor: int, kind: RecordAction, plan: RevisionPlan): List[JournalEntry] =
-  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: plan })
+  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: plan, assessments: List() })
 pure def owners(e: Enforcement): List[Notice] =
   e.notices.append({ entry: e.journal.length() + 1, to: ListingAccount }).append({ entry: e.journal.length() + 1, to: StewardAccount })
 pure def canRecordResult(e: Enforcement, by: int, scanOutcome: A::Outcome, plan: RevisionPlan): bool =
@@ -283,15 +283,25 @@ pure def alwaysServiceBanFindings(e: Enforcement): bool = e.restriction == Servi
 Each read of a clean or malicious assessment's canonical retained evidence
 (`backend/vetting/evidence-retention.ts`) reports present or missing. Missing,
 corrupt, expired or unauthorized evidence makes the clean result unverified
-until a later read finds it again.
+until a later read finds it again. A read may concern any completed clean or
+malicious assessment of a listed repository, not only the latest: a
+reinstatement relies on the newest completed one at the live pin, which a
+later pending or other-pin assessment may follow, and development reads that
+one's evidence when it decides (`retainedEvidence(finished)` in
+`repositoryClearance`, `backend/vetting/persistence.ts`).
 
 ```quint
 type EvidenceRead = { assessment: int, present: bool }
 pure def canObserveEvidence(e: Enforcement, by: int, repository: int, evidenceRead: EvidenceRead): bool =
-  by == platform and e.repositories.includes(repository) and latestOf(e, repository).id == evidenceRead.assessment and
-  (latestOf(e, repository).state == AClean or latestOf(e, repository).state == AMalicious)
+  by == platform and e.repositories.includes(repository) and
+  ((latestOf(e, repository).id == evidenceRead.assessment and
+    (latestOf(e, repository).state == AClean or latestOf(e, repository).state == AMalicious)) or
+   e.recorded.some(a => a.id == evidenceRead.assessment and a.repository == repository and (a.state == AClean or a.state == AMalicious)))
 pure def observeEvidence(e: Enforcement, by: int, repository: int, evidenceRead: EvidenceRead): Enforcement =
-  { ...e, latest: e.latest.put(repository, { ...latestOf(e, repository), verified: evidenceRead.present }) }
+  { ...e, latest: if (latestOf(e, repository).id == evidenceRead.assessment)
+      e.latest.put(repository, { ...latestOf(e, repository), verified: evidenceRead.present }) else e.latest,
+    unverified: if (evidenceRead.present) e.unverified.exclude(Set(evidenceRead.assessment))
+      else e.unverified.union(Set(evidenceRead.assessment)) }
 pure val evidenceReadValues = Set({ assessment: 1, present: false }, { assessment: 1, present: true }, { assessment: 2, present: false })
 ```
 
@@ -528,25 +538,84 @@ pure def lawStewardSeesNoFlagEvidence(e: Enforcement, receipt: int): bool =
 ### A fresh clean scan of every repository lifts a flag-only pause
 
 The signed vetting service reinstates a pause that flags alone placed when
-every repository has a clean, non-reused assessment requested at or after the
-pause, its retained evidence verifies, the live integration-branch head of
-every repository still matches the scanned pin, and the resolved flags leave
-fewer than two distinct active reporters. An unavailable pin read defers only
-the reinstatement. It appends no registry revision.
+the deciding assessment of every listed repository is clean, non-reused,
+requested at or after the pause, covers every active flag and has verified
+retained evidence, and the resolved flags leave fewer than two distinct
+active reporters (`planFlagReinstatement` in `backend/vetting/persistence.ts`,
+commit 519bfa983).
+
+The deciding assessment of a repository is the newest completed one of its
+current identity bound to its live pin: the live integration-branch head and
+skill template, with the current vetted content (`latestAtPin`). Newest means
+the latest request, which the recorded history keeps in request order
+(development: `requested_at`, then `rowid`): a repository has at most one
+pending assessment and only that one is recorded. A pending assessment never
+decides, so a running investigation does not block a clean scan; a completed
+one at another commit, template or content does not supersede it; a newer
+incomplete one at the same pin blocks it until a still later clean scan at
+that pin. Each pin read names one assessment of one repository and says
+whether the live pin matches the pin and content that assessment was bound
+to. Development selects over every stored row, so the reads must be complete
+and consistent: a read for every completed assessment of each repository's
+current identity, and never two reads of one assessment that disagree. A
+repository whose live pin could not be read decides nothing, which defers
+only the reinstatement.
+
+The reinstatement record names the deciding assessment of every listed
+repository (`system_issuer.assessmentIds`, the scanned one first), and
+storage evaluates the same selection again in the insertion transaction
+(migration `0131`), so an assessment completed between the plan and the insert
+refuses it. A record written without that list passes only for a
+single-repository project, from its `assessmentId`, and an assessment row
+without a repository id resolves it from the first repository of its own
+revision. It appends no registry revision.
 
 ```quint
 type PinState = PinMatches | PinChanged | PinUnavailable
-type PinRead = { repository: int, pin: PinState }
-pure def pinsMatch(e: Enforcement, pins: List[PinRead]): bool =
-  e.repositories.every(r => pins.some(p => p.repository == r and p.pin == PinMatches))
+type PinRead = { repository: int, assessment: int, pin: PinState }
+pure def pinUnavailable(pins: List[PinRead], repository: int): bool =
+  pins.some(p => p.repository == repository and p.pin == PinUnavailable)
+pure def atLivePin(pins: List[PinRead], repository: int, assessment: int): bool =
+  pins.some(p => p.repository == repository and p.assessment == assessment and p.pin == PinMatches)
+pure def pinsComplete(e: Enforcement, pins: List[PinRead]): bool =
+  e.repositories.every(r => pinUnavailable(pins, r) or
+    e.recorded.every(a => (a.repository == r and a.identity == identityOf(e, r)) implies
+      pins.some(p => p.repository == r and p.assessment == a.id))) and
+  pins.every(p => pins.every(q => (q.repository == p.repository and q.assessment == p.assessment) implies q.pin == p.pin))
+pure def completedAtPin(e: Enforcement, repository: int, pins: List[PinRead]): List[Assessment] =
+  if (pinUnavailable(pins, repository)) List()
+  else e.recorded.select(a => a.repository == repository and a.identity == identityOf(e, repository) and atLivePin(pins, repository, a.id))
+pure def decidingAt(e: Enforcement, repository: int, pins: List[PinRead]): Assessment =
+  val candidates = completedAtPin(e, repository, pins)
+  candidates.nthOr(candidates.length() - 1, unassessed)
+pure def freshAtPin(e: Enforcement, repository: int, pins: List[PinRead]): bool =
+  val a = decidingAt(e, repository, pins)
+  a.state == AClean and not(a.reused) and a.requestEpoch == e.epoch and not(e.unverified.contains(a.id))
+pure def allFreshAtPin(e: Enforcement, pins: List[PinRead]): bool = e.repositories.every(r => freshAtPin(e, r, pins))
+pure def coversActiveFlagsAt(e: Enforcement, repository: int, pins: List[PinRead]): bool =
+  e.flags.every(f => activeFlag(e, f) implies decidingAt(e, repository, pins).snapshot.includes(f.receipt))
+pure def provenance(e: Enforcement, pins: List[PinRead]): List[int] = e.repositories.listMap(r => decidingAt(e, r, pins).id)
+pure val noEntry: JournalEntry = { seq: 0, kind: RecordDeny, issuer: ByModerator, actor: 0, result: RevisionNotNeeded, assessments: List() }
+pure def provenanceOf(e: Enforcement): List[int] = e.journal.nthOr(e.journal.length() - 1, noEntry).assessments
 pure def allFresh(e: Enforcement): bool = e.repositories.every(r => freshClean(e, r))
 pure def canReinstateFlagPause(e: Enforcement, by: int, pins: List[PinRead]): bool =
-  by == vettingService and e.restriction == FlagQuarantine and allFresh(e) and pinsMatch(e, pins) and not(twoActiveFlaggers(e))
+  by == vettingService and e.restriction == FlagQuarantine and pinsComplete(e, pins) and allFreshAtPin(e, pins) and
+  e.repositories.every(r => coversActiveFlagsAt(e, r, pins)) and not(twoActiveFlaggers(e))
 pure def reinstateFlagPause(e: Enforcement, by: int, pins: List[PinRead]): Enforcement =
   { ...e, restriction: Clear, restrictedBy: Set(), appeal: if (e.appeal == AppealRequested) AppealGranted else NoAppeal,
-    appellants: Set(), journal: entry(e, RecordReinstate, ByVettingService, 0), notices: owners(e) }
-pure val pinsValues = Set(List({ repository: 1, pin: PinMatches }), List({ repository: 1, pin: PinUnavailable }),
-  List({ repository: 1, pin: PinChanged }), List({ repository: 1, pin: PinMatches }, { repository: 2, pin: PinMatches }))
+    appellants: Set(), journal: e.journal.append({ seq: e.journal.length() + 1, kind: RecordReinstate, issuer: ByVettingService,
+      actor: 0, result: RevisionNotNeeded, assessments: provenance(e, pins) }), notices: owners(e) }
+pure def stepScanReinstatementNamesEveryRepository(before: Enforcement, via: str, after: Enforcement): bool =
+  via == "reinstateFlagPause" implies
+    (provenanceOf(after).length() == before.repositories.length() and
+     before.repositories.every(r => provenanceOf(after).some(id =>
+       before.recorded.some(a => a.id == id and a.repository == r and a.state == AClean))))
+pure val pinsValues = tuples(0.to(2), 0.to(2), 0.to(2))
+  .map(x => List({ repository: x._1, assessment: 1, pin: PinMatches }, { repository: x._2, assessment: 2, pin: PinMatches },
+    { repository: x._3, assessment: 3, pin: PinMatches }).select(p => p.repository > 0))
+  .union(tuples(1.to(3), 1.to(3)).filter(x => x._1 != x._2)
+    .map(x => List({ repository: 1, assessment: x._1, pin: PinMatches }, { repository: 1, assessment: x._2, pin: PinChanged })))
+  .union(Set(List({ repository: 1, assessment: 1, pin: PinUnavailable }), List({ repository: 1, assessment: 1, pin: PinChanged })))
 ```
 
 ## Story: Moderators restrict, decide malice and decide appeals independently
@@ -624,8 +693,12 @@ pure def denyAppeal(e: Enforcement, by: int, fence: Fence): Enforcement =
 
 Reinstatement needs an open project appeal, a moderator independent of the
 restriction and the appeal, the landed paused and retired revision, and for
-every repository a clean, non-reused, evidence-verified assessment requested
-after the latest restriction with its live pin matching. It records the
+every repository a clean, non-reused, evidence-verified deciding assessment
+requested after the latest restriction: as for a flag-only pause, the newest
+completed one at its live pin and current content, read from complete and
+consistent pin reads, so a pending
+investigation does not block it and one at another pin does not supersede it
+(`repositoryClearance` with `forReinstatement`). It records the
 malicious findings it reviewed; a later finding is a new Ban. It resolves the
 flags it found. The registry restores a paused Community listing only if the
 project was listed when the restriction began.
@@ -633,7 +706,7 @@ project was listed when the restriction began.
 ```quint
 pure def canReinstate(e: Enforcement, by: int, fence: Fence, pins: List[PinRead]): bool =
   fenced(e, fence) and e.appeal == AppealRequested and e.restriction != Clear and independent(e, by) and not(e.revisionPending) and
-  allFresh(e) and pinsMatch(e, pins)
+  pinsComplete(e, pins) and allFreshAtPin(e, pins)
 pure def reinstate(e: Enforcement, by: int, fence: Fence, pins: List[PinRead]): Enforcement =
   { ...e, restriction: Clear, restrictedBy: Set(), appeal: AppealGranted, appellants: Set(),
     reviewedFindings: e.findings, resolved: e.resolved.concat(activeReceipts(e)),
@@ -744,8 +817,18 @@ pure def sometimesRevisionPending(e: Enforcement): bool = e.revisionPending
 pure def sometimesCleared(e: Enforcement): bool = mayContribute(e) and latestOf(e, 1).state == AClean
 pure def sometimesBannedAccountAppealed(e: Enforcement): bool =
   e.appeal == AppealRequested and e.appellants.exists(a => e.accountBans.includes(a) and a != e.steward and a != e.creator)
+pure def sometimesFlagPauseLiftedPastPendingInvestigation(e: Enforcement): bool =
+  latestOf(e, 1).state == APending and
+  e.journal.some(j => j.kind == RecordReinstate and j.issuer == ByVettingService and j.assessments.length() > 0 and
+    j.assessments.every(id => id != latestOf(e, 1).id))
+pure def sometimesFlagPauseLiftedPastOtherPin(e: Enforcement): bool =
+  e.restriction == Clear and latestOf(e, 1).state == AIncomplete and
+  e.journal.some(j => j.kind == RecordReinstate and j.issuer == ByVettingService and j.assessments.length() > 0 and
+    j.assessments.every(id => id != latestOf(e, 1).id))
+pure def sometimesEarlierAssessmentUnverified(e: Enforcement): bool =
+  e.recorded.some(a => e.unverified.contains(a.id) and a.id != latestOf(e, a.repository).id)
 pure def readyToLiftFlagPause(e: Enforcement): bool =
-  e.restriction == FlagQuarantine and allFresh(e) and not(twoActiveFlaggers(e))
+  e.restriction == FlagQuarantine and allFresh(e) and e.repositories.every(r => coversActiveFlags(e, r)) and not(twoActiveFlaggers(e))
 pure def leadsToFlagPauseLifted(e: Enforcement, later: Enforcement): bool =
   readyToLiftFlagPause(e) implies (later.restriction != FlagQuarantine or not(readyToLiftFlagPause(later)))
 pure val fair_reinstateFlagPause = "weak"

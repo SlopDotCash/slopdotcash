@@ -1,5 +1,6 @@
 // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import { millisOf } from "@repo/platform/clock"
+import { isLegacyProject, legacyProjects } from "@repo/backend/legacy"
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
 import { type PublishedRead, type RegistryFreshness, bootRegistry } from "../../gen/frontend__registry.effect.vibe"
 import { fetchBounded } from "../platform/bounded.vibe"
@@ -11,6 +12,16 @@ export const publishedRegistryPath = "/data/project-registry.json"
 export const registryUnavailable = "Project data could not load."
 
 export type RegistryProject = Readonly<Record<string, unknown>>
+
+export interface HistoryRepository {
+  readonly projectId: string
+  readonly repositoryId: string
+}
+
+interface HistoryProject {
+  readonly id: string
+  readonly repositories: ReadonlyArray<{ readonly id: string; readonly aliases: ReadonlyArray<string> }>
+}
 
 export interface RegistryBoot {
   readonly freshness: RegistryFreshness
@@ -119,14 +130,64 @@ export function findHistoricalProject(boot: RegistryBoot, projectId: string): Re
   return historicalProjects(boot).find((project) => project.id === projectId)
 }
 
-export function findProjectByRepositoryId(boot: RegistryBoot, repositoryId: string): RegistryProject | undefined {
+function lastOwner(projects: ReadonlyArray<RegistryProject>, repositoryId: string): RegistryProject | undefined {
   const wanted = repositoryId.toLowerCase()
-  return listedProjects(boot).find((project) => repositoriesOf(project).some((repository) => namesOf(repository).includes(wanted)))
+  return [...projects].reverse().find((project) => repositoriesOf(project).some((repository) => namesOf(repository).includes(wanted)))
 }
 
-export function findRepository(boot: RegistryBoot, repositoryId: string): RegistryProject | undefined {
+export function findProjectByRepositoryId(boot: RegistryBoot, repositoryId: string): RegistryProject | undefined {
+  return lastOwner(listedProjects(boot), repositoryId)
+}
+
+export function findHistoricalProjectByRepositoryId(boot: RegistryBoot, repositoryId: string): RegistryProject | undefined {
+  return lastOwner(historicalProjects(boot), repositoryId)
+}
+
+export function isHistoricalProjectId(boot: RegistryBoot, projectId: string): boolean {
+  return findHistoricalProject(boot, projectId) !== undefined || isLegacyProject(projectId)
+}
+
+function historyOf(project: RegistryProject): ReadonlyArray<HistoryProject> {
+  const id = text(project.id)
+  if (id === undefined) return []
+  const repositories = repositoriesOf(project).flatMap((repository) => {
+    const repositoryId = text(repository.id)
+    const aliases = Array.isArray(repository.aliases) ? repository.aliases.filter((alias): alias is string => typeof alias === "string") : []
+    return repositoryId === undefined ? [] : [{ id: repositoryId, aliases }]
+  })
+  return [{ id, repositories }]
+}
+
+function historyProjects(boot: RegistryBoot): ReadonlyArray<HistoryProject> {
+  return [...legacyProjects, ...historicalProjects(boot).flatMap(historyOf)]
+}
+
+export function findHistoricalRepository(boot: RegistryBoot, repositoryId: string): HistoryRepository | undefined {
   const wanted = repositoryId.toLowerCase()
-  return repositoriesOf(findProjectByRepositoryId(boot, repositoryId) ?? {}).find((repository) => text(repository.id)?.toLowerCase() === wanted)
+  let found: HistoryRepository | undefined = undefined
+  for (const project of historyProjects(boot)) {
+    for (const repository of project.repositories) {
+      if ([repository.id, ...repository.aliases].some((name) => name.toLowerCase() === wanted)) found = { projectId: project.id, repositoryId: repository.id }
+    }
+  }
+  return found
+}
+
+export function isHistoricalRepositoryId(boot: RegistryBoot, repositoryId: string): boolean {
+  return findHistoricalRepository(boot, repositoryId) !== undefined
+}
+
+export function findHistoricalRepositoryIdentity(boot: RegistryBoot, repositoryId: string): string | undefined {
+  const identities = new Map<string, { readonly repositoryId: string; readonly names: Set<string> }>()
+  for (const repository of historyProjects(boot).flatMap((project) => project.repositories)) {
+    const identity = { repositoryId: repository.id, names: new Set<string>() }
+    for (const name of [repository.id, ...repository.aliases]) {
+      const key = name.toLowerCase()
+      for (const linked of identities.get(key)?.names ?? [key]) identity.names.add(linked)
+    }
+    for (const name of identity.names) identities.set(name, identity)
+  }
+  return identities.get(repositoryId.toLowerCase())?.repositoryId
 }
 
 export service Registry {

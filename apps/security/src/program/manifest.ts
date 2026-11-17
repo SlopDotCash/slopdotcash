@@ -3,6 +3,7 @@ import type { Network } from "@repo/ports/backend";
 import type { Offer, ProgramStatus } from "../../gen/security__program.ts";
 import type { AwardSplit, Eligibility, FundingPolicy } from "../../gen/security__terms.ts";
 import { limbsOf } from "../terms/asset.ts";
+import type { OwnerChange } from "./kernel.ts";
 
 export type Json = string | number | boolean | null | ReadonlyArray<Json> | { readonly [key: string]: Json };
 type Fields = Readonly<Record<string, unknown>>;
@@ -40,6 +41,18 @@ const chains: Readonly<Record<Chain, ChainAssets>> = {
   ethereum: { family: "evm", chainId: "1", cluster: null, network: "Ethereum", maxBaseUnits: maxEvmBaseUnits, native: { chain: "ethereum", address: evmNative, symbol: "ETH", decimals: 18 }, stablecoin: { chain: "ethereum", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 } },
   robinhood: { family: "evm", chainId: "4663", cluster: null, network: "Robinhood", maxBaseUnits: maxEvmBaseUnits, native: { chain: "robinhood", address: evmNative, symbol: "ETH", decimals: 18 }, stablecoin: { chain: "robinhood", address: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", symbol: "USDG", decimals: 6 } },
   solana: { family: "solana", chainId: null, cluster: "mainnet-beta", network: "Solana", maxBaseUnits: maxSolanaBaseUnits, native: { chain: "solana", address: solanaNative, symbol: "SOL", decimals: 9 }, stablecoin: { chain: "solana", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", symbol: "USDC", decimals: 6 } },
+};
+
+const escrowNetworks: Readonly<Record<string, { readonly chain: Chain; readonly usdc: string | null }>> = {
+  "base-sepolia": { chain: "base", usdc: "0x036cbd53842c5426634e7929541ec2318f3dcf7e" },
+  "base-mainnet": { chain: "base", usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
+  "solana-devnet": { chain: "solana", usdc: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU" },
+  "solana-testnet": { chain: "solana", usdc: null },
+  "solana-mainnet": { chain: "solana", usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
+  "robinhood-testnet": { chain: "robinhood", usdc: null },
+  "robinhood-mainnet": { chain: "robinhood", usdc: null },
+  "ethereum-sepolia": { chain: "ethereum", usdc: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238" },
+  ethereum: { chain: "ethereum", usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" },
 };
 
 const statuses: Readonly<Record<string, ProgramStatus>> = { draft: "Unpublished", "pending-approval": "PendingApproval", open: "Open", paused: "Paused", closed: "Closed" };
@@ -266,6 +279,20 @@ function validateFundingAndCapacity(terms: Fields): Fields {
 }
 
 /** @throws {ManifestProblem} */
+function validateSettlement(terms: Fields): void {
+  if (terms.settlement === undefined) return;
+  const amount = record(terms.amount, "amount");
+  if (amount.currency !== "USDC" || member(terms.settlement, "chain") !== amount.network) fail("settlement", "requires matching USDC program terms");
+  const deployments = member(terms.settlement, "deployments");
+  for (const deployment of Array.isArray(deployments) ? deployments : []) {
+    const network = member(deployment, "network");
+    const reviewed = typeof network === "string" && Object.hasOwn(escrowNetworks, network) ? escrowNetworks[network] : undefined;
+    const asset = member(deployment, "asset");
+    if (reviewed === undefined || reviewed.usdc === null || amount.decimals !== 6 || typeof asset !== "string" || !sameAddress(reviewed.chain, reviewed.usdc, asset)) fail("settlement", "requires the reviewed USDC asset on this network");
+  }
+}
+
+/** @throws {ManifestProblem} */
 function validateContacts(terms: Fields, repositoryIds: ReadonlyArray<string>): void {
   const sponsor = record(terms.sponsor, "sponsor");
   exactKeys(sponsor, ["githubId", "name"], "sponsor");
@@ -280,6 +307,7 @@ function validateContacts(terms: Fields, repositoryIds: ReadonlyArray<string>): 
   integer(targets.acknowledgeHours, "responseTargets.acknowledgeHours", 1, 336);
   integer(targets.triageBusinessDays, "responseTargets.triageBusinessDays", 1, 60);
   integer(targets.updateIntervalDays, "responseTargets.updateIntervalDays", 1, 60);
+  validateSettlement(terms);
   validateApprovers(terms.approvers);
   const dispute = record(terms.dispute, "dispute");
   exactKeys(dispute, ["authority", "process"], "dispute");
@@ -335,11 +363,10 @@ export function securityBountyProblem(value: unknown, context: ManifestContext):
   }
 }
 
-export type OwnerRefusal = "ProgramRequired" | "SplitRestricted" | "ContactsRestricted" | "VaultRestricted" | "AssetRestricted" | "FundingUnavailable";
-
-export interface OwnerChange {
+export interface OwnerInput {
   readonly previous: unknown;
   readonly next: unknown;
+  readonly effectiveStatus: unknown;
   readonly actorGithubId: string;
   readonly canManageContacts: boolean;
   readonly splitApprover: boolean;
@@ -362,23 +389,26 @@ function assetTerms(terms: unknown) {
 }
 
 /** @throws {never} */
-export function ownerProgramRefusal(change: OwnerChange): OwnerRefusal | undefined {
-  const { previous, next } = change;
-  if (next === undefined) return previous === undefined ? undefined : "ProgramRequired";
-  if (!change.splitApprover && isFullAwardSplit(member(next, "split")) !== isFullAwardSplit(member(previous, "split"))) return "SplitRestricted";
-  if (!change.canManageContacts) {
-    if (previous !== undefined) {
-      if (canonical(member(previous, "approvers")) !== canonical(member(next, "approvers")) || canonical(member(previous, "sponsor")) !== canonical(member(next, "sponsor"))) return "ContactsRestricted";
-    } else if (people(next).some((person) => member(person, "githubId") !== change.actorGithubId) || (member(member(next, "sponsor"), "githubId") !== null && member(member(next, "sponsor"), "githubId") !== change.actorGithubId)) {
-      return "ContactsRestricted";
-    }
-  }
+export function ownerChangeOf(input: OwnerInput): OwnerChange {
+  const { previous, next } = input;
   const deployments = member(member(previous, "settlement"), "deployments");
-  const boundVault = Array.isArray(deployments) && deployments.length > 0;
-  if (canonical(member(previous, "settlement")) !== canonical(member(next, "settlement")) && (boundVault || member(next, "settlement") !== undefined)) return "VaultRestricted";
-  if (boundVault && previous !== undefined && canonical(assetTerms(previous)) !== canonical(assetTerms(next))) return "AssetRestricted";
-  if (member(next, "status") === "open" && member(next, "fundingPolicy") !== "after-approval" && !change.fundsAvailable) return "FundingUnavailable";
-  return undefined;
+  const sponsor = member(member(next, "sponsor"), "githubId");
+  return {
+    hadProgram: previous !== undefined,
+    hasProgram: next !== undefined,
+    splitChanged: isFullAwardSplit(member(next, "split")) !== isFullAwardSplit(member(previous, "split")),
+    splitApprover: input.splitApprover,
+    canManageContacts: input.canManageContacts,
+    contactsChanged: canonical(member(previous, "approvers")) !== canonical(member(next, "approvers")) || canonical(member(previous, "sponsor")) !== canonical(member(next, "sponsor")),
+    namesOthers: people(next).some((person) => member(person, "githubId") !== input.actorGithubId) || (sponsor !== null && sponsor !== input.actorGithubId),
+    settlementChanged: canonical(member(previous, "settlement")) !== canonical(member(next, "settlement")),
+    boundVault: Array.isArray(deployments) && deployments.length > 0,
+    namesSettlement: member(next, "settlement") !== undefined,
+    assetChanged: canonical(assetTerms(previous)) !== canonical(assetTerms(next)),
+    opening: input.effectiveStatus === "open",
+    afterApproval: member(next, "fundingPolicy") === "after-approval",
+    fundsAvailable: input.fundsAvailable,
+  };
 }
 
 /** @throws {never} */
@@ -425,4 +455,88 @@ export function offerOf(terms: unknown): Offer {
 /** @throws {never} */
 export function fundingEvidence(projectId: string, snapshotAt: string): Json {
   return { state: "verified-available", evidence: `Finalized bounty vault balance for ${projectId} at ${snapshotAt}`, verifiedAt: snapshotAt };
+}
+
+export interface ProgramAsset {
+  readonly network: string;
+  readonly symbol: string;
+  readonly decimals: number;
+  readonly address: string;
+}
+
+export interface AwardAssetTerms {
+  readonly currency: string;
+  readonly decimals: number;
+  readonly network: string | null;
+  readonly asset?: ProgramAsset;
+}
+
+export interface ProgramDeployment {
+  readonly network: string;
+  readonly vault: string;
+  readonly asset: string;
+}
+
+export interface ProgramTerms {
+  readonly amount: AwardAssetTerms;
+  readonly deployments: ReadonlyArray<ProgramDeployment>;
+}
+
+export interface ProgramFundsView {
+  readonly currency: string;
+  readonly decimals: number;
+  readonly network: string | null;
+  readonly freeMinor: string;
+  readonly snapshotAt: string;
+  readonly availableMinor: string;
+  readonly assetAddress: string;
+  readonly deploymentNetwork: string;
+}
+
+/** @throws {never} */
+function awardAssetTerms(value: unknown): AwardAssetTerms | undefined {
+  const currency = member(value, "currency");
+  const decimals = member(value, "decimals");
+  const network = member(value, "network");
+  const asset = member(value, "asset");
+  if (typeof currency !== "string" || typeof decimals !== "number" || (typeof network !== "string" && network !== null)) return undefined;
+  if (asset === undefined || asset === null) return { currency, decimals, network };
+  const assetNetwork = member(asset, "network");
+  const symbol = member(asset, "symbol");
+  const assetDecimals = member(asset, "decimals");
+  const address = member(asset, "address");
+  if (typeof assetNetwork !== "string" || typeof symbol !== "string" || typeof assetDecimals !== "number" || typeof address !== "string") return undefined;
+  return { currency, decimals, network, asset: { network: assetNetwork, symbol, decimals: assetDecimals, address } };
+}
+
+/** @throws {never} */
+export function programTermsOf(terms: unknown): ProgramTerms | undefined {
+  const amount = awardAssetTerms(member(terms, "amount"));
+  if (amount === undefined) return undefined;
+  const listed = member(member(terms, "settlement"), "deployments");
+  const deployments = (Array.isArray(listed) ? listed : []).flatMap((deployment: unknown) => {
+    const network = member(deployment, "network");
+    const vault = member(deployment, "vault");
+    const asset = member(deployment, "asset");
+    return typeof network === "string" && typeof vault === "string" && typeof asset === "string" ? [{ network, vault, asset }] : [];
+  });
+  return { amount, deployments };
+}
+
+/** @throws {never} */
+export function fundsCompatible(award: unknown, funds: ProgramFundsView): boolean {
+  const terms = awardAssetTerms(award);
+  const deployment = Object.hasOwn(escrowNetworks, funds.deploymentNetwork) ? escrowNetworks[funds.deploymentNetwork] : undefined;
+  if (terms === undefined || deployment === undefined || deployment.chain !== terms.network) return false;
+  if (terms.currency !== funds.currency || terms.decimals !== funds.decimals || terms.network !== funds.network) return false;
+  if (terms.asset === undefined) return terms.currency === "USDC" && terms.decimals === 6 && deployment.usdc !== null && sameAddress(deployment.chain, deployment.usdc, funds.assetAddress);
+  return terms.asset.network === deployment.chain && terms.asset.symbol === terms.currency && terms.asset.decimals === terms.decimals && sameAddress(deployment.chain, terms.asset.address, funds.assetAddress);
+}
+
+/** @throws {never} */
+export function reservedMinor(funds: ProgramFundsView): string {
+  if (!baseUnits.test(funds.freeMinor) || !baseUnits.test(funds.availableMinor)) return funds.freeMinor;
+  const free = BigInt(funds.freeMinor);
+  const available = BigInt(funds.availableMinor);
+  return (free > available ? free - available : 0n).toString();
 }

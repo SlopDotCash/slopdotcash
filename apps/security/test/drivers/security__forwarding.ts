@@ -171,6 +171,7 @@ function shown(state: Forwarding): Forwarding {
     activeClaim: claimOut(state.activeClaim),
     readyClaims: state.readyClaims.map(claimOut),
     canonical: copyOut(state.canonical),
+    bindingCopies: state.bindingCopies.map(copyOut),
     receiptDigest: nameOf(state.receiptDigest),
   };
 }

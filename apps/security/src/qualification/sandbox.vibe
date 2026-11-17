@@ -1,0 +1,238 @@
+// spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"
+import * as Base64 from "effect/encoding/Base64"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Interpreter } from "../sandbox/run.vibe"
+import { ScanService, signedCall, signedJson } from "../scanner/run/service.vibe"
+import { runIsolatedArtifact, sandboxPath } from "../scanner/sandboxClient/client.vibe"
+import { protectedCheckout, secretVariable, variable } from "../programs/checkout.vibe"
+import { type PublicScannerKey, publicScannerKey } from "../programs/publicKey.vibe"
+import { CloudflareAccount, cloudflareAccount, metadataRead } from "./cloudflare.vibe"
+
+export error QualificationRefused { message: string }
+export error ProbeFailed { probe: string }
+
+export const stagingOrigin = "https://staging.slop.cash"
+export const stagingSandbox = "slop-vetting-sandbox-staging"
+export const operatorWorkflow = "SlopDotCash/slopdotcash/.github/workflows/operator.yml@refs/heads/development"
+export const sandboxProbes = ["authorization", "digest", "uid-environment", "fresh-filesystem", "python-node", "egress", "output-limit", "timeout", "fresh-after-timeout"] as const
+
+schema Health { ok?: boolean; service?: string; revision?: string; imageSha256?: string }
+
+schema EnvVar { readonly type: string; readonly value?: string }
+schema ServiceBinding { readonly service: string }
+schema ProductionConfig { readonly env_vars?: Record<string, EnvVar>; readonly services?: Record<string, ServiceBinding> }
+schema DeploymentConfigs { readonly production: ProductionConfig }
+schema Canonical { readonly id?: string }
+schema PagesProject { readonly name?: string; readonly production_branch: string; readonly canonical_deployment?: Canonical; readonly deployment_configs: DeploymentConfigs }
+schema TriggerMetadata { readonly branch?: string; readonly commit_hash?: string; readonly commit_dirty?: boolean }
+schema Trigger { readonly metadata?: TriggerMetadata }
+schema Stage { readonly name?: string; readonly status?: string }
+schema PagesDeployment { readonly id?: string; readonly url?: string; readonly created_on?: string; readonly environment?: string; readonly project_name?: string; readonly is_skipped?: boolean; readonly latest_stage?: Stage; readonly deployment_trigger?: Trigger }
+schema PagesDomain { readonly status: string }
+schema VersionShare { readonly version_id: string; readonly percentage: number }
+schema WorkerDeployment { readonly versions: ReadonlyArray<VersionShare> }
+schema WorkerDeployments { readonly deployments: ReadonlyArray<WorkerDeployment> }
+schema Binding { readonly name: string; readonly type: string; readonly text?: string; readonly namespace_id?: string; readonly class_name?: string }
+schema VersionResources { readonly bindings: ReadonlyArray<Binding> }
+schema WorkerVersion { readonly resources: VersionResources }
+schema Subdomain { readonly enabled?: boolean; readonly previews_enabled?: boolean }
+schema WorkerDomain { readonly service: string }
+schema Network { readonly mode: string; readonly assign_ipv4: string; readonly assign_ipv6: string }
+schema ContainerConfiguration { readonly image: string; readonly network: Network }
+schema ContainerObjects { readonly namespace_id: string }
+schema ContainerApplication { readonly name: string; readonly configuration: ContainerConfiguration; readonly durable_objects: ContainerObjects }
+
+const pagesProject = "slop-staging"
+const stagingDomain = "staging.slop.cash"
+const scannerKeyName = "VETTING_RESULT_PUBLIC_KEYS"
+const sandboxBindings: ReadonlySet<string> = new Set(["RUNNER", "RUNNER_IMAGE_SHA256", "SLOP_RELEASE_SHA"])
+
+export function sandboxPlan() {
+  return { mode: "plan", origin: stagingOrigin, worker: stagingSandbox, probes: sandboxProbes, changes: "Only harmless disposable sandbox executions; no model, case or evidence publication" }
+}
+
+export effect function qualificationMode(args: ReadonlyArray<string>, usage: string) {
+  if (args.length === 0) return "plan"
+  const [flag, mode, ...rest] = args
+  if (flag !== "--mode" || (mode !== "plan" && mode !== "execute") || rest.length !== 0) throw new QualificationRefused({ message: usage })
+  return mode
+}
+
+function decoded(text: string) {
+  const bytes = Result.getOrUndefined(Base64.decode(text))
+  return bytes === undefined ? "" : new TextDecoder().decode(bytes)
+}
+
+effect function expect(probe: string, holds: boolean) {
+  if (!holds) throw new ProbeFailed({ probe })
+}
+
+export function successfulDeployment(listed: ReadonlyArray<PagesDeployment>, sha: string) {
+  const matches = listed.flatMap((deployment) => {
+    const createdOn = Date.parse(deployment.created_on ?? "")
+    const metadata = deployment.deployment_trigger?.metadata
+    const exact = deployment.environment === "production" && deployment.project_name === pagesProject && deployment.is_skipped === false && deployment.latest_stage?.name === "deploy" && deployment.latest_stage.status === "success" && metadata?.branch === "development" && metadata.commit_dirty === false && metadata.commit_hash === sha && Number.isFinite(createdOn)
+    return exact ? [{ id: deployment.id ?? "", url: deployment.url ?? "", createdOn }] : []
+  })
+  if (matches.some((match) => !/^[0-9a-f-]{20,}$/iu.test(match.id) || !URL.canParse(match.url) || new URL(match.url).protocol !== "https:")) return "invalid"
+  return matches.reduce<(typeof matches)[number] | undefined>((latest, match) => latest === undefined || match.createdOn > latest.createdOn ? match : latest, undefined)
+}
+
+effect function expectMetadata(holds: boolean) {
+  if (!holds) throw new ProbeFailed({ probe: "metadata" })
+}
+
+effect function health(sha: string, image: string) {
+  const value = signedJson({ step: "health", method: "GET", path: sandboxPath, timeoutMs: 30_000, limitBytes: 64 * 1024 }) catch effect () => {
+    throw new ProbeFailed({ probe: "health" })
+  }
+  const answer = Schema.decodeUnknownEffect(Health)(value) catch effect () => {
+    throw new ProbeFailed({ probe: "health" })
+  }
+  try expect("health", answer.ok === true && answer.service === "vetting-sandbox" && answer.revision === sha && answer.imageSha256 === image)
+}
+
+effect function deployedIdentity(sha: string, key: PublicScannerKey) {
+  const project = try metadataRead("pages project", `pages/projects/${pagesProject}`, PagesProject)
+  const production = project.deployment_configs.production
+  const published = production.env_vars?.[scannerKeyName]
+  try expectMetadata(project.production_branch === "development" && published?.type === "plain_text" && published.value === key.publicKey)
+  try expectMetadata(production.services?.VETTING_SANDBOX?.service === stagingSandbox)
+  const listed = try metadataRead("pages deployments", `pages/projects/${pagesProject}/deployments?env=production&per_page=25`, Schema.Array(PagesDeployment))
+  const deployment = successfulDeployment(listed, sha)
+  if (deployment === undefined || deployment === "invalid" || project.canonical_deployment?.id !== deployment.id) throw new ProbeFailed({ probe: "metadata" })
+  const domain = try metadataRead("pages domain", `pages/projects/${pagesProject}/domains/${stagingDomain}`, PagesDomain)
+  try expectMetadata(domain.status === "active")
+  const deployed = try metadataRead("sandbox deployments", `workers/scripts/${stagingSandbox}/deployments`, WorkerDeployments)
+  const active = deployed.deployments[0]?.versions ?? []
+  const [only] = active
+  if (active.length !== 1 || only === undefined || only.percentage !== 100) throw new ProbeFailed({ probe: "metadata" })
+  const version = try metadataRead("sandbox version", `workers/scripts/${stagingSandbox}/versions/${only.version_id}`, WorkerVersion)
+  const bindings = version.resources.bindings
+  const binding = (name: string) => bindings.find((entry) => entry.name === name)
+  const image = binding("RUNNER_IMAGE_SHA256")?.text ?? ""
+  const runner = binding("RUNNER")
+  try expectMetadata(binding("SLOP_RELEASE_SHA")?.text === sha && /^[a-f0-9]{64}$/u.test(image) && runner?.class_name === "OfflineSandbox")
+  try expectMetadata(bindings.every((entry) => sandboxBindings.has(entry.name)))
+  const subdomain = try metadataRead("sandbox subdomain", `workers/scripts/${stagingSandbox}/subdomain`, Subdomain)
+  try expectMetadata(subdomain.enabled === false && subdomain.previews_enabled === false)
+  const domains = try metadataRead("worker domains", "workers/domains", Schema.Array(WorkerDomain))
+  try expectMetadata(!domains.some((entry) => entry.service === stagingSandbox))
+  const applications = try metadataRead("sandbox container", `containers/applications?name=${stagingSandbox}-offlinesandbox`, Schema.Array(ContainerApplication))
+  const containers = applications.filter((application) => application.name === `${stagingSandbox}-offlinesandbox`)
+  const [container] = containers
+  if (containers.length !== 1 || container === undefined) throw new ProbeFailed({ probe: "metadata" })
+  const network = container.configuration.network
+  try expectMetadata(container.configuration.image.endsWith(`@sha256:${image}`) && container.durable_objects.namespace_id === runner?.namespace_id && network.mode === "private" && network.assign_ipv4 === "none" && network.assign_ipv6 === "none")
+  try health(sha, image)
+  return { pagesDeploymentId: deployment.id, workerVersionId: only.version_id, sourceSha: sha, imageSha256: image, publicKeySha256: key.sha256 }
+}
+
+effect function unsignedStatus(body: Uint8Array) {
+  const { origin } = try ScanService
+  const client = try HttpClient.HttpClient
+  const request = HttpClientRequest.bodyUint8Array(HttpClientRequest.post(`${origin}${sandboxPath}`), body, "application/json")
+  const response = provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" }) catch effect () => {
+    throw new ProbeFailed({ probe: "authorization" })
+  }
+  return response.status
+}
+
+export effect function runSandboxProbes(identity: { readonly sourceSha: string; readonly imageSha256: string }) {
+  const runIds = new Set<string>()
+  const encoder = new TextEncoder()
+  const execute = (source: string, interpreter: Interpreter = "python") => effect {
+    const run = runIsolatedArtifact(encoder.encode(source), interpreter) catch effect () => {
+      throw new ProbeFailed({ probe: "execution" })
+    }
+    const evidence = run.evidence
+    try expect("identity", evidence.sourceSha === identity.sourceSha && evidence.imageSha256 === identity.imageSha256 && !runIds.has(evidence.runId))
+    runIds.add(evidence.runId)
+    return evidence
+  }
+  const payload = (source: string, digest?: string) => effect {
+    const bytes = encoder.encode(source)
+    return encoder.encode(JSON.stringify({ artifactBase64: Base64.encode(bytes), artifactSha256: digest ?? (try sha256Hex(bytes)), interpreter: "python" }))
+  }
+  try expect("authorization", (try unsignedStatus(try payload("print('untrusted')"))) === 401)
+  const mismatch = signedCall({ step: "digest", method: "POST", path: sandboxPath, body: try payload("print('wrong digest')", "0".repeat(64)), contentType: "application/json", timeoutMs: 120_000, limitBytes: 64 * 1024 }) catch effect () => {
+    throw new ProbeFailed({ probe: "digest" })
+  }
+  try expect("digest", mismatch.status === 400)
+  const unsupported = try execute("not an executable format", "binary")
+  try expect("digest", unsupported.status === "not-executable" && unsupported.exitCode === 126 && !unsupported.outputComplete)
+  const identityRun = try execute("import os,json\nprint(os.getuid(), os.getgid())\nprint(json.dumps(sorted(os.environ)))\nopen('/analysis/work/marker', 'w').write('private')")
+  const lines = decoded(identityRun.stdoutBase64).split("\n")
+  const environment = Effect.try(() => JSON.parse(lines[1] ?? "") as unknown) catch effect () => {
+    throw new ProbeFailed({ probe: "uid-environment" })
+  }
+  const keys = Array.isArray(environment) ? environment.filter((key) => key !== "LC_CTYPE") : []
+  try expect("uid-environment", identityRun.exitCode === 0 && /65534 65534/u.test(lines[0] ?? "") && JSON.stringify(keys) === JSON.stringify(["HOME", "PATH", "TMPDIR"]))
+  const fresh = try execute("import os\nprint(os.path.exists('/analysis/work/marker'))\nprint(os.getenv('SURPLUS_API_KEY', 'absent'))")
+  try expect("fresh-filesystem", decoded(fresh.stdoutBase64) === "False\nabsent\n")
+  const node = try execute("console.log('node-runtime')", "node")
+  try expect("python-node", node.exitCode === 0 && decoded(node.stdoutBase64) === "node-runtime\n")
+  const network = try execute("import socket\ntry:\n s=socket.socket()\n s.settimeout(3)\n s.connect(('1.1.1.1',443))\n print('CONNECTED')\nexcept OSError:\n print('BLOCKED')")
+  try expect("egress", decoded(network.stdoutBase64) === "BLOCKED\n")
+  const limited = try execute("import sys\nsys.stdout.write('x' * 1000000)")
+  try expect("output-limit", limited.status === "output-limit" && !limited.outputComplete && (Result.getOrUndefined(Base64.decode(limited.stdoutBase64))?.length ?? 0) === 65536)
+  const timeout = try execute("import time\ntime.sleep(40)")
+  try expect("timeout", timeout.status === "timeout" && !timeout.outputComplete)
+  const afterTimeout = try execute("import os\nprint(os.path.exists('/analysis/work/marker'))")
+  try expect("fresh-after-timeout", afterTimeout.exitCode === 0 && decoded(afterTimeout.stdoutBase64) === "False\n")
+  return {
+    authorizationRefused: true,
+    digestMismatchRefused: true,
+    unsupportedRefused: true,
+    unprivilegedIdentity: true,
+    minimalEnvironment: true,
+    freshFilesystem: true,
+    pythonAndNode: true,
+    egressRefused: true,
+    outputBounded: true,
+    timeoutBounded: true,
+    freshAfterTimeout: true,
+    uniqueExecutions: runIds.size,
+    destruction: "successful responses awaited destroy; independent provider teardown inventory not proven",
+  }
+}
+
+effect function executed() {
+  const { sha } = try protectedCheckout({ refs: ["refs/heads/development"], workflowRef: operatorWorkflow, mode: "execute", message: "The protected staging qualification checkout is required" })
+  const runnerTemp = try variable("RUNNER_TEMP")
+  const key = try secretVariable("SLOP_VETTING_SIGNING_JWK")
+  if (runnerTemp === undefined || key === undefined) throw new QualificationRefused({ message: "The protected staging qualification checkout is required" })
+  const account = cloudflareAccount(try variable("CLOUDFLARE_ACCOUNT_ID"), try secretVariable("CLOUDFLARE_API_TOKEN"))
+  if (account === undefined) throw new QualificationRefused({ message: "Protected metadata access is required" })
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const directory = path.join(runnerTemp, "vetting-sandbox-qualification")
+  try fs.makeDirectory(directory, { recursive: true, mode: 0o700 })
+  const report = try Ref.make<Readonly<Record<string, unknown>>>({ sourceSha: sha, target: "staging", evidenceKind: "harmless-sandbox-probes", success: false, phase: "metadata", modelCalls: 0, evidenceWrites: 0, scanPublications: 0 })
+  const note = (fields: Readonly<Record<string, unknown>>) => Ref.update(report, (current) => ({ ...current, ...fields }))
+  const run = Effect.provide(effect {
+    const publicKey = try publicScannerKey(key, "staging", sha)
+    const before = try deployedIdentity(sha, publicKey)
+    try note({ deployment: before, phase: "harmless-probes" })
+    try note({ probes: try runSandboxProbes(before), phase: "identity-readback" })
+    const after = try deployedIdentity(sha, publicKey)
+    if (JSON.stringify(after) !== JSON.stringify(before)) throw new ProbeFailed({ probe: "identity-readback" })
+    try note({ success: true, phase: "complete" })
+  }, Layer.mergeAll(Layer.succeed(ScanService, { origin: stagingOrigin, key }), Layer.succeed(CloudflareAccount, account)))
+  try Effect.ensuring(run, effect {
+    const final = try Ref.get(report)
+    try Effect.ignore(fs.writeFile(path.join(directory, "result.json"), new TextEncoder().encode(`${JSON.stringify(final, null, 2)}\n`), { mode: 0o600 }))
+  })
+}
+
+export effect function sandboxQualification(args: ReadonlyArray<string>) {
+  const mode = try qualificationMode(args, "usage: sandbox-qualification [--mode plan|execute]")
+  if (mode === "plan") {
+    try Console.log(JSON.stringify(sandboxPlan()))
+    return
+  }
+  executed() catch effect () => {
+    throw new QualificationRefused({ message: "Sandbox qualification failed; request, signature and output bytes are not logged." })
+  }
+}
+

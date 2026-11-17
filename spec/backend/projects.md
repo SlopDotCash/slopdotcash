@@ -331,11 +331,13 @@ pure val editValues = Set({ authority: owner1, expectedRevision: 2, checked: tru
 Removal rechecks current authority on the stored primary repository, even on
 a retry. It appends a paused, retired revision and never runs activation. A
 project the owner already removed, or an administrator delisted, returns
-success unchanged. Removing a project that a restriction retired records the
-owner's removal as its own revision, so a later reinstatement never lists it
-again (PRD section 4: removal hides the project; the project API instead
-returns success without recording the removal). History, earned Points,
-private cases and funded obligations are kept.
+success unchanged. Removal waits until the project's own restriction is
+lifted: the [composition](./projectComposition.md) refuses it while a
+Quarantine or Ban is in force (409 `project_restricted`), before the
+already-removed retry, so a restriction's retired revision is never taken for
+a removal and reinstatement lists the project again from the revision the
+restriction opened on (Slop development `da358d8a9`). History, earned
+Points, private cases and funded obligations are kept.
 
 ```quint
 type Removal = { authority: AuthorityRead, expectedRevision: int }

@@ -17,7 +17,10 @@ or milliseconds) before these decisions see it.
 ### A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards
 
 Variants derive only from the registry's reward policy. An external prize
-share shows its advertised amount. Otherwise a monthly pool with a cap above
+card leads with "Points + external prize", without the advertised amount or
+an "External prize" state; the project page names the prize (operator
+decision, 16 November 2026; development `src/App.tsx:634–672` at
+`df21e37b7`). Otherwise a monthly pool with a cap above
 zero shows its cap (a stablecoin pool in dollars, a token pool with its ticker
 and explorer link), unless the security program is bounty-only. A security
 program, separate or bounty-only, adds its own variant with its amount, status

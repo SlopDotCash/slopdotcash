@@ -1,0 +1,65 @@
+// spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"
+import { D1, type Statement, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { type Notice, Notices } from "@repo/ports/operations"
+import type { ItemKind } from "../context/load.vibe"
+
+export const moderatorLabel = "slopbot: moderator"
+export const scamReviewPath = "/api/v1/notifications/scam-reviews/"
+
+const githubOwner = /^[A-Za-z0-9_.-]{1,39}$/u
+const githubRepo = /^[A-Za-z0-9_.-]{1,100}$/u
+const githubLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+
+export interface ScamReview {
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: ItemKind
+  readonly number: number
+  readonly itemNodeId: string
+  readonly authorLogin: string
+  readonly authorId: number
+  readonly projectId: string
+  readonly sourceAt: string
+}
+
+export error ScamReviewInvalid { reason: string }
+
+function actionPath(review: ScamReview) {
+  if (!githubOwner.test(review.owner) || !githubRepo.test(review.repo) || !Number.isSafeInteger(review.number) || review.number < 1) return undefined
+  return `${scamReviewPath}${review.owner}/${review.repo}/${review.itemKind === "pull_request" ? "pull" : "issues"}/${review.number}`
+}
+
+function noticeOf(review: ScamReview, path: string, recipient: string): Notice {
+  return {
+    eventKey: `slopbot-scam-review:${review.itemNodeId}`,
+    recipientGithubId: recipient,
+    kind: "SlopbotScamReview",
+    subject: review.projectId,
+    detail: `Review the account of @${review.authorLogin} after a scam closure on ${review.owner}/${review.repo}#${review.number}.`,
+    actionPath: path,
+    sourceAt: review.sourceAt,
+  }
+}
+
+export function activeScamPenalty(itemNodeId: string): Statement {
+  return sql`EXISTS (SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = ${itemNodeId} AND p.category = 'scam' AND p.reversed_at IS NULL AND p.moderator_review = 1)`
+}
+
+export effect function moderatorRecipients(authorId: number) {
+  return (try (try Roles).snapshot("moderator")).filter((recipient) => recipient !== String(authorId))
+}
+
+export effect function scamNoticeStatements(review: ScamReview, recipients: ReadonlyArray<string>, onlyIf?: Statement) {
+  if (!githubLogin.test(review.authorLogin)) throw new ScamReviewInvalid({ reason: "Invalid scam review author" })
+  const path = actionPath(review)
+  if (path === undefined) throw new ScamReviewInvalid({ reason: "Invalid scam review target" })
+  if (recipients.length === 0) return []
+  const notices = recipients.map((recipient) => noticeOf(review, path, recipient))
+  return try (try Notices).statements(onlyIf === undefined ? { notices } : { notices, onlyIf })
+}
+
+export effect function noticeScamReview(review: ScamReview, recipients: ReadonlyArray<string>, onlyIf?: Statement) {
+  const statements = try scamNoticeStatements(review, recipients, onlyIf)
+  if (statements.length > 0) try (try D1).batch(statements)
+}

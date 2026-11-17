@@ -66,18 +66,29 @@ pure def stepRecordsRetained(before: Vetting, after: Vetting): bool =
 
 ### A reused clean scan never lifts a flag pause
 
-The signed refresh lifts a flag-only pause only when every repository's
-latest assessment is a fresh clean scan of its own: its record lifts a flag
-pause (clean, not reused, evidence available, no open investigation).
+The signed refresh lifts a flag-only pause only when the assessment that
+decides each repository, the newest completed one at its live pin
+([enforcement](./enforcement.md)), is a fresh clean scan of its own: the
+record of every assessment the reinstatement names lifts a flag pause
+(clean, not reused, evidence available, no open investigation). A pending
+investigation is never that assessment. Each completed clean assessment keeps
+a delivered record that qualified it, unless its evidence was last read
+missing.
 
 ```quint
 pure def canReinstateFlagPause(v: Vetting, by: int, pins: List[E::PinRead]): bool =
   E::canReinstateFlagPause(v.security, by, pins)
 pure def reinstateFlagPause(v: Vetting, by: int, pins: List[E::PinRead]): Vetting =
   { ...v, security: E::reinstateFlagPause(v.security, by, pins) }
+pure def alwaysCompletedCleanHasQualifiedRecord(v: Vetting): bool =
+  v.security.recorded.every(a => a.state == E::AClean implies
+    (recordFor(v, a.id).result == A::DClean and recordFor(v, a.id).repository == a.repository and
+     recordFor(v, a.id).reused == a.reused and not(recordFor(v, a.id).investigationOpen) and
+     (recordFor(v, a.id).evidenceAvailable or v.security.unverified.contains(a.id))))
 pure def stepFlagPauseLiftsOnlyOnFreshRecords(before: Vetting, via: str, after: Vetting): bool =
   via == "reinstateFlagPause" implies
-    before.security.repositories.every(r => A::liftsFlagPause(recordFor(before, E::latestOf(before.security, r).id)))
+    before.security.repositories.every(r => E::provenanceOf(after.security).some(id =>
+      recordFor(before, id).repository == r and A::liftsFlagPause(recordFor(before, id))))
 ```
 
 ### Requests, flags and the registry mirror run under enforcement's own guards
@@ -135,7 +146,11 @@ pure val requestOriginValues = Set(E::SetupCheck, E::AdminInvestigation, E::Flag
 pure val receiptValues = Set(1, 2)
 pure val goodStanding: E::FlagStanding = { actor: 2, revision: 1, accountAgeDays: 30, acceptedContributions: 1, maintainer: E::ReadNo, banned: E::ReadNo }
 pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 })
-pure val pinsValues = Set(List({ repository: 1, pin: E::PinMatches }))
+pure val pinsValues = tuples(0.to(1), 0.to(1), 0.to(1))
+  .map(x => List({ repository: x._1, assessment: 1, pin: E::PinMatches }, { repository: x._2, assessment: 2, pin: E::PinMatches },
+    { repository: x._3, assessment: 3, pin: E::PinMatches }).select(p => p.repository > 0))
+  .union(tuples(1.to(3), 1.to(3)).filter(x => x._1 != x._2)
+    .map(x => List({ repository: 1, assessment: x._1, pin: E::PinMatches }, { repository: 1, assessment: x._2, pin: E::PinChanged })))
 pure val identityValues = Set(2)
 pure val weight_deliver = 6
 pure val weight_requestAssessment = 6

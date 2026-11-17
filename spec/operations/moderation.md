@@ -129,7 +129,10 @@ pure def sometimesReinstatementReviewRequested(m: Moderation): bool = m.items.so
 
 ### An underfunded month asks the steward once, and each owner cut notifies its contributor once
 
-The steward's payout exception is keyed by project and month, without a
+The payout exception goes to the project's
+[payout audience](./payoutAudience.md) (its steward, or the account that
+listed the project when the steward is a GitHub Organization), which the
+monthly job passes as `steward`. It is keyed by project and month, without a
 time, so a coordinator retry never adds a second row. Each committed owner
 cut is keyed by its sequence and reaches the contributor whose amount was
 cut; a refused cut writes nothing.

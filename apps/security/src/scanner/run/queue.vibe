@@ -34,16 +34,16 @@ export service ScanAcquisition {
   readonly testRemote: ((repository: string) => string) | undefined
 }
 
-const Revision = Schema.Struct({ projectId: Schema.String, revision: Schema.Number, manifestSha256: Schema.String, manifestText: Schema.String })
+schema Revision { projectId: string; revision: number; manifestSha256: string; manifestText: string }
 const Listed = Schema.Struct({ id: Schema.String, githubUrl: Schema.String, aliases: Schema.optionalKey(Schema.Array(Schema.String)), githubId: Schema.optionalKey(Schema.String), nodeId: Schema.optionalKey(Schema.String) })
 const Manifest = Schema.Struct({
   id: Schema.String,
   repositories: Schema.NonEmptyArray(Listed),
   authority: Schema.optionalKey(Schema.Struct({ repositoryId: Schema.optionalKey(Schema.String), repositoryNodeId: Schema.optionalKey(Schema.String) })),
 })
-const GitHubRepository = Schema.Struct({ id: Schema.Number, node_id: Schema.String, full_name: Schema.String, private: Schema.Boolean })
-const TemplateFile = Schema.Struct({ path: Schema.String, sha256: Schema.String })
-const TemplateGroup = Schema.Struct({ sourcePath: Schema.String, files: Schema.Array(TemplateFile) })
+schema GitHubRepository { id: number; node_id: string; full_name: string; private: boolean }
+schema TemplateFile { path: string; sha256: string }
+schema TemplateGroup { sourcePath: string; files: ReadonlyArray<TemplateFile> }
 const TemplateIndex = Schema.Struct({
   schemaVersion: Schema.String,
   templateSha256: Schema.String,
@@ -55,7 +55,7 @@ const TemplateIndex = Schema.Struct({
   renderer: Schema.Struct({ revisionStatus: Schema.String, sources: Schema.Array(TemplateFile) }),
   acceptedRevisions: Schema.Array(Schema.Unknown),
 })
-const SourceGaps = Schema.Struct({ visibilityGaps: Schema.Array(Schema.String) })
+schema SourceGaps { visibilityGaps: ReadonlyArray<string> }
 
 type ManifestShape = typeof Manifest.Type
 type ListedShape = typeof Listed.Type

@@ -1,4 +1,4 @@
-// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
+// spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
 import { boundedBytes } from "@repo/platform/browser"
 import { affectedOf, changedFiles } from "../coverage/scope.vibe"
 import { isAncestor } from "../run/heads.vibe"

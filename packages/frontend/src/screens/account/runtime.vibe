@@ -1,0 +1,94 @@
+// spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { type ConsentField, EmailPreferences, type EmailPanel, type Enrollment, emailLayer } from "../../flows/account/email.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { nextRevalidation } from "../../session/signals.ts"
+import { type Family, WalletChoice, type WalletOffer, walletChoiceServices } from "../../wallets/core/discovery.vibe"
+import { PayoutWallets, type WalletPanel, payoutWallets } from "./walletPanel.vibe"
+
+effect function refreshedOnFocus(email: EmailPreferences.Shape) {
+  const browser = try BrowserSession
+  while (true) {
+    try promise((signal) => nextRevalidation(signal))
+    if ((try browser.lifetime()).actorId !== 0) try email.refresh()
+  }
+}
+
+const emailWatch = Layer.effectDiscard(effect {
+  const email = try EmailPreferences
+  const browser = try BrowserSession
+  const context = try Effect.context<HttpClient.HttpClient>()
+  const scope = try Scope.Scope
+
+  effect function reload() {
+    if ((try browser.lifetime()).actorId === 0) return
+    fork.in(scope) Effect.provideContext(email.load(), context)
+  }
+
+  try browser.onAccountChange(() => reload())
+  try reload()
+})
+
+export const accountSections = Layer.provideMerge(Layer.mergeAll(Layer.provideMerge(emailWatch, emailLayer), payoutWallets), walletChoiceServices)
+
+export type AccountRuntime = ReturnType<typeof makeAccountRuntime>
+
+function makeAccountRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(accountSections, Layer.effectContext(page.contextEffect)))
+}
+
+const sections = new WeakMap<PageRuntime, AccountRuntime>()
+
+export function accountRuntime(page: PageRuntime): AccountRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeAccountRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function watchEmail(show: (panel: EmailPanel) => void!!) {
+  const email = try EmailPreferences
+  fork refreshedOnFocus(email)
+  for try (const panel of email.changes) try show(panel)
+}
+
+export effect function watchWallets(show: (panel: WalletPanel) => void!!) {
+  for try (const panel of (try PayoutWallets).changes) try show(panel)
+}
+
+export effect function watchOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
+  for try (const offers of (try WalletChoice).offers) try show(offers)
+}
+
+export effect function reloadEmail() {
+  try (try EmailPreferences).load()
+}
+
+export effect function toggleEmail(field: ConsentField) {
+  try (try EmailPreferences).toggle(field)
+}
+
+export effect function editEmail() {
+  try (try EmailPreferences).editAddress()
+}
+
+export effect function requestEmailVerification(enrollment: Enrollment) {
+  try (try EmailPreferences).requestVerification(enrollment)
+}
+
+export effect function reloadWallets() {
+  try (try PayoutWallets).reload()
+}
+
+export effect function connectWallet(offer: number, family: Family) {
+  try (try PayoutWallets).connect(offer, family)
+}
+
+export effect function confirmWalletChange() {
+  try (try PayoutWallets).confirmChange()
+}
+
+export effect function keepSavedWallet() {
+  try (try PayoutWallets).keepSaved()
+}

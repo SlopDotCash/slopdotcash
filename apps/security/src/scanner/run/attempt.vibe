@@ -1,0 +1,40 @@
+// spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"
+import { type Event, type Fetch, type FetchOutcome, type Receipt, type ReuseOrigin, type Scan, type ServiceFailure, initial, machineOver, queuedAssignment } from "../../../gen/security__admission.effect.vibe"
+
+export effect function attemptMachine(start: Scan = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function fetched(outcome: FetchOutcome, entries: number): Fetch {
+  return outcome === "Fetched" ? { fetched: outcome, commit: queuedAssignment.commit, verifiedLocally: true, entries, inventoryDigest: 1 } : { fetched: outcome, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 }
+}
+
+export function reusedOrigin(inventoryDigest: number): ReuseOrigin {
+  return {
+    assessment: queuedAssignment.assessment + 1,
+    disposition: "DClean",
+    reused: false,
+    repository: queuedAssignment.repository,
+    identityEpoch: queuedAssignment.identityEpoch,
+    commit: queuedAssignment.commit,
+    inventoryDigest,
+    template: queuedAssignment.template,
+    policy: queuedAssignment.policy,
+    retained: true,
+    laterRestriction: false,
+    flagsCovered: true,
+  }
+}
+
+export const publishedDigest = 1
+
+export function receiptOf(outcome: "accepted" | "rejected" | "unknown"): Receipt {
+  if (outcome === "accepted") return { kind: "ReceiptAccepted", digest: publishedDigest, stored: queuedAssignment }
+  if (outcome === "rejected") return { kind: "ReceiptRejected", digest: 0, stored: queuedAssignment }
+  return { kind: "ReceiptLost", digest: 0, stored: queuedAssignment }
+}
+
+export function interrupted(failure: ServiceFailure): Event {
+  return { type: "interrupt", failure }
+}

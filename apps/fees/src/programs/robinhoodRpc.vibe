@@ -1,0 +1,105 @@
+// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/buybackRpc.md, "A verified observation binds the exact chain, block and contract read"
+import { jsonRpc } from "@repo/platform/chain/rpc"
+import { type FinalizedBlock, type FinalizedRpcEvidence, type HeightWitness, type IndependentRead, finalizedRpc, liveRobinhood, robinhoodChainId, rpcQualified } from "../../gen/fees__buybackRpc.effect.vibe"
+import { amountOf } from "../buyback/codec.vibe"
+import { definitions } from "../runtime/networks.vibe"
+import { FinalizedRpcWire, blockOf, diagnosticEvent, probeTimeoutMs } from "../rpcProbe/probe.vibe"
+
+module verified {
+  import { jsonValue } from "../solana/bytes.ts"
+  /** @throws {never} */
+  export function parsedJson(text: string): unknown { return jsonValue(text) }
+  /** @throws {never} */
+  export function wholeHeight(decimal: string): bigint { return /^(?:0|[1-9][0-9]*)$/u.test(decimal) ? BigInt(decimal) : 0n }
+}
+import { parsedJson, wholeHeight } from verified
+
+export error RpcUnqualified { message: string }
+
+export const usage = "qualify-robinhood-rpc <expected-worker-version-id> <worker-tail-event.json>"
+
+const versionId = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const decimalHeight = /^(?:0|[1-9][0-9]*)$/u
+const blockHash = /^0x[0-9a-f]{64}$/u
+const referenceBytes = 1024 * 1024
+const fileBytes = 4n * 1024n * 1024n
+
+const TailEvent = Schema.Struct({
+  scriptVersion: Schema.Struct({ id: Schema.String }),
+  logs: Schema.Array(Schema.Struct({ message: Schema.Array(Schema.Unknown) })),
+})
+
+const DiagnosticLine = Schema.Struct({ event: Schema.Literal(diagnosticEvent), network: Schema.Literal("robinhood"), finalizedRpc: FinalizedRpcWire })
+
+const WireBlock = Schema.NullOr(Schema.Struct({ number: Schema.String, hash: Schema.String }))
+
+function unqualified(message: string) {
+  return new RpcUnqualified({ message })
+}
+
+function logged(item: unknown) {
+  return typeof item === "string" ? parsedJson(item) : item
+}
+
+effect function diagnostics(event: typeof TailEvent.Type) {
+  const found: Array<typeof DiagnosticLine.Type> = []
+  for (const log of event.logs) {
+    for (const item of log.message) {
+      const line = Schema.decodeUnknownEffect(DiagnosticLine)(logged(item)) catch () => undefined
+      if (line !== undefined) found.push(line)
+    }
+  }
+  return found
+}
+
+export function witness(decimal: string): HeightWitness {
+  const exactDecode = decimalHeight.test(decimal)
+  return { decimal, limbs: amountOf(wholeHeight(decimal)), exactDecode }
+}
+
+export function reportedEvidence(chainId: number, height: string, hash: string): FinalizedRpcEvidence {
+  const block: FinalizedBlock = { height, hash, exactHeight: decimalHeight.test(height), canonicalHash: blockHash.test(hash) }
+  return { observedChainId: chainId, finalized: true, block, contractRead: { completed: true, height, exactDestination: true, zeroOrder: true }, canonical: block }
+}
+
+effect function independentBlocks(height: string) {
+  const reference = try jsonRpc({ urls: Redacted.make([definitions.Robinhood.defaultRpcUrl] as ReadonlyArray<string>), timeoutMs: probeTimeoutMs, maxBytes: referenceBytes })
+  const chain = try reference.call("eth_chainId", [], Schema.String)
+  const head = blockOf(try reference.call("eth_getBlockByNumber", ["finalized", false], WireBlock))
+  const matching = decimalHeight.test(height) ? blockOf(try reference.call("eth_getBlockByNumber", [`0x${wholeHeight(height).toString(16)}`, false], WireBlock)) : blockOf(null)
+  return { chain, head, matching }
+}
+
+export effect function qualifyRobinhoodRpc(args: ReadonlyArray<string>) {
+  const [expected = "", file = "", ...rest] = args
+  if (!versionId.test(expected) || file === "" || rest.length > 0) throw unqualified(`usage: ${usage}`)
+  const fs = try FileSystem.FileSystem
+  const size = (try fs.stat(file)).size
+  if (size > fileBytes) throw unqualified("The Worker tail event is too large.")
+  const event = Schema.decodeUnknownEffect(TailEvent)(parsedJson(try fs.readFileString(file))) catch effect () => {
+    throw unqualified("The Worker tail event is not a Cloudflare tail event with a script version.")
+  }
+  const lines = try diagnostics(event)
+  const [line] = lines
+  if (lines.length !== 1 || line === undefined) throw unqualified("The Worker tail event does not hold exactly one Robinhood finalized RPC diagnostic.")
+  if (line.finalizedRpc.status !== "verified") throw unqualified("The Worker's Robinhood finalized RPC observation is unavailable.")
+  const reported = line.finalizedRpc
+  const evidence = reportedEvidence(reported.chainId, reported.blockNumber, reported.blockHash)
+  const observed = finalizedRpc(liveRobinhood, evidence)
+  if (observed.tag !== "Verified") throw unqualified("The Worker's Robinhood finalized RPC observation is not exact.")
+  const independent = independentBlocks(observed.height) catch effect () => {
+    throw unqualified("The independent Robinhood RPC did not verify the candidate block.")
+  }
+  const read: IndependentRead = {
+    expectedWorkerRevision: expected,
+    summaryWorkerRevision: event.scriptVersion.id,
+    separateTrustedEndpoint: true,
+    chainId: independent.chain === `0x${robinhoodChainId.toString(16)}` ? robinhoodChainId : 0,
+    matchingBlock: independent.matching,
+    finalizedHead: independent.head,
+    matchingHeight: witness(independent.matching.height),
+    headHeight: witness(independent.head.height),
+  }
+  if (!rpcQualified(liveRobinhood, evidence, read)) throw unqualified("The Worker's Robinhood finalized RPC observation is not qualified on the expected version and an independent finalized block.")
+  try Console.log(JSON.stringify({ event: "robinhood_rpc_qualified", workerVersion: expected, chainId: observed.chainId, blockNumber: observed.height, blockHash: observed.hash }))
+}

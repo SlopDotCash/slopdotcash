@@ -1,5 +1,6 @@
 // spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
+import { type Chain, type NetworkKey, EVM_NATIVE_ASSET, NETWORKS, PAYOUT_FEE_BASIS_POINTS, SOLANA_NATIVE_ASSET, WITHDRAWAL_FEE_BASIS_POINTS } from "@repo/settlement/kernels/networks";
 
 export const maxProjectIdLength = 43;
 export const maxProjectImageLength = 16_384;
@@ -46,6 +47,20 @@ export const emptyProposal = Object.freeze({
   rewardAssetSymbol: "",
   copyrightModel: "unknown",
   legalHolder: "",
+  licenseSpdx: "",
+  licenseCommit: "",
+  licenseDigest: "",
+  inboundMode: "unknown",
+  inboundTermsUrl: "",
+  inboundCommit: "",
+  inboundDigest: "",
+  inboundVersion: "",
+  inboundAcceptance: "",
+  assignmentAssignee: "",
+  assignmentUrl: "",
+  assignmentDigest: "",
+  assignmentVersion: "",
+  assignmentSignedAt: "",
 });
 
 export type Proposal = { -readonly [Field in keyof typeof emptyProposal]: string };
@@ -159,7 +174,108 @@ export function monthlyPoolValue(value: string, token?: PoolToken): MonthlyPoolV
   return { display: `${formatBaseUnits({ value: parsed.minor, decimals: token.decimals })} ${token.symbol}`, minor: parsed.minor.toString(), valid: true };
 }
 
-const projectImage = /^data:image\/(?:webp|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/u;
+export type RewardAssetKind = "stablecoin" | "token" | "native";
+
+export interface FundingChoice {
+  readonly mode: "none" | "monthly";
+  readonly network: Chain;
+  readonly assetKind: RewardAssetKind;
+  readonly tokenAddress: string;
+  readonly tokenSymbol: string;
+  readonly monthlyAmount: string;
+}
+
+export interface RewardAssetChoice {
+  readonly network: Chain;
+  readonly kind: RewardAssetKind;
+  readonly address: string;
+  readonly symbol: string;
+}
+
+export interface MonthlyPoolReward {
+  readonly kind: "monthly-pool";
+  readonly currency: string;
+  readonly chain: Chain;
+  readonly rewardStartAt: string;
+  readonly cycle: "calendar-month-utc";
+  readonly monthlyCapMinor: string;
+  readonly monthlyCapDisplay: string;
+  readonly committedMinor: "0";
+  readonly paymentMode: "disabled";
+  readonly feeBasisPoints: number;
+  readonly unusedFunds: "rollover-without-cap-increase";
+  readonly fundingState: "pledged";
+}
+
+export interface EscrowPolicy {
+  readonly schemaVersion: "1";
+  readonly effectiveCycle: string;
+  readonly chain: Chain;
+  readonly feeBasisPoints: number;
+  readonly withdrawalFeeBasisPoints: number;
+  readonly feeMode: "deduct-from-gross";
+  readonly deployments: readonly [];
+}
+
+export type RewardFields =
+  | { readonly reward: MonthlyPoolReward }
+  | { readonly escrow: EscrowPolicy; readonly rewardAsset: RewardAssetChoice; readonly reward: MonthlyPoolReward };
+
+const unvaultedPoolFeeBasisPoints = 100;
+
+const mainnets = { base: "base-mainnet", ethereum: "ethereum", robinhood: "robinhood-mainnet", solana: "solana-mainnet" } as const satisfies Record<Chain, NetworkKey>;
+
+function monthlyPool(chain: Chain, currency: string, rewardStartAt: string, amount: { readonly minor: string; readonly display: string }, feeBasisPoints: number): MonthlyPoolReward {
+  return {
+    kind: "monthly-pool",
+    currency,
+    chain,
+    rewardStartAt,
+    cycle: "calendar-month-utc",
+    monthlyCapMinor: amount.minor,
+    monthlyCapDisplay: amount.display,
+    committedMinor: "0",
+    paymentMode: "disabled",
+    feeBasisPoints,
+    unusedFunds: "rollover-without-cap-increase",
+    fundingState: "pledged",
+  };
+}
+
+function fundedAsset(choice: FundingChoice): { readonly asset: RewardAssetChoice; readonly amount: { readonly minor: string; readonly display: string } } {
+  const network = NETWORKS[mainnets[choice.network]];
+  if (choice.assetKind === "token") {
+    const symbol = choice.tokenSymbol.trim();
+    return { asset: { network: choice.network, kind: "token", address: choice.tokenAddress.trim(), symbol }, amount: { minor: "0", display: `0 ${symbol}` } };
+  }
+  if (choice.assetKind === "native") {
+    const native = network.family === "solana" ? { address: SOLANA_NATIVE_ASSET, symbol: "SOL", decimals: 9 } : { address: EVM_NATIVE_ASSET, symbol: "ETH", decimals: 18 };
+    return { asset: { network: choice.network, kind: "native", address: native.address, symbol: native.symbol }, amount: monthlyPoolValue(choice.monthlyAmount, native) };
+  }
+  const stablecoin = network.assets[0];
+  return { asset: { network: choice.network, kind: "stablecoin", address: stablecoin.address, symbol: stablecoin.symbol }, amount: monthlyPoolValue(choice.monthlyAmount) };
+}
+
+/** @throws {never} */
+export function rewardFields(choice: FundingChoice, now: string): RewardFields {
+  if (choice.mode === "none") return { reward: monthlyPool("base", "USDC", now, { minor: "0", display: "$0" }, unvaultedPoolFeeBasisPoints) };
+  const { asset, amount } = fundedAsset(choice);
+  return {
+    escrow: {
+      schemaVersion: "1",
+      effectiveCycle: now.slice(0, 7),
+      chain: choice.network,
+      feeBasisPoints: PAYOUT_FEE_BASIS_POINTS,
+      withdrawalFeeBasisPoints: WITHDRAWAL_FEE_BASIS_POINTS,
+      feeMode: "deduct-from-gross",
+      deployments: [],
+    },
+    rewardAsset: asset,
+    reward: monthlyPool(choice.network, asset.symbol, now, amount, PAYOUT_FEE_BASIS_POINTS),
+  };
+}
+
+const projectImage =/^data:image\/(?:webp|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/u;
 
 function decodedImage(value: string): string | undefined {
   try {

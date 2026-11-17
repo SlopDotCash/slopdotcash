@@ -1,4 +1,4 @@
-// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Every required check binds the same source and built artifact"
 
 const SourceSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/u))
 

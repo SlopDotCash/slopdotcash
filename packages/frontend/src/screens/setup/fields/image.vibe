@@ -1,0 +1,15 @@
+// spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
+import { maxProjectImageLength, projectImageProblem } from "../../../flows/projects/proposal.ts"
+import { squareImage } from "./canvas.ts"
+
+export error ImageRefused { message: string }
+
+export effect function projectImageOf(file: Blob) {
+  const image = try tryPromise({
+    try: () => squareImage(file, maxProjectImageLength),
+    catch: (cause) => new ImageRefused({ message: cause instanceof Error ? cause.message : "The image could not be read." }),
+  })
+  const problem = projectImageProblem(image)
+  if (problem !== undefined) throw new ImageRefused({ message: problem })
+  return image
+}

@@ -1,0 +1,179 @@
+// spec/slopbot/maintainerHold.md, "The first durable maintainer notice starts the window once"; spec/slopbot/maintainerHold.md, "The scheduled dispatcher queues each due hold and requeues a lost message after a day"; spec/slopbot/maintainerHold.md, "The due hold resolves on every known source: the maintainer acted, it is superseded, or it is labeled"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type GateObservation, type ReviewIdentity, unobserved } from "../../gen/slopbot__closure.effect.vibe"
+import { type Event, type HeldFinding, type Hold, type HoldStatus, NotAState, apply, decodeState, holdSeconds, initial } from "../../gen/slopbot__maintainerHold.effect.vibe"
+import type { MaintainerHoldJob } from "../jobs/job.vibe"
+import { actionStatement } from "../publish/actions.vibe"
+import { type CategoryName, categories, findingOf } from "../review/verdict.vibe"
+
+export schema HoldRow {
+  readonly review_key: string
+  readonly job_json: string
+  readonly item_node_id: string
+  readonly revision: string
+  readonly category: string
+  readonly held_at: string
+  readonly due_at: string
+  readonly queued_at: string | null
+  readonly resolved_at: string | null
+  readonly outcome: "labeled" | "maintainer_acted" | "superseded" | null
+}
+schema ReviewedRow { readonly repository_id: number; readonly item_kind: string; readonly author_id: number; readonly content_digest: string }
+schema FlagsRow { readonly reopened: number; readonly upheld: number }
+
+export interface HoldScope {
+  readonly reviewKey: string
+  readonly finding: HeldFinding
+  readonly category: CategoryName
+  readonly gate: GateObservation
+  readonly job: MaintainerHoldJob
+}
+
+export interface HoldLoaded {
+  readonly hold: Hold
+  readonly row: typeof HoldRow.Type | undefined
+  readonly iso: string
+}
+
+export interface StoredHold {
+  readonly row: typeof HoldRow.Type
+  readonly scope: HoldScope
+}
+
+const statuses: Readonly<Record<"labeled" | "maintainer_acted" | "superseded", HoldStatus>> = { labeled: "HoldLabeled", maintainer_acted: "MaintainerActed", superseded: "HoldSuperseded" }
+const holdMillis = holdSeconds * 1000
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function categoryOf(text: string): CategoryName | undefined {
+  return categories.find((category) => category === text)
+}
+
+function flagsRead(identity: ReviewIdentity) {
+  return sql`SELECT
+      (SELECT count(*) FROM slopbot_deliveries WHERE reopen_confirmed_at IS NOT NULL AND json_extract(reopen_source, '$.itemNodeId') = ${identity.itemNode}
+        AND json_extract(reopen_source, '$.revision') = ${identity.revision}) AS reopened,
+      (SELECT count(*) FROM slopbot_appeals WHERE appeal_key = ${`appeal:${identity.itemNode}:${identity.revision}`} AND resolution = 'upheld') AS upheld`
+}
+
+function holdRead(reviewKey: string) {
+  return sql`SELECT review_key, job_json, item_node_id, revision, category, held_at, due_at, queued_at, resolved_at, outcome FROM slopbot_maintainer_holds WHERE review_key = ${reviewKey}`
+}
+
+effect function holdOf(scope: HoldScope, rows: ReadonlyArray<Rows>) {
+  const [holdRows, flagRows] = rows
+  const [row] = try decoded(HoldRow, holdRows ?? [], "maintainer hold")
+  const [flags] = try decoded(FlagsRow, flagRows ?? [], "maintainer hold reversals")
+  const millis = try Clock.currentTimeMillis
+  const heldAt = row === undefined ? 0 : seconds(row.held_at)
+  const queuedAt = row?.queued_at == null ? 0 : seconds(row.queued_at)
+  const status: HoldStatus = row === undefined ? "NoHold" : row.outcome === null ? "WaitingForMaintainer" : statuses[row.outcome]
+  const hold = try decodeState({
+    finding: scope.finding,
+    gate: scope.gate,
+    now: Math.max(Math.floor(millis / 1000), heldAt, queuedAt),
+    heldAt,
+    queuedAt,
+    hold: status,
+    uncertainLabel: status === "HoldLabeled",
+    maintainerReopened: (flags?.reopened ?? 0) > 0,
+    appealUpheld: (flags?.upheld ?? 0) > 0,
+  } satisfies Hold)
+  return { hold, row, iso: try isoAt(millis) } satisfies HoldLoaded
+}
+
+function holdAggregate(scope: HoldScope): Aggregate<HoldLoaded, NotAState | RowMismatch, never> {
+  const flags = flagsRead(scope.finding.identity)
+  return {
+    name: `maintainer hold ${scope.reviewKey}`,
+    version: sql`SELECT coalesce((SELECT held_at || ':' || coalesce(queued_at, '-') || ':' || coalesce(resolved_at, '-') FROM slopbot_maintainer_holds WHERE review_key = ${scope.reviewKey}), 'none')
+      || '|' || (SELECT reopened || ':' || upheld FROM (${flags})) AS version`,
+    reads: [holdRead(scope.reviewKey), flags],
+    decode: (rows) => holdOf(scope, rows),
+  }
+}
+
+function resolvedWrite(reviewKey: string, outcome: "labeled" | "maintainer_acted" | "superseded", at: string): Statement {
+  return sql`UPDATE slopbot_maintainer_holds SET resolved_at = ${at}, outcome = ${outcome} WHERE review_key = ${reviewKey} AND resolved_at IS NULL`
+}
+
+effect function writesFor(scope: HoldScope, event: Event, loaded: HoldLoaded) {
+  const at = loaded.iso
+  switch (event.type) {
+    case "notifyMaintainer": {
+      const millis = millisOf(at)
+      return [sql`INSERT OR IGNORE INTO slopbot_maintainer_holds (review_key, job_json, item_node_id, revision, category, held_at, due_at)
+        VALUES (${scope.reviewKey}, ${JSON.stringify(scope.job)}, ${scope.finding.identity.itemNode}, ${scope.finding.identity.revision}, ${scope.category}, ${at}, ${try isoAt(millis + holdMillis)})`]
+    }
+    case "dispatchHold":
+      return [sql`UPDATE slopbot_maintainer_holds SET queued_at = ${at} WHERE review_key = ${scope.reviewKey} AND resolved_at IS NULL`]
+    case "resolveMaintainerAction":
+      return [resolvedWrite(scope.reviewKey, "maintainer_acted", at)]
+    case "supersedeHold":
+      return [resolvedWrite(scope.reviewKey, "superseded", at)]
+    case "labelUncertain":
+      return [
+        actionStatement({ reviewKey: scope.reviewKey, repositoryId: scope.job.repositoryId, itemNodeId: scope.finding.identity.itemNode, action: "label", detail: scope.category }, at),
+        resolvedWrite(scope.reviewKey, "labeled", at),
+      ]
+    default:
+      return []
+  }
+}
+
+export effect function loadHold(scope: HoldScope) {
+  return (try load(holdAggregate(scope))).state
+}
+
+export effect function commitHold(scope: HoldScope, steps: (loaded: HoldLoaded) => ReadonlyArray<Event>) {
+  return try update(holdAggregate(scope), (loaded) => effect {
+    let hold = loaded.hold
+    const writes: Statement[] = []
+    for (const event of steps(loaded)) {
+      hold = try apply(hold, event)
+      writes.push(...(try writesFor(scope, event, loaded)))
+    }
+    return { value: hold, writes } satisfies Decision<Hold>
+  })
+}
+
+export function holdJobOf(reviewKey: string, job: Omit<MaintainerHoldJob, "kind" | "reviewKey" | "deliveryId">): MaintainerHoldJob {
+  return {
+    kind: "maintainer_hold",
+    reviewKey,
+    deliveryId: `hold:${reviewKey}`,
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    owner: job.owner,
+    repo: job.repo,
+    itemKind: job.itemKind,
+    number: job.number,
+  }
+}
+
+export function startingScope(reviewKey: string, job: MaintainerHoldJob, start: Hold = initial): HoldScope {
+  return { reviewKey, finding: start.finding, category: categories.find((name) => findingOf(name) === start.finding.category) ?? "none", gate: start.gate, job }
+}
+
+export effect function storedHold(job: MaintainerHoldJob) {
+  const row: typeof HoldRow.Type | undefined = try first(HoldRow, holdRead(job.reviewKey))
+  if (row === undefined) return undefined
+  const reviewed: typeof ReviewedRow.Type | undefined = try first(ReviewedRow, sql`SELECT repository_id, item_kind, author_id, content_digest FROM slopbot_reviews WHERE review_key = ${job.reviewKey}`)
+  const category = categoryOf(row.category)
+  if (reviewed === undefined || category === undefined) throw new RowMismatch({ text: "maintainer hold", issue: "the held review or its category is unavailable" })
+  const identity: ReviewIdentity = {
+    project: 1,
+    repository: reviewed.repository_id,
+    kind: reviewed.item_kind === "pull_request" ? "PullRequest" : "Issue",
+    itemNode: row.item_node_id,
+    revision: row.revision,
+    contentDigest: reviewed.content_digest,
+    author: reviewed.author_id,
+  }
+  const scope: HoldScope = { reviewKey: job.reviewKey, finding: { identity, category: findingOf(category), decidedSeq: 1 }, category, gate: unobserved, job }
+  return { row, scope } satisfies StoredHold
+}

@@ -80,13 +80,14 @@ The observation is this vault's own free balance as of the finalized head
 the chain adapter last reported, stamped with that head's time, so a
 projection whose head is more than 30 minutes behind the coordinator's clock
 is stale and refused. Earlier periods' unreserved obligations of the same
-vault are a typed input from the coordinator.
+vault are a typed input from the coordinator. This composition's escrow
+models no month pledge, so it holds no other month's pledge back.
 
 ```quint
 pure def canObserveHead(s: MonthlySettlement, time: int): bool = time > s.headTime and time >= s.escrow.clock
 pure def observeHead(s: MonthlySettlement, time: int): MonthlySettlement = { ...s, headTime: time }
 pure def observation(s: MonthlySettlement, earlierUnreserved: M::Amount): MO::VaultObservation =
-  { observedAt: s.headTime, free: s.escrow.free, earlierUnreserved: earlierUnreserved }
+  { observedAt: s.headTime, free: s.escrow.free, earlierUnreserved: earlierUnreserved, otherOpenPledges: M::zero }
 pure def canCreateObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): bool =
   s.escrow.deployed and s.escrow.purpose == E::OrdinaryPurpose
     and MO::canCreateObligations(s.month, observation(s, earlierUnreserved), bans)
@@ -198,7 +199,15 @@ examines at most 16 leaves of the signed tree, in tree order, starting at
 the cursor journaled for that tree. Each leaf is its own transaction and its
 own `materialize` event above. The cursor passes a leaf only once that
 leaf's award is committed at a finalized block and the sender's own
-journaled nonce for it has settled, so a lost or replaced call resumes at
+journaled nonce for it has settled: the signer's nonce at the finalized
+block has passed it, since a nonce mined at the latest block can disappear
+in a reorganization. While the signer's latest nonce has not passed its own
+journaled step, the executor sends the same bytes again; once it has, it
+only waits. Until every such nonce of the month, root keys included, is
+finalized, the call reports the month incomplete, also when other senders
+already committed every leaf (development
+`workers/payment-executor/core.ts` `sendJournaledUntilFinalized`, and its
+README). So a lost or replaced call resumes at
 the first leaf that is not yet finalized and never skips one. A sent
 transaction is not evidence of a reservation. The Solana path
 (`solana-monthly.ts`, `submitSolanaMonthly`) keeps no cursor: each call

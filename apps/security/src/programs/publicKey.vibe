@@ -1,0 +1,42 @@
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"
+import * as Base64 from "effect/encoding/Base64"
+import { ed25519KeyPair, sha256Hex } from "@repo/platform/crypto"
+import { protectedCheckout, secretVariable } from "./checkout.vibe"
+
+export error PublicKeyRefused { message: string }
+
+export type KeyTarget = "staging" | "production"
+
+export interface PublicScannerKey {
+  readonly schema: "slop-scanner-public-key-v1"
+  readonly target: KeyTarget
+  readonly sourceSha: string
+  readonly publicKey: string
+  readonly sha256: string
+}
+
+export effect function publicScannerKey(key: Redacted.Redacted<string>, target: KeyTarget, sourceSha: string) {
+  const pair = ed25519KeyPair(key) catch effect () => {
+    throw new PublicKeyRefused({ message: "The scanner signing key is invalid" })
+  }
+  return { schema: "slop-scanner-public-key-v1", target, sourceSha, publicKey: Base64.encode(pair.publicKey), sha256: try sha256Hex(pair.publicKey) } satisfies PublicScannerKey
+}
+
+const releases: Readonly<Record<KeyTarget, string>> = { staging: "development", production: "main" }
+
+export effect function publicKey(args: ReadonlyArray<string>) {
+  const [target, ...rest] = args
+  if ((target !== "staging" && target !== "production") || rest.length !== 0) throw new PublicKeyRefused({ message: "usage: public-key staging|production" })
+  const branch = releases[target]
+  const { sha } = protectedCheckout({
+    refs: [`refs/heads/${branch}`],
+    events: ["push", "workflow_dispatch"],
+    workflowRef: `SlopDotCash/slopdotcash/.github/workflows/deploy.yml@refs/heads/${branch}`,
+    message: "The exact protected Pages release is required",
+  }) catch effect () => {
+    throw new PublicKeyRefused({ message: "The exact protected Pages release is required" })
+  }
+  const key = try secretVariable("SLOP_VETTING_SIGNING_JWK")
+  if (key === undefined) throw new PublicKeyRefused({ message: "SLOP_VETTING_SIGNING_JWK is required" })
+  try Console.log(JSON.stringify(try publicScannerKey(key, target, sha)))
+}

@@ -1,0 +1,65 @@
+// spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "Booking uses the exact completed journal and both canonical timestamps"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"
+import { fromAmount } from "@repo/settlement/kernels/amounts"
+import { type AwardTimes, type FeeJournal, type JournalRead, type Reader, type TimedReceipt, canBook, canRecordCash, cashFact, exactAwardComplete, initial, machineOver } from "../../gen/fees__directBountyIncome.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.effect.vibe"
+import type { DirectBounty, Transfer as Receipt } from "../../gen/settlement__directBounty.ts"
+import type { BookedDirectFee } from "../buyback/income.vibe"
+import type { Transfer } from "../receipts/discover.vibe"
+
+export interface DirectAward {
+  readonly bounty: DirectBounty
+  readonly originalPreparedAt: number
+  readonly aggregateVerifiedAt: number
+}
+
+export type ReceiptTime<E, R> = (receipt: Receipt) => TimedReceipt!E!R
+
+export interface Recognized {
+  readonly journal: FeeJournal
+  readonly unknownCases: ReadonlyArray<number>
+}
+
+const settlementJournal: Reader = "SettlementJournal"
+
+export effect function feeJournal(start: FeeJournal = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+effect function timesOf<E, R>(award: DirectAward, observe: ReceiptTime<E, R>) {
+  const feeTime = try observe(award.bounty.feeReceipt)
+  const researcherTime = award.bounty.terms.network === "Solana" ? feeTime : try observe(award.bounty.researcherReceipt)
+  return { originalPreparedAt: award.originalPreparedAt, aggregateVerifiedAt: award.aggregateVerifiedAt, feeTime, researcherTime } satisfies AwardTimes
+}
+
+export effect function recognized<E, R>(network: Network, awards: ReadonlyArray<DirectAward>, observe: ReceiptTime<E, R>) {
+  const journal = try feeJournal()
+  const read: JournalRead = "CurrentRead"
+  const unknownCases: number[] = []
+  for (const award of awards) {
+    const { bounty } = award
+    if (bounty.terms.network !== network) continue
+    if (canRecordCash(try journal.get(), bounty, read, settlementJournal)) try journal.send({ type: "recordCash", bounty, read }, settlementJournal)
+    else if (cashFact(bounty, read).status === "UnknownCash") unknownCases.push(bounty.terms.caseId)
+    if (!exactAwardComplete(bounty)) continue
+    const timing = try timesOf(award, observe)
+    if (canBook(try journal.get(), bounty, timing, read, settlementJournal)) try journal.send({ type: "book", bounty, timing, read }, settlementJournal)
+  }
+  return { journal: try journal.get(), unknownCases } satisfies Recognized
+}
+
+function canonical(network: Network, text: string) {
+  return network === "Solana" ? text : text.toLowerCase()
+}
+
+export function bookedDirectFees(journal: FeeJournal, network: Network, asset: string, wallet: string): ReadonlyArray<BookedDirectFee> {
+  return journal.entries
+    .filter((row) => row.sourceKey.network === network && row.asset === canonical(network, asset) && row.wallet === canonical(network, wallet))
+    .map((row) => ({ receipt: row.sourceKey.transaction, amount: fromAmount(row.amount), chainTime: row.completeAt }))
+}
+
+export function receivedDirectFees(journal: FeeJournal, network: Network, wallet: string): ReadonlyArray<Transfer> {
+  return journal.received
+    .filter((row) => row.status === "FeeReceived" && row.sourceKey.network === network && row.wallet === canonical(network, wallet))
+    .map((row) => ({ receipt: row.sourceKey.transaction, token: row.asset, amount: fromAmount(row.amount) }))
+}

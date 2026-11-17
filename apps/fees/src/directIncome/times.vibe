@@ -1,0 +1,40 @@
+// spec/fees/directBountyIncome.md, "Booking uses the exact completed journal and both canonical timestamps"
+import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
+import { SolanaRpc, isSignature } from "@repo/platform/chain/solana"
+import type { TimedReceipt } from "../../gen/fees__directBountyIncome.effect.vibe"
+import type { Transfer } from "../../gen/settlement__directBounty.ts"
+
+const evmHash = /^0x[0-9a-f]{64}$/u
+
+export function unauthenticated(transfer: Transfer): TimedReceipt {
+  return { network: transfer.network, transaction: transfer.transaction, height: transfer.height, chainTime: 0, authenticated: false }
+}
+
+function observed(transfer: Transfer, seconds: number): TimedReceipt {
+  return { network: transfer.network, transaction: transfer.transaction, height: transfer.height, chainTime: seconds * 1000, authenticated: true }
+}
+
+export effect function evmReceiptTime(transfer: Transfer) {
+  const evm = try EvmRpc
+  if (!evmHash.test(transfer.transaction)) return unauthenticated(transfer)
+  const read = effect {
+    const receipt = try evm.finalizedReceipt(transfer.transaction as Hex)
+    if (receipt === undefined || receipt.status !== "success" || Number(receipt.blockNumber) !== transfer.height) return unauthenticated(transfer)
+    const block = try evm.blockByNumber(receipt.blockNumber)
+    if (block === undefined || block.hash !== receipt.blockHash) return unauthenticated(transfer)
+    return observed(transfer, block.timestamp)
+  }
+  return read catch () => unauthenticated(transfer)
+}
+
+export effect function solanaReceiptTime(transfer: Transfer) {
+  const solana = try SolanaRpc
+  const signature = transfer.transaction
+  if (!isSignature(signature)) return unauthenticated(transfer)
+  const read = effect {
+    const found = try solana.transaction(signature, "finalized")
+    if (found === undefined || found.meta.err || found.slot !== transfer.height || found.blockTime === undefined) return unauthenticated(transfer)
+    return observed(transfer, found.blockTime)
+  }
+  return read catch () => unauthenticated(transfer)
+}

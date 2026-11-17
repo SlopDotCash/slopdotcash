@@ -1,0 +1,20 @@
+// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { type Command, program } from "@repo/platform/program"
+import { inspectFeeWorker } from "./inspectFeeWorker.vibe"
+import { qualifyRobinhoodRpc } from "./robinhoodRpc.vibe"
+import { qualifySolanaRpcPair } from "./solanaRpcPair.vibe"
+
+function command<E, R>(run: Command<E, R>): Command<unknown, R> {
+  return run
+}
+
+program({
+  services: Layer.mergeAll(outbound, webCrypto),
+  commands: {
+    "qualify-robinhood-rpc": command(qualifyRobinhoodRpc),
+    "qualify-solana-rpc-pair": command(qualifySolanaRpcPair),
+    "inspect-fee-worker": command((args) => Effect.asVoid(inspectFeeWorker(args))),
+  },
+}).runMain()

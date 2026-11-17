@@ -1,0 +1,107 @@
+// spec/security/scanController.md, "A run dispatches only when every gate holds and otherwise skips"; spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
+import { webCrypto, ed25519KeyPair } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { jsonVar } from "@repo/platform/config"
+import { systemGit } from "@repo/platform/git"
+import { providers } from "@repo/platform/providers"
+import { type RateCard, type ScannerProfile, profileApproved } from "../scanner/providers/review.ts"
+import { maxReplyBytes } from "../scanner/providers/route.vibe"
+import { journaled } from "../scanner/publish/journal.vibe"
+import { type ScanPassReport, ScanSettings, runScanPass } from "../scanner/run/pass.vibe"
+import { ScanAcquisition } from "../scanner/run/queue.vibe"
+import { ScanService, signedJson } from "../scanner/run/service.vibe"
+import { sandboxPath } from "../scanner/sandboxClient/client.vibe"
+import { protectedCheckout, secretVariable } from "./checkout.vibe"
+
+export error ScanControllerFailed { message: string }
+export error ScanPassIncomplete { message: string }
+
+export const policyVersion = "slop-bounded-2026-10-24"
+
+schema Rate {
+  uncachedInputNanoUsdPerToken: string
+  cachedInputNanoUsdPerToken: string
+  cacheCreationNanoUsdPerToken: string
+  outputNanoUsdPerToken: string
+}
+schema RateCards { primary: Rate; specialist: Rate }
+schema BridgeHealth { ok?: boolean; revision?: string; imageSha256?: string }
+
+const rateKeys = ["uncachedInputNanoUsdPerToken", "cachedInputNanoUsdPerToken", "cacheCreationNanoUsdPerToken", "outputNanoUsdPerToken"] as const
+
+function verifiedCard(card: RateCard) {
+  return rateKeys.every((key) => /^[0-9]{1,12}$/u.test(card[key]))
+}
+
+export function pinnedProfiles(cards: { readonly primary: RateCard; readonly specialist: RateCard }) {
+  const primary: ScannerProfile = { reviewer: "opus", transport: "anthropic-messages", model: "claude-sonnet-5.5", maxOutputTokens: 8192, rateCard: cards.primary }
+  const specialist: ScannerProfile = { reviewer: "astra", transport: "openai-responses", model: "gpt-6.1-terra", maxOutputTokens: 8192, rateCard: cards.specialist }
+  return { primary, specialist }
+}
+
+export function passSucceeded(report: ScanPassReport) {
+  return report.refreshed && report.assessments.every((assessment) => assessment.state === "published" && assessment.outcome === "accepted")
+}
+
+effect function bridgeMatches(sha: string) {
+  const value = try signedJson({ step: "bridge", method: "GET", path: sandboxPath, timeoutMs: 30_000, limitBytes: 64 * 1024 })
+  const unknownHealth: BridgeHealth = {}
+  const health = Schema.decodeUnknownEffect(BridgeHealth)(value) catch effect () => {
+    return unknownHealth
+  }
+  if (health.revision !== sha) {
+    const deployed = /^[a-f0-9]{40}$/u.test(health.revision ?? "") ? health.revision : "no valid revision"
+    try Console.error(`The isolated runner reports ${deployed}; this checkout is ${sha}. Dispatch again after the release of this checkout succeeds.`)
+  }
+  return health.ok === true && health.revision === sha && /^[a-f0-9]{64}$/u.test(health.imageSha256 ?? "")
+}
+
+effect function controlled(stage: Ref.Ref<string>) {
+  try Ref.set(stage, "checkout")
+  const { sha, ref } = try protectedCheckout({ refs: ["refs/heads/main", "refs/heads/development"], message: "The protected branch's exact workflow checkout is required" })
+  const githubToken = try secretVariable("GITHUB_TOKEN")
+  if (githubToken === undefined) throw new ScanControllerFailed({ message: "The workflow read-only GitHub credential is required" })
+  const origin = ref === "refs/heads/main" ? "https://slop.cash" : "https://staging.slop.cash"
+  try Ref.set(stage, "rate-cards")
+  const cards = try jsonVar("VETTING_RATE_CARDS", Option.getOrUndefined(try Config.option(Config.String("VETTING_RATE_CARDS"))), RateCards)
+  if (!verifiedCard(cards.primary) || !verifiedCard(cards.specialist)) throw new ScanControllerFailed({ message: "Verified rate cards are required" })
+  try Ref.set(stage, "scanner-config")
+  const apiKey = try secretVariable("SURPLUS_API_KEY")
+  const key = try secretVariable("SLOP_VETTING_SIGNING_JWK")
+  if (apiKey === undefined || key === undefined) throw new ScanControllerFailed({ message: "SURPLUS_API_KEY and SLOP_VETTING_SIGNING_JWK are required" })
+  try ed25519KeyPair(key)
+  const profiles = pinnedProfiles(cards)
+  if (!profileApproved(profiles.primary) || !profileApproved(profiles.specialist)) throw new ScanControllerFailed({ message: "The primary review must be Surplus claude-sonnet-5.5 and the specialist Surplus gpt-6.1-terra" })
+  const fs = try FileSystem.FileSystem
+  const workDirectory = try fs.makeTempDirectoryScoped({ prefix: "slop-vetting-controller-" })
+  const services = Layer.mergeAll(
+    Layer.succeed(ScanService, { origin, key }),
+    Layer.succeed(ScanSettings, { primary: profiles.primary, specialist: profiles.specialist, policyVersion, workDirectory, review: {} }),
+    Layer.succeed(ScanAcquisition, { githubToken, testRemote: undefined }),
+    Layer.provide(providers({ surplus: { apiKey }, timeoutMs: 600_000, maxReplyBytes }), Layer.mergeAll(outbound, webCrypto)),
+  )
+  provide services {
+    try Ref.set(stage, "journal")
+    try journaled("controller-readiness")
+    try Ref.set(stage, "bridge")
+    const ready = try bridgeMatches(sha)
+    try Ref.set(stage, "runner-revision")
+    if (!ready) throw new ScanControllerFailed({ message: "The matching isolated runner has not been deployed" })
+    try Ref.set(stage, "scan")
+    const report = try runScanPass()
+    try Console.log(JSON.stringify(report))
+    return report
+  }
+}
+
+export effect function scan(args: ReadonlyArray<string>) {
+  if (args.length !== 0) throw new ScanControllerFailed({ message: "usage: scan" })
+  const stage = try Ref.make("checkout")
+  const outcome = try exit(scoped(controlled(stage)))
+  if (Exit.isFailure(outcome)) {
+    const error = Cause.squash(outcome.cause)
+    const kind = typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : "Defect"
+    throw new ScanControllerFailed({ message: `Scanner controller failed at step ${try Ref.get(stage)} (${kind}); no source, provider response or credentials are logged.` })
+  }
+  if (!passSucceeded(outcome.value)) throw new ScanPassIncomplete({ message: "Scan pass incomplete; pending assessments stay queued." })
+}

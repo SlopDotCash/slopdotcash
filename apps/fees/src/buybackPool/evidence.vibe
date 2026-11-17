@@ -1,0 +1,66 @@
+// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg"; spec/fees/composition.md, "Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { type BookedDirectFee, incomeEvidence } from "../buyback/income.vibe"
+import { exactNumber } from "../evm/abi.ts"
+import type { IncomeEntry } from "../buyback/codec.vibe"
+import type { Instance, Names } from "../journal/codec.vibe"
+import type { Held } from "../runtime/config.vibe"
+import { robinhoodUsdg, slopToken } from "../runtime/pins.ts"
+import { type ArrivalEntry, type PoolInstance, ArrivalRow, arrivalEntry } from "./codec.vibe"
+
+module verified {
+  import type { IncomeEntry } from "../buyback/codec.vibe"
+  import { fromAmount } from "@repo/settlement/kernels/amounts"
+  import { shareOf } from "../kernels/buybackShares.ts"
+  /** @throws {never} */
+  export function halfOfIncome(entries: ReadonlyArray<IncomeEntry>): bigint { return shareOf(entries.reduce((total, entry) => total + fromAmount(entry.amount), 0n), 5_000n) }
+}
+import { halfOfIncome } from verified
+
+export interface PoolQuery {
+  readonly scope: string
+  readonly offset: number
+  readonly held: Held
+  readonly names: Names
+  readonly wallet: string
+  readonly journal: Instance
+  readonly bookedUsdg: ReadonlyArray<BookedDirectFee>
+  readonly bookedSlop: ReadonlyArray<BookedDirectFee>
+}
+
+export effect function arrivalEvidence(scope: string, wallet: string) {
+  const found = try rows(ArrivalRow, sql`SELECT o.source_network, o.order_id, o.amount, o.evidence_block FROM fee_bridge_outcomes o JOIN fee_conversions c ON c.id = o.bridge_id WHERE o.outcome = 'arrived' AND lower(o.token) = ${robinhoodUsdg} AND lower(json_extract(c.quote, '$.receiver')) = lower(${wallet}) AND substr(c.run_id, 1, ${scope.length}) = ${scope} ORDER BY o.rowid`)
+  const entries: Array<ArrivalEntry> = []
+  for (const row of found) entries.push(try arrivalEntry(row))
+  return entries
+}
+
+effect function localShare(fees: ReadonlyArray<IncomeEntry>) {
+  const share = exactNumber(halfOfIncome(fees))
+  if (share === undefined) throw new RowMismatch({ text: "Robinhood fee share", issue: "the retained half exceeds the pool model's exact range" })
+  return share === 0 ? [] : [share]
+}
+
+export effect function poolInstance(query: PoolQuery) {
+  const { scope, offset, wallet } = query
+  const fees = try incomeEvidence({ network: "Robinhood", wallet, usdc: robinhoodUsdg, scope, offset }, query.bookedUsdg)
+  const slop = try incomeEvidence({ network: "Robinhood", wallet, usdc: slopToken, scope, offset }, query.bookedSlop)
+  const arrivals = try arrivalEvidence(scope, wallet)
+  return {
+    scope,
+    offset,
+    held: query.held,
+    names: query.names,
+    wallet,
+    journal: query.journal,
+    arrivalEvidence: arrivals,
+    arrivals,
+    feeEvidence: fees,
+    fees,
+    reserved: try localShare(fees),
+    slopEvidence: slop,
+    slopFees: slop,
+    runs: 0,
+    runFrom: 0,
+  } satisfies PoolInstance
+}

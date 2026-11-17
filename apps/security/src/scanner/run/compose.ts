@@ -90,6 +90,13 @@ export interface ScanComposition {
   readonly result: ScanResult;
   readonly report: Uint8Array;
   readonly needsSpecialist: boolean;
+  readonly ambiguous: boolean;
+  readonly uncovered: number;
+}
+
+/** @throws {never} */
+export function deterministicAmbiguity(result: ScanResult): boolean {
+  return specialistRequired({ ...result, primaryReview: { ...result.primaryReview, verdict: "no-findings", risk: "low" } });
 }
 
 export class ReviewInventoryMismatch extends Error {
@@ -159,6 +166,7 @@ export function composeScanResult(input: {
     findings: inspection.findings.slice(0, 200).map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
-  const result: ScanResult = resultProblems(composed).length > 0 ? { ...composed, disposition: "incomplete" } : composed;
-  return { result, report, needsSpecialist: input.specialist === null && specialistRequired(result) };
+  const uncovered = resultProblems(composed).length;
+  const result: ScanResult = uncovered > 0 ? { ...composed, disposition: "incomplete" } : composed;
+  return { result, report, needsSpecialist: input.specialist === null && specialistRequired(result), ambiguous: deterministicAmbiguity(result), uncovered };
 }

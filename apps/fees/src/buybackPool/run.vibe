@@ -1,0 +1,255 @@
+// spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "A purchase never spends more than the Robinhood fee wallet's finalized USDG balance"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"
+import type { Address, Hex } from "@repo/platform/chain/evm"
+import { positiveAmount, zero } from "../../gen/settlement__money.effect.vibe"
+import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, maximumSafeValue, purchaseDecision, remaining, signs } from "../../gen/fees__buybackPool.effect.vibe"
+import { deadAddress, openSend } from "../../gen/fees__buyback.effect.vibe"
+import { amountOf } from "../buyback/codec.vibe"
+import { exactNumber, pausedCalldata, transferCalldata } from "../evm/abi.ts"
+import { approvalNeeded, approvalSettled } from "../evm/approval.vibe"
+import { attemptStatus, broadcast, credited, feesPerGas, gasLimit, nativeCost, readWord, tokenBalance } from "../evm/client.vibe"
+import { type KyberSettings, nativeValue, quote } from "../kyber/route.vibe"
+import { type EvmSigned, type Signed, FeeWallet } from "../signer/feeWallet.vibe"
+import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
+import { burnAddress, robinhoodUsdg, slopToken } from "../runtime/pins.ts"
+import type { PoolInstance, SendRecord } from "./codec.vibe"
+import { burnTransfers } from "./burnTransfers.ts"
+import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval } from "./store.vibe"
+
+module verified {
+  import { boundedSend as bounded } from "../kernels/buybackShares.ts"
+  import { fromAmount as whole } from "@repo/settlement/kernels/amounts"
+  import type { Amount } from "../../gen/settlement__money.ts"
+  /** @throws {never} */
+  export function boundedSend(due: bigint, balance: bigint, cap: bigint): bigint { return bounded(due, balance, cap) }
+  /** @throws {never} */
+  export function fromAmount(amount: Amount): bigint { return whole(amount) }
+}
+import { boundedSend, fromAmount } from verified
+
+export interface PoolSettings {
+  readonly runId: string
+  readonly wallet: string
+  readonly limits: BuybackLimits
+  readonly native: NativeLimits
+  readonly kyber: KyberSettings
+}
+
+interface Running {
+  instance: PoolInstance
+  state: Pool
+  readonly settings: PoolSettings
+  readonly records: Array<string>
+}
+
+export interface PoolResult { readonly instance: PoolInstance; readonly state: Pool; readonly records: ReadonlyArray<string> }
+
+const usdg = robinhoodUsdg as Address
+const slop = slopToken as Address
+
+function tagOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
+}
+
+effect function big(text: string) {
+  return try orDie(Effect.try(() => BigInt(text)))
+}
+
+effect function exact(value: bigint, event: string, what: string) {
+  const number = exactNumber(value)
+  if (number === undefined) throw new PoolRefused({ event, issue: `${what} is outside the pool model's exact range` })
+  return number
+}
+
+effect function step(running: Running, event: Event, facts: Facts = {}) {
+  const done = try send(running.instance, event, "Worker", { runId: running.settings.runId, wallet: running.settings.wallet, ...facts })
+  running.instance = done.instance
+  running.state = done.state
+  running.records.push(event.type)
+  return done.state
+}
+
+function signedFacts(settings: PoolSettings, signed: EvmSigned) {
+  const { prepared } = signed
+  return { txId: signed.txId, rawTx: signed.rawTx, nonce: prepared.nonce, maximumWei: prepared.maximumWei.toString(), intentHash: prepared.unsigned.intentHash, limits: settings.native, ...prepared.expiresAt === undefined ? {} : { expiresAt: prepared.expiresAt } } satisfies SignedFacts
+}
+
+effect function signedEvm(signed: Signed, event: string) {
+  if (signed.family !== "evm") throw new PoolRefused({ event, issue: "a Robinhood Chain send is an EVM send" })
+  return signed
+}
+
+effect function broadcastOf(running: Running, raw: Hex, txId: string, what: string) {
+  const sent = try broadcast(raw)
+  if (sent.kind === "Accepted") try Effect.logInfo(what, { network: "Robinhood", txId })
+  return sent
+}
+
+effect function settleSend(running: Running, record: SendRecord) {
+  const status = try attemptStatus(record.txs.map((attempt) => attempt as Hex))
+  if (status.kind !== "Landed") {
+    if (status.kind === "Unlanded" && record.state === "unknown") {
+      const again = try broadcast(record.latestRaw as Hex)
+      try Effect.logInfo("fee_send_rebroadcast", { network: "Robinhood", txId: record.txs[record.txs.length - 1] ?? record.tx, accepted: again.kind === "Accepted" })
+    }
+    return
+  }
+  const receipt = { landedTxId: status.tx, actualWei: (try nativeCost(status.receipt)).toString(), blockHash: status.receipt.blockHash }
+  const succeeded = status.receipt.status === "success"
+  const tx = running.instance.names.number("tx", record.tx)
+  if (record.kind === "approval") {
+    const evidence = try approvalSettled(status, { token: record.token as Address, spender: "Router", amount: try big(record.amountIn), nonce: try big(String(record.nonce ?? -1)) })
+    try settleApproval(running.instance, record.id, evidence.succeeded, { receipt })
+    running.records.push("settleApproval")
+    return
+  }
+  if (record.kind === "buyback") {
+    const output = succeeded ? try credited(status.receipt, slop) : 0n
+    const swap = { tx, succeeded, finalized: true, output: succeeded ? amountOf(output) : zero, toFeeWallet: output > 0n, slopToken: true }
+    if (!canSettlePurchase(running.state, swap)) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: status.tx })
+    try step(running, { type: "settlePurchase", swap }, { receipt })
+    return
+  }
+  if (succeeded) {
+    const amount = try big(record.amountIn)
+    const moved = burnTransfers(status.receipt.logs, slop, running.settings.wallet, burnAddress)
+    if (moved.burned !== amount || moved.left !== amount) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "burn", id: record.id, txId: status.tx })
+  }
+  const sendReceipt = { tx, succeeded, finalized: true }
+  if (!canSettleBurn(running.state, sendReceipt)) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "burn", id: record.id, txId: status.tx })
+  try step(running, { type: "settleBurn", receipt: sendReceipt }, { receipt })
+}
+
+effect function reconcile(running: Running) {
+  const ledger = try poolOf(running.instance)
+  for (const record of ledger.sends) if (record.state === "submitted" || record.state === "unknown") try settleSend(running, record)
+  return (try poolOf(running.instance)).sends.some((record) => record.kind === "approval" && (record.state === "submitted" || record.state === "unknown"))
+}
+
+effect function decidedPurchase(running: Running, purchaseQuote: PurchaseQuote, facts: Facts) {
+  if (canDecidePurchase(running.state, purchaseQuote)) return try step(running, { type: "decidePurchase", quote: purchaseQuote }, facts)
+  try Effect.logWarning("fee_buyback_undecided", { network: "Robinhood", leg: "buyback", amount: purchaseQuote.spent, decision: purchaseDecision(running.state, purchaseQuote).state, mode: running.state.runtime.buybackMode })
+}
+
+effect function decidedBurn(running: Running, request: BurnRequest, facts: Facts) {
+  if (canDecideBurn(running.state, request)) return try step(running, { type: "decideBurn", burnRequest: request }, facts)
+  try Effect.logWarning("fee_buyback_undecided", { network: "Robinhood", leg: "burn", value: request.value, decision: burnDecision(running.state, request).state, mode: running.state.runtime.buybackMode })
+}
+
+effect function approve(running: Running, amount: bigint, summary: string) {
+  const floors = try sendFloors(running.instance)
+  const wallet = try FeeWallet
+  const signed = try signedEvm(try wallet.sign({ kind: "KyberApprove", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amount }, () => Effect.void), "approvePurchase")
+  const { settings } = running
+  try journalApproval(running.instance, { amount, runId: settings.runId, wallet: settings.wallet, summary, signed: signedFacts(settings, signed) })
+  running.records.push("approvePurchase")
+  const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_approval_submitted")
+  if (sent.kind === "Accepted") return
+  const ledger = try poolOf(running.instance)
+  const record = ledger.sends.find((entry) => entry.kind === "approval" && entry.tx === signed.txId)
+  if (record !== undefined) try loseApproval(running.instance, record.id, sent.detail)
+}
+
+effect function buy(running: Running, purchaseQuote: PurchaseQuote, slippageBps: number, quoted: QuoteFacts) {
+  const amount = try big(String(purchaseQuote.spent))
+  const floors = try sendFloors(running.instance)
+  const wallet = try FeeWallet
+  const minimumOutput = fromAmount(purchaseQuote.minimum)
+  const signed = try signedEvm(try wallet.sign({ kind: "KyberSwap", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amountIn: amount, minimumOutput, slippageBps }, () => Effect.void), "purchase")
+  const tx = running.instance.names.number("tx", signed.txId)
+  const signedQuote = { ...purchaseQuote, tx, minimum: amountOf(signed.prepared.minimumOutput) }
+  if (!canPurchase(running.state, signedQuote)) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "buyback", reason: "the signed purchase is outside the pool's terms" })
+  try step(running, { type: "purchase", quote: signedQuote }, { quote: quoted, signed: signedFacts(running.settings, signed) })
+  const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_buyback_submitted")
+  if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
+}
+
+function capReached(spent: number, balance: number): PurchaseQuote {
+  return { route: "RouteFound", tx: 0, spent, minimum: zero, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance }
+}
+
+effect function purchaseLeg(running: Running) {
+  const { state, settings } = running
+  if (openSend(state.purchase) || state.credit <= 0) return
+  const balance = try tokenBalance(usdg, "finalized")
+  const credit = try big(String(state.credit))
+  const held = boundedSend(credit, balance, credit)
+  if (held <= 0n) return
+  const safe = try big(String(maximumSafeValue))
+  const balanceNumber = Number(boundedSend(balance, safe, safe))
+  const left = remaining(state)
+  if (left <= 0) return try decidedPurchase(running, capReached(try exact(held, "decidePurchase", "the purchase input"), balanceNumber), {})
+  const amount = boundedSend(credit, balance, try big(String(left)))
+  const spent = try exact(amount, "decidePurchase", "the purchase input")
+  const slippageBps = settings.limits.maxSlippageBps
+  const found = try quote("Robinhood", usdg, amount, slop, slippageBps, settings.kyber)
+  if (found.kind === "NoRoute") return try decidedPurchase(running, { ...capReached(spent, balanceNumber), route: "NoRouteResult" }, { detail: found.detail })
+  const priced = found.quote
+  const paused = (try readWord(slop, pausedCalldata, "latest")) !== 0n
+  const purchaseQuote: PurchaseQuote = {
+    route: "RouteFound",
+    tx: 0,
+    spent,
+    minimum: amountOf(priced.minAmountOut),
+    gasValue: try exact(priced.gasCostMicro, "decidePurchase", "the purchase gas value"),
+    slippageBps,
+    impactBps: priced.priceImpactBps,
+    receiver: "fees",
+    tokenPaused: paused,
+    balance: balanceNumber,
+  }
+  const quoted = { amountOut: priced.amountOut.toString(), impactBps: priced.priceImpactBps < 0 ? null : priced.priceImpactBps, summary: priced.summary.slice(0, 8192) } satisfies QuoteFacts
+  const verdict = purchaseDecision(running.state, purchaseQuote)
+  if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decidedPurchase(running, purchaseQuote, { quote: quoted })
+  if (paused) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "buyback", reason: "SLOP transfers are paused" })
+  if (try approvalNeeded(usdg, amount, "Router")) return try approve(running, amount, quoted.summary)
+  try buy(running, purchaseQuote, slippageBps, quoted)
+}
+
+effect function burnGas(running: Running, quantity: bigint) {
+  const gas = try gasLimit(slop, transferCalldata(burnAddress as Address, quantity), 0n)
+  const fees = try feesPerGas()
+  return try nativeValue("Robinhood", gas * fees.maxFeePerGas, running.settings.kyber)
+}
+
+effect function burnLeg(running: Running) {
+  const { state, settings } = running
+  if (openSend(state.burn)) return
+  const due = burnDue(state)
+  if (!positiveAmount(due)) return
+  const quantity = fromAmount(due)
+  if ((try tokenBalance(slop, "latest")) < quantity) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "the fee wallet holds less SLOP than the burn share" })
+  const paused = (try readWord(slop, pausedCalldata, "latest")) !== 0n
+  const valued = try quote("Robinhood", slop, quantity, usdg, 0, settings.kyber)
+  if (valued.kind === "NoRoute") return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: `burn value unavailable: ${valued.detail}` })
+  const value = exactNumber(valued.quote.amountOut)
+  if (value === undefined) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "burn value exceeds safe integer accounting" })
+  const gasMicro = paused ? 0n : try burnGas(running, quantity)
+  if (gasMicro === undefined) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "the burn gas cannot be priced" })
+  const request: BurnRequest = { tx: 0, quantity: due, value, gasValue: try exact(gasMicro, "decideBurn", "the burn gas value"), destination: deadAddress, tokenPaused: paused }
+  const verdict = burnDecision(running.state, request)
+  if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decidedBurn(running, request, {})
+  const floors = try sendFloors(running.instance)
+  const wallet = try FeeWallet
+  const signed = try signedEvm(try wallet.sign({ kind: "SlopBurn", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: try big(String(value)), amount: quantity }, () => Effect.void), "burn")
+  const tx = running.instance.names.number("tx", signed.txId)
+  const signedRequest = { ...request, tx }
+  if (!canBurn(running.state, signedRequest)) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "the signed burn is outside the pool's terms" })
+  try step(running, { type: "burn", burnRequest: signedRequest }, { signed: signedFacts(settings, signed) })
+  const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_burn_submitted")
+  if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
+}
+
+effect function attempt<E, R>(leg: string, program: void!E!R) {
+  program catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: "Robinhood", leg, error: tagOf(error) }) }
+}
+
+export effect function robinhoodPool(instance: PoolInstance, settings: PoolSettings) {
+  const running: Running = { instance, state: (try poolOf(instance)).state, settings, records: [] }
+  if (!canBeginRun(running.state)) return { instance: running.instance, state: running.state, records: running.records } satisfies PoolResult
+  try step(running, { type: "beginRun" })
+  let approving = true
+  try attempt("reconcile", effect { approving = try reconcile(running) })
+  if (!approving) try attempt("buyback", purchaseLeg(running))
+  try attempt("burn", burnLeg(running))
+  return { instance: running.instance, state: running.state, records: running.records } satisfies PoolResult
+}

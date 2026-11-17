@@ -134,7 +134,17 @@ replayed callback finds nothing to claim. Any later failure ends the flow:
 GitHub's `error` parameter, a verifier that cannot be decrypted, a failed
 token exchange, no identity, a web identity without a node ID, or expiry
 while GitHub answered. Only a processing flow can fail, and only the
-callback handler's own exchange completes or fails it.
+callback handler's own exchange completes or fails it. A failed token
+exchange or user read logs one structured `github_identity_failed` record
+with its stage (`token` or `user`), a fixed reason (`http-rejected`,
+`invalid-response` or `request-or-response-failed`), the HTTP status when
+known and GitHub's OAuth error code only when it is one of
+`incorrect_client_credentials`, `redirect_uri_mismatch`,
+`bad_verification_code`, `unverified_user_email`, `access_denied`,
+`unsupported_grant_type`, `server_error` or `temporarily_unavailable`; never
+the code, verifier, tokens, secrets, error descriptions or response bodies
+(Slop development `6ec8e3dfd`, `workers/identity/index.ts:215–251`; shell
+obligation).
 
 ```quint
 pure def flowByState(s: Identity, oauthState: int): Flow = s.flows.select(f => f.oauthState == oauthState).nthOr(0, absentFlow)

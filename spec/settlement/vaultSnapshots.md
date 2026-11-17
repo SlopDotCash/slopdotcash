@@ -40,6 +40,7 @@ identity. A pending or merely included creation exposes no registered snapshot.
 
 ```quint
 import money as M from "./money"
+import monthPledges as P from "./monthPledges"
 type Purpose = Ordinary | PrivateBounty
 type Chain = Evm | SolanaMain | SolanaOther
 type RequestPhase = ReadyRegistration | ReadyAppend | ReadyChainCheck | ReadyGenesisProbe | ReadyTotals | ReadyPrior | ReadyWrite | RequestDone
@@ -55,14 +56,14 @@ type Counters = { deposits: M::Amount, payments: M::Amount, payoutFees: M::Amoun
 type Balance = { present: bool, amount: M::Amount }
 type Balances = { free: Balance, principal: Balance, feesReserved: Balance, feesAccrued: Balance, reserved: Balance }
 type Observation = { exists: bool, identity: Identity, purpose: Purpose, block: M::Amount, blockTime: int,
-  observedAt: int, counters: Counters, balances: Balances, legacyServiceFees: M::Amount }
+  observedAt: int, counters: Counters, balances: Balances, legacyServiceFees: M::Amount, monthPledges: P::PledgeRead }
 type DeploymentRow = { registration: Registration, observation: Observation }
 type RequestRow = { id: int, purpose: Purpose, source: Source, phase: RequestPhase, result: RequestResult, http: int,
   capture: int, expected: int, network: str, tx: str, registration: Registration, incoming: Observation,
   genesisRoot: str, genesisConfirmed: bool, genesisProbes: int }
 type MonthStart = { network: str, vault: str, period: int, free: M::Amount, withdrawn: M::Amount, blockTime: int }
 type Snapshots = { revision: Revision, history: List[Revision], ordinary: DeploymentRow, privateBounty: DeploymentRow,
-  requests: List[RequestRow], monthStarts: List[MonthStart] }
+  requests: List[RequestRow], monthStarts: List[MonthStart], pledges: List[P::StoredPledge], openPledged: P::StoredTotal }
 pure val noIdentity: Identity = { chain: Evm, network: "", vault: "", readVault: "", asset: "", decimals: 0, rules: "" }
 pure val noRegistration: Registration = { tx: "", revision: 0, identity: noIdentity }
 pure val noRevision: Revision = { number: 0, ordinaryPolicy: 0, privatePolicy: 0 }
@@ -72,13 +73,15 @@ pure val missingBalance: Balance = { present: false, amount: M::zero }
 pure val zeroBalances: Balances = { free: missingBalance, principal: missingBalance, feesReserved: missingBalance,
   feesAccrued: missingBalance, reserved: missingBalance }
 pure val noObservation: Observation = { exists: false, identity: noIdentity, purpose: Ordinary, block: M::zero,
-  blockTime: 0, observedAt: 0, counters: zeroCounters, balances: zeroBalances, legacyServiceFees: M::zero }
+  blockTime: 0, observedAt: 0, counters: zeroCounters, balances: zeroBalances, legacyServiceFees: M::zero,
+  monthPledges: P::PledgesNotRead }
 pure val noDeployment: DeploymentRow = { registration: noRegistration, observation: noObservation }
 pure val noRequest: RequestRow = { id: 0, purpose: Ordinary, source: RegistrationRequest, phase: RequestDone,
   result: NoResult, http: 0, capture: 0, expected: 0, network: "", tx: "", registration: noRegistration,
   incoming: noObservation, genesisRoot: "", genesisConfirmed: false, genesisProbes: 0 }
 pure val initial: Snapshots = { revision: firstRevision, history: List(firstRevision),
-  ordinary: noDeployment, privateBounty: noDeployment, requests: List(), monthStarts: List() }
+  ordinary: noDeployment, privateBounty: noDeployment, requests: List(), monthStarts: List(), pledges: List(),
+  openPledged: P::noStoredTotal }
 pure def deployment(s: Snapshots, purpose: Purpose): DeploymentRow = if (purpose == Ordinary) s.ordinary else s.privateBounty
 pure def setDeployment(purpose: Purpose, row: DeploymentRow, s: Snapshots): Snapshots =
   if (purpose == Ordinary) { ...s, ordinary: row } else { ...s, privateBounty: row }
@@ -251,8 +254,10 @@ pure def write(s: Snapshots, requestId: int, reply: WriteReply): Snapshots =
   val r = requestRow(s, requestId)
   val row = deployment(s, r.purpose)
   val prior = row.observation
-  val nextObservation = { ...r.incoming, legacyServiceFees: if (prior.exists) prior.legacyServiceFees else M::zero }
-  val committed = withMonthStart(nextObservation, setDeployment(r.purpose, { ...row, observation: nextObservation }, s))
+  val pledgeRead = if (r.purpose == Ordinary) P::acceptedRead(r.incoming.monthPledges) else P::PledgesNotRead
+  val nextObservation = { ...r.incoming, legacyServiceFees: if (prior.exists) prior.legacyServiceFees else M::zero, monthPledges: pledgeRead }
+  val committed = withMonthPledges(nextObservation,
+    withMonthStart(nextObservation, setDeployment(r.purpose, { ...row, observation: nextObservation }, s)))
   if (reply == WriteFailed) finish(r, ObservationUnavailable, 503, s)
   else if (writable(r.incoming, prior) and reply == WriteReplyLost) finish(r, ObservationReplyLost, 503, committed)
   else if (writable(r.incoming, prior)) finish(r, ObservationStored, 200, committed)
@@ -294,7 +299,8 @@ pure val observationValues = Set(ordinaryRead, privateRead, solanaRead,
   { ...ordinaryRead, block: List(2), observedAt: 1 }, { ...ordinaryRead, observedAt: 2 },
   { ...ordinaryRead, block: List(2), counters: zeroCounters },
   { ...solanaRead, block: List(2), observedAt: 1 }, { ...solanaRead, observedAt: 2 },
-  { ...ordinaryRead, block: List(3), blockTime: 1796083300, observedAt: 3, balances: { ...zeroBalances, free: { present: true, amount: List(7) } } })
+  { ...ordinaryRead, block: List(3), blockTime: 1796083300, observedAt: 3, balances: { ...zeroBalances, free: { present: true, amount: List(7) } } },
+  pledgedRead, closedPledgeRead, unsupportedPledgeRead)
 pure val baseCreation: Creation = { identity: evm, transaction: "creation-one", reviewed: 1, purpose: Ordinary, status: FinalizedCreation }
 pure val creationValues = Set(baseCreation, { ...baseCreation, identity: solana }, { ...baseCreation, purpose: PrivateBounty },
   { ...baseCreation, status: IncludedCreation }, { ...baseCreation, status: PendingCreation },
@@ -358,6 +364,47 @@ pure def alwaysOneMonthStartPerVault(s: Snapshots): bool = s.monthStarts.every(m
 pure def stepMonthStartsNeverChange(before: Snapshots, after: Snapshots): bool =
   before.monthStarts.every(m => after.monthStarts.includes(m)) and after.monthStarts.length() <= before.monthStarts.length() + 1
 pure def sometimesMonthStartRecorded(s: Snapshots): bool = s.monthStarts.length() > 0
+```
+
+## Story: Keep each vault's month pledges with its finalized read
+
+### An ordinary vault read stores its month pledges, keeping the newest read of each month
+
+After an ordinary vault's observation is stored, the month pledges read with
+it at the same block are kept as [month pledges](./monthPledges.md) states:
+each month's row takes the read of the newest block, a closed pledge stays,
+and the vault's stored open total becomes the read's total, or no pledge
+support. A pledge read that failed, was refused or was not taken leaves the
+stored rows and total unchanged; the counters still store. A private-bounty
+vault reads and records no pledges, and an observation that is not stored
+records none (development `backend/payments/vault-snapshots.ts`
+`recordMonthPledges`, migration `0128`, `workers/payments/index.ts`
+`syncRegistryVaults`).
+
+```quint
+pure def withMonthPledges(observation: Observation, s: Snapshots): Snapshots =
+  if (observation.purpose == Ordinary)
+    { ...s, pledges: P::storePledgeRead(s.pledges, observation.identity.network, observation.identity.vault,
+        observation.block, observation.monthPledges),
+      openPledged: P::storedTotalAfter(s.openPledged, observation.monthPledges) }
+  else s
+pure def alwaysPledgesOfTheOrdinaryVault(s: Snapshots): bool =
+  s.pledges.every(p => registered(s.ordinary.registration) and p.network == s.ordinary.registration.identity.network
+    and p.vault == s.ordinary.registration.identity.vault and P::validPledgePeriod(p.period)
+    and M::withinMaximum(p.amount, M::maxU128))
+  and (if (s.openPledged.supported) M::withinMaximum(s.openPledged.amount, M::maxU128) else s.openPledged.amount == M::zero)
+pure def stepStoredPledgesNeverDropped(before: Snapshots, after: Snapshots): bool =
+  before.pledges.every(p => after.pledges.some(n => P::samePledge(n, p.network, p.vault, p.period)
+    and M::compareAmounts(n.block, p.block) >= 0))
+pure def sometimesOpenPledgeStored(s: Snapshots): bool = s.openPledged.supported
+  and s.pledges.some(p => p.open and M::positiveAmount(p.amount))
+pure def sometimesClosedPledgeKept(s: Snapshots): bool = s.pledges.some(p => not(p.open) and M::positiveAmount(p.amount))
+pure val pledgeSample: P::ChainPledge = { period: 202612, amount: List(5), open: true }
+pure val pledgedRead: Observation = { ...ordinaryRead, block: List(2), observedAt: 2,
+  monthPledges: P::PledgesRead({ openPledged: List(5), pledges: List(pledgeSample) }) }
+pure val closedPledgeRead: Observation = { ...ordinaryRead, block: List(3), observedAt: 3,
+  monthPledges: P::PledgesRead({ openPledged: List(0), pledges: List({ ...pledgeSample, open: false }) }) }
+pure val unsupportedPledgeRead: Observation = { ...ordinaryRead, block: List(2), observedAt: 3, monthPledges: P::NoPledgeSupport }
 ```
 
 ## Story: Public vault totals show the last finalized value, never a fabricated zero

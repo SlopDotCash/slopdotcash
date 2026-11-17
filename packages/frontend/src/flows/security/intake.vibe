@@ -1,0 +1,108 @@
+// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"
+import { route } from "@repo/platform/route"
+import { type IntakeReadiness, type SubmissionView, authorizeForwarding, intakeReadiness, reconcileForwarding, retryScreening, reviewRouting, reviseReport, sendForwarding } from "@repo/security/client"
+import { call } from "../../platform/api.vibe"
+import { type Private, ReportBody, type ReportDraft, privateCall, reportBody } from "./private.vibe"
+import { keepsReportText, saveReportText } from "./reportText.vibe"
+
+export const readinessLimitBytes = 16_384
+
+export const intakeMessages = {
+  storage: "This browser could not keep your report during GitHub authorization. Allow site storage for this tab, then try again.",
+  grant: "Authorize GitHub for this report first.",
+  noAuthorization: "GitHub authorization could not start. Try again.",
+} as const
+
+export const grantErrors: Readonly<Record<string, string>> = {
+  grant_identity_mismatch: "GitHub authorized a different account than the one signed in to Slop. Nothing was sent.",
+  grant_state_mismatch: "The GitHub authorization did not match. Try again.",
+  grant_exchange_failed: "GitHub did not complete the authorization. Try again.",
+  grant_flow_missing: "The GitHub authorization expired. Try again.",
+}
+
+schema Revision { expectedRevision?: number; report: ReportBody }
+schema Review { expectedRevision?: number; decision: string; reason: string }
+schema Screening { expectedRevision?: number }
+schema Sending { expectedRevision: number; report?: ReportBody }
+schema Reconciling { expectedRevision: number }
+
+const revise = route({ ...reviseReport, request: Revision })
+const review = route({ ...reviewRouting, request: Review })
+const screen = route({ ...retryScreening, request: Screening })
+const send = route({ ...sendForwarding, request: Sending })
+const reconcile = route({ ...reconcileForwarding, request: Reconciling })
+
+export type ReviewDecision = "forward" | "request-information"
+
+export type Readiness =
+  | { readonly kind: "ready"; readonly value: IntakeReadiness }
+  | { readonly kind: "failed"; readonly message: string }
+
+export type SubmissionAction =
+  | { readonly kind: "updated"; readonly submission: SubmissionView; readonly notice: string | null }
+  | { readonly kind: "grantRequired"; readonly message: string }
+  | { readonly kind: "redirect"; readonly url: string }
+  | { readonly kind: "storageFailed"; readonly message: string }
+  | { readonly kind: "authorizationUnavailable"; readonly message: string }
+  | Exclude<Private<never>, { readonly kind: "done" }>
+
+interface Answered {
+  readonly submission: SubmissionView
+  readonly rateLimited?: { readonly retryAfterSeconds: number | null }
+}
+
+export function rateLimitMessage(retryAfterSeconds: number | null): string {
+  const wait = retryAfterSeconds === null ? "a few minutes" : retryAfterSeconds < 60 ? "1 minute" : `${Math.ceil(retryAfterSeconds / 60)} minutes`
+  return `GitHub is limiting new reports from your account right now. GitHub has no copy of this report. Wait ${wait}, then send it again.`
+}
+
+function updated(result: Private<Answered>): SubmissionAction {
+  if (result.kind !== "done") return result
+  const limited = result.value.rateLimited
+  return { kind: "updated", submission: result.value.submission, notice: limited === undefined ? null : rateLimitMessage(limited.retryAfterSeconds) }
+}
+
+function forwarded(result: Private<Answered>): SubmissionAction {
+  if (result.kind === "failed" && result.failure._tag === "Refused" && result.failure.error === "grant_required") return { kind: "grantRequired", message: intakeMessages.grant }
+  return updated(result)
+}
+
+export effect function readinessOf(projectId: string) {
+  const read = call(intakeReadiness, { params: { id: projectId } }, { limitBytes: readinessLimitBytes }) catch (failure) => ({ failure })
+  if ("failure" in read) return { kind: "failed", message: read.failure.message } satisfies Readiness
+  return { kind: "ready", value: read } satisfies Readiness
+}
+
+export effect function reviseSubmission(owner: string, submission: SubmissionView, draft: ReportDraft) {
+  const body = { ...(submission.intake === null ? {} : { expectedRevision: submission.intake.revision }), report: reportBody(draft) }
+  return updated(try privateCall(owner, revise, { params: { id: submission.id }, body }, () => 1))
+}
+
+export effect function reviewSubmission(owner: string, submission: SubmissionView, decision: ReviewDecision, reason: string) {
+  const body = { ...(submission.intake === null ? {} : { expectedRevision: submission.intake.revision }), decision, reason }
+  return updated(try privateCall(owner, review, { params: { id: submission.id }, body }, () => 1))
+}
+
+export effect function retrySubmissionScreening(owner: string, submission: SubmissionView) {
+  const body = submission.intake === null ? {} : { expectedRevision: submission.intake.revision }
+  return forwarded(try privateCall(owner, screen, { params: { id: submission.id }, body }, () => 1))
+}
+
+export effect function sendSubmission(owner: string, submission: SubmissionView, draft: ReportDraft | null) {
+  if (draft !== null) try saveReportText(submission.id, draft)
+  const body = { expectedRevision: submission.revision, ...(draft === null ? {} : { report: reportBody(draft) }) }
+  return forwarded(try privateCall(owner, send, { params: { id: submission.id }, body }, () => 1))
+}
+
+export effect function reconcileSubmission(owner: string, submission: SubmissionView) {
+  return forwarded(try privateCall(owner, reconcile, { params: { id: submission.id }, body: { expectedRevision: submission.revision } }, () => 1))
+}
+
+export effect function authorizeSubmission(owner: string, submission: SubmissionView, draft: ReportDraft) {
+  if (keepsReportText(submission) && !(try saveReportText(submission.id, draft))) return { kind: "storageFailed", message: intakeMessages.storage } satisfies SubmissionAction
+  const result = try privateCall(owner, authorizeForwarding, { params: { id: submission.id } }, () => 1)
+  if (result.kind !== "done") return forwarded(result)
+  const url = result.value.authorizeUrl
+  if (url === undefined || !url.startsWith("https://")) return { kind: "authorizationUnavailable", message: intakeMessages.noAuthorization } satisfies SubmissionAction
+  return { kind: "redirect", url } satisfies SubmissionAction
+}

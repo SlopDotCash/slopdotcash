@@ -1,0 +1,97 @@
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+import { type BountyAmount, SECURITY_SPLIT, type SharePreview, type SplitPolicy, bountySharePreview } from "@repo/security/client"
+import type { FundingChoice } from "../projects/proposal.ts"
+import { type RewardAsset, assetBaseUnits, rewardAssetChoice } from "./bountyAsset.ts"
+
+export const privateBountyCriteria = "A reproducible security vulnerability within the project scope. The owner confirms impact and the first qualifying report."
+export const privateBountyTesting = "Use local tests with synthetic data and funds. Do not exploit live systems or access other users' data."
+export const privateBountyDisclosure = "Keep reports private until the owner approves disclosure."
+
+export interface BountyAmountDraft {
+  readonly asset: RewardAsset
+  readonly currency: string
+  readonly decimals: number
+  readonly network: RewardAsset["network"]
+  readonly grossMinor: string
+}
+
+export type BountyAmountField =
+  | { readonly kind: "amount"; readonly amount: BountyAmountDraft }
+  | { readonly kind: "invalid"; readonly message: string }
+
+export interface BountyActor {
+  readonly githubId: string
+  readonly githubLogin: string
+}
+
+export interface BountyInput {
+  readonly name: string
+  readonly repository: string
+  readonly commit: string
+  readonly scope: string
+  readonly criteria: string
+  readonly testing: string
+  readonly funding: FundingChoice
+  readonly actor: BountyActor
+}
+
+export type BountyTerms =
+  | { readonly kind: "terms"; readonly terms: Readonly<Record<string, unknown>> & { readonly amount: BountyAmountDraft } }
+  | { readonly kind: "invalid"; readonly message: string }
+
+export function bountyAmountFields(choice: FundingChoice): BountyAmountField {
+  const chosen = rewardAssetChoice(choice)
+  if (chosen.kind === "invalid") return chosen
+  const { asset, decimals } = chosen
+  const gross = asset.kind === "token" ? { kind: "units", minor: "0" } as const : assetBaseUnits(choice.monthlyAmount, decimals)
+  if (gross.kind === "invalid") return gross
+  return { kind: "amount", amount: { asset, currency: asset.symbol, decimals, network: asset.network, grossMinor: gross.minor } }
+}
+
+export function bountyAmountPreview(amount: BountyAmountDraft, rawAmount: string, split: SplitPolicy = SECURITY_SPLIT): SharePreview | undefined {
+  const shown: BountyAmount = { currency: amount.currency, decimals: amount.decimals, asset: { kind: amount.asset.kind, symbol: amount.asset.symbol } }
+  return bountySharePreview(shown, amount.grossMinor, rawAmount, split)
+}
+
+export function privateBountyTerms(input: BountyInput): BountyTerms {
+  const field = bountyAmountFields(input.funding)
+  if (field.kind === "invalid") return field
+  const owner = { githubId: input.actor.githubId, githubLogin: input.actor.githubLogin }
+  return {
+    kind: "terms",
+    terms: {
+      version: "1",
+      status: "open",
+      rewardMode: "bounty-only",
+      eligibility: "in-scope-security",
+      fundingPolicy: "after-approval",
+      amount: field.amount,
+      split: { ...SECURITY_SPLIT },
+      sponsor: { name: input.name, githubId: owner.githubId },
+      funding: { state: "pledged" },
+      capacity: {
+        awards: null,
+        closesAt: null,
+        exhaustionRule: "The owner decides each qualifying finding separately and funds an approved award before payment. No award or available funding is guaranteed.",
+      },
+      scope: {
+        sourceRevisions: [{ repository: input.repository, commit: input.commit }],
+        deployments: [],
+        includedAssets: [input.repository],
+        excludedDependencies: ["Third-party systems and dependencies"],
+        testingPermission: input.testing.trim() || privateBountyTesting,
+        severityRubric: input.criteria.trim(),
+        lossDefinition: input.scope.trim(),
+      },
+      intake: { kind: "github-private-vulnerability-reporting", repository: input.repository },
+      responseTargets: { acknowledgeHours: 24, triageBusinessDays: 3, updateIntervalDays: 7 },
+      approvers: { technical: [owner], financial: [owner], dispute: [owner] },
+      dispute: {
+        authority: "advisory",
+        process: "Request a review through the private case appeal. Slopbot triages it and an authorized human decides escalated disputes.",
+      },
+      disclosure: privateBountyDisclosure,
+      safeHarbor: "Follow the published testing rules and report in good faith. These terms grant no permission to access third-party systems or conduct harmful testing.",
+    },
+  }
+}

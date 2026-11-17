@@ -1,0 +1,44 @@
+// spec/security/scanController.md, "A run dispatches only when every gate holds and otherwise skips"
+import { gitBytes } from "@repo/platform/git"
+import { utf8Text } from "@repo/platform/git/bytes"
+
+export error CheckoutRefused { message: string }
+
+export effect function variable(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+export effect function secretVariable(name: string) {
+  const value = Option.getOrUndefined(try Config.option(Config.Redacted(name)))
+  return value !== undefined && Redacted.value(value).trim() !== "" ? value : undefined
+}
+
+export effect function checkoutHead() {
+  const bytes = gitBytes({ args: ["rev-parse", "HEAD"], limit: 1024, seconds: 30 }, "The checkout head is unreadable") catch effect () => {
+    throw new CheckoutRefused({ message: "The checkout head is unreadable" })
+  }
+  return (utf8Text(bytes) ?? "").trim()
+}
+
+export effect function protectedCheckout(input: { readonly refs: ReadonlyArray<string>; readonly events?: ReadonlyArray<string>; readonly workflowRef?: string; readonly mode?: string; readonly message: string }) {
+  const actions = try variable("GITHUB_ACTIONS")
+  const event = try variable("GITHUB_EVENT_NAME")
+  const ref = try variable("GITHUB_REF")
+  const sha = try variable("GITHUB_SHA")
+  const head = try checkoutHead()
+  const workflow = try variable("GITHUB_WORKFLOW_REF")
+  const repository = try variable("GITHUB_REPOSITORY")
+  const mode = try variable("VETTING_QUALIFICATION_MODE")
+  const exact =
+    actions === "true" &&
+    (input.events ?? ["workflow_dispatch"]).includes(event ?? "") &&
+    ref !== undefined &&
+    input.refs.includes(ref) &&
+    sha !== undefined &&
+    /^[a-f0-9]{40}$/u.test(sha) &&
+    head === sha &&
+    (input.workflowRef === undefined || (repository === "SlopDotCash/slopdotcash" && workflow === input.workflowRef)) &&
+    (input.mode === undefined || mode === input.mode)
+  if (!exact || sha === undefined || ref === undefined) throw new CheckoutRefused({ message: input.message })
+  return { sha, ref }
+}

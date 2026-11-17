@@ -183,7 +183,13 @@ against the revision, enforcement record count and clearance generation it
 read, so a scan result, grant, revocation or identity change recorded in
 between refuses it and the check runs again. Owner revisions,
 appended repositories, consent edits and placements are refused while any
-restriction holds (`project_restricted`). An owner
+restriction holds (`project_restricted`). Removal is refused too while the
+project's own restriction is in force, a pending restriction revision
+included: 409 `project_restricted`, "The project is <state>; request
+reinstatement before removing it", checked after the authority recheck and
+before the already-removed retry, and again inside the guarded append
+(Slop development `da358d8a9`, `backend/projects/handler.ts:1857,2202,2406`,
+the retained `api_project_removal` model). An owner
 revision's clearance input is the composed clearance, so an executable change
 pauses an active project whose admission is not retained: an executable
 change never leaves the project collectable without clearance.
@@ -225,7 +231,8 @@ pure def canEditConsent(c: Registry, by: int, edit: P::ConsentEdit, account: Acc
 pure def editConsent(c: Registry, by: int, edit: P::ConsentEdit, account: AccountStanding): Registry =
   val p = P::editConsent(c.project, by, edit)
   { ...c, project: p, security: sync(p, c.security) }
-pure def canRemove(c: Registry, by: int, removal: P::Removal): bool = P::canRemove(c.project, by, removal)
+pure def canRemove(c: Registry, by: int, removal: P::Removal): bool =
+  P::canRemove(c.project, by, removal) and c.security.restriction == E::Clear
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
   val p = P::remove(c.project, by, removal)
   { ...c, project: p, security: E::withRevisionLanded(p.tier == P::Retired, sync(p, c.security)) }
@@ -250,11 +257,12 @@ Flags are filed on registered projects that the owner has not removed and
 administrators have not delisted. A flag pause appends no revision. A
 moderator quarantine or ban appends the restriction's revision with the
 record, or marks it pending when the current revision's policy check refuses
-it; an administrator later appends it under a passing policy check, or the
-owner's removal lands a paused, retired revision, and reinstatement is
-refused until one lands. Reinstatement restores a paused Community listing
-only for a project the restriction retired; a project the owner removed
-during the restriction stays removed. Every moderator decision carries the
+it; an administrator later appends it under a passing policy check, and
+reinstatement is refused until it lands. The owner cannot remove the project
+while the restriction holds, so the restriction's retired revision is never
+taken for a removal. Reinstatement restores a paused Community listing only
+for a project the restriction retired; a project the owner removed before
+the restriction stays removed. Every moderator decision carries the
 revision and sequence its preview confirmed.
 
 ```quint

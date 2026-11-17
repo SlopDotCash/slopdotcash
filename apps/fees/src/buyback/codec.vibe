@@ -2,8 +2,8 @@
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
-import { type Amount, addAmounts, zero } from "../../gen/settlement__money.effect.vibe"
-import { type BridgeDecision, type BridgeOrder, type BridgeReason, type Buyback, type DecisionState, type IncomeKey, type IncomeKind, approveOrder, closeOrder, decodeState, initial, loseSend, observeArrival, observeCancelling, observeRefund, order, reportUnfilled, settleApproval, settleOrder } from "../../gen/fees__buyback.effect.vibe"
+import type { Amount } from "../../gen/settlement__money.effect.vibe"
+import { type BridgeDecision, type BridgeOrder, type BridgeReason, type Buyback, type DecisionState, type IncomeKey, type IncomeKind, apply, approveOrder, closeOrder, decodeState, initial, loseSend, observeArrival, observeCancelling, observeRefund, order, reportUnfilled, settleApproval, settleOrder } from "../../gen/fees__buyback.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
 import type { Instance, Names } from "../journal/codec.vibe"
 import { networkNames } from "../journal/codec.vibe"
@@ -54,7 +54,9 @@ export interface SendRecord {
   readonly id: string
   readonly kind: "approval" | "bridge"
   readonly tx: string
+  readonly txs: readonly [string, ...string[]]
   readonly rawTx: string
+  readonly latestRaw: string
   readonly nonce: number | null
   readonly token: string
   readonly amountIn: string
@@ -92,6 +94,7 @@ schema SendRow {
   created_at: string; finalized_at: string | null; amount_out: string | null
 }
 schema GasRow { id: string; conversion_id: string; nonce: number; tx_id: string | null; state: string; maximum_wei: string; actual_wei: string | null; solana_account_proof: string | null }
+schema ReplacementRow { conversion_id: string; attempt: number; tx_id: string; raw_tx: string }
 schema OutcomeRow { bridge_id: string; order_id: string; outcome: "arrived" | "refunded"; amount: string; evidence_block: number }
 schema TermsJson { provider: "debridge"; orderId: string; takeToken: string; takeAmount: string; takeChainId: string; receiver: string; nativeFee: string; salt: string }
 
@@ -111,6 +114,7 @@ export function legReads(leg: Leg): ReadonlyArray<Statement> {
     sql`SELECT id, kind, run_id, mode, token, amount_in, quote, tx_id, raw_tx, evm_nonce, state, reason, created_at, finalized_at, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
     sql`SELECT id, conversion_id, nonce, tx_id, state, maximum_wei, actual_wei, solana_account_proof FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
     sql`SELECT bridge_id, order_id, outcome, amount, evidence_block FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
+    sql`SELECT conversion_id, attempt, tx_id, raw_tx FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY conversion_id, attempt`,
   ]
 }
 
@@ -118,7 +122,8 @@ export function legVersion(leg: Leg): Statement {
   const scope = legRows(networkNames[leg.network], leg.scope)
   return sql`(SELECT count(*) || ':' || coalesce(group_concat(id || ':' || state || ':' || coalesce(reason, '') || ':' || coalesce(amount_out, ''), ','), '') FROM (SELECT id, state, reason, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid))
     || '#' || (SELECT count(*) || ':' || coalesce(group_concat(id || ':' || state || ':' || coalesce(actual_wei, ''), ','), '') FROM (SELECT id, state, actual_wei FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid))
-    || '#' || (SELECT count(*) FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE ${scope}))`
+    || '#' || (SELECT count(*) FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE ${scope}))
+    || '#' || (SELECT count(*) FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}))`
 }
 
 effect function whole(text: string | null, label: string) {
@@ -154,12 +159,22 @@ export function incomeKey(leg: Leg, entry: IncomeEntry): IncomeKey {
   return { kind: entry.kind, network: leg.network, id: leg.names.number("receipt", `${entry.kind}:${entry.text}`) }
 }
 
-export effect function decodeLedger(leg: Leg, [sent, reserved, proven]: ReadonlyArray<Rows>) {
+effect function withIncome(leg: Leg, recorded: Buyback) {
+  let state = recorded
+  for (const entry of leg.income) {
+    const event = { type: "recordIncome", key: incomeKey(leg, entry), incomeAmount: entry.amount, chainTime: entry.chainTime } as const
+    state = apply(state, event, "Worker") catch effect () => { throw new RowMismatch({ text: `buyback income ${entry.kind} ${entry.text}`, issue: "the buyback model does not admit this income: it repeats a key, is not positive, or is outside activation and the present" }) }
+  }
+  return state
+}
+
+export effect function decodeLedger(leg: Leg, [sent, reserved, proven, replaced]: ReadonlyArray<Rows>) {
   const names = leg.names
   const offset = leg.offset
   const sendRows = try decoded(SendRow, sent ?? [], "buyback sends")
   const gasRows = try decoded(GasRow, reserved ?? [], "buyback native gas")
   const outcomes = try decoded(OutcomeRow, proven ?? [], "bridge outcomes")
+  const replacements = try decoded(ReplacementRow, replaced ?? [], "buyback send replacements")
   const solana = leg.network === "Solana"
   const sends: Array<SendRecord> = []
   const orders = new Map<number, SendRecord>()
@@ -178,11 +193,14 @@ export effect function decodeLedger(leg: Leg, [sent, reserved, proven]: Readonly
     if (row.raw_tx === null) throw new RowMismatch({ text: label, issue: "a signed send lacks its journaled bytes" })
     const tx = names.number("tx", row.tx_id)
     const amount = try whole(row.amount_in, label)
+    const later = replacements.filter((entry) => entry.conversion_id === row.id)
     const record: SendRecord = {
       id: row.id,
       kind: row.kind === "bridge" ? "bridge" : "approval",
       tx: row.tx_id,
+      txs: [row.tx_id, ...later.map((entry) => entry.tx_id)],
       rawTx: row.raw_tx,
+      latestRaw: later[later.length - 1]?.raw_tx ?? row.raw_tx,
       nonce: row.evm_nonce,
       token: row.token,
       amountIn: row.amount_in,
@@ -222,14 +240,6 @@ export effect function decodeLedger(leg: Leg, [sent, reserved, proven]: Readonly
     if (leg.awaiting !== terms.orderId) state = closeOrder(state, "Worker")
   }
   const clock = (try Clock.currentTimeMillis) - offset
-  const income = leg.income.reduce((total: Amount, entry) => addAmounts(total, entry.amount), zero)
-  const ledger = try decodeState({
-    ...state,
-    clock,
-    income,
-    sources: leg.income.map((entry) => incomeKey(leg, entry)),
-    incomeTimes: leg.income.map((entry) => entry.chainTime),
-    decisions,
-  } satisfies Buyback)
+  const ledger = try decodeState(try withIncome(leg, { ...state, clock, decisions } satisfies Buyback))
   return { state: ledger, sends, orders } satisfies Ledger
 }

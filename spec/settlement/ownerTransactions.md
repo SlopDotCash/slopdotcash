@@ -31,11 +31,25 @@ A finalized reservation is a commitment, not a payment.
 
 ### A request is reviewed against current authority and becomes a fixed plan
 
+Month locks (operator decision, 15 November 2026; development
+`backend/payments/solana-month-lock.ts`, `POST /projects/:id/solana-month-lock`)
+add two plans that need only a served network and the planner's acceptance,
+because the program itself checks the owner: the owner's lock of 1, 3, 6 or
+12 months from the current UTC month at one positive amount, and anyone's
+release of one month's lapsed lock. `monthLockPlanned` is the
+[month pledges](./monthPledges.md) planner's answer on the finalized read:
+`lockPlanned` for a lock, `canPlanRelease` for a release. A lock with nothing
+left to plan has no message to sign and is never reviewed. The check accepts
+exactly the rebuilt pledge or release message, as for every plan. A
+withdrawal review is refused while `lockedFunds` holds: the free balance
+less the gross is below the vault's open pledged total
+(`withdrawTakesPledgedFunds`; development `backend/payments/solana-funding.ts`).
+
 ```quint
-type PlanKind = DepositPlan | WithdrawPlan | AwardPlan | SolanaMonthlyPlan
+type PlanKind = DepositPlan | WithdrawPlan | AwardPlan | SolanaMonthlyPlan | LockMonthsPlan | ReleaseLapsedPledgePlan
 type RequestPhase = Draft | Reviewed | Pending | Finalized | Failed | Expired
 type ReviewFacts = { steward: bool, repositoryAuthority: bool, revision: int, restricted: bool, networkServed: bool,
-  snapshotDigest: str, obligationFunded: bool }
+  snapshotDigest: str, obligationFunded: bool, monthLockPlanned: bool, lockedFunds: bool }
 type Submission = { message: str, prefix: str, signature: str, transaction: str }
 type CheckResult = { transaction: str, message: str, finalized: bool, succeeded: bool, expired: bool }
 type OwnerRequest = { kind: PlanKind, phase: RequestPhase, revision: int, snapshotDigest: str, message: str,
@@ -45,8 +59,9 @@ pure val initial: OwnerRequest = { kind: DepositPlan, phase: Draft, revision: 1,
   submitted: noSubmission, submissions: 0 }
 pure def reviewAllowed(r: OwnerRequest, kind: PlanKind, facts: ReviewFacts): bool =
   if (kind == DepositPlan) facts.networkServed
+  else if (kind == LockMonthsPlan or kind == ReleaseLapsedPledgePlan) facts.networkServed and facts.monthLockPlanned
   else facts.steward and facts.repositoryAuthority and facts.revision == r.revision and not(facts.restricted) and facts.networkServed
-    and (kind == WithdrawPlan or (facts.snapshotDigest == r.snapshotDigest and facts.obligationFunded))
+    and (if (kind == WithdrawPlan) not(facts.lockedFunds) else (facts.snapshotDigest == r.snapshotDigest and facts.obligationFunded))
 pure def canReview(r: OwnerRequest, kind: PlanKind, facts: ReviewFacts, message: str): bool =
   r.phase == Draft and message != "" and reviewAllowed(r, kind, facts)
 pure def review(r: OwnerRequest, kind: PlanKind, facts: ReviewFacts, message: str): OwnerRequest =
@@ -89,16 +104,18 @@ pure def stepTerminal(before: OwnerRequest, after: OwnerRequest): bool =
   (before.phase == Finalized or before.phase == Failed) implies after == before
 pure def sometimesFinalized(r: OwnerRequest): bool = r.phase == Finalized and r.kind == AwardPlan
 pure def sometimesFailedAfterExpiry(r: OwnerRequest): bool = r.phase == Failed
+pure def sometimesMonthsLocked(r: OwnerRequest): bool = r.phase == Finalized and r.kind == LockMonthsPlan
+pure def sometimesLapsedLockReleased(r: OwnerRequest): bool = r.phase == Finalized and r.kind == ReleaseLapsedPledgePlan
 ```
 
 ### Simulation samples
 
 ```quint
-pure val kindValues = Set(DepositPlan, WithdrawPlan, AwardPlan, SolanaMonthlyPlan)
+pure val kindValues = Set(DepositPlan, WithdrawPlan, AwardPlan, SolanaMonthlyPlan, LockMonthsPlan, ReleaseLapsedPledgePlan)
 pure val factsSample: ReviewFacts = { steward: true, repositoryAuthority: true, revision: 1, restricted: false, networkServed: true,
-  snapshotDigest: "d", obligationFunded: true }
+  snapshotDigest: "d", obligationFunded: true, monthLockPlanned: true, lockedFunds: false }
 pure val factsValues = Set(factsSample, { ...factsSample, steward: false }, { ...factsSample, restricted: true },
-  { ...factsSample, snapshotDigest: "other" })
+  { ...factsSample, snapshotDigest: "other" }, { ...factsSample, lockedFunds: true }, { ...factsSample, monthLockPlanned: false })
 pure val messageValues = Set("m1")
 pure val submissionValues = Set({ message: "m1", prefix: "", signature: "s", transaction: "t" },
   { message: "m1", prefix: "compute-budget", signature: "s", transaction: "t" }, { message: "m1", prefix: "transfer", signature: "s", transaction: "t" },

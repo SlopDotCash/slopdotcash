@@ -12,8 +12,10 @@ live GraphQL collection keeps its own cost budget, modeled in the
 recovery](./quotaRecovery.md) collector owns the historical campaign.
 
 Only a GET to the GitHub API is retried. A rate-limited response (403 with a
-usable primary reset or Retry-After, or 429, which waits one minute without
-a hint) is retried at most five attempts in all. Any other response,
+usable primary reset or Retry-After, 429, or a 403 whose JSON body has a
+string `message` matching `/secondary rate limit|abuse detection/iu`; the
+last two wait one minute without a hint) is retried at most five attempts in
+all, and the fifth answer is returned with its status. Any other response,
 including an ordinary authorization 403, is returned as it is. A wait that
 would reach the run's quota deadline stops the run with a checkpoint, and the
 checkpoint then refuses every later read. Times and delays are integer
@@ -27,7 +29,7 @@ milliseconds from the transport's verified clock.
 type Method = Get | Write
 type Origin = GitHubApi | OtherOrigin
 type ReadPhase = Idle | Waiting | Returned | Checkpointed
-type Response = { status: int, primaryDelay: int, retryAfter: int }
+type Response = { status: int, primaryDelay: int, retryAfter: int, secondaryMessage: bool }
 type Read = { phase: ReadPhase, method: Method, origin: Origin, attempt: int, now: int, deadline: int,
   wakeAt: int, returnedStatus: int, sent: int, checkpoint: bool }
 pure val maxAttempts = 5
@@ -38,7 +40,7 @@ pure def delayFor(x: Response): int =
   val hinted = if (x.primaryDelay > x.retryAfter) x.primaryDelay else x.retryAfter
   if (x.status != 403 and x.status != 429) -1
   else if (hinted > 0) hinted
-  else if (x.status == 429) 60000
+  else if (x.status == 429 or x.secondaryMessage) 60000
   else -1
 pure def canBegin(r: Read, method: Method, origin: Origin): bool = r.phase == Idle and r.sent == 0 and not(r.checkpoint)
 pure def begin(r: Read, method: Method, origin: Origin): Read =
@@ -60,12 +62,18 @@ pure def alwaysWritesSentOnce(r: Read): bool = not(retryable(r)) implies r.sent 
 pure def alwaysCheckpointFinal(r: Read): bool = r.checkpoint iff r.phase == Checkpointed
 pure def alwaysWaitingRetryable(r: Read): bool = r.phase == Waiting implies (retryable(r) and r.attempt < maxAttempts and r.attempt >= 1)
 pure def stepCheckpointRefusesLater(before: Read, after: Read): bool = before.checkpoint implies (after.checkpoint and after.sent == before.sent)
-pure def lawAuthorizationNotRetried(primaryDelay: int, retryAfter: int): bool =
-  (primaryDelay <= 0 and retryAfter <= 0) implies delayFor({ status: 403, primaryDelay: primaryDelay, retryAfter: retryAfter }) < 0
-pure def lawUnhintedLimitWaitsOneMinute(status: int): bool = status == 429 implies delayFor({ status: status, primaryDelay: 0, retryAfter: 0 }) == 60000
+pure def lawAuthorizationNotRetried(primaryDelay: int, retryAfter: int, secondaryMessage: bool): bool =
+  (primaryDelay <= 0 and retryAfter <= 0 and not(secondaryMessage)) implies
+    delayFor({ status: 403, primaryDelay: primaryDelay, retryAfter: retryAfter, secondaryMessage: secondaryMessage }) < 0
+pure def lawUnhintedLimitWaitsOneMinute(status: int): bool = status == 429 implies delayFor({ status: status, primaryDelay: 0, retryAfter: 0, secondaryMessage: false }) == 60000
+pure def lawUnhintedSecondaryLimitWaitsOneMinute(status: int): bool = status == 403 implies
+  delayFor({ status: status, primaryDelay: 0, retryAfter: 0, secondaryMessage: true }) == 60000
 pure def sometimesRetriedThenReturned(r: Read): bool = r.phase == Returned and r.attempt > 1
 pure def lawFifthLimitIsReturned(status: int): bool = status == 429 implies
-  respond({ ...initial, attempt: maxAttempts, sent: maxAttempts }, { status: status, primaryDelay: 0, retryAfter: 1000 }).phase == Returned
+  respond({ ...initial, attempt: maxAttempts, sent: maxAttempts }, { status: status, primaryDelay: 0, retryAfter: 1000, secondaryMessage: false }).phase == Returned
+pure def lawFifthSecondaryLimitIsReturned(status: int): bool =
+  val after = respond({ ...initial, attempt: maxAttempts, sent: maxAttempts }, { status: status, primaryDelay: 0, retryAfter: 0, secondaryMessage: true })
+  status == 403 implies (after.phase == Returned and after.returnedStatus == 403)
 pure def sometimesSecondAttempt(r: Read): bool = r.attempt >= 2
 pure def sometimesWriteReturnedOnce(r: Read): bool = r.phase == Returned and r.method == Write and r.returnedStatus == 429
 pure def sometimesCheckpointed(r: Read): bool = r.phase == Checkpointed
@@ -104,13 +112,18 @@ pure def lawDigestMismatchRefused(m: PartsManifest, read: List[ReadPart], wholeD
 ### Simulation samples include limits, authorization refusals and generations
 
 ```quint
-pure val xValues = Set({ status: 200, primaryDelay: 0, retryAfter: 0 }, { status: 429, primaryDelay: 0, retryAfter: 0 },
-  { status: 403, primaryDelay: 0, retryAfter: 0 }, { status: 403, primaryDelay: 5000, retryAfter: 0 },
-  { status: 429, primaryDelay: 0, retryAfter: 200000 }, { status: 429, primaryDelay: 0, retryAfter: 1000 })
+pure val xValues = Set({ status: 200, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
+  { status: 429, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
+  { status: 403, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
+  { status: 403, primaryDelay: 0, retryAfter: 0, secondaryMessage: true },
+  { status: 403, primaryDelay: 5000, retryAfter: 0, secondaryMessage: false },
+  { status: 429, primaryDelay: 0, retryAfter: 200000, secondaryMessage: false },
+  { status: 429, primaryDelay: 0, retryAfter: 1000, secondaryMessage: false })
 pure val atValues = Set(1000, 2000, 3000, 4000, 5000, 60000, 1000000)
 pure val statusValues = Set(403, 429)
 pure val primaryDelayValues = Set(0, 5000)
 pure val retryAfterValues = Set(0, 1000)
+pure val secondaryMessageValues = Set(false, true)
 pure val mValues = Set({ total: 6, digest: 9, parts: List({ digest: 1, bytes: 4 }, { digest: 2, bytes: 2 }) })
 pure val readValues = Set(List({ digest: 1, bytes: 4, content: 1 }, { digest: 2, bytes: 2, content: 2 }),
   List({ digest: 1, bytes: 4, content: 1 }, { digest: 3, bytes: 2, content: 3 }))

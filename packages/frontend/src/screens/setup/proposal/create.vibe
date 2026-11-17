@@ -1,0 +1,45 @@
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import type { CallFailure } from "../../../platform/api.vibe"
+import { type EditorAccountChanged, createProject, requireEditorActor } from "../../../flows/projects/api.vibe"
+import { Session } from "../../../session/session.vibe"
+
+export const creationUnconfirmed = "Project creation could not be confirmed."
+
+export interface NewSetup {
+  readonly manifest: unknown
+  readonly referrer: string | null
+  readonly monthlyAmount: string | null
+  readonly actor: string
+}
+
+export error CreationFailed { message: string; installSlopbot: boolean }
+
+type Failure = CallFailure | EditorAccountChanged
+
+function accessLost(failure: Failure): boolean {
+  return failure._tag === "EditorAccountChanged" || failure._tag === "ActorChanged" || (failure._tag === "Refused" && (failure.status === 401 || failure.status === 403))
+}
+
+effect function created(setup: NewSetup) {
+  try requireEditorActor(setup.actor)
+  const answer = try createProject({ manifest: setup.manifest, referrer: setup.referrer, monthlyAmount: setup.monthlyAmount, expectedActor: setup.actor })
+  try requireEditorActor(setup.actor)
+  return answer
+}
+
+effect function refused(failure: Failure, actor: string) {
+  const checked = accessLost(failure) ? failure : try Effect.match(requireEditorActor(actor), { onSuccess: () => failure, onFailure: (recheck) => recheck })
+  if (accessLost(checked)) try (try Session).refresh()
+  return new CreationFailed({
+    message: checked.message === "" ? creationUnconfirmed : checked.message,
+    installSlopbot: checked._tag === "Refused" && checked.error === "slopbot_required",
+  })
+}
+
+export effect function createFromSetup(setup: NewSetup) {
+  return created(setup) catch effect (failure) => { throw try refused(failure, setup.actor) }
+}
+
+export effect function refreshSession() {
+  try (try Session).refresh()
+}

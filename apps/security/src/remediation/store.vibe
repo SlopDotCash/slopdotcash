@@ -14,6 +14,8 @@ export const stageText = { NotStarted: "not-started", Investigating: "investigat
 export const disclosureText = { Embargoed: "embargoed", RedactionApproved: "redaction-approved", Disclosed: "disclosed" } as const satisfies Readonly<Record<Disclosure, string>>
 export const recognitionText = { PrivateRecognition: "private", OptIn: "opt-in" } as const satisfies Readonly<Record<Recognition, string>>
 
+export const exactStages: ReadonlyArray<Stage> = ["Retest", "Resolved", "MitigationVerified"]
+
 export interface Journal {
   readonly state: Remediation
   readonly digests: ReadonlyMap<string, number>
@@ -69,6 +71,7 @@ function folded(r: Remediation, event: EventRow, digests: Map<string, number>): 
   if (stage === undefined) return r
   const digest = digestNumber(digests, detail.patchDigest)
   const revision = r.revision + 1
+  if (digest === 0 && exactStages.includes(stage)) return { ...r, stage: "Fixing", revision }
   switch (stage) {
     case "Retest": return { ...r, stage, patchDigest: digest, patchAuthor: by, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0, revision }
     case "Resolved": return { ...r, stage, verifiedPatch: digest, patchReviewer: by, verifiedPatches: r.verifiedPatches.includes(digest) ? r.verifiedPatches : [...r.verifiedPatches, digest], revision }

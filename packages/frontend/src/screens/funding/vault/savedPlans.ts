@@ -1,12 +1,15 @@
 // spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"
-import { EVM_NATIVE_ASSET, isNetworkKey, NETWORKS, SOLANA_NATIVE_ASSET } from "@repo/settlement/kernels/networks";
-import { type MonthlySetting, settingCall } from "../../../wallets/owner/commitmentCalls.ts";
-import { type Call, type Operation, type Step, samePlannedCall, transferCall, type VaultCallTerms } from "../../../wallets/owner/evmCalls.ts";
-import type { EvmBatchPlan, EvmCallPlan, OwnerPlan, PlannedCall } from "../../../wallets/owner/ownerPlans.schema.ts";
+import { U256_MAX, decodeUint } from "@repo/settlement/chain/evm/abi";
+import { EVM_NATIVE_ASSET, SOLANA_NATIVE_ASSET } from "@repo/settlement/kernels/networks";
+import { storageKeys } from "../../../platform/storage.vibe";
+import type { SlotStorage } from "../../../wallets/core/slots.ts";
+import { type MonthlySetting, settingOf } from "../../../wallets/owner/commitmentCalls.ts";
+import { familyOf } from "../../../wallets/owner/commitments.vibe";
+import type { Operation, Step, VaultCallTerms } from "../../../wallets/owner/evmCalls.ts";
+import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts";
+import { type EvmBatchPlan, type OwnerPlan, planOf } from "../../../wallets/owner/ownerPlans.schema.ts";
 import type { SolanaVaultTerms } from "../../../wallets/owner/solanaPlans.ts";
 import type { FundingDeployment } from "./project.schema.ts";
-
-export type Family = "evm" | "solana";
 
 export interface SavedTransfer {
   readonly operation: Operation;
@@ -21,77 +24,75 @@ const shapes: ReadonlyArray<readonly [Operation, Step]> = [
   ["deposit", "reset"],
 ];
 
-const wordAt = (data: string, start: number): bigint | undefined => {
-  const word = data.slice(start, start + 64);
-  return /^[0-9a-f]{64}$/u.test(word) ? BigInt(`0x${word}`) : undefined;
-};
+/** @throws {never} */
+const lastWord = (data: string) => `0x${data.slice(-64)}`;
 
 /** @throws {never} */
-function rebuilt(terms: VaultCallTerms, operation: Operation, step: Step, gross: bigint): Call | undefined {
-  try {
-    return transferCall(terms, operation, step, gross);
-  } catch {
-    return undefined;
-  }
-}
-
-/** @throws {never} */
-function sameCall(planned: PlannedCall, call: Call): boolean {
-  return planned.to === call.to.toLowerCase() && planned.data === call.data.toLowerCase() && planned.value === call.value;
-}
-
-/** @throws {never} */
-export function familyOf(network: string): Family | undefined {
-  return isNetworkKey(network) ? NETWORKS[network].family : undefined;
-}
-
-/** @throws {never} */
-export function evmTerms(deployment: Pick<FundingDeployment, "vault" | "asset">): VaultCallTerms {
-  return { vault: deployment.vault, asset: deployment.asset, native: deployment.asset.toLowerCase() === EVM_NATIVE_ASSET };
+export function evmTerms(vault: { readonly vault: string; readonly asset: string }): VaultCallTerms {
+  return { vault: vault.vault, asset: vault.asset, native: vault.asset.toLowerCase() === EVM_NATIVE_ASSET };
 }
 
 /** @throws {never} */
 export function solanaTerms(deployment: FundingDeployment): SolanaVaultTerms | undefined {
   const { programId, projectPda } = deployment;
-  if (familyOf(deployment.network) !== "solana" || !programId || !projectPda) return undefined;
+  if (familyOf(deployment) !== "solana" || !programId || !projectPda) return undefined;
   return { program: programId, project: projectPda, owner: deployment.owner, mint: deployment.asset === SOLANA_NATIVE_ASSET ? null : deployment.asset, tokenProgram: null };
 }
 
-/** @throws {never} */
-export function savedTransfer(terms: VaultCallTerms, plan: OwnerPlan | undefined): SavedTransfer | undefined {
-  const call: EvmCallPlan | undefined = plan?.kind === "evmDeposit" ? plan.call : plan?.kind === "evmCall" ? plan : undefined;
-  if (call === undefined) return undefined;
+/** The operations a saved single-call plan could be, each to be verified against the vault before it is used. @throws {never} */
+export function transferCandidates(plan: OwnerPlan | undefined): ReadonlyArray<SavedTransfer> {
+  const call = plan?.kind === "evmDeposit" ? plan.call : plan?.kind === "evmCall" ? plan : undefined;
+  if (call === undefined) return [];
   const value = BigInt(call.value);
-  const amount = value > 0n ? value : wordAt(call.data, call.data.length - 64);
-  if (amount === undefined) return undefined;
-  for (const [operation, step] of shapes) {
-    const gross = step === "reset" ? 0n : amount;
-    const expected = rebuilt(terms, operation, step, gross);
-    if (expected !== undefined && samePlannedCall(call, call.from, BigInt(call.chainId), expected)) return { operation, step, gross };
-  }
-  return undefined;
+  const amount = value > 0n ? value : decodeUint(lastWord(call.data), U256_MAX);
+  if (amount === undefined) return [];
+  return shapes.map(([operation, step]) => ({ operation, step, gross: step === "reset" ? 0n : amount }));
 }
 
 /** @throws {never} */
-export function batchGross(terms: VaultCallTerms, plan: EvmBatchPlan): bigint | undefined {
-  const last = plan.calls.at(-1);
-  const gross = last === undefined ? undefined : wordAt(last.data, last.data.length - 64);
-  const expected = gross === undefined ? undefined : rebuilt(terms, "deposit", "send", gross);
-  return last !== undefined && expected !== undefined && sameCall(last, expected) ? gross : undefined;
+export function sameBatch(saved: EvmBatchPlan, expected: EvmBatchPlan): boolean {
+  return (
+    saved.from === expected.from &&
+    saved.chainId === expected.chainId &&
+    saved.calls.length === expected.calls.length &&
+    expected.calls.every((call, index) => {
+      const kept = saved.calls[index];
+      return kept !== undefined && kept.to === call.to && kept.data === call.data && kept.value === call.value;
+    })
+  );
 }
 
-/** @throws {never} */
+/** The setting a saved plan asks for; the chain check verifies the plan against it before it counts. @throws {never} */
 export function savedSetting(plan: OwnerPlan | undefined): MonthlySetting | undefined {
-  if (plan?.kind !== "evmCall") return undefined;
-  const cap = wordAt(plan.data, 10);
-  const flag = wordAt(plan.data, 74);
-  if (cap === undefined || (flag !== 0n && flag !== 1n)) return undefined;
-  const setting = { cap, enabled: flag === 1n };
-  try {
-    return settingCall(setting).toLowerCase() === plan.data ? setting : undefined;
-  } catch {
-    return undefined;
-  }
+  return plan?.kind === "evmCall" ? settingOf(`0x${plan.data.slice(10, 74)}`, `0x${plan.data.slice(74, 138)}`) : undefined;
+}
+
+export interface VaultKeys {
+  readonly creation: string;
+  readonly transfer: string;
+  readonly batch: string;
+  readonly commitment: string;
+  readonly setting: string;
+  readonly release: string;
+}
+
+/** @throws {never} */
+export function vaultKeys(projectId: string, deployment: FundingDeployment, period: string): VaultKeys {
+  const target = `${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  return {
+    creation: `${storageKeys.vaultSetup.key}${projectId}`,
+    transfer: `${storageKeys.vaultAction.key}${target}`,
+    batch: `${storageKeys.vaultAction.key}${target}:batch`,
+    commitment: `${storageKeys.awardCommitment.key}${projectId}:${period}`,
+    setting: `${storageKeys.vaultMonthly.key}${deployment.network}:${deployment.vault}`,
+    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}`,
+  };
+}
+
+/** @throws {never} */
+export function storedPlan(storage: SlotStorage | undefined, key: string): OwnerPlan | undefined {
+  const read = slotOfText(readText(storage, key));
+  return read.kind === "owned" ? planOf(read.slot.plan) : undefined;
 }
 
 /** @throws {never} */

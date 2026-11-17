@@ -148,7 +148,6 @@ function factsCopy(row: SubmissionRow, facts: AdvisoryFacts): Copy {
     ...copyOf(facts),
     repository: sameRepository(facts.repository, row.repository) ? 1 : 2,
     author: facts.authorId === null ? 0 : facts.authorId === row.reporter_github_id ? 1 : 2,
-    marker: facts.markerFound ? 1 : 2,
   }
 }
 

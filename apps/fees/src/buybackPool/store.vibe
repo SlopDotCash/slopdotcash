@@ -1,0 +1,408 @@
+// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg"
+import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import { isoAt } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { equalAmounts } from "../../gen/settlement__money.effect.vibe"
+import { type Event, type Pool, NotAState, apply, decodeEvent } from "../../gen/fees__buybackPool.effect.vibe"
+import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../../gen/fees__buybackBinding.effect.vibe"
+import { NotAState as JournalNotAState, nonceFloor } from "../../gen/fees__conversion.effect.vibe"
+import type { Sender } from "../../gen/fees__runtime.effect.vibe"
+import type { IncomeEntry } from "../buyback/codec.vibe"
+import { type Instance, type Journal, amountOf, unitsOf } from "../journal/codec.vibe"
+import { verifiedEvmSend } from "../journal/signedSend.ts"
+import { aggregate as journalAggregate } from "../journal/store.vibe"
+import * as W from "../journal/writes.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import { robinhoodUsdg, slopToken } from "../runtime/pins.ts"
+import { type ArrivalEntry, type Ledger, type PoolInstance, type SendRecord, arrivalOf, burnReasonText, decisionStateName, decodePool, poolReads, poolVersion, purchaseReasonText, receiptOf } from "./codec.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  import { withinReservation as within } from "../journal/amounts.ts"
+  import { fromAmount as whole } from "@repo/settlement/kernels/amounts"
+  import type { Amount } from "../../gen/settlement__money.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function withinReservation(gas: bigint, feePerGas: bigint, maximum: bigint): boolean { return within(gas, feePerGas, maximum) }
+  /** @throws {never} */
+  export function decimalOf(amount: Amount): string { return whole(amount).toString() }
+}
+import { decimalOf, errorText, withinReservation } from verified
+
+export error PoolRefused { event: string; issue: string }
+
+export interface SignedFacts {
+  readonly txId: string
+  readonly rawTx: string
+  readonly nonce: number
+  readonly maximumWei: string
+  readonly intentHash: string
+  readonly limits: NativeLimits
+  readonly expiresAt?: number
+}
+
+export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string }
+
+export interface QuoteFacts { readonly amountOut: string; readonly impactBps: number | null; readonly summary: string }
+
+export interface Facts {
+  readonly runId?: string
+  readonly wallet?: string
+  readonly detail?: string
+  readonly signed?: SignedFacts
+  readonly receipt?: ReceiptFacts
+  readonly quote?: QuoteFacts
+}
+
+export interface Loaded { readonly ledger: Ledger; readonly journal: Journal | undefined }
+
+export interface Sent { readonly state: Pool; readonly instance: PoolInstance }
+
+const named = "SLOP purchase pool of Robinhood Chain"
+
+function plain(instance: PoolInstance): Aggregate<Loaded, RowMismatch | NotAState, never> {
+  return {
+    name: named,
+    version: sql`SELECT ${poolVersion(instance)} AS version`,
+    reads: poolReads(instance),
+    decode: effect (rows: ReadonlyArray<Rows>) => ({ ledger: try decodePool(instance, rows), journal: undefined }) satisfies Loaded,
+  }
+}
+
+function bound(instance: PoolInstance, journal: Instance): Aggregate<Loaded, RowMismatch | NotAState | JournalNotAState, never> {
+  const fee = journalAggregate(journal, instance.names)
+  const count = fee.reads.length
+  return {
+    name: named,
+    version: sql`SELECT (${fee.version}) || '#' || ${poolVersion(instance)} AS version`,
+    reads: [...fee.reads, ...poolReads(instance)],
+    decode: effect (rows: ReadonlyArray<Rows>) => ({ journal: try fee.decode(rows.slice(0, count)), ledger: try decodePool(instance, rows.slice(count)) }) satisfies Loaded,
+  }
+}
+
+effect function need<T>(value: T | undefined, event: string, issue: string) {
+  if (value === undefined) throw new PoolRefused({ event, issue })
+  return value
+}
+
+effect function refuse(event: string, issue: string) {
+  throw new PoolRefused({ event, issue })
+}
+
+function sendByTx(instance: PoolInstance, ledger: Ledger, tx: number, kind: SendRecord["kind"]) {
+  return ledger.sends.find((send) => send.kind === kind && instance.names.number("tx", send.tx) === tx)
+}
+
+function journalOf(instance: PoolInstance, event: string) {
+  return need(instance.journal, event, "a pool send needs the Robinhood Chain fee journal")
+}
+
+effect function admitted(instance: PoolInstance, journal: Journal, kind: BuybackSendKind, tx: number, signed: SignedFacts, runId: string, event: string) {
+  const runNumber = try need([...journal.runs].find(([, text]) => text === runId)?.[0], event, "the run holds no lease in the Robinhood Chain fee journal")
+  const units = try unitsOf(signed.maximumWei, "Robinhood", "the reserved maximum")
+  const send: BuybackSend = { network: "Robinhood", kind, runId: runNumber, tx, nonce: signed.nonce, maximum: Number(units) }
+  if (!buybackSendAdmitted(journal.state, send)) return try refuse(event, "the Robinhood Chain fee journal does not admit this pool send")
+  const held = journal.foreign.map((entry) => entry.reservation).filter((entry) => entry.state !== "Abandoned" && !entry.settled)
+  if (held.some((entry) => entry.nonce >= signed.nonce)) return try refuse(event, "another buyback send holds this nonce or a later one")
+}
+
+effect function verifiedBytes(instance: PoolInstance, signed: SignedFacts, tx: number, wallet: string, event: string) {
+  if (instance.names.number("tx", signed.txId) !== tx) return try refuse(event, "the signed transaction identifier is not the event's transaction")
+  const checked = try tryPromise({ try: () => verifiedEvmSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet: wallet.toLowerCase() }), catch: () => new PoolRefused({ event, issue: "the signed bytes cannot be checked" }) })
+  if (checked.kind === "refused") return try refuse(event, checked.issue)
+  if (checked.send.nonce !== signed.nonce) return try refuse(event, "the signed nonce is not the reserved one")
+  if (!withinReservation(checked.send.gas, checked.send.maxFeePerGas, try amountOf(signed.maximumWei, "the reserved maximum"))) return try refuse(event, "the signed worst-case fee exceeds the reserved maximum")
+}
+
+function reservation(gasId: string, wallet: string, runId: string, signed: SignedFacts, now: string): W.Reservation {
+  return {
+    id: gasId,
+    network: "robinhood",
+    wallet,
+    nonce: signed.nonce,
+    intentHash: signed.intentHash,
+    runId,
+    maximumWei: signed.maximumWei,
+    perTransactionWei: signed.limits.perTransaction.toString(),
+    perDayWei: signed.limits.perDay.toString(),
+    createdAt: now,
+    blockhashSlot: null,
+    accountProof: null,
+    purpose: "fees",
+  }
+}
+
+interface Signing {
+  readonly kind: BuybackSendKind
+  readonly tx: number
+  readonly signed: SignedFacts
+  readonly runId: string
+  readonly wallet: string
+  readonly now: string
+}
+
+effect function reserved(loaded: Loaded, instance: PoolInstance, signing: Signing, event: string) {
+  const journal = try need(loaded.journal, event, "a pool send needs the Robinhood Chain fee journal")
+  try verifiedBytes(instance, signing.signed, signing.tx, signing.wallet, event)
+  try admitted(instance, journal, signing.kind, signing.tx, signing.signed, signing.runId, event)
+  const gasId = `fee-gas-${try randomId()}`
+  return { gasId, statement: W.reserve(reservation(gasId, signing.wallet, signing.runId, signing.signed, signing.now)) }
+}
+
+interface Signed {
+  readonly kind: "buyback" | "burn" | "approval"
+  readonly id: string
+  readonly runId: string
+  readonly wallet: string
+  readonly token: string
+  readonly amount: string
+  readonly value: number
+  readonly quoteAmountOut: string | null
+  readonly minAmountOut: string | null
+  readonly impactBps: number | null
+  readonly quote: string
+  readonly signed: SignedFacts
+  readonly gasId: string
+  readonly now: string
+}
+
+function signedRow(entry: Signed): Statement {
+  const route = entry.kind === "burn" ? null : "kyberswap"
+  const expiresAt = entry.kind === "buyback" ? entry.signed.expiresAt ?? null : null
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, quote, approval_tx_id, tx_id, raw_tx, evm_nonce, expires_at, state, created_at, updated_at, submitted_at, native_gas_id) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, 'robinhood', 'live', ${entry.wallet}, ${entry.token}, ${slopToken}, ${entry.amount}, ${route}, ${entry.quoteAmountOut}, ${entry.minAmountOut}, ${entry.value}, ${entry.impactBps}, ${entry.quote}, ${entry.kind === "approval" ? entry.signed.txId : null}, ${entry.signed.txId}, ${entry.signed.rawTx}, ${entry.signed.nonce}, ${expiresAt}, 'submitted', ${entry.now}, ${entry.now}, ${entry.now}, ${entry.gasId})`
+}
+
+interface Decided {
+  readonly kind: "buyback" | "burn"
+  readonly id: string
+  readonly runId: string
+  readonly wallet: string
+  readonly amount: string
+  readonly next: Pool
+  readonly reason: string | null
+  readonly quote: QuoteFacts | undefined
+  readonly now: string
+}
+
+function decisionRow(entry: Decided): Statement {
+  const decided = entry.next.decisions[entry.next.decisions.length - 1]
+  const state = decisionStateName[decided?.state ?? "Pending"]
+  const token = entry.kind === "buyback" ? robinhoodUsdg : slopToken
+  const route = entry.kind === "buyback" && decided?.state !== "NoRoute" && entry.quote !== undefined ? "kyberswap" : null
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, quote_value_micro, price_impact_bps, quote, state, reason, created_at, updated_at) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, 'robinhood', ${decided?.live === true ? "live" : "dry_run"}, ${entry.wallet}, ${token}, ${slopToken}, ${entry.amount}, ${route}, ${route === null ? null : entry.quote?.amountOut ?? null}, ${decided?.value ?? 0}, ${route === null ? null : entry.quote?.impactBps ?? null}, ${route === null ? null : entry.quote?.summary ?? null}, ${state}, ${entry.reason}, ${entry.now}, ${entry.now})`
+}
+
+effect function settlement(record: SendRecord, facts: Facts, event: string, now: string) {
+  const receipt = try need(facts.receipt, event, "the finalized receipt's evidence is missing")
+  if (!record.txs.includes(receipt.landedTxId)) return try refuse(event, "the receipt is of none of the journaled attempts")
+  const ids = record.gas.filter((gas) => gas.state === "signed" && gas.actualWei === null).map((gas) => gas.id)
+  return { receipt, statements: W.settled({ ids, landedTxId: receipt.landedTxId, actualWei: receipt.actualWei, day: now.slice(0, 10), blockHash: receipt.blockHash }) }
+}
+
+function evidenced(evidence: ReadonlyArray<IncomeEntry>, instance: PoolInstance, receipt: number) {
+  return evidence.find((entry) => receiptOf(instance.names, entry) === receipt)
+}
+
+function arrivalFound(instance: PoolInstance, arrival: Extract<Event, { type: "creditArrival" }>["arrival"]) {
+  return instance.arrivalEvidence.find((entry) => {
+    const named = arrivalOf(instance.names, entry)
+    return named.network === arrival.network && named.order === arrival.order && named.takeAmount === arrival.takeAmount && named.height === arrival.height
+  })
+}
+
+effect function reasonOf(event: Extract<Event, { type: "decidePurchase" | "decideBurn" }>, next: Pool, facts: Facts) {
+  const decided = next.decisions[next.decisions.length - 1]
+  if (decided === undefined || decided.reason === "NoReason") return null
+  if (decided.reason === "NoRouteFound") return errorText(facts.detail ?? "").slice(0, 500) || "no purchase route"
+  const written = (event.type === "decidePurchase" ? purchaseReasonText : burnReasonText)[decided.reason]
+  return try need(written, event.type, `the pool has no recorded text for ${decided.reason}`)
+}
+
+effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, next: Pool, facts: Facts) {
+  const { ledger } = loaded
+  const now = try isoAt(ledger.state.clock + instance.offset)
+  switch (event.type) {
+    case "advanceClock":
+    case "publishWorker":
+    case "setReleaseVariable":
+    case "verifyReadiness":
+    case "beginRun":
+    case "reserveLocalShare":
+      return []
+    case "creditArrival": {
+      if (arrivalFound(instance, event.arrival) === undefined) return try refuse(event.type, "the arrival is not a retained OrderArrived outcome of its source leg")
+      return []
+    }
+    case "recordRobinhoodFee": {
+      const found = evidenced(instance.feeEvidence, instance, event.robinhoodFee.receipt)
+      if (found === undefined || decimalOf(found.amount) !== String(event.robinhoodFee.amount) || found.chainTime !== event.robinhoodFee.chainTime)
+        return try refuse(event.type, "the fee is not a finalized USDG receipt of the Robinhood Chain fee wallet")
+      return []
+    }
+    case "receiveSlopFee": {
+      const found = evidenced(instance.slopEvidence, instance, event.fee.receipt)
+      if (found === undefined || !equalAmounts(found.amount, event.fee.quantity) || found.chainTime !== event.fee.chainTime)
+        return try refuse(event.type, "the fee is not a finalized SLOP receipt of the Robinhood Chain fee wallet")
+      return []
+    }
+    case "decidePurchase":
+    case "decideBurn": {
+      if (next.decisions.length === ledger.state.decisions.length) return []
+      const purchasing = event.type === "decidePurchase"
+      const amount = purchasing ? String(event.quote.spent) : decimalOf(event.burnRequest.quantity)
+      return [decisionRow({
+        kind: purchasing ? "buyback" : "burn",
+        id: try randomId(),
+        runId: try need(facts.runId, event.type, "the run is missing"),
+        wallet: try need(facts.wallet, event.type, "the fee wallet is missing"),
+        amount,
+        next,
+        reason: try reasonOf(event, next, facts),
+        quote: facts.quote,
+        now,
+      })]
+    }
+    case "purchase": {
+      const signed = try need(facts.signed, event.type, "the signed purchase is missing")
+      const runId = try need(facts.runId, event.type, "the run is missing")
+      const wallet = try need(facts.wallet, event.type, "the fee wallet is missing")
+      const quote = try need(facts.quote, event.type, "the purchase quote is missing")
+      const { gasId, statement } = try reserved(loaded, instance, { kind: "PurchaseSend", tx: event.quote.tx, signed, runId, wallet, now }, event.type)
+      if (signed.expiresAt === undefined) return try refuse(event.type, "a purchase needs its router deadline")
+      return [statement, signedRow({ kind: "buyback", id: try randomId(), runId, wallet, token: robinhoodUsdg, amount: String(event.quote.spent), value: event.quote.spent, quoteAmountOut: quote.amountOut, minAmountOut: decimalOf(event.quote.minimum), impactBps: quote.impactBps, quote: quote.summary, signed, gasId, now })]
+    }
+    case "burn": {
+      const signed = try need(facts.signed, event.type, "the signed burn is missing")
+      const runId = try need(facts.runId, event.type, "the run is missing")
+      const wallet = try need(facts.wallet, event.type, "the fee wallet is missing")
+      const { gasId, statement } = try reserved(loaded, instance, { kind: "BurnSend", tx: event.burnRequest.tx, signed, runId, wallet, now }, event.type)
+      const quantity = decimalOf(event.burnRequest.quantity)
+      return [statement, signedRow({ kind: "burn", id: try randomId(), runId, wallet, token: slopToken, amount: quantity, value: event.burnRequest.value, quoteAmountOut: null, minAmountOut: null, impactBps: null, quote: JSON.stringify({ burn: quantity }), signed, gasId, now })]
+    }
+    case "loseSend": {
+      const record = try need(ledger.sends.find((send) => send.kind !== "approval" && instance.names.number("tx", send.tx) === event.tx), event.type, "the transaction is of no journaled pool send")
+      return [W.transition(record.id, ["submitted"], "unknown", `broadcast: ${errorText(facts.detail ?? "")}`.slice(0, 500), now)]
+    }
+    case "settlePurchase": {
+      const record = try need(sendByTx(instance, ledger, event.swap.tx, "buyback"), event.type, "the receipt is of no journaled purchase")
+      const settled = try settlement(record, facts, event.type, now)
+      if (!event.swap.succeeded) return [W.reverted(record.id, "swap transaction reverted", settled.receipt.landedTxId, now), ...settled.statements]
+      return [W.finalized({ id: record.id, amountOut: decimalOf(event.swap.output), reason: null, landedTxId: settled.receipt.landedTxId, targetBalanceAfter: null, now }), ...settled.statements]
+    }
+    case "settleBurn": {
+      const record = try need(sendByTx(instance, ledger, event.receipt.tx, "burn"), event.type, "the receipt is of no journaled burn")
+      const settled = try settlement(record, facts, event.type, now)
+      if (!event.receipt.succeeded) return [W.reverted(record.id, "burn transaction reverted", settled.receipt.landedTxId, now), ...settled.statements]
+      return [W.finalized({ id: record.id, amountOut: record.amountIn, reason: null, landedTxId: settled.receipt.landedTxId, targetBalanceAfter: null, now }), ...settled.statements]
+    }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
+  }
+}
+
+function withRuntime(instance: PoolInstance, next: Pool): PoolInstance {
+  const held = { ...instance.held, runtime: next.runtime }
+  return { ...instance, held, ...instance.journal === undefined ? {} : { journal: { ...instance.journal, held: { ...instance.journal.held, runtime: next.runtime } } } }
+}
+
+function observed(instance: PoolInstance, ledger: Ledger, event: Event, next: Pool): PoolInstance {
+  switch (event.type) {
+    case "publishWorker":
+    case "setReleaseVariable":
+    case "verifyReadiness":
+      return withRuntime(instance, next)
+    case "beginRun": return { ...instance, runs: instance.runs + 1, runFrom: ledger.purchases }
+    case "reserveLocalShare": return { ...instance, reserved: [...instance.reserved, event.amount] }
+    case "recordRobinhoodFee": {
+      const found = evidenced(instance.feeEvidence, instance, event.robinhoodFee.receipt)
+      return found === undefined ? instance : { ...instance, fees: [...instance.fees, found] }
+    }
+    case "receiveSlopFee": {
+      const found = evidenced(instance.slopEvidence, instance, event.fee.receipt)
+      return found === undefined ? instance : { ...instance, slopFees: [...instance.slopFees, found] }
+    }
+    case "creditArrival": {
+      const found = arrivalFound(instance, event.arrival)
+      return found === undefined ? instance : { ...instance, arrivals: [...instance.arrivals, found] satisfies ReadonlyArray<ArrivalEntry> }
+    }
+    default: return instance
+  }
+}
+
+effect function decide(loaded: Loaded, instance: PoolInstance, event: Event, by: Sender, facts: Facts) {
+  const next = try apply(loaded.ledger.state, event, by)
+  const writes: ReadonlyArray<Statement> = try writesFor(loaded, instance, event, next, facts)
+  return { value: { state: next, instance: observed(instance, loaded.ledger, event, next) }, writes } satisfies Decision<Sent>
+}
+
+export effect function poolOf(instance: PoolInstance) {
+  return (try load(plain(instance))).state.ledger
+}
+
+export interface Floors { readonly evm: number; readonly ledger: Ledger }
+
+export effect function sendFloors(instance: PoolInstance) {
+  const loaded = try load(bound(instance, try journalOf(instance, "purchase")))
+  const journal = try need(loaded.state.journal, "purchase", "a pool send needs the Robinhood Chain fee journal")
+  const held = journal.foreign.map((entry) => entry.reservation).filter((entry) => entry.state !== "Abandoned" && !entry.settled)
+  return { evm: Math.max(nonceFloor(journal.state), ...held.map((entry) => entry.nonce + 1)), ledger: loaded.state.ledger } satisfies Floors
+}
+
+export effect function send(instance: PoolInstance, event: Event, by: Sender, facts: Facts = {}) {
+  if (event.type === "purchase" || event.type === "burn") return try update(bound(instance, try journalOf(instance, event.type)), (loaded) => decide(loaded, instance, event, by, facts))
+  return try update(plain(instance), (loaded) => decide(loaded, instance, event, by, facts))
+}
+
+export effect function receive(instance: PoolInstance, input: unknown, by: Sender, facts: Facts = {}) {
+  return try send(instance, try decodeEvent(input), by, facts)
+}
+
+export interface Approving {
+  readonly amount: bigint
+  readonly runId: string
+  readonly wallet: string
+  readonly summary: string
+  readonly signed: SignedFacts
+}
+
+effect function approvalWrites(loaded: Loaded, instance: PoolInstance, approving: Approving) {
+  const now = try isoAt(loaded.ledger.state.clock + instance.offset)
+  const tx = instance.names.number("tx", approving.signed.txId)
+  const amount = approving.amount.toString()
+  const { gasId, statement } = try reserved(loaded, instance, { kind: "PurchaseSend", tx, signed: approving.signed, runId: approving.runId, wallet: approving.wallet, now }, "approvePurchase")
+  return [statement, signedRow({ kind: "approval", id: try randomId(), runId: approving.runId, wallet: approving.wallet, token: robinhoodUsdg, amount, value: Number(approving.amount), quoteAmountOut: null, minAmountOut: null, impactBps: null, quote: approving.summary, signed: approving.signed, gasId, now })]
+}
+
+export effect function journalApproval(instance: PoolInstance, approving: Approving) {
+  const journal = try journalOf(instance, "approvePurchase")
+  return try update(bound(instance, journal), effect (loaded: Loaded) => ({ value: loaded.ledger, writes: try approvalWrites(loaded, instance, approving) }) satisfies Decision<Ledger>)
+}
+
+effect function approvalRecord(ledger: Ledger, id: string) {
+  const record = ledger.sends.find((send) => send.kind === "approval" && send.id === id && (send.state === "submitted" || send.state === "unknown"))
+  return try need(record, "settleApproval", "the approval is not an open journaled send of the pool")
+}
+
+export effect function settleApproval(instance: PoolInstance, id: string, succeeded: boolean, facts: Facts) {
+  return try update(plain(instance), effect (loaded: Loaded) => {
+    const record = try approvalRecord(loaded.ledger, id)
+    const now = try isoAt(loaded.ledger.state.clock + instance.offset)
+    const settled = try settlement(record, facts, "settleApproval", now)
+    const closed = succeeded
+      ? W.finalized({ id: record.id, amountOut: "0", reason: null, landedTxId: settled.receipt.landedTxId, targetBalanceAfter: null, now })
+      : W.reverted(record.id, "approval transaction reverted", settled.receipt.landedTxId, now)
+    return { value: loaded.ledger, writes: [closed, ...settled.statements] } satisfies Decision<Ledger>
+  })
+}
+
+export effect function loseApproval(instance: PoolInstance, id: string, detail: string) {
+  return try update(plain(instance), effect (loaded: Loaded) => {
+    const record = try approvalRecord(loaded.ledger, id)
+    const now = try isoAt(loaded.ledger.state.clock + instance.offset)
+    return { value: loaded.ledger, writes: [W.transition(record.id, ["submitted"], "unknown", `broadcast: ${errorText(detail)}`.slice(0, 500), now)] } satisfies Decision<Ledger>
+  })
+}

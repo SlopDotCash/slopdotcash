@@ -1,4 +1,4 @@
-// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Every required check binds the same source and built artifact"
 import { systemGit } from "@repo/platform/git"
 import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
 import { agentClientGate } from "./agentClients.vibe"

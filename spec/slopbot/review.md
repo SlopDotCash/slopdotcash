@@ -1,8 +1,13 @@
 # Review attempts and provider recovery
 
-PRD section 5 selects Orbio Claude Sonnet 5.5, then Surplus Claude Sonnet 5.5,
-then Surplus GPT-6.1 Terra. Every Orbio failure, including exhausted credits,
-goes directly to Surplus. Exact attribution and known or unknown actual cost
+PRD section 5 (operator decision of 16 November 2026, replacing the
+Orbio-first order of 11 November) selects Surplus Claude Sonnet 5.5, then
+Surplus GPT-6.1 Terra, then Orbio Claude Sonnet 5.5 as the backstop. A
+Surplus spending denial skips the remaining Surplus model and goes directly
+to Orbio; the review waits for the Surplus reset only when Orbio does not
+serve. Every Orbio failure, including exhausted credits, is an ordinary
+failure. Free advisory reviews are capped per repository and UTC month
+([monthly cap](./reviewCap.md)). Exact attribution and known or unknown actual cost
 remain in the journal. Slopbot is free and never charges a project vault.
 PRD section 5 also requires no-findings, limited-coverage and
 retryable-failure outcomes, identified unreviewed content, and evidence
@@ -34,6 +39,7 @@ left queued. The bound scope is the one the routing decision derived.
 ```quint
 import routing as R from "./routing"
 import repositoryScope as RS from "./repositoryScope"
+import reviewCap as C from "./reviewCap"
 type Provider = OrbioSonnet | SurplusSonnet | SurplusTerra
 type CallKind = Triage | Confirm
 type CallOutcome = CallOk | CallFailed | CallBudgetDenied
@@ -46,24 +52,62 @@ type CallRecord = { kind: CallKind, provider: Provider, outcome: CallOutcome, se
 type SourceBinding = { requested: str, fetched: str, isolation: Isolation }
 type Review = { status: ReviewStatus, bound: bool, scope: RS::Scope, kind: CallKind, provider: Provider,
   calls: List[CallRecord], attempts: int, unreviewed: int, rechecked: bool, triage: Verdict, second: Verdict,
-  confirmed: bool, uncertain: bool, now: int, retryAt: int }
+  confirmed: bool, uncertain: bool, now: int, retryAt: int, capAdmitted: bool }
 pure val closeConfidence = 90
 pure val noVerdict: Verdict = { category: NoFinding, confidence: 0, limitations: 0, grounded: false }
-pure val initial: Review = { status: Queued, bound: false, scope: RS::Unregistered, kind: Triage, provider: OrbioSonnet,
+pure val initial: Review = { status: Queued, bound: false, scope: RS::Unregistered, kind: Triage, provider: SurplusSonnet,
   calls: List(), attempts: 0, unreviewed: 0, rechecked: false, triage: noVerdict, second: noVerdict,
-  confirmed: false, uncertain: false, now: 1, retryAt: 0 }
+  confirmed: false, uncertain: false, now: 1, retryAt: 0, capAdmitted: false }
 pure def routeScope(route: R::Route): RS::Scope = if (route == R::SecurityReviewOnly) RS::SecurityOnly else RS::Contributor
 pure def canBindSource(r: Review, route: R::Route, source: SourceBinding): bool = r.status == Queued and not(r.bound)
 pure def bindSource(r: Review, route: R::Route, source: SourceBinding): Review =
   if (R::reviews(route) and source.requested != "" and source.fetched == source.requested
-    and source.isolation == ApprovedIsolation) { ...r, bound: true, scope: routeScope(route) }
-  else { ...r, status: Skipped }
-pure def canStart(r: Review): bool = r.status == Queued and r.bound
+    and source.isolation == ApprovedIsolation) { ...r, bound: true, scope: routeScope(route), capAdmitted: false }
+  else { ...r, status: Skipped, capAdmitted: false }
+pure def canStart(r: Review): bool = r.status == Queued and r.bound and r.capAdmitted
 pure def start(r: Review): Review =
-  { ...r, status: InFlight, kind: Triage, provider: OrbioSonnet, attempts: r.attempts + 1, triage: noVerdict,
+  { ...r, status: InFlight, kind: Triage, provider: SurplusSonnet, attempts: r.attempts + 1, triage: noVerdict,
     second: noVerdict, confirmed: false, uncertain: false, unreviewed: 0, rechecked: false }
 pure def canElapse(r: Review, seconds: int): bool = seconds > 0
 pure def elapse(r: Review, seconds: int): Review = { ...r, now: r.now + seconds }
+```
+
+### A bound review of a new item over the month's free-review cap is skipped before any call
+
+The worker admits the item to the repository's month
+([monthly cap](./reviewCap.md)) after binding and before `start`, on every
+run of the review, a restart included: before the deterministic
+pre-filter, any model call or any GitHub write. Admission is part of the
+review's state: binding, a restart and a refusal clear it, and a review
+starts, and so calls a model, only once admitted in this run, as
+development's own model requires (`reviews > 0 implies admittedItem`). An
+item already admitted that month is always admitted again and starts
+normally. A new item that meets a full month finishes skipped with the
+reason `monthly-review-cap`, with no call. Development refuses a restarted
+review the same way, even one whose earlier attempt already made calls
+(`runReview` in `review.ts` admits before every run), when the restart lands
+in a new, full month. That review would be skipped with calls, which
+`alwaysSkippedNeverCalls` forbids, so the refusal here covers only a review
+with no calls, and a restarted review with calls in a full month stays
+queued. Whether such a review gets its own terminal status or
+`alwaysSkippedNeverCalls` is relaxed is the owner's pending decision.
+
+```quint
+pure def canAdmitMonthly(r: Review, alreadyAdmitted: bool, usedThisMonth: int): bool =
+  r.status == Queued and r.bound and usedThisMonth >= 0 and C::admitsReview(alreadyAdmitted, usedThisMonth)
+pure def admitMonthly(r: Review, alreadyAdmitted: bool, usedThisMonth: int): Review = { ...r, capAdmitted: true }
+pure def canRefuseMonthlyCap(r: Review, alreadyAdmitted: bool, usedThisMonth: int): bool =
+  r.status == Queued and r.bound and r.calls.length() == 0 and usedThisMonth >= 0
+    and not(C::admitsReview(alreadyAdmitted, usedThisMonth))
+pure def refuseMonthlyCap(r: Review, alreadyAdmitted: bool, usedThisMonth: int): Review =
+  { ...r, status: Skipped, bound: false, capAdmitted: false }
+pure def lawAdmittedItemIsNeverRefused(r: Review, usedThisMonth: int): bool =
+  not(canRefuseMonthlyCap(r, true, usedThisMonth))
+pure def alwaysCallsNeedAdmission(r: Review): bool =
+  (r.status == InFlight or r.status == Answered or r.status == Limited or r.status == Complete
+    or r.status == BudgetBlocked or r.status == RetryableFailure) implies r.capAdmitted
+pure def sometimesMonthlyCapSkipped(r: Review): bool = r.status == Skipped and r.scope != RS::Unregistered
+pure val usedThisMonthValues = Set(0, 1999, 2000)
 ```
 
 ### Each provider step first rechecks the live registry
@@ -89,11 +133,19 @@ The call row is written with the call kind, route step, provider, the
 model GitHub-visible attribution requires, the served model, the internal
 cost and a zero customer charge. A provider-reported amount is known. A
 missing or fractional receipt keeps the cost unknown, and an unknown cost
-never becomes zero. A missing provider key skips that step without a call
-row. A failed call goes to the next step. Exhausting the route is a
-retryable failure that the queue redelivers. A Surplus spending denial
-blocks the review until its reset. An Orbio denial is an ordinary Orbio
-failure and goes to Surplus. A valid answer must come from the model the
+never becomes zero. The route is Surplus Sonnet, Surplus Terra, then
+Orbio Sonnet. A missing Surplus key skips both Surplus steps, and a
+missing Orbio key skips Orbio, without a call row. A failed call goes to
+the next step. A structured Surplus spending denial is recorded as a call
+that served nothing; it skips the remaining Surplus step, which shares the
+denied budget, and asks Orbio in the same attempt, and the review
+remembers its reset (`retryAt`) while it waits for Orbio; a reset not
+later than now is not remembered. A valid Orbio
+answer is used normally and leaves no block. When Orbio fails or has no
+key, a remembered reset blocks the review until that reset, and without
+one the exhausted route is a retryable failure that the queue redelivers.
+An Orbio failure, including an Orbio denial, is never a spending denial. A
+valid answer must come from the model the
 step requested. Its validated verdict, with the worker's grounding check
 against the bound source and the published rule, is kept with the call.
 
@@ -103,12 +155,13 @@ pure val noCall: CallRecord = { kind: Triage, provider: OrbioSonnet, outcome: Ca
 pure def expectedModel(provider: Provider): str =
   if (provider == SurplusTerra) "gpt-6.1-terra"
   else if (provider == OrbioSonnet) "anthropic/claude-sonnet-5.5" else "claude-sonnet-5.5"
-pure def nextProvider(p: Provider): Provider = if (p == OrbioSonnet) SurplusSonnet else SurplusTerra
+pure def nextProvider(p: Provider): Provider = if (p == SurplusSonnet) SurplusTerra else OrbioSonnet
+pure def routeEnd(retryAt: int): ReviewStatus = if (retryAt > 0) BudgetBlocked else RetryableFailure
 pure def validVerdict(v: Verdict): bool = v.confidence >= 0 and v.confidence <= 100 and v.limitations >= 0
 pure def canSkipMissingCredential(r: Review): bool = r.status == InFlight and r.rechecked
 pure def skipMissingCredential(r: Review): Review =
-  if (r.provider == SurplusTerra) { ...r, status: RetryableFailure, rechecked: false }
-  else { ...r, provider: nextProvider(r.provider), rechecked: false }
+  if (r.provider == OrbioSonnet) { ...r, status: routeEnd(r.retryAt), rechecked: false }
+  else { ...r, provider: OrbioSonnet, rechecked: false }
 pure def canRecordCall(r: Review, call: CallRecord, resetAt: int): bool =
   r.status == InFlight and r.rechecked and call.kind == r.kind and call.provider == r.provider
     and call.customerCharge == 0 and call.amount >= 0 and validVerdict(call.verdict)
@@ -119,19 +172,25 @@ pure def recordCall(r: Review, call: CallRecord, resetAt: int): Review =
   val denied = call.outcome == CallBudgetDenied and call.provider != OrbioSonnet
   val after = { ...r, calls: calls, rechecked: false }
   if (call.outcome == CallOk)
-    (if (call.kind == Triage) { ...after, status: Answered, triage: call.verdict }
-     else { ...after, status: Answered, second: call.verdict })
-  else if (denied and resetAt > r.now) { ...after, status: BudgetBlocked, retryAt: resetAt }
-  else if (r.provider == SurplusTerra) { ...after, status: RetryableFailure }
+    (if (call.kind == Triage) { ...after, status: Answered, triage: call.verdict, retryAt: 0 }
+     else { ...after, status: Answered, second: call.verdict, retryAt: 0 })
+  else if (denied) { ...after, provider: OrbioSonnet, retryAt: if (resetAt > r.now) resetAt else r.retryAt }
+  else if (r.provider == OrbioSonnet) { ...after, status: routeEnd(r.retryAt) }
   else { ...after, provider: nextProvider(r.provider) }
 pure def stepEveryCallFollowsARecheck(before: Review, after: Review): bool =
   after.calls.length() > before.calls.length() implies before.rechecked
+pure def alwaysRememberedResetHasItsDenial(r: Review): bool =
+  r.retryAt > 0 implies r.calls.some(c => c.outcome == CallBudgetDenied and c.provider != OrbioSonnet)
+pure def sometimesOrbioAfterADenial(r: Review): bool = r.status == InFlight and r.provider == OrbioSonnet and r.retryAt > 0
+pure def sometimesOrbioServesAfterADenial(r: Review): bool =
+  r.status == Answered and r.provider == OrbioSonnet
+    and r.calls.some(c => c.outcome == CallBudgetDenied and c.provider != OrbioSonnet)
 ```
 
 ### A closure needs a second, agreeing review, and limited coverage stays advisory
 
-A triage answer with a finding starts a separate confirmation route from
-Orbio. The review is confirmed only when both verdicts name the same
+A triage answer with a finding starts a separate confirmation route, the
+same route as triage from Surplus Sonnet. The review is confirmed only when both verdicts name the same
 finding, each has confidence of at least 90, neither reports a limitation
 and both are grounded. A confirmation that disagrees, is unsure or is
 ungrounded leaves the review uncertain: it goes to the maintainer first and
@@ -152,7 +211,7 @@ pure def agrees(first: Verdict, second: Verdict): bool =
     and first.confidence >= closeConfidence and second.confidence >= closeConfidence
     and first.limitations == 0 and second.limitations == 0 and first.grounded and second.grounded
 pure def canStartConfirm(r: Review): bool = r.status == Answered and r.kind == Triage and hasFinding(r)
-pure def startConfirm(r: Review): Review = { ...r, status: InFlight, kind: Confirm, provider: OrbioSonnet, rechecked: false }
+pure def startConfirm(r: Review): Review = { ...r, status: InFlight, kind: Confirm, provider: SurplusSonnet, rechecked: false }
 pure def canFinish(r: Review, unreviewed: int): bool = r.status == Answered and unreviewed >= 0
 pure def finish(r: Review, unreviewed: int): Review =
   val confirmed = r.kind == Confirm and agrees(r.triage, r.second)
@@ -203,7 +262,7 @@ only decides whether a delivery may restart the review. While a budget
 block's reset time has not come, every delivery is refused without a
 claim. After the reset any delivery may restart it, and the block's resume
 is the delivery that does so when GitHub sends nothing. A restart begins
-again at Orbio and keeps every earlier call row. Limited and complete
+again at Surplus Sonnet and keeps every earlier call row. Limited and complete
 reviews are final for their revision and policy. A dead-lettered job has no
 recovery route yet: the review stays a visible retryable failure until
 GitHub's next event.
@@ -212,7 +271,7 @@ GitHub's next event.
 pure def canRetry(r: Review): bool =
   r.status == RetryableFailure or (r.status == BudgetBlocked and r.now >= r.retryAt)
 pure def retry(r: Review): Review =
-  { ...r, status: Queued, provider: OrbioSonnet, kind: Triage, retryAt: 0, rechecked: false }
+  { ...r, status: Queued, provider: SurplusSonnet, kind: Triage, retryAt: 0, rechecked: false, capAdmitted: false }
 pure def stepBlockWaitsForReset(before: Review, after: Review): bool =
   (before.status == BudgetBlocked and after.status != BudgetBlocked) implies before.now >= before.retryAt
 pure def sometimesComplete(r: Review): bool = r.status == Complete and not(hasFinding(r))
@@ -242,6 +301,7 @@ pure val callValues = Set(okOrbio, { ...okOrbio, verdict: noVerdict }, failed,
   { ...okOrbio, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5" },
   { ...failed, provider: SurplusSonnet, outcome: CallBudgetDenied }, { ...failed, provider: SurplusSonnet },
   { ...okOrbio, provider: SurplusTerra, servedModel: "gpt-6.1-terra" }, { ...failed, provider: SurplusTerra },
+  { ...failed, provider: SurplusTerra, outcome: CallBudgetDenied },
   { ...okOrbio, kind: Confirm }, { ...okOrbio, kind: Confirm, verdict: { ...sure, confidence: 60 } },
   { ...okOrbio, kind: Confirm, verdict: { ...sure, category: Scam } },
   { ...okOrbio, kind: Confirm, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5" },

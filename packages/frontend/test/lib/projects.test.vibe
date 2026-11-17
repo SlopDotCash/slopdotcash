@@ -474,7 +474,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
     })
   })
 
-  it.effect('An administrator grants and revokes an owner-approved exemption and keeps a manifest draft until its exact text is accepted (spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/frontend/projectDrafts.md, "An administrator\'s manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+  it.effect(`An administrator grants and revokes an owner-approved exemption and keeps a manifest draft until its exact text is accepted (spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/frontend/projectDrafts.md, "An administrator's manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")`, () => effect {
     const { world } = try Browser
     const admin = String(adminId)
     const steward = String(stewardId)

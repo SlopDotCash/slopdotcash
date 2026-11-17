@@ -1,0 +1,140 @@
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { Deployment } from "../../platform/config.vibe"
+import { SessionStore } from "../../platform/storage.vibe"
+import { currentAddress } from "../../session/address.ts"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { resumeLocalSignIn, signIn } from "../../session/identity.vibe"
+import { Session } from "../../session/session.vibe"
+import { type SignInWindow, closeSignInWindow, leaveFor, showAuthorization } from "./browserWindow.ts"
+
+export const signInMessages = {
+  blocked: "Your browser did not open the GitHub sign-in window. Allow pop-ups for this site, or open it in another browser, and try again.",
+  signedIn: "You’re signed in.",
+  reopened: "Your account is open again. Connections and activity email are off.",
+} as const
+
+export interface SignInState {
+  readonly waiting: boolean
+  readonly message: string
+  readonly closedAccount: boolean
+}
+
+const quiet: SignInState = { waiting: false, message: "", closedAccount: false }
+
+export service SignInAttempt {
+  readonly changes: Stream.Stream<SignInState>
+  start(reopen: boolean, target: SignInWindow): void!!
+  resume(): void!!
+}
+
+type Joined = { readonly joined: true } | { readonly error: { readonly _tag: "SignInFailed" | "AccountClosed"; readonly message: string } }
+
+export const signInAttempt = Layer.effect(SignInAttempt, effect {
+  const context = try Effect.context<BrowserSession | Session | Deployment | SessionStore | HttpClient.HttpClient>()
+  const scope = try Scope.Scope
+  const shown = try SubscriptionRef.make(quiet)
+  let running: Fiber.Fiber<void> | undefined = undefined
+  let attempts = 0
+
+  effect function settle(mine: number, reopen: boolean, outcome: Joined) {
+    if (mine !== attempts) return
+    if ("joined" in outcome) return try SubscriptionRef.set(shown, { waiting: false, closedAccount: false, message: reopen ? signInMessages.reopened : signInMessages.signedIn })
+    const closed = outcome.error._tag === "AccountClosed"
+    try SubscriptionRef.update(shown, (state) => ({ waiting: false, closedAccount: closed || state.closedAccount, message: outcome.error.message }))
+  }
+
+  effect function run(work: void!!) {
+    const previous = running
+    running = undefined
+    if (previous !== undefined) try Fiber.interrupt(previous)
+    running = fork.in(scope) work
+  }
+
+  effect function joined(mine: number, reopen: boolean, target: SignInWindow) {
+    let authorized = false
+    const authorize = (url: string) => sync(() => {
+      authorized = true
+      showAuthorization(target, url)
+    })
+    try ensuring(Effect.provideContext(effect {
+      const member = signIn({ reopen, sameTab: target.kind === "sameTab", authorize }) catch (error) => ({ error })
+      try settle(mine, reopen, "error" in member ? { error: member.error } : { joined: true })
+    }, context), sync(() => {
+      if (!authorized) closeSignInWindow(target)
+    }))
+  }
+
+  effect function resumed(mine: number) {
+    const outcome = Effect.provideContext(resumeLocalSignIn((url: string) => sync(() => showAuthorization({ kind: "sameTab" }, url))), context) catch (error) => ({ error })
+    if (outcome === undefined) return try SubscriptionRef.update(shown, (state) => mine === attempts ? { ...state, waiting: false } : state)
+    try settle(mine, false, "error" in outcome ? { error: outcome.error } : { joined: true })
+  }
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    start: effect (reopen: boolean, target: SignInWindow) => {
+      attempts += 1
+      const mine = attempts
+      if (target.kind === "blocked") {
+        try run(Effect.void)
+        return try SubscriptionRef.update(shown, (state) => ({ ...state, waiting: false, message: signInMessages.blocked }))
+      }
+      try SubscriptionRef.update(shown, (state) => ({ ...state, waiting: true, message: "" }))
+      try run(joined(mine, reopen, target))
+    },
+    resume: effect () => {
+      attempts += 1
+      const mine = attempts
+      try SubscriptionRef.update(shown, (state) => ({ ...state, waiting: true, message: "" }))
+      try run(resumed(mine))
+    },
+  }
+})
+
+effect function leave() {
+  const path = try (try BrowserSession).returnPath()
+  try sync(() => leaveFor(path))
+}
+
+effect function followSession(attempt: SignInAttempt.Shape) {
+  const session = try Session
+  let resumed = (try Deployment).localBackendOrigin === undefined
+  for try (const view of session.changes) {
+    if (view.status === "signedIn") {
+      try leave()
+      break
+    }
+    if (view.status === "signedOut" && !resumed) {
+      resumed = true
+      try attempt.resume()
+    }
+  }
+}
+
+export type LoginRuntime = ReturnType<typeof makeLoginRuntime>
+
+function makeLoginRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(signInAttempt, Layer.effectContext(page.contextEffect)))
+}
+
+const logins = new WeakMap<PageRuntime, LoginRuntime>()
+
+export function loginRuntime(page: PageRuntime): LoginRuntime {
+  const known = logins.get(page)
+  if (known !== undefined) return known
+  const made = makeLoginRuntime(page)
+  logins.set(page, made)
+  return made
+}
+
+export effect function watchSignIn(show: (state: SignInState) => void!!) {
+  const attempt = try SignInAttempt
+  try (try BrowserSession).saveReturn(currentAddress().search)
+  fork followSession(attempt)
+  for try (const state of attempt.changes) try show(state)
+}
+
+export effect function startSignIn(reopen: boolean, target: SignInWindow) {
+  try (try SignInAttempt).start(reopen, target)
+}

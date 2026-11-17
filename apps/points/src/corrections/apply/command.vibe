@@ -1,4 +1,4 @@
-// spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+// spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { D1 } from "@repo/platform/d1"

@@ -1,0 +1,242 @@
+// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackPool.md, "One run cap, one rolling cap and one burn share bound the whole pool"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { millisOf } from "@repo/platform/clock"
+import type { Rows } from "@repo/platform/stored"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import { type Event, type Pool, type PoolDecision, type PoolLeg, type PoolReason, type PoolState, apply, burn, decodeState, initial, loseSend, purchase, settleBurn, settlePurchase } from "../../gen/fees__buybackPool.effect.vibe"
+import { deadAddress } from "../../gen/fees__buyback.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.effect.vibe"
+import { type IncomeEntry, amountOf } from "../buyback/codec.vibe"
+import { type Instance, type Names, amountOf as exactAmount } from "../journal/codec.vibe"
+import { inScope } from "../journal/writes.vibe"
+import type { Held } from "../runtime/config.vibe"
+import { robinhoodUsdg } from "../runtime/pins.ts"
+
+module text {
+  import type { IncomeEntry } from "../buyback/codec.vibe"
+  import { fromAmount } from "@repo/settlement/kernels/amounts"
+  /** @throws {never} */
+  export function amountText(entry: IncomeEntry): string { return fromAmount(entry.amount).toString() }
+}
+import { amountText } from text
+
+export interface ArrivalEntry {
+  readonly network: Network
+  readonly order: string
+  readonly takeAmount: number
+  readonly height: number
+}
+
+export interface PoolInstance {
+  readonly scope: string
+  readonly offset: number
+  readonly held: Held
+  readonly names: Names
+  readonly wallet: string
+  readonly journal?: Instance
+  readonly arrivalEvidence: ReadonlyArray<ArrivalEntry>
+  readonly arrivals: ReadonlyArray<ArrivalEntry>
+  readonly feeEvidence: ReadonlyArray<IncomeEntry>
+  readonly fees: ReadonlyArray<IncomeEntry>
+  readonly reserved: ReadonlyArray<number>
+  readonly slopEvidence: ReadonlyArray<IncomeEntry>
+  readonly slopFees: ReadonlyArray<IncomeEntry>
+  readonly runs: number
+  readonly runFrom: number
+}
+
+export type SendKind = "buyback" | "burn" | "approval"
+
+export interface GasRecord { readonly id: string; readonly state: string; readonly actualWei: string | null }
+
+export interface SendRecord {
+  readonly id: string
+  readonly kind: SendKind
+  readonly tx: string
+  readonly txs: readonly [string, ...string[]]
+  readonly latestRaw: string
+  readonly nonce: number | null
+  readonly token: string
+  readonly amountIn: string
+  readonly state: "submitted" | "unknown" | "finalized" | "failed"
+  readonly gas: ReadonlyArray<GasRecord>
+}
+
+export interface Ledger {
+  readonly state: Pool
+  readonly sends: ReadonlyArray<SendRecord>
+  readonly purchases: number
+}
+
+export const purchaseReasonText: Readonly<Partial<Record<PoolReason, string>>> = {
+  RunCapReached: "per-run value cap reached",
+  DayCapReached: "daily value cap reached",
+  ExceedsRemaining: "quote exceeds the remaining value cap",
+  UnsafeValue: "quote value exceeds safe integer accounting",
+  BelowMinimum: "below the minimum purchase value",
+  BelowGasMultiple: "below the gas-cost multiple",
+  ImpactUnknown: "price impact unknown",
+  ImpactAbove: "price impact above the cap",
+  SlippageOutside: "minimum output outside the slippage limit",
+}
+
+export const burnReasonText: Readonly<Partial<Record<PoolReason, string>>> = {
+  TokenPaused: "SLOP transfers are paused",
+  BelowMinimum: "below the minimum burn value",
+  BelowGasMultiple: "below the gas-cost multiple",
+  UnsafeValue: "burn value exceeds safe integer accounting",
+}
+
+export const decisionStateName: Readonly<Record<PoolState, "quoted" | "pending" | "skipped" | "no_route">> = { Quoted: "quoted", Pending: "pending", Skipped: "skipped", NoRoute: "no_route" }
+
+const decisionStates: ReadonlyArray<readonly [string, PoolState]> = [["quoted", "Quoted"], ["pending", "Pending"], ["skipped", "Skipped"], ["no_route", "NoRoute"]]
+const legacyBurnWaits: ReadonlyArray<string> = ["burn transfer simulation failed", "burn value unavailable:"]
+const decimal = /^(0|[1-9][0-9]*)$/u
+const networkOf: Readonly<Record<string, Network>> = { base: "Base", ethereum: "Ethereum", solana: "Solana" }
+
+schema SendRow {
+  id: string; kind: string; mode: string; token: string; amount_in: string; min_amount_out: string | null
+  quote_value_micro: number | null; tx_id: string | null; raw_tx: string | null; evm_nonce: number | null
+  state: string; reason: string | null; created_at: string; amount_out: string | null
+}
+schema GasRow { id: string; conversion_id: string; state: string; actual_wei: string | null }
+schema ReplacementRow { conversion_id: string; tx_id: string; raw_tx: string }
+export schema ArrivalRow { source_network: string; order_id: string; amount: string; evidence_block: number }
+
+type Send = typeof SendRow.Type
+
+export function poolRows(scope: string): Statement {
+  return sql`${inScope("robinhood", scope)} AND (kind IN ('buyback', 'burn') OR (kind = 'approval' AND route = 'kyberswap'))`
+}
+
+export function poolReads(instance: PoolInstance): ReadonlyArray<Statement> {
+  const scope = poolRows(instance.scope)
+  return [
+    sql`SELECT id, kind, mode, token, amount_in, min_amount_out, quote_value_micro, tx_id, raw_tx, evm_nonce, state, reason, created_at, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
+    sql`SELECT id, conversion_id, state, actual_wei FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
+    sql`SELECT conversion_id, tx_id, raw_tx FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY conversion_id, attempt`,
+  ]
+}
+
+export function poolVersion(instance: PoolInstance): Statement {
+  const scope = poolRows(instance.scope)
+  return sql`(SELECT count(*) || ':' || coalesce(group_concat(id || ':' || state || ':' || coalesce(reason, '') || ':' || coalesce(amount_out, ''), ','), '') FROM (SELECT id, state, reason, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid))
+    || '#' || (SELECT count(*) || ':' || coalesce(group_concat(id || ':' || state || ':' || coalesce(actual_wei, ''), ','), '') FROM (SELECT id, state, actual_wei FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid))
+    || '#' || (SELECT count(*) FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}))`
+}
+
+export function receiptOf(names: Names, entry: IncomeEntry) {
+  return names.number("receipt", `pool:${entry.kind}:${entry.text}`)
+}
+
+export function arrivalOf(names: Names, entry: ArrivalEntry) {
+  return { network: entry.network, order: names.number("hash", entry.order), takeAmount: entry.takeAmount, height: entry.height }
+}
+
+export effect function arrivalEntry(row: typeof ArrivalRow.Type) {
+  const network = networkOf[row.source_network]
+  const label = `bridge arrival ${row.order_id}`
+  if (network === undefined) throw new RowMismatch({ text: label, issue: `${row.source_network} is not a bridge source network` })
+  return { network, order: row.order_id, takeAmount: try whole(row.amount, label), height: row.evidence_block } satisfies ArrivalEntry
+}
+
+effect function whole(text: string | null, label: string) {
+  if (text === null || !decimal.test(text) || !Number.isSafeInteger(Number(text))) throw new RowMismatch({ text: label, issue: `${text ?? "nothing"} is not a whole number the pool model holds` })
+  return Number(text)
+}
+
+effect function admitted(state: Pool, event: Event, label: string) {
+  return apply(state, event, "Worker") catch effect () => { throw new RowMismatch({ text: label, issue: "the pool model does not admit this record: it repeats a key, is not positive, or is outside activation and the present" }) }
+}
+
+effect function credited(instance: PoolInstance, start: Pool) {
+  const { names } = instance
+  let state = start
+  for (const fee of instance.fees) {
+    const label = `Robinhood fee ${fee.kind} ${fee.text}`
+    const robinhoodFee = { receipt: receiptOf(names, fee), amount: try whole(amountText(fee), label), chainTime: fee.chainTime }
+    state = try admitted(state, { type: "recordRobinhoodFee", robinhoodFee }, label)
+  }
+  for (const amount of instance.reserved) state = try admitted(state, { type: "reserveLocalShare", amount }, "Robinhood fee share")
+  for (const fee of instance.slopFees) state = try admitted(state, { type: "receiveSlopFee", fee: { receipt: receiptOf(names, fee), quantity: fee.amount, chainTime: fee.chainTime } }, `SLOP fee ${fee.kind} ${fee.text}`)
+  for (const arrival of instance.arrivals) state = try admitted(state, { type: "creditArrival", arrival: arrivalOf(names, arrival) }, `bridge arrival ${arrival.order}`)
+  return state
+}
+
+effect function recordedDecision(row: Send, leg: PoolLeg, offset: number) {
+  const label = `pool decision ${row.id}`
+  const state = decisionStates.find(([name]) => name === row.state)?.[1]
+  if (state === undefined) return undefined
+  const texts = Object.entries(leg === "PurchaseLeg" ? purchaseReasonText : burnReasonText) as ReadonlyArray<readonly [PoolReason, string]>
+  const reason: PoolReason | undefined = state === "Quoted" ? (row.reason === null ? "NoReason" : undefined)
+    : state === "NoRoute" ? (row.reason === null ? undefined : "NoRouteFound")
+    : texts.find(([key, written]) => written === row.reason && (state === "Pending") === (key === "BelowMinimum" || key === "BelowGasMultiple" || key === "TokenPaused"))?.[0]
+  if (reason === undefined && leg === "BurnLeg" && state === "Pending" && legacyBurnWaits.some((prefix) => (row.reason ?? "").startsWith(prefix))) return undefined
+  if (reason === undefined) throw new RowMismatch({ text: label, issue: `reason ${row.reason ?? "missing"} does not fit state ${row.state}` })
+  const value = row.quote_value_micro ?? (leg === "PurchaseLeg" ? try whole(row.amount_in, label) : 0)
+  return { leg, state, reason, value, live: row.mode === "live", at: millisOf(row.created_at) - offset } satisfies PoolDecision
+}
+
+export effect function decodePool(instance: PoolInstance, [sent, reserved, replaced]: ReadonlyArray<Rows>) {
+  const { names, offset } = instance
+  const sendRows = try decoded(SendRow, sent ?? [], "pool sends")
+  const gasRows = try decoded(GasRow, reserved ?? [], "pool native gas")
+  const replacements = try decoded(ReplacementRow, replaced ?? [], "pool send replacements")
+  const clock = (try Clock.currentTimeMillis) - offset
+  let state: Pool = try credited(instance, { ...initial, runtime: instance.held.runtime, clock })
+  const sends: Array<SendRecord> = []
+  const decisions: Array<PoolDecision> = []
+  let purchases = 0
+  let runSpent = 0
+  for (const row of sendRows) {
+    const label = `pool send ${row.id}`
+    const usdg = row.token.toLowerCase() === robinhoodUsdg
+    if (row.tx_id === null) {
+      if (row.kind === "approval" || (row.kind === "buyback" && !usdg)) continue
+      const decision = try recordedDecision(row, row.kind === "buyback" ? "PurchaseLeg" : "BurnLeg", offset)
+      if (decision !== undefined) decisions.push(decision)
+      continue
+    }
+    if (row.mode !== "live") continue
+    if (row.state !== "submitted" && row.state !== "unknown" && row.state !== "finalized" && row.state !== "failed") throw new RowMismatch({ text: label, issue: `a signed send cannot be ${row.state}` })
+    if (row.raw_tx === null) throw new RowMismatch({ text: label, issue: "a signed send lacks its journaled bytes" })
+    if (row.kind === "buyback" && !usdg) throw new RowMismatch({ text: label, issue: "a purchase from a token other than USDG is outside the pool; its acquired SLOP must be imported first" })
+    const later = replacements.filter((entry) => entry.conversion_id === row.id)
+    const kind: SendKind = row.kind === "buyback" ? "buyback" : row.kind === "burn" ? "burn" : "approval"
+    sends.push({
+      id: row.id,
+      kind,
+      tx: row.tx_id,
+      txs: [row.tx_id, ...later.map((entry) => entry.tx_id)],
+      latestRaw: later[later.length - 1]?.raw_tx ?? row.raw_tx,
+      nonce: row.evm_nonce,
+      token: row.token,
+      amountIn: row.amount_in,
+      state: row.state,
+      gas: gasRows.filter((gas) => gas.conversion_id === row.id).map((gas) => ({ id: gas.id, state: gas.state, actualWei: gas.actual_wei })),
+    })
+    if (kind === "approval") continue
+    const tx = names.number("tx", row.tx_id)
+    const at = { ...state, clock: millisOf(row.created_at) - offset }
+    const succeeded = row.state === "finalized"
+    if (kind === "buyback") {
+      const spent = try whole(row.amount_in, label)
+      purchases += 1
+      if (instance.runs > 0 && purchases > instance.runFrom) runSpent += spent
+      const minimum = amountOf(try exactAmount(row.min_amount_out ?? "0", label))
+      state = { ...purchase(at, { route: "RouteFound", tx, spent, minimum, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: spent }), clock }
+      if (row.state === "unknown") state = loseSend(state, tx)
+      if (row.state === "finalized" || row.state === "failed") {
+        const output = succeeded ? amountOf(try exactAmount(row.amount_out ?? "0", label)) : zero
+        state = settlePurchase(state, { tx, succeeded, finalized: true, output, toFeeWallet: true, slopToken: true })
+      }
+      continue
+    }
+    const quantity = amountOf(try exactAmount(row.amount_in, label))
+    state = { ...burn(at, { tx, quantity, value: 0, gasValue: 0, destination: deadAddress, tokenPaused: false }), clock }
+    if (row.state === "unknown") state = loseSend(state, tx)
+    if (row.state === "finalized" || row.state === "failed") state = settleBurn(state, { tx, succeeded, finalized: true })
+  }
+  const pool = try decodeState({ ...state, clock, runNumber: instance.runs, runSpent, decisions } satisfies Pool)
+  return { state: pool, sends, purchases } satisfies Ledger
+}

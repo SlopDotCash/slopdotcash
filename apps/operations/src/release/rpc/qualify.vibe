@@ -17,6 +17,12 @@ export interface QualifiedHead {
   readonly blockHash: string
 }
 
+export interface ContractProbe {
+  readonly to: string
+  readonly data: string
+  readonly answers: (result: string) => boolean
+}
+
 const blockHash = /^0x[a-f0-9]{64}$/u
 const quantity = /^0x(?:0|[1-9a-f][0-9a-f]*)$/u
 const rpcMillis = 5_000
@@ -44,14 +50,22 @@ function validBlock(block: FinalizedBlock) {
   return quantity.test(block.number) && blockHash.test(block.hash)
 }
 
-export effect function qualifyRobinhood(candidate: Redacted.Redacted<string>) {
+export effect function qualifyRobinhood(candidate: Redacted.Redacted<string>, probe: ContractProbe) {
   const url = secureRpcUrl(Redacted.value(candidate))
   if (url === undefined) throw refused("The candidate must use TLS and be independent of the public reference.")
   const rpc = try client(url)
-  const observed = rpc.call("eth_getBlockByNumber", ["finalized", false], FinalizedBlock) catch effect (error) => {
-    throw refused(error._tag === "WrongChain" ? "The candidate RPC does not serve Robinhood Chain 4663." : "The candidate failed the finalized Robinhood read.")
+  const contractRead = "The candidate failed the finalized Robinhood contract read."
+  const observed = rpc.call("eth_getBlockByNumber", ["finalized", false], FinalizedBlock) catch effect () => {
+    throw refused(contractRead)
   }
-  if (!validBlock(observed)) throw refused("The candidate failed the finalized Robinhood read.")
+  if (!validBlock(observed)) throw refused(contractRead)
+  const answer = rpc.call("eth_call", [{ to: probe.to, data: probe.data }, observed.number], Schema.String) catch effect () => {
+    throw refused(contractRead)
+  }
+  const own = rpc.call("eth_getBlockByNumber", [observed.number, false], FinalizedBlock) catch effect () => {
+    throw refused(contractRead)
+  }
+  if (!probe.answers(answer) || own.number !== observed.number || own.hash !== observed.hash) throw refused(contractRead)
   const reference = try client(robinhoodReference)
   const independent = "The independent Robinhood RPC did not verify the candidate block."
   const [finalized, canonical] = all([

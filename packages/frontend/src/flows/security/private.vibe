@@ -1,0 +1,107 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Access, Route } from "@repo/platform/route"
+import { type CallFailure, type CallInput, call } from "../../platform/api.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session, actorNumber } from "../../session/session.vibe"
+
+export const privateLimitBytes = 1_048_576
+
+export const privateMessages = {
+  unverified: "Your private session could not be verified. Retry before viewing reports.",
+  accountChanged: "Your account changed or signed out. Reload your private reports.",
+  accessChanged: "Private report access changed. Reload your private reports.",
+  otherAccount: "This private response belongs to another account. Reload your private reports.",
+  closed: "This private report action was closed.",
+} as const
+
+export interface ReportDraft {
+  readonly summary: string
+  readonly description: string
+  readonly severity: string
+  readonly cvss: string
+  readonly cwe: string
+}
+
+export const emptyReport: ReportDraft = { summary: "", description: "", severity: "", cvss: "", cwe: "" }
+
+export schema ReportBody {
+  summary: string
+  description: string
+  severity?: string
+  cvssVectorString?: string
+  cweIds?: ReadonlyArray<string>
+}
+
+export function reportBody(draft: ReportDraft): ReportBody {
+  const cweIds = draft.cwe.split(/[\s,]+/u).map((entry) => entry.trim().toUpperCase()).filter((entry) => entry !== "")
+  const vector = draft.cvss.trim()
+  return {
+    summary: draft.summary.trim(),
+    description: draft.description.trim(),
+    ...(vector !== "" ? { cvssVectorString: vector } : draft.severity !== "" ? { severity: draft.severity } : {}),
+    ...(cweIds.length > 0 ? { cweIds } : {}),
+  }
+}
+
+export effect function modelNumber(text: string) {
+  const value = Number.parseInt((try sha256Hex(text)).slice(0, 12), 16)
+  return value === 0 ? 1 : value
+}
+
+export type Private<A> =
+  | { readonly kind: "done"; readonly value: A }
+  | { readonly kind: "failed"; readonly failure: CallFailure; readonly message: string }
+  | { readonly kind: "unverified"; readonly message: string }
+  | { readonly kind: "accountChanged"; readonly message: string }
+  | { readonly kind: "closed"; readonly message: string }
+
+export type Identity = "same" | "changed" | "unknown"
+
+export effect function identityOf(owner: string) {
+  const current = (try Session).current() catch () => undefined
+  if (current === undefined) return "unknown" satisfies Identity
+  return (current?.githubId === owner ? "same" : "changed") satisfies Identity
+}
+
+effect function verified(owner: string) {
+  const identity = try identityOf(owner)
+  if (identity === "unknown") return { kind: "unverified", message: privateMessages.unverified } satisfies Private<never>
+  if (identity === "changed") {
+    try (try BrowserSession).observe("changed")
+    return { kind: "accountChanged", message: privateMessages.accountChanged } satisfies Private<never>
+  }
+  return undefined
+}
+
+function accessRefused(failure: CallFailure): boolean {
+  return failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status)
+}
+
+export effect function privateCall<B, A, X extends Access>(owner: string, route: Route<B, A, X>, input: CallInput<B>, rows: (value: A) => number, ownerOf: (value: A) => string | undefined = () => undefined) {
+  const browser = try BrowserSession
+  const lifetime = try browser.lifetime()
+  if (lifetime.actorId !== actorNumber(owner)) return { kind: "closed", message: privateMessages.closed } satisfies Private<A>
+  const before = try verified(owner)
+  if (before !== undefined) return before
+  const answered = Effect.map(call(route, input, { limitBytes: privateLimitBytes, expectedActor: owner }), (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
+  if (!answered.ok) {
+    const failure = answered.failure
+    if (failure._tag === "ActorChanged") {
+      try browser.observe("changed")
+      return { kind: "accountChanged", message: privateMessages.accountChanged } satisfies Private<A>
+    }
+    if (accessRefused(failure)) {
+      if (failure._tag === "Refused" && failure.status === 401) try browser.sessionEnded()
+      return { kind: "failed", failure, message: privateMessages.accessChanged } satisfies Private<A>
+    }
+    const after = try verified(owner)
+    return after ?? ({ kind: "failed", failure, message: failure.message } satisfies Private<A>)
+  }
+  const after = try verified(owner)
+  if (after !== undefined) return after
+  const answeredFor = ownerOf(answered.value)
+  if (answeredFor !== undefined && answeredFor !== owner) return { kind: "accountChanged", message: privateMessages.otherAccount } satisfies Private<A>
+  if (!(try browser.acceptPrivate(lifetime, rows(answered.value), true))) return { kind: "closed", message: privateMessages.closed } satisfies Private<A>
+  return { kind: "done", value: answered.value } satisfies Private<A>
+}

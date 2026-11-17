@@ -39,7 +39,8 @@ type Leaf = { source: str, actor: int, gross: M::Amount }
 type FundedMonth = { project: str, period: int, snapshotDigest: str, wholeGross: M::Amount, leaves: List[Leaf], cap: M::Amount }
 type ChainView = { height: int, time: int, sourceSequence: int, authority: str, monthlyEnabled: bool, cap: M::Amount,
   consumed: List[str], otherMonthSources: List[str], admittedRoot: str, legacyRoot: bool, remaining: M::Amount }
-type SigningFacts = { height: int, projectActive: bool, restricted: bool, vaultServed: bool, automaticOn: bool, snapshotDigest: str }
+type SigningFacts = { height: int, projectActive: bool, restricted: bool, vaultServed: bool, automaticOn: bool, snapshotDigest: str,
+  pledged: bool, retired: bool }
 type LegacyAuthorization = { root: str, snapshotDigest: str, wholeGross: M::Amount, leafCount: int, signer: str }
 type Attempt = { id: int, height: int, sourceSequence: int, root: str, remainingGross: M::Amount,
   leafCount: int, frozenAt: int, signer: str, publishedAt: int }
@@ -53,7 +54,8 @@ type Commitment = { family: ChainFamily, phase: CommitPhase, refusal: RefusalRea
 pure val emptyMonth: FundedMonth = { project: "", period: 0, snapshotDigest: "", wholeGross: M::zero, leaves: List(), cap: M::zero }
 pure val emptyView: ChainView = { height: 0, time: 0, sourceSequence: 0, authority: "attester", monthlyEnabled: true, cap: M::zero,
   consumed: List(), otherMonthSources: List(), admittedRoot: "", legacyRoot: false, remaining: M::zero }
-pure val noFacts: SigningFacts = { height: 0, projectActive: false, restricted: false, vaultServed: false, automaticOn: false, snapshotDigest: "" }
+pure val noFacts: SigningFacts = { height: 0, projectActive: false, restricted: false, vaultServed: false, automaticOn: false, snapshotDigest: "",
+  pledged: false, retired: false }
 pure val noLegacy: LegacyAuthorization = { root: "", snapshotDigest: "", wholeGross: M::zero, leafCount: 0, signer: "" }
 pure val initial: Commitment = { family: EvmV2, phase: NoIntent, refusal: NoRefusal, held: NoRefusal, month: emptyMonth, view: emptyView,
   facts: noFacts, legacy: noLegacy, attempts: List(), admittedRoot: "", admittedLegacy: false, frozenAt: 0, clock: 1796342400,
@@ -119,6 +121,14 @@ the refusal recorded, while the window has not opened or has closed, the
 project is inactive or restricted, the vault is not served, the owner turned
 automatic payment off, the snapshot changed, the facts are not from the
 current view, or the remaining gross exceeds the cap the contract reports.
+A month the owner pledged on chain in the vault that pays it (a stored
+pledge above zero, open or since closed, as [month pledges](./monthPledges.md)
+`pledgedIn` finds it) is the owner's consent to reserve it: while the project
+is not retired, the attester signs it with automatic payment off and while
+the project is inactive or restricted (operator decision, 15 November 2026;
+development `backend/payments/monthly-attestation.ts`). A missing project has
+no pledge and still refuses as restricted. The contract still checks the
+pledge and the cap.
 A refusal is not terminal: a later observation may allow signing inside the
 window.
 
@@ -130,12 +140,13 @@ pure def signingRefusal(c: Commitment): RefusalReason =
   if (c.clock < c.opensAt or c.view.time < c.opensAt) WindowNotOpen
   else if (c.clock >= c.closesAt) WindowClosed
   else if (c.facts.height != c.view.height or c.facts.height == 0) FactsStale
-  else if (not(c.facts.projectActive) or c.facts.restricted) ProjectRestricted
+  else if (not(pledgeWaives(c.facts)) and (not(c.facts.projectActive) or c.facts.restricted)) ProjectRestricted
   else if (not(c.facts.vaultServed)) VaultNotServed
-  else if (not(c.facts.automaticOn)) AutomaticOff
+  else if (not(pledgeWaives(c.facts)) and not(c.facts.automaticOn)) AutomaticOff
   else if (c.facts.snapshotDigest != c.month.snapshotDigest) SnapshotChanged
   else if (M::compareAmounts(c.month.wholeGross, c.view.cap) > 0) ChainCapExceeded
   else NoRefusal
+pure def pledgeWaives(facts: SigningFacts): bool = facts.pledged and not(facts.retired)
 pure def canRefuseSigning(c: Commitment): bool =
   c.phase == Authorized and c.view.admittedRoot == "" and stale(c) and signingRefusal(c) != NoRefusal and c.held != signingRefusal(c)
     and (c.family == EvmV2 or c.attempts.length() == 0)
@@ -311,6 +322,8 @@ pure def sometimesLegacyAdmitted(c: Commitment): bool = c.phase == Admitted and 
 pure def sometimesUnknownRoot(c: Commitment): bool = c.phase == Investigating
 pure def sometimesAutomaticOffRefused(c: Commitment): bool = c.phase == Authorized and c.held == AutomaticOff
 pure def sometimesRestrictedRefused(c: Commitment): bool = c.phase == Authorized and c.held == ProjectRestricted
+pure def sometimesPledgedSignedWithAutomaticOff(c: Commitment): bool = c.attempts.length() > 0 and c.facts.pledged
+  and not(c.facts.automaticOn) and c.facts.restricted
 pure def sometimesBeforeWindowRefused(c: Commitment): bool = c.phase == Authorized and c.held == WindowNotOpen
 pure def sometimesChainCapRefused(c: Commitment): bool = c.phase == Authorized and c.held == ChainCapExceeded
 ```
@@ -338,9 +351,12 @@ pure val viewValues = Set(
   { ...emptyView, height: 3, time: 1796342600, cap: List(8), admittedRoot: "v1", legacyRoot: true, remaining: List(0) },
   { ...emptyView, height: 3, time: 1796342600, cap: List(8), admittedRoot: "x", remaining: List(5) })
 pure def factsAt(height: int): SigningFacts =
-  { height: height, projectActive: true, restricted: false, vaultServed: true, automaticOn: true, snapshotDigest: "d1" }
+  { height: height, projectActive: true, restricted: false, vaultServed: true, automaticOn: true, snapshotDigest: "d1",
+    pledged: false, retired: false }
 pure val factsValues = Set(factsAt(1), factsAt(2), factsAt(3), factsAt(4)).union(Set({ ...factsAt(1), automaticOn: false },
-  { ...factsAt(1), restricted: true }, { ...factsAt(2), snapshotDigest: "d2" }, { ...factsAt(2), vaultServed: false }))
+  { ...factsAt(1), restricted: true }, { ...factsAt(2), snapshotDigest: "d2" }, { ...factsAt(2), vaultServed: false },
+  { ...factsAt(1), automaticOn: false, restricted: true, pledged: true },
+  { ...factsAt(1), automaticOn: false, pledged: true, retired: true }))
 pure val legacyValues = Set({ root: "v1", snapshotDigest: "d1", wholeGross: List(5), leafCount: 2, signer: "attester" },
   { root: "v1", snapshotDigest: "d0", wholeGross: List(5), leafCount: 2, signer: "attester" })
 pure val attemptIdValues = Set(1, 2)

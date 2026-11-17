@@ -1,0 +1,109 @@
+// spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"
+import type * as KeyValueStore from "effect/persistence/KeyValueStore"
+import type { SubmissionView } from "@repo/security/client"
+import type { IntakeEntry, IntakeRecord, IntakeStage } from "../../../gen/frontend__drafts.ts"
+import { draftStillNeeded, keptDraftIds, terminalFailureCodes } from "../../../gen/frontend__drafts.effect.vibe"
+import { SessionStore, storageKeys } from "../../platform/storage.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session, type SessionView } from "../../session/session.vibe"
+import { type ReportDraft, emptyReport } from "./private.vibe"
+
+export type TextOwner = Pick<SubmissionView, "id" | "origin" | "state" | "failureCode" | "advisory">
+
+schema StoredText { summary?: string; description?: string; severity?: string; cvss?: string; cwe?: string }
+
+const intakeStages: ReadonlyMap<string, IntakeStage> = new Map([
+  ["draft", "IntakeDraft"],
+  ["submitting", "IntakeSubmitting"],
+  ["uncertain", "IntakeUncertain"],
+  ["failed", "IntakeFailed"],
+])
+
+const textPrefix = storageKeys.intakeDraft.key
+const composePrefix = storageKeys.reportCompose.key
+
+function textKey(id: string) {
+  return `${textPrefix}${id}`
+}
+
+export function intakeRecordOf(submission: TextOwner): IntakeRecord {
+  return {
+    fromSlop: submission.origin === "slop",
+    hasAdvisory: submission.advisory !== null,
+    intake: intakeStages.get(submission.state) ?? "IntakeSettled",
+    terminalFailure: terminalFailureCodes.includes(submission.failureCode ?? ""),
+  }
+}
+
+export function needsReportText(submission: TextOwner): boolean {
+  return draftStillNeeded(intakeRecordOf(submission))
+}
+
+export function keepsReportText(submission: TextOwner & Pick<SubmissionView, "intake">): boolean {
+  return submission.intake === null && needsReportText(submission)
+}
+
+export effect function loadReportText(id: string) {
+  const values = (try SessionStore).values
+  const raw = values.get(textKey(id)) catch () => undefined
+  if (raw === undefined) return undefined
+  const parsed = Effect.try(() => JSON.parse(raw) as unknown) catch () => undefined
+  const stored = Schema.decodeUnknownEffect(StoredText)(parsed) catch () => undefined
+  return stored === undefined ? undefined : ({ ...emptyReport, ...stored } satisfies ReportDraft)
+}
+
+export effect function saveReportText(id: string, draft: ReportDraft) {
+  const store = try SessionStore
+  if (!store.durable) return false
+  return Effect.as(store.values.set(textKey(id), JSON.stringify(draft)), true) catch () => false
+}
+
+export effect function clearReportText(id: string) {
+  (try SessionStore).values.remove(textKey(id)) catch () => undefined
+}
+
+export effect function releaseReportText(submission: TextOwner & Pick<SubmissionView, "intake">) {
+  if (!keepsReportText(submission)) try clearReportText(submission.id)
+}
+
+effect function pruned(values: KeyValueStore.KeyValueStore, submissions: ReadonlyArray<TextOwner>) {
+  const keys = values.keys catch () => []
+  const ids = keys.filter((key) => key.startsWith(textPrefix)).map((key) => key.slice(textPrefix.length))
+  const entries: IntakeEntry[] = submissions.flatMap((submission) => {
+    const index = ids.indexOf(submission.id)
+    return index < 0 ? [] : [{ id: index + 1, record: intakeRecordOf(submission) }]
+  })
+  const kept = new Set(keptDraftIds(entries, ids.map((_, index) => index + 1)))
+  for (const [index, id] of ids.entries()) {
+    if (!kept.has(index + 1)) values.remove(textKey(id)) catch () => undefined
+  }
+}
+
+export effect function pruneReportTexts(submissions: ReadonlyArray<TextOwner>) {
+  try pruned((try SessionStore).values, submissions)
+}
+
+effect function erased(values: KeyValueStore.KeyValueStore) {
+  try pruned(values, [])
+  values.clearPrefix(composePrefix) catch () => undefined
+}
+
+export effect function eraseReportTexts() {
+  try erased((try SessionStore).values)
+}
+
+effect function erasedWhenFirstSignedOut(views: Stream.Stream<SessionView>, values: KeyValueStore.KeyValueStore) {
+  const first = try Stream.runHead(Stream.filter(views, (view) => view.status === "signedIn" || view.status === "signedOut"))
+  if (Option.isSome(first) && first.value.status === "signedOut") try erased(values)
+}
+
+export const reportTextErasure = Layer.effectDiscard(effect {
+  const browser = try BrowserSession
+  const values = (try SessionStore).values
+  const last = try Ref.make(0)
+  try browser.onAccountChange((actorId) => effect {
+    const previous = try Ref.getAndSet(last, actorId)
+    if (actorId === 0 || (previous !== 0 && previous !== actorId)) try erased(values)
+  })
+  fork.scoped erasedWhenFirstSignedOut((try Session).changes, values)
+})

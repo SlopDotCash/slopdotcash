@@ -40,7 +40,10 @@ pure def validReceipt(t: ReceiptTerms): bool = t.revision > 0 and t.receivedAt >
 PRD section 8 ("Offers and report intake") shows Slop's default "Does not
 qualify" list, ten lines in one constant, beside the owner's own
 exclusions: at most 20 more lines of 3 to 300 characters, modelled by their
-lengths. Paid terms carry the owner's lines of the revision in force at
+lengths. The shell's parser of `scope.excludedFindings` also refuses a line
+with surrounding whitespace or a line break and a list with two lines equal
+ignoring case, and reads an absent field as no lines, so terms published
+before the field keep validating (`src/lib/security-bounty.mjs`). Paid terms carry the owner's lines of the revision in force at
 receipt; terms without them have none. Screening, case analysis and appeal
 triage receive both lists and may name a matching line, counted from the
 first default line; the line is advice and decides no validity, award or

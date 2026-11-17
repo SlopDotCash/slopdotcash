@@ -1,0 +1,168 @@
+// spec/slopbot/maintainerHold.md, "The due hold resolves on every known source: the maintainer acted, it is superseded, or it is labeled"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { GitHub } from "@repo/platform/github"
+import { type GateObservation, type RepositoryScope, type SourceObservation, unknownSource, unobserved } from "../../gen/slopbot__closure.effect.vibe"
+import { type Hold, type MaintainerTimeline, canLabelUncertain, canObserve, holdDue, mayAct, observe, reversed, sourceKnown, supersedingSource } from "../../gen/slopbot__maintainerHold.effect.vibe"
+import type { Scope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { type Account, type Comparison, IssueRead, PullRead, RepositoryRead, absentOn404, compareDiff, reviewedItemText } from "../context/load.vibe"
+import { activeInstallation } from "../installation/store.vibe"
+import type { MaintainerHoldJob } from "../jobs/job.vibe"
+import { addLabels, removeLabel, uncertainLabel } from "../publish/labels.vibe"
+import type { ScopedItem } from "../publish/scope.vibe"
+import type { ReviewSettings } from "../review/run.vibe"
+import { exemptionOf } from "../routing/facts.vibe"
+import { type Observed, observe as observeScope } from "../scope/facts.vibe"
+import { type HoldLoaded, type HoldScope, commitHold, loadHold, storedHold } from "./store.vibe"
+
+schema TimelineActor { readonly login: string; readonly id: number }
+schema TimelineEntry {
+  readonly event?: string
+  readonly created_at?: string
+  readonly submitted_at?: string
+  readonly actor?: TimelineActor | null
+  readonly user?: TimelineActor | null
+}
+
+export error HoldUnresolved { reviewKey: string; reason: string }
+
+interface Fresh {
+  readonly source: SourceObservation
+  readonly labels: ReadonlyArray<string>
+  readonly owner: typeof Account.Type | undefined
+  readonly revisionChanged: boolean
+}
+
+const scopes: Readonly<Record<Scope, RepositoryScope>> = { Unregistered: "Unregistered", Contributor: "Active", SecurityOnly: "SecurityOnly", ReversalOnly: "ReversalOnly" }
+const passiveEvents = new Set(["mentioned", "subscribed", "unsubscribed"])
+const timelinePages = 30
+const freshSeq = 1
+
+function freshOf(fresh: Fresh): Fresh {
+  return fresh
+}
+
+function scopedOf(job: MaintainerHoldJob, projectId: string, itemNodeId: string): ScopedItem {
+  return { ref: { owner: job.owner, repo: job.repo, repositoryId: job.repositoryId }, projectId, number: job.number, itemNodeId }
+}
+
+effect function comparisonOf(repositoryId: number, pull: typeof PullRead.Type | undefined) {
+  if (pull === undefined) return { diff: "", changedFiles: 0, unreviewed: 0 }
+  const compared: Comparison = try compareDiff(repositoryId, pull)
+  return { diff: compared.diff, changedFiles: compared.changedFiles, unreviewed: compared.unreviewed }
+}
+
+effect function freshSource(scope: HoldScope, observed: Observed) {
+  const { job } = scope
+  const { identity } = scope.finding
+  const known = { ...unknownSource, identity, scope: observed.projectId === undefined ? "Unregistered" : scopes[slopbotScope(observed.observation)] }
+  if (!(try activeInstallation(job.installationId))) return freshOf({ source: { ...known, installation: "InstallationRemoved" }, labels: [], owner: undefined, revisionChanged: false })
+  const github = try GitHub
+  const base = `/repositories/${job.repositoryId}`
+  const repository = try absentOn404(github.json(base, RepositoryRead))
+  const issue = try absentOn404(github.json(`${base}/issues/${job.number}`, IssueRead))
+  if (repository === undefined || issue === undefined || issue.node_id !== identity.itemNode) return freshOf({ source: { ...known, installation: "InstallationActive" }, labels: [], owner: repository?.owner, revisionChanged: false })
+  const pull = job.itemKind === "pull_request" ? try absentOn404(github.json(`${base}/pulls/${job.number}`, PullRead)) : undefined
+  if (job.itemKind === "pull_request" && pull === undefined) return freshOf({ source: { ...known, installation: "InstallationActive" }, labels: [], owner: repository.owner, revisionChanged: false })
+  const comparison = try comparisonOf(job.repositoryId, pull)
+  const revision = pull?.head.sha ?? try sha256Hex(`${issue.title}\n${issue.body ?? ""}`)
+  const digest = try sha256Hex(reviewedItemText(issue, pull, comparison))
+  const same = revision === identity.revision && digest === identity.contentDigest
+  return freshOf({
+    source: {
+      ...known,
+      source: same ? "SourceCurrent" : "SourceSuperseded",
+      installation: "InstallationActive",
+      item: pull?.merged === true ? "ItemMerged" : issue.state === "open" ? "ItemOpen" : issue.state === "closed" ? "ItemClosed" : "ItemUnknown",
+      draft: pull?.draft === true,
+      coverage: comparison.unreviewed === 0 ? "CoverageComplete" : "CoverageLimited",
+    },
+    labels: (issue.labels ?? []).map((label) => label.name),
+    owner: repository.owner,
+    revisionChanged: revision !== identity.revision,
+  })
+}
+
+export effect function maintainerActedSince(job: MaintainerHoldJob, owner: typeof Account.Type, since: string, appUserId: string) {
+  const entries = try (try GitHub).pages(`/repositories/${job.repositoryId}/issues/${job.number}/timeline`, TimelineEntry, { maxPages: timelinePages, perPage: 100 })
+  const actors = new Map<number, typeof TimelineActor.Type>()
+  const start = millisOf(since)
+  for (const entry of entries) {
+    const at = entry.submitted_at ?? entry.created_at
+    const actor = entry.actor ?? entry.user
+    if (at === undefined || passiveEvents.has(entry.event ?? "") || millisOf(at) < start || actor == null || String(actor.id) === appUserId) continue
+    actors.set(actor.id, actor)
+  }
+  for (const actor of actors.values()) {
+    const exemption = try exemptionOf(job.repositoryId, owner, actor)
+    if (exemption === "ExemptionUnknown") return "TimelineUnknown" satisfies MaintainerTimeline
+    if (exemption === "Exempt") return "MaintainerAction" satisfies MaintainerTimeline
+  }
+  return "NoMaintainerAction" satisfies MaintainerTimeline
+}
+
+function gateOf(source: SourceObservation): GateObservation {
+  return { ...unobserved, seq: freshSeq, source }
+}
+
+function timelineOf(loaded: HoldLoaded, timeline: MaintainerTimeline) {
+  const { hold } = loaded
+  return { itemNode: hold.finding.identity.itemNode, revision: hold.finding.identity.revision, heldAt: hold.heldAt, checkedAt: hold.now, timeline }
+}
+
+function seen(hold: Hold, gate: GateObservation) {
+  return canObserve(hold, gate) ? observe(hold, gate) : hold
+}
+
+function supersededReason(fresh: Fresh) {
+  const { source } = fresh
+  if (source.scope === "Unregistered" || source.scope === "ReversalOnly") return "repository is not registered in the Slop registry"
+  if (source.scope === "SecurityOnly") return "security review only"
+  if (source.installation !== "InstallationActive") return "installation removed or suspended"
+  if (source.coverage === "CoverageLimited") return "comparison coverage is incomplete"
+  if (source.item !== "ItemOpen") return "item is no longer open"
+  if (source.draft) return "item is a draft"
+  return fresh.revisionChanged ? "item changed after the review" : "reviewed source changed"
+}
+
+effect function reversedSupersede(scope: HoldScope, item: ScopedItem, gate: GateObservation) {
+  try removeLabel(item, uncertainLabel)
+  const hold = try commitHold(scope, () => [{ type: "observe", observation: gate }, { type: "supersedeHold" }])
+  return hold.appealUpheld ? "hold superseded: appeal was upheld" : "hold superseded: maintainer reopened the item"
+}
+
+export effect function applyMaintainerHold(job: MaintainerHoldJob, settings: ReviewSettings) {
+  const stored = try storedHold(job)
+  if (stored === undefined || stored.row.resolved_at !== null) return "hold already resolved"
+  const { scope } = stored
+  const base = try loadHold(scope)
+  if (!holdDue(base.hold)) return "hold not due"
+  const current = try observeScope({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })
+  const fresh = try freshSource(scope, current)
+  const gate = gateOf(fresh.source)
+  const item = scopedOf(job, current.projectId ?? "", scope.finding.identity.itemNode)
+  const after = seen(base.hold, gate)
+  if (sourceKnown(fresh.source) && supersedingSource(fresh.source)) {
+    try commitHold(scope, () => [{ type: "observe", observation: gate }, { type: "supersedeHold" }])
+    return `hold superseded: ${supersededReason(fresh)}`
+  }
+  if (reversed(after)) return try reversedSupersede(scope, item, gate)
+  if (fresh.owner === undefined || !mayAct(after)) throw new HoldUnresolved({ reviewKey: job.reviewKey, reason: "item not readable" })
+  const timeline = try maintainerActedSince(job, fresh.owner, stored.row.held_at, settings.appUserId)
+  if (timeline === "TimelineUnknown") throw new HoldUnresolved({ reviewKey: job.reviewKey, reason: "maintainer status is unknown; the hold is retried" })
+  if (timeline === "MaintainerAction") {
+    try commitHold(scope, (loaded) => [{ type: "observe", observation: gate }, { type: "resolveMaintainerAction", timeline: timelineOf(loaded, timeline) }])
+    return "maintainer acted; no label"
+  }
+  const before = try loadHold(scope)
+  if (reversed(before.hold)) return try reversedSupersede(scope, item, gate)
+  if (!canLabelUncertain(seen(before.hold, gate), timelineOf(before, timeline))) throw new HoldUnresolved({ reviewKey: job.reviewKey, reason: "the hold cannot be labeled on this observation" })
+  if (!fresh.labels.includes(uncertainLabel)) try addLabels(item, [uncertainLabel])
+  const labeled = commitHold(scope, (loaded) => [{ type: "observe", observation: gate }, { type: "labelUncertain", timeline: timelineOf(loaded, timeline) }]) catch effect (error) => {
+    if (error._tag === "Rejected" && reversed(error.state)) return undefined
+    throw error
+  }
+  if (labeled === undefined) return try reversedSupersede(scope, item, gate)
+  return `labeled after the maintainer window (${scope.category})`
+}

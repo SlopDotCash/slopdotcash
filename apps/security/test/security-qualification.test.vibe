@@ -1,0 +1,67 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
+import { QualificationRefused, sandboxPlan, sandboxQualification } from "../src/qualification/sandbox.vibe"
+import { ScreeningQualificationFailed, screeningPlan, securityScreening } from "../src/qualification/screening.vibe"
+import { VettingControlsRefused, flagsPlan, flagsRun, vettingControls } from "../src/qualification/vettingControls.vibe"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "2 minutes" })((it) => {
+  it.effect('Sandbox and flag qualification plans run offline and deterministically, and execution refuses outside the protected operator job; the screening plan builds its bounded request without sending it (spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable")', () => effect {
+    const requests: string[] = []
+    const offline = (input: unknown) => {
+      requests.push(String(input))
+      return Promise.reject(new Error("offline"))
+    }
+    provide FetchHttpClient.Fetch = offline {
+      try sandboxQualification([])
+      try sandboxQualification(["--mode", "plan"])
+      try vettingControls(["--scope", "flags"])
+      try vettingControls(["--scope", "flags", "--mode", "plan"])
+      try securityScreening([])
+      const screening = try screeningPlan()
+      const screeningExecuted = try Effect.flip(securityScreening(["--mode", "execute"]))
+      const executed = try Effect.flip(sandboxQualification(["--mode", "execute"]))
+      const unknownMode = try Effect.flip(sandboxQualification(["--mode", "live"]))
+      const flagsExecute = try Effect.flip(vettingControls(["--scope", "flags", "--mode", "execute"]))
+      const recovery = try Effect.flip(vettingControls(["--scope", "recovery"]))
+      try same(
+        {
+          sandbox: sandboxPlan(),
+          flags: flagsPlan("f".repeat(40), "slop-vet-flags-12-1"),
+          runs: [flagsRun(undefined, undefined), flagsRun("12", "1"), flagsRun("x", "1")],
+          screening,
+          refusals: [executed instanceof QualificationRefused, unknownMode instanceof QualificationRefused, flagsExecute instanceof VettingControlsRefused, recovery instanceof VettingControlsRefused, screeningExecuted instanceof ScreeningQualificationFailed],
+          requests,
+        },
+        {
+          sandbox: {
+            mode: "plan",
+            origin: "https://staging.slop.cash",
+            worker: "slop-vetting-sandbox-staging",
+            probes: ["authorization", "digest", "uid-environment", "fresh-filesystem", "python-node", "egress", "output-limit", "timeout", "fresh-after-timeout"],
+            changes: "Only harmless disposable sandbox executions; no model, case or evidence publication",
+          },
+          flags: {
+            mode: "plan",
+            source: "f".repeat(40),
+            names: { worker: "slop-vet-flags-12-1", databases: ["slop-vet-flags-12-1-source"], buckets: ["slop-vet-flags-12-1-source"], queues: ["slop-vet-flags-12-1-work", "slop-vet-flags-12-1-failed"] },
+            resources: { d1: 1, r2: 1, queues: 2, worker: 1 },
+            fixture: "two-flag-pause",
+            publicRoutes: false,
+            scans: false,
+            cleanup: "only exact resources created by this workflow run",
+          },
+          runs: ["slop-vet-flags-0-0", "slop-vet-flags-12-1", undefined],
+          screening: { path: "private-report-screening", provider: "surplus", model: null, requests: 0, failedAttempts: [], outcome: "dry-run; no provider calls" },
+          refusals: [true, true, true, true, true],
+          requests: [],
+        },
+      )
+    }
+  })
+})

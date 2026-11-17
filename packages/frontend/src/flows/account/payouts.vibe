@@ -1,14 +1,17 @@
 // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"
 import { type DirectTransfer, PaymentsAccount, directHistoryHeader } from "@repo/settlement/client"
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
-import { fetchedJson, loadDirectTransfers, paymentsLimitBytes, paymentsTimeoutMs } from "../../reads/payments.vibe"
+import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
+import { millisOf } from "@repo/platform/clock"
+import { directValid, fetchedValue, loadDirectTransfers, paymentsLimitBytes, paymentsTimeoutMs } from "../../reads/payments.vibe"
 import type { ReadFailure } from "../../reads/resource.vibe"
 import { BrowserSession } from "../../session/browserSession.vibe"
 import { Session, actorNumber } from "../../session/session.vibe"
 
 export const payoutMessages = {
   unavailable: "Payments could not load. Retry.",
-  invalid: "Invalid payment account response.",
+  notAnAccount: "Invalid payment account response.",
+  invalid: "The payment record could not be verified. Please retry.",
   accountChanged: "Your account changed. Reload your payouts before continuing.",
   walletChanged: "Your wallet changed. Refresh and confirm the current address.",
   privateUnavailable: "Could not load your payouts.",
@@ -20,20 +23,30 @@ export type PayoutsRead =
   | { readonly kind: "ready"; readonly account: PaymentsAccount }
 
 const numericId = /^\d+$/u
+const assetAddress = /^[0-9A-Za-z]{32,44}$/u
+const period = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const githubSource = /^https:\/\/github\.com\//u
 
-function decimals(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0 && value <= 36
+function asset(value: { readonly assetAddress: string; readonly assetDecimals: number }): boolean {
+  return assetAddress.test(value.assetAddress) && Number.isSafeInteger(value.assetDecimals) && value.assetDecimals >= 0 && value.assetDecimals <= 36
 }
 
-function units(...values: ReadonlyArray<string>): boolean {
-  return values.every((value) => parseBaseUnits(value) !== undefined)
+function feeSplit(value: { readonly grossBase: string; readonly feeBase: string; readonly netBase: string }): boolean {
+  const [gross, fee, net] = [parseBaseUnits(value.grossBase), parseBaseUnits(value.feeBase), parseBaseUnits(value.netBase)]
+  return gross !== undefined && fee !== undefined && net !== undefined && gross === net + fee
+}
+
+function networkAgrees(network: string, chain: string): boolean {
+  return !isNetworkKey(network) || NETWORKS[network].chain === chain
 }
 
 export function accountValid(account: PaymentsAccount): boolean {
   return numericId.test(account.githubUserId)
-    && account.payments.every((payment) => decimals(payment.assetDecimals) && units(payment.grossBase, payment.feeBase, payment.netBase))
-    && account.monthlyAwards.every((award) => decimals(award.assetDecimals) && units(award.grossBase, award.feeBase, award.netBase))
-    && account.balances.every((balance) => decimals(balance.assetDecimals) && units(balance.netBase))
+    && account.payments.every((payment) => (payment.state !== "paid" || (payment.transactionId ?? "") !== "") && asset(payment) && feeSplit(payment))
+    && account.monthlyAwards.every((award) => period.test(award.period) && asset(award) && feeSplit(award))
+    && account.balances.every((balance) => networkAgrees(balance.network, balance.chain) && asset(balance) && parseBaseUnits(balance.netBase) !== undefined)
+    && account.directTransfers.every(directValid)
+    && account.walletObservations.every((observation) => githubSource.test(observation.sourceUrl) && Number.isFinite(millisOf(observation.observedAt)))
 }
 
 function failedWith(failure: ReadFailure): PayoutsRead {
@@ -61,8 +74,10 @@ export effect function loadPayouts(walletsOnly: boolean) {
   const lifetime = try browser.lifetime()
   const headers: Readonly<Record<string, string>> = { [directHistoryHeader]: "paged", ...before === undefined ? {} : { "x-slop-expected-github-id": before.githubId } }
   const read = effect {
-    const account = try fetchedJson(PaymentsAccount, "/api/v1/payments/me", headers, paymentsLimitBytes, paymentsTimeoutMs)
-    if (!accountValid(account)) return { kind: "failed", message: payoutMessages.invalid, accountChanged: false } satisfies PayoutsRead
+    const answered = try fetchedValue("/api/v1/payments/me", headers, paymentsLimitBytes, paymentsTimeoutMs)
+    if (typeof answered.value !== "object" || answered.value === null) return { kind: "failed", message: payoutMessages.notAnAccount, accountChanged: false } satisfies PayoutsRead
+    const account = Schema.decodeUnknownEffect(PaymentsAccount)(answered.value) catch () => undefined
+    if (account === undefined || !accountValid(account)) return { kind: "failed", message: payoutMessages.invalid, accountChanged: false } satisfies PayoutsRead
     return { kind: "ready", account: { ...account, directTransfers: try directHistory(account, walletsOnly) } } satisfies PayoutsRead
   }
   const answered: PayoutsRead = read catch (failure) => signedOutBy(failure) ? { kind: "signedOut" } satisfies PayoutsRead : failedWith(failure)

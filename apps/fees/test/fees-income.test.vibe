@@ -1,0 +1,428 @@
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import { CallerLive } from "@repo/backend/caller"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { evmRpc } from "@repo/platform/chain/evm"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { type Anvil, anvil, forward } from "@repo/platform/testing/chains"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { area, pages } from "@repo/platform/worker"
+import { feeOnly, separatePaid } from "../gen/fees__directBountyIncome.ts"
+import type { Transfer } from "../gen/settlement__directBounty.ts"
+import { feeConversionsPath, reportApi } from "../src/client/report.vibe"
+import { type DirectAward, bookedDirectFees, receivedDirectFees, recognized } from "../src/directIncome/store.vibe"
+import { evmReceiptTime } from "../src/directIncome/times.vibe"
+import { inspectFeeWorker } from "../src/programs/inspectFeeWorker.vibe"
+import { qualifyRobinhoodRpc } from "../src/programs/robinhoodRpc.vibe"
+import { feeReportRoutes } from "../src/report/routes.vibe"
+import { definitions } from "../src/runtime/networks.vibe"
+import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
+import { diagnosticLine, recoveryDiagnostic } from "../src/rpcProbe/probe.vibe"
+import { journalDatabase } from "./support/journal.ts"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+}
+
+service Fixture {
+  readonly db: D1Database
+  readonly base: Anvil
+  readonly robinhood: Anvil
+}
+
+const cutover = 1794441600
+const origin = "https://slop.test"
+const admin = "9400000001"
+const member = "9400000002"
+const versionId = "22222222-2222-2222-2222-222222222222"
+const otherVersion = "33333333-3333-3333-3333-333333333333"
+const deploymentId = "11111111-1111-1111-1111-111111111111"
+const accountId = "a".repeat(32)
+const checkedSource = "c".repeat(40)
+const repositoryRoot = new URL("../../..", import.meta.url).pathname
+const context: ExecutionContext = { waitUntil: () => undefined }
+const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static asset", { status: 404 }) as unknown as globalThis.Response) }
+const counts = { bridgeRecords: 0, purchaseRecords: 1, burnRecords: 1, arrivals: 1, refunds: 0, inTransit: 0, errors: 0 }
+const liveRecovery = { robinhood: true, live: true, recovery: true }
+
+function push(value: number) {
+  const digits = value.toString(16)
+  const even = digits.length % 2 === 0 ? digits : `0${digits}`
+  return `${(0x5f + even.length / 2).toString(16)}${even}`
+}
+
+function words(count: number) {
+  const loads = Array.from({ length: count }, (_, index) => `600435${index === 0 ? "" : `${push(index)}01`}54${push(index * 32)}52`).join("")
+  return `${loads}${push(count * 32)}${push(0)}f3`
+}
+
+const Started = Layer.unwrap(effect {
+  const started = try acquireRelease(promise(() => journalDatabase("fees-income")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  const base = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2, timestamp: cutover - 3600 })), (chain) => promise(() => chain.close()))
+  const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  try promise(() => robinhood.rpc("anvil_setCode", [dln.destination, `0x${words(4)}`]))
+  try promise(() => robinhood.mine(5))
+  return Layer.mergeAll(d1(started.db), webCrypto, Layer.succeed(Fixture, { db: started.db, base, robinhood }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+interface Paid { readonly transaction: string; readonly height: number }
+
+effect function paidAt(chain: Anvil, seconds: number) {
+  const [payer, payee] = chain.accounts
+  if (payer === undefined || payee === undefined) return try die(new Error("anvil has no accounts"))
+  try promise(() => chain.rpc("evm_setNextBlockTimestamp", [`0x${seconds.toString(16)}`]))
+  const receipt = try promise(() => chain.transact({ from: payer.address, to: payee.address, value: 1n }))
+  return { transaction: receipt.transactionHash.toLowerCase(), height: Number(receipt.blockNumber) } satisfies Paid
+}
+
+function receipt(transfer: Transfer, paid: Paid): Transfer {
+  return { ...transfer, transaction: paid.transaction, height: paid.height }
+}
+
+function award(caseId: number, fee: Paid, researcher: Paid | undefined, preparedAt: number): DirectAward {
+  const paid = researcher === undefined ? feeOnly : separatePaid
+  return {
+    bounty: {
+      ...paid,
+      terms: { ...paid.terms, caseId },
+      feeReceipt: receipt(paid.feeReceipt, fee),
+      researcherReceipt: researcher === undefined ? paid.researcherReceipt : receipt(paid.researcherReceipt, researcher),
+    },
+    originalPreparedAt: preparedAt,
+    aggregateVerifiedAt: preparedAt + 60_000,
+  }
+}
+
+effect function incomeOf(awards: ReadonlyArray<DirectAward>) {
+  const { base } = try Fixture
+  const chain = Layer.provide(evmRpc({ urls: Redacted.make([base.url] as ReadonlyArray<string>), chainId: 8453n }), outbound)
+  return Effect.provide(recognized("Base", awards, evmReceiptTime), chain) catch (error) => error._tag
+}
+
+effect function robinhoodNet() {
+  const { robinhood } = try Fixture
+  const net = try orDie(Effect.try(() => internet({ rpc: { [robinhood.url]: forward(robinhood.url), [definitions.Robinhood.defaultRpcUrl]: forward(robinhood.url) } })))
+  return { net, fetch: asFetch(net.handler) }
+}
+
+effect function diagnosed(fetch: typeof globalThis.fetch, scope: typeof liveRecovery, endpoint: string | undefined) {
+  const run = recoveryDiagnostic(scope, endpoint === undefined ? undefined : Redacted.make(endpoint), counts)
+  return try Effect.provideService(Effect.provide(run, FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+}
+
+effect function qualified(fetch: typeof globalThis.fetch, args: ReadonlyArray<string>) {
+  const run = Effect.as(Effect.provide(qualifyRobinhoodRpc(args), FetchHttpClient.layer), "qualified")
+  return Effect.provideService(run, FetchHttpClient.Fetch, fetch) catch (error) => String("message" in error ? error.message : error)
+}
+
+function tailEvent(version: string, lines: ReadonlyArray<unknown>) {
+  return JSON.stringify({ outcome: "ok", scriptVersion: { id: version }, logs: lines.map((line) => ({ level: "log", message: [JSON.stringify(line)] })) })
+}
+
+function tokenOf(githubId: string) {
+  return `fees-income-session-${githubId}`.padEnd(48, "x")
+}
+
+effect function signedUp(githubIds: ReadonlyArray<string>) {
+  const statements: Statement[] = []
+  for (const githubId of githubIds) {
+    statements.push(
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, '2026-11-01T00:00:00.000Z', 1, 5)`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(tokenOf(githubId))}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+    )
+  }
+  try (try D1).batch(statements)
+}
+
+interface Seeded {
+  readonly kind: string
+  readonly id: string
+  readonly network: string
+  readonly mode: "live" | "dry_run"
+  readonly token: string
+  readonly target: string
+  readonly amountIn: string
+  readonly route: string | null
+  readonly minimum: string | null
+  readonly quote: string | null
+  readonly tx: string | null
+  readonly raw: string | null
+  readonly expires: number | null
+  readonly amountOut: string | null
+  readonly state: string
+  readonly at: string
+}
+
+const wallet = `0x${"a".repeat(40)}`
+const tokenOne = `0x${"1".repeat(40)}`
+const tokenTwo = `0x${"2".repeat(40)}`
+const slop = `0x${"5".repeat(40)}`
+const orderId = `0x${"b".repeat(64)}`
+
+function seeded(row: Seeded): Statement {
+  const finalized = row.state === "finalized" ? row.at : null
+  const submitted = row.tx === null ? null : row.at
+  const approval = row.kind === "approval" ? row.tx : null
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out,
+      quote_value_micro, price_impact_bps, quote, approval_tx_id, landed_tx_id, tx_id, raw_tx, evm_nonce, expires_at, amount_out, token_balance_before,
+      target_balance_before, target_balance_after, state, reason, created_at, updated_at, submitted_at, finalized_at, native_gas_id)
+    VALUES (${row.kind}, ${row.id}, 'report-run-1', ${row.network}, ${row.mode}, ${wallet}, ${row.token}, ${row.target}, ${row.amountIn}, ${row.route}, ${row.minimum}, ${row.minimum},
+      NULL, NULL, ${row.quote}, ${approval}, NULL, ${row.tx}, ${row.raw}, NULL, ${row.expires}, ${row.amountOut}, NULL, NULL, NULL, ${row.state}, NULL, ${row.at}, ${row.at}, ${submitted}, ${finalized}, NULL)`
+}
+
+effect function ask(path: string, options: { readonly method?: string; readonly as?: string } = {}) {
+  const { db } = try Fixture
+  const site = pages({
+    areas: [area({ name: "fees", api: reportApi, routes: feeReportRoutes, provides: Layer.empty })],
+    services: (env: Env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: admin, PROJECT_MODERATOR_GITHUB_IDS: "" }))),
+    assets: "ASSETS",
+  })
+  const headers: Record<string, string> = options.as === undefined ? {} : { cookie: `__Host-slop_points=${tokenOf(options.as)}` }
+  const request = try orDie(Effect.try(() => new WebRequest(`${origin}${path}`, { method: options.method ?? "GET", headers })))
+  const response = try promise(() => site.fetch(request as unknown as globalThis.Request, { SLOP_DB: db, ASSETS: assets }, context))
+  const text = try promise(() => response.text())
+  const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return { status: response.status, cache: response.headers.get("cache-control"), text, body }
+}
+
+interface Binding { readonly name: string; readonly type: string; readonly text?: string }
+
+function cloudflare(bindings: ReadonlyArray<Binding>, calls: Array<string>, source = checkedSource) {
+  return internet({
+    hosts: {
+      "api.cloudflare.com": async (request) => {
+        const path = new URL(request.url).pathname
+        calls.push(`${request.method} ${path.split("/").slice(-2).join("/")} ${request.headers.get("authorization") === "Bearer private-token"}`)
+        const result = path.endsWith("/deployments")
+          ? { deployments: [{ id: deploymentId, versions: [{ version_id: versionId, percentage: 100 }] }] }
+          : { id: versionId, annotations: { "workers/tag": source }, resources: { bindings } }
+        return WebResponse.json({ success: true, result })
+      },
+    },
+  })
+}
+
+effect function inspected(fetch: typeof globalThis.fetch, temp: string) {
+  const settings = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "private-token", GITHUB_SHA: checkedSource, RUNNER_TEMP: temp }))
+  const run = Effect.provide(inspectFeeWorker([repositoryRoot, "production"]), Layer.merge(FetchHttpClient.layer, settings))
+  return Effect.provideService(run, FetchHttpClient.Fetch, fetch) catch (error) => String("message" in error ? error.message : error)
+}
+
+layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Distinguish funds received from income booked for a completed direct award on Base (spec/fees/directBountyIncome.md, "Story: Distinguish funds received from income booked for a completed direct award"; spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "Booking uses the exact completed journal and both canonical timestamps"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet")', () => effect {
+    const { base } = try Fixture
+    const earlyFee = try paidAt(base, cutover - 50)
+    const earlyResearcher = try paidAt(base, cutover - 40)
+    const lateFee = try paidAt(base, cutover + 10)
+    const lateResearcher = try paidAt(base, cutover + 20)
+    const onlyFee = try paidAt(base, cutover + 30)
+    try promise(() => base.mine(3))
+    const preparedBefore = (cutover - 600) * 1000
+    const awards = [
+      award(11, earlyFee, earlyResearcher, preparedBefore),
+      award(12, lateFee, lateResearcher, preparedBefore),
+      award(13, onlyFee, undefined, (cutover + 25) * 1000),
+    ]
+    const income = try incomeOf(awards)
+    if (typeof income === "string") return try same(income, "recognized")
+    try same({
+      received: income.journal.received.map((row) => [row.caseId, row.sourceKey.transaction, row.height]),
+      booked: income.journal.entries.map((row) => [row.caseId, row.researcherTx, row.feeChainTime, row.researcherChainTime, row.completeAt, row.originalPreparedAt]),
+      unknown: income.unknownCases,
+      usdc: bookedDirectFees(income.journal, "Base", "ASSET", "FEES"),
+      cash: receivedDirectFees(income.journal, "Base", "fees").map((transfer) => [transfer.receipt, transfer.token, transfer.amount]),
+      elsewhere: bookedDirectFees(income.journal, "Ethereum", "asset", "fees"),
+    }, {
+      received: [[11, earlyFee.transaction, earlyFee.height], [12, lateFee.transaction, lateFee.height], [13, onlyFee.transaction, onlyFee.height]],
+      booked: [[12, lateResearcher.transaction, (cutover + 10) * 1000, (cutover + 20) * 1000, (cutover + 20) * 1000, preparedBefore]],
+      unknown: [],
+      usdc: [{ receipt: lateFee.transaction, amount: 25n, chainTime: (cutover + 20) * 1000 }],
+      cash: [[earlyFee.transaction, "asset", 25n], [lateFee.transaction, "asset", 25n], [onlyFee.transaction, "asset", 25n]],
+      elsewhere: [],
+    })
+  })
+
+  it.effect('Observe whether the configured Robinhood RPC can serve finalized state, and qualify it on the expected Worker version against an independent finalized block (spec/fees/buybackRpc.md, "Story: Observe whether the configured Robinhood RPC can serve finalized state"; spec/fees/buybackRpc.md, "Only a live Robinhood buyback recovery tick can report the diagnostic"; spec/fees/buybackRpc.md, "A verified observation binds the exact chain, block and contract read"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block")', () => scoped(effect {
+    const { robinhood, base } = try Fixture
+    const { net, fetch } = try robinhoodNet()
+    const finalized = try promise(() => robinhood.finalized())
+    const block = (try promise(() => robinhood.rpc("eth_getBlockByNumber", [`0x${finalized.toString(16)}`, false]))) as { readonly hash: string }
+    const verified = try diagnosed(fetch, liveRecovery, robinhood.url)
+    const before = net.requests.length
+    const dryRun = try diagnosed(fetch, { ...liveRecovery, live: false }, robinhood.url)
+    const receiptsOnly = try diagnosed(fetch, { ...liveRecovery, recovery: false }, robinhood.url)
+    const unconfigured = try diagnosed(fetch, liveRecovery, undefined)
+    const quiet = net.requests.length - before
+    const baseNet = try orDie(Effect.try(() => internet({ rpc: { [base.url]: forward(base.url) } })))
+    const wrongChain = try diagnosed(asFetch(baseNet.handler), liveRecovery, base.url)
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-robinhood-rpc-" })
+    const file = `${directory}/tail.json`
+    const line = diagnosticLine(verified)
+    try fs.writeFileString(file, tailEvent(versionId, [{ event: "fee_converter_run", trigger: "recovery" }, line]))
+    const accepted = try qualified(fetch, [versionId, file])
+    const stale = try qualified(fetch, [otherVersion, file])
+    try fs.writeFileString(file, tailEvent(versionId, [{ ...line, finalizedRpc: { status: "verified", chainId: 4663, blockNumber: finalized.toString(), blockHash: `0x${"0".repeat(64)}` } }]))
+    const moved = try qualified(fetch, [versionId, file])
+    try fs.writeFileString(file, tailEvent(versionId, [diagnosticLine(wrongChain)]))
+    const unavailable = try qualified(fetch, [versionId, file])
+    try fs.writeFileString(file, tailEvent(versionId, [line, line]))
+    const ambiguous = try qualified(fetch, [versionId, file])
+    const usage = try qualified(fetch, ["not-a-version", file])
+    try same({
+      verified,
+      line,
+      omitted: [dryRun.observation, receiptsOnly.observation, unconfigured.observation, diagnosticLine(dryRun)],
+      kept: [dryRun.counts, wrongChain.counts],
+      quiet,
+      wrongChain: diagnosticLine(wrongChain)?.finalizedRpc,
+      qualification: [accepted, stale, moved, unavailable, ambiguous],
+      usage: usage.startsWith("usage: qualify-robinhood-rpc"),
+      unexpected: net.unexpected,
+    }, {
+      verified: { counts, observation: { tag: "Verified", chainId: 4663, height: finalized.toString(), hash: block.hash } },
+      line: { event: "fee_buyback_finalized_rpc", network: "robinhood", counts, finalizedRpc: { status: "verified", chainId: 4663, blockNumber: finalized.toString(), blockHash: block.hash } },
+      omitted: [{ tag: "Omitted" }, { tag: "Omitted" }, { tag: "Omitted" }, undefined],
+      kept: [counts, counts],
+      quiet: 0,
+      wrongChain: { status: "unavailable" },
+      qualification: [
+        "qualified",
+        "The Worker's Robinhood finalized RPC observation is not qualified on the expected version and an independent finalized block.",
+        "The Worker's Robinhood finalized RPC observation is not qualified on the expected version and an independent finalized block.",
+        "The Worker's Robinhood finalized RPC observation is unavailable.",
+        "The Worker tail event does not hold exactly one Robinhood finalized RPC diagnostic.",
+      ],
+      usage: true,
+      unexpected: [],
+    })
+  }))
+
+  it.effect('Only an administrator reads the fee report over HTTP, with exact totals and no signed bytes (spec/fees/feeReport.md, "Story: Show administrators what the fee wallets did"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network\'s target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals")', () => effect {
+    const now = try Clock.currentTimeMillis
+    const at = (hours: number) => isoAt(now - hours * 3_600_000)
+    const usdc = circleUsdc.base
+    const rows: ReadonlyArray<Seeded> = [
+      { kind: "conversion", id: "conv-old-0002", network: "base", mode: "live", token: tokenOne, target: usdc, amountIn: "3", route: "kyberswap", minimum: "1", quote: "{}", tx: `0x${"c2".repeat(32)}`, raw: "SIGNED-SECRET-TWO", expires: 1, amountOut: "2", state: "finalized", at: try at(30) },
+      { kind: "approval", id: "approval-0001", network: "base", mode: "live", token: tokenOne, target: usdc, amountIn: "1000000000000000000000001", route: "kyberswap", minimum: null, quote: "{}", tx: `0x${"a1".repeat(32)}`, raw: "SIGNED-SECRET-THREE", expires: null, amountOut: "0", state: "finalized", at: try at(3) },
+      { kind: "conversion", id: "conv-new-0001", network: "base", mode: "live", token: tokenOne, target: usdc, amountIn: "1000000000000000000000001", route: "kyberswap", minimum: "4900000", quote: "{}", tx: `0x${"c1".repeat(32)}`, raw: "SIGNED-SECRET-ONE", expires: 1, amountOut: "5000000", state: "finalized", at: try at(2) },
+      { kind: "bridge", id: "bridge-00001", network: "base", mode: "live", token: usdc, target: robinhoodUsdg, amountIn: "500000000", route: "debridge", minimum: "499000000", quote: JSON.stringify({ orderId }), tx: `0x${"b1".repeat(32)}`, raw: "SIGNED-SECRET-FOUR", expires: null, amountOut: "500000000", state: "finalized", at: try at(1.5) },
+      { kind: "buyback", id: "buyback-0001", network: "robinhood", mode: "live", token: robinhoodUsdg, target: slop, amountIn: "250000000", route: "kyberswap", minimum: "100", quote: "{}", tx: `0x${"d1".repeat(32)}`, raw: "SIGNED-SECRET-FIVE", expires: 1, amountOut: "1000", state: "finalized", at: try at(1.25) },
+      { kind: "conversion", id: "conv-dry-0003", network: "ethereum", mode: "dry_run", token: tokenTwo, target: circleUsdc.ethereum, amountIn: "7", route: "kyberswap", minimum: "6", quote: "{}", tx: null, raw: null, expires: null, amountOut: null, state: "quoted", at: try at(1) },
+    ]
+    try (try D1).batch(rows.map(seeded))
+    try signedUp([admin, member])
+    const posted = try ask(feeConversionsPath, { method: "POST", as: admin })
+    const anonymous = try ask(feeConversionsPath)
+    const forbidden = try ask(feeConversionsPath, { as: member })
+    const report = try ask(feeConversionsPath, { as: admin })
+    const line = (row: Seeded) => ({
+      id: row.id, network: row.network, mode: row.mode, token: row.token, targetToken: row.target, amountIn: row.amountIn, route: row.route, quoteAmountOut: row.minimum,
+      minAmountOut: row.minimum, priceImpactBps: null, approvalTxId: null, txId: row.tx, landedTxId: null, amountOut: row.amountOut, tokenBalanceBefore: null,
+      targetBalanceBefore: null, targetBalanceAfter: null, state: row.state, reason: null, createdAt: row.at, submittedAt: row.tx === null ? null : row.at,
+      finalizedAt: row.state === "finalized" ? row.at : null,
+    })
+    const leg = (row: Seeded, order: string | null) => ({
+      id: row.id, kind: row.kind, network: row.network, mode: row.mode, token: row.token, targetToken: row.target, amountIn: row.amountIn, amountOut: row.amountOut,
+      minAmountOut: row.minimum, txId: row.tx, landedTxId: null, state: row.state, reason: null, createdAt: row.at, finalizedAt: row.at, orderId: order, outcome: null,
+    })
+    const [old, , fresh, bridge, buyback, dry] = rows
+    if (old === undefined || fresh === undefined || bridge === undefined || buyback === undefined || dry === undefined) return try die(new Error("seed rows missing"))
+    try same({
+      posted: [posted.status, posted.body, posted.cache],
+      anonymous: [anonymous.status, anonymous.body, anonymous.cache],
+      forbidden: [forbidden.status, forbidden.body, forbidden.cache],
+      report: [report.status, report.cache, report.body],
+      secret: report.text.includes("SIGNED-SECRET"),
+    }, {
+      posted: [405, { error: "method_not_allowed" }, "private, no-store"],
+      anonymous: [401, { error: "unauthorized", message: "Sign in with GitHub" }, "private, no-store"],
+      forbidden: [403, { error: "forbidden", message: "Admin access is required" }, "private, no-store"],
+      report: [200, "private, no-store", {
+        schemaVersion: "1",
+        recent: [line(dry), line(fresh), line(old)],
+        routes: [
+          { network: "base", targetToken: circleUsdc.base, status: "usdc" },
+          { network: "ethereum", targetToken: circleUsdc.ethereum, status: "usdc" },
+          { network: "robinhood", targetToken: null, status: "not_converted" },
+          { network: "solana", targetToken: circleUsdc.solana, status: "usdc" },
+        ],
+        totals: [{ network: "base", token: tokenOne, targetToken: usdc, conversions: 2, amountIn: "1000000000000000000000004", amountOut: "5000002" }],
+        last24Hours: [{ network: "base", mode: "live", state: "finalized", count: 1 }, { network: "ethereum", mode: "dry_run", state: "quoted", count: 1 }],
+        buyback: {
+          recent: [leg(buyback, null), leg(bridge, orderId)],
+          totals: [
+            { network: "base", kind: "bridge", token: usdc, sends: 1, amountIn: "500000000", amountOut: "500000000", inTransit: "500000000", refunded: "0" },
+            { network: "robinhood", kind: "buyback", token: robinhoodUsdg, sends: 1, amountIn: "250000000", amountOut: "1000", inTransit: "0", refunded: "0" },
+          ],
+        },
+      }],
+      secret: false,
+    })
+  })
+
+  it.effect('Inspect the deployed fee Worker bindings by name and kind against the reviewed configuration, never returning a secret value (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const text = try fs.readFileString(`${repositoryRoot}apps/fees/wrangler/feeConverter.production.jsonc`)
+    const reviewed = (try orDie(Effect.try(() => JSON.parse(text) as unknown))) as { readonly vars: Readonly<Record<string, string>>; readonly expectedSecrets: ReadonlyArray<string> }
+    const matching: ReadonlyArray<Binding> = [
+      { name: "FEE_DB", type: "d1" },
+      ...Object.entries(reviewed.vars).map(([name, text]) => ({ name, type: "plain_text", text })),
+      ...reviewed.expectedSecrets.map((name) => ({ name, type: "secret_text", text: "PRIVATE_SECRET_MUST_NOT_RETURN" })),
+    ]
+    const temp = try fs.makeTempDirectoryScoped({ prefix: "slop-fee-bindings-" })
+    const calls: string[] = []
+    const passed = try inspected(asFetch(cloudflare(matching, calls).handler), temp)
+    const written = try fs.readFileString(`${temp}/fee-worker-bindings.json`)
+    const mode = (try fs.stat(`${temp}/fee-worker-bindings.json`)).mode & 0o777
+    const missing = try inspected(asFetch(cloudflare(matching.filter((binding) => binding.name !== "RPC_URL_BASE"), []).handler), temp)
+    const extra = try inspected(asFetch(cloudflare([...matching, { name: "UNKNOWN", type: "plain_text", text: "PRIVATE_URL_MUST_NOT_RETURN" }], []).handler), temp)
+    const wrongKind = try inspected(asFetch(cloudflare(matching.map((binding) => binding.name === "RPC_URL_SOLANA" ? { ...binding, type: "plain_text" } : binding), []).handler), temp)
+    const afterWrongKind = try fs.readFileString(`${temp}/fee-worker-bindings.json`)
+    const solanaRpcs = new Set(["RPC_URL_SOLANA", "SOLANA_RECOVERY_RPC_URL"])
+    const withoutSolanaRpcs = matching.filter((binding) => !solanaRpcs.has(binding.name))
+    const defaulted = try inspected(asFetch(cloudflare(withoutSolanaRpcs, []).handler), temp)
+    const unmatched = try inspected(asFetch(cloudflare(withoutSolanaRpcs, [], "d".repeat(40)).handler), temp)
+    const recoveryWrongKind = try inspected(asFetch(cloudflare(matching.map((binding) => binding.name === "SOLANA_RECOVERY_RPC_URL" ? { ...binding, type: "plain_text" } : binding), []).handler), temp)
+    const report = typeof passed === "string" ? undefined : passed
+    try same({
+      calls,
+      bindings: report?.bindings,
+      settings: report?.settings.every((setting: { readonly present: boolean; readonly matchesReviewedConfiguration: boolean }) => setting.present && setting.matchesReviewedConfiguration),
+      providers: [report?.solanaPrimary, report?.solanaRecovery, report?.solanaKeyPresent, report?.sourceMatchesCheckout],
+      private: [written, afterWrongKind].some((text) => text.includes("PRIVATE_") || text.includes("private-token")),
+      mode,
+      refused: [missing, extra, wrongKind],
+      defaulted: typeof defaulted === "string" ? defaulted : [defaulted.bindings, defaulted.solanaPrimary, defaulted.solanaRecovery, defaulted.sourceMatchesCheckout],
+      sourceDefaultsUnproved: [unmatched, recoveryWrongKind],
+    }, {
+      calls: ["GET slop-fee-converter/deployments true", `GET versions/${versionId} true`, "GET slop-fee-converter/deployments true"],
+      bindings: { missing: [], extra: [], wrongKind: [] },
+      settings: true,
+      providers: ["opaque-secret-binding", "opaque-secret-binding", true, true],
+      private: false,
+      mode: 0o600,
+      refused: [
+        "The deployed fee Worker bindings differ from the reviewed configuration: missing RPC_URL_BASE; extra none; wrong kind none",
+        "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra UNKNOWN; wrong kind none",
+        "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra none; wrong kind RPC_URL_SOLANA",
+      ],
+      defaulted: [{ missing: [], extra: [], wrongKind: [] }, "solana-public-default", "allnodes-publicnode-default", true],
+      sourceDefaultsUnproved: [
+        "The deployed fee Worker bindings differ from the reviewed configuration: missing RPC_URL_SOLANA,SOLANA_RECOVERY_RPC_URL; extra none; wrong kind none",
+        "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra none; wrong kind SOLANA_RECOVERY_RPC_URL",
+      ],
+    })
+  }))
+})

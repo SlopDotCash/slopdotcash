@@ -242,3 +242,45 @@ lemma lawStoredConsentUsableImmediately_ensures(b: Binding, by_: string, signatu
     }
   }
 }
+
+lemma AdmittedPaymentIsTheAppendedRecord(b: Binding, by_: string, obligation: int)
+  ensures canSolanaAdmitAttempt(b, by_, obligation) ==> paymentFor(solanaAdmitAttempt(b, by_, obligation), obligation) == paymentFor(b, obligation).(attemptOpen := true, attemptClaim := solanaClaim(b))
+{
+  if canSolanaAdmitAttempt(b, by_, obligation) {
+    var x := paymentFor(b, obligation).(attemptOpen := true, attemptClaim := solanaClaim(b));
+    var kept := ProofLib.Filter((p: PaymentEvidence) => (p.obligation != obligation), b.payments);
+    var after := solanaAdmitAttempt(b, by_, obligation);
+    assert x.obligation == obligation;
+    assert after.payments == kept + [x];
+    forall i | 0 <= i < |kept|
+      ensures kept[i].obligation != obligation
+    {
+      assert kept[i] in kept;
+      ProofLib.FilterMember((p: PaymentEvidence) => (p.obligation != obligation), b.payments, kept[i]);
+    }
+    ProofLib.FilterNone((p: PaymentEvidence) => (p.obligation == obligation), kept);
+    ProofLib.FilterAppend((p: PaymentEvidence) => (p.obligation == obligation), kept, x);
+    assert ProofLib.Filter((p: PaymentEvidence) => (p.obligation == obligation), after.payments) == [x];
+  }
+}
+
+lemma lawAdmissionOpensOnlyForTheCurrentClaim_ensures(b: Binding, by_: string, obligation: int)
+  ensures (lawAdmissionOpensOnlyForTheCurrentClaim(b, by_, obligation) == true)
+{
+  if canSolanaAdmitAttempt(b, by_, obligation) {
+    AdmittedPaymentIsTheAppendedRecord(b, by_, obligation);
+    assert solanaAdmitAttempt(b, by_, obligation).generations == b.generations;
+  }
+}
+
+lemma lawAdmittedAttemptIsPreparable_ensures(b: Binding, by_: string, obligation: int)
+  ensures (lawAdmittedAttemptIsPreparable(b, by_, obligation) == true)
+{
+  if canSolanaAdmitAttempt(b, by_, obligation) {
+    var after := solanaAdmitAttempt(b, by_, obligation);
+    AdmittedPaymentIsTheAppendedRecord(b, by_, obligation);
+    assert after.solanaWallet == b.solanaWallet;
+    assert solanaClaim(after) == solanaClaim(b);
+    assert solanaReady(after, by_, obligation);
+  }
+}

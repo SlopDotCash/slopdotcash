@@ -1,0 +1,123 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
+import { providers } from "@repo/platform/providers"
+import { policyVersion, pinnedProfiles } from "../src/programs/scan.vibe"
+import { maxReplyBytes } from "../src/scanner/providers/route.vibe"
+import { ScanSettings, runScanPass } from "../src/scanner/run/pass.vibe"
+import { ScanAcquisition } from "../src/scanner/run/queue.vibe"
+import { ScanService } from "../src/scanner/run/service.vibe"
+import { type Workspace, workspace } from "./support/git/fixtures.ts"
+import { type ScanWorld, assessmentId, cleanReview, largeSourceFixture, origin, reviewedItemIds, scanWorld, smallFixture } from "./support/scan/world.ts"
+
+const rate = { uncachedInputNanoUsdPerToken: "3000", cachedInputNanoUsdPerToken: "300", cacheCreationNanoUsdPerToken: "3750", outputNanoUsdPerToken: "15000" }
+const profiles = pinnedProfiles({ primary: rate, specialist: rate })
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function opened() {
+  return try acquireRelease(orDie(Effect.try(() => workspace())), (made: Workspace) => sync(() => made.close()))
+}
+
+effect function pass(world: ScanWorld, space: Workspace) {
+  const services = Layer.mergeAll(
+    Layer.succeed(ScanService, { origin, key: Redacted.make(world.key) }),
+    Layer.succeed(ScanSettings, { primary: profiles.primary, specialist: profiles.specialist, policyVersion, workDirectory: space.output, review: { retryDelayMs: 0 } }),
+    Layer.succeed(ScanAcquisition, { githubToken: undefined, testRemote: () => world.remote }),
+    Layer.provide(providers({ surplus: { apiKey: Redacted.make("surplus-test-key") }, timeoutMs: 60_000, maxReplyBytes }), Layer.mergeAll(FetchHttpClient.layer, webCrypto)),
+    FetchHttpClient.layer,
+  )
+  provide FetchHttpClient.Fetch = world.fetch {
+    provide services {
+      return try runScanPass()
+    }
+  }
+}
+
+function publishedPaths(world: ScanWorld) {
+  return world.calls.filter((call) => call.path === "/api/v1/vetting/results").length
+}
+
+layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto), { excludeTestServices: true, timeout: "10 minutes" })((it) => {
+  it.effect('Batched review covers every item once on the large fixture in both provider formats (spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once")', () => scoped(effect {
+    const space = try opened()
+    const fixture = try orDie(Effect.try(() => largeSourceFixture(space.root)))
+    const world = try orDie(Effect.try(() => scanWorld({ repositoryPath: fixture.repository.path, commit: fixture.commit })))
+    for (let index = 0; index < 8; index += 1) {
+      world.provider.reply((call) => call.route === "surplus-anthropic", { text: cleanReview(["prompt-injection"]) })
+      world.provider.reply((call) => call.route === "surplus-openai", { text: cleanReview() })
+    }
+    const report = try pass(world, space)
+    const contents = (route: string) => world.provider.calls.filter((call) => call.route === route).map((call) => call.messages[0]?.content ?? "")
+    const covered = (route: string) => effect {
+      const batches = contents(route).filter((content) => content.includes("\"batch\":"))
+      const reviewed = try orDie(Effect.try(() => batches.flatMap((content) => [...reviewedItemIds(content)])))
+      return {
+        batches: batches.length >= 2,
+        synthesis: contents(route).some((content) => content.includes("\"synthesis\":")),
+        modules: reviewed.filter((id) => id.startsWith("src/module-")).length,
+        copies: reviewed.filter((id) => id.startsWith("copies/")).length,
+        duplicates: reviewed.length - new Set(reviewed).size,
+      }
+    }
+    const outcome = report.assessments[0]
+    const everyItemOnce = { batches: true, synthesis: true, modules: 1100, copies: 20, duplicates: 0 }
+    try same(
+      {
+        refreshed: report.refreshed,
+        state: outcome?.state,
+        disposition: outcome?.state === "published" ? outcome.disposition : undefined,
+        specialist: outcome?.state === "published" ? outcome.specialist : undefined,
+        anthropic: try covered("surplus-anthropic"),
+        openai: try covered("surplus-openai"),
+        unsigned: world.calls.filter((call) => !call.signed).length,
+        results: publishedPaths(world),
+        journal: world.journal.get(assessmentId),
+        keyOnlyToSurplus: world.provider.calls.every((call) => call.key === "surplus-test-key"),
+      },
+      { refreshed: true, state: "published", disposition: "clean", specialist: true, anthropic: everyItemOnce, openai: everyItemOnce, unsigned: 0, results: 1, journal: ["reserve", "complete"], keyOnlyToSurplus: true },
+    )
+  }))
+
+  it.effect('A provider outage leaves the assessment pending and publishes nothing; the next pass clears it (spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"; spec/security/admission.md, "Evidence durability precedes a clean or malicious publication")', () => scoped(effect {
+    const space = try opened()
+    const fixture = try orDie(Effect.try(() => smallFixture(space.root)))
+    const world = try orDie(Effect.try(() => scanWorld({ repositoryPath: fixture.repository.path, commit: fixture.commit })))
+    const first = try pass(world, space)
+    try same(
+      { assessments: first.assessments, results: publishedPaths(world), journal: world.journal.get(assessmentId), attempts: world.provider.calls.length, evidence: world.calls.filter((call) => call.path.startsWith("/api/v1/vetting/evidence/")).length },
+      { assessments: [{ assessmentId, state: "retry", step: "primary-review", reason: "provider-http-500-api_error" }], results: 0, journal: undefined, attempts: 1, evidence: 0 },
+    )
+    world.provider.reply((call) => call.route === "surplus-anthropic", { text: cleanReview() })
+    world.provider.reply((call) => call.route === "surplus-openai", { text: cleanReview() })
+    const second = try pass(world, space)
+    const outcome = second.assessments[0]
+    try same({ state: outcome?.state, outcome: outcome?.state === "published" ? outcome.outcome : undefined, results: publishedPaths(world), journal: world.journal.get(assessmentId) }, { state: "published", outcome: "accepted", results: 1, journal: ["reserve", "complete"] })
+  }))
+
+  it.effect('A declined review never passes, and a lost publication response stays uncertain and is never resent (spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once")', () => scoped(effect {
+    const space = try opened()
+    const fixture = try orDie(Effect.try(() => smallFixture(space.root)))
+    const world = try orDie(Effect.try(() => scanWorld({ repositoryPath: fixture.repository.path, commit: fixture.commit })))
+    world.provider.reply((call) => call.route === "surplus-anthropic", { text: "I cannot review this.", stopReason: "refusal" })
+    world.publication("lose")
+    const first = try pass(world, space)
+    const [result] = world.published
+    const disposition = typeof result === "object" && result !== null && "disposition" in result ? result.disposition : undefined
+    const second = try pass(world, space)
+    try same(
+      { first: first.assessments, disposition, second: second.assessments, results: publishedPaths(world), journal: world.journal.get(assessmentId), specialistCalls: world.provider.calls.filter((call) => call.route === "surplus-openai").length },
+      {
+        first: [{ assessmentId, state: "published", disposition: "incomplete", outcome: "unknown", specialist: false, evidence: "retained", reason: "stop-refusal" }],
+        disposition: "incomplete",
+        second: [{ assessmentId, state: "journaled" }],
+        results: 1,
+        journal: ["reserve", "complete"],
+        specialistCalls: 0,
+      },
+    )
+  }))
+})

@@ -1,0 +1,56 @@
+// spec/slopbot/maintainerHold.md, "The first durable maintainer notice starts the window once"; spec/slopbot/maintainerHold.md, "The scheduled dispatcher queues each due hold and requeues a lost message after a day"; spec/slopbot/jobQueue.md, "A due maintainer hold or appeal is sent when due and again after a day without resolution"
+import { first, sql } from "@repo/platform/d1"
+import { canDispatchHold, canNotifyMaintainer } from "../../gen/slopbot__maintainerHold.effect.vibe"
+import type { HoldRequest } from "../closure/decide.vibe"
+import { dueJobs } from "../jobs/due.vibe"
+import { send } from "../jobs/job.vibe"
+import { completeReview, failReview } from "../review/run.vibe"
+import { findingOf } from "../review/verdict.vibe"
+import { type HoldScope, commitHold, holdJobOf, loadHold, storedHold } from "./store.vibe"
+
+schema DueRow { readonly due_at: string }
+
+export error HoldNotStored { reviewKey: string }
+
+const changedBeforeAction = "review source or authorization changed before action"
+
+export effect function recordHold(request: HoldRequest) {
+  const { session, closure, category, verdict } = request
+  const scope: HoldScope = {
+    reviewKey: session.reviewKey,
+    finding: { identity: closure.identity, category: findingOf(category), decidedSeq: closure.gate.seq },
+    category,
+    gate: closure.gate,
+    job: holdJobOf(session.reviewKey, session.job),
+  }
+  const loaded = try loadHold(scope)
+  if (loaded.hold.hold === "NoHold") {
+    if (!canNotifyMaintainer(loaded.hold)) {
+      try failReview(session, { verdict, action: "comment", skipReason: changedBeforeAction })
+      return changedBeforeAction
+    }
+    try commitHold(scope, () => [{ type: "notifyMaintainer" }])
+  }
+  const due: typeof DueRow.Type | undefined = try first(DueRow, sql`SELECT due_at FROM slopbot_maintainer_holds WHERE review_key = ${session.reviewKey}`)
+  if (due === undefined) throw new HoldNotStored({ reviewKey: session.reviewKey })
+  try completeReview(session, { verdict, action: "hold" }, request.triage.call !== undefined)
+  return `held for maintainer until ${due.due_at} (${category})`
+}
+
+export effect function dispatchMaintainerHolds() {
+  const { jobs } = try dueJobs("slopbot_maintainer_holds")
+  let dispatched = 0
+  for (const { job } of jobs) {
+    if (job.kind !== "maintainer_hold") continue
+    const stored = try storedHold(job)
+    if (stored === undefined) continue
+    if (!canDispatchHold((try loadHold(stored.scope)).hold)) continue
+    try send(job)
+    const marked = Effect.as(commitHold(stored.scope, () => [{ type: "dispatchHold" }]), true) catch effect (error) => {
+      if (error._tag === "Rejected") return false
+      throw error
+    }
+    if (marked) dispatched++
+  }
+  return dispatched
+}

@@ -1,0 +1,49 @@
+// spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"
+import { boundedBytes } from "@repo/platform/browser"
+
+export error MetadataUnavailable { step: string }
+
+export service CloudflareAccount {
+  readonly accountId: string
+  readonly token: Redacted.Redacted<string>
+}
+
+schema Envelope {
+  readonly success: boolean
+  readonly result: Schema.Unknown
+}
+
+const cloudflareApi = "https://api.cloudflare.com/client/v4"
+const responseLimit = 1024 * 1024
+const accountPattern = /^[a-f0-9]{32}$/u
+
+export function cloudflareAccount(accountId: string | undefined, token: Redacted.Redacted<string> | undefined) {
+  return accountId !== undefined && accountPattern.test(accountId) && token !== undefined ? { accountId, token } : undefined
+}
+
+export effect function metadataRead<S extends Schema.Constraint>(step: string, path: string, shape: S) {
+  const { accountId, token } = try CloudflareAccount
+  const client = try HttpClient.HttpClient
+  const request = HttpClientRequest.setHeaders(HttpClientRequest.bearerToken(HttpClientRequest.get(`${cloudflareApi}/accounts/${accountId}/${path}`), token), { accept: "application/json", "cache-control": "no-cache" })
+  const answered = timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "manual" } {
+      const response = try client.execute(request)
+      const bytes = try boundedBytes(response, responseLimit, step)
+      return { status: response.status, bytes }
+    }
+  }, Duration.seconds(30)) catch effect () => {
+    throw new MetadataUnavailable({ step })
+  }
+  if (answered.status < 200 || answered.status > 299) throw new MetadataUnavailable({ step })
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(answered.bytes)) as unknown) catch effect () => {
+    throw new MetadataUnavailable({ step })
+  }
+  const envelope = Schema.decodeUnknownEffect(Envelope)(value) catch effect () => {
+    throw new MetadataUnavailable({ step })
+  }
+  if (!envelope.success || envelope.result === undefined || envelope.result === null) throw new MetadataUnavailable({ step })
+  const result = Schema.decodeUnknownEffect(shape)(envelope.result) catch effect () => {
+    throw new MetadataUnavailable({ step })
+  }
+  return result
+}

@@ -33,7 +33,8 @@ its captured claim and attempt identity when another worker takes over.
 Only the exact retained attempt key is sent to the idempotent executor. A queue
 with an active delivery state belongs to an admitted reserved obligation.
 An existing-attempt replay under a captured request can race lease takeover.
-New attempt creation still requires the current lease. The executor independently
+New attempt creation by a worker still requires the current lease; a
+Solana binding prepare, below, is the one creation outside a lease. The executor independently
 checks its bound request, current destination
 authority, release and on-chain payable status before signing.
 
@@ -158,6 +159,30 @@ pure def returnSuccess(d: Dispatch, token: int, tx: str): Dispatch =
   val accepted = unique and ((a.tx == "" and (active(a) or a.status == Failed)) or (a.tx == tx and active(a)))
   val recorded = if (accepted) putAttempt({ ...a, tx: tx, status: AttemptSubmitted }, d) else d
   if (owns(d, token)) clearLease(if (accepted) Submitted else Held, recorded) else recorded
+```
+
+### A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready
+
+An authenticated Solana recipient's prepare (`POST /wallets/solana-bind/prepare`)
+may create the obligation's first prepared attempt, for the current
+authorized claim, only while its outbox row is ready and no prepared,
+unknown or submitted attempt exists, in one atomic write; the lease is not
+taken. A concurrent prepare, and a dispatcher that acquires the row first
+or later, share that one attempt: the dispatcher reads it as the active
+attempt of the same claim and reuses it. An active attempt of an earlier
+claim keeps the obligation until it is reconciled. The completion of the
+binding never creates an attempt. The private security ledger follows the
+same rule (development `backend/payments/handler.ts` 1134-1175,
+`solana-bind-attempt.test.ts`, and `backend/payments/README.md`).
+
+```quint
+pure def canPrepareBinding(d: Dispatch, key: str, binding: Binding): bool =
+  d.admitted and d.queue == Ready and d.target.network == Solana and validBinding(binding) and binding == d.wallet
+    and firstActive(d).key == "" and key != "" and attempt(d, key).key == ""
+pure def prepareBinding(d: Dispatch, key: str, binding: Binding): Dispatch =
+  { ...d, attempts: d.attempts.append({ key: key, binding: binding, status: Prepared, tx: "" }) }
+pure def sometimesBindingPreparedBeforeDispatch(d: Dispatch): bool =
+  d.queue == Ready and d.requests.length() == 0 and d.attempts.some(a => a.status == Prepared)
 ```
 
 ## Story: Recover uncertainty without opening a competing transfer

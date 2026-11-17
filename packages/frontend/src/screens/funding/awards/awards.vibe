@@ -1,0 +1,345 @@
+// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import type { CommitmentReview, MonthlyOwnerView, MonthlyRun } from "@repo/settlement/client"
+import { ordinaryFeeBase } from "@repo/settlement/kernels/fees"
+import { type ChainResult, Machine as MonthlyMachine, canObserveClock, clock } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
+import { cutNoticeSeconds } from "../../../../gen/settlement__monthly.ts"
+import { untilTime } from "../../../platform/clock.vibe"
+import { browserServices } from "../../../platform/layer.vibe"
+import { storageKeys } from "../../../platform/storage.vibe"
+import { WalletChoice, type WalletOffer, walletChoiceServices } from "../../../wallets/core/discovery.vibe"
+import { type EvmConnection, connectEvm } from "../../../wallets/core/evm.vibe"
+import { type SolanaConnection, connectSolana } from "../../../wallets/core/solana.vibe"
+import { sessionSlots } from "../../../wallets/core/slots.ts"
+import { type Deployment, deploymentOf } from "../../../wallets/owner/commitmentCalls.ts"
+import { type ChainStatus, type SolanaCommitmentReview, type VerifiedCommitment, checkEvmCommitment, checkSolanaCommitment, commitmentMessages, evmVaultOf, familyOf, requestCommitment, reviewSolanaCommitment, sendEvmCommitment, sendSolanaCommitment } from "../../../wallets/owner/commitments.vibe"
+import { type EvmVault, readVault, requireVaultWallet } from "../../../wallets/owner/evmVault.vibe"
+import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts"
+import { monthlyNotice, ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
+import type { SolanaVaultTerms } from "../../../wallets/owner/solanaPlans.ts"
+import { type FundingProject, deploymentsOf } from "../vault/project.schema.ts"
+import { solanaTerms } from "../vault/savedPlans.ts"
+import { type SavedAward, commitmentKey, savedAward } from "./month.ts"
+
+export type { MonthlyOwnerView, WalletOffer }
+
+export type Connection =
+  | { readonly family: "evm"; readonly address: string; readonly evm: EvmConnection }
+  | { readonly family: "solana"; readonly address: string; readonly solana: SolanaConnection }
+
+export interface CommitmentShown {
+  readonly review: CommitmentReview
+  readonly login: string
+  readonly gross: string
+  readonly fee: string
+  readonly net: string
+  readonly decimals: number
+  readonly freeBalance: string
+  readonly asset: string
+  readonly vault: string
+  readonly evm: VerifiedCommitment | undefined
+  readonly solana: SolanaCommitmentReview | undefined
+}
+
+export interface Checked {
+  readonly finalized: boolean
+  readonly message: string
+}
+
+interface Shown {
+  readonly view: MonthlyOwnerView | undefined
+  readonly actor: string
+}
+
+interface Reservable {
+  readonly view: MonthlyOwnerView
+  readonly run: MonthlyRun
+  readonly deployment: Deployment
+  readonly family: "evm" | "solana" | undefined
+  readonly evm: EvmVault | undefined
+  readonly solana: SolanaVaultTerms | undefined
+}
+
+export error AwardsStopped { message: string }
+
+export const awardMessages = {
+  unverified: "The award response could not be verified.",
+  unavailable: "Awards are unavailable. Retry.",
+  notReservable: "This month's awards cannot be reserved on this vault.",
+  unsupported: "This vault's network is not available for wallet actions here.",
+  reconnect: "Reconnect the submitting wallet: ",
+  changed: "The prepared award changed. Review it again.",
+  enterHash: "Enter the transaction from your wallet.",
+  pending: "The commitment is not finalized yet. Check again later.",
+  failed: "The transaction failed. The award was not reserved. Review again before retrying.",
+  cleared: "Local request cleared after your wallet check.",
+} as const
+
+export const clockSpacingMs = 60_000
+
+type MonthlyPage = Effect.Success<ReturnType<typeof ownerMonthlyPage>>
+
+export service AwardsDesk {
+  readonly project: FundingProject
+  readonly period: string
+  readonly monthly: MonthlyPage
+  readonly shown: SubscriptionRef.SubscriptionRef<Shown>
+}
+
+const shared = Layer.provideMerge(walletChoiceServices, browserServices)
+const memo = Layer.makeMemoMapUnsafe()
+
+function slotKeys(projectId: string, period: string) {
+  return {
+    commitment: commitmentKey(projectId, period),
+    setting: `${storageKeys.vaultMonthly.key}${projectId}:${period}`,
+    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}`,
+  }
+}
+
+function deskOf(project: FundingProject, period: string) {
+  return Layer.effect(AwardsDesk, effect {
+    const monthly = try ownerMonthlyPage(sessionSlots(), slotKeys(project.id, period), project.id, period)
+    const shown = try SubscriptionRef.make<Shown>({ view: undefined, actor: "" })
+    return { project, period, monthly, shown }
+  })
+}
+
+export function awardsServices(project: FundingProject, period: string) {
+  const machine = Layer.effect(MonthlyMachine, effect { return (try AwardsDesk).monthly.machine })
+  return Layer.provideMerge(machine, Layer.provideMerge(deskOf(project, period), shared))
+}
+
+export type AwardsServices = Layer.Success<ReturnType<typeof awardsServices>>
+export type AwardsRuntime = ManagedRuntime.ManagedRuntime<AwardsServices, Layer.Error<ReturnType<typeof awardsServices>>>
+
+const runtimes = new Map<string, AwardsRuntime>()
+
+export function awardsRuntime(project: FundingProject, period: string): AwardsRuntime {
+  const key = `${project.id}\n${period}`
+  const known = runtimes.get(key)
+  if (known !== undefined) return known
+  const made = ManagedRuntime.make(awardsServices(project, period), { memoMap: memo })
+  runtimes.set(key, made)
+  return made
+}
+
+function stopped(message: string) {
+  return new AwardsStopped({ message })
+}
+
+effect function accept(view: MonthlyOwnerView) {
+  const { project, period, shown } = try AwardsDesk
+  if (view.projectId !== project.id || view.period !== period) throw stopped(awardMessages.unverified)
+  try SubscriptionRef.update(shown, (current) => ({ ...current, view }))
+  return view
+}
+
+export effect function followAwards(account: number, githubId: string) {
+  const { monthly, shown } = try AwardsDesk
+  try SubscriptionRef.set(shown, { view: undefined, actor: account === 0 ? "" : githubId })
+  try monthly.follow(account, githubId, false)
+  if (account === 0) return undefined
+  return try accept((try monthly.readMonth()).view)
+}
+
+export effect function refreshAwards() {
+  return try accept((try (try AwardsDesk).monthly.readMonth()).view)
+}
+
+export effect function saveAllocation(githubUserId: string, grossBase: string, cut: boolean, reason: string) {
+  const { monthly } = try AwardsDesk
+  try monthly.editDraft(cut, reason)
+  const saved = try monthly.save(githubUserId, grossBase, reason)
+  if (saved.view === undefined) throw stopped(saved.message === "" ? monthlyNotice(saved.state.notice) : saved.message)
+  try accept(saved.view)
+  return saved.message
+}
+
+export effect function finalizeAwards() {
+  const { monthly } = try AwardsDesk
+  const done = try monthly.finalize()
+  if ("message" in done) throw stopped(done.message === "" ? monthlyNotice(done.state.notice) : done.message)
+  try accept(done.view)
+  return monthlyNotice(done.state.notice)
+}
+
+export effect function setAutomatic(automatic: boolean) {
+  try (try AwardsDesk).monthly.saveSetting(automatic)
+  return try refreshAwards()
+}
+
+effect function tick() {
+  const { monthly } = try AwardsDesk
+  const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+  if (canObserveClock(try monthly.machine.get(), now, clock)) try Effect.ignore(monthly.machine.send({ type: "observeClock", now }, clock))
+}
+
+effect function followClock() {
+  const { monthly } = try AwardsDesk
+  while (true) {
+    try tick()
+    const { month, now } = try monthly.machine.get()
+    const boundaries = [month.cutoffAt - cutNoticeSeconds, month.cutoffAt, month.latestCutAt + cutNoticeSeconds].filter((at) => at > now)
+    try untilTime(Math.min((try Clock.currentTimeMillis) + clockSpacingMs, ...boundaries.map((at) => at * 1000)))
+  }
+}
+
+export effect function watchMonth(show: (view: MonthlyOwnerView | undefined) => void!!) {
+  const { shown } = try AwardsDesk
+  const views = effect {
+    for try (const current of SubscriptionRef.changes(shown)) try show(current.view)
+  }
+  try Effect.raceFirst(views, followClock())
+}
+
+export effect function watchAwardOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
+  for try (const offers of (try WalletChoice).offers) try show(offers)
+}
+
+effect function reservable() {
+  const { project, shown } = try AwardsDesk
+  const { view } = try SubscriptionRef.get(shown)
+  const deployment = view === undefined ? undefined : deploymentOf(view.deployment)
+  if (view === undefined || view.run === null || deployment === undefined || deployment.network !== view.run.network) throw stopped(awardMessages.notReservable)
+  const registered = deploymentsOf(project).find((entry) => entry.network === deployment.network && entry.vault === deployment.vault)
+  return { view, run: view.run, deployment, family: familyOf(deployment), evm: evmVaultOf(deployment), solana: registered === undefined ? undefined : solanaTerms(registered) } satisfies Reservable
+}
+
+effect function actorOf() {
+  return (try SubscriptionRef.get((try AwardsDesk).shown)).actor
+}
+
+export effect function connectOwner(id: number) {
+  const { monthly } = try AwardsDesk
+  const target = try reservable()
+  let connection: Connection
+  if (target.family === "evm") {
+    const evm = try connectEvm(id, false)
+    connection = { family: "evm", address: evm.address, evm }
+  } else if (target.family === "solana") {
+    const solana = try connectSolana(id)
+    connection = { family: "solana", address: solana.address, solana }
+  } else throw stopped(awardMessages.unsupported)
+  const saved = try monthly.saved("Commitment")
+  const from = saved.plan?.kind === "evmCall" ? saved.plan.from : undefined
+  if (from !== undefined && from !== connection.address.toLowerCase()) throw stopped(`${awardMessages.reconnect}${from}`)
+  return connection
+}
+
+function reviewOf(target: Reservable, githubUserId: string): CommitmentReview {
+  return { network: target.deployment.network, githubUserId, manifestSha256: target.view.manifestSha256, snapshotSha256: target.run.snapshotSha256 }
+}
+
+effect function evmVaultFor(target: Reservable, connection: Connection) {
+  if (target.evm === undefined || connection.family !== "evm") throw stopped(awardMessages.unsupported)
+  try requireVaultWallet(connection.evm, target.evm)
+  if (connection.address.toLowerCase() !== target.evm.owner.toLowerCase()) throw stopped(commitmentMessages.ownerWallet)
+  return { vault: target.evm, wallet: connection.evm }
+}
+
+effect function solanaFor(target: Reservable, connection: Connection) {
+  if (target.solana === undefined || connection.family !== "solana") throw stopped(awardMessages.unsupported)
+  return { terms: target.solana, wallet: connection.solana }
+}
+
+export effect function reviewCommitment(connection: Connection, githubUserId: string) {
+  const { project, period, monthly } = try AwardsDesk
+  const target = try reservable()
+  const actor = try actorOf()
+  const review = reviewOf(target, githubUserId)
+  let shown: CommitmentShown
+  if (connection.family === "solana") {
+    const { terms, wallet } = try solanaFor(target, connection)
+    const solana = try reviewSolanaCommitment(project.id, period, target.deployment, terms, wallet, review, actor)
+    const { plan, transaction } = solana.reviewed
+    shown = { review, login: plan.award.login, gross: plan.award.gross, fee: transaction.fee, net: transaction.net, decimals: transaction.decimals, freeBalance: transaction.freeBalance, asset: target.deployment.asset, vault: target.deployment.vault, evm: undefined, solana }
+  } else {
+    const { vault, wallet } = try evmVaultFor(target, connection)
+    const verified = try requestCommitment(project.id, period, review, actor)
+    const totals = try readVault(wallet, vault, "finalized")
+    const { award } = verified.plan
+    shown = { review, login: award.login, gross: award.gross, fee: award.fee, net: award.net, decimals: totals.decimals, freeBalance: totals.counters.free.toString(), asset: verified.deployment.asset, vault: verified.deployment.vault, evm: verified, solana: undefined }
+  }
+  if ((try monthly.machine.get()).commitment.phase !== "Reviewed") try monthly.review("Commitment")
+  return shown
+}
+
+export effect function sendCommitment(connection: Connection, shown: CommitmentShown) {
+  const { project, period, monthly } = try AwardsDesk
+  const target = try reservable()
+  const actor = try actorOf()
+  if (connection.family === "solana") {
+    const { terms, wallet } = try solanaFor(target, connection)
+    if (shown.solana === undefined) throw stopped(awardMessages.changed)
+    const fresh = try reviewSolanaCommitment(project.id, period, target.deployment, terms, wallet, shown.review, actor)
+    if (JSON.stringify(fresh.reviewed.plan) !== JSON.stringify(shown.solana.reviewed.plan)) throw stopped(awardMessages.changed)
+    return try monthly.submit("Commitment", (before) => sendSolanaCommitment(target.deployment.network, wallet, fresh, before))
+  }
+  const { vault, wallet } = try evmVaultFor(target, connection)
+  if (shown.evm === undefined) throw stopped(awardMessages.changed)
+  const current = try requestCommitment(project.id, period, shown.review, actor)
+  if (JSON.stringify(current.plan) !== JSON.stringify(shown.evm.plan)) throw stopped(awardMessages.changed)
+  return try monthly.submit("Commitment", (before) => sendEvmCommitment(wallet, vault, current, before))
+}
+
+function verifiedOf(target: Reservable, award: SavedAward): VerifiedCommitment {
+  const fee = ordinaryFeeBase(award.gross)
+  const login = target.run.awards.find((entry) => entry.githubUserId === award.githubUserId)?.login ?? ""
+  return {
+    plan: {
+      schemaVersion: "2",
+      projectId: target.view.projectId,
+      cycleId: target.view.period,
+      manifestSha256: target.view.manifestSha256,
+      snapshotSha256: target.run.snapshotSha256,
+      deployment: target.view.deployment,
+      award: { githubUserId: award.githubUserId, login, sourceDigest: award.sourceDigest, gross: award.gross.toString(), fee: fee.toString(), net: (award.gross - fee).toString() },
+    },
+    deployment: target.deployment,
+    gross: award.gross,
+  }
+}
+
+function resultOf(status: ChainStatus): ChainResult {
+  return status === "finalized" ? "FinalMatch" : status === "failed" ? "FinalFailure" : "StillPending"
+}
+
+export effect function checkCommitment(connection: Connection) {
+  const { project, period, monthly } = try AwardsDesk
+  const target = try reservable()
+  const saved = try monthly.saved("Commitment")
+  const hash = saved.attempt.hash !== "" ? saved.attempt.hash : saved.attempt.candidate
+  if (hash === "") throw stopped(awardMessages.enterHash)
+  let status: ChainStatus
+  if (connection.family === "solana") {
+    const { wallet } = try solanaFor(target, connection)
+    status = try checkSolanaCommitment(project.id, period, target.deployment, wallet, saved.plan, hash, try actorOf())
+  } else {
+    const { vault, wallet } = try evmVaultFor(target, connection)
+    const award = savedAward(saved.plan)
+    if (award === undefined) throw stopped(commitmentMessages.planUnreadable)
+    status = try checkEvmCommitment(wallet, vault, verifiedOf(target, award), saved.plan, hash)
+  }
+  const result = resultOf(status)
+  try monthly.check("Commitment", () => Effect.succeed(result))
+  const message = status === "finalized" ? `Award reserved on the finalized chain: ${hash}. Not yet paid.` : status === "failed" ? awardMessages.failed : awardMessages.pending
+  return { finalized: status === "finalized", message } satisfies Checked
+}
+
+export effect function enterCommitmentHash(connection: Connection, candidate: string) {
+  try (try AwardsDesk).monthly.enterCandidate("Commitment", candidate.trim())
+  return try checkCommitment(connection)
+}
+
+export effect function confirmCommitmentUnsent() {
+  return try (try AwardsDesk).monthly.confirmUnsent("Commitment")
+}
+
+export effect function unreadableCommitment() {
+  const { project, period } = try AwardsDesk
+  return slotOfText(readText(sessionSlots(), commitmentKey(project.id, period))).kind === "unreadable"
+}
+
+export effect function clearUnreadableCommitment() {
+  return try (try AwardsDesk).monthly.clearUnreadable("Commitment")
+}

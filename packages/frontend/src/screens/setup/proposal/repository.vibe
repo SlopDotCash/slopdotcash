@@ -1,0 +1,9 @@
+// spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
+import { lookupRepository } from "../../../flows/projects/github.vibe"
+
+export const lookupPauseMillis = 250
+
+export effect function lookupAfterPause(repository: string) {
+  try sleep(lookupPauseMillis)
+  return try lookupRepository(repository)
+}

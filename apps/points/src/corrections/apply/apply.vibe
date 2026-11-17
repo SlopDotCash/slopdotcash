@@ -1,8 +1,8 @@
-// spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/journal.md, "A reallocation keeps the unit's whole value and changes only its recipients"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+// spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/journal.md, "A reallocation keeps the unit's whole value and changes only its recipients"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
 import { millisOf } from "@repo/platform/clock"
 import { D1, rows, sql } from "@repo/platform/d1"
-import { type Award, type Journal, type Revision as Row, coverageText, journalText, revisionText } from "../../kernels/records/canonical.ts"
-import { batchDigest, pointKey } from "../../kernels/records/ids.vibe"
+import { type Award, type Journal, type Revision as Row, type RevisionBody, coverageText, journalText, revisionText } from "../../kernels/records/canonical.ts"
+import { batchDigest, pointKey, pointRevisionId } from "../../kernels/records/ids.vibe"
 import { instantOf } from "../../kernels/records/instants.ts"
 import { type Store, advanceTo, command, finish, jointUnit, openStore, ownUnit, unitNameOf } from "../../journal/ledger.vibe"
 import { appended, commit as commitRows, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "../../journal/rows.vibe"
@@ -10,14 +10,14 @@ import { octoberOriginalContributorDecision } from "../../journal/snapshot.vibe"
 import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
 import { importStatements } from "../../publication/import.vibe"
 import { hasBaselinePrefix } from "../collect/inventory.vibe"
-import { type Correction, type CorrectionPhase, type Event, type Manifest, Machine, canCommit, emptyManifest, initial, machineOver } from "../../../gen/points__corrections.effect.vibe"
+import { type Correction, type CorrectionPhase, type Event, type Manifest, Machine, canCommit, decodeState, emptyManifest, initial, machineOver } from "../../../gen/points__corrections.effect.vibe"
 import type { Actor as Sender, JournalEntry } from "../../../gen/points__corrections.ts"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
 import { allocatePoints, canWriteAllocation } from "../../../gen/points__allocation.effect.vibe"
 import type { PointShare, Recipient } from "../../../gen/points__allocation.ts"
 import { type Collection, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
-import { type DerivedProof, type ProjectOfRepository, check, correctionFailure, derivePullRequestProof, digestPattern, distinct, isInstant, isNodeId, sameSet, sourceRepository } from "./derive.vibe"
+import { type DerivedProof, type ProjectOfRepository, check, correctionFailure, deriveProof, digestPattern, distinct, isInstant, isNodeId, sameSet, sourceRepository } from "./derive.vibe"
 
 module verified {
   import { ambiguousPlans as ambiguous, connectedLabels as connected } from "./proofs.ts"
@@ -58,6 +58,7 @@ interface Plan {
   readonly proof: DerivedProof | null
   readonly total: number
   readonly recipients: ReadonlyArray<{ readonly id: string; readonly login: string; readonly lines: number }>
+  readonly writable: boolean
   readonly replacements: ReadonlyArray<Award>
   readonly changed: ReadonlyArray<Award>
   readonly participationHeld: boolean
@@ -155,10 +156,13 @@ effect function bannedAtOf(bans: ReadonlyMap<string, string>) {
   return bannedAt
 }
 
-effect function replacementsOf(candidate: ManifestCandidate, previous: ReadonlyArray<Row>, recipients: Plan["recipients"], total: number) {
+function allocationOf(recipients: Plan["recipients"]): Recipient[] {
   const ordered = interned(recipients.map((recipient) => recipient.id))
-  const allocation: Recipient[] = recipients.map((recipient) => ({ actor: ordered.get(recipient.id) ?? 0, lines: recipient.lines }))
-  if (!canWriteAllocation(total, allocation, true, false)) return []
+  return recipients.map((recipient) => ({ actor: ordered.get(recipient.id) ?? 0, lines: recipient.lines }))
+}
+
+effect function replacementsOf(candidate: ManifestCandidate, previous: ReadonlyArray<Row>, recipients: Plan["recipients"], total: number) {
+  const allocation = allocationOf(recipients)
   const shares = allocatePoints(total, allocation)
   const [template] = previous
   if (template === undefined) return []
@@ -186,7 +190,7 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
   try check(sameSet(previous.map((revision) => `${revision.award.key}\u0000${revision.id}`), candidate.expectedPredecessors.map((entry) => `${entry.key}\u0000${entry.revisionId}`)) &&
     previous.every(({ award }) => award.occurredAt === candidate.occurredAt && award.sourceUrl === candidate.sourceUrl && award.workUnitId === candidate.workUnitId), "pool predecessors or immutable identity differ")
   const appliedOctober = previous.some((revision) => revision.decision?.reason === octoberOriginalContributorDecision)
-  const proof = appliedOctober ? null : try derivePullRequestProof(candidate, input.projectOf)
+  const proof = appliedOctober ? null : try deriveProof(candidate, input.projectOf)
   const complete = candidate.proof
   if (candidate.kind === "work-unit" && complete.status === "complete") {
     try check(previous.every((revision) => revision.decision?.sourceId === `value:${complete.decisionDigest ?? ""}`), "grouped proof does not match retained valuation provenance")
@@ -194,7 +198,8 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
   const total = previous.reduce((sum, revision) => sum + revision.award.amount, 0)
   try check(Number.isSafeInteger(total), "pool total overflows")
   const recipients = proof === null ? [] : [...proof.actors.values()].map((actor) => ({ id: actor.id, login: actor.login, lines: proof.weights.get(actor.id) ?? 0 }))
-  const replacements = proof !== null && total > 0 ? try replacementsOf(candidate, previous, recipients, total) : []
+  const writable = proof !== null && (total === 0 || canWriteAllocation(total, allocationOf(recipients), true, false))
+  const replacements = writable && total > 0 ? try replacementsOf(candidate, previous, recipients, total) : []
   const baseline = latestOf(previous)
   const changed = replacements.filter((award) => {
     const before = baseline.get(award.key)?.award
@@ -207,7 +212,7 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
   })
   const evidence = eligibility.get(JSON.stringify([candidate.projectId, monthOf(candidate.occurredAt)]))
   const protectedMonth = evidence !== undefined && freezes(evidence) ? evidence : undefined
-  return { index, candidate, key, previous, current: pools.current.get(key) ?? [], proof, total, recipients, replacements, changed, participationHeld, protectedMonth, eligible: protectedMonth === undefined } satisfies Plan
+  return { index, candidate, key, previous, current: pools.current.get(key) ?? [], proof, total, recipients, writable, replacements, changed, participationHeld, protectedMonth, eligible: protectedMonth === undefined } satisfies Plan
 }
 
 effect function checkSelection(plans: ReadonlyArray<Plan>, baseline: ReadonlyMap<string, Row>) {
@@ -299,7 +304,7 @@ effect function startOf(plan: Plan, collection: Collection, source: number, appl
 }
 
 effect function opened(plan: Plan, input: PlanInput, applied: boolean) {
-  const run = try correctionRun(try startOf(plan, input.collection, plan.index + 1, applied))
+  const run = try correctionRun(try decodeState(try startOf(plan, input.collection, plan.index + 1, applied)))
   if (!applied) {
     run.send({ type: "stageChunk", index: 0, digest: input.collection.chunkDigest }, trusted) catch effect () => {
       throw new CorrectionRefused({ message: "Collection receipt or current registry does not authorize this correction" })
@@ -347,6 +352,21 @@ effect function replayed(plans: ReadonlyArray<Plan>, input: PlanInput, prior: Re
   return { journal: input.journal, manifestDigest: input.collection.manifestDigest, dispositions, phases } satisfies Planned
 }
 
+effect function decidedBy(row: Row, sourceId: string) {
+  const decision = row.decision
+  if (decision === undefined || decision.sourceId === sourceId) return row
+  const body: RevisionBody = {
+    previous: row.previous,
+    recordedAt: row.recordedAt,
+    sourceDigest: row.sourceDigest,
+    sourceRule: row.sourceRule,
+    award: row.award,
+    ...(row.penalty === undefined ? {} : { penalty: row.penalty }),
+    decision: { ...decision, sourceId },
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Row
+}
+
 effect function appendComponent(store: Store, component: ReadonlyArray<Plan>, input: PlanInput, buffer: Row[]) {
   const staged: Row[] = []
   for (const plan of component) {
@@ -364,14 +384,17 @@ effect function appendComponent(store: Store, component: ReadonlyArray<Plan>, in
     const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: reallocationReason, digest: input.collection.manifestDigest }])
     if (refused !== "") return false
     const valueSource = [...plan.previous].sort((left, right) => right.recordedAt.localeCompare(left.recordedAt)).find((revision) => revision.decision?.sourceId.startsWith("value:") === true)?.decision?.sourceId
+    const decided = new Map(plan.previous.map((revision) => [revision.award.key, revision.decision?.sourceId] as const))
     const provenance = {
       recordedAt: input.recordedAt,
       sourceDigest: input.collection.manifestDigest,
       effectiveAt: input.recordedAt,
-      decisionSourceId: decisionSourceOf([valueSource, ...plan.previous.map((revision) => revision.decision?.sourceId), candidate.sourceId]),
+      decisionSourceId: decisionSourceOf([valueSource, candidate.sourceId]),
     }
     const written: Row[] = []
-    for (const revision of try appended(opened)) written.push(...(try rowsOf(store, opened, revision, templates, provenance)))
+    for (const revision of try appended(opened)) {
+      for (const row of try rowsOf(store, opened, revision, templates, provenance)) written.push(try decidedBy(row, decisionSourceOf([decided.get(row.award.key), valueSource, candidate.sourceId])))
+    }
     const planned = new Map(plan.changed.map((award) => [award.key, award] as const))
     if (written.length !== planned.size || written.some((row) => {
       const award = planned.get(row.award.key)
@@ -415,7 +438,7 @@ export effect function planCorrections(input: PlanInput) {
   const ready: Plan[][] = []
   for (const component of componentsOf(plans)) {
     const retained = component.some((plan) => !plan.eligible)
-    const complete = component.every((plan) => plan.proof !== null && ambiguous[plan.index] !== true)
+    const complete = component.every((plan) => plan.writable && ambiguous[plan.index] !== true)
     const banned = component.filter((plan) => plan.participationHeld)
     for (const plan of component) {
       const run = try opened(plan, input, false)

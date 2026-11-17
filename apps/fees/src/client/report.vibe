@@ -1,0 +1,127 @@
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network's target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals"
+import { type AnyRoute, type Method, route } from "@repo/platform/route"
+import { getAdminFeeConversions } from "./refusals.vibe"
+
+export schema FeeConversionLine {
+  readonly id: string
+  readonly network: string
+  readonly mode: string
+  readonly token: string
+  readonly targetToken: string
+  readonly amountIn: string
+  readonly route: string | null
+  readonly quoteAmountOut: string | null
+  readonly minAmountOut: string | null
+  readonly priceImpactBps: number | null
+  readonly approvalTxId: string | null
+  readonly txId: string | null
+  readonly landedTxId: string | null
+  readonly amountOut: string | null
+  readonly tokenBalanceBefore: string | null
+  readonly targetBalanceBefore: string | null
+  readonly targetBalanceAfter: string | null
+  readonly state: string
+  readonly reason: string | null
+  readonly createdAt: string
+  readonly submittedAt: string | null
+  readonly finalizedAt: string | null
+}
+
+export schema FeeConversionRoute {
+  readonly network: string
+  readonly targetToken: string | null
+  readonly status: "usdc" | "not_converted"
+}
+
+export schema FeeConversionTotal {
+  readonly network: string
+  readonly token: string
+  readonly targetToken: string
+  readonly conversions: number
+  readonly amountIn: string
+  readonly amountOut: string
+}
+
+export schema FeeConversionStateCount {
+  readonly network: string
+  readonly mode: string
+  readonly state: string
+  readonly count: number
+}
+
+export schema BuybackLine {
+  readonly id: string
+  readonly kind: string
+  readonly network: string
+  readonly mode: string
+  readonly token: string
+  readonly targetToken: string
+  readonly amountIn: string
+  readonly amountOut: string | null
+  readonly minAmountOut: string | null
+  readonly txId: string | null
+  readonly landedTxId: string | null
+  readonly state: string
+  readonly reason: string | null
+  readonly createdAt: string
+  readonly finalizedAt: string | null
+  readonly orderId: string | null
+  readonly outcome: "arrived" | "refunded" | null
+}
+
+export schema BuybackTotal {
+  readonly network: string
+  readonly kind: string
+  readonly token: string
+  readonly sends: number
+  readonly amountIn: string
+  readonly amountOut: string
+  readonly inTransit: string
+  readonly refunded: string
+}
+
+export schema BuybackReport {
+  readonly recent: ReadonlyArray<BuybackLine>
+  readonly totals: ReadonlyArray<BuybackTotal>
+}
+
+export schema FeeConversionsReport {
+  readonly schemaVersion: "1"
+  readonly recent: ReadonlyArray<FeeConversionLine>
+  readonly routes: ReadonlyArray<FeeConversionRoute>
+  readonly totals: ReadonlyArray<FeeConversionTotal>
+  readonly last24Hours: ReadonlyArray<FeeConversionStateCount>
+  readonly buyback: BuybackReport
+}
+
+export const feeConversionsPath = "/api/v1/admin/fee-conversions"
+
+function parity(row: { readonly status: number; readonly error: string; readonly message: string; readonly headers: Readonly<Record<string, string>> }) {
+  return { status: row.status, code: row.error, message: row.message, headers: row.headers }
+}
+
+export const feeConversionsRefusals = {
+  unauthorized: parity(getAdminFeeConversions.unauthorized),
+  actorChanged: parity(getAdminFeeConversions.actorChanged),
+  forbidden: parity(getAdminFeeConversions.forbidden),
+}
+
+export const feeConversions = route({
+  method: "GET",
+  path: feeConversionsPath,
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: FeeConversionsReport,
+  rejected: "forbidden",
+  cache: "private",
+  unauthenticated: feeConversionsRefusals.unauthorized,
+  sessionExpired: feeConversionsRefusals.unauthorized,
+  actorMismatch: feeConversionsRefusals.actorChanged,
+})
+
+const otherMethods: ReadonlyArray<Method> = ["POST", "PUT", "DELETE"]
+
+export const otherFeeConversionMethods = otherMethods.map((method) => route({ method, path: feeConversionsPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "private" }))
+
+export const reportApi: ReadonlyArray<AnyRoute> = [feeConversions, ...otherFeeConversionMethods]

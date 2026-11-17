@@ -1,0 +1,137 @@
+// spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/frontend/reportDetails.md, "Private report IDs scope both heading references"; spec/security/program.md, "Receipt terms come only from the open published revision"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"
+import type { IntakeReadiness, SubmissionView } from "@repo/security/client"
+import type { PageRuntime } from "../../../app/runtime.vibe"
+import { claimAdvisory, requestKey } from "../../../flows/security/cases.vibe"
+import { draftMachine } from "../../../flows/security/composeDraft.vibe"
+import { type ReviewDecision, authorizeSubmission, readinessOf, reconcileSubmission, retrySubmissionScreening, reviewSubmission, reviseSubmission, sendSubmission } from "../../../flows/security/intake.vibe"
+import { reportHeadings } from "../../../flows/security/details.vibe"
+import { type ReportDraft, emptyReport } from "../../../flows/security/private.vibe"
+import { keepsReportText, loadReportText, releaseReportText, reportTextErasure, saveReportText } from "../../../flows/security/reportText.vibe"
+import { untilTime } from "../../../platform/clock.vibe"
+import { Registry, findProject, registryLayer } from "../../../reads/registry.vibe"
+import { reportCompose } from "./compose.vibe"
+import { type ProgramProject, programProjectOf } from "./terms.schema.ts"
+
+export type ReadinessShown =
+  | { readonly status: "checking" }
+  | { readonly status: "error"; readonly projectId: string; readonly message: string }
+  | { readonly status: "checked"; readonly projectId: string; readonly value: IntakeReadiness; readonly stale: boolean; readonly rechecking: boolean }
+
+export type ProgramRead =
+  | { readonly kind: "found"; readonly project: ProgramProject }
+  | { readonly kind: "missing" }
+  | { readonly kind: "failed"; readonly message: string }
+
+export const programMessages = {
+  missing: "This project has no security page.",
+  unreadable: "This project's security terms could not be read.",
+} as const
+
+export service ProgramReadiness {
+  readonly changes: Stream.Stream<ReadinessShown>
+  check(projectId: string): void!!
+}
+
+export const readinessLayer = Layer.effect(ProgramReadiness, effect {
+  const context = try Effect.context<HttpClient.HttpClient>()
+  const scope = try Scope.Scope
+  const shown = try SubscriptionRef.make<ReadinessShown>({ status: "checking" })
+  let rounds = 0
+
+  effect function expire(at: number, mine: number) {
+    try untilTime(at)
+    if (mine !== rounds) return
+    try SubscriptionRef.update(shown, (now): ReadinessShown => (now.status === "checked" ? { ...now, stale: true } : now))
+  }
+
+  effect function check(projectId: string): void!!HttpClient.HttpClient {
+    rounds += 1
+    const mine = rounds
+    try SubscriptionRef.update(shown, (now): ReadinessShown => (now.status === "checked" && now.projectId === projectId ? { ...now, rechecking: true } : { status: "checking" }))
+    const read = try readinessOf(projectId)
+    if (mine !== rounds) return
+    if (read.kind === "failed") {
+      try SubscriptionRef.update(shown, (now): ReadinessShown => (now.status === "checked" && now.projectId === projectId ? { ...now, stale: true, rechecking: false } : { status: "error", projectId, message: read.message }))
+      return
+    }
+    try SubscriptionRef.set(shown, { status: "checked", projectId, value: read.value, stale: read.value.stale, rechecking: false })
+    if (!read.value.stale) fork.in(scope) expire((try Clock.currentTimeMillis) + read.value.maxAgeSeconds * 1000, mine)
+  }
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    check: (projectId: string) => Effect.provideContext(check(projectId), context),
+  }
+})
+
+export const programSections = Layer.provideMerge(reportCompose, Layer.mergeAll(registryLayer, readinessLayer, draftMachine, reportTextErasure))
+
+export type ProgramRuntime = ReturnType<typeof makeProgramRuntime>
+
+function makeProgramRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(programSections, Layer.effectContext(page.contextEffect)))
+}
+
+const sections = new WeakMap<PageRuntime, ProgramRuntime>()
+
+export function programRuntime(page: PageRuntime): ProgramRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeProgramRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function loadProgram(reference: string) {
+  const boot = try (try Registry).load()
+  if (boot.error !== undefined) return { kind: "failed", message: boot.error } satisfies ProgramRead
+  const record = findProject(boot, reference)
+  if (record === undefined) return { kind: "missing" } satisfies ProgramRead
+  const project = programProjectOf(record)
+  if (project === undefined) return { kind: "failed", message: programMessages.unreadable } satisfies ProgramRead
+  return { kind: "found", project } satisfies ProgramRead
+}
+
+export effect function watchReadiness(show: (shown: ReadinessShown) => void!!) {
+  for try (const shown of (try ProgramReadiness).changes) try show(shown)
+}
+
+export effect function checkReadiness(projectId: string) {
+  try (try ProgramReadiness).check(projectId)
+}
+
+export effect function linkReport(owner: string, projectId: string, advisory: string, key: string | null) {
+  const used = key ?? (try requestKey())
+  return { key: used, result: try claimAdvisory(owner, projectId, advisory, used) }
+}
+
+export type SubmissionRequest =
+  | { readonly kind: "screen" }
+  | { readonly kind: "send"; readonly draft: ReportDraft | null }
+  | { readonly kind: "reconcile" }
+  | { readonly kind: "authorize"; readonly draft: ReportDraft }
+  | { readonly kind: "review"; readonly decision: ReviewDecision; readonly reason: string }
+  | { readonly kind: "revise"; readonly draft: ReportDraft }
+
+export effect function actOnSubmission(owner: string, submission: SubmissionView, request: SubmissionRequest) {
+  switch (request.kind) {
+    case "screen": return try retrySubmissionScreening(owner, submission)
+    case "send": return try sendSubmission(owner, submission, request.draft)
+    case "reconcile": return try reconcileSubmission(owner, submission)
+    case "authorize": return try authorizeSubmission(owner, submission, request.draft)
+    case "review": return try reviewSubmission(owner, submission, request.decision, request.reason)
+    case "revise": return try reviseSubmission(owner, submission, request.draft)
+  }
+}
+
+export effect function submissionOpened(submission: SubmissionView) {
+  try releaseReportText(submission)
+  return {
+    text: (try loadReportText(submission.id)) ?? emptyReport,
+    headings: try reportHeadings(submission.id),
+  }
+}
+
+export effect function storeReportText(submission: SubmissionView, draft: ReportDraft) {
+  if (keepsReportText(submission)) try saveReportText(submission.id, draft)
+}

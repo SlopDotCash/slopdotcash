@@ -9,8 +9,8 @@ import { Response } from "miniflare"
 import { AgentClientsRefused, agentClientGate, requiredClients } from "../src/release/evidence/agentClients.vibe"
 import { EvidenceRefused, type Verification, sealEvidence, validateEvidence } from "../src/release/evidence/bundle.vibe"
 import { captureEvidence, committedBuild, servedArtifacts } from "../src/release/evidence/capture.vibe"
-import { rpc } from "../src/release/rpc/command.vibe"
-import { RotationRefused } from "../src/release/rpc/qualify.vibe"
+import { rotateRobinhoodRpc } from "../src/release/rpc/command.vibe"
+import { type ContractProbe, RotationRefused } from "../src/release/rpc/qualify.vibe"
 import { cloudflare } from "../src/release/wrangler/cloudflare.vibe"
 
 const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
@@ -25,13 +25,20 @@ const forkedHash = `0x${"b".repeat(64)}`
 schema RpcCall {
   readonly id: number | string | null
   readonly method: string
-  readonly params: ReadonlyArray<string | number | boolean>
+  readonly params: ReadonlyArray<string | number | boolean | { readonly to: string; readonly data: string }>
 }
 
 interface Chain {
   readonly chainId: string
   readonly finalized: { readonly number: string; readonly hash: string }
   readonly blocks: Readonly<Record<string, string>>
+  readonly contract: string | null
+}
+
+const takeOrders: ContractProbe = {
+  to: `0x${"d".repeat(40)}`,
+  data: `0x5b2f30e9${"0".repeat(64)}`,
+  answers: (result) => /^0x[0-9a-f]{256}$/u.test(result),
 }
 
 function described(error: unknown) {
@@ -120,6 +127,7 @@ function chainHost(chain: Chain, calls: string[]): Handler {
     calls.push(`${new URL(request.url).host} ${call.method}`)
     const [tag] = call.params
     const result = call.method === "eth_chainId" ? chain.chainId
+      : call.method === "eth_call" ? chain.contract
       : tag === "finalized" ? chain.finalized
       : typeof tag === "string" && chain.blocks[tag] !== undefined ? { number: tag, hash: chain.blocks[tag] }
       : null
@@ -140,7 +148,7 @@ function everyRecord(sha: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, systemGit), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Retain verification evidence of the published source outside the repository (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it")', () => scoped(effect {
+  it.effect(`Retain verification evidence of the published source outside the repository (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Served bytes are verified against the deployment's own source")`, () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-evidence-" })
@@ -217,7 +225,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     }))
   }))
 
-  it.effect('Refuse release when an affected workflow lacks a recorded agent-client result (spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full")', () => scoped(effect {
+  it.effect('Refuse release when an affected workflow lacks a recorded agent-client result (spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-agent-clients-" })
@@ -304,19 +312,21 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
         return new Response(`no fake answers ${url.host}`, { status: 599 })
       }
     }
-    const robinhood: Chain = { chainId: "0x1237", finalized: { number: "0x10", hash: finalizedHash }, blocks: { "0x10": finalizedHash } }
-    const base: Chain = { chainId: "0x2105", finalized: { number: "0x10", hash: finalizedHash }, blocks: {} }
-    const forked: Chain = { chainId: "0x1237", finalized: { number: "0x12", hash: forkedHash }, blocks: { "0x10": forkedHash } }
+    const robinhood: Chain = { chainId: "0x1237", finalized: { number: "0x10", hash: finalizedHash }, blocks: { "0x10": finalizedHash }, contract: `0x${"0".repeat(256)}` }
+    const base: Chain = { ...robinhood, chainId: "0x2105" }
+    const stateless: Chain = { ...robinhood, contract: "0x" }
+    const forked: Chain = { chainId: "0x1237", finalized: { number: "0x12", hash: forkedHash }, blocks: { "0x10": forkedHash }, contract: null }
     const rotate = (values: Readonly<Record<string, string>>, candidate: Chain, reference: Chain) => {
       calls.length = 0
       const before = api.calls.length
       return effect {
-        const outcome = try settled(routed(configured(rpc(["rotate-robinhood", directory]), values), asFetch(network(candidate, reference))))
+        const outcome = try settled(routed(configured(rotateRobinhoodRpc(directory, takeOrders), values), asFetch(network(candidate, reference))))
         return { outcome, rpc: [...calls], cloudflare: api.calls.slice(before).map((call) => `${call.method} ${call.path}`).sort() }
       }
     }
 
     const wrongChain = try rotate(environment, base, robinhood)
+    const headersOnly = try rotate(environment, stateless, robinhood)
     const insecure = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: "http://candidate-rpc.test/v1/journey" }, robinhood, robinhood)
     const reference = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: `${referenceRpc}/` }, robinhood, robinhood)
     const untrusted = try rotate({ ...environment, GITHUB_REF: "refs/heads/development" }, robinhood, robinhood)
@@ -325,20 +335,21 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const qualified = try rotate(environment, robinhood, robinhood)
     const worker = `/accounts/${accountId}/workers/scripts/slop-fee-converter`
 
-    try Effect.try(() => assert.deepStrictEqual({ wrongChain, insecure, reference, untrusted, disabled, contradicted, qualified }, {
-      wrongChain: { outcome: "The candidate RPC does not serve Robinhood Chain 4663.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: [] },
+    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, disabled, contradicted, qualified }, {
+      wrongChain: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: [] },
+      headersOnly: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber"], cloudflare: [] },
       insecure: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
       reference: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
       untrusted: { outcome: "The fee-converter release requires trusted main and verified TLS.", rpc: [], cloudflare: [] },
       disabled: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
       contradicted: {
         outcome: "The independent Robinhood RPC did not verify the candidate block.",
-        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
+        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
         cloudflare: [],
       },
       qualified: {
         outcome: "Fee-converter deployment or upload history is unavailable.",
-        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
+        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
         cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`],
       },
     }))

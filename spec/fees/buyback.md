@@ -105,26 +105,39 @@ pure def alwaysRuntimeSound(b: Buyback): bool = R::alwaysPublishedPassedPrefligh
 
 While the buyback is not off and no order is open, a run evaluates the due
 share in the pinned order: rolling daily cap reached is skipped; an amount
-below 500 USDC waits as pending; a value beyond safe integer accounting is
-skipped; no route is recorded as such; a fixed bridge fee above the approved
-maximum or a cost above 1.5% is skipped; a dry run with acceptable terms is
+below 25 USDC of available buyback funds waits as pending and requests no
+route; a value beyond safe integer accounting is skipped; no route is
+recorded as such; a fixed bridge fee above the approved maximum or a total
+bridge cost above 10% is skipped; a dry run with acceptable terms is
 recorded as quoted and signs nothing. A repeated decision with the same
 state, reason, amount and mode adds no record.
+
+The 25 USDC minimum and the 10% cap are the owner's decision of 16–17
+November 2026 (`BUYBACK_MIN_BRIDGE_MICRO = "25000000"`,
+`BUYBACK_MAX_BRIDGE_COST_BPS = "1000"`; `docs/slop-buyback.md`, "Owner
+decisions"), replacing 500 USDC and 1.5%. `costBps` is the total cost of the
+order as a share of its amount: the spread between the amount and the take
+amount plus the priced fixed fee, order-account rent and network fee. A
+quote whose native cost cannot be priced is no quote, so it records nothing
+and signs nothing. Reconciliation of open orders, refunds and arrivals never
+waits on the minimum.
 
 ```quint
 type BridgeRoute = RouteFound | NoRouteResult
 type BridgeQuote = { route: BridgeRoute, amount: int, takeAmount: int, costBps: int, nativeFee: int }
+pure val minimumBridge = 25000000
+pure val maximumBridgeCostBps = 1000
 pure val maximumSafeValue = 9007199254740991
 pure def nativeFeeCeiling(b: Buyback): int = if (b.source == R::Solana) 50000000 else 1000000
 pure def bridgeDecision(decided: DecisionState, reason: BridgeReason, b: Buyback, quote: BridgeQuote): BridgeDecision =
   { state: decided, reason: reason, amount: quote.amount, live: b.runtime.buybackMode == R::Live, at: b.clock }
 pure def decisionOf(b: Buyback, quote: BridgeQuote): BridgeDecision =
   if (spentInWindow(b.bridgeSpends, b.clock) >= 5000000000) bridgeDecision(Skipped, DayCapReached, b, quote)
-  else if (quote.amount < 500000000) bridgeDecision(Pending, BelowMinimum, b, quote)
+  else if (quote.amount < minimumBridge) bridgeDecision(Pending, BelowMinimum, b, quote)
   else if (quote.amount > maximumSafeValue) bridgeDecision(Skipped, UnsafeValue, b, quote)
   else if (quote.route == NoRouteResult) bridgeDecision(NoRoute, NoRouteFound, b, quote)
   else if (quote.nativeFee > nativeFeeCeiling(b)) bridgeDecision(Skipped, NativeFeeAbove, b, quote)
-  else if (quote.costBps > 150 or quote.takeAmount > quote.amount or quote.takeAmount <= 0) bridgeDecision(Skipped, CostAbove, b, quote)
+  else if (quote.costBps > maximumBridgeCostBps or quote.takeAmount > quote.amount or quote.takeAmount <= 0) bridgeDecision(Skipped, CostAbove, b, quote)
   else bridgeDecision(Quoted, NoReason, b, quote)
 pure def lastDecision(b: Buyback): BridgeDecision =
   b.decisions.nthOr(b.decisions.length() - 1, { state: Quoted, reason: NoReason, amount: -1, live: false, at: 0 })
@@ -154,14 +167,15 @@ share use full-width Amount limbs. The available share is half the
 cumulative income rounded down, less every commitment. The source wallet,
 receiver, order authority and refund beneficiary are the same reviewed
 fee-wallet identity. Refuse an external call, affiliate fee or unknown
-reserved taker, an order below 500 USDC or above 1,000 USDC per run, a cost
-above 1.5%, or more than 5,000 USDC in the rolling 24 hours. Solana needs no
+reserved taker, an order below 25 USDC, above the source wallet's balance
+or above 1,000 USDC per run, a total
+cost above 10%, or more than 5,000 USDC in the rolling 24 hours. Solana needs no
 approval. A dry run quotes and signs nothing; the approval and the order
 re-check the cost and every term, so a changed cost refuses either.
 
 ```quint
 type BridgeOrder = { orderId: int, tx: int, amount: int, takeAmount: int, costBps: int, receiver: str, authority: str,
-  beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, solana: bool, nativeFee: int }
+  beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, solana: bool, nativeFee: int, balance: int }
 pure def unreleased(spends: List[Spend], now: int): int = spends.foldl(0, (total, spend) =>
   total + (if (not(spend.released) and spend.at > now - dayMs and spend.at <= now) spend.amount else 0))
 pure def spentInWindow(spends: List[Spend], now: int): int = unreleased(spends, now)
@@ -173,10 +187,10 @@ pure def bridgeNativeAllowed(b: Buyback, request: BridgeOrder): bool =
   else request.nativeFee >= 0 and request.nativeFee <= 1000000
 pure def orderTermsValid(b: Buyback, request: BridgeOrder): bool =
   request.solana == (b.source == R::Solana) and request.orderId > 0 and not(b.orders.includes(request.orderId))
-    and request.amount >= 500000000 and request.amount <= 1000000000 and request.takeAmount > 0
-    and request.takeAmount <= request.amount
+    and request.amount >= minimumBridge and request.amount <= 1000000000 and request.takeAmount > 0
+    and request.takeAmount <= request.amount and request.balance >= 0 and request.amount <= request.balance
     and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(request.amount)), H::half(b.income).quotient) <= 0
-    and request.costBps >= 0 and request.costBps <= 150
+    and request.costBps >= 0 and request.costBps <= maximumBridgeCostBps
     and request.receiver == "fees" and request.authority == "fees" and request.beneficiary == "fees"
     and not(request.externalCall) and request.affiliateFee == 0 and request.reservedTaker == ""
     and spentInWindow(b.bridgeSpends, b.clock) + request.amount <= 5000000000 and bridgeNativeAllowed(b, request)
@@ -202,6 +216,7 @@ pure def order(b: Buyback, request: BridgeOrder, by: R::Sender): Buyback =
     bridgeSpends: b.bridgeSpends.append({ id: request.orderId, at: b.clock, amount: request.amount, released: false }),
     bridgeNative: if (request.solana) b.bridgeNative.append({ id: request.orderId, at: b.clock, amount: request.nativeFee, released: false }) else b.bridgeNative }
 pure def sometimesApprovalRefusedCostChange(b: Buyback): bool = b.orderPhase == Approving and b.approval.phase == Finalized
+pure def sometimesMinimumBridgeOrdered(b: Buyback): bool = b.orderPhase != NoOrder and b.orderAmount == minimumBridge
 ```
 
 ### A deposit is in transit only from its finalized order receipt; a failed order releases its share
@@ -272,7 +287,7 @@ pure def sometimesInTransit(b: Buyback): bool = b.orderPhase == InTransit
 pure def sometimesRefunded(b: Buyback): bool = b.orderPhase == Refunded
 pure def sometimesCancellingReported(b: Buyback): bool = b.orderPhase == Cancelling and b.unfilledReported
 pure def arrivedTotal(b: Buyback): int = b.outcomes.foldl(0, (t, o) => if (o.result == OrderArrived) t + o.takeAmount else t)
-pure def alwaysOutcomesOfOrders(b: Buyback): bool = b.outcomes.every(o => b.orders.includes(o.order) and o.amount >= 500000000
+pure def alwaysOutcomesOfOrders(b: Buyback): bool = b.outcomes.every(o => b.orders.includes(o.order) and o.amount >= minimumBridge
   and o.amount <= 1000000000 and o.takeAmount >= 0 and o.takeAmount <= o.amount
   and (o.result == OrderArrived implies o.takeAmount > 0 and o.height > 0)
   and (o.result == OrderRefunded implies o.takeAmount == 0 and o.height > 0))
@@ -306,7 +321,7 @@ pure def alwaysJournalPastAndPositive(b: Buyback): bool = b.clock >= buybackStar
   and b.bridgeNative.every(s => s.at >= 0 and s.at <= b.clock and s.amount > 0)
 pure def alwaysPendingOrderReserved(b: Buyback): bool =
   (b.orderPhase == Ordering or b.orderPhase == InTransit or b.orderPhase == Cancelling) implies
-    b.orderAmount >= 500000000 and b.orderAmount <= 1000000000 and M::compareAmounts(b.committed, M::smallAmount(b.orderAmount)) >= 0
+    b.orderAmount >= minimumBridge and b.orderAmount <= 1000000000 and M::compareAmounts(b.committed, M::smallAmount(b.orderAmount)) >= 0
       and b.takeAmount > 0 and b.takeAmount <= b.orderAmount
 pure def stepIncomeMonotonic(before: Buyback, after: Buyback): bool = M::compareAmounts(after.income, before.income) >= 0
 pure def stepSignaturesNeedLiveBuyback(before: Buyback, via: str, after: Buyback): bool =
@@ -332,21 +347,25 @@ pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMod
   { ...R::liveAll, source: 3, buybackMode: R::Off })
 pure val requestValues = Set(
   { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000 },
-  { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 151, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 600000000 },
+  { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 1001, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 2, tx: 24, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "wrong", authority: "fees", beneficiary: "fees",
-    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000 },
+    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 4, tx: 28, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 600000000 },
   { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 3, tx: 27, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 })
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+  { orderId: 5, tx: 25, amount: 25000000, takeAmount: 22500000, costBps: 1000, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 25000000 },
+  { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 499999999 })
 pure val receiptValues = Set({ tx: 21, succeeded: true, finalized: true }, { tx: 22, succeeded: true, finalized: true },
   { tx: 22, succeeded: false, finalized: true }, { tx: 23, succeeded: true, finalized: true }, { tx: 24, succeeded: false, finalized: true },
   { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false },
@@ -360,9 +379,10 @@ pure val refundValues = Set({ order: 1, amount: 500000000, beneficiary: "fees", 
 pure val cancellationValues = Set({ order: 1, height: 4, finalized: true }, { order: 1, height: 4, finalized: false })
 pure val quoteValues = Set(
   { route: RouteFound, amount: 500000000, takeAmount: 495000000, costBps: 100, nativeFee: 1000 },
-  { route: RouteFound, amount: 100000000, takeAmount: 99000000, costBps: 100, nativeFee: 1000 },
+  { route: RouteFound, amount: 20000000, takeAmount: 19800000, costBps: 100, nativeFee: 1000 },
+  { route: RouteFound, amount: 25000000, takeAmount: 22500000, costBps: 1000, nativeFee: 1000 },
   { route: NoRouteResult, amount: 500000000, takeAmount: 0, costBps: 0, nativeFee: 0 },
-  { route: RouteFound, amount: 500000000, takeAmount: 490000000, costBps: 200, nativeFee: 1000 })
+  { route: RouteFound, amount: 500000000, takeAmount: 450000000, costBps: 1001, nativeFee: 1000 })
 pure val weight_publishWorker = 4
 pure val weight_verifyReadiness = 4
 pure val weight_recordIncome = 6

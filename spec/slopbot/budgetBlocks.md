@@ -1,8 +1,9 @@
 # Slopbot provider budget blocks and resume
 
-PRD section 5 makes every Orbio failure, including exhausted credits, go
-directly to Surplus, and keeps a failed provider attempt distinct from an
-item blocked until a budget reset. Source is
+PRD section 5 (operator decision of 16 November 2026) tries Surplus first
+and Orbio as the backstop, makes a Surplus spending denial ask Orbio before
+the item waits, and keeps a failed provider attempt distinct from an item
+blocked until a budget reset. Source is
 `workers/slopbot/budget-blocks.ts`, `workers/slopbot/review.ts`
 (`activeBudgetBlock`, `recordBudgetBlock`) and
 `migrations/0048_slopbot_budget_blocks.sql` at the pinned development
@@ -20,7 +21,9 @@ it directly.
 ### Only the current claim owner records an immutable block
 
 A block needs a recognized Surplus spending denial with a reset time later
-than now. An Orbio failure never blocks: the route goes on to Surplus. The
+than now, remembered by the [review](./review.md) route after the Orbio
+backstop had no key or served no valid result. An Orbio failure alone
+never blocks, and an Orbio verdict after a denial leaves no block. The
 database trigger requires the same running claim with a live lease and the
 same installation, repository and item as the stored job. Recording the
 block finishes the review as failed with the reason

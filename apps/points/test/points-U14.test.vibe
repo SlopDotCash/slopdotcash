@@ -1,0 +1,228 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { type Answer, Area, areaLayer } from "@repo/platform/testing/area"
+import { type Journal, type Revision, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { applyCorrections } from "../src/corrections/apply/command.vibe"
+import { proveCandidates } from "../src/corrections/apply/prove.vibe"
+import { corrections } from "../src/programs/corrections.vibe"
+import { type Pool, alpha, author, baseGeneratedAt, beta, carrier, censusDigest, collectedAt, correctionRule, gamma, receiptSchema, registry, sourceOf, transferSql, urlOf } from "./support/u14/fixtures.ts"
+import { absentService } from "./support/u11/pages.ts"
+
+type Body = Readonly<Record<string, unknown>>
+
+interface Collected {
+  readonly manifest: string
+  readonly receipt: string
+  readonly digest: string
+}
+
+interface Plan {
+  readonly dispositions: ReadonlyArray<{ readonly candidateId: string; readonly status: string }>
+  readonly phases: ReadonlyArray<string>
+  readonly journal: string
+}
+
+const root = new URL("..", import.meta.url).pathname
+const notVerified = "Historical correction import was not verified; retain the run for reconciliation"
+
+const Corrections = areaLayer({
+  root,
+  config: "test/support/u14/vite.config.ts",
+  entry: "corrections",
+  d1: { SLOP_DB: "slop-private" },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local" },
+  services: { SLOP_IDENTITY: absentService() },
+})
+
+function fields(answer: Answer): Body {
+  return typeof answer.body === "object" && answer.body !== null && !Array.isArray(answer.body) ? answer.body as Body : {}
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function carried(pool: Pool) {
+  const key = try pointKey({ projectId: pool.project, actorId: carrier.id, category: "merged-pull-request", sourceId: pool.source })
+  const body: RevisionBody = {
+    previous: null,
+    recordedAt: pool.recordedAt,
+    sourceDigest: "a".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: {
+      key,
+      actor: { id: carrier.id, login: carrier.login },
+      projectId: pool.project,
+      category: "merged-pull-request",
+      amount: 30,
+      occurredAt: pool.occurredAt,
+      sourceId: pool.source,
+      sourceUrl: urlOf(pool),
+      workUnitId: pool.source,
+      provisional: false,
+    },
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Revision
+}
+
+effect function baseJournal() {
+  const revisions = [try carried(alpha), try carried(beta), try carried(gamma)]
+  return try journalFile(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: baseGeneratedAt, coverage: [], revisions })}\n`)
+}
+
+effect function collected(base: Journal, pools: ReadonlyArray<Pool>) {
+  const revisionIdsDigest = try sha256Hex(JSON.stringify(base.revisions.map((revision) => revision.id)))
+  const candidates = pools.map((pool) => {
+    const predecessor = base.revisions.find((revision) => revision.award.sourceId === pool.source)
+    return {
+      id: `correction_${pool.project}`,
+      kind: "pull-request",
+      projectId: pool.project,
+      sourceId: pool.source,
+      sourceUrl: urlOf(pool),
+      occurredAt: pool.occurredAt,
+      workUnitId: pool.source,
+      sourceIds: [pool.source],
+      expectedPredecessors: predecessor === undefined ? [] : [{ key: predecessor.award.key, revisionId: predecessor.id }],
+      proof: { status: "complete", censusDigest, sources: [sourceOf(pool)] },
+    }
+  })
+  const manifest = JSON.stringify({ schemaVersion: "1", rule: correctionRule, generatedAt: collectedAt, baseline: { revisionCount: base.revisions.length, revisionIdsDigest }, candidates })
+  const digest = try sha256Hex(manifest)
+  const receipt = JSON.stringify({
+    schemaVersion: receiptSchema,
+    manifestDigest: digest,
+    through: collectedAt,
+    projects: pools.map((pool) => pool.project),
+    totalPositivePools: pools.length,
+    completeProofs: pools.length,
+    heldProofs: 0,
+    ownershipComplete: true,
+    registryDigest: try sha256Hex(registry),
+  })
+  return { manifest: `${manifest}\n`, receipt, digest } satisfies Collected
+}
+
+effect function publicText() {
+  const journal = fields(try (try Area).get("/api/v1/test/points/corrections/public")).journal
+  return typeof journal === "string" ? journal : ""
+}
+
+effect function seeded(base: Journal) {
+  if ((try publicText()) === "") try (try Area).post("/api/v1/test/points/corrections/seed", { journal: `${journalText(base)}\n` })
+}
+
+effect function planned(journal: string, collection: Collected, recordedAt: string, bans: ReadonlyArray<{ readonly actor: string; readonly at: string }> = []) {
+  const answer = try (try Area).post("/api/v1/test/points/corrections/plan", { journal, manifest: collection.manifest, receipt: collection.receipt, registry, bans, recordedAt, mode: "apply", reviewed: collection.digest })
+  const body = fields(answer)
+  return { status: answer.status, plan: body as unknown as Plan }
+}
+
+effect function recorded(journal: string) {
+  return fields(try (try Area).post("/api/v1/test/points/corrections/record", { journal }))
+}
+
+effect function revisionCount() {
+  const [row] = try (try Area).sql("SELECT COUNT(*) AS revisions FROM points_revisions")
+  return row?.revisions
+}
+
+effect function appendedRows(text: string) {
+  const journal = try journalFile(text)
+  return journal.revisions.slice(3).map((revision) => JSON.stringify([revision.award.projectId, revision.award.actor.id, revision.award.amount, revision.previous === null, revision.sourceDigest])).sort()
+}
+
+function expectedRows(rows: ReadonlyArray<readonly [string, string, number, boolean]>, digest: string) {
+  return rows.map((row) => JSON.stringify([...row, digest])).sort()
+}
+
+function recordingConsole(errors: string[]): Console.Console {
+  const ignore = () => undefined
+  return {
+    assert: ignore, clear: ignore, count: ignore, countReset: ignore, debug: ignore, dir: ignore, dirxml: ignore,
+    group: ignore, groupCollapsed: ignore, groupEnd: ignore, info: ignore, table: ignore, time: ignore, timeEnd: ignore,
+    timeLog: ignore, trace: ignore, warn: ignore, log: ignore,
+    error: (...args: ReadonlyArray<unknown>) => { errors.push(args.join(" ")) },
+  }
+}
+
+effect function untrustedRun(args: ReadonlyArray<string>, event: string) {
+  const errors: string[] = []
+  const runner = program({ services: Layer.mergeAll(webCrypto, outbound, systemGit), commands: { corrections: corrections({ prove: proveCandidates, apply: applyCorrections }) } })
+  const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: event, GITHUB_REF: "refs/heads/main", GITHUB_SHA: "f".repeat(40), PATH: "/usr/bin:/bin" }))
+  provide NodeServices.layer, environment, Console.Console = recordingConsole(errors) {
+    const status = try runner.run(["corrections", "apply", ...args])
+    return { status, errors }
+  }
+}
+
+layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A correction racing a newly protected month refuses atomically and a replay appends nothing (spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/journal.md, "A reallocation keeps the unit\'s whole value and changes only its recipients"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months")', () => effect {
+    const unreviewed = try untrustedRun(["manifest.json", "result", "apply"], "workflow_dispatch")
+    const pushed = try untrustedRun(["manifest.json", "result", "preview"], "push")
+    try same([unreviewed, pushed], [
+      { status: 1, errors: ["CorrectionStopped: Historical Points correction stopped during trusted invocation."] },
+      { status: 1, errors: ["CorrectionStopped: Historical Points correction stopped during trusted invocation."] },
+    ])
+
+    const base = try baseJournal()
+    try seeded(base)
+    const baseText = try publicText()
+    const collection = try collected(base, [alpha, beta])
+
+    const first = try planned(baseText, collection, "2026-11-12T00:00:00.000Z")
+    try same({ status: first.status, dispositions: first.plan.dispositions, phases: first.plan.phases, rows: try appendedRows(first.plan.journal) }, {
+      status: 200,
+      dispositions: [{ candidateId: "correction_alpha", status: "applied" }, { candidateId: "correction_beta", status: "applied" }],
+      phases: ["Applied", "Applied"],
+      rows: expectedRows([["alpha", author.id, 30, true], ["alpha", carrier.id, 0, false], ["beta", author.id, 30, true], ["beta", carrier.id, 0, false]], collection.digest),
+    })
+
+    try (try Area).sql(transferSql(alpha))
+    const raced = try recorded(first.plan.journal)
+    try same({ raced, revisions: try revisionCount(), public: try publicText() }, { raced: { outcome: "refused", message: notVerified }, revisions: 3, public: baseText })
+
+    const second = try planned(baseText, collection, "2026-11-12T00:00:00.000Z")
+    try same({ dispositions: second.plan.dispositions, phases: second.plan.phases, rows: try appendedRows(second.plan.journal) }, {
+      dispositions: [{ candidateId: "correction_alpha", status: "retained" }, { candidateId: "correction_beta", status: "applied" }],
+      phases: ["Protected", "Applied"],
+      rows: expectedRows([["beta", author.id, 30, true], ["beta", carrier.id, 0, false]], collection.digest),
+    })
+    const written = try recorded(second.plan.journal)
+    try same({ outcome: written.outcome, revisions: try revisionCount(), public: try publicText() }, { outcome: "recorded", revisions: 5, public: second.plan.journal })
+
+    const replay = try planned(second.plan.journal, collection, "2026-11-13T00:00:00.000Z")
+    try same({ dispositions: replay.plan.dispositions, phases: replay.plan.phases, unchanged: replay.plan.journal === second.plan.journal }, {
+      dispositions: [{ candidateId: "correction_alpha", status: "retained" }, { candidateId: "correction_beta", status: "already-applied" }],
+      phases: ["Open", "Replayed"],
+      unchanged: true,
+    })
+  })
+
+  it.effect('Funded-history preservation: a correction prepared after its month is settled changes no recorded revision and appends nothing, and a banned recipient holds it (spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months")', () => effect {
+    const base = try baseJournal()
+    try seeded(base)
+    const current = try publicText()
+    const before = try revisionCount()
+    const collection = try collected(base, [gamma])
+    const banned = try planned(current, collection, "2026-11-14T00:00:00.000Z", [{ actor: author.id, at: "2026-10-01T00:00:00.000Z" }])
+    try (try Area).sql(transferSql(gamma))
+    const settled = try planned(current, collection, "2026-11-14T00:00:00.000Z")
+    try same({
+      banned: { dispositions: banned.plan.dispositions, phases: banned.plan.phases, unchanged: banned.plan.journal === current },
+      settled: { dispositions: settled.plan.dispositions, phases: settled.plan.phases, unchanged: settled.plan.journal === current },
+      revisions: try revisionCount(),
+      public: try publicText(),
+    }, {
+      banned: { dispositions: [{ candidateId: "correction_gamma", status: "held" }], phases: ["Banned"], unchanged: true },
+      settled: { dispositions: [{ candidateId: "correction_gamma", status: "retained" }], phases: ["Protected"], unchanged: true },
+      revisions: before,
+      public: current,
+    })
+  })
+})

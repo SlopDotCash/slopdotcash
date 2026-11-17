@@ -19,7 +19,7 @@ registration.
 One instance is one browser context on one project's owner vault page: the
 creation flow and the registered vault's transfer flow. The sender `by` is
 the signed-in account (positive), the server (`0`), the wallet and chain
-adapter (`-1`) or the page's timer (`-2`). Each flow's saved request is a
+adapter (`-1`), the page's timer (`-2`) or the tab's visibility (`-3`). Each flow's saved request is a
 [wallet attempt](./walletAttempt.md) in a slot keyed by its account.
 
 ## Story: Create and register the vault without asking the wallet twice
@@ -34,31 +34,35 @@ this browser, or a storage failure asks nothing of the wallet.
 ```quint
 import walletAttempt as WA from "./walletAttempt"
 import projections as P from "./projections"
+import vaultLocks as VL from "./vaultLocks"
 import money as M from "../settlement/money"
 type Target = Creation | Transfer
 type Phase = Idle | Reviewed | Awaiting | Sent | Unclear | Done | Failed
 type Origin = NoCheck | AutoCheck | OwnerCheck
 type Answer = StillPending | IncludedRead | FinalRead | Refused | Reverted | ReadFailed
 type Notice = Quiet | StorageBlocked | Occupied | WithdrawalRefused | Received | CheckFailed | Registered | Counted | TransferFailed
+  | LockedFundsRefused
 type Flow = { phase: Phase, slot: WA::Attempt, slotOwner: int, awaiting: str, sentLifetime: int, inflight: Origin,
-  autoAsks: int, refusals: int, stopped: bool }
+  autoAsks: int, refusals: int, stopped: bool, hiddenAsks: int }
 type OwnerVault = { owner: int, lifetime: int, editing: bool, creation: Flow, transfer: Flow, notice: Notice, lateReplies: int,
-  used: List[str] }
+  used: List[str], hidden: bool }
 pure val server = 0
 pure val adapter = -1
 pure val timer = -2
+pure val tab = -3
 pure val autoAskLimit = 4
+pure val hiddenAskLimit = 120
 pure val refusalLimit = 3
 pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awaiting: "", sentLifetime: 0, inflight: NoCheck,
-  autoAsks: 0, refusals: 0, stopped: false }
+  autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0 }
 pure val initial: OwnerVault = { owner: 0, lifetime: 0, editing: false, creation: idleFlow, transfer: idleFlow, notice: Quiet, lateReplies: 0,
-  used: List() }
+  used: List(), hidden: false }
 pure def flowOf(v: OwnerVault, target: Target): Flow = if (target == Creation) v.creation else v.transfer
 pure def withFlow(target: Target, flow: Flow, v: OwnerVault): OwnerVault =
   if (target == Creation) { ...v, creation: flow } else { ...v, transfer: flow }
 pure def resumed(flow: Flow, account: int): Flow =
   val own = flow.slot != WA::noAttempt and flow.slotOwner == account
-  { ...flow, inflight: NoCheck, awaiting: "", autoAsks: 0, refusals: 0, stopped: false,
+  { ...flow, inflight: NoCheck, awaiting: "", autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0,
     phase: if (flow.phase == Done) Done
       else if (not(own)) Idle else if (flow.slot.hash != "" or flow.slot.candidate != "") Sent else Unclear }
 pure def canSignIn(v: OwnerVault, account: int, by: int): bool = account > 0 and by == account and account != v.owner
@@ -79,14 +83,19 @@ pure def canReview(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P
 `withdrawal` is the gross amount of a withdrawal review, zero for a deposit.
 While the month is Funded, the review refuses an amount that would leave the
 vault below what contributors were shown
-([projections](./projections.md), `withdrawalAllowedOnSlopPages`). The
-contract itself does not enforce this.
+([projections](./projections.md), `withdrawalAllowedOnSlopPages`). A vault
+without month locks does not enforce this itself. For a vault with month
+locks, `locks` carries the review's read of its open locked total: the review
+refuses, before the wallet is asked, a withdrawal into the locked funds, and
+the page's promise guard does not apply to it, nor to a month Funded by
+pledges ([month locks](./vaultLocks.md), `withdrawalAllowed`).
 
 ```quint
-pure def review(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P::PoolFacts, by: int): OwnerVault =
-  if (target == Transfer and not(P::withdrawalAllowedOnSlopPages(pool, withdrawal))) { ...v, notice: WithdrawalRefused }
-  else withFlow(target, { ...flowOf(v, target), phase: Reviewed, inflight: NoCheck, autoAsks: 0, refusals: 0, stopped: false },
-    { ...v, notice: Quiet })
+pure def review(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P::PoolFacts, locks: VL::VaultLocks, by: int): OwnerVault =
+  if (target == Transfer and VL::lockRefusesWithdrawal(locks, withdrawal)) { ...v, notice: LockedFundsRefused }
+  else if (target == Transfer and not(VL::withdrawalAllowed(pool, locks, withdrawal))) { ...v, notice: WithdrawalRefused }
+  else withFlow(target, { ...flowOf(v, target), phase: Reviewed, inflight: NoCheck, autoAsks: 0, refusals: 0, stopped: false,
+    hiddenAsks: 0 }, { ...v, notice: Quiet })
 pure def canSend(v: OwnerVault, target: Target, identity: str, stored: bool, by: int): bool =
   v.owner > 0 and by == v.owner and flowOf(v, target).phase == Reviewed and identity != "" and not(v.used.includes(identity))
 pure def send(v: OwnerVault, target: Target, identity: str, stored: bool, by: int): OwnerVault =
@@ -148,7 +157,12 @@ while the owner is not editing it and no check runs, at most four times. The
 owner's button asks the same question for any saved hash or candidate. An
 owner action retires an automatic check in flight, never the reverse; a
 retired answer and an answer from an earlier lifetime are discarded. No
-check opens a wallet prompt.
+check opens a wallet prompt. While the tab is hidden a transfer is not
+checked and spends nothing, and a creation keeps being asked on its own
+limit of 120 background asks, spending no attempt; past it the timer waits
+until the tab is shown (PRD section 6, operator decision, 17 November 2026;
+development `src/lib/vault-auto-register.ts` and
+`formal/models/ui/ui_vault_auto_register.qnt` at `df21e37b7`).
 
 ```quint
 pure def canEdit(v: OwnerVault, editing: bool, by: int): bool = v.owner > 0 and by == v.owner and editing != v.editing
@@ -160,10 +174,15 @@ pure def canAsk(v: OwnerVault, target: Target, origin: Origin, by: int): bool =
   v.owner > 0 and flow.phase == Sent and
   (if (origin == AutoCheck) by == timer and flow.slot.hash != "" and not(v.editing) and flow.inflight == NoCheck
       and not(flow.stopped) and flow.autoAsks < autoAskLimit
+      and (not(v.hidden) or (target == Creation and flow.hiddenAsks < hiddenAskLimit))
     else origin == OwnerCheck and by == v.owner and flow.inflight != OwnerCheck)
 pure def ask(v: OwnerVault, target: Target, origin: Origin, by: int): OwnerVault =
   val flow = flowOf(v, target)
-  withFlow(target, { ...flow, inflight: origin, autoAsks: flow.autoAsks + (if (origin == AutoCheck) 1 else 0) }, v)
+  val background = origin == AutoCheck and v.hidden
+  withFlow(target, { ...flow, inflight: origin, autoAsks: flow.autoAsks + (if (origin == AutoCheck and not(background)) 1 else 0),
+    hiddenAsks: flow.hiddenAsks + (if (background) 1 else 0) }, v)
+pure def canSetTabHidden(v: OwnerVault, hidden: bool, by: int): bool = by == tab and hidden != v.hidden
+pure def setTabHidden(v: OwnerVault, hidden: bool, by: int): OwnerVault = { ...v, hidden: hidden }
 ```
 
 ### Only a finalized matching result registers or counts, and failures keep the saved request
@@ -216,6 +235,8 @@ pure def alwaysSignedOutIsIdle(v: OwnerVault): bool = v.owner == 0 implies
 pure def alwaysAttemptsFresh(v: OwnerVault): bool = (v.creation.slot.identity == "" or v.used.includes(v.creation.slot.identity))
   and (v.transfer.slot.identity == "" or v.used.includes(v.transfer.slot.identity))
 pure def alwaysNoAutoCheckWhileEditing(v: OwnerVault): bool = v.editing implies v.creation.inflight != AutoCheck
+pure def alwaysBackgroundAsksWithinLimit(v: OwnerVault): bool = v.creation.hiddenAsks >= 0
+  and v.creation.hiddenAsks <= hiddenAskLimit and v.transfer.hiddenAsks == 0
 pure def stepOwnerCheckNeverRetired(before: OwnerVault, after: OwnerVault): bool =
   not(before.creation.inflight == OwnerCheck and after.creation.inflight == AutoCheck)
   and not(before.transfer.inflight == OwnerCheck and after.transfer.inflight == AutoCheck)
@@ -231,17 +252,20 @@ pure def sometimesUnclearResumed(v: OwnerVault): bool = v.creation.phase == Uncl
 pure def sometimesOtherAccountSeesNothing(v: OwnerVault): bool = v.owner > 0 and v.creation.phase == Idle
   and v.creation.slot != WA::noAttempt and v.creation.slotOwner != v.owner
 pure def sometimesWithdrawalRefused(v: OwnerVault): bool = v.notice == WithdrawalRefused
+pure def sometimesLockedFundsRefused(v: OwnerVault): bool = v.notice == LockedFundsRefused
+pure def sometimesRegisteredFromBackgroundTab(v: OwnerVault): bool = v.creation.phase == Done and v.creation.hiddenAsks > 0
 pure def sometimesReceived(v: OwnerVault): bool = v.notice == Received and v.transfer.phase == Sent
 pure def sometimesCounted(v: OwnerVault): bool = v.transfer.phase == Done
 pure def sometimesTimerStopped(v: OwnerVault): bool = v.creation.stopped and v.creation.phase == Sent
 pure def sometimesStorageBlocked(v: OwnerVault): bool = v.notice == StorageBlocked
 pure def sometimesLateReply(v: OwnerVault): bool = v.lateReplies > 0
 pure val accountValues = Set(1, 2)
-pure val byValues = Set(1, 2, server, adapter, timer)
+pure val byValues = Set(1, 2, server, adapter, timer, tab)
 pure val lifetimeValues = Set(1, 2)
 pure val identityValues = Set("c1", "c2", "t1")
 pure val hashValues = Set("", "h1")
 pure val candidateValues = Set("h2")
+pure val locksValues = VL::locksValues
 pure val weight_review = 10
 pure val weight_send = 10
 pure val weight_walletReply = 14

@@ -97,13 +97,33 @@ function claimOf(row: SubmissionRow, sent: HistoryRow | undefined, digests: Read
   }
 }
 
-export function copyOf(facts: Pick<AdvisoryFacts, "ghsa" | "createdAt" | "evidenceDigest">): Copy {
-  return { ghsa: ghsaRank(facts.ghsa), repository: 1, author: 1, marker: 1, createdAtMs: millisOf(facts.createdAt), digest: facts.evidenceDigest }
+type BoundFacts = Pick<AdvisoryFacts, "ghsa" | "createdAt" | "evidenceDigest" | "markerFound">
+
+const bindingKinds: ReadonlySet<string> = new Set(["created", "reconcile-matched", "duplicate-advisories"])
+
+export function copyOf(facts: BoundFacts): Copy {
+  return { ghsa: ghsaRank(facts.ghsa), repository: 1, author: 1, marker: facts.markerFound ? 1 : 2, createdAtMs: millisOf(facts.createdAt), digest: facts.evidenceDigest }
 }
 
-function canonicalOf(row: SubmissionRow): Copy {
+function boundOf(facts: BoundFacts): BoundFacts {
+  return { ghsa: facts.ghsa, createdAt: facts.createdAt, evidenceDigest: facts.evidenceDigest, markerFound: facts.markerFound }
+}
+
+function isBoundFacts(value: unknown): value is BoundFacts {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const entry = value as Readonly<Record<string, unknown>>
+  return typeof entry.ghsa === "string" && ghsaRank(entry.ghsa) > 0 && typeof entry.createdAt === "string" && typeof entry.evidenceDigest === "string" && typeof entry.markerFound === "boolean"
+}
+
+function bindingCopiesOf(history: ReadonlyArray<HistoryRow>): ReadonlyArray<Copy> {
+  const listed = detailOf(history.findLast((entry) => bindingKinds.has(entry.kind))).copies
+  return Array.isArray(listed) ? listed.flatMap((entry) => isBoundFacts(entry) ? [copyOf(entry)] : []) : []
+}
+
+function canonicalOf(row: SubmissionRow, bound: ReadonlyArray<Copy>): Copy {
   if (row.advisory_ghsa === null || row.github_created_at === null) return noCopy
-  return copyOf({ ghsa: row.advisory_ghsa, createdAt: row.github_created_at, evidenceDigest: row.evidence_digest ?? "" })
+  const rank = ghsaRank(row.advisory_ghsa)
+  return bound.find((copy) => copy.ghsa === rank) ?? copyOf({ ghsa: row.advisory_ghsa, createdAt: row.github_created_at, evidenceDigest: row.evidence_digest ?? "", markerFound: true })
 }
 
 function duplicatesOf(history: ReadonlyArray<HistoryRow>) {
@@ -111,11 +131,18 @@ function duplicatesOf(history: ReadonlyArray<HistoryRow>) {
   return Array.isArray(listed) ? listed.flatMap((ghsa) => typeof ghsa === "string" && ghsaRank(ghsa) > 0 ? [ghsaRank(ghsa)] : []) : []
 }
 
-export function forwardingOf(row: SubmissionRow, history: ReadonlyArray<HistoryRow>, digests: ReadonlyArray<string>, volatile: Volatile): unknown {
+function receiptDigestOf(row: SubmissionRow, history: ReadonlyArray<HistoryRow>) {
+  const recorded = detailOf(history.findLast((entry) => entry.kind === "github-linked")).receiptDigest
+  return typeof recorded === "string" && recorded !== "" ? recorded : row.evidence_digest ?? ""
+}
+
+export function forwardingOf(row: SubmissionRow, history: ReadonlyArray<HistoryRow>, digests: ReadonlyArray<string>, volatile: Volatile): Forwarding | undefined {
   const phase = phases[row.state]
   if (phase === undefined || row.origin !== "slop") return undefined
   const sends = history.filter((entry) => entry.kind === "send")
   const last = history.at(-1)
+  const bound = bindingCopiesOf(history)
+  const canonical = canonicalOf(row, bound)
   return {
     phase,
     failure: failureOf(row),
@@ -130,10 +157,11 @@ export function forwardingOf(row: SubmissionRow, history: ReadonlyArray<HistoryR
     activeClaim: claimOf(row, sends.at(-1), digests),
     readyClaims: [...volatile.readyClaims],
     postedRevisions: [...volatile.postedRevisions],
-    canonical: canonicalOf(row),
+    canonical,
+    bindingCopies: bound.length > 0 ? [...bound] : canonical.ghsa > 0 ? [canonical] : [],
     duplicateGhsas: duplicatesOf(history),
     contactsPending: phase !== "ReceiptVerified" && history.some((entry) => entry.kind === "contacts-unavailable"),
-    receiptDigest: phase === "ReceiptVerified" ? row.evidence_digest ?? "" : "",
+    receiptDigest: phase === "ReceiptVerified" ? receiptDigestOf(row, history) : "",
     receiptReplyLost: volatile.receiptReplyLost,
     retryWithoutCopy: phase === "Draft" && (last?.kind === "rate-limited" || last?.kind === "reconcile-empty"),
   }
@@ -190,21 +218,22 @@ export function claimTransition(actorGithubId: string, claim: { readonly attempt
 export function linkedTransition(caseId: string, facts: AdvisoryFacts, projectId: string, reporterGithubId: string, at: string): Transition {
   return {
     state: "receipt-verified",
-    set: { case_id: caseId, advisory_ghsa: facts.ghsa, github_created_at: facts.createdAt, evidence_digest: facts.evidenceDigest },
+    set: { case_id: caseId },
     kind: "github-linked",
-    detail: { caseId, advisory: facts.ghsa },
+    detail: { caseId, advisory: facts.ghsa, createdAt: facts.createdAt, receiptDigest: facts.evidenceDigest },
     actorGithubId: reporterGithubId,
     at,
     guard: sql`NOT EXISTS (SELECT 1 FROM security_cases WHERE project_id=${projectId} AND advisory_ghsa=${facts.ghsa} AND submission_state='verified' AND id<>${caseId})`,
   }
 }
 
-export function boundTransition(chosen: AdvisoryFacts, duplicates: ReadonlyArray<string>, single: string, actorGithubId: string | null, at: string): Transition {
+export function boundTransition(chosen: AdvisoryFacts, copies: ReadonlyArray<AdvisoryFacts>, duplicates: ReadonlyArray<string>, single: string, actorGithubId: string | null, at: string): Transition {
+  const bound = copies.map(boundOf)
   return {
     state: "submitted",
     set: { advisory_ghsa: chosen.ghsa, github_created_at: chosen.createdAt, evidence_digest: chosen.evidenceDigest },
     kind: duplicates.length > 0 ? "duplicate-advisories" : single,
-    detail: duplicates.length > 0 ? { advisory: chosen.ghsa, ghsas: [...duplicates] } : { advisory: chosen.ghsa },
+    detail: duplicates.length > 0 ? { advisory: chosen.ghsa, ghsas: [...duplicates], copies: bound } : { advisory: chosen.ghsa, copies: bound },
     actorGithubId,
     at,
   }
@@ -224,8 +253,8 @@ export function receiptTransition(row: SubmissionRow, before: Forwarding, next: 
   return stayTransition(row, "contacts-unavailable", null, at)
 }
 
-export function reconcileTransition(row: SubmissionRow, next: Forwarding, complete: boolean, chosen: AdvisoryFacts | undefined, duplicates: ReadonlyArray<string>, actorGithubId: string, at: string): Transition {
-  if (next.phase === "Submitted" && chosen !== undefined) return boundTransition(chosen, duplicates, "reconcile-matched", actorGithubId, at)
+export function reconcileTransition(row: SubmissionRow, next: Forwarding, complete: boolean, chosen: AdvisoryFacts | undefined, copies: ReadonlyArray<AdvisoryFacts>, duplicates: ReadonlyArray<string>, actorGithubId: string, at: string): Transition {
+  if (next.phase === "Submitted" && chosen !== undefined) return boundTransition(chosen, copies, duplicates, "reconcile-matched", actorGithubId, at)
   if (next.phase === "Draft") return { state: "draft", kind: "reconcile-empty", actorGithubId, at }
   return stayTransition(row, complete ? "reconcile-too-early" : "reconcile-inconclusive", actorGithubId, at)
 }
@@ -290,13 +319,13 @@ export effect function forwarded(current: Loaded, event: Event, shell: Shell, le
     case "recordCreated": {
       if (!canRecordCreated(f, event.claim, event.accepted, event.listing)) return try stepped(current, event, ledger)
       const next = recordCreated(f, event.claim, event.accepted, event.listing)
-      return try stepped(current, event, ledger, boundTransition(shell.factsOf(next.canonical), next.duplicateGhsas.map(ghsaOfRank), "created", null, at))
+      return try stepped(current, event, ledger, boundTransition(shell.factsOf(next.canonical), next.bindingCopies.map(shell.factsOf), next.duplicateGhsas.map(ghsaOfRank), "created", null, at))
     }
     case "reconcile": {
       if (!canReconcile(f, event.request, event.listing, event.nowMs)) return try stepped(current, event, ledger)
       const next = reconcile(f, event.request, event.listing, event.nowMs)
       const chosen = next.canonical.ghsa > 0 ? shell.factsOf(next.canonical) : undefined
-      return try stepped(current, event, ledger, reconcileTransition(current.row, next, event.listing.complete, chosen, next.duplicateGhsas.map(ghsaOfRank), shell.actorGithubId, at))
+      return try stepped(current, event, ledger, reconcileTransition(current.row, next, event.listing.complete, chosen, next.bindingCopies.map(shell.factsOf), next.duplicateGhsas.map(ghsaOfRank), shell.actorGithubId, at))
     }
     case "readReceipt": {
       if (!canReadReceipt(f, event.request, event.advisoryRead)) return try stepped(current, event, ledger)

@@ -30,9 +30,11 @@ schema RecordRequest { journal: string }
 schema RecordAnswer { outcome: string; message: string }
 schema LatestBatch { generated_at: string; coverage: string }
 schema Payload { payload: string }
+schema PublicAnswer { journal: string | null }
 
 const seedRoute = route({ method: "POST", path: "/api/v1/test/points/corrections/seed", access: "public", limitKib: 256, request: SeedRequest, answer: SeedAnswer, rejected: "rejected", cache: "no-store" })
 const planRoute = route({ method: "POST", path: "/api/v1/test/points/corrections/plan", access: "public", limitKib: 512, request: PlanRequest, answer: PlanAnswer, rejected: "rejected", cache: "no-store" })
+const publicRoute = route({ method: "GET", path: "/api/v1/test/points/corrections/public", access: "public", limitKib: 1, request: undefined, answer: PublicAnswer, rejected: "rejected", cache: "no-store" })
 const recordRoute = route({ method: "POST", path: "/api/v1/test/points/corrections/record", access: "public", limitKib: 256, request: RecordRequest, answer: RecordAnswer, rejected: "rejected", cache: "no-store" })
 
 effect function seeded(text: string) {
@@ -66,6 +68,11 @@ effect function publicJournal() {
   return try journalFile(`{"schemaVersion":"1","ruleVersion":"slop-points-v1","generatedAt":${JSON.stringify(batch.generated_at)},"coverage":${batch.coverage},"revisions":[${revisions}]}\n`)
 }
 
+effect function published() {
+  const journal = try publicJournal()
+  return { journal: journal === null ? null : `${journalText(journal)}\n` }
+}
+
 effect function recorded(text: string) {
   const outcome = recordCorrection(try journalFile(text), { verifyAuthority: () => Effect.void, loadPublic: publicJournal, wait: () => Effect.void }) catch effect (error) => {
     return error instanceof CorrectionRefused ? { outcome: "refused", message: error.message } : { outcome: "failed", message: String(error) }
@@ -75,5 +82,5 @@ effect function recorded(text: string) {
 
 export default worker({
   services: (env: Env) => Layer.provideMerge(Layer.mergeAll(CallerLive, accountSettings(env)), Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))),
-  routes: Layer.mergeAll(handle(seedRoute, (input) => seeded(input.body.journal)), handle(planRoute, (input) => planned(input.body)), handle(recordRoute, (input) => recorded(input.body.journal))),
+  routes: Layer.mergeAll(handle(seedRoute, (input) => seeded(input.body.journal)), handle(planRoute, (input) => planned(input.body)), handle(recordRoute, (input) => recorded(input.body.journal)), handle(publicRoute, () => published())),
 })

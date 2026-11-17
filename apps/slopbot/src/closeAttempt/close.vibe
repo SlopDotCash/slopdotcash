@@ -1,0 +1,338 @@
+// spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation's recheck or a later one"; spec/slopbot/closeAttempt.md, "A close that a later recheck or capacity refuses is labeled instead and never retried for this revision"; spec/slopbot/closeAttempt.md, "Only GitHub's own close event confirms and only a definitive refusal releases"; spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+import { millisOf } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { D1, sql } from "@repo/platform/d1"
+import { Registry } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
+import type { Admission } from "../../gen/slopbot__closeCapacity.effect.vibe"
+import { type Candidate, type LeaseView, type ProjectFence, type RefusalReason, canAddModeratorLabel, canBlockClose, canConfirmCloseComment, canLabelBlocked, canNotifyModerator, mayReserve, noFence } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import { type GateObservation, noParticipation } from "../../gen/slopbot__closure.effect.vibe"
+import { type CloseFence, CloseAttemptMissing, confirmSlot, rejectSlot, reserveSlot } from "../closeCapacity/store.vibe"
+import { type CloseRequest, closeComment, closeStillAllowed } from "../closure/decide.vibe"
+import { type Account, type ReviewContext, type ReviewTarget, reviewRowOf } from "../context/load.vibe"
+import type { ReviewJob } from "../jobs/job.vibe"
+import { ReviewBusy } from "../jobs/retry.vibe"
+import { type ReviewClaim, ReviewLeaseLost, assertReviewClaim, claimReview, finishReview, heldLease } from "../lease/store.vibe"
+import type { FinishDetail } from "../lease/writes.vibe"
+import { recordAction } from "../publish/actions.vibe"
+import { type CommentTarget, type Reviewed, type VerifiedDefect, commentBody, upsertComment } from "../publish/comment.vibe"
+import { addLabels, categoryLabel } from "../publish/labels.vibe"
+import type { CallRecord } from "../route/route.vibe"
+import { type ReviewSettings, type Session, commentTargetOf, completeReview, failReview, reviewDetails, sameEvidence, scopeOf, settleFailure } from "../review/run.vibe"
+import type { Verdict } from "../review/verdict.vibe"
+import { type ItemTarget, githubClosedAt, requestClose } from "./github.vibe"
+import { activeScamPenalty, moderatorLabel, moderatorRecipients, noticeScamReview } from "./moderators.vibe"
+import { activePenalty, confirmedReopenCoverage, confirmedReopenFor, penaltyNotice, recordPenaltyStatements, reversePenalty } from "./penalty.vibe"
+import { type ReopenSubject, observeConfirmedReopens, reconcileConfirmedReopen } from "./reopen.vibe"
+import { type AttemptRecord, attemptByKey, attemptState, decidedState, nextRecheck, openAttempt, recoveryJson, restoredAttempt, sendAttempt, storedOf } from "./store.vibe"
+
+export error CloseUnconfirmed { itemNodeId: string; status: number }
+export error CloseRefused { itemNodeId: string; status: number }
+export error CloseTimeUnavailable { itemNodeId: string }
+export error CloseNotReserved { admission: string }
+
+export interface Reconciling {
+  readonly job: ReviewJob
+  readonly target: ReviewTarget
+  readonly context: ReviewContext
+  readonly quality: ReadonlyArray<VerifiedDefect>
+  readonly close: { readonly attempt_id: string; readonly review_key: string; readonly recovery_json: string; readonly penalty_eligible: number; readonly project_id: string }
+}
+
+interface Closing {
+  readonly record: AttemptRecord
+  readonly session: Session | undefined
+  readonly claim: ReviewClaim
+  readonly subject: ReopenSubject
+  readonly target: CommentTarget
+  readonly job: ReviewJob
+  readonly reviewKey: string
+  readonly projectId: string
+  readonly author: typeof Account.Type
+  readonly verdict: Verdict
+  readonly triage: CallRecord | undefined
+  readonly confirm: CallRecord | undefined
+  readonly reviewed: Reviewed
+  readonly penaltyEligible: boolean
+  readonly labels: ReadonlyArray<string>
+}
+
+interface Fenced {
+  readonly model: ProjectFence
+  readonly capacity: CloseFence
+}
+
+const changedBeforeClosure = "source, policy, evidence or eligibility changed before closure"
+const authorityChanged = "closure authority changed, the daily cap was reached, or a close is already pending"
+const lateReversed = "maintainer reopened the reviewed revision; late close reversed"
+const lateKept = "maintainer reopened the reviewed revision; later state kept"
+const reconcileFailed = "Close reconciliation did not finish"
+const busySeconds = 60
+
+const refusals: Readonly<Record<Exclude<Admission, "Admitted" | "InvalidRequest">, RefusalReason>> = {
+  CapReached: "CapReached",
+  BreakerTripped: "BreakerTripped",
+  ItemPending: "ItemPending",
+  AlreadyClosed: "ItemPending",
+  FenceChanged: "FenceChanged",
+  LeaseLost: "LeaseLost",
+}
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function itemOf(job: ReviewJob): ItemTarget {
+  return { repositoryId: job.repositoryId, itemKind: job.itemKind, number: job.number }
+}
+
+effect function fenceOf(projectId: string) {
+  const view = try (try Registry).project(projectId)
+  const generation = (try (try Enforcement).project(projectId)).enforcementGeneration
+  if (view === undefined) return { model: { ...noFence, enforcementPosition: generation }, capacity: { projectId, revision: 0, manifestSha256: "", enforcementGeneration: generation } } satisfies Fenced
+  return {
+    model: { project: 1, projectRevision: view.revision, manifestDigest: view.manifestSha256, enforcementPosition: generation },
+    capacity: { projectId, revision: view.revision, manifestSha256: view.manifestSha256, enforcementGeneration: generation },
+  } satisfies Fenced
+}
+
+effect function leaseOf(claim: ReviewClaim) {
+  const { lease, token } = try heldLease(claim)
+  return { token, running: lease.status === "Running", expiresAt: lease.expires, observedAt: lease.now } satisfies LeaseView
+}
+
+effect function recheckGate(request: CloseRequest, record: AttemptRecord) {
+  const decided = request.closure.gate
+  const allowed = try closeStillAllowed(request)
+  const seq = try nextRecheck(record)
+  if (allowed) return { ...decided, seq } satisfies GateObservation
+  const usable = try sameEvidence(request.session)
+  return { ...decided, seq, source: { ...decided.source, source: usable ? "SourceCurrent" : "SourceSuperseded" }, participation: noParticipation } satisfies GateObservation
+}
+
+effect function finished(closing: Closing, detail: FinishDetail) {
+  if (closing.session !== undefined) return try completeReview(closing.session, detail, closing.triage !== undefined)
+  return try finishReview(closing.claim, "completed", detail)
+}
+
+effect function labeledInstead(request: CloseRequest, record: AttemptRecord, reason: string) {
+  const { session, category, verdict } = request
+  if (!canLabelBlocked(try attemptState(record))) {
+    try failReview(session, { verdict, action: "none", skipReason: reason })
+    return reason
+  }
+  const target = commentTargetOf(session)
+  const action = { reviewKey: session.reviewKey, repositoryId: session.target.repositoryId, itemNodeId: session.context.issue.node_id, detail: category }
+  try upsertComment(target, closeComment(request, reason), session.attempt.claim, scopeOf(session))
+  try recordAction({ ...action, action: "comment" })
+  try assertReviewClaim(session.attempt.claim)
+  try addLabels(target, [categoryLabel(category)])
+  try sendAttempt(record, { type: "labelBlocked" })
+  try recordAction({ ...action, action: "label" })
+  try completeReview(session, { verdict, action: "label" }, request.triage.call !== undefined)
+  return `labeled (${category})`
+}
+
+effect function notifyModerators(closing: Closing, closedAt: string) {
+  const state = try attemptState(closing.record)
+  const recipients = (try moderatorRecipients(closing.author.id)).filter((recipient) => canNotifyModerator(state, Number(recipient)))
+  try noticeScamReview({
+    owner: closing.job.owner,
+    repo: closing.job.repo,
+    itemKind: closing.job.itemKind,
+    number: closing.job.number,
+    itemNodeId: closing.subject.itemNodeId,
+    authorLogin: closing.author.login,
+    authorId: closing.author.id,
+    projectId: closing.projectId,
+    sourceAt: closedAt,
+  }, recipients)
+  for (const recipient of recipients) try sendAttempt(closing.record, { type: "notifyModerator", recipient: Number(recipient) })
+}
+
+effect function lateClose(closing: Closing) {
+  try observeConfirmedReopens(closing.record)
+  const restored = try reconcileConfirmedReopen(closing.subject, closing.record)
+  try finished(closing, { verdict: closing.verdict, action: "close" })
+  return restored ? lateReversed : lateKept
+}
+
+effect function afterConfirm(closing: Closing, closedAt: string) {
+  const { subject, record } = closing
+  if (try confirmedReopenFor(subject.itemNodeId, subject.revision)) return try lateClose(closing)
+  const penalty = closing.penaltyEligible ? try activePenalty(subject.itemNodeId) : undefined
+  const late = try confirmedReopenCoverage(subject.itemNodeId, subject.revision)
+  if (late !== undefined) {
+    try reversePenalty(subject.itemNodeId, "maintainer_reopen", late)
+    return try lateClose(closing)
+  }
+  if (canConfirmCloseComment(try attemptState(record))) {
+    const body = commentBody({ verdict: closing.verdict, action: "close", blockedClose: null, reviewed: closing.reviewed, triage: closing.triage, confirm: closing.confirm, ...penalty === undefined ? {} : { penalty: penaltyNotice(penalty) } })
+    try upsertComment(closing.target, body, closing.claim, "contributor")
+    try (try D1).run(sql`UPDATE slopbot_close_attempts SET comment_confirmed = 1 WHERE review_key = ${closing.reviewKey} AND state = 'confirmed'`)
+    try sendAttempt(record, { type: "confirmCloseComment" })
+  }
+  if (canAddModeratorLabel(try attemptState(record))) {
+    if (!closing.labels.includes(moderatorLabel)) try addLabels(closing.target, [moderatorLabel])
+    try sendAttempt(record, { type: "addModeratorLabel" })
+  }
+  try notifyModerators(closing, closedAt)
+  try finished(closing, { verdict: closing.verdict, action: "close" })
+  return `closed (${closing.verdict.category})`
+}
+
+effect function confirmed(closing: Closing, attemptKey: string, closedAt: string) {
+  const { subject } = closing
+  const also = closing.penaltyEligible
+    ? try recordPenaltyStatements({ itemNodeId: subject.itemNodeId, repositoryId: subject.item.repositoryId, projectId: closing.projectId, authorId: closing.author.id, revision: subject.revision, category: closing.verdict.category, reviewKey: closing.reviewKey, closedAt })
+    : []
+  try confirmSlot({ repositoryId: subject.item.repositoryId, itemNodeId: subject.itemNodeId, reviewKey: closing.reviewKey, attemptKey, revision: subject.revision, closedAt, also })
+  if ((try attemptByKey(attemptKey))?.state !== "confirmed") throw new CloseUnconfirmed({ itemNodeId: subject.itemNodeId, status: 200 })
+  try sendAttempt(closing.record, { type: "confirmClose", closeEvent: { itemNode: subject.itemNodeId, revision: subject.revision, closedBy: "SlopbotApp", closedAt: seconds(closedAt) } })
+  return try afterConfirm(closing, closedAt)
+}
+
+function closingOf(request: CloseRequest, record: AttemptRecord): Closing {
+  const { session } = request
+  return {
+    record,
+    session,
+    claim: session.attempt.claim,
+    subject: {
+      ref: session.ref,
+      projectId: session.target.projectId,
+      installationId: session.target.installationId,
+      item: itemOf(session.job),
+      itemNodeId: session.context.issue.node_id,
+      revision: session.context.revision,
+      appUserId: session.settings.appUserId,
+    },
+    target: commentTargetOf(session),
+    job: session.job,
+    reviewKey: session.reviewKey,
+    projectId: session.target.projectId,
+    author: session.context.issue.user,
+    verdict: request.verdict,
+    triage: request.triage.call,
+    confirm: request.confirm.call,
+    reviewed: reviewDetails(session),
+    penaltyEligible: request.penaltyEligible,
+    labels: (session.context.issue.labels ?? []).map((label) => label.name),
+  }
+}
+
+effect function closing(request: CloseRequest) {
+  const { session, closure } = request
+  const identity = closure.identity
+  const candidate: Candidate = { identity, triage: closure.triage, confirm: closure.confirm, decidedSeq: closure.gate.seq }
+  const record = try openAttempt(decidedState(candidate, closure.gate))
+  const fence = try fenceOf(session.target.projectId)
+  const gate = try recheckGate(request, record)
+  const lease = try leaseOf(session.attempt.claim)
+  try sendAttempt(record, { type: "observeRecheck", recheck: { gate, fence: fence.model, lease } })
+  const rechecked = try attemptState(record)
+  if (!mayReserve(rechecked)) {
+    if (!canBlockClose(rechecked)) throw new ReviewLeaseLost({ reviewKey: session.reviewKey })
+    try sendAttempt(record, { type: "blockClose" })
+    return try labeledInstead(request, record, changedBeforeClosure)
+  }
+  const reserved = try reserveSlot({
+    repositoryId: session.target.repositoryId,
+    repositoryPath: `${session.job.owner}/${session.job.repo}`,
+    itemNodeId: identity.itemNode,
+    reviewKey: session.reviewKey,
+    claimToken: session.attempt.claim.token,
+    authorId: identity.author,
+    revision: identity.revision,
+    dailyCap: request.dailyCap,
+    penaltyEligible: request.penaltyEligible,
+    recovery: recoveryJson(request.verdict, request.triage.call, request.confirm.call, candidate, fence.model),
+    fence: fence.capacity,
+  })
+  if (reserved.kind === "refused") {
+    if (reserved.admission === "InvalidRequest") throw new CloseNotReserved({ admission: reserved.admission })
+    const reason = refusals[reserved.admission]
+    if (reason === "LeaseLost") throw new ReviewLeaseLost({ reviewKey: session.reviewKey })
+    try sendAttempt(record, { type: "blockForCapacity", capacityRefusal: { repository: identity.repository, itemNode: identity.itemNode, revision: identity.revision, observedSeq: gate.seq, leaseToken: lease.token, reason } })
+    return try labeledInstead(request, record, authorityChanged)
+  }
+  try sendAttempt(record, { type: "reserveClose", grant: { repository: identity.repository, itemNode: identity.itemNode, revision: identity.revision, attemptId: reserved.attemptId, fence: fence.model, leaseToken: lease.token, observedSeq: gate.seq } })
+  try sendAttempt(record, { type: "requestClose" })
+  const answer = try requestClose(itemOf(session.job))
+  if (answer.kind === "refused") {
+    try rejectSlot({ repositoryId: session.target.repositoryId, itemNodeId: identity.itemNode, reviewKey: session.reviewKey, attemptKey: reserved.attemptKey, status: answer.status })
+    try sendAttempt(record, { type: "rejectClose", githubRefusal: { attemptId: reserved.attemptId, status: answer.status } })
+    throw new CloseRefused({ itemNodeId: identity.itemNode, status: answer.status })
+  }
+  if (answer.kind === "unknown") throw new CloseUnconfirmed({ itemNodeId: identity.itemNode, status: answer.status })
+  return try confirmed(closingOf(request, record), reserved.attemptKey, answer.closedAt)
+}
+
+export effect function closeCandidate(request: CloseRequest) {
+  const result = closing(request) catch effect (error) => {
+    try settleFailure(request.session, error)
+    throw error
+  }
+  return result
+}
+
+effect function reconciled(closing: Closing, state: string, attemptKey: string, closedAt: string) {
+  if (state === "pending") return try confirmed(closing, attemptKey, closedAt)
+  return try afterConfirm(closing, closedAt)
+}
+
+export effect function reconcileClose(reconciling: Reconciling, settings: ReviewSettings) {
+  const { job, target, context, close } = reconciling
+  const { issue } = context
+  const closedAt = try githubClosedAt(issue.closed_at)
+  if (closedAt === undefined) throw new CloseTimeUnavailable({ itemNodeId: issue.node_id })
+  const row = try attemptByKey(close.attempt_id)
+  const stored = row === undefined ? undefined : storedOf(row)
+  if (stored === undefined) throw new CloseAttemptMissing({ attemptKey: close.attempt_id })
+  const labels = (issue.labels ?? []).map((label) => label.name)
+  const recovered = try restoredAttempt(close.recovery_json, stored, labels.includes(moderatorLabel))
+  const claimed = try claimReview(reviewRowOf(target, context, close.review_key), { token: try randomId(), route: "MayCloseReview" })
+  if (claimed.kind === "completed") return "review already completed"
+  if (claimed.kind === "limited") throw new ReviewBusy({ remainingSeconds: busySeconds })
+  const appUser = Number(settings.appUserId)
+  const ref = { owner: job.owner, repo: job.repo, repositoryId: job.repositoryId }
+  const closing: Closing = {
+    record: try openAttempt(recovered.state),
+    session: undefined,
+    claim: claimed.claim,
+    subject: { ref, projectId: target.projectId, installationId: job.installationId, item: itemOf(job), itemNodeId: issue.node_id, revision: context.revision, appUserId: settings.appUserId },
+    target: { ref, projectId: target.projectId, number: job.number, itemNodeId: issue.node_id, appUser: Number.isSafeInteger(appUser) && appUser > 0 ? appUser : 0 },
+    job,
+    reviewKey: close.review_key,
+    projectId: close.project_id,
+    author: issue.user,
+    verdict: recovered.verdict,
+    triage: recovered.triage,
+    confirm: recovered.confirm,
+    reviewed: { revision: context.revision, policyDigest: context.policyDigest, limitations: context.limitations, scope: "contributor", defects: reconciling.quality },
+    penaltyEligible: close.penalty_eligible === 1,
+    labels,
+  }
+  const result = reconciled(closing, stored.state, close.attempt_id, row?.closed_at ?? closedAt) catch effect (error) => {
+    finishReview(claimed.claim, "failed", { skipReason: reconcileFailed }) catch () => undefined
+    throw error
+  }
+  return result
+}
+
+export effect function closedItemNotices(job: ReviewJob, context: ReviewContext) {
+  const { issue } = context
+  const penalty = try activePenalty(issue.node_id)
+  if (penalty?.moderator_review !== 1) return
+  try noticeScamReview({
+    owner: job.owner,
+    repo: job.repo,
+    itemKind: job.itemKind,
+    number: job.number,
+    itemNodeId: issue.node_id,
+    authorLogin: issue.user.login,
+    authorId: issue.user.id,
+    projectId: penalty.project_id,
+    sourceAt: penalty.recorded_at,
+  }, try moderatorRecipients(issue.user.id), activeScamPenalty(issue.node_id))
+}

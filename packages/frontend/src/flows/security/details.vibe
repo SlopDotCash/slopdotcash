@@ -1,0 +1,40 @@
+// spec/frontend/composition.md, "Each mounted report must belong to the authorized current account lifetime"; spec/frontend/reportDetails.md, "Private report IDs scope both heading references"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"
+import type { HeadingRef } from "../../../gen/frontend__reportDetails.ts"
+import { cardHeading, summaryHeading } from "../../../gen/frontend__reportDetails.effect.vibe"
+import { BrowserSession, compositionState } from "../../session/browserSession.vibe"
+import { modelNumber } from "./private.vibe"
+
+export interface DetailStamp {
+  readonly actorId: number
+  readonly epoch: number
+}
+
+export interface DetailHeadings {
+  readonly card: string
+  readonly summary: string
+}
+
+const families: Readonly<Record<HeadingRef["kind"], string>> = { CardHeading: "private-report-card", SummaryHeading: "private-report-summary" }
+
+function headingId(ref: HeadingRef) {
+  return `${families[ref.kind]}-${ref.submission}`
+}
+
+export effect function detailStamp() {
+  const navigation = (try compositionState()).navigation
+  return { actorId: navigation.actor, epoch: navigation.epoch } satisfies DetailStamp
+}
+
+export effect function reportHeadings(submissionId: string) {
+  const submission = try modelNumber(submissionId)
+  return { card: headingId(cardHeading(submission)), summary: headingId(summaryHeading(submission)) } satisfies DetailHeadings
+}
+
+export effect function openReportDetail(stamp: DetailStamp, submissionId: string, caseReadAuthorized: boolean) {
+  const submission = try modelNumber(submissionId)
+  return try (try BrowserSession).compose({ type: "openDetail", actorId: stamp.actorId, requestEpoch: stamp.epoch, submission, caseReadAuthorized })
+}
+
+export effect function closeReportDetail(submissionId: string) {
+  return try (try BrowserSession).compose({ type: "closeDetail", submission: try modelNumber(submissionId) })
+}

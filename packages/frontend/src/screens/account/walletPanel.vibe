@@ -1,0 +1,164 @@
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"
+import { type PayoutsRead, loadPayouts } from "../../flows/account/payouts.vibe"
+import { Deployment } from "../../platform/config.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session } from "../../session/session.vibe"
+import { type Family, WalletChoice } from "../../wallets/core/discovery.vibe"
+import { connectEvm } from "../../wallets/core/evm.vibe"
+import { type RegistrationError, type SavedWallet, type WalletSigner, checkActor, evmSigner, familyChains, keptMessage, registerFamily, replacedWallet, solanaSigner } from "../../wallets/core/registration.vibe"
+import { connectSolana } from "../../wallets/core/solana.vibe"
+
+export type PaymentsAccount = Extract<PayoutsRead, { readonly kind: "ready" }>["account"]
+
+export const walletFailedMessage = "Wallet confirmation failed. Please retry."
+
+export interface WalletChange {
+  readonly family: Family
+  readonly saved: string
+  readonly address: string
+}
+
+export interface WalletPanel {
+  readonly account: PaymentsAccount | undefined
+  readonly loading: boolean
+  readonly signedOut: boolean
+  readonly loadError: string
+  readonly error: string
+  readonly message: string
+  readonly busy: Family | undefined
+  readonly change: WalletChange | undefined
+}
+
+export const walletPanelOpened: WalletPanel = { account: undefined, loading: true, signedOut: false, loadError: "", error: "", message: "", busy: undefined, change: undefined }
+
+export service PayoutWallets {
+  readonly changes: Stream.Stream<WalletPanel>
+  reload(): void!!
+  connect(offer: number, family: Family): void!!
+  confirmChange(): void!!
+  keepSaved(): void!!
+}
+
+type Needs = Session | BrowserSession | Deployment | WalletChoice | HttpClient.HttpClient
+
+export const payoutWallets = Layer.effect(PayoutWallets, effect {
+  const browser = try BrowserSession
+  const context = try Effect.context<Needs>()
+  const scope = try Scope.Scope
+  const shown = try SubscriptionRef.make(walletPanelOpened)
+  let loads = 0
+  let attempts = 0
+  let signer: WalletSigner | undefined = undefined
+
+  effect function update(change: (panel: WalletPanel) => WalletPanel) {
+    try SubscriptionRef.update(shown, change)
+  }
+
+  effect function clearAccount(signedOut: boolean) {
+    loads += 1
+    attempts += 1
+    signer = undefined
+    try update((panel) => ({ ...panel, account: undefined, loading: false, change: undefined, message: "", busy: undefined, signedOut }))
+  }
+
+  effect function load(): void!!Needs {
+    loads += 1
+    const mine = loads
+    try update((panel) => ({ ...panel, loading: true, loadError: "" }))
+    const read = try loadPayouts(true)
+    if (mine !== loads) return
+    if (read.kind === "signedOut") return try clearAccount(true)
+    if (read.kind === "failed") {
+      if (read.accountChanged) try clearAccount(false)
+      return try update((panel) => ({ ...panel, loading: false, loadError: read.message }))
+    }
+    const held = (try SubscriptionRef.get(shown)).account
+    if (held !== undefined && held.githubUserId !== read.account.githubUserId) try clearAccount(false)
+    try update((panel) => ({ ...panel, account: read.account, loading: false, signedOut: false }))
+  }
+
+  effect function reload() {
+    fork.in(scope) Effect.provideContext(load(), context)
+  }
+
+  effect function step(family: Family, owner: string, work: (mine: number) => void!RegistrationError!Needs) {
+    attempts += 1
+    const mine = attempts
+    try update((panel) => ({ ...panel, busy: family, error: "", message: "" }))
+    const outcome = effect {
+      try checkActor(owner)
+      if (mine === attempts) try work(mine)
+    } catch (error) => ({ error })
+    if (mine !== attempts) return
+    if (outcome !== undefined) {
+      const failed = outcome.error
+      if (failed._tag === "SignedOut") return try clearAccount(true)
+      if (failed._tag === "AccountChanged") try clearAccount(false)
+      try update((panel) => ({ ...panel, error: failed.message === "" ? walletFailedMessage : failed.message }))
+    }
+    if (mine === attempts) try update((panel) => ({ ...panel, busy: undefined }))
+  }
+
+  effect function registered(chosen: WalletSigner, owner: string, mine: number) {
+    const saved = (try SubscriptionRef.get(shown)).account?.wallets ?? []
+    const outcome = registerFamily(chosen, owner, saved) catch (error) => ({ error })
+    if (mine === attempts) try reload()
+    if ("error" in outcome) throw outcome.error
+    if (mine === attempts) try update((panel) => ({ ...panel, message: outcome.message }))
+  }
+
+  effect function connected(offer: number, family: Family, account: PaymentsAccount, mine: number) {
+    const owner = account.githubUserId
+    const saved = account.wallets.filter((wallet: SavedWallet) => familyChains(family).includes(wallet.chain))
+    const chosen = family === "evm" ? evmSigner(try connectEvm(offer, saved.some((wallet: SavedWallet) => wallet.authorized))) : solanaSigner(try connectSolana(offer))
+    try checkActor(owner)
+    if (mine !== attempts) return
+    const replaced = replacedWallet(family, chosen.address, account.wallets)
+    if (replaced !== undefined) {
+      signer = chosen
+      return try update((panel) => ({ ...panel, change: { family, saved: replaced.address, address: chosen.address } }))
+    }
+    try registered(chosen, owner, mine)
+  }
+
+  effect function connect(offer: number, family: Family) {
+    const panel = try SubscriptionRef.get(shown)
+    const account = panel.account
+    if (account === undefined || panel.busy !== undefined || panel.change !== undefined) return
+    signer = undefined
+    try step(family, account.githubUserId, (mine) => connected(offer, family, account, mine))
+  }
+
+  effect function confirmChange() {
+    const panel = try SubscriptionRef.get(shown)
+    const change = panel.change
+    const chosen = signer
+    const account = panel.account
+    if (change === undefined || chosen === undefined || account === undefined) return
+    signer = undefined
+    try update((shownPanel) => ({ ...shownPanel, change: undefined }))
+    try step(change.family, account.githubUserId, (mine) => registered(chosen, account.githubUserId, mine))
+  }
+
+  effect function keepSaved() {
+    const change = (try SubscriptionRef.get(shown)).change
+    if (change === undefined) return
+    signer = undefined
+    try update((panel) => ({ ...panel, change: undefined, message: keptMessage(change.family) }))
+  }
+
+  try browser.onAccountChange(() => effect {
+    try clearAccount(true)
+    try update((panel) => ({ ...panel, error: "", loadError: "" }))
+    try reload()
+  })
+  try reload()
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    reload,
+    connect: (offer: number, family: Family) => Effect.provideContext(connect(offer, family), context),
+    confirmChange: () => Effect.provideContext(confirmChange(), context),
+    keepSaved,
+  }
+})

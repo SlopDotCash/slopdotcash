@@ -2,7 +2,7 @@
 import type { Journal } from "../kernels/records/canonical.ts"
 import { batchDigest } from "../kernels/records/ids.vibe"
 import { compareCodeUnits } from "../client/snapshot/checks.vibe"
-import { type Completion, type Event, type Imports, type Reconciliation, Machine, canInvalidate, canRelease, find, held, includesSource, initial, machineOver } from "../../gen/points__historicalImport.effect.vibe"
+import { type Completion, type Event, type Imports, type Reconciliation, Machine, canInvalidate, find, held, includesSource, initial, machineOver } from "../../gen/points__historicalImport.effect.vibe"
 
 export error HoldRecordInvalid { id: number; message: string }
 
@@ -57,11 +57,13 @@ export effect function holdsOf(records: ReadonlyArray<ImportRecord>, currentJour
     if (record.completion !== undefined) try recorded(run, record, { type: "complete", id: record.id, c: record.completion }, "Every source of an import is assessed or explicitly held")
     if (record.refused === true) try recorded(run, record, { type: "refuse", id: record.id }, "Only a collecting or assessed import is refused")
     if (record.reconciliation !== undefined) try recorded(run, record, { type: "reconcile", id: record.id, r: record.reconciliation }, "A reconciliation binds checked changes to a journal digest")
-    if (record.released !== true) continue
-    const state = try run.get()
-    if (canRelease(state, record.id, currentJournal)) try run.send({ type: "release", id: record.id, currentJournal })
-    else if (canInvalidate(state, record.id, currentJournal)) try run.send({ type: "invalidate", id: record.id, currentJournal })
-    else throw new HoldRecordInvalid({ id: record.id, message: "Only a reconciled import is released" })
+    const reconciledAt = record.reconciliation?.journalDigest
+    if (record.released === true) {
+      if (reconciledAt === undefined) throw new HoldRecordInvalid({ id: record.id, message: "Only a reconciled import is released" })
+      try recorded(run, record, { type: "release", id: record.id, currentJournal: reconciledAt }, "Only a reconciled import is released")
+    } else if (canInvalidate(try run.get(), record.id, currentJournal)) {
+      try run.send({ type: "invalidate", id: record.id, currentJournal })
+    }
   }
   return { state: try run.get(), sourceNumbers } satisfies Holds
 }

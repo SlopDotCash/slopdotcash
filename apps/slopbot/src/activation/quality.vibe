@@ -1,12 +1,13 @@
 // spec/slopbot/closureActivation.md, "An objective-quality receipt counts only when signed by the configured verifier key under the approved profile, bound to the exact subject and unexpired"; spec/slopbot/closureActivation.md, "Objective closure also needs the qualified profile, a shadow proposal under the current key and the 1 November 2026 effective time"
 import * as Base64 from "effect/encoding/Base64"
-import { isoNow, millisOf } from "@repo/platform/clock"
+import { millisOf } from "@repo/platform/clock"
 import { ed25519Verify, sha256Hex, utf8 } from "@repo/platform/crypto"
-import { D1, rows, sql } from "@repo/platform/d1"
+import { rows, sql } from "@repo/platform/d1"
 import { GitHub } from "@repo/platform/github"
 import { type Activation, type QualityReceipt, type QualityShadow, type QualitySubject, type QualityTrust, type ReceiptKind, objectiveCloseQualified, qualityWindowSeconds, receiptCounts } from "../../gen/slopbot__closureActivation.effect.vibe"
 import { comparisonFileLimit } from "../../gen/slopbot__review.effect.vibe"
 import type { ReviewContext, ReviewTarget } from "../context/load.vibe"
+import { ClosureActivation } from "./config.vibe"
 import type { VerifiedDefect } from "../publish/comment.vibe"
 import type { Verdict } from "../review/verdict.vibe"
 
@@ -15,17 +16,6 @@ export const qualityMarker = "<!-- slopbot:quality-evidence:v1 -->"
 export interface CountedReceipt {
   readonly defect: VerifiedDefect
   readonly receipt: QualityReceipt
-}
-
-export interface ShadowProposal {
-  readonly reviewKey: string
-  readonly repositoryId: number
-  readonly itemNodeId: string
-  readonly revision: string
-  readonly policyDigest: string
-  readonly profile: string
-  readonly verifierKey: string
-  readonly defectId: string
 }
 
 type Fields = Readonly<Record<string, unknown>>
@@ -274,6 +264,13 @@ export effect function qualityEvidence(target: ReviewTarget, context: ReviewCont
   return (try countedReceipts(target, context, trust, commentId)).map((counted) => counted.defect)
 }
 
+export function qualityHook(commentId: number | undefined) {
+  return (target: ReviewTarget, context: ReviewContext) => effect {
+    const { trust } = try ClosureActivation
+    return try qualityEvidence(target, context, trust, commentId)
+  }
+}
+
 export function citedReceipt(verdict: Verdict, receipts: ReadonlyArray<CountedReceipt>, nowMillis: number) {
   const cited = receipts.find((counted) => counted.defect.id === verdict.objective_defect)
   if (cited === undefined || millisOf(cited.defect.expiresAt) <= nowMillis || !verdict.evidence.includes(cited.defect.evidence)) return undefined
@@ -283,11 +280,6 @@ export function citedReceipt(verdict: Verdict, receipts: ReadonlyArray<CountedRe
 export effect function shadowsFor(repositoryId: number, profile: string, verifierKey: string) {
   const found = try rows(ShadowRow, sql`SELECT repository_id, profile_sha256, verifier_key FROM slopbot_quality_shadow WHERE repository_id = ${repositoryId} AND profile_sha256 = ${profile} AND verifier_key = ${verifierKey} LIMIT 1`)
   return found.map((row) => ({ repository: row.repository_id, profile: row.profile_sha256, verifierKey: row.verifier_key }) satisfies QualityShadow)
-}
-
-export effect function recordShadow(proposal: ShadowProposal) {
-  try (try D1).run(sql`INSERT OR IGNORE INTO slopbot_quality_shadow (review_key, repository_id, item_node_id, revision, policy_digest, profile_sha256, verifier_key, defect_id, created_at)
-    VALUES (${proposal.reviewKey}, ${proposal.repositoryId}, ${proposal.itemNodeId}, ${proposal.revision}, ${proposal.policyDigest}, ${proposal.profile}, ${proposal.verifierKey}, ${proposal.defectId}, ${try isoNow()})`)
 }
 
 export effect function verifierQualified(counted: CountedReceipt, activation: Activation, trust: QualityTrust, subject: QualitySubject) {

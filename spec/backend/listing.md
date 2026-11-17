@@ -57,7 +57,14 @@ pure def lawPauseKeepsListing(project: P::Project, security: E::Enforcement, clo
 ### Funding never decides placement and placement never establishes funding
 
 Ordinary and bounty projects follow the same predicates. Placement changes do
-not change funding, rewards, clearance or recorded obligations.
+not change funding, rewards, clearance or recorded obligations. The tier and
+these registry reads stay independent of funding. Separately, from the
+operator decision of 16 November 2026 (PRD section 10), the home page,
+/sponsors and agent discovery leave out an active monthly pool that is not
+funded this month, while a failed funding read lists every project; that
+month listing is `listedThisMonth` of the
+[public projections](../frontend/projections.md), applied on top of these
+predicates, and never moves a project between tiers.
 
 ```quint
 pure def lawFundingDoesNotChoosePlacement(project: P::Project, security: E::Enforcement, closure: R::Closure, tier: P::Tier): bool =

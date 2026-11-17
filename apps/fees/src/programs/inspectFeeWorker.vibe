@@ -1,0 +1,194 @@
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+import { boundedBytes } from "@repo/platform/browser"
+import type { Environment } from "../../gen/fees__runtime.effect.vibe"
+import { databaseBinding, expectedSecrets } from "../runtime/networks.vibe"
+
+module verified {
+  import { jsonValue } from "../solana/bytes.ts"
+  /** @throws {never} */
+  export function parsedJson(text: string): unknown { return jsonValue(text) }
+}
+import { parsedJson } from verified
+
+export error InspectionFailed { message: string }
+
+export const usage = "inspect-fee-worker [repository-root] [production|staging]"
+
+const cloudflareApi = "https://api.cloudflare.com/client/v4"
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const account = /^[a-f0-9]{32}$/u
+const sourceSha = /^[a-f0-9]{40}$/u
+const bindingName = /^[A-Z][A-Z0-9_]*$/u
+const reviewedSetting = /^(?:FEE_CONVERTER_|FEE_WALLET_|BUYBACK_)/u
+const responseLimit = 1024 * 1024
+const requestSeconds = 20
+
+const environments: Readonly<Record<string, Environment>> = { production: "Production", staging: "Staging" }
+
+schema WranglerFile { name: string; vars: Readonly<Record<string, string>> }
+
+const Envelope = Schema.Struct({ success: Schema.Boolean, result: Schema.optionalKey(Schema.Unknown) })
+
+schema DeployedVersion { version_id: string; percentage: number }
+
+schema Deployment { id: string; versions: ReadonlyArray<DeployedVersion> }
+
+schema Deployments { deployments: ReadonlyArray<Deployment> }
+
+const Binding = Schema.Struct({ name: Schema.String, type: Schema.String, text: Schema.optionalKey(Schema.Unknown) })
+
+const Version = Schema.Struct({
+  id: Schema.String,
+  annotations: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  resources: Schema.optionalKey(Schema.Struct({ bindings: Schema.optionalKey(Schema.Array(Binding)) })),
+})
+
+type BindingKind = "d1" | "plain_text" | "secret_text"
+
+export interface ExpectedBinding { readonly name: string; readonly kind: BindingKind; readonly required: boolean }
+
+export interface BindingComparison {
+  readonly missing: ReadonlyArray<string>
+  readonly extra: ReadonlyArray<string>
+  readonly wrongKind: ReadonlyArray<string>
+}
+
+function failed(message: string) {
+  return new InspectionFailed({ message })
+}
+
+const sourceDefaults = { RPC_URL_SOLANA: "solana-public-default", SOLANA_RECOVERY_RPC_URL: "allnodes-publicnode-default" } as const
+
+export function expectedBindings(vars: Readonly<Record<string, string>>, environment: Environment, sourceMatched: boolean): ReadonlyArray<ExpectedBinding> {
+  return [
+    { name: databaseBinding, kind: "d1", required: true },
+    ...Object.keys(vars).map((name) => ({ name, kind: "plain_text", required: true }) satisfies ExpectedBinding),
+    ...expectedSecrets(environment).map((name) => ({ name, kind: "secret_text", required: !(sourceMatched && name in sourceDefaults) }) satisfies ExpectedBinding),
+  ]
+}
+
+function kindOf(type: string) {
+  return type.startsWith("secret_") ? "secret_text" : type
+}
+
+export function compareBindings(expected: ReadonlyArray<ExpectedBinding>, deployed: ReadonlyArray<{ readonly name: string; readonly type: string }>): BindingComparison {
+  const found = new Map(deployed.map((binding) => [binding.name, kindOf(binding.type)] as const))
+  const wanted = new Map(expected.map((binding) => [binding.name, binding.kind] as const))
+  return {
+    missing: expected.filter((binding) => binding.required && !found.has(binding.name)).map((binding) => binding.name).sort(),
+    extra: deployed.filter((binding) => !wanted.has(binding.name)).map((binding) => binding.name).sort(),
+    wrongKind: expected.filter((binding) => found.has(binding.name) && found.get(binding.name) !== binding.kind).map((binding) => binding.name).sort(),
+  }
+}
+
+effect function setting(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+effect function wranglerFile(root: string, environment: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const file = path.join(root, "apps/fees/wrangler", `feeConverter.${environment}.jsonc`)
+  const text = fs.readFileString(file) catch effect () => { throw failed("The reviewed fee Worker configuration is unavailable.") }
+  return Schema.decodeUnknownEffect(WranglerFile)(parsedJson(text)) catch effect () => {
+    throw failed("The reviewed fee Worker configuration is not a Worker configuration with plain variables.")
+  }
+}
+
+function metadata(accountId: string, token: Redacted.Redacted<string>, worker: string) {
+  const base = `${cloudflareApi}/accounts/${accountId}/workers/scripts/${worker}`
+  return (path: string) => effect {
+    const request = HttpClientRequest.setHeaders(HttpClientRequest.get(`${base}/${path}`), { authorization: `Bearer ${Redacted.value(token)}`, "cache-control": "no-cache", accept: "application/json" })
+    const answered = timeout(effect {
+      provide FetchHttpClient.RequestInit = { redirect: "error", cache: "no-store" } {
+        const response = try HttpClient.execute(request)
+        return { status: response.status, bytes: try boundedBytes(response, responseLimit, "Cloudflare metadata") }
+      }
+    }, Duration.seconds(requestSeconds)) catch effect () => { throw failed("Production metadata unavailable") }
+    const envelope = Schema.decodeUnknownEffect(Envelope)(parsedJson(new TextDecoder().decode(answered.bytes))) catch effect () => {
+      throw failed("Production metadata unavailable")
+    }
+    if (answered.status < 200 || answered.status > 299 || !envelope.success) throw failed("Production metadata unavailable")
+    return envelope.result
+  }
+}
+
+effect function active(value: unknown) {
+  const listed = Schema.decodeUnknownEffect(Deployments)(value) catch effect () => { throw failed("Production deployment is not pinned to one active version") }
+  const [deployment] = listed.deployments
+  const [version] = deployment?.versions ?? []
+  if (deployment === undefined || version === undefined || !uuid.test(deployment.id) || deployment.versions.length !== 1 || !uuid.test(version.version_id) || version.percentage !== 100) {
+    throw failed("Production deployment is not pinned to one active version")
+  }
+  return { id: deployment.id, versionId: version.version_id }
+}
+
+function provider(names: ReadonlySet<string>, matched: boolean, name: keyof typeof sourceDefaults) {
+  if (names.has(name)) return "opaque-secret-binding"
+  return matched ? sourceDefaults[name] : "binding-absent-source-not-matched"
+}
+
+export effect function inspectFeeWorker(args: ReadonlyArray<string>) {
+  const [root = ".", named = "production", ...rest] = args
+  const environment = environments[named]
+  if (environment === undefined || rest.length > 0) throw failed(`usage: ${usage}`)
+  if ((try setting("GITHUB_REF")) !== "refs/heads/main") throw failed("Inspect only from main")
+  const accountId = (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? ""
+  const token = Option.getOrUndefined(try Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN")))
+  if (!account.test(accountId) || token === undefined || Redacted.value(token) === "") throw failed("Production credentials unavailable")
+  const checkedSource = (try setting("GITHUB_SHA")) ?? ""
+  if (!sourceSha.test(checkedSource)) throw failed("Invalid checked source")
+  const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
+  if (runnerTemp === "") throw failed("Runner temporary directory unavailable")
+  const reviewed = try wranglerFile(root, named)
+  const get = metadata(accountId, token, reviewed.name)
+  const before = try active(try get("deployments"))
+  const version = Schema.decodeUnknownEffect(Version)(try get(`versions/${before.versionId}`)) catch effect () => { throw failed("Version identity mismatch") }
+  if (version.id !== before.versionId) throw failed("Version identity mismatch")
+  const bindings = version.resources?.bindings
+  if (bindings === undefined || !bindings.every((binding) => bindingName.test(binding.name)) || new Set(bindings.map((binding) => binding.name)).size !== bindings.length) {
+    throw failed("Invalid binding inventory")
+  }
+  const after = try active(try get("deployments"))
+  if (after.id !== before.id || after.versionId !== before.versionId) throw failed("Deployment changed during inspection")
+  const sourceCommit = version.annotations?.["workers/tag"] ?? ""
+  if (!sourceSha.test(sourceCommit)) throw failed("Missing source commit tag")
+  const secretNames = bindings.filter((binding) => binding.type.startsWith("secret_")).map((binding) => binding.name).sort()
+  const names = new Set(bindings.map((binding) => binding.name))
+  const plaintext = new Map(bindings.filter((binding) => binding.type === "plain_text").map((binding) => [binding.name, binding.text] as const))
+  const matched = sourceCommit === checkedSource
+  const comparison = compareBindings(expectedBindings(reviewed.vars, environment, matched), bindings)
+  const report = {
+    schemaVersion: 1,
+    worker: reviewed.name,
+    deploymentId: before.id,
+    versionId: version.id,
+    sourceCommit,
+    checkedSource,
+    sourceMatchesCheckout: matched,
+    secretNames,
+    settings: Object.entries(reviewed.vars).filter(([name]) => reviewedSetting.test(name)).sort(([left], [right]) => left.localeCompare(right)).map(([name, value]) => ({
+      name,
+      expected: value,
+      present: plaintext.has(name),
+      matchesReviewedConfiguration: plaintext.get(name) === value,
+    })),
+    bindings: comparison,
+    solanaPrimary: provider(names, matched, "RPC_URL_SOLANA"),
+    solanaRecovery: provider(names, matched, "SOLANA_RECOVERY_RPC_URL"),
+    solanaKeyPresent: secretNames.includes("FEE_WALLET_KEY_SOLANA"),
+    limitations: [
+      "Secret names do not prove their values, operator identity or key/address match.",
+      "Metadata inspection does not qualify runtime RPC recovery or activate processing.",
+    ],
+  }
+  const text = JSON.stringify(report)
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.writeFileString(path.join(runnerTemp, "fee-worker-bindings.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })
+  try Console.log(text)
+  if (comparison.missing.length + comparison.extra.length + comparison.wrongKind.length > 0) {
+    throw failed(`The deployed fee Worker bindings differ from the reviewed configuration: missing ${comparison.missing.join(",") || "none"}; extra ${comparison.extra.join(",") || "none"}; wrong kind ${comparison.wrongKind.join(",") || "none"}`)
+  }
+  return report
+}

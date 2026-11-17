@@ -1,0 +1,169 @@
+// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/screening.md, "Story: Screen the exact saved version privately before owner routing"
+import { type ModelReply, Provider, ProviderFailure, providers } from "@repo/platform/providers"
+import { analysisMessage, screeningPrompt } from "../analysis/prompts.ts"
+import { screeningProposal } from "../analysis/proposals.vibe"
+import { protectedCheckout, secretVariable } from "../programs/checkout.vibe"
+import { qualificationMode } from "./sandbox.vibe"
+import { type WireGate, attemptTimeoutMs, backoffMs, boundedFetch, maximumAttempts, maximumMicroUsd, outputTokens, screeningModel, shortToken, syntheticReport, totalMaximumMicroUsd } from "./screeningWire.ts"
+
+export type ScreeningFailureCategory =
+  | "request-bound"
+  | "price-bound"
+  | "http-status"
+  | "network"
+  | "timeout"
+  | "receipt-unreadable"
+  | "receipt-missing"
+  | "receipt-over-budget"
+  | "total-over-budget"
+  | "model-unidentified"
+  | "incomplete"
+  | "schema-invalid"
+  | "wrong-decision"
+
+type Detail = Readonly<Record<string, string | number | boolean | null>>
+
+export error ScreeningQualificationFailed { message: string }
+error AttemptFailed { category: ScreeningFailureCategory; detail: Detail }
+
+interface Spent {
+  readonly micro: number
+  readonly requests: number
+}
+
+const transient: ReadonlySet<ScreeningFailureCategory> = new Set(["network", "timeout", "receipt-unreadable", "incomplete", "schema-invalid"])
+const usage = "usage: security-screening [--mode plan|execute]"
+const maxReplyBytes = 1024 * 1024
+
+function failed(category: ScreeningFailureCategory, detail: Detail = {}) {
+  return new AttemptFailed({ category, detail })
+}
+
+function retryableStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500
+}
+
+function retryable(failure: AttemptFailed) {
+  return failure.category === "http-status" ? failure.detail.retryable === true : transient.has(failure.category)
+}
+
+effect function charged(spent: Ref.Ref<Spent>, micro: number) {
+  try Ref.update(spent, (current) => ({ ...current, micro: current.micro + micro }))
+}
+
+effect function receiptBounded(spent: Ref.Ref<Spent>, cost: number | null) {
+  try charged(spent, cost ?? maximumMicroUsd)
+  if (cost === null) throw failed("receipt-missing")
+  if (cost > maximumMicroUsd) throw failed("receipt-over-budget", { costMicroUsd: cost })
+  if ((try Ref.get(spent)).micro > totalMaximumMicroUsd) throw failed("total-over-budget")
+}
+
+effect function refused(spent: Ref.Ref<Spent>, failure: ProviderFailure) {
+  const status = failure.status
+  if (status === undefined) {
+    try charged(spent, maximumMicroUsd)
+    throw failed(failure.category === "Timeout" ? "timeout" : "network")
+  }
+  if (status < 200 || status > 299) {
+    const cost = failure.receipt.costMicroUsd
+    try charged(spent, cost ?? maximumMicroUsd)
+    if (cost !== null && cost > maximumMicroUsd) throw failed("receipt-over-budget")
+    if ((try Ref.get(spent)).micro > totalMaximumMicroUsd) throw failed("total-over-budget")
+    throw failed("http-status", { status, errorType: shortToken(/^provider-http-\d{3}-(.+)$/u.exec(failure.reason)?.[1]), retryable: retryableStatus(status) })
+  }
+  if (failure.reason === "response-unreadable") {
+    try charged(spent, maximumMicroUsd)
+    throw failed("receipt-unreadable", { status })
+  }
+  try receiptBounded(spent, failure.receipt.costMicroUsd)
+  if (failure.category === "Unavailable" || failure.category === "RateLimited" || failure.category === "SpendDenied") throw failed("incomplete", { errorType: shortToken(failure.reason) })
+  if (failure.category === "Malformed") throw failed("schema-invalid")
+  throw failed("incomplete", { stopReason: shortToken(failure.reason), truncated: failure.reason === "truncated" })
+}
+
+effect function screened(spent: Ref.Ref<Spent>, reply: ModelReply) {
+  try receiptBounded(spent, reply.costMicroUsd)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u.test(reply.model)) throw failed("model-unidentified", { servedModel: shortToken(reply.model) })
+  const proposal = screeningProposal(reply.text, new Set())
+  if (proposal === undefined) throw reply.stopReason !== "end_turn" ? failed("incomplete", { stopReason: shortToken(reply.stopReason), truncated: false }) : failed("schema-invalid")
+  if (proposal.decision !== "legitimate") throw failed("wrong-decision", { decision: shortToken(proposal.decision) })
+  return reply.model
+}
+
+effect function completed(gate: WireGate, dryRun: boolean, spentMicro: number) {
+  const provider = try Provider
+  const outer = try FetchHttpClient.Fetch
+  provide FetchHttpClient.Fetch = boundedFetch(gate, dryRun, spentMicro, outer) {
+    return provider.complete({
+      route: "surplus-anthropic",
+      model: screeningModel,
+      system: screeningPrompt,
+      messages: [{ role: "user", content: analysisMessage(syntheticReport) }],
+      maxTokens: outputTokens,
+      effort: "high",
+      timeoutMs: attemptTimeoutMs,
+      accept: "allText",
+    }) catch effect (failure) => {
+      return failure
+    }
+  }
+}
+
+effect function attempt(spent: Ref.Ref<Spent>, dryRun: boolean) {
+  const gate: WireGate = { stop: undefined, sent: false }
+  const answer = try completed(gate, dryRun, (try Ref.get(spent)).micro)
+  if (gate.sent) try Ref.update(spent, (current) => ({ ...current, requests: current.requests + 1 }))
+  if (gate.stop === "dry-run") return undefined
+  if (gate.stop !== undefined) throw failed(gate.stop)
+  if (answer instanceof ProviderFailure) return try refused(spent, answer)
+  return try screened(spent, answer)
+}
+
+export effect function qualifyScreening(dryRun: boolean) {
+  const spent = try Ref.make<Spent>({ micro: 0, requests: 0 })
+  const attempts: Array<Readonly<Record<string, unknown>>> = []
+  for (let number = 1; ; number += 1) {
+    const outcome = attempt(spent, dryRun) catch effect (error) => {
+      return error
+    }
+    if (!(outcome instanceof AttemptFailed)) {
+      return {
+        path: "private-report-screening",
+        provider: "surplus",
+        model: outcome ?? null,
+        requests: (try Ref.get(spent)).requests,
+        failedAttempts: attempts,
+        outcome: outcome === undefined ? "dry-run; no provider calls" : "synthetic report classified legitimate",
+      }
+    }
+    attempts.push({ attempt: number, category: outcome.category, ...outcome.detail })
+    if (number >= maximumAttempts || !retryable(outcome) || (try Ref.get(spent)).micro + maximumMicroUsd > totalMaximumMicroUsd) {
+      throw new ScreeningQualificationFailed({ message: `Private-screening qualification failed (${outcome.category}); no publication is permitted. ${JSON.stringify({ category: outcome.category, attempts })}` })
+    }
+    try Effect.sleep(Duration.millis(backoffMs[number - 1] ?? 5_000))
+  }
+}
+
+export effect function screeningPlan() {
+  provide providers({ surplus: { apiKey: Redacted.make("synthetic-dry-run-no-credential") }, timeoutMs: attemptTimeoutMs, maxReplyBytes }) {
+    return try qualifyScreening(true)
+  }
+}
+
+export effect function securityScreening(args: ReadonlyArray<string>) {
+  const mode = qualificationMode(args, usage) catch effect () => {
+    throw new ScreeningQualificationFailed({ message: usage })
+  }
+  if (mode === "plan") {
+    try Console.log(JSON.stringify(try screeningPlan()))
+    return
+  }
+  protectedCheckout({ refs: ["refs/heads/main"], events: ["push", "workflow_dispatch"], message: "Private-screening qualification requires the protected main release." }) catch effect () => {
+    throw new ScreeningQualificationFailed({ message: "Private-screening qualification requires the protected main release." })
+  }
+  const apiKey = try secretVariable("SURPLUS_API_KEY")
+  if (apiKey === undefined) throw new ScreeningQualificationFailed({ message: "Private-screening qualification requires the protected main release." })
+  provide providers({ surplus: { apiKey }, timeoutMs: attemptTimeoutMs, maxReplyBytes }) {
+    try Console.log(JSON.stringify(try qualifyScreening(false)))
+  }
+}

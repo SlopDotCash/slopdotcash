@@ -1,0 +1,78 @@
+// spec/slopbot/closeAttempt.md, "Only GitHub's own close event confirms and only a definitive refusal releases"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { definitiveRefusal } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import { type ItemKind, IssueRead, PullRead, absentOn404 } from "../context/load.vibe"
+
+schema ItemState { readonly state: string; readonly closed_at?: string | null }
+
+export interface ItemTarget {
+  readonly repositoryId: number
+  readonly itemKind: ItemKind
+  readonly number: number
+}
+
+export type CloseAnswer =
+  | { readonly kind: "closed"; readonly closedAt: string }
+  | { readonly kind: "refused"; readonly status: number }
+  | { readonly kind: "unknown"; readonly status: number }
+
+export interface CurrentItem {
+  readonly issue: typeof IssueRead.Type
+  readonly revision: string
+  readonly merged: boolean
+}
+
+export error ReopenUnconfirmed { status: number }
+
+const githubTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u
+
+function itemPath(target: ItemTarget) {
+  return `/repositories/${target.repositoryId}/${target.itemKind === "pull_request" ? "pulls" : "issues"}/${target.number}`
+}
+
+function failedStatus(error: GitHubFailure) {
+  if (error._tag === "NotFound") return 404
+  if (error._tag === "GitHubRefused") return error.status
+  if (error._tag === "RateLimited") return 429
+  if (error._tag === "GitHubUnavailable") return error.status ?? 0
+  return 200
+}
+
+function answered(answer: CloseAnswer): CloseAnswer {
+  return answer
+}
+
+export effect function githubClosedAt(value: string | null | undefined) {
+  if (typeof value !== "string" || !githubTime.test(value)) return undefined
+  const millis = millisOf(value)
+  return Number.isFinite(millis) ? try isoAt(millis) : undefined
+}
+
+export effect function requestClose(target: ItemTarget) {
+  const body = target.itemKind === "pull_request" ? { state: "closed" } : { state: "closed", state_reason: "not_planned" }
+  const sent = (try GitHub).send("PATCH", itemPath(target), body, ItemState) catch effect (error) => {
+    return failedStatus(error)
+  }
+  if (typeof sent === "number") return answered(definitiveRefusal(sent) ? { kind: "refused", status: sent } : { kind: "unknown", status: sent })
+  const closedAt = sent.status === 200 && sent.value?.state === "closed" ? try githubClosedAt(sent.value.closed_at) : undefined
+  if (closedAt === undefined) return answered({ kind: "unknown", status: sent.status })
+  return answered({ kind: "closed", closedAt })
+}
+
+export effect function reopenItem(target: ItemTarget) {
+  const sent = try (try GitHub).send("PATCH", itemPath(target), { state: "open" }, ItemState)
+  if (sent.status !== 200 || sent.value?.state !== "open") throw new ReopenUnconfirmed({ status: sent.status })
+}
+
+export effect function currentItem(target: ItemTarget) {
+  const github = try GitHub
+  const base = `/repositories/${target.repositoryId}`
+  const issue = try absentOn404(github.json(`${base}/issues/${target.number}`, IssueRead))
+  if (issue === undefined) return undefined
+  if (target.itemKind !== "pull_request") return { issue, revision: try sha256Hex(`${issue.title}\n${issue.body ?? ""}`), merged: false } satisfies CurrentItem
+  const pull = try absentOn404(github.json(`${base}/pulls/${target.number}`, PullRead))
+  if (pull === undefined) return undefined
+  return { issue, revision: pull.head.sha, merged: pull.merged } satisfies CurrentItem
+}

@@ -1,0 +1,112 @@
+// spec/fees/buybackRpc.md, "Only a live Robinhood buyback recovery tick can report the diagnostic"; spec/fees/buybackRpc.md, "A verified observation binds the exact chain, block and contract read"
+import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
+import { type BuybackRpcScope, type DiagnosticSummary, type FinalizedBlock, type FinalizedRpcEvidence, type RecoveryCounts, type RpcObservation, recoverySummary, runProbe } from "../../gen/fees__buybackRpc.effect.vibe"
+import { dln } from "../runtime/pins.ts"
+
+module verified {
+  import { takeOrdersCalldata, takeStatusOf } from "../dln/evmCalldata.ts"
+  import { quantity } from "../evm/abi.ts"
+  /** @throws {never} */
+  export function zeroOrderCalldata(): string { return takeOrdersCalldata(`0x${"0".repeat(64)}`) }
+  /** @throws {never} */
+  export function takeOrdersAnswer(data: string): boolean { return /^0x[0-9a-fA-F]*$/u.test(data) && takeStatusOf(data as `0x${string}`) !== undefined }
+  /** @throws {never} */
+  export function quantityOf(value: unknown): bigint | undefined { return quantity(value) }
+}
+import { quantityOf, takeOrdersAnswer, zeroOrderCalldata } from verified
+
+export const probeTimeoutMs = 5_000
+const probeBytes = 1024 * 1024
+const blockHash = /^0x[0-9a-f]{64}$/u
+const canonicalQuantity = /^0x(?:0|[1-9a-f][0-9a-f]*)$/u
+
+const WireBlock = Schema.NullOr(Schema.Struct({ number: Schema.String, hash: Schema.String }))
+
+export interface ContractProbe {
+  readonly to: string
+  readonly data: string
+  readonly answers: (result: string) => boolean
+}
+
+export const zeroOrderProbe: ContractProbe = { to: dln.destination, data: zeroOrderCalldata(), answers: takeOrdersAnswer }
+
+export type FinalizedRpcWire =
+  | { readonly status: "verified"; readonly chainId: number; readonly blockNumber: string; readonly blockHash: string }
+  | { readonly status: "unavailable" }
+
+export const FinalizedRpcWire = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("verified"), chainId: Schema.Number, blockNumber: Schema.String, blockHash: Schema.String }),
+  Schema.Struct({ status: Schema.Literal("unavailable") }),
+])
+
+const noBlock: FinalizedBlock = { height: "", hash: "", exactHeight: false, canonicalHash: false }
+
+export const unobserved: FinalizedRpcEvidence = {
+  observedChainId: 0,
+  finalized: false,
+  block: noBlock,
+  contractRead: { completed: false, height: "", exactDestination: false, zeroOrder: false },
+  canonical: noBlock,
+}
+
+export function blockOf(wire: { readonly number: string; readonly hash: string } | null): FinalizedBlock {
+  if (wire === null) return noBlock
+  const exactHeight = canonicalQuantity.test(wire.number)
+  const height = exactHeight ? (quantityOf(wire.number) ?? 0n).toString() : ""
+  return { height, hash: wire.hash, exactHeight, canonicalHash: blockHash.test(wire.hash) }
+}
+
+function probeRpc(endpoint: Redacted.Redacted<string>) {
+  return jsonRpc({ urls: Redacted.make([Redacted.value(endpoint)] as ReadonlyArray<string>), timeoutMs: probeTimeoutMs, maxBytes: probeBytes })
+}
+
+function chainNumber(chain: bigint | undefined) {
+  return chain === undefined || chain > 9007199254740991n ? 0 : Number(chain)
+}
+
+effect function reads(rpc: JsonRpc) {
+  const observedChainId = chainNumber(quantityOf(try rpc.call("eth_chainId", [], Schema.String)))
+  const finalized = try rpc.call("eth_getBlockByNumber", ["finalized", false], WireBlock)
+  const block = blockOf(finalized)
+  if (finalized === null || !block.exactHeight) return { ...unobserved, observedChainId, finalized: finalized !== null, block }
+  const answer = try rpc.call("eth_call", [{ to: zeroOrderProbe.to, data: zeroOrderProbe.data }, finalized.number], Schema.String)
+  const canonical = blockOf(try rpc.call("eth_getBlockByNumber", [finalized.number, false], WireBlock))
+  return {
+    observedChainId,
+    finalized: true,
+    block,
+    contractRead: { completed: zeroOrderProbe.answers(answer), height: block.height, exactDestination: true, zeroOrder: true },
+    canonical,
+  } satisfies FinalizedRpcEvidence
+}
+
+export effect function finalizedEvidence(endpoint: Redacted.Redacted<string>) {
+  provide FetchHttpClient.RequestInit = { redirect: "manual" } {
+    return reads(try probeRpc(endpoint)) catch () => unobserved
+  }
+}
+
+export effect function recoveryDiagnostic(scope: Omit<BuybackRpcScope, "probeAvailable">, endpoint: Redacted.Redacted<string> | undefined, counts: RecoveryCounts) {
+  const full: BuybackRpcScope = { ...scope, probeAvailable: endpoint !== undefined }
+  const evidence = endpoint !== undefined && runProbe(full) ? try finalizedEvidence(endpoint) : unobserved
+  return recoverySummary(full, evidence, counts)
+}
+
+export function observationWire(observation: RpcObservation): FinalizedRpcWire | undefined {
+  switch (observation.tag) {
+    case "Omitted": return undefined
+    case "Unavailable": return { status: "unavailable" }
+    case "Verified": return { status: "verified", chainId: observation.chainId, blockNumber: observation.height, blockHash: observation.hash }
+    default: {
+      const _exhaustive: never = observation
+      return _exhaustive
+    }
+  }
+}
+
+export const diagnosticEvent = "fee_buyback_finalized_rpc"
+
+export function diagnosticLine(summary: DiagnosticSummary) {
+  const finalizedRpc = observationWire(summary.observation)
+  return finalizedRpc === undefined ? undefined : { event: diagnosticEvent, network: "robinhood", counts: summary.counts, finalizedRpc }
+}

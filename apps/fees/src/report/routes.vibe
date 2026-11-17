@@ -1,0 +1,187 @@
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network's target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals"
+import { fromAmount } from "@repo/settlement/kernels/amounts"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { Refused, handle, handleRaw, json } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { type BridgeOutcome, type JournalRecord, type LegTotal, type RecordKind, type RecordState, type ReportLine, type StateCount, type TokenTotal, feeReport, recentLimit, reportAccess, reportDayMs, reportRoutes } from "../../gen/fees__feeReport.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.effect.vibe"
+import { amountOf as limbsOf } from "../buyback/codec.vibe"
+import { amountOf } from "../journal/codec.vibe"
+import { definitions, networkNamed } from "../runtime/networks.vibe"
+import { type BuybackLine, type BuybackTotal, type FeeConversionLine, type FeeConversionRoute, type FeeConversionStateCount, type FeeConversionTotal, feeConversions, feeConversionsRefusals, otherFeeConversionMethods } from "../client/report.vibe"
+import { getAdminFeeConversions } from "../client/refusals.vibe"
+
+schema ReportRow {
+  seq: number; id: string; kind: string; network: string; mode: string; token: string; target_token: string; amount_in: string
+  route: string | null; quote_amount_out: string | null; min_amount_out: string | null; price_impact_bps: number | null
+  approval_tx_id: string | null; tx_id: string | null; landed_tx_id: string | null; amount_out: string | null
+  token_balance_before: string | null; target_balance_before: string | null; target_balance_after: string | null
+  state: string; reason: string | null; created_at: string; submitted_at: string | null; finalized_at: string | null
+  order_id: string | null; outcome: "arrived" | "refunded" | null
+}
+
+type Row = typeof ReportRow.Type
+
+const recordKinds: Readonly<Record<string, RecordKind>> = {
+  conversion: "ConversionRecord", approval: "ApprovalRecord", claim: "ClaimRecord", bridge: "BridgeRecord", buyback: "BuybackRecord", burn: "BurnRecord",
+}
+
+const recordStates: Readonly<Record<string, RecordState>> = {
+  quoted: "QuotedRecord", pending: "DustPendingRecord", skipped: "SkippedRecord", no_route: "NoRouteRecord",
+  submitted: "SubmittedRecord", unknown: "UnknownRecord", finalized: "FinalizedRecord", failed: "FailedRecord",
+}
+
+const outcomes: { readonly [K in "arrived" | "refunded"]: BridgeOutcome } = { arrived: "ArrivedOutcome", refunded: "RefundedOutcome" }
+
+const kindNames: { readonly [K in RecordKind]: string } = {
+  ConversionRecord: "conversion", ApprovalRecord: "approval", ClaimRecord: "claim", BridgeRecord: "bridge", BuybackRecord: "buyback", BurnRecord: "burn",
+}
+
+const stateNames: { readonly [K in RecordState]: string } = {
+  QuotedRecord: "quoted", DustPendingRecord: "pending", SkippedRecord: "skipped", NoRouteRecord: "no_route",
+  SubmittedRecord: "submitted", UnknownRecord: "unknown", FinalizedRecord: "finalized", FailedRecord: "failed",
+}
+
+effect function reportRows(now: number) {
+  const since = try isoAt(now - reportDayMs)
+  return try rows(ReportRow, sql`SELECT c.rowid AS seq, c.id, c.kind, c.network, c.mode, c.token, c.target_token, c.amount_in, c.route,
+      c.quote_amount_out, c.min_amount_out, c.price_impact_bps, c.approval_tx_id, c.tx_id, c.landed_tx_id, c.amount_out,
+      c.token_balance_before, c.target_balance_before, c.target_balance_after, c.state, c.reason, c.created_at, c.submitted_at,
+      c.finalized_at, json_extract(c.quote, '$.orderId') AS order_id, o.outcome
+    FROM fee_conversions c LEFT JOIN fee_bridge_outcomes o ON o.bridge_id = c.id
+    WHERE c.rowid IN (SELECT rowid FROM fee_conversions WHERE kind = 'conversion' ORDER BY created_at DESC, rowid DESC LIMIT ${recentLimit})
+      OR c.rowid IN (SELECT rowid FROM fee_conversions WHERE kind IN ('bridge', 'buyback', 'burn') ORDER BY created_at DESC, rowid DESC LIMIT ${recentLimit})
+      OR (c.mode = 'live' AND c.state = 'finalized' AND c.kind IN ('conversion', 'bridge', 'buyback', 'burn'))
+      OR (c.kind = 'conversion' AND c.created_at >= ${since})
+    ORDER BY c.rowid`)
+}
+
+effect function limbs(text: string | null, label: string) {
+  return limbsOf(text === null ? 0n : try amountOf(text, label))
+}
+
+effect function recordOf(row: Row) {
+  const label = `fee report row ${row.id}`
+  const kind = recordKinds[row.kind]
+  const state = recordStates[row.state]
+  const network = networkNamed(row.network)
+  if (kind === undefined || state === undefined || network === undefined) throw new RowMismatch({ text: label, issue: "kind, state or network is not one the journal holds" })
+  return {
+    id: row.seq,
+    kind,
+    network,
+    live: row.mode === "live",
+    state,
+    token: row.token,
+    targetToken: row.target_token,
+    amountIn: try limbs(row.amount_in, label),
+    amountOut: try limbs(row.amount_out, label),
+    txId: row.tx_id ?? "",
+    landedTxId: row.landed_tx_id ?? "",
+    reason: row.reason ?? "",
+    createdAt: millisOf(row.created_at),
+    order: 0,
+    outcome: row.outcome === null ? "NoOutcome" : outcomes[row.outcome],
+    signedBytes: "",
+  } satisfies JournalRecord
+}
+
+function decimal(amount: ReadonlyArray<number>) {
+  return fromAmount([...amount]).toString()
+}
+
+function byText<T>(key: (item: T) => string) {
+  return (left: T, right: T) => key(left) < key(right) ? -1 : 1
+}
+
+function conversionLine(row: Row): FeeConversionLine {
+  return {
+    id: row.id, network: row.network, mode: row.mode, token: row.token, targetToken: row.target_token, amountIn: row.amount_in, route: row.route,
+    quoteAmountOut: row.quote_amount_out, minAmountOut: row.min_amount_out, priceImpactBps: row.price_impact_bps, approvalTxId: row.approval_tx_id,
+    txId: row.tx_id, landedTxId: row.landed_tx_id, amountOut: row.amount_out, tokenBalanceBefore: row.token_balance_before,
+    targetBalanceBefore: row.target_balance_before, targetBalanceAfter: row.target_balance_after, state: row.state, reason: row.reason,
+    createdAt: row.created_at, submittedAt: row.submitted_at, finalizedAt: row.finalized_at,
+  }
+}
+
+function buybackLine(row: Row): BuybackLine {
+  return {
+    id: row.id, kind: row.kind, network: row.network, mode: row.mode, token: row.token, targetToken: row.target_token, amountIn: row.amount_in,
+    amountOut: row.amount_out, minAmountOut: row.min_amount_out, txId: row.tx_id, landedTxId: row.landed_tx_id, state: row.state, reason: row.reason,
+    createdAt: row.created_at, finalizedAt: row.finalized_at, orderId: row.order_id, outcome: row.outcome,
+  }
+}
+
+function networkName(network: Network) {
+  return definitions[network].name
+}
+
+function routeOf(target: { readonly network: Network; readonly converted: boolean }): FeeConversionRoute {
+  const definition = definitions[target.network].target
+  return target.converted && definition.kind === "usdc"
+    ? { network: networkName(target.network), targetToken: definition.address, status: "usdc" }
+    : { network: networkName(target.network), targetToken: null, status: "not_converted" }
+}
+
+function totalOf(total: TokenTotal): FeeConversionTotal {
+  return { network: networkName(total.network), token: total.token, targetToken: total.targetToken, conversions: total.conversions, amountIn: decimal(total.amountIn), amountOut: decimal(total.amountOut) }
+}
+
+function countOf(count: StateCount): FeeConversionStateCount {
+  return { network: networkName(count.network), mode: count.live ? "live" : "dry_run", state: stateNames[count.state], count: count.recordCount }
+}
+
+function legOf(total: LegTotal): BuybackTotal {
+  return {
+    network: networkName(total.network), kind: kindNames[total.kind], token: total.token, sends: total.sends, amountIn: decimal(total.amountIn),
+    amountOut: decimal(total.amountOut), inTransit: decimal(total.inTransit), refunded: decimal(total.refunded),
+  }
+}
+
+effect function linesOf<L>(lines: ReadonlyArray<ReportLine>, found: ReadonlyMap<number, Row>, render: (row: Row) => L) {
+  const rendered: L[] = []
+  for (const line of lines) {
+    const row = found.get(line.id)
+    if (row === undefined) throw new RowMismatch({ text: `fee report line ${line.id}`, issue: "the line has no journal row" })
+    rendered.push(render(row))
+  }
+  return rendered
+}
+
+effect function report() {
+  const now = try Clock.currentTimeMillis
+  const found = try reportRows(now)
+  const records: JournalRecord[] = []
+  for (const row of found) records.push(try recordOf(row))
+  const model = feeReport(records, now)
+  const bySeq = new Map(found.map((row) => [row.seq, row] as const))
+  return {
+    schemaVersion: "1",
+    recent: try linesOf(model.recent, bySeq, conversionLine),
+    routes: reportRoutes.map(routeOf),
+    totals: model.totals.map(totalOf).sort(byText((total) => total.network + total.token)),
+    last24Hours: model.last24Hours.map(countOf).sort(byText((count) => `${count.network}\u0000${count.mode}\u0000${count.state}`)),
+    buyback: {
+      recent: try linesOf(model.buyback.recent, bySeq, buybackLine),
+      totals: model.buyback.totals.map(legOf).sort(byText((total) => total.network + total.kind + total.token)),
+    },
+  } as const
+}
+
+effect function administrator(githubId: string) {
+  const viewer = (try (try Roles).has(githubId, "administrator")) ? "Administrator" : "Member"
+  if (reportAccess("Get", viewer) !== "Granted") throw new Refused(feeConversionsRefusals.forbidden)
+}
+
+const methodNotAllowed = getAdminFeeConversions.otherMethods.methodNotAllowed
+
+export const feeReportRoutes = Layer.mergeAll(
+  handle(feeConversions, (input) => effect {
+    try administrator(input.actor.githubId)
+    return try report()
+  }),
+  ...otherFeeConversionMethods.map((descriptor) => handleRaw(descriptor, () => effect {
+    return json({ error: methodNotAllowed.error }, methodNotAllowed.status, { "cache-control": methodNotAllowed.headers["cache-control"] })
+  })),
+)

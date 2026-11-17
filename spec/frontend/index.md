@@ -34,6 +34,10 @@ design tokens of the shared component library.
 - [Project setup and manifest drafts](./projectDrafts.md)
 - [Browser wallet discovery](./wallets.md)
 - [Derived public views](./views.md)
+- [Vault month locks](./vaultLocks.md)
+- [Owner month lock card](./monthLock.md)
+- [Monthly listing and the home grid](./poolListing.md)
+- [Project page links](./projectLinks.md)
 
 Source requirements are PRD sections 2–4 and 6–10. The retained UI models under
 `reference/slop-main/formal/models/ui/` provide the individual legacy races and

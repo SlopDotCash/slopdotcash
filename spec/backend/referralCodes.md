@@ -115,11 +115,18 @@ pure def sometimesDistinctOwners(s: LinkRegistry): bool = activeKey(s, "alice-id
 ### A current reservation resolves through current open membership
 
 GET and HEAD return a non-cacheable redirect to the same-origin project
-form. The optional `ref` parameter is the member's current GitHub login. It
-comes from joining `points_members` by the immutable actor ID, using the
-active reservation and an open member. Malformed, unknown, replaced and
-closed-account links reach the form without a referral. A failed database
-read for a syntactically valid code returns 503 and invites retry. Other
+form. The optional `ref` parameter is the member's current GitHub login. The
+active reservation and an open member are found by joining `points_members`
+by the immutable actor ID; the login is then the one GitHub reports now for
+that permanent id, never the login cached at sign-in, which can belong to
+another account after a rename (Slop development `520137369`,
+`backend/referrals/codes.ts:196–275`). Malformed, unknown, replaced and
+closed-account links reach the form without a referral, and so does a member
+whose account GitHub no longer has or that is no longer a person's account
+(an organization or a bot): `MemberAbsent`. A failed database read or a
+GitHub read that does not answer, for a syntactically valid code, returns
+503 and invites retry: forwarding without the referrer would drop a referral
+that exists. Other
 methods return 405. A route that does not match the referral prefix is
 outside this contract. The shell must percent-encode the returned login and
 must derive syntax and membership from verified route and database data.

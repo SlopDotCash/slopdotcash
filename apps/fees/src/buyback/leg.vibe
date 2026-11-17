@@ -6,23 +6,20 @@ import { broadcast as broadcastEvm, attemptStatus, FeeChain, feesPerGas, nativeC
 import { approvalSettled } from "../evm/approval.vibe"
 import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
 import { type EvmOrderProposal, dlnOrderGas, proposeEvmOrder, recheckedEvmOrder } from "../dln/evmOrder.vibe"
-import { type SolanaOrderDraft, proposeSolanaOrder, recheckedSolanaOrder } from "../dln/solanaOrder.vibe"
 import { createdOrder, evmRefund, fill, solanaOrderDebit, solanaRefund } from "../dln/evidence.vibe"
-import { type JupiterSettings, jupiterQuote } from "../jupiter/quote.vibe"
 import { nativeReceipt } from "../solana/receipt.vibe"
-import { broadcastSolana, walletBalance } from "../solana/client.vibe"
-import { solanaNativeAsset } from "../solana/wire.vibe"
-import { base64Decode } from "@repo/platform/chain/solana"
-import { FeeWallet } from "../signer/feeWallet.vibe"
+import { walletBalance } from "../solana/client.vibe"
+import { type EvmSigned, FeeWallet } from "../signer/feeWallet.vibe"
 import type { DlnOrderTerms, PreparationAttempt } from "../signer/intents.ts"
 import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { chainIds, circleUsdc, robinhoodUsdg } from "../runtime/pins.ts"
 import { type Leg, type Ledger, type SendRecord, type Terms } from "./codec.vibe"
+import { orderParties } from "./parties.ts"
 import { BuybackRefused, type Facts, type SignedFacts, ledgerOf, send, sendFloors } from "./store.vibe"
 
 module verified {
   import { boundedSend as bounded, entitlement as entitled } from "../kernels/buybackShares.ts"
-  import { remainingBudget as remaining } from "../kernels/arithmetic.ts"
+  import { remainingBudget as remaining, roundedDivision as rounded } from "../kernels/arithmetic.ts"
   import { fromAmount as whole } from "@repo/settlement/kernels/amounts"
   import type { Amount } from "../../gen/settlement__money.ts"
   /** @throws {never} */
@@ -32,9 +29,15 @@ module verified {
   /** @throws {never} */
   export function remainingBudget(runCap: bigint, runUsed: bigint, dayCap: bigint, dayUsed: bigint): bigint { return remaining(runCap, runUsed, dayCap, dayUsed) }
   /** @throws {never} */
+  export function roundedDivision(numerator: bigint, denominator: bigint, up: boolean): bigint { return rounded(numerator, denominator, up) }
+  /** @throws {never} */
   export function fromAmount(amount: Amount): bigint { return whole(amount) }
 }
-import { boundedSend, entitlement, fromAmount, remainingBudget } from verified
+import { boundedSend, entitlement, fromAmount, remainingBudget, roundedDivision } from verified
+
+const orderCeilingMicro = 1_000_000_000n
+const windowCeilingMicro = 5_000_000_000n
+const shareCeilingBps = 5_000n
 
 export interface LegSettings {
   readonly runId: string
@@ -43,7 +46,6 @@ export interface LegSettings {
   readonly native: NativeLimits
   readonly receiver: Address
   readonly kyber: KyberSettings
-  readonly jupiter?: JupiterSettings
   readonly robinhood?: Layer.Layer<FeeChain | EvmRpc, unknown, never>
 }
 
@@ -107,13 +109,19 @@ effect function termsOrder(record: SendRecord) {
   return { terms, order: orderTerms(terms, try big(record.amountIn), try big(terms.takeAmount), try big(terms.salt), try big(terms.nativeFee)) }
 }
 
-function bridgeRequest(orderId: number, tx: number, amount: number, quote: BridgeQuote, solana: boolean): BridgeOrder {
-  return { orderId, tx, amount, takeAmount: quote.takeAmount, costBps: quote.costBps, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", solana, nativeFee: quote.nativeFee }
+effect function bridgeRequest(running: Running, settings: LegSettings, proposal: EvmOrderProposal, tx: number, quote: BridgeQuote) {
+  const parties = try present(orderParties(proposal.data, { source: running.wallet, receiver: settings.receiver }), "order", "the bridge calldata is not a salted DLN order")
+  const { affiliateFeeBytes, ...named } = parties
+  return { ...named, orderId: running.leg.names.number("hash", proposal.order.orderId.toLowerCase()), tx, amount: quote.amount, takeAmount: quote.takeAmount, costBps: quote.costBps, affiliateFee: affiliateFeeBytes, solana: false, nativeFee: quote.nativeFee } satisfies BridgeOrder
 }
 
 function costBps(amount: bigint, cost: bigint) {
-  if (cost <= 0n) return 0
-  return Number((cost * 10000n + amount - 1n) / amount)
+  if (cost <= 0n || amount <= 0n) return 0
+  return Number(roundedDivision(cost * 10000n, amount, true))
+}
+
+function smaller(a: bigint, b: bigint) {
+  return a < b ? a : b
 }
 
 function termsJson(order: DlnOrderTerms): Terms {
@@ -121,15 +129,17 @@ function termsJson(order: DlnOrderTerms): Terms {
 }
 
 effect function decided(running: Running, quote: BridgeQuote, facts: Facts) {
-  if (canDecide(running.state, quote, "Worker")) try step(running, { type: "decide", quote }, facts)
+  if (canDecide(running.state, quote, "Worker")) return try step(running, { type: "decide", quote }, facts)
+  try Effect.logWarning("fee_buyback_undecided", { network: running.leg.network, amount: quote.amount, decision: decisionOf(running.state, quote).state, mode: running.state.runtime.buybackMode })
 }
 
 function owedOf(state: Buyback, settings: LegSettings) {
-  return entitlement(0n, fromAmount(state.income), settings.limits.shareBps, fromAmount(state.committed))
+  return entitlement(0n, fromAmount(state.income), smaller(settings.limits.shareBps, shareCeilingBps), fromAmount(state.committed))
 }
 
 effect function sendable(state: Buyback, settings: LegSettings, owed: bigint, balance: bigint) {
-  const left = remainingBudget(settings.limits.runCapMicro, 0n, settings.limits.dailyCapMicro, try big(String(spentInWindow(state.bridgeSpends, state.clock))))
+  const spent = try big(String(spentInWindow(state.bridgeSpends, state.clock)))
+  const left = remainingBudget(smaller(settings.limits.runCapMicro, orderCeilingMicro), 0n, smaller(settings.limits.dailyCapMicro, windowCeilingMicro), spent)
   return boundedSend(owed, balance, left > 0n ? left : 0n)
 }
 
@@ -147,22 +157,15 @@ effect function evmPriced(running: Running, settings: LegSettings, proposal: Evm
   return { quote, summary }
 }
 
-effect function solanaPriced(settings: LegSettings, draft: SolanaOrderDraft) {
-  const jupiter = try present(settings.jupiter, "decide", "Solana bridge pricing needs the Jupiter settings")
-  const priced = try jupiterQuote(jupiter, solanaNativeAsset, draft.nativeFee, 0)
-  const amount = draft.intent.giveAmount
-  const cost = amount - draft.order.takeAmount + priced.outAmount
-  const quote: BridgeQuote = { route: "RouteFound", amount: Number(amount), takeAmount: Number(draft.order.takeAmount), costBps: costBps(amount, cost), nativeFee: Number(draft.nativeFee) }
-  const summary = JSON.stringify({ provider: "debridge", orderId: draft.intent.orderId, takeAmount: draft.order.takeAmount.toString(), takeChainId: String(chainIds.robinhood), receiver: draft.intent.receiver, nativeFee: draft.nativeFee.toString(), nativeFeeMicro: priced.outAmount.toString() })
-  return { quote, summary }
+function signedFacts(settings: LegSettings, signed: EvmSigned) {
+  return { txId: signed.txId, rawTx: signed.rawTx, nonce: signed.prepared.nonce, maximumWei: signed.prepared.maximumWei.toString(), intentHash: signed.prepared.unsigned.intentHash, limits: settings.native } satisfies SignedFacts
 }
 
-effect function signedFacts(settings: LegSettings, txId: string, rawTx: string, nonce: number, maximumWei: bigint, intentHash: string, solana: { readonly slot: number; readonly proof: string | undefined } | undefined) {
-  const limits = solana === undefined ? settings.native : try present(settings.limits.solanaBridgeNative, "order", "a Solana bridge order needs the reviewed bridge native limits")
-  return {
-    txId, rawTx, nonce, maximumWei: maximumWei.toString(), intentHash, limits, purpose: solana === undefined ? "fees" : "bridge",
-    ...solana === undefined ? {} : { blockhashSlot: solana.slot, ...solana.proof === undefined ? {} : { accountProof: solana.proof } },
-  } satisfies SignedFacts
+effect function admissible(running: Running, request: BridgeOrder) {
+  if (orderTermsValid(running.state, request) && signs(running.state)) return true
+  const reason = request.reservedTaker !== "" ? "the order reserves its fill for a taker the bridge terms do not admit" : "the order terms are outside the approved bounds"
+  try Effect.logInfo("fee_bridge_waiting", { network: running.leg.network, reason })
+  return false
 }
 
 effect function floorOf(running: Running) {
@@ -179,13 +182,13 @@ effect function approve(running: Running, settings: LegSettings, proposal: EvmOr
   const network = running.leg.network
   if (network === "Solana" || network === "Robinhood") return
   const { order } = proposal
+  if (!(try admissible(running, try bridgeRequest(running, settings, proposal, 1, quote)))) return
   const floors = try floorOf(running)
   const wallet = try FeeWallet
   const signed = try wallet.sign({ kind: "DlnApprove", network, nonceFloor: try big(String(floors.evm)), valueMicro: order.giveAmount, amount: order.giveAmount, takeAmount: order.takeAmount, nativeFee: order.nativeFee, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("approveOrder", "a bridge approval is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  const request = bridgeRequest(running.leg.names.number("hash", order.orderId.toLowerCase()), tx, quote.amount, quote, false)
-  try step(running, { type: "approveOrder", request }, { summary, takeAmount: order.takeAmount.toString(), signed: try signedFacts(settings, signed.txId, signed.rawTx, signed.prepared.nonce, signed.prepared.maximumWei, signed.prepared.unsigned.intentHash, undefined) })
+  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote) }, { summary, takeAmount: order.takeAmount.toString(), signed: signedFacts(settings, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_approval_submitted", signed.txId)
 }
 
@@ -199,31 +202,13 @@ effect function orderEvm(running: Running, settings: LegSettings) {
   const { proposal } = proposed
   const { quote } = try evmPriced(running, settings, proposal)
   const order = try recheckedEvmOrder(proposal)
-  const orderId = running.leg.names.number("hash", order.orderId.toLowerCase())
-  if (!orderTermsValid(running.state, bridgeRequest(orderId, 1, quote.amount, quote, false))) return try Effect.logInfo("fee_bridge_waiting", { network, reason: "the order terms changed beyond the approved bounds" })
+  if (!(try admissible(running, try bridgeRequest(running, settings, proposal, 1, quote)))) return
   const floors = try floorOf(running)
   const signed = try (try FeeWallet).sign({ kind: "DlnCreateOrder", network, nonceFloor: try big(String(floors.evm)), valueMicro: amount, order, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("order", "an EVM bridge order is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "order", request: bridgeRequest(orderId, tx, quote.amount, quote, false) }, { terms: termsJson(order), signed: try signedFacts(settings, signed.txId, signed.rawTx, signed.prepared.nonce, signed.prepared.maximumWei, signed.prepared.unsigned.intentHash, undefined) })
+  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote) }, { terms: termsJson(order), signed: signedFacts(settings, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_bridge_submitted", signed.txId)
-}
-
-effect function orderSolana(running: Running, settings: LegSettings, draft: SolanaOrderDraft, quote: BridgeQuote) {
-  const order = try recheckedSolanaOrder(draft)
-  const orderId = running.leg.names.number("hash", draft.intent.orderId.toLowerCase())
-  if (!orderTermsValid(running.state, bridgeRequest(orderId, 1, quote.amount, quote, true))) return try Effect.logInfo("fee_bridge_waiting", { network: "Solana", reason: "the order terms are outside the bridge bounds" })
-  const floors = try floorOf(running)
-  const signed = try (try FeeWallet).sign({ kind: "SolanaDlnOrder", network: "Solana", giveAmount: draft.intent.giveAmount, takeAmount: order.takeAmount, receiver: draft.intent.receiver as Address, orderNonce: order.nonce, orderId: draft.intent.orderId }, () => Effect.void)
-  if (signed.family !== "solana") return try refuse("order", "a Solana bridge order is a Solana send")
-  const tx = running.leg.names.number("tx", signed.txId)
-  const terms: Terms = { provider: "debridge", orderId: draft.intent.orderId.toLowerCase(), takeToken: robinhoodUsdg, takeAmount: order.takeAmount.toString(), takeChainId: String(chainIds.robinhood), receiver: draft.intent.receiver, nativeFee: draft.nativeFee.toString(), salt: order.nonce.toString() }
-  try step(running, { type: "order", request: bridgeRequest(orderId, tx, quote.amount, quote, true) }, { terms, signed: try signedFacts(settings, signed.txId, signed.rawTx, floors.solana, draft.nativeFee, signed.prepared.intentHash, { slot: signed.prepared.blockhashSlot, proof: signed.prepared.accountProof }) })
-  const raw = base64Decode(signed.rawTx)
-  if (raw === undefined) return try refuse("order", "the signed Solana order is not base64")
-  const refused = Effect.as(broadcastSolana(raw), undefined) catch (error) => error._tag
-  if (refused !== undefined) return try step(running, { type: "loseSend", tx }, { detail: refused })
-  try Effect.logInfo("fee_bridge_submitted", { network: "Solana", txId: signed.txId })
 }
 
 effect function evaluate(running: Running, settings: LegSettings) {
@@ -238,15 +223,8 @@ effect function evaluate(running: Running, settings: LegSettings) {
   const probe: BridgeQuote = { route: "RouteFound", amount: Number(amount), takeAmount: Number(amount), costBps: 0, nativeFee: 0 }
   const facts: Facts = { balance: balance.toString() }
   if (decisionOf(state, probe).state !== "Quoted") return try decided(running, probe, facts)
+  if (solana) return try Effect.logInfo("fee_bridge_waiting", { network: leg.network, reason: "a Solana bridge order cannot be signed until the signer accepts a DLN order intent that rebuilds its bytes" })
   const unrouted: BridgeQuote = { route: "NoRouteResult", amount: Number(amount), takeAmount: 0, costBps: 0, nativeFee: 0 }
-  if (solana) {
-    const proposed = try proposeSolanaOrder(amount, settings.receiver)
-    if (proposed.kind === "NoRoute") return try decided(running, unrouted, { ...facts, detail: proposed.detail })
-    const { quote, summary } = try solanaPriced(settings, proposed.draft)
-    const verdict = decisionOf(running.state, quote)
-    if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decided(running, quote, { ...facts, summary, takeAmount: proposed.draft.order.takeAmount.toString() })
-    return try orderSolana(running, settings, proposed.draft, quote)
-  }
   const proposed = try proposeEvmOrder(amount, settings.receiver)
   if (proposed.kind === "NoRoute") return try decided(running, unrouted, { ...facts, detail: proposed.detail })
   const { quote, summary } = try evmPriced(running, settings, proposed.proposal)
@@ -256,15 +234,15 @@ effect function evaluate(running: Running, settings: LegSettings) {
 }
 
 effect function settleEvm(running: Running, record: SendRecord, tx: number) {
-  const status = try attemptStatus([record.tx as Hex])
+  const status = try attemptStatus(record.txs.map((attempt) => attempt as Hex))
   if (status.kind !== "Landed") {
     if (status.kind === "Unlanded" && record.state === "unknown") {
-      const again = try broadcastEvm(record.rawTx as Hex)
-      try Effect.logInfo("fee_send_rebroadcast", { network: running.leg.network, txId: record.tx, accepted: again.kind === "Accepted" })
+      const again = try broadcastEvm(record.latestRaw as Hex)
+      try Effect.logInfo("fee_send_rebroadcast", { network: running.leg.network, txId: record.txs[record.txs.length - 1] ?? record.tx, accepted: again.kind === "Accepted" })
     }
     return
   }
-  const receipt = { landedTxId: record.tx, actualWei: (try nativeCost(status.receipt)).toString(), blockHash: status.receipt.blockHash }
+  const receipt = { landedTxId: status.tx, actualWei: (try nativeCost(status.receipt)).toString(), blockHash: status.receipt.blockHash }
   if (record.kind === "approval") {
     const evidence = try approvalSettled(status, { token: usdcOf(running.leg) as Address, spender: "Bridge", amount: try big(record.amountIn), nonce: try big(String(record.nonce ?? -1)) })
     return try step(running, { type: "settleApproval", receipt: { tx, succeeded: evidence.succeeded, finalized: true } }, { receipt })
@@ -347,7 +325,7 @@ export effect function arrivals(legs: ReadonlyArray<Leg>, settings: ArrivalSetti
       const { terms, order } = try termsOrder(record)
       const filled = try fill({ orderId: order.orderId, takeAmount: order.takeAmount, receiver: order.receiver })
       if (filled.kind === "Arrived" && phase === "InTransit") {
-        try step(running, { type: "observeArrival", arrival: { order: running.state.order, amount: Number(filled.amount), receiver: "fees", height: Number(filled.height), finalized: true } }, { blockHash: filled.blockHash })
+        try step(running, { type: "observeArrival", arrival: { order: running.state.order, amount: Number(filled.amount), receiver: filled.receiver.toLowerCase() === settings.wallet.toLowerCase() ? "fees" : filled.receiver, height: Number(filled.height), finalized: true } }, { blockHash: filled.blockHash })
         try Effect.logInfo("fee_bridge_arrived", { network: leg.network, orderId: terms.orderId, amount: terms.takeAmount })
         return try step(running, { type: "closeOrder" })
       }

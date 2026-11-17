@@ -2,7 +2,8 @@
 import { Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { vectors } from "../../kernels/vectors.ts";
-import { type MonthlyPoolValue, type PoolToken, emptyProposal, immutableProposalTermsUrl, maxProjectIdLength, monthlyPoolValue, normalizeRepositoryInput, projectImageProblem, proposalOf, slugify, validRepositoryPath } from "./proposal.ts";
+import type { Chain } from "@repo/settlement/kernels/networks";
+import { type EscrowPolicy, type FundingChoice, type MonthlyPoolReward, type MonthlyPoolValue, type PoolToken, type RewardFields, emptyProposal, immutableProposalTermsUrl, maxProjectIdLength, monthlyPoolValue, normalizeRepositoryInput, projectImageProblem, proposalOf, rewardFields, slugify, validRepositoryPath } from "./proposal.ts";
 
 export const pastedRepositoryLinksBecomeOwnerAndName = vectors<string, string>([
   ["https://github.com/slop/tool", "slop/tool"],
@@ -87,3 +88,41 @@ export const savedConsentIsOnlyEverItsExactText = vectors<unknown, string | unde
 ], (stored) => proposalOf(stored)?.automaticClosure);
 
 export const newProposalsStartWithClosureUnchecked = vectors<null, string>([[null, "false"]], () => emptyProposal.automaticClosure);
+
+export const restoredDraftsKeepTheirLicenseTermsAndAssignment = vectors<unknown, Partial<Record<string, string>> | undefined>([
+  [
+    { licenseSpdx: "MIT", inboundTermsUrl: "https://github.com/slop/tool/blob/main/TERMS.md", inboundMode: "dco", assignmentSignedAt: "2026-11-01" },
+    { licenseSpdx: "MIT", inboundMode: "dco", inboundTermsUrl: "https://github.com/slop/tool/blob/main/TERMS.md", assignmentSignedAt: "2026-11-01" },
+  ],
+  [{}, { licenseSpdx: "", inboundMode: "unknown", inboundTermsUrl: "", assignmentSignedAt: "" }],
+], (stored) => {
+  const draft = proposalOf(stored);
+  return draft === null ? undefined : { licenseSpdx: draft.licenseSpdx, inboundMode: draft.inboundMode, inboundTermsUrl: draft.inboundTermsUrl, assignmentSignedAt: draft.assignmentSignedAt };
+});
+
+const rewardStart = "2026-11-17T08:00:00.000Z";
+const choice = (overrides: Partial<FundingChoice>): FundingChoice => ({ mode: "monthly", network: "base", assetKind: "stablecoin", tokenAddress: "", tokenSymbol: "", monthlyAmount: "1000", ...overrides });
+const pool = (chain: Chain, currency: string, monthlyCapMinor: string, monthlyCapDisplay: string, feeBasisPoints: number): MonthlyPoolReward => ({
+  kind: "monthly-pool", currency, chain, rewardStartAt: rewardStart, cycle: "calendar-month-utc", monthlyCapMinor, monthlyCapDisplay,
+  committedMinor: "0", paymentMode: "disabled", feeBasisPoints, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged",
+});
+const vault = (chain: Chain): EscrowPolicy => ({ schemaVersion: "1", effectiveCycle: "2026-11", chain, feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] });
+
+export const fundingChoicesBuildTheManifestRewardAssetAndVault = vectors<FundingChoice, RewardFields>([
+  [choice({ mode: "none", network: "solana" }), { reward: pool("base", "USDC", "0", "$0", 100) }],
+  [choice({}), {
+    escrow: vault("base"),
+    rewardAsset: { network: "base", kind: "stablecoin", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
+    reward: pool("base", "USDC", "1000000000", "$1,000", 200),
+  }],
+  [choice({ network: "solana", assetKind: "native", monthlyAmount: "1.5" }), {
+    escrow: vault("solana"),
+    rewardAsset: { network: "solana", kind: "native", address: "11111111111111111111111111111111", symbol: "SOL" },
+    reward: pool("solana", "SOL", "1500000000", "1.5 SOL", 200),
+  }],
+  [choice({ network: "ethereum", assetKind: "token", tokenAddress: " 0x00000000000000000000000000000000000000aa ", tokenSymbol: " TOK ", monthlyAmount: "25" }), {
+    escrow: vault("ethereum"),
+    rewardAsset: { network: "ethereum", kind: "token", address: "0x00000000000000000000000000000000000000aa", symbol: "TOK" },
+    reward: pool("ethereum", "TOK", "0", "0 TOK", 200),
+  }],
+], (funding) => rewardFields(funding, rewardStart));

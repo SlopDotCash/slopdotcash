@@ -129,10 +129,16 @@ pure def checkedCurrent(r: Request, v: ValueInference): bool = r.check == Observ
 
 ### Admit at most three unresolved or non-free attempts for the same key
 
-The route orders Orbio Sonnet, Surplus Sonnet and Surplus Terra. A missing
-credential skips its route step. A failed provider advances to its successor.
-Only a recognized Surplus spending denial stops the route early as a provider
-budget block. Its receipt may still carry unknown or actual usage. Wholly free denial and
+The route orders Surplus Sonnet, Surplus Terra and Orbio Sonnet (PRD
+section 5, operator decision of 16 November 2026). A missing credential
+skips its route step. A failed provider advances to its successor. A
+recognized Surplus spending denial skips the remaining Surplus step, which
+shares the denied budget, and asks Orbio in the same attempt; the request
+waits as a provider budget block only when Orbio has no key or serves no
+valid result. The denial's receipt may still carry unknown or actual usage.
+An attempt whose only call was the denial is wholly free; an attempt that
+also called Orbio is non-free even when the request then waits as a budget
+block. Wholly free denial and
 completed zero-call reconciliation do not consume a paid slot. An incomplete
 attempt occupies a slot and may still produce the first retained result.
 Three completed non-free attempts without a retained result are terminal for
@@ -191,7 +197,7 @@ pure def reserve(v: ValueInference, attemptId: int, otherUsed: int, otherHeld: i
   putAttempt({ ...attempt(v, attemptId), stage: HeldBudget, month: v.month,
     limited: v.config == Capped, maximum: if (v.config == Capped) v.maximum else 0 },
     { ...v, occupied: v.occupied.union(Set(attemptId)) })
-pure def providerFor(n: int): Provider = if (n == 0) OrbioSonnet else if (n == 1) SurplusSonnet else SurplusTerra
+pure def providerFor(n: int): Provider = if (n == 0) SurplusSonnet else if (n == 1) SurplusTerra else OrbioSonnet
 pure def canCall(v: ValueInference, attemptId: int): bool =
   val a = attempt(v, attemptId)
   a.stage == HeldBudget and checkedCurrent(request(v, a.token), v) and v.retained == noRetained
@@ -210,8 +216,10 @@ pure def canRecordCall(v: ValueInference, attemptId: int, charge: Charge): bool 
     and (charge.result != BudgetDenial or charge.provider != OrbioSonnet)
 pure def recordCall(v: ValueInference, attemptId: int, charge: Charge): ValueInference =
   val a = attempt(v, attemptId)
-  val routeFinished = charge.result != FailedCall or a.routeStep >= 2
-  putAttempt({ ...a, routeStep: a.routeStep + 1, allCalls: a.allCalls.append(charge), stage: if (routeFinished) RouteDone else HeldBudget }, v)
+  val denied = charge.result == BudgetDenial
+  val routeFinished = charge.result == ValidResult or (charge.result == FailedCall and a.routeStep >= 2)
+  putAttempt({ ...a, routeStep: if (denied) 2 else a.routeStep + 1, allCalls: a.allCalls.append(charge),
+    stage: if (routeFinished) RouteDone else HeldBudget }, v)
 pure def canSkipUnavailable(v: ValueInference, attemptId: int, unavailableProvider: Provider, credentialMissing: bool): bool =
   val a = attempt(v, attemptId)
   a.stage == HeldBudget and a.routeStep < 3 and unavailableProvider == providerFor(a.routeStep) and credentialMissing
@@ -223,6 +231,8 @@ pure def canEndWithoutCall(v: ValueInference, attemptId: int): bool =
   a.stage == HeldBudget and (not(owns(request(v, a.token), v)) or not(locallyAuthorized(v)) or v.retained != noRetained)
 pure def endWithoutCall(v: ValueInference, attemptId: int): ValueInference =
   putAttempt({ ...attempt(v, attemptId), stage: RouteDone }, v)
+pure def sometimesOrbioAfterADenial(v: ValueInference): bool =
+  v.attempts.some(a => a.allCalls.some(c => c.result == BudgetDenial) and a.allCalls.some(c => c.provider == OrbioSonnet))
 ```
 
 ### Usage precedes retained output and explicit completion

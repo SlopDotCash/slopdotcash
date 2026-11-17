@@ -1,0 +1,308 @@
+// spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence"; spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
+import { isoNow } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import type { Disposition, Event, Machine } from "../../../gen/security__admission.effect.vibe"
+import { ReuseAnswer } from "../../client/admission.vibe"
+import { type ScanResult, isScanResult, maxResultBytes, parseResult, resultProblems, scanSchema, sourceInventory, templatePrefix } from "../../admission/result.ts"
+import { readAcquiredObject, readAcquiredSource } from "../acquire/source.vibe"
+import { inspectRepository } from "../inspect/inspection.ts"
+import type { RepositoryInspection, ScanInputFile } from "../inspect/model.ts"
+import { type ScannerEvidence, type ScannerProfile, reviewDeclined } from "../providers/review.ts"
+import { complete, approved, journaled, reserve, submit } from "../publish/journal.vibe"
+import { type ReviewOptions, reviewInventory } from "../review/inventory.vibe"
+import { inspectIsolatedArtifacts } from "../sandboxClient/client.vibe"
+import { attemptMachine, fetched, interrupted, publishedDigest, receiptOf, reusedOrigin } from "./attempt.vibe"
+import { type QueuedScan, type ScanComposition, composeAcquisitionRefusal, composeScanResult } from "./compose.ts"
+import { type EvidenceObject, retainEvidence } from "./evidence.vibe"
+import { type Assignment, QueuedRefusal, acquireQueued, readPendingAssessments } from "./queue.vibe"
+import { ScanService, signedCall, signedJson } from "./service.vibe"
+
+export service ScanSettings {
+  readonly primary: ScannerProfile
+  readonly specialist: ScannerProfile
+  readonly policyVersion: string
+  readonly workDirectory: string
+  readonly review: ReviewOptions
+}
+
+export type RetryStep = "acquire" | "isolated-execution" | "reuse" | "primary-review" | "specialist-review" | "evidence" | "assessment"
+
+export type AssessmentOutcome =
+  | { readonly assessmentId: string; readonly state: "published"; readonly disposition: string; readonly outcome: "accepted" | "rejected" | "unknown"; readonly specialist: boolean; readonly evidence: "retained" | "failed"; readonly reason?: string }
+  | { readonly assessmentId: string; readonly state: "retry"; readonly step: RetryStep; readonly reason?: string }
+  | { readonly assessmentId: string; readonly state: "journaled" }
+
+export interface ScanPassReport {
+  readonly refreshed: boolean
+  readonly assessments: ReadonlyArray<AssessmentOutcome>
+}
+
+export error ReuseLookupFailed
+export error QueuedInputsInvalid
+export error NamedObjectMissing
+export error DispositionDisagrees
+
+const coveredByBoundedScan: ReadonlySet<string> = new Set(["execution-dependencies-and-release-assets-not-acquired", "skill-template-inputs-not-acquired", "runtime-and-model-review-not-performed"])
+schema QueuedInput { path: string; sha256: string }
+schema QueuedInputs { schema: "slop-queued-inputs-v1"; repository: string; inputs: ReadonlyArray<QueuedInput> }
+
+function retry(assessmentId: string, step: RetryStep, reason?: string): AssessmentOutcome {
+  return { assessmentId, state: "retry", step, ...(reason === undefined ? {} : { reason }) }
+}
+
+function errorName(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : error instanceof Error ? error.name : "unknown"
+}
+
+effect function refresh() {
+  const answer = signedCall({ step: "refresh", method: "POST", path: "/api/v1/vetting/refresh", body: new TextEncoder().encode("{}"), contentType: "application/json", timeoutMs: 30_000, limitBytes: 64 * 1024 }) catch effect () => {
+    return undefined
+  }
+  return answer !== undefined && answer.status >= 200 && answer.status <= 299
+}
+
+effect function acquiredInputs(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const source = try readAcquiredSource(directory)
+  const raw = try fs.readFile(path.join(directory, "queued-inputs.json"))
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)) as unknown) catch effect () => {
+    throw new QueuedInputsInvalid()
+  }
+  const queued = Schema.decodeUnknownEffect(QueuedInputs)(value) catch effect () => {
+    throw new QueuedInputsInvalid()
+  }
+  const templates: ScanInputFile[] = []
+  for (const input of queued.inputs) templates.push({ path: `${templatePrefix}/${input.path}`, bytes: try readAcquiredObject(directory, input.sha256) })
+  return { repository: queued.repository, files: [...source.files, ...templates], acquisitionGaps: source.acquisitionGaps.filter((gap) => !coveredByBoundedScan.has(gap)) }
+}
+
+const dispositionOf: Readonly<Record<ScanResult["disposition"], Disposition>> = { clean: "DClean", incomplete: "DIncomplete", malicious: "DMalicious" }
+
+function modelEscalated(composition: ScanComposition) {
+  const review = composition.result.primaryReview
+  return review.verdict !== "no-findings" || review.risk !== "low"
+}
+
+function primaryReviewed(composition: ScanComposition): Event {
+  return { type: "reviewPrimary", primaryOutcome: modelEscalated(composition) ? "PrimaryEscalate" : "PrimaryClean" }
+}
+
+effect function reusableResult(assignment: Assignment, repository: string, inventorySha256: string) {
+  const settings = try ScanSettings
+  const value = signedJson({ step: "reuse", method: "POST", path: "/api/v1/vetting/reuse", body: { assessmentId: assignment.assessmentId, inputManifestSha256: inventorySha256, policyVersion: settings.policyVersion }, timeoutMs: 30_000, limitBytes: maxResultBytes + 128 }) catch effect () => {
+    throw new ReuseLookupFailed()
+  }
+  const answer = Schema.decodeUnknownEffect(ReuseAnswer)(value) catch effect () => {
+    throw new ReuseLookupFailed()
+  }
+  if (answer.result === null) return undefined
+  if (new TextEncoder().encode(JSON.stringify(answer.result)).byteLength > maxResultBytes) throw new ReuseLookupFailed()
+  const parsed = parseResult(answer.result)
+  if (parsed.kind !== "parsed" || !isScanResult(parsed.result)) throw new ReuseLookupFailed()
+  const result = parsed.result
+  if (
+    result.disposition !== "clean" ||
+    result.reusedAssessmentId === null ||
+    result.assessmentId !== assignment.assessmentId ||
+    result.projectId !== assignment.projectId ||
+    result.revision !== assignment.revision ||
+    result.manifestSha256 !== assignment.manifestSha256 ||
+    result.assessed.repository.toLowerCase() !== repository.toLowerCase() ||
+    result.assessed.commitSha !== assignment.commitSha ||
+    result.assessed.templateSha256 !== assignment.templateSha256 ||
+    sourceInventory(result) !== inventorySha256 ||
+    result.policyVersion !== settings.policyVersion ||
+    resultProblems(result).length > 0
+  )
+    throw new ReuseLookupFailed()
+  return result
+}
+
+effect function published(machine: Machine.Shape, result: ScanResult) {
+  const { origin } = try ScanService
+  const body = JSON.stringify(result)
+  const checked = try approved(body)
+  const intent = { assessmentId: result.assessmentId, resultSha256: checked.resultSha256, origin, disposition: result.disposition }
+  try reserve(intent)
+  try machine.send({ type: "recordIntent", digest: publishedDigest })
+  try machine.send({ type: "send" })
+  const sent = try submit(body, result, checked.resultSha256)
+  try machine.send({ type: "recordReceipt", response: receiptOf(sent.outcome) })
+  try complete({ ...intent, outcome: sent.outcome, httpStatus: sent.httpStatus })
+  return sent.outcome
+}
+
+effect function retainedAs(machine: Machine.Shape, kept: boolean) {
+  try machine.send({ type: "retain", retention: kept ? "Stored" : "StoreFailed" })
+}
+
+effect function publishRefusal(machine: Machine.Shape, assignment: Assignment, refusal: QueuedRefusal, startedAt: string) {
+  const settings = try ScanSettings
+  try machine.send({ type: "acquire", fetch: fetched(refusal.fetched, 0) })
+  const runId = `scan_${(try randomId()).replaceAll("-", "")}`
+  const composed = composeAcquisitionRefusal({ queued: { ...assignment, repository: refusal.repository }, reason: refusal.reason, primaryModel: settings.primary.model, policyVersion: settings.policyVersion, runId, startedAt, completedAt: try isoNow() })
+  const retained = retainEvidence(assignment.assessmentId, runId, [
+    { bytes: composed.report, kind: "trace", label: "Acquisition refusal report", contentType: "application/json" },
+    { bytes: composed.inventory, kind: "manifest", label: "Uninspected source coverage", contentType: "application/json" },
+  ]) catch effect () => {
+    return false
+  }
+  try retainedAs(machine, retained)
+  const outcome = try published(machine, composed.result)
+  return { assessmentId: assignment.assessmentId, state: "published", disposition: "incomplete", outcome, specialist: false, evidence: retained ? "retained" : "failed" } satisfies AssessmentOutcome
+}
+
+effect function reviewed(inspection: RepositoryInspection, profile: ScannerProfile) {
+  const settings = try ScanSettings
+  return (try reviewInventory(inspection, profile, settings.review)).evidence
+}
+
+effect function scanAcquired(machine: Machine.Shape, assignment: Assignment, directory: string) {
+  const settings = try ScanSettings
+  const { assessmentId } = assignment
+  const startedAt = try isoNow()
+  const inputs = acquiredInputs(directory) catch effect () => {
+    try machine.send(interrupted("SourceUnavailable"))
+    return undefined
+  }
+  if (inputs === undefined) return retry(assessmentId, "acquire")
+  const inspected = inspectRepository({ files: inputs.files, acquisitionGaps: inputs.acquisitionGaps })
+  const files = [...inputs.files, ...inspected.derivedFiles]
+  const sourceInventory = inspected.inventory
+  const sourceInventorySha256 = inspected.inventorySha256
+  const entries = inspected.items.length
+  try machine.send({ type: "acquire", fetch: fetched("Fetched", entries) })
+  const reused = reusableResult(assignment, inputs.repository, sourceInventorySha256) catch effect (error) => {
+    try machine.send(interrupted("ReuseLookupFailed"))
+    return error
+  }
+  if (reused instanceof ReuseLookupFailed) return retry(assessmentId, "reuse", "ReuseLookupFailed")
+  if (reused !== undefined) {
+    try machine.send({ type: "reuse", origin: reusedOrigin(1) })
+    try retainedAs(machine, true)
+    const outcome = try published(machine, reused)
+    return { assessmentId, state: "published", disposition: "clean", outcome, specialist: false, evidence: "retained" } satisfies AssessmentOutcome
+  }
+  const isolated = inspectIsolatedArtifacts(files, inspected) catch effect (error) => {
+    try machine.send(interrupted("ReadinessUnavailable"))
+    return errorName(error)
+  }
+  if (typeof isolated === "string") return retry(assessmentId, "isolated-execution", isolated)
+  const inspection = isolated.inspection
+  const executionEvidenceSha256s: string[] = []
+  for (const report of isolated.reports) executionEvidenceSha256s.push(try sha256Hex(report))
+  const checked = (uncovered: number, ambiguous: boolean) => effect {
+    try machine.send({ type: "checkDeterministically", uncovered: Math.min(uncovered, entries), ambiguous })
+    if (entries > 0) try machine.send({ type: "reviewBatch", count: entries })
+  }
+  const primary = try reviewed(inspection, settings.primary)
+  let declined: string | undefined = undefined
+  if (primary.review.status !== "completed") {
+    if (!reviewDeclined(primary.failure)) {
+      try checked(isolated.uncovered, false)
+      try machine.send({ type: "reviewPrimary", primaryOutcome: "PrimaryUnavailable" })
+      return retry(assessmentId, "primary-review", primary.failure)
+    }
+    declined = primary.failure
+  }
+  const runId = `scan_${(try randomId()).replaceAll("-", "")}`
+  const queued: QueuedScan = { ...assignment, repository: inputs.repository }
+  const compose = (specialist: ScannerEvidence | null) => effect {
+    const completedAt = try isoNow()
+    return try orDie(Effect.try(() => composeScanResult({ queued, inspection, policyVersion: settings.policyVersion, runId, startedAt, completedAt, primary, specialist, execution: isolated.execution, executionEvidenceSha256s, sourceInventorySha256 })))
+  }
+  const first = try compose(null)
+  const { ambiguous } = first
+  let composed = first
+  let specialist: ScannerEvidence | null = null
+  if (declined === undefined && first.needsSpecialist) {
+    const second = try reviewed(inspection, settings.specialist)
+    if (second.review.status !== "completed") {
+      if (!reviewDeclined(second.failure)) {
+        try checked(isolated.uncovered, ambiguous)
+        try machine.send(primaryReviewed(first))
+        if (!modelEscalated(first)) try machine.send({ type: "escalateSpecialist", reason: "Ambiguous" })
+        try machine.send({ type: "reviewSpecialist", specialistOutcome: "SpecialistUnavailable" })
+        return retry(assessmentId, "specialist-review", second.failure)
+      }
+      declined = second.failure
+    }
+    composed = try compose(second)
+    specialist = second
+  }
+  try checked(composed.uncovered, ambiguous)
+  if (primary.review.status !== "completed") {
+    try machine.send({ type: "reviewPrimary", primaryOutcome: "PrimaryDeclined" })
+  } else {
+    try machine.send(specialist === null ? { type: "reviewPrimary", primaryOutcome: "PrimaryClean" } : primaryReviewed(first))
+    if (specialist !== null && !modelEscalated(first)) try machine.send({ type: "escalateSpecialist", reason: "Ambiguous" })
+    if (specialist !== null) try machine.send({ type: "reviewSpecialist", specialistOutcome: specialist.review.status === "completed" ? "SpecialistClean" : "SpecialistDeclined" })
+    if ((try machine.get()).phase === "Reviewing") try machine.send({ type: "synthesize" })
+  }
+  const decided = try machine.get()
+  if (decided.phase !== "Evidence" || decided.disposition !== dispositionOf[composed.result.disposition]) throw new DispositionDisagrees()
+  const bySha = new Map<string, ScanInputFile>()
+  for (const file of files) bySha.set(try sha256Hex(file.bytes), file)
+  const named: EvidenceObject[] = []
+  for (const sha256 of [...composed.result.assessed.dependencyLocks.map((lock) => lock.sha256), ...composed.result.artifacts.map((artifact) => artifact.sha256)]) {
+    const file = bySha.get(sha256)
+    if (file === undefined) throw new NamedObjectMissing()
+    named.push({ bytes: file.bytes, kind: "artifact", label: file.path, contentType: "application/octet-stream" })
+  }
+  const retained = retainEvidence(assessmentId, runId, [
+    { bytes: composed.report, kind: "trace", label: "Bounded scan report", contentType: "application/json" },
+    { bytes: sourceInventory, kind: "manifest", label: "Acquired scan input inventory", contentType: "application/json" },
+    { bytes: inspection.inventory, kind: "manifest", label: "Reviewed scan inventory", contentType: "application/json" },
+    ...isolated.reports.map((bytes, index) => ({ bytes, kind: "trace" as const, label: `Isolated artifact execution ${index + 1}`, contentType: "application/json" })),
+    ...named,
+  ]) catch effect () => {
+    return false
+  }
+  try retainedAs(machine, retained)
+  if (!retained && composed.result.disposition === "clean") return retry(assessmentId, "evidence")
+  const outcome = try published(machine, composed.result)
+  return { assessmentId, state: "published", disposition: composed.result.disposition, outcome, specialist: specialist !== null, evidence: retained ? "retained" : "failed", ...(declined === undefined ? {} : { reason: declined }) } satisfies AssessmentOutcome
+}
+
+export effect function scanOne(assignment: Assignment, machine: Machine.Shape) {
+  const settings = try ScanSettings
+  const { assessmentId } = assignment
+  try machine.send({ type: "start" })
+  const acquisitionStartedAt = try isoNow()
+  const acquired = acquireQueued(assessmentId, settings.workDirectory) catch effect (error) => {
+    return error
+  }
+  if (acquired instanceof QueuedRefusal) {
+    if (acquired.fetched === "FetchStaleTemplate") {
+      try machine.send({ type: "acquire", fetch: fetched("FetchStaleTemplate", 0) })
+      return retry(assessmentId, "acquire", "QueuedRefusal")
+    }
+    return try publishRefusal(machine, assignment, acquired, acquisitionStartedAt)
+  }
+  if (!("directory" in acquired)) {
+    try machine.send({ type: "acquire", fetch: fetched("FetchUnavailable", 0) })
+    return retry(assessmentId, "acquire", errorName(acquired))
+  }
+  const fs = try FileSystem.FileSystem
+  return try Effect.ensuring(scanAcquired(machine, acquired.assignment, acquired.directory), Effect.ignore(fs.remove(acquired.directory, { recursive: true, force: true })))
+}
+
+export effect function runScanPass() {
+  const settings = try ScanSettings
+  const fs = try FileSystem.FileSystem
+  try fs.makeDirectory(settings.workDirectory, { recursive: true, mode: 0o700 })
+  const refreshed = try refresh()
+  const pending = try readPendingAssessments()
+  const assessments: AssessmentOutcome[] = []
+  for (const assignment of pending) {
+    if (try journaled(assignment.assessmentId)) {
+      assessments.push({ assessmentId: assignment.assessmentId, state: "journaled" })
+      continue
+    }
+    const machine = try attemptMachine()
+    const outcome = try exit(scanOne(assignment, machine))
+    assessments.push(Exit.isSuccess(outcome) ? outcome.value : retry(assignment.assessmentId, "assessment", errorName(Cause.squash(outcome.cause))))
+  }
+  return { refreshed, assessments } satisfies ScanPassReport
+}

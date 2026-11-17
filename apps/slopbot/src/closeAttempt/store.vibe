@@ -1,0 +1,167 @@
+// spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation's recheck or a later one"; spec/slopbot/closeAttempt.md, "Only GitHub's own close event confirms and only a definitive refusal releases"
+import { millisOf } from "@repo/platform/clock"
+import { type Statement, first, sql } from "@repo/platform/d1"
+import { type Candidate, type CloseAttempt, type Event, type ProjectFence, Machine, decodeState, initial, machineOver, noAttempt, noFence, noLease, unreadItem } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import { type GateObservation, unobserved } from "../../gen/slopbot__closure.effect.vibe"
+import type { CallRecord } from "../route/route.vibe"
+import { type Verdict, validateVerdict } from "../review/verdict.vibe"
+
+schema RecoveredUsage { readonly input: number; readonly output: number; readonly cacheRead: number; readonly cacheWrite: number }
+schema RecoveredCall {
+  readonly routeStep: number
+  readonly gateway: "orbio" | "surplus"
+  readonly requestedModel: string
+  readonly servedModel: string | null
+  readonly priceKey: string
+  readonly outcome: "ok"
+  readonly failure: null
+  readonly usage: RecoveredUsage
+  readonly providerCostMicroUsd: number | null
+  readonly providerRequestId: string | null
+}
+schema RecoveredFence { readonly project: number; readonly projectRevision: number; readonly manifestDigest: string; readonly enforcementPosition: number }
+schema DecidedAt { readonly decidedSeq: number }
+
+const Recovery = Schema.Struct({ verdict: Schema.Unknown, triage: Schema.NullOr(RecoveredCall), confirm: Schema.NullOr(RecoveredCall), candidate: Schema.Unknown, fence: RecoveredFence })
+
+export schema AttemptRow {
+  readonly attempt_id: string
+  readonly review_key: string
+  readonly ordinal: number
+  readonly state: string
+  readonly revision: string
+  readonly closed_at: string | null
+  readonly comment_confirmed: number
+  readonly recovery_json: string
+  readonly project_id: string
+  readonly penalty_eligible: number
+}
+
+export error RecoveryUnreadable { reason: string }
+
+export interface Recovered {
+  readonly state: CloseAttempt
+  readonly verdict: Verdict
+  readonly triage: CallRecord | undefined
+  readonly confirm: CallRecord | undefined
+}
+
+export interface AttemptRecord {
+  readonly machine: Machine.Shape
+  readonly rechecks: Ref.Ref<number>
+  readonly reads: Ref.Ref<number>
+}
+
+export interface StoredAttempt {
+  readonly attemptId: number
+  readonly state: "pending" | "confirmed"
+  readonly closedAt: string | null
+  readonly commentConfirmed: boolean
+}
+
+export function decidedState(candidate: Candidate, decided: GateObservation): CloseAttempt {
+  return {
+    candidate,
+    recheck: { gate: decided, fence: noFence, lease: noLease },
+    attempt: noAttempt,
+    rejected: [],
+    blocked: "NotBlocked",
+    findingLabel: false,
+    moderatorNotices: [],
+    moderatorLabel: false,
+    maintainerReopened: false,
+    authorAppealed: false,
+    appealUpheld: false,
+    itemNow: unreadItem,
+    slopbotReopened: false,
+  }
+}
+
+function attemptRead(where: Statement) {
+  return sql`SELECT c.attempt_id, c.review_key, c.state, c.revision, c.closed_at, c.comment_confirmed, c.recovery_json, c.project_id, c.penalty_eligible,
+      (SELECT count(*) FROM slopbot_close_attempts o WHERE o.repository_id = c.repository_id AND o.rowid <= c.rowid) AS ordinal
+    FROM slopbot_close_attempts c WHERE ${where} ORDER BY c.rowid DESC LIMIT 1`
+}
+
+export effect function attemptByKey(attemptKey: string) {
+  const found: typeof AttemptRow.Type | undefined = try first(AttemptRow, attemptRead(sql`c.attempt_id = ${attemptKey}`))
+  return found
+}
+
+export effect function confirmedAttempt(itemNodeId: string, revision: string) {
+  const found: typeof AttemptRow.Type | undefined = try first(AttemptRow, attemptRead(sql`c.item_node_id = ${itemNodeId} AND c.revision = ${revision} AND c.state = 'confirmed'`))
+  return found
+}
+
+export function storedOf(row: typeof AttemptRow.Type): StoredAttempt | undefined {
+  if (row.state !== "pending" && row.state !== "confirmed") return undefined
+  return { attemptId: row.ordinal, state: row.state, closedAt: row.closed_at, commentConfirmed: row.comment_confirmed === 1 }
+}
+
+export function recoveryJson(verdict: Verdict, triage: CallRecord | undefined, confirm: CallRecord | undefined, candidate: Candidate, fence: ProjectFence) {
+  return JSON.stringify({ verdict, triage: triage ?? null, confirm: confirm ?? null, candidate, fence })
+}
+
+export effect function restoredAttempt(recoveryText: string, stored: StoredAttempt, moderatorLabel: boolean) {
+  const parsed = try Effect.try({ try: () => JSON.parse(recoveryText) as unknown, catch: () => new RecoveryUnreadable({ reason: "recovery JSON is malformed" }) })
+  const recovery = Schema.decodeUnknownEffect(Recovery)(parsed) catch effect () => { throw new RecoveryUnreadable({ reason: "recovery does not name the decided close" }) }
+  const verdict = validateVerdict(recovery.verdict)
+  if (verdict === undefined) throw new RecoveryUnreadable({ reason: "recovered verdict is invalid" })
+  const decided = Schema.decodeUnknownEffect(DecidedAt)(recovery.candidate) catch effect () => { throw new RecoveryUnreadable({ reason: "recovery does not name the decided close" }) }
+  const reservedSeq = decided.decidedSeq + 1
+  const confirmed = stored.state === "confirmed"
+  const state = try decodeState({
+    candidate: recovery.candidate,
+    recheck: { gate: { ...unobserved, seq: reservedSeq }, fence: recovery.fence, lease: noLease },
+    attempt: {
+      state: confirmed ? "Confirmed" : "Pending",
+      id: stored.attemptId,
+      requests: 1,
+      closedAt: confirmed ? Math.floor(millisOf(stored.closedAt ?? "") / 1000) : 0,
+      commentConfirmed: confirmed && stored.commentConfirmed,
+      leaseToken: 1,
+      fence: recovery.fence,
+      reservedSeq,
+    },
+    rejected: [],
+    blocked: "NotBlocked",
+    findingLabel: false,
+    moderatorNotices: [],
+    moderatorLabel: confirmed && moderatorLabel,
+    maintainerReopened: false,
+    authorAppealed: false,
+    appealUpheld: false,
+    itemNow: unreadItem,
+    slopbotReopened: false,
+  })
+  return { state, verdict, triage: recovery.triage ?? undefined, confirm: recovery.confirm ?? undefined } satisfies Recovered
+}
+
+export effect function openAttempt(start: CloseAttempt = initial) {
+  const held = try Ref.make<CloseAttempt>(start)
+  return {
+    machine: try machineOver(() => Ref.get(held), (next) => Ref.set(held, next)),
+    rechecks: try Ref.make(start.recheck.gate.seq),
+    reads: try Ref.make(start.itemNow.seq),
+  } satisfies AttemptRecord
+}
+
+export effect function attemptState(record: AttemptRecord) {
+  return try record.machine.get()
+}
+
+export effect function sendAttempt(record: AttemptRecord, event: Event) {
+  return try record.machine.send(event)
+}
+
+export effect function receiveAttempt(record: AttemptRecord, input: unknown) {
+  return try record.machine.receive(input)
+}
+
+export effect function nextRecheck(record: AttemptRecord) {
+  return try Ref.updateAndGet(record.rechecks, (seq) => seq + 1)
+}
+
+export effect function nextRead(record: AttemptRecord) {
+  return try Ref.updateAndGet(record.reads, (seq) => seq + 1)
+}

@@ -67,7 +67,7 @@ type SolanaStatus = SolanaPrepared | SolanaCompleted | SolanaExpired
 type SolanaGeneration = { obligation: int, generation: int, claim: int, transaction: int, status: SolanaStatus,
   expiryHeight: int, privateCase: int }
 type PaymentEvidence = { obligation: int, owner: str, network: str, vault: str, reserved: bool,
-  attemptClaim: int, attemptOpen: bool, privateCase: int }
+  attemptClaim: int, attemptOpen: bool, privateCase: int, outboxReady: bool }
 type CaseAccess = { privateCase: int, actor: str }
 type SolanaWalletSignature = { recoveredSigner: str, transaction: int }
 type Binding = { wallet: W::WalletRegistration, solanaWallet: W::WalletRegistration, deployments: List[Deployment],
@@ -194,7 +194,7 @@ reporter `write` row to that case's access log.
 
 ```quint
 pure val absentPayment: PaymentEvidence = { obligation: 0, owner: "", network: "", vault: "", reserved: false,
-  attemptClaim: 0, attemptOpen: false, privateCase: 0 }
+  attemptClaim: 0, attemptOpen: false, privateCase: 0, outboxReady: false }
 pure def paymentFor(b: Binding, obligation: int): PaymentEvidence =
   b.payments.select(p => p.obligation == obligation).nthOr(0, absentPayment)
 pure def canObservePayment(b: Binding, by: str, evidence: PaymentEvidence): bool =
@@ -276,6 +276,51 @@ pure def lawReplacedClaimGenerationCannotComplete(b: Binding, by: str, obligatio
   liveGeneration(b, obligation).claim != solanaClaim(b) implies not(canSolanaComplete(b, by, obligation, generation, walletSignature))
 ```
 
+### A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox
+
+Mainnet has no hosted payment dispatcher, so a prepare may itself open the
+obligation's first payout attempt (Slop development `c1439dc0d`,
+`backend/payments/handler.ts:1134–1175`, `backend/payments/README.md:42–50`).
+The attempt itself is the settlement dispatch's `prepareBinding`, whose rule
+is [payment dispatch](../settlement/paymentDispatch.md), "A Solana binding
+prepare creates the first attempt for the current claim only while the
+outbox is ready"; this rule states only the requester's side of it. Before
+the prepare above, the request is admitted for the requester's currently
+authorized Solana registry claim only when the obligation is the
+requester's, still reserved, its outbox is ready and it has no open
+attempt; the prepare is then refused as `binding_not_ready` unless the open
+attempt is of that claim. Completion never opens an attempt. A security
+settlement's reporter is held to the same admission, and the request is
+logged once, by its prepare or its refusal. Whether the outbox is ready is
+the settlement service's report, never the requester's.
+
+```quint
+pure def canSolanaAdmitAttempt(b: Binding, by: str, obligation: int): bool =
+  val p = paymentFor(b, obligation)
+  by == b.solanaWallet.actor and obligation > 0 and p.obligation == obligation and p.owner == by and p.reserved
+    and p.outboxReady and not(p.attemptOpen) and solanaClaim(b) > 0
+pure def solanaAdmitAttempt(b: Binding, by: str, obligation: int): Binding =
+  { ...b, payments: b.payments.select(p => p.obligation != obligation)
+    .append({ ...paymentFor(b, obligation), attemptOpen: true, attemptClaim: solanaClaim(b) }) }
+pure def lawAdmissionOpensOnlyForTheCurrentClaim(b: Binding, by: str, obligation: int): bool =
+  canSolanaAdmitAttempt(b, by, obligation) implies
+    (paymentFor(solanaAdmitAttempt(b, by, obligation), obligation).attemptClaim == solanaClaim(b)
+     and paymentFor(solanaAdmitAttempt(b, by, obligation), obligation).attemptOpen
+     and solanaAdmitAttempt(b, by, obligation).generations == b.generations)
+pure def lawCompletionOpensNoAttempt(b: Binding, by: str, obligation: int, generation: int, walletSignature: SolanaWalletSignature): bool =
+  solanaComplete(b, by, obligation, generation, walletSignature).payments == b.payments
+pure def lawEarlierClaimAttemptKeepsObligation(b: Binding, by: str, obligation: int): bool =
+  (paymentFor(b, obligation).attemptOpen and paymentFor(b, obligation).attemptClaim != solanaClaim(b)) implies
+    (not(canSolanaAdmitAttempt(b, by, obligation)) and not(canSolanaPrepare(b, by, obligation)))
+pure def lawAdmittedAttemptIsPreparable(b: Binding, by: str, obligation: int): bool =
+  canSolanaAdmitAttempt(b, by, obligation) implies solanaReady(solanaAdmitAttempt(b, by, obligation), by, obligation)
+pure def sometimesPrepareOpenedFirstAttempt(b: Binding): bool =
+  b.generations.some(g => g.obligation == 4 and g.status != SolanaExpired)
+pure def sometimesPrivateAttemptAdmitted(b: Binding): bool =
+  b.payments.some(p => p.obligation == 5 and p.attemptOpen)
+pure val weight_solanaAdmitAttempt = 8
+```
+
 ### The wallet registries move underneath through their own guarded events
 
 These events forward to the EVM and Solana wallet registries unchanged, so
@@ -343,9 +388,9 @@ pure def authorizedSample(chain: W::WalletChain, wallet: str): W::WalletRegistra
 pure val initial: Binding = { wallet: authorizedSample(W::Base, "wallet-a"), solanaWallet: authorizedSample(W::Solana, "wallet-s"),
   consents: List(), generations: List(), lastGeneration: 0, finalizedHeight: 1000, caseAccessLog: List(),
   payments: List({ obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1,
-      attemptOpen: true, privateCase: 0 },
+      attemptOpen: true, privateCase: 0, outboxReady: true },
     { obligation: 2, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1,
-      attemptOpen: true, privateCase: 5 }),
+      attemptOpen: true, privateCase: 5, outboxReady: true }),
   deployments: List({ network: "base", vault: "vault-a", chain: W::Base, chainId: 8453, family: Evm, registered: true, solanaContext: false },
     { network: "base", vault: "vault-b", chain: W::Base, chainId: 8453, family: Evm, registered: true, solanaContext: false },
     { network: "base", vault: "vault-b", chain: W::Base, chainId: 84532, family: Evm, registered: true, solanaContext: false },
@@ -376,16 +421,19 @@ pure val signatureValues = Set(
   { recoveredSigner: "wallet-a", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 601, upperHalfS: false },
   { recoveredSigner: "wallet-a", claim: 1, network: "base", vault: "vault-b", chainId: 8453, version: 0, expiresAt: 7777601, upperHalfS: false })
 pure val evidenceValues = Set(
-  { obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 2, attemptOpen: true, privateCase: 0 },
-  { obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: false, attemptClaim: 1, attemptOpen: false, privateCase: 0 },
-  { obligation: 2, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 2, attemptOpen: true, privateCase: 5 },
-  { obligation: 3, owner: "1", network: "solana", vault: "vault-x", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 0 },
-  { obligation: 3, owner: "other", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 0 })
+  { obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 2, attemptOpen: true, privateCase: 0, outboxReady: true },
+  { obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: false, attemptClaim: 1, attemptOpen: false, privateCase: 0, outboxReady: true },
+  { obligation: 2, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 2, attemptOpen: true, privateCase: 5, outboxReady: true },
+  { obligation: 3, owner: "1", network: "solana", vault: "vault-x", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 0, outboxReady: true },
+  { obligation: 3, owner: "other", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 0, outboxReady: true },
+  { obligation: 4, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 0, attemptOpen: false, privateCase: 0, outboxReady: true },
+  { obligation: 4, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 0, attemptOpen: false, privateCase: 0, outboxReady: false },
+  { obligation: 5, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 0, attemptOpen: false, privateCase: 6, outboxReady: true })
 pure val heightValues = Set(1100, 1151, 1400)
 pure val walletSignatureValues = Set({ recoveredSigner: "wallet-s", transaction: 1 }, { recoveredSigner: "wallet-s", transaction: 2 },
   { recoveredSigner: "wallet-b", transaction: 2 }, { recoveredSigner: "wallet-b", transaction: 3 }, { recoveredSigner: "", transaction: 1 })
 pure val generationValues = Set(1, 2, 3)
-pure val obligationValues = Set(1, 2, 3)
+pure val obligationValues = Set(1, 2, 3, 4, 5)
 pure val cValues = Set({ claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, signer: "wallet-a", createdAt: 0 })
 pure val bValues = Set(initial)
 pure val weight_bindAuthorize = 12

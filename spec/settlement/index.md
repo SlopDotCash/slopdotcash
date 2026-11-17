@@ -9,6 +9,7 @@ PRD sections 2, 3, 6, 7, 8, 10, 11 and 12 govern these financial state machines.
 - [Destination bindings and authority rotation](./bindingAuthority.md)
 - [Project vault reservations](./vault.md)
 - [Vault registration and finalized observations](./vaultSnapshots.md)
+- [Month pledges and month locks](./monthPledges.md)
 - [Full-width largest remainder](./allocation.md)
 - [Reward weights and payout exclusions](./payoutExclusions.md)
 - [Monthly allocations](./monthly.md)

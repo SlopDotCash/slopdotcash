@@ -5,9 +5,9 @@ import { randomId } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { equalAmounts } from "../../gen/settlement__money.effect.vibe"
 import { type BridgeOrder, type Buyback, type Event, NotAState, apply, decodeEvent } from "../../gen/fees__buyback.effect.vibe"
-import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted, nonceAdmitted, sendNetworkFits } from "../../gen/fees__buybackBinding.effect.vibe"
-import { NotAState as JournalNotAState, leaseHeld, nonceFloor, solanaSequence, txUsed } from "../../gen/fees__conversion.effect.vibe"
-import { type Sender, buybackSigns } from "../../gen/fees__runtime.effect.vibe"
+import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../../gen/fees__buybackBinding.effect.vibe"
+import { NotAState as JournalNotAState, nonceFloor, solanaSequence } from "../../gen/fees__conversion.effect.vibe"
+import type { Sender } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, type Journal, amountOf, networkNames, revertedText, unitsOf } from "../journal/codec.vibe"
 import { verifiedEvmSend } from "../journal/signedSend.ts"
 import { aggregate as journalAggregate } from "../journal/store.vibe"
@@ -35,9 +35,6 @@ export interface SignedFacts {
   readonly maximumWei: string
   readonly intentHash: string
   readonly limits: NativeLimits
-  readonly purpose: W.Purpose
-  readonly blockhashSlot?: number
-  readonly accountProof?: string
 }
 
 export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string; readonly paid?: string }
@@ -106,10 +103,7 @@ effect function admitted(leg: Leg, journal: Journal, kind: BuybackSendKind, requ
   const fee = journal.state
   const units = try unitsOf(signed.maximumWei, leg.network, "the reserved maximum")
   const send: BuybackSend = { network: leg.network, kind, runId: try runNumber(journal, runId, event), tx: request.tx, nonce: signed.nonce, maximum: Number(units) }
-  const ok = signed.purpose === "fees" ? buybackSendAdmitted(fee, send)
-    : fee.network === send.network && sendNetworkFits(send) && leaseHeld(fee, send.runId) && !fee.overrun && buybackSigns(fee.runtime, send.network)
-      && send.tx > 0 && !txUsed(fee, send.tx) && nonceAdmitted(fee, send.nonce)
-  if (!ok) return try refuse(event, "the network's fee journal does not admit this buyback send")
+  if (!buybackSendAdmitted(fee, send)) return try refuse(event, "the network's fee journal does not admit this buyback send")
   const held = journal.foreign.map((entry) => entry.reservation).filter((entry) => entry.state !== "Abandoned" && !entry.settled)
   if (leg.network !== "Solana" && held.some((entry) => entry.nonce >= signed.nonce)) return try refuse(event, "another buyback send holds this nonce or a later one")
 }
@@ -119,7 +113,7 @@ effect function sameTx(leg: Leg, txId: string, tx: number, event: Event) {
 }
 
 effect function verifiedBytes(leg: Leg, signed: SignedFacts, wallet: string, event: Event) {
-  if (leg.network === "Solana") return
+  if (leg.network === "Solana") return try refuse(event, "a Solana bridge send has no check against its signed intent")
   const checked = try tryPromise({ try: () => verifiedEvmSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet: wallet.toLowerCase() }), catch: () => new BuybackRefused({ event: event.type, issue: "the signed bytes cannot be checked" }) })
   if (checked.kind === "refused") return try refuse(event, checked.issue)
   if (checked.send.nonce !== signed.nonce) return try refuse(event, "the signed nonce is not the reserved one")
@@ -138,9 +132,9 @@ function reservation(leg: Leg, gasId: string, wallet: string, runId: string, sig
     perTransactionWei: signed.limits.perTransaction.toString(),
     perDayWei: signed.limits.perDay.toString(),
     createdAt: now,
-    blockhashSlot: signed.blockhashSlot ?? null,
-    accountProof: signed.accountProof ?? null,
-    purpose: signed.purpose,
+    blockhashSlot: null,
+    accountProof: null,
+    purpose: "fees",
   }
 }
 
@@ -192,7 +186,7 @@ function decisionRow(leg: Leg, next: Buyback, facts: Facts, id: string, runId: s
 
 effect function settlement(leg: Leg, record: SendRecord, facts: Facts, event: Event, now: string) {
   const receipt = try need(facts.receipt, event, "the finalized receipt's evidence is missing")
-  if (receipt.landedTxId !== record.tx) return try refuse(event, "the receipt is not of the journaled send")
+  if (!record.txs.includes(receipt.landedTxId)) return try refuse(event, "the receipt is of none of the journaled attempts")
   const ids = record.gas.filter((gas) => gas.state === "signed" && gas.actualWei === null).map((gas) => gas.id)
   return { receipt, statements: W.settled({ ids, landedTxId: receipt.landedTxId, actualWei: receipt.actualWei, day: now.slice(0, 10), blockHash: receipt.blockHash }) }
 }

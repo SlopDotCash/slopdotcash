@@ -285,7 +285,12 @@ recipient still belongs to its kind's audience at preparation, from the
 current project, enforcement, appeal and penalty records and the
 administrator and moderator sets of the current configuration snapshot;
 otherwise it answers `Denied` and the attempt is suppressed. A payout
-exception reaches only the project's current steward. A project ban made by
+exception reaches only the project's current
+[payout audience](./payoutAudience.md): its steward when the steward is a
+GitHub user account, the account that listed the project when the steward is
+a GitHub Organization, and that Organization steward when no lister is
+recorded; the `steward` fact holds exactly when the recipient is
+`inPayoutAudience` of the current project. A project ban made by
 the vetting service reaches a current owner, a current affected contributor
 or current staff (an administrator or moderator), whichever writer won the
 shared notice key. Every other project-owner notice (ready, revision, scan

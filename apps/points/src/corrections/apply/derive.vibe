@@ -1,6 +1,7 @@
-// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
-import { type CompleteProof, type CorrectionActor, type CorrectionCommit, type CorrectionSource, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
+import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
+import { type CompleteProof, type CorrectionActor, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
 
 export interface Scope { readonly commit: string; readonly path: string }
 
@@ -76,6 +77,18 @@ export effect function sourceRepository(url: string, projectId: string, projectO
   return repository.toLowerCase()
 }
 
+export function correctionClaimCommit(commit: CorrectionCommit) {
+  const resolution = commit.mergeResolution
+  const parents = commit.parentShas
+  return commit.parentCount <= 1 || (resolution !== undefined && parents !== undefined &&
+    (mergeResolutionLineCounts(resolution, { sha: commit.sha, parents: parents.map((sha) => ({ sha })) })?.length ?? 0) > 0)
+}
+
+function sameFiles(left: ReadonlyArray<CorrectionFile> | null, right: ReadonlyArray<CorrectionFile> | undefined) {
+  return left !== null && right !== undefined && left.length === right.length &&
+    left.every((file, position) => file.path === right[position]?.path && file.additions === right[position]?.additions && file.deletions === right[position]?.deletions)
+}
+
 effect function validCommit(commit: CorrectionCommit) {
   const parents = commit.parentShas
   try check(sha.test(commit.sha) && count(commit.parentCount) &&
@@ -83,17 +96,22 @@ effect function validCommit(commit: CorrectionCommit) {
     (commit.additions === null || count(commit.additions)) && (commit.deletions === null || count(commit.deletions)) &&
     (commit.firstAcceptedSourceId === null || node.test(commit.firstAcceptedSourceId)), "invalid commit proof")
   try validActor(commit.author)
+  const resolution = commit.mergeResolution
+  if (resolution !== undefined) {
+    const counted = parents === undefined ? null : mergeResolutionLineCounts(resolution, { sha: commit.sha, parents: parents.map((sha) => ({ sha })) })
+    try check(sameFiles(counted, commit.files), "resolution file evidence differs from canonical patch")
+  }
   const files = commit.files
   if (files === undefined) return
   try check(distinct(files.map((file) => file.path)) && files.every((file) => file.path !== "" && count(file.additions) && count(file.deletions)), "invalid or duplicate commit file")
-  if (commit.mergeResolution === undefined && commit.additions !== null && commit.deletions !== null) {
+  if (resolution === undefined && commit.additions !== null && commit.deletions !== null) {
     try check(files.reduce((sum, file) => sum + file.additions, 0) === commit.additions && files.reduce((sum, file) => sum + file.deletions, 0) === commit.deletions, "commit file counts do not reconcile")
   }
 }
 
-effect function validSource(source: CorrectionSource, candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
+effect function validSource(source: CorrectionSource, candidate: ManifestCandidate, projectOf: ProjectOfRepository, unclaimedContext: boolean) {
   try check(node.test(source.sourceId) && node.test(source.repositoryNodeId) && sha.test(source.headSha) && count(source.commitCount) &&
-    (source.occurredAt === null || (isInstant(source.occurredAt) && source.occurredAt <= candidate.occurredAt)) &&
+    (source.occurredAt === null || (isInstant(source.occurredAt) && (source.occurredAt <= candidate.occurredAt || unclaimedContext))) &&
     (try sourceRepository(source.sourceUrl, candidate.projectId, projectOf)) === source.repository.toLowerCase(), "invalid source identity")
   try validActor(source.author)
   const censused = source.complete && source.commitCount === source.commits.length
@@ -103,53 +121,103 @@ effect function validSource(source: CorrectionSource, candidate: ManifestCandida
   return censused
 }
 
-function reviewedOriginalBinding(proof: CompleteProof) {
-  return proof.originalContributor !== undefined || proof.originalContributorParts !== undefined || proof.independentClaimIds !== undefined
+interface Tally {
+  readonly actors: Map<string, CorrectionActor>
+  readonly weights: Map<string, number>
+  readonly scopes: Scope[]
+  incomplete: boolean
 }
 
-export effect function derivePullRequestProof(candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
+effect function credit(sources: ReadonlyMap<string, CorrectionSource>, source: CorrectionSource, commit: CorrectionCommit) {
+  const retained = commit.retainedCopy
+  const identity = JSON.stringify([commit.author?.id ?? null, commit.author?.kind ?? null])
+  if (eligible(commit.author)) {
+    try check(retained === undefined, "linked author must not be overridden")
+    return commit.author
+  }
+  if (retained === undefined) return eligible(source.author) ? source.author : null
+  const files = commit.files ?? []
+  try check(digestPattern.test(retained.bindingDigest) && node.test(retained.originalSourceId) && sha.test(retained.originalCommitSha) &&
+    retained.originalSourceId !== source.sourceId && files.length > 0 && sameSet(retained.boundPaths, files.map((file) => file.path)), "retained copy lacks complete accepted-path bindings")
+  const original = sources.get(retained.originalSourceId)
+  const originalCommit = original?.commits.find((item) => item.sha === retained.originalCommitSha)
+  try check(original !== undefined && original.occurredAt === null && original.repositoryNodeId === source.repositoryNodeId &&
+    originalCommit !== undefined && originalCommit.parentCount <= 1 &&
+    JSON.stringify([originalCommit.author?.id ?? null, originalCommit.author?.kind ?? null]) === identity, "retained original does not bind this accepted commit")
+  return original !== undefined && eligible(original.author) ? original.author : null
+}
+
+effect function add(tally: Tally, sources: ReadonlyMap<string, CorrectionSource>, candidate: ManifestCandidate, source: CorrectionSource, commit: CorrectionCommit, lines: { readonly additions: number | null; readonly deletions: number | null; readonly path: string }) {
+  if (!correctionClaimCommit(commit) || (candidate.kind === "pull-request" && commit.parentCount > 1) || commit.firstAcceptedSourceId !== source.sourceId) return
+  tally.scopes.push({ commit: `${source.repositoryNodeId}\u0000${commit.sha}`, path: lines.path })
+  const recipient = try credit(sources, source, commit)
+  if (recipient === null) {
+    tally.incomplete = true
+    return
+  }
+  tally.actors.set(recipient.id, recipient)
+  if (lines.additions === null || lines.deletions === null) {
+    tally.incomplete = true
+    return
+  }
+  const weight = (tally.weights.get(recipient.id) ?? 0) + lines.additions + lines.deletions
+  try check(Number.isSafeInteger(weight), "implementation line weight overflows")
+  tally.weights.set(recipient.id, weight)
+}
+
+effect function addClaims(tally: Tally, sources: ReadonlyMap<string, CorrectionSource>, candidate: ManifestCandidate, proof: CompleteProof) {
+  const claims = proof.claims ?? []
+  const expected = proof.expectedClaimIds ?? []
+  try check(digestPattern.test(proof.decisionDigest ?? "") && expected.length > 0 && sameSet(expected, claims.map((claim) => claim.id)), "grouped claims do not match the retained unit scope")
+  for (const claim of claims) {
+    try check(node.test(claim.id) && sha.test(claim.commitSha) && claim.path !== "", "invalid grouped claim")
+    const source = sources.get(claim.sourceId)
+    const commit = source?.commits.find((item) => item.sha === claim.commitSha)
+    try check(source !== undefined && source.occurredAt !== null && commit !== undefined && correctionClaimCommit(commit) && commit.firstAcceptedSourceId === source.sourceId, "grouped claim has no unique accepted ordinary commit")
+    const file = commit?.files?.find((item) => item.path === claim.path)
+    if (source === undefined || commit === undefined || file === undefined) {
+      tally.incomplete = true
+      continue
+    }
+    try add(tally, sources, candidate, source, commit, { additions: file.additions, deletions: file.deletions, path: claim.path })
+  }
+}
+
+export effect function deriveProof(candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
   const proof = candidate.proof
   if (proof.status === "held") return null
   try check(digestPattern.test(proof.censusDigest), "invalid ownership census digest")
-  if (candidate.kind !== "pull-request" || reviewedOriginalBinding(proof)) return null
+  if (proof.originalContributorParts !== undefined) return null
+  try check(proof.independentClaimIds === undefined, "independent claims require a complete original partition")
+  if (proof.originalContributor !== undefined) return null
   try check(sameSet(candidate.sourceIds, proof.sources.map((source) => source.sourceId)), "incomplete or duplicate source scope")
   const sources = new Map(proof.sources.map((source) => [source.sourceId, source] as const))
+  const claims = proof.claims
   let incomplete = false
-  for (const source of sources.values()) if (!(try validSource(source, candidate, projectOf))) incomplete = true
+  for (const source of sources.values()) {
+    const unclaimedContext = candidate.kind === "work-unit" && claims !== undefined && !claims.some((claim) => claim.sourceId === source.sourceId)
+    if (!(try validSource(source, candidate, projectOf, unclaimedContext))) incomplete = true
+  }
   const accepted = sources.get(candidate.sourceId)
   try check(accepted !== undefined && accepted.sourceUrl === candidate.sourceUrl && accepted.occurredAt === candidate.occurredAt, "completion source does not match the recorded pool")
   if (incomplete || accepted === undefined) return null
-  const actors = new Map<string, CorrectionActor>()
-  const weights = new Map<string, number>()
-  const scopes: Scope[] = []
-  let unresolved = false
-  for (const commit of accepted.commits) {
-    if (commit.parentCount > 1 || commit.firstAcceptedSourceId !== accepted.sourceId) continue
-    if (commit.retainedCopy !== undefined) {
-      try check(!eligible(commit.author), "linked author must not be overridden")
-      return null
-    }
-    scopes.push({ commit: `${accepted.repositoryNodeId}\u0000${commit.sha}`, path: "*" })
-    const recipient = eligible(commit.author) ? commit.author : eligible(accepted.author) ? accepted.author : null
-    if (recipient === null) {
-      unresolved = true
-      continue
-    }
-    actors.set(recipient.id, recipient)
-    if (commit.additions === null || commit.deletions === null) {
-      unresolved = true
-      continue
-    }
-    weights.set(recipient.id, (weights.get(recipient.id) ?? 0) + commit.additions + commit.deletions)
+  const tally: Tally = { actors: new Map(), weights: new Map(), scopes: [], incomplete: false }
+  if (candidate.kind === "pull-request") {
+    for (const commit of accepted.commits) try add(tally, sources, candidate, accepted, commit, { additions: commit.additions, deletions: commit.deletions, path: "*" })
+  } else {
+    try addClaims(tally, sources, candidate, proof)
   }
+  const { actors, weights, scopes } = tally
   try check(distinct(scopes.map((scope) => `${scope.commit}\u0000${scope.path}`)), "duplicate implementation claim")
-  if (actors.size === 1 && unresolved && scopes.length > 0) {
-    const resolved = accepted.commits.filter((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId &&
-      (eligible(commit.author) || eligible(accepted.author))).length
+  if (candidate.kind === "pull-request" && actors.size === 1 && tally.incomplete && scopes.length > 0) {
+    let resolved = 0
+    for (const commit of accepted.commits) {
+      if (commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId && (try credit(sources, accepted, commit)) !== null) resolved += 1
+    }
     const [sole] = [...actors.keys()]
     if (resolved === scopes.length && sole !== undefined) return { actors, weights: new Map([[sole, 0]]), scopes } satisfies DerivedProof
   }
-  return unresolved || actors.size === 0 ? null : { actors, weights, scopes } satisfies DerivedProof
+  return tally.incomplete || actors.size === 0 ? null : { actors, weights, scopes } satisfies DerivedProof
 }
 
 export function projectOfRegistry(projects: ReadonlyArray<unknown>): ProjectOfRepository {

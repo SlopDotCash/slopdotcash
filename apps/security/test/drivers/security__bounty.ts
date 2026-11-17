@@ -8,13 +8,14 @@ import { database, migrate, startWorker, storage } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { Authority as RepositoryAuthority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
-import { VaultTotals, type VaultTotalsView } from "@repo/ports/settlement";
 import type { Driver, Options } from "../../gen/security__bounty.conformance.ts";
 import type { Bounty, Event, HoldKind, RouteObservation } from "../../gen/security__bounty.ts";
 import type { Authority, PrivateCase } from "../../gen/security__cases.ts";
 import type { ReceiptTerms } from "../../gen/security__terms.ts";
 import { privateRoute } from "../../src/analysis/route.vibe";
-import { type DirectRoute, DirectRoutes, awardClearancesLive } from "../../src/bounty/store.vibe";
+import { type DirectRoute, DirectRoutes, SecurityProgramFunds } from "../../src/bounty/funds.vibe";
+import { awardClearancesLive } from "../../src/bounty/store.vibe";
+import type { ProgramFundsView } from "../../src/program/manifest.ts";
 import { caseRecord } from "../../src/cases/rows.vibe";
 import { performed } from "../../src/cases/routes.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
@@ -42,7 +43,7 @@ const noAuthority: Authority = { epoch: 0, technical: [], financial: [], moderat
 let generation = 0;
 let snapshot: Authority = noAuthority;
 let clockMs = 3;
-let funds: { readonly view: VaultTotalsView | undefined; readonly observedAt: number } = { view: undefined, observedAt: 0 };
+let funds: { readonly view: ProgramFundsView | undefined; readonly finalized: boolean; readonly observedAt: number } = { view: undefined, finalized: false, observedAt: 0 };
 let route: { readonly direct: DirectRoute | undefined; readonly observedAt: number } = { direct: undefined, observedAt: 0 };
 const cases = new Map<number, string>();
 let keys = 0;
@@ -59,6 +60,18 @@ const fixture: ProjectView = {
   projectId: project, revision: 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community",
   retirement: "NotRetired", stewardGithubId: "1", repositories: [{ id: "4001", nodeId: "R_bounty", fullName: repository, integrationBranch: "main", aliases: [] }], closureConsent: false,
 };
+
+const manifest = JSON.stringify({ id: project, securityBounty: { status: "open", fundingPolicy: "after-approval", amount: { grossMinor: "1000000", currency: "USDC", decimals: 6, network: "base" } } });
+const snapshotMaxAgeMs = 30 * 60_000;
+
+async function programFunds() {
+  const view = funds.view;
+  if (view === undefined || !funds.finalized || clockMs - funds.observedAt > snapshotMaxAgeMs) return { funds: undefined, guards: [] };
+  const held = await db.prepare("SELECT r.gross_minor FROM security_award_reservations r WHERE r.project_id = ? AND NOT EXISTS (SELECT 1 FROM security_settlements s WHERE s.case_id = r.case_id)").bind(project).all();
+  const outstanding = held.results.reduce((total, row) => total + BigInt(String(row.gross_minor)), 0n);
+  const free = BigInt(view.freeMinor);
+  return { funds: { ...view, availableMinor: (free > outstanding ? free - outstanding : 0n).toString() }, guards: [] };
+}
 
 const ports = Layer.mergeAll(
   Layer.succeed(Registry, { project: () => Effect.succeed(fixture), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
@@ -79,13 +92,13 @@ const ports = Layer.mergeAll(
     atReceipt: () => Effect.succeed(undefined),
     unbanned: (id) => Effect.succeed(ids(snapshot.banned).includes(id) ? sql`0` : sql`1`),
   }),
-  Layer.succeed(VaultTotals, { of: () => Effect.succeed(funds.view) }),
+  Layer.succeed(SecurityProgramFunds, { read: () => Effect.promise(() => programFunds()) }),
   Layer.succeed(DirectRoutes, { route: () => Effect.succeed(route.direct) }),
 );
 
 await db.batch([
-  db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'Bounty conformance',?)").bind(project, JSON.stringify({ id: project }), "a".repeat(64), new Date(epoch).toISOString()),
-  db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(project, JSON.stringify({ id: project }), "a".repeat(64), new Date(epoch).toISOString(), new Date(epoch).toISOString()),
+  db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'Bounty conformance',?)").bind(project, manifest, "a".repeat(64), new Date(epoch).toISOString()),
+  db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(project, manifest, "a".repeat(64), new Date(epoch).toISOString(), new Date(epoch).toISOString()),
 ]);
 
 const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)));
@@ -152,7 +165,7 @@ const findingText = { Confirmed: "confirmed", Duplicate: "duplicate", OutOfScope
 
 async function settle(id: number, receipt: Extract<Event, { type: "settleVaultHold" }>["receipt"]): Promise<Outcome> {
   const caseId = cases.get(id);
-  if (caseId === undefined || !receipt.finalized || receipt.receipt <= 0 || funds.view?.freeBaseUnits === undefined) return "refused";
+  if (caseId === undefined || !receipt.finalized || receipt.receipt <= 0 || funds.view === undefined) return "refused";
   const [held] = (await db.prepare("SELECT r.gross_minor FROM security_award_reservations r WHERE r.case_id = ? AND NOT EXISTS (SELECT 1 FROM security_settlements s WHERE s.case_id = r.case_id)").bind(caseId).all()).results;
   if (held?.gross_minor !== minor(receipt.gross)) return "refused";
   const obligation = `so_bounty_g${generation}_${id}`;
@@ -163,9 +176,9 @@ async function settle(id: number, receipt: Extract<Event, { type: "settleVaultHo
     db.prepare("INSERT INTO security_settlements(case_id,obligation_id,source_digest,network,vault,asset,asset_decimals,gross_base,fee_base,reporter_github_id,approved_by,approved_at,case_revision,deployment) VALUES(?,?,?,?,?,?,6,?,'0',?,?,?,1,'{}')")
       .bind(caseId, obligation, source, "base-mainnet", bountyVault, usdcBase, minor(receipt.gross), githubId(1), githubId(2), at(funds.observedAt)),
   ]);
-  const free = BigInt(funds.view.freeBaseUnits);
+  const free = BigInt(funds.view.freeMinor);
   const paid = BigInt(minor(receipt.gross));
-  funds = { ...funds, view: { ...funds.view, freeBaseUnits: (free >= paid ? free - paid : 0n).toString() } };
+  funds = { ...funds, view: { ...funds.view, freeMinor: (free >= paid ? free - paid : 0n).toString() } };
   return "accepted";
 }
 
@@ -186,7 +199,8 @@ async function send(event: Event, by: unknown): Promise<Outcome> {
       if (event.funds.observedAt <= funds.observedAt || event.funds.observedAt > clockMs) return "refused";
       funds = {
         observedAt: event.funds.observedAt,
-        view: { network: "Base", vault: bountyVault, asset: event.funds.asset === "usdc" ? usdcBase : foreignAsset, freeBaseUnits: minor(event.funds.free), observedAt: at(event.funds.observedAt), stale: !event.funds.finalized },
+        finalized: event.funds.finalized,
+        view: { currency: "USDC", decimals: 6, network: "base", deploymentNetwork: "base-mainnet", assetAddress: event.funds.asset === "usdc" ? usdcBase : foreignAsset, freeMinor: minor(event.funds.free), availableMinor: minor(event.funds.free), snapshotAt: at(event.funds.observedAt) },
       };
       return "accepted";
     }
@@ -261,7 +275,7 @@ export const driver: Driver<ReturnType<typeof shape>> & AsyncDisposable = {
     generation += 1;
     snapshot = noAuthority;
     clockMs = 3;
-    funds = { view: undefined, observedAt: 0 };
+    funds = { view: undefined, finalized: false, observedAt: 0 };
     route = { direct: undefined, observedAt: 0 };
     cases.clear();
     clock.set(base() + clockMs);

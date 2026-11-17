@@ -62,10 +62,10 @@ type Lease = { holder: int, expiresAt: int }
 type ReviewedVault = { vault: int, deployment: int, token: int }
 type Fee = { runtime: R::Runtime, network: R::Network, clock: int, lease: Lease, nextRun: int,
   trigger: Trigger, runValue: int, receipts: List[int], holdings: List[Holding], vaults: List[ReviewedVault],
-  rows: List[Row], gas: List[Reservation], overrun: bool, scans: List[ExpiryScan], proofs: List[ExpiryProof] }
+  rows: List[Row], gas: List[Reservation], overrun: bool, scans: List[ExpiryScan], proofs: List[ExpiryProof], rotation: Lease }
 pure val initial: Fee = { runtime: R::initial, network: R::Base, clock: 0,
   lease: { holder: 0, expiresAt: 0 }, nextRun: 1, trigger: Recovery, runValue: 0, receipts: List(), holdings: List(),
-  vaults: List(), rows: List(), gas: List(), overrun: false, scans: List(), proofs: List() }
+  vaults: List(), rows: List(), gas: List(), overrun: false, scans: List(), proofs: List(), rotation: { holder: 0, expiresAt: 0 } }
 pure val lockMs = 840000
 pure val dayMs = 86400000
 pure val quoteAbandonMs = 3600000
@@ -80,6 +80,7 @@ pure def canAdvanceClock(f: Fee, elapsed: int, by: R::Sender): bool = by == R::W
 pure def advanceClock(f: Fee, elapsed: int, by: R::Sender): Fee = { ...f, clock: f.clock + elapsed }
 pure def canAcquireLease(f: Fee, runId: int, trigger: Trigger, by: R::Sender): bool =
   by == R::Worker and R::runs(f.runtime) and runId == f.nextRun and (f.lease.holder == 0 or f.clock > f.lease.expiresAt)
+    and not(rotationHolds(f))
 pure def acquireLease(f: Fee, runId: int, trigger: Trigger, by: R::Sender): Fee =
   { ...f, lease: { holder: runId, expiresAt: f.clock + lockMs }, nextRun: runId + 1, trigger: trigger, runValue: 0,
     gas: f.gas.listMap(g => if (g.state == Reserved) { ...g, state: Abandoned } else g) }
@@ -91,6 +92,50 @@ pure def alwaysLeaseIdentity(f: Fee): bool = f.lease.holder >= 0 and f.lease.hol
   and f.gas.every(g => g.runId > 0 and g.runId < f.nextRun) and f.rows.every(r => r.runId > 0 and r.runId < f.nextRun)
 pure def stepStaleRunCannotSign(before: Fee, via: str, after: Fee): bool =
   after.gas.length() > before.gas.length() implies leaseHeld(before, after.gas.nthOr(before.gas.length(), noGas).runId)
+```
+
+### An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile
+
+The rotation of the live Solana RPC pair ([RPC rotation](./solanaRpcRotation.md))
+takes the same `fee_converter_locks` row as a run, from the protected release
+job: only on Solana, only when the lease is free or expired, and only while
+the journal is quiet: no live row quoted, submitted or unknown (a conversion
+whose approval landed and whose swap is unsigned is such a quoted intent
+here) and no gas reservation reserved, or signed and unsettled. The pinned
+query also counts a finalized Solana bridge deposit with no proven outcome;
+that is the [bridge leg](./buyback.md)'s in-transit order, which the shell
+checks in the same statement. A renewal needs the rotation's own unexpired
+lease and a journal still quiet. The rotation releases only its own lease;
+one whose activation is uncertain leaves it to expire
+(`rotate-fee-solana-rpc.ts`, `acquireRotationLeaseSql`,
+`renewRotationLeaseSql`). While it holds the lease no run can take it, so
+no run reserves, signs, replaces or claims.
+
+```quint
+pure def rotationHolds(f: Fee): bool = f.rotation.holder > 0 and f.clock <= f.rotation.expiresAt
+pure def runHolds(f: Fee): bool = f.lease.holder > 0 and f.clock <= f.lease.expiresAt
+pure def journalQuiet(f: Fee): bool =
+  f.rows.every(r => not(r.live and (r.state == Quoted or r.state == Submitted or r.state == Unknown)))
+    and f.gas.every(g => g.state != Reserved and (g.state == Signed implies g.settled))
+pure def canAcquireRotationLease(f: Fee, rotationId: int, by: R::Sender): bool =
+  by == R::ReleaseWorkflow and f.network == R::Solana and rotationId > 0 and not(runHolds(f)) and not(rotationHolds(f))
+    and journalQuiet(f)
+pure def acquireRotationLease(f: Fee, rotationId: int, by: R::Sender): Fee =
+  { ...f, rotation: { holder: rotationId, expiresAt: f.clock + lockMs } }
+pure def canRenewRotationLease(f: Fee, rotationId: int, by: R::Sender): bool =
+  by == R::ReleaseWorkflow and f.network == R::Solana and rotationId > 0 and f.rotation.holder == rotationId and rotationHolds(f)
+    and journalQuiet(f)
+pure def renewRotationLease(f: Fee, rotationId: int, by: R::Sender): Fee =
+  { ...f, rotation: { holder: rotationId, expiresAt: f.clock + lockMs } }
+pure def canReleaseRotationLease(f: Fee, rotationId: int, by: R::Sender): bool =
+  by == R::ReleaseWorkflow and rotationId > 0 and f.rotation.holder == rotationId
+pure def releaseRotationLease(f: Fee, rotationId: int, by: R::Sender): Fee = { ...f, rotation: { holder: 0, expiresAt: 0 } }
+pure def alwaysRotationExcludesRuns(f: Fee): bool = rotationHolds(f) implies not(runHolds(f))
+pure def stepRotationBlocksRuns(before: Fee, via: str, after: Fee): bool = rotationHolds(before) implies
+  not(via == "acquireLease" or via == "reserveGas" or via == "sign" or via == "replace" or via == "claim")
+pure def stepRotationOnlyWhenQuiet(before: Fee, via: str, after: Fee): bool =
+  (via == "acquireRotationLease" or via == "renewRotationLease") implies journalQuiet(before) and before.network == R::Solana
+pure def sometimesRotationHoldsLease(f: Fee): bool = rotationHolds(f) and f.nextRun > 1
 ```
 
 ### The Worker configuration and the reviewed vaults are published components
@@ -642,6 +687,7 @@ pure def alwaysDryRowsNeverSign(f: Fee): bool = f.rows.every(r => not(r.live) im
 ```quint
 pure val elapsedValues = Set(180000, 3600001, 86400000)
 pure val runIdValues = Set(1, 2)
+pure val rotationIdValues = Set(1, 2)
 pure val idValues = Set(1, 2)
 pure val txValues = Set(12, 13)
 pure val nonceValues = Set(0, 1)

@@ -1,0 +1,392 @@
+import { assert, layer } from "@effect/vitest"
+import { type Address, type Hex, encodeAbiParameters, encodeEventTopics, encodeFunctionData, erc20Abi, parseAbi } from "viem"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { isoAt } from "@repo/platform/clock"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type Anvil, anvil, artifact, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
+import { internet } from "@repo/platform/testing/internet"
+import { type QuotesFake, asFetch, kyberNative, quotesFake } from "@repo/platform/testing/quotes"
+import type { Event } from "../gen/fees__buyback.ts"
+import type { Network, Sender, WorkerConfig } from "../gen/fees__runtime.ts"
+import { type IncomeEntry, type Leg, incomeKey } from "../src/buyback/codec.vibe"
+import { incomeEvidence } from "../src/buyback/income.vibe"
+import { type LegResult, type LegSettings, arrivals, bridgeLeg } from "../src/buyback/leg.vibe"
+import { type Facts, ledgerOf, send } from "../src/buyback/store.vibe"
+import { decodedApproval } from "../src/evm/abi.ts"
+import { feeChain } from "../src/evm/client.vibe"
+import { runText } from "../src/journal/codec.vibe"
+import { journal, send as journalSend } from "../src/journal/store.vibe"
+import type { BuybackLimits, NativeLimits } from "../src/runtime/config.vibe"
+import { circleUsdc, dln, kyberswap, robinhoodUsdg } from "../src/runtime/pins.ts"
+import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
+import { feeSolana } from "../src/solana/client.vibe"
+import { fromAmount } from "@repo/settlement/kernels/amounts"
+import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+
+service Fixture {
+  readonly db: D1Database
+  readonly ethereum: Anvil
+  readonly robinhood: Anvil
+  readonly fetch: typeof globalThis.fetch
+  readonly quotes: QuotesFake
+}
+
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const start = 1794441600000
+const hour = 3600000
+const usdc = circleUsdc.base
+const ethereumUsdc = circleUsdc.ethereum as Address
+const giveAmount = 500_000_000n
+const takeAmount = 499_000_000n
+const fixedFee = 100_000_000_000_000n
+const minted = 2_000_000_000n
+const tokenAbi = parseAbi(["function mint(address to, uint256 amount)"])
+const createdAbi = parseAbi([
+  "struct Order { uint64 makerOrderNonce; bytes makerSrc; uint256 giveChainId; bytes giveTokenAddress; uint256 giveAmount; uint256 takeChainId; bytes takeTokenAddress; uint256 takeAmount; bytes receiverDst; bytes givePatchAuthoritySrc; bytes orderAuthorityAddressDst; bytes allowedTakerDst; bytes allowedCancelBeneficiarySrc; bytes externalCall; }",
+  "event CreatedOrder(Order order, bytes32 orderId, bytes affiliateFee, uint256 nativeFixFee, uint256 percentFee, uint32 referralCode, bytes metadata)",
+])
+const ethereumLimits: NativeLimits = { perTransaction: 1_000_000_000_000_000n, perDay: 10_000_000_000_000_000n, additionalFeeReserve: 0n }
+const buybackLimits: BuybackLimits = {
+  startAt: start, shareBps: 5_000n, burnBps: 5_000n, minBridgeMicro: 500_000_000n, maxBridgeCostBps: 150n, maxBridgeNativeFee: [], minBuyMicro: 1_000_000n,
+  minBurnMicro: 1_000_000n, maxSlippageBps: 100, maxPriceImpactBps: 100, runCapMicro: giveAmount, dailyCapMicro: 5_000_000_000n, unfilledAlertSeconds: 3_600n, solanaBridgeNative: undefined,
+}
+const dryRunEthereum = { source: 1, converterMode: "Live", buybackMode: "DryRun", networks: ["Ethereum", "Robinhood"], keys: ["Ethereum", "Robinhood"], nativeLimits: ["Ethereum", "Robinhood"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
+
+function push(value: number) {
+  const digits = value.toString(16)
+  const even = digits.length % 2 === 0 ? digits : `0${digits}`
+  return `${(0x5f + even.length / 2).toString(16)}${even}`
+}
+
+function words(count: number) {
+  const loads = Array.from({ length: count }, (_, index) => `600435${index === 0 ? "" : `${push(index)}01`}54${push(index * 32)}52`).join("")
+  return `${loads}${push(count * 32)}${push(0)}f3`
+}
+
+function word(value: bigint) {
+  return `0x${value.toString(16).padStart(64, "0")}`
+}
+
+function wide(value: number) {
+  return value.toString(16).padStart(4, "0")
+}
+
+interface Placed { readonly orderId: Hex; readonly slot: bigint; readonly salt: bigint }
+
+function sourceCode(wallet: Hex, placed: Placed) {
+  const transfer = encodeFunctionData({ abi: erc20Abi, functionName: "transferFrom", args: [wallet, dln.source as Address, giveAmount] }).slice(2)
+  const [created] = createdAbi
+  const order = {
+    makerOrderNonce: placed.salt, makerSrc: wallet, giveChainId: 1n, giveTokenAddress: ethereumUsdc, giveAmount, takeChainId: 4663n, takeTokenAddress: robinhoodUsdg as Hex, takeAmount,
+    receiverDst: wallet, givePatchAuthoritySrc: wallet, orderAuthorityAddressDst: wallet, allowedTakerDst: "0x" as Hex, allowedCancelBeneficiarySrc: wallet, externalCall: "0x" as Hex,
+  }
+  const log = encodeAbiParameters(created.inputs, [order, placed.orderId, "0x", fixedFee, 0n, 0, "0x"]).slice(2)
+  const [topic] = encodeEventTopics({ abi: createdAbi, eventName: "CreatedOrder" })
+  const sizes = { transfer: transfer.length / 2, log: log.length / 2 }
+  const main = (revert: number, fee: number, give: number, transferAt: number, logAt: number) => [
+    `3660041461${wide(fee)}57`,
+    `3660241461${wide(give)}57`,
+    `60015461${wide(revert)}57`,
+    `61${wide(sizes.transfer)}61${wide(transferAt)}600039`,
+    `6020600061${wide(sizes.transfer)}60006000`,
+    `73${ethereumUsdc.slice(2)}5af11561${wide(revert)}57`,
+    `61${wide(sizes.log)}61${wide(logAt)}600039`,
+    `7f${(topic ?? "0x").slice(2)}61${wide(sizes.log)}6000a1`,
+    `7f${placed.orderId.slice(2)}600052`,
+    "60206000f3",
+  ].join("")
+  const revert = main(0, 0, 0, 0, 0).length / 2
+  const fee = revert + 5
+  const give = fee + 12
+  const transferAt = give + 1 + words(8).length / 2
+  return `0x${main(revert, fee, give, transferAt, transferAt + sizes.transfer)}5b600080fd5b60005460005260206000f35b${words(8)}${transfer}${log}`
+}
+
+async function installed(ethereum: Anvil, robinhood: Anvil, out: string) {
+  await refuseMainnet({ url: ethereum.url, family: "evm" })
+  await refuseMainnet({ url: robinhood.url, family: "evm" })
+  const [deployer] = ethereum.accounts
+  if (deployer === undefined) throw new Error("anvil has no accounts")
+  const { bytecode } = await artifact(`${out}/FeeConverterFixture.sol/FeeConverterUSDC.json`)
+  const deployed = await ethereum.transact({ from: deployer.address, data: bytecode })
+  if (deployed.contractAddress === undefined) throw new Error("FeeConverterUSDC was not deployed")
+  await ethereum.rpc("anvil_setCode", [ethereumUsdc, await ethereum.rpc("eth_getCode", [deployed.contractAddress, "latest"])])
+  await ethereum.rpc("anvil_setStorageAt", [dln.source, word(0n), word(fixedFee)])
+  await robinhood.rpc("anvil_setCode", [dln.destination, `0x${words(4)}`])
+  return deployer.address
+}
+
+const Started = Layer.effect(Fixture, effect {
+  const started = try acquireRelease(promise(() => journalDatabase("fees-buyback")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  const ethereum = try acquireRelease(promise(() => anvil({ chainId: 1, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["test/FeeConverterFixture.sol"])), (output) => promise(() => output.close()))
+  const deployer = try promise(() => installed(ethereum, robinhood, built.out))
+  const wallet = (generationInstance(4, "Ethereum").held.wallets[0] ?? "") as Address
+  try promise(() => ethereum.rpc("anvil_setBalance", [wallet, word(10n ** 19n)]))
+  try promise(() => ethereum.transact({ from: deployer, to: ethereumUsdc, data: encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [wallet, minted] }) }))
+  try promise(() => ethereum.mine(3))
+  try promise(() => robinhood.mine(3))
+  const quotes = quotesFake()
+  quotes.kyberswap.route({ chain: "ethereum", tokenIn: kyberNative, tokenOut: ethereumUsdc, amountOut: (wei) => (wei * 3n) / 1_000_000_000_000n, routerAddress: kyberswap.router as Hex, gasUsd: "0", l1FeeUsd: null })
+  const net = try orDie(Effect.try(() => internet({ quotes: quotes.handler, rpc: { [ethereum.url]: forward(ethereum.url), [robinhood.url]: forward(robinhood.url) } })))
+  return { db: started.db, ethereum, robinhood, fetch: asFetch(net.handler), quotes }
+})
+
+interface World {
+  leg: Leg
+  readonly generation: number
+  readonly names: GenerationNames
+  readonly clock: SettableClock
+  readonly db: D1Database
+}
+
+function services(world: World) {
+  return Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer)
+}
+
+function offsetOf(generation: number) {
+  return generation * 1000 * dayMs
+}
+
+function keyOf(generation: number) {
+  return `0x${(generation + 1).toString(16).padStart(64, "0")}`
+}
+
+effect function opened(generation: number, network: Network, income: ReadonlyArray<IncomeEntry> = []) {
+  const { db } = try Fixture
+  const instance = generationInstance(generation, network)
+  const names = generationNames(generation)
+  const leg: Leg = { network, scope: instance.scope, offset: offsetOf(generation), held: instance.held, names, journal: instance, evidence: income, income, cancelling: [], reported: [] }
+  return { leg, generation, names, clock: settableClock(offsetOf(generation) + start + 2 * hour), db } satisfies World
+}
+
+function wallet(world: World) {
+  return world.leg.held.wallets[0] ?? ""
+}
+
+effect function step(world: World, event: Event, by: Sender = "Worker", facts: Facts = {}) {
+  const sent = try Effect.provide(send({ ...world.leg, journal: { ...generationInstance(world.generation, world.leg.network), held: world.leg.held } }, event, by, { runId: `${world.leg.scope}buyback-decisions`, wallet: wallet(world), token: usdc, ...facts }), services(world))
+  world.leg = sent.leg
+  return sent.state
+}
+
+effect function tried(world: World, event: Event, by: Sender = "Worker", facts: Facts = {}) {
+  return Effect.as(step(world, event, by, facts), "accepted") catch (error) => error._tag
+}
+
+effect function leased(world: World, network: Network) {
+  const instance = { ...generationInstance(world.generation, network), held: world.leg.held }
+  const runId = (try Effect.provide(journal(instance, world.names), services(world))).state.nextRun
+  try Effect.provide(journalSend(instance, world.names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker"), services(world))
+  return runText(instance.scope, world.names.text("run", runId) ?? "", "Recovery")
+}
+
+function placedOf(index: bigint): Placed {
+  let slot = 0n
+  for (let byte = 0; byte < 32; byte += 1) slot = slot * 256n + index
+  return { orderId: word(slot) as Hex, slot, salt: index }
+}
+
+effect function scripted(world: World, index: bigint) {
+  const { ethereum, quotes } = try Fixture
+  const placed = placedOf(index)
+  try orDie(Effect.try(() => quotes.dln.order({ family: "evm", srcChainId: 1n, source: dln.source as Hex, giveToken: ethereumUsdc, takeChainId: 4663n, takeToken: robinhoodUsdg as Hex, takeAmount, orderId: placed.orderId, salt: placed.salt, nativeFee: fixedFee })))
+  try promise(() => ethereum.rpc("anvil_setCode", [dln.source, sourceCode(wallet(world) as Hex, placed)]))
+  return placed
+}
+
+function settingsOf(world: World, runId: string): LegSettings {
+  return { runId, wallet: wallet(world), limits: buybackLimits, native: ethereumLimits, receiver: wallet(world) as Address, kyber: { clientId: kyberswap.clientId, buyback: { receiver: wallet(world) as Address, maxBridgeCostBps: 150n } } }
+}
+
+effect function bridged(world: World, runId: string) {
+  const { ethereum, fetch } = try Fixture
+  const settings = settingsOf(world, runId)
+  const chain = feeChain({ network: "Ethereum", wallet: wallet(world), urls: Redacted.make([ethereum.url]), timeoutMs: 10_000 })
+  const signing = Layer.provideMerge(evmFeeWallet({ network: "Ethereum", wallet: wallet(world), key: Redacted.make(keyOf(world.generation)), runtime: world.leg.held.runtime, limits: ethereumLimits, gasMultiple: 10n, kyber: settings.kyber }), chain)
+  const solana = feeSolana({ wallet: world.leg.held.wallets[1] ?? "", urls: Redacted.make(["https://solana.invalid"]), genesis: "11111111111111111111111111111111", timeoutMs: 10_000 })
+  const ran = try Effect.provideService(Effect.provide(Effect.provide(bridgeLeg(world.leg, settings), Layer.mergeAll(services(world), signing, solana)), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+  world.leg = ran.leg
+  return ran
+}
+
+effect function arrived(world: World, runId: string) {
+  const { robinhood, fetch } = try Fixture
+  const chain = feeChain({ network: "Robinhood", wallet: wallet(world), urls: Redacted.make([robinhood.url]), timeoutMs: 10_000 })
+  const [ran] = try Effect.provideService(Effect.provide(Effect.provide(arrivals([world.leg], { runId, wallet: wallet(world) }), Layer.mergeAll(services(world), chain)), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+  if (ran === undefined) return try die(new Error("the arrival run returned no leg"))
+  world.leg = ran.leg
+  return ran
+}
+
+effect function finalize(chain: Anvil) {
+  try promise(() => chain.mine(3))
+}
+
+effect function automine(chain: Anvil, on: boolean) {
+  try promise(() => chain.rpc("evm_setAutomine", [on]))
+}
+
+function recorded(run: LegResult) {
+  return [...run.records]
+}
+
+schema SendCheck { kind: string; state: string; mode: string; reason: string | null; tx_id: string | null }
+schema OutcomeCheck { outcome: string; amount: string; evidence_network: string; run_id: string }
+
+effect function seed(db: D1Database, generation: number, id: string, kind: "conversion" | "claim", target: string, amountOut: string, finalizedAt: number) {
+  const at = try isoAt(offsetOf(generation) + finalizedAt)
+  const owner = generationInstance(generation).held.wallets[0] ?? ""
+  const token = kind === "claim" ? usdc : "0x00000000000000000000000000000000000000aa"
+  try Effect.provide(effect {
+    try (try D1).run(sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, min_amount_out, tx_id, raw_tx, evm_nonce, expires_at, amount_out, state, created_at, updated_at, submitted_at, finalized_at) VALUES (${kind}, ${id}, ${`g${generation}:seeded-run`}, 'base', 'live', ${owner}, ${token}, ${kind === "claim" ? usdc : target}, ${amountOut}, ${kind === "claim" ? null : "kyberswap"}, ${kind === "claim" ? null : "1"}, ${`0x${id.padStart(64, "0")}`}, '0x01', ${0}, ${kind === "claim" ? null : 1}, ${amountOut}, 'finalized', ${at}, ${at}, ${at}, ${at})`)
+  }, d1(db))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee")', () => effect {
+    const { db } = try Fixture
+    try seed(db, 1, "1a", "conversion", usdc, "900000000", start - dayMs)
+    try seed(db, 1, "1b", "conversion", usdc, "1200000000", start + hour)
+    try seed(db, 1, "1c", "claim", usdc, "600000000", start + hour)
+    try seed(db, 1, "1d", "conversion", "0x00000000000000000000000000000000000000bb", "700000000", start + hour)
+    const world = try opened(2, "Base")
+    const booked = [{ receipt: "g1-direct-7", amount: 200000000n, chainTime: start + hour / 2 }, { receipt: "g1-direct-8", amount: 300000000n, chainTime: start - 1 }]
+    const query = { network: "Base", wallet: generationInstance(1).held.wallets[0] ?? "", usdc, scope: "g1:", offset: offsetOf(1) } as const
+    const evidence = try Effect.provide(incomeEvidence(query, booked), services(world))
+    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"1c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }]), services(world)), "counted") catch (error) => error._tag
+    world.leg = { ...world.leg, evidence }
+    const [first] = evidence
+    const early = first === undefined ? "missing" : try tried(world, { type: "recordIncome", key: incomeKey(world.leg, first), incomeAmount: first.amount, chainTime: start - 1 })
+    for (const entry of evidence) try step(world, { type: "recordIncome", key: incomeKey(world.leg, entry), incomeAmount: entry.amount, chainTime: entry.chainTime })
+    const again = first === undefined ? "missing" : try tried(world, { type: "recordIncome", key: incomeKey(world.leg, first), incomeAmount: first.amount, chainTime: first.chainTime })
+    const forged: IncomeEntry = { kind: "UsdcClaim", text: "g2-forged", amount: [0, 0, 0, 5], chainTime: start + hour }
+    const unbacked = try tried(world, { type: "recordIncome", key: incomeKey(world.leg, forged), incomeAmount: forged.amount, chainTime: forged.chainTime })
+    const state = (try Effect.provide(ledgerOf(world.leg), services(world))).state
+    const repeated = Effect.as(Effect.provide(ledgerOf({ ...world.leg, income: [...world.leg.income, ...world.leg.income.slice(0, 1)] }), services(world)), "loaded") catch (error) => error._tag
+
+    try same({
+      evidence: evidence.map((entry) => [entry.kind, entry.text, entry.amount, entry.chainTime - start]),
+      doubled,
+      early,
+      again,
+      unbacked,
+      income: state.income,
+      sources: state.sources.map((key) => key.kind),
+      repeated,
+    }, {
+      evidence: [["DirectFee", "g1-direct-7", [0, 0, 200], hour / 2], ["ConversionOutput", "1b", [0, 0, 200, 1], hour], ["UsdcClaim", "1c", [0, 0, 600], hour]],
+      doubled: "RowMismatch",
+      early: "Rejected",
+      again: "Rejected",
+      unbacked: "BuybackRefused",
+      income: [0, 0, 0, 2],
+      sources: ["DirectFee", "ConversionOutput", "UsdcClaim"],
+      repeated: "RowMismatch",
+    })
+  })
+
+  it.effect('A bridge leg decides once, approves exactly its amount, orders only after the finalized approval, holds a deposit in transit from its receipt, reports it unfilled after an hour, closes an arrival under the Robinhood Chain lease and a refund once, and releases the share of a failed order (spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "A deposit is in transit only from its finalized order receipt; a failed order releases its share"; spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"; spec/fees/buyback.md, "Cumulative accounting stays within its shares and every journal entry is past and positive"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network\'s fee journal and shares its lease, nonce floor and native reservation")', () => effect {
+    const { ethereum, robinhood } = try Fixture
+    const income: IncomeEntry = { kind: "ConversionOutput", text: "g4-output", amount: [0, 0, 0, 2], chainTime: start + hour }
+    const world = try opened(4, "Ethereum", [income])
+    const live = { ...dryRunEthereum, source: 2, buybackMode: "Live" } satisfies WorkerConfig
+    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+    try step(world, { type: "publishWorker", config: dryRunEthereum }, "ReleaseWorkflow")
+    try step(world, { type: "verifyReadiness", readyNetwork: "Ethereum" }, "Owner")
+    try step(world, { type: "verifyReadiness", readyNetwork: "Robinhood" }, "Owner")
+    const first = try scripted(world, 0xa1n)
+    const unleased = `${world.leg.scope}no-lease:recovery`
+    const dry = [recorded(try bridged(world, unleased)), recorded(try bridged(world, unleased))]
+    try step(world, { type: "publishWorker", config: live }, "ReleaseWorkflow")
+    const refusedWithoutLease = recorded(try bridged(world, unleased))
+    const runId = try leased(world, "Ethereum")
+    const approving = try bridged(world, runId)
+    try finalize(ethereum)
+    const ordering = try bridged(world, runId)
+    try finalize(ethereum)
+    const deposited = try bridged(world, runId)
+    const robinhoodRun = try leased(world, "Robinhood")
+    try promise(() => robinhood.rpc("anvil_setStorageAt", [dln.destination, word(first.slot), word(1n)]))
+    try finalize(robinhood)
+    const arrival = try arrived(world, robinhoodRun)
+
+    const second = try scripted(world, 0xb2n)
+    const secondApproval = try bridged(world, runId)
+    try finalize(ethereum)
+    const secondOrder = try bridged(world, runId)
+    try finalize(ethereum)
+    const inTransit = try bridged(world, runId)
+    world.clock.advance(hour + 60_000)
+    const unfilled = [recorded(try arrived(world, robinhoodRun)), recorded(try arrived(world, robinhoodRun))]
+    try promise(() => ethereum.rpc("anvil_setStorageAt", [dln.source, word(second.slot), word(3n)]))
+    try promise(() => ethereum.rpc("anvil_setStorageAt", [dln.source, word(second.slot + 5n), word(giveAmount)]))
+    try finalize(ethereum)
+    const renewed = try leased(world, "Ethereum")
+    try scripted(world, 0xc3n)
+    const refunded = try bridged(world, renewed)
+    try finalize(ethereum)
+    try automine(ethereum, false)
+    const thirdOrder = try bridged(world, renewed)
+    try promise(() => ethereum.rpc("anvil_setStorageAt", [dln.source, word(1n), word(1n)]))
+    try promise(() => ethereum.mine(1))
+    try automine(ethereum, true)
+    try finalize(ethereum)
+    const failed = try bridged(world, renewed)
+    const reloaded = (try Effect.provide(ledgerOf(world.leg), services(world))).state
+
+    const scope = world.leg.scope
+    const sends = try Effect.provide(rows(SendCheck, sql`SELECT kind, state, mode, reason, tx_id FROM fee_conversions WHERE network = 'ethereum' AND substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))
+    const outcomes = try Effect.provide(rows(OutcomeCheck, sql`SELECT outcome, amount, evidence_network, run_id FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE substr(run_id, 1, ${scope.length}) = ${scope}) ORDER BY rowid`), d1(world.db))
+    const approvalTx = sends.find((row) => row.kind === "approval")?.tx_id ?? ""
+    const approval = (try promise(() => ethereum.rpc("eth_getTransactionByHash", [approvalTx]))) as { readonly input: Hex }
+
+    try same({
+      dry,
+      refusedWithoutLease,
+      approving: [recorded(approving), approving.state.orderPhase, approving.state.approval.amount],
+      exact: decodedApproval(approval.input),
+      ordering: [recorded(ordering), ordering.state.orderPhase, ordering.state.orderSend.amount],
+      deposited: [recorded(deposited), deposited.state.orderPhase, String(fromAmount(deposited.state.committed))],
+      arrival: [recorded(arrival), arrival.state.orderPhase, String(fromAmount(arrival.state.committed))],
+      second: [recorded(secondApproval), recorded(secondOrder), recorded(inTransit), inTransit.state.orderPhase],
+      unfilled,
+      refunded: [recorded(refunded), refunded.state.orderPhase, String(fromAmount(refunded.state.committed))],
+      thirdOrder: recorded(thirdOrder),
+      failed: [recorded(failed), failed.state.orderPhase, String(fromAmount(failed.state.committed)), failed.state.bridgeSpends.map((spend) => spend.released)],
+      outcomes: failed.state.outcomes.map((outcome) => [outcome.result, outcome.takeAmount]),
+      reloadedEqual: JSON.stringify(reloaded) === JSON.stringify(failed.state),
+      sends: sends.map((row) => [row.kind, row.state, row.mode, row.reason]),
+      outcomeRows: outcomes.map((row) => [row.outcome, row.amount, row.evidence_network, row.run_id === robinhoodRun || row.run_id === renewed]),
+    }, {
+      dry: [["decide"], ["decide"]],
+      refusedWithoutLease: [],
+      approving: [["approveOrder"], "Approving", 500000000],
+      exact: { spender: dln.source, amount: giveAmount },
+      ordering: [["settleApproval", "order"], "Ordering", 500000000],
+      deposited: [["settleOrder"], "InTransit", "500000000"],
+      arrival: [["observeArrival", "closeOrder"], "NoOrder", "500000000"],
+      second: [["approveOrder"], ["settleApproval", "order"], ["settleOrder"], "InTransit"],
+      unfilled: [["reportUnfilled"], []],
+      refunded: [["observeRefund", "closeOrder", "approveOrder"], "Approving", "500000000"],
+      thirdOrder: ["settleApproval", "order"],
+      failed: [["settleOrder"], "NoOrder", "500000000", [false, true, true]],
+      outcomes: [["OrderArrived", 499000000], ["OrderRefunded", 0], ["CreationFailed", 499000000]],
+      reloadedEqual: true,
+      sends: [
+        ["bridge", "quoted", "dry_run", null],
+        ["approval", "finalized", "live", null], ["bridge", "finalized", "live", null],
+        ["approval", "finalized", "live", null], ["bridge", "finalized", "live", null],
+        ["approval", "finalized", "live", null], ["bridge", "failed", "live", "bridge order transaction reverted"],
+      ],
+      outcomeRows: [["arrived", "499000000", "robinhood", true], ["refunded", "500000000", "ethereum", true]],
+    })
+  })
+})

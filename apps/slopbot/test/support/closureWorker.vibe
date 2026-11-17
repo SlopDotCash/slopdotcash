@@ -1,0 +1,207 @@
+// spec/slopbot/closure.md, "Story: Decide a current review under the registered repository's policy"; spec/slopbot/closureActivation.md, "Story: Keep closure off until a reviewed production release activates it with reviewed evidence"
+import type { D1Database } from "@repo/platform/bindings"
+import { jsonVar } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, decoded, sql } from "@repo/platform/d1"
+import { GitHub, github } from "@repo/platform/github"
+import { answered, body, json, outbound } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { contributor } from "@repo/contributor/live"
+import { ProjectStatus, type ProjectView, type ReadFailure, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import { RunEvidence } from "@repo/ports/contributor"
+import { Enforcement, Restriction } from "@repo/ports/security"
+import { ClosureActivation, type ReviewedRecords, activationFrom, activationView, releaseOf, reviewedRecords } from "../../src/activation/config.vibe"
+import { qualityEvidence, qualityHook, qualitySubject } from "../../src/activation/quality.vibe"
+import { type ClosureDecision, closeStillAllowed, decideFinding } from "../../src/closure/decide.vibe"
+import { Memberships, closureEligibility } from "../../src/closure/participation.vibe"
+import { type ReviewTarget, loadContext } from "../../src/context/load.vibe"
+import { ReviewJob } from "../../src/jobs/job.vibe"
+import { type ReviewHooks, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
+import { routeProviders } from "../../src/route/route.vibe"
+import { Participation } from "../../src/routing/facts.vibe"
+import { observe } from "../../src/scope/facts.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly GITHUB_API: string
+  readonly GITHUB_TOKEN: string
+  readonly ORBIO_API_KEY: string
+  readonly SURPLUS_API_KEY: string
+  readonly SLOPBOT_APP_USER_ID: string
+  readonly SLOPBOT_CLOSURE_ENABLED: string
+  readonly SLOPBOT_RELEASE: string
+  readonly TEST_PROJECTS: string
+  readonly TEST_ACTIVATION_RECORDS: string
+  readonly TEST_VERIFIER_KEY: string
+  readonly TEST_QUALITY_PROFILE: string
+}
+
+schema TestProject {
+  readonly projectId: string
+  readonly path: string
+  readonly repositoryId: string
+  readonly rowStatus: ProjectStatus
+  readonly retirement: Retirement
+  readonly restriction: Restriction
+  readonly closureConsent: boolean
+}
+
+schema TestDecision { readonly kind: "QualifierNamed" | "VerifierLaunchLifted"; readonly reference: string; readonly actor: number }
+schema TestReview {
+  readonly category: "Spam" | "Scam" | "EmptyItem" | "Duplicate" | "Busywork" | "Gaming" | "LowQuality" | "OutOfScope" | "MissingEvidence" | "NoFinding"
+  readonly realCases: number
+  readonly counterexamples: number
+  readonly evidenceDigest: string
+  readonly reviewer: number
+  readonly elapsedDays: number
+}
+schema TestQualifying { readonly by: number; readonly review: TestReview }
+schema TestRecords { readonly decisions: ReadonlyArray<TestDecision>; readonly qualifications: ReadonlyArray<TestQualifying> }
+schema MemberRow { readonly closed_at: string | null }
+
+const TestProjects = Schema.Array(TestProject)
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 3,
+    manifestSha256: "0".repeat(64),
+    rowStatus: project.rowStatus,
+    manifestStatus: project.rowStatus,
+    listingTier: "Community",
+    retirement: project.retirement,
+    stewardGithubId: "100",
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: project.closureConsent,
+  }
+}
+
+function registryOver(text: string) {
+  return Layer.unwrap(effect {
+    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
+    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          const found = projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return projects.map(viewOf) },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Enforcement, {
+        project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+    )
+  })
+}
+
+const members = Layer.effect(Memberships, effect {
+  const db = try D1
+  return {
+    status: (githubId) => effect {
+      const [found] = try decoded(MemberRow, try db.all(sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`), "membership")
+      if (found === undefined) return "MemberAbsent"
+      return found.closed_at === null ? "MemberActive" : "MemberClosed"
+    },
+  }
+})
+
+const participants = Layer.effect(Participation, effect {
+  const db = try D1
+  return {
+    member: (githubId) => effect {
+      return (try decoded(MemberRow, try db.all(sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`), "membership")).length > 0
+    },
+  }
+})
+
+function activationOver(env: Env) {
+  return Layer.effect(ClosureActivation, effect {
+    const records = try jsonVar("TEST_ACTIVATION_RECORDS", env.TEST_ACTIVATION_RECORDS, TestRecords)
+    const reviewed: ReviewedRecords = { decisions: records.decisions, qualifications: records.qualifications, verifiers: [] }
+    return { activation: try activationFrom(reviewed, try releaseOf(env)), trust: { verifierKey: env.TEST_VERIFIER_KEY, profile: env.TEST_QUALITY_PROFILE } }
+  })
+}
+
+service Settings { readonly current: ReviewSettings }
+
+service ReleaseVars { readonly SLOPBOT_CLOSURE_ENABLED?: string; readonly SLOPBOT_RELEASE?: string }
+
+effect function described(decision: ClosureDecision) {
+  if (decision.kind === "settled") return { kind: decision.kind, result: decision.result }
+  if (decision.kind === "hold") return { kind: decision.kind, category: decision.hold.category, outcome: decision.hold.closure.outcome, blockedClose: decision.hold.blockedClose }
+  const { request } = decision
+  return {
+    kind: decision.kind,
+    category: request.category,
+    outcome: request.closure.outcome,
+    penaltyEligible: request.penaltyEligible,
+    dailyCap: request.dailyCap,
+    confirmedBy: request.confirm.call === undefined ? null : request.confirm.call.gateway,
+    stillAllowed: try closeStillAllowed(request),
+  }
+}
+
+effect function decided() {
+  return try answered(effect {
+    const job = try body(ReviewJob, 4)
+    const { current } = try Settings
+    const hooks: ReviewHooks<ReadFailure, GitHub | Memberships | RunEvidence | ClosureActivation | Experimental.Crypto.Crypto> = { eligibility: closureEligibility, quality: qualityHook(job.qualityCommentId), closedItem: () => Effect.void, onSkip: () => Effect.void }
+    const outcome = effect {
+      const reviewed = try reviewItem(job, current, hooks)
+      if (reviewed.kind === "settled") return { kind: "settled", result: reviewed.result }
+      if (reviewed.kind === "closeReconciliation") return { kind: reviewed.kind, result: reviewed.close.state }
+      return try described(try decideFinding(reviewed.finding, { reopened: () => Effect.succeed(false) }))
+    }
+    const answer = outcome catch (error) => ({ kind: "failed", error: error._tag })
+    return json(answer)
+  })
+}
+
+effect function launchActivation() {
+  return try answered(effect {
+    const activation = try activationFrom(reviewedRecords, try releaseOf(try ReleaseVars))
+    return json({ spam: activationView(activation, "Spam", false), enabled: activation.enabled, journal: activation.journal.length })
+  })
+}
+
+effect function subjectOf() {
+  return try answered(effect {
+    const job = try body(ReviewJob, 4)
+    const observed = try observe({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })
+    const projectId = observed.projectId ?? ""
+    const project = try (try Registry).project(projectId)
+    const target: ReviewTarget = { projectId, installationId: job.installationId, repositoryId: job.repositoryId, itemKind: job.itemKind, number: job.number, securityOnly: false, consent: project?.closureConsent === true ? "Enabled" : "Absent" }
+    const context = try loadContext(target, observed)
+    if (context === undefined) return json({ subject: null, defects: [] })
+    const { trust } = try ClosureActivation
+    return json({ subject: qualitySubject(target, context) ?? null, defects: (try qualityEvidence(target, context, trust, undefined)).map((defect) => defect.id) })
+  })
+}
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOPBOT_DB), webCrypto, registryOver(env.TEST_PROJECTS))
+  return Layer.mergeAll(
+    base,
+    Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-closure-test" }), outbound),
+    Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
+    Layer.provide(Layer.mergeAll(members, participants, contributor.provides as Layer.Layer<RunEvidence, never, D1 | Registry>), base),
+    activationOver(env),
+    Layer.succeed(ReleaseVars, { SLOPBOT_CLOSURE_ENABLED: env.SLOPBOT_CLOSURE_ENABLED, SLOPBOT_RELEASE: env.SLOPBOT_RELEASE }),
+    Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: env.TEST_VERIFIER_KEY } }),
+  )
+}
+
+const routes = Layer.mergeAll(HttpRouter.add("POST", "/test/closure", decided()), HttpRouter.add("GET", "/test/activation", launchActivation()), HttpRouter.add("POST", "/test/subject", subjectOf()))
+
+export default worker({ services, routes })

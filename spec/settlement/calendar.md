@@ -29,3 +29,30 @@ pure def utcPeriod(seconds: int): int =
   if (seconds < 0) 0 else year * 100 + month
 pure def ordinalPeriod(period: int): int = (period / 100) * 12 + period % 100 - 1
 ```
+
+## Story: Count whole months and date a month lock's lapse
+
+### A month lock lapses at 00:00 UTC on the 4th of the second month after its month
+
+Months are added on the ordinal count, so December 2026 plus two is
+February 2027. The lapse instant is the close of the month's commit window,
+72 hours after the following month ends: 2026-12 lapses at 2027-02-04
+00:00 UTC. The pledge window, the release offer and the lapse date the owner
+reads share it (development `src/lib/month-lock.ts`, `lockEnds`; operator
+decision, 15 November 2026). A month before year 0 has no successor here
+and maps to zero.
+
+```quint
+pure def addPeriods(period: int, count: int): int =
+  val ordinal = ordinalPeriod(period) + count
+  if (ordinal < 0) 0 else (ordinal / 12) * 100 + ordinal % 12 + 1
+pure def periodStartSeconds(period: int): int =
+  val month = period % 100
+  val year = period / 100 - (if (month <= 2) 1 else 0)
+  val era = year / 400
+  val yearOfEra = year - era * 400
+  val dayOfYear = (153 * (if (month > 2) month - 3 else month + 9) + 2) / 5
+  (era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear - 719468) * 86400
+pure val lockLapseDelaySeconds = 259200
+pure def lockLapsesAt(period: int): int = periodStartSeconds(addPeriods(period, 2)) + lockLapseDelaySeconds
+```

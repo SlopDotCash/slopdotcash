@@ -109,7 +109,7 @@ async function sendFacts(event: Extract<Event, { type: "approveOrder" | "order" 
   const bytes = solana ? { rawTx: `g${generation}-solana-order-${event.request.tx}`, intentHash: `g${generation}-intent-${event.request.tx}` } : await evmSigned(nonce, maximum);
   const txId = txText(event.request.tx, bytes.rawTx);
   const limits = solana ? { perTransaction: 50_000_000n, perDay: 100_000_000n, additionalFeeReserve: 0n } : { perTransaction: 100_000n * gwei, perDay: 1_000_000n * gwei, additionalFeeReserve: 50_000n * gwei };
-  const signed = { txId, rawTx: bytes.rawTx, nonce, maximumWei: solana ? String(maximum) : (BigInt(maximum) * gwei).toString(), intentHash: bytes.intentHash, limits, purpose: solana ? "bridge" as const : "fees" as const, ...solana ? { blockhashSlot: 40 } : {} };
+  const signed = { txId, rawTx: bytes.rawTx, nonce, maximumWei: solana ? String(maximum) : (BigInt(maximum) * gwei).toString(), intentHash: bytes.intentHash, limits };
   const terms = { provider: "debridge" as const, orderId: orderText(event.request.orderId), takeToken: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", takeAmount: String(event.request.takeAmount), takeChainId: "4663", receiver: leg.held.wallets[0] ?? "", nativeFee: String(event.request.nativeFee), salt: "1" };
   return { runId, signed, summary: JSON.stringify({ provider: "debridge", orderId: terms.orderId }), takeAmount: terms.takeAmount, ...event.type === "order" ? { terms } : {} };
 }

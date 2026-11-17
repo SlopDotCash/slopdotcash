@@ -75,7 +75,7 @@ repositories, oldest attempt first.
 type Table = MergeActivityRows | Scores | ProjectStatus | Payments
 type Write = { table: Table, repository: int }
 type Row = { stored: bool, observedAt: int, attemptedAt: int, failed: bool, summary: Summary }
-type Merges = { repository: int, now: int, measured: bool, row: Row, running: bool, reads: int }
+type Merges = { repository: int, now: int, measured: bool, listed: bool, row: Row, running: bool, reads: int }
 type Outcome = { state: Merges, out: List[Write] }
 pure val schedule = "slopbot-schedule"
 pure val registry = "registry"
@@ -84,7 +84,7 @@ pure val refreshAfterHours = 20
 pure val retryAfterHours = 1
 pure val noSummary: Summary = { lastMergedAt: 0, waitingOutside: 0, waitingCapped: false, mergedOutside30d: 0, medianDoubled: -1 }
 pure val noRow: Row = { stored: false, observedAt: 0, attemptedAt: 0, failed: false, summary: noSummary }
-pure val initial: Merges = { repository: 1, now: 1, measured: false, row: noRow, running: false, reads: 0 }
+pure val initial: Merges = { repository: 1, now: 1, measured: false, listed: true, row: noRow, running: false, reads: 0 }
 pure def due(m: Merges): bool =
   not(m.row.stored) or m.now - m.row.attemptedAt >= (if (m.row.failed) retryAfterHours else refreshAfterHours)
 pure def canObserveClock(m: Merges, now: int, by: str): bool = by == schedule and now > m.now
@@ -113,16 +113,46 @@ pure def canReadOther(m: Merges, by: str): bool = readable(m, by)
 pure def readOther(m: Merges, by: str): Outcome =
   { state: { ...m, reads: m.reads + 1 }, out: List({ table: MergeActivityRows, repository: 0 }) }
 pure def canReadSucceeded(m: Merges, open: List[OpenPull], capped: bool, merged: List[MergedPull], by: str): bool =
-  readable(m, by) and m.measured and due(m)
+  readable(m, by) and m.measured and m.listed and due(m)
 pure def readSucceeded(m: Merges, open: List[OpenPull], capped: bool, merged: List[MergedPull], by: str): Outcome =
   { state: { ...m, reads: m.reads + 1, row: { stored: true, observedAt: m.now, attemptedAt: m.now, failed: false,
       summary: summarize(open, capped, merged, m.now) } },
     out: List({ table: MergeActivityRows, repository: m.repository }) }
-pure def canReadFailed(m: Merges, by: str): bool = readable(m, by) and m.measured and due(m)
+pure def canReadFailed(m: Merges, by: str): bool = readable(m, by) and m.measured and m.listed and due(m)
 pure def readFailed(m: Merges, by: str): Outcome =
   { state: { ...m, reads: m.reads + 1, row: { ...m.row, stored: true, attemptedAt: m.now, failed: true } },
     out: List({ table: MergeActivityRows, repository: m.repository }) }
 pure def served(m: Merges): bool = m.row.stored and m.row.observedAt > 0
+```
+
+### A path the project no longer lists is never read again and the next run deletes its row
+
+The instance's repository is a path the project lists. A reviewed transfer
+publishes the repository's new path, and the old path is then unlisted for
+good: the registry reports it, the old path is never read again, and the
+next run deletes its stored row, so
+`GET /api/v1/merge-activity` no longer serves it and its stale values never
+add to the project (Slop development `887f92d18`,
+`backend/projects/merge-activity.ts:271–345`, the retained
+`api_merge_activity` model). Only an unlisted path loses its row: a paused or
+retired project's listed paths are not read but keep theirs. The deletion
+leaves the last observed time in this model so that no time goes back; with
+no stored row nothing of it is served. A row of a project the registry no
+longer returns at all is not deleted by the run.
+
+```quint
+pure def canUnlistPath(m: Merges, by: str): bool = by == registry and m.listed
+pure def unlistPath(m: Merges, by: str): Merges = { ...m, listed: false }
+pure def canPrune(m: Merges, by: str): bool = by == schedule and m.running and not(m.listed) and m.row.stored
+pure def prune(m: Merges, by: str): Outcome =
+  { state: { ...m, row: { ...m.row, stored: false } }, out: List({ table: MergeActivityRows, repository: m.repository }) }
+pure def stepUnlistedStaysUnlisted(before: Merges, after: Merges): bool = not(before.listed) implies not(after.listed)
+pure def stepOnlyUnlistedRowsDeleted(before: Merges, via: str, after: Merges): bool =
+  (before.row.stored and not(after.row.stored)) implies (via == "prune" and not(before.listed))
+pure def stepUnlistedPathNotRead(before: Merges, via: str, after: Merges): bool =
+  not(before.listed) implies (via != "readSucceeded" and via != "readFailed")
+pure def sometimesTransferredRowDeleted(m: Merges): bool = not(m.listed) and not(m.row.stored) and m.row.observedAt > 0
+pure def sometimesPausedRowKept(m: Merges): bool = m.listed and not(m.measured) and served(m)
 ```
 
 ### Rules

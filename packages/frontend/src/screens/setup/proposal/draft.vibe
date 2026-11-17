@@ -1,0 +1,11 @@
+// spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"
+import { ProjectDrafts, draftSaver, legacyProposalDraft, projectDrafts, proposalDraftKey } from "../../../flows/projects/draftStore.vibe"
+
+effect function openedProposalDraft() {
+  const legacy = try legacyProposalDraft()
+  return try draftSaver(try (try ProjectDrafts).open(proposalDraftKey, legacy))
+}
+
+export function openProposalDraft() {
+  return Effect.provide(openedProposalDraft(), projectDrafts)
+}

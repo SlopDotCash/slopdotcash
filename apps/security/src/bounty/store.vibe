@@ -1,39 +1,33 @@
 // spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/security/bounty.md, "The earliest human-confirmed eligible report of a root cause qualifies first"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/bounty.md, "One root cause holds at most one proposal or award obligation"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"
 import { millisOf } from "@repo/platform/clock"
 import { D1, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
 import { Restrictions } from "@repo/ports/backend"
-import type { Network, ReadFailure } from "@repo/ports/backend"
-import { VaultTotals } from "@repo/ports/settlement"
 import type { Bounty, FundsSnapshot, Hold, RouteObservation } from "../../gen/security__bounty.ts"
 import { clearanceFor, confirmedEligible, fundsFresh, initial as noBounty, noFunds } from "../../gen/security__bounty.effect.vibe"
 import type { PrivateCase, ProjectClearance } from "../../gen/security__cases.ts"
 import { NotAState } from "../../gen/security__cases.effect.vibe"
-import { addAmounts, zero } from "../../gen/settlement__money.effect.vibe"
+import { zero } from "../../gen/settlement__money.effect.vibe"
 import { type AwardCommitment, type AwardRequest, AwardClearances } from "../cases/clearance.vibe"
 import { type CaseRecord, caseRecord } from "../cases/rows.vibe"
 import { type Refusal, refused } from "../cases/store.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
-import { type AssetIdentity, frozenAsset, networkOf, sameAddress } from "../program/manifest.ts"
+import { type AssetIdentity, frozenAsset, fundsCompatible, networkOf, programTermsOf, reservedMinor } from "../program/manifest.ts"
+import { programOf } from "../program/store.vibe"
 import { limbsOf } from "../terms/asset.ts"
-
-export interface DirectRoute {
-  readonly qualified: boolean
-  readonly observedAt: string
-}
-
-export service DirectRoutes {
-  route(asset: { readonly network: Network; readonly address: string }): (DirectRoute | undefined)!ReadFailure
-}
+import { directRouteOf, programFundsOf } from "./funds.vibe"
 
 schema Found { found: number }
 schema Candidate { id: string }
-schema Outstanding { gross_minor: string; terms: string | null }
-schema Pin { revision: number; manifest_sha256: string; enforcements: number; reservations: number }
+schema Pin { revision: number; manifest_sha256: string; enforcements: number }
 
 interface Funds {
   readonly snapshot: FundsSnapshot
   readonly reserved: ReadonlyArray<number>
+  readonly guards: ReadonlyArray<Statement>
 }
+
+const unfunded: Funds = { snapshot: noFunds, reserved: zero, guards: [] }
 
 const vaultChanged: Refusal = { status: 409, error: "insufficient_funds", message: "The award can no longer be reserved. Check the available funds and the recipient’s participation status." }
 const directChanged: Refusal = { status: 409, error: "award_changed", message: "The award can no longer be approved. Reload the case." }
@@ -66,30 +60,27 @@ effect function competitorOf(record: CaseRecord, rootCauseKey: string) {
   return undefined
 }
 
-effect function outstanding(projectId: string, identity: AssetIdentity, observedAt: string) {
-  const held = try rows(Outstanding, sql`SELECT r.gross_minor, c.terms FROM security_award_reservations r JOIN security_cases c ON c.id = r.case_id WHERE r.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ${observedAt})`)
-  let total: ReadonlyArray<number> = zero
-  for (const entry of held) {
-    const terms = entry.terms === null ? undefined : try Effect.try({ try: () => JSON.parse(entry.terms ?? "null") as unknown, catch: () => new RowMismatch({ text: "reserved case terms", issue: "not JSON" }) })
-    const asset = frozenAsset(terms)
-    if (asset !== undefined && asset.chain === identity.chain && asset.decimals === identity.decimals && sameAddress(identity.chain, asset.address, identity.address)) total = addAmounts([...total], limbsOf(entry.gross_minor))
-  }
-  return total
+function member(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
 }
 
-effect function fundsOf(projectId: string, identity: AssetIdentity | undefined, asset: string) {
-  const view = try (try VaultTotals).of({ projectId, purpose: "PrivateBounty" })
-  if (view === undefined || view.freeBaseUnits === undefined) return { snapshot: noFunds, reserved: zero } satisfies Funds
-  const compatible = identity !== undefined && networkOf(identity.chain) === view.network && sameAddress(identity.chain, identity.address, view.asset)
-  const snapshot: FundsSnapshot = { finalized: !view.stale, observedAt: millisOf(view.observedAt), asset: compatible ? asset : `vault:${view.asset}`, free: limbsOf(view.freeBaseUnits) }
-  const reserved = compatible && identity !== undefined ? try outstanding(projectId, identity, view.observedAt) : zero
-  return { snapshot, reserved } satisfies Funds
+function every(guards: ReadonlyArray<Statement>): Statement {
+  return guards.reduce((all, guard) => sql`${all} AND ${guard}`, sql`1`)
+}
+
+effect function fundsOf(projectId: string, award: unknown, asset: string) {
+  const program = (try programOf(projectId)).terms
+  if (member(member(program, "funding"), "state") !== "verified-available" && member(program, "fundingPolicy") !== "after-approval") return unfunded
+  const { funds, guards } = try programFundsOf(projectId, programTermsOf(program))
+  if (funds === undefined) return unfunded
+  const snapshot: FundsSnapshot = { finalized: true, observedAt: millisOf(funds.snapshotAt), asset: fundsCompatible(award, funds) ? asset : `vault:${funds.deploymentNetwork}:${funds.assetAddress}`, free: limbsOf(funds.freeMinor) }
+  return { snapshot, reserved: limbsOf(reservedMinor(funds)), guards } satisfies Funds
 }
 
 effect function routeOf(identity: AssetIdentity | undefined, asset: string) {
   const none: RouteObservation = { asset: "", qualified: false, observedAt: 0 }
   if (identity === undefined) return none
-  const route = try (try DirectRoutes).route({ network: networkOf(identity.chain), address: identity.address })
+  const route = try directRouteOf({ network: networkOf(identity.chain), address: identity.address })
   return route === undefined ? none : { asset, qualified: route.qualified, observedAt: millisOf(route.observedAt) } satisfies RouteObservation
 }
 
@@ -104,7 +95,7 @@ function projected(self: PrivateCase, selfId: string, competitor: CaseRecord | u
 }
 
 effect function pinOf(projectId: string) {
-  const pin = try first(Pin, sql`SELECT p.revision, p.manifest_sha256, (SELECT COUNT(*) FROM project_enforcements) AS enforcements, (SELECT COUNT(*) FROM security_award_reservations WHERE project_id = ${projectId}) AS reservations FROM projects p WHERE p.id = ${projectId}`)
+  const pin = try first(Pin, sql`SELECT p.revision, p.manifest_sha256, (SELECT COUNT(*) FROM project_enforcements) AS enforcements FROM projects p WHERE p.id = ${projectId}`)
   if (pin === undefined) throw refused(actionRows.programRestricted)
   return pin
 }
@@ -128,7 +119,7 @@ export effect function commitment(request: AwardRequest) {
   const full = self.terms.split === "FullAward"
   const competitor = try competitorOf(record, rootCauseKey)
   const held = (try first(Found, sql`${heldElsewhere(projectId, caseId, rootCauseKey)} LIMIT 1`)) !== undefined
-  const funds = full ? { snapshot: noFunds, reserved: zero } satisfies Funds : try fundsOf(projectId, identity, asset)
+  const funds = full ? unfunded : try fundsOf(projectId, request.terms, asset)
   const route = full ? { asset: "", qualified: false, observedAt: 0 } satisfies RouteObservation : try routeOf(identity, asset)
   const { bounty, index } = projected(self, caseId, competitor, held, funds, route, try Clock.currentTimeMillis)
   const clearance = clearanceFor(bounty, index, limbsOf(request.grossMinor))
@@ -153,14 +144,14 @@ export effect function commitment(request: AwardRequest) {
   if (request.policyRevision === null || typeof currency !== "string") throw refused(actionRows.actionNotAllowedTheCaseHasNo)
   return {
     clearance,
-    before: [sql`INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ${caseId}, ${projectId}, ${rootCauseKey}, ${request.policyRevision}, ${request.grossMinor}, ${currency}, ${request.at} WHERE ${guards} AND (SELECT COUNT(*) FROM security_award_reservations WHERE project_id = ${projectId}) = ${pin.reservations}`],
+    before: [sql`INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ${caseId}, ${projectId}, ${rootCauseKey}, ${request.policyRevision}, ${request.grossMinor}, ${currency}, ${request.at} WHERE ${guards} AND ${every(funds.guards)}`],
     require: sql`EXISTS (SELECT 1 FROM security_award_reservations WHERE case_id = security_cases.id)`,
     unmet: vaultChanged,
   } satisfies AwardCommitment
 }
 
 export const awardClearancesLive = Layer.effect(AwardClearances, effect {
-  const services = try Effect.context<D1 | VaultTotals | DirectRoutes | Restrictions>()
+  const services = try Effect.context<D1 | Restrictions | Roles>()
   return {
     commitment: (request) => Effect.provide(commitment(request), services),
   } satisfies AwardClearances.Shape

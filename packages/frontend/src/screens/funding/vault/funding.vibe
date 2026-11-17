@@ -1,30 +1,41 @@
 // spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+import { millisOf } from "@repo/platform/clock"
+import { U128_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
+import { staleAfterMs } from "@repo/settlement/client"
+import { parsePeriod } from "@repo/settlement/kernels/calendar"
 import type { PoolFacts } from "../../../../gen/frontend__projections.ts"
 import { type Answer, Machine as VaultMachine } from "../../../../gen/frontend__ownerVault.effect.vibe"
-import { Machine as BatchMachine } from "../../../../gen/frontend__batchedDeposit.effect.vibe"
+import { type Batch, Machine as BatchMachine } from "../../../../gen/frontend__batchedDeposit.effect.vibe"
+import { zero } from "../../../../gen/settlement__money.ts"
 import { type ChainResult, Machine as MonthlyMachine } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
 import { Machine as ReadMachine } from "../../../../gen/frontend__requests.effect.vibe"
 import { networkLabel } from "../../../kernels/assetText.ts"
+import { untilTime } from "../../../platform/clock.vibe"
 import { browserServices } from "../../../platform/layer.vibe"
-import { storageKeys } from "../../../platform/storage.vibe"
 import { type VaultTotals, projectVaultReads } from "../../../reads/payments.vibe"
 import type { Resource } from "../../../reads/resource.vibe"
+import { nextRevalidation } from "../../../session/signals.ts"
 import { WalletChoice, type WalletOffer, walletChoiceServices } from "../../../wallets/core/discovery.vibe"
 import { type EvmConnection, connectEvm } from "../../../wallets/core/evm.vibe"
 import { type SolanaConnection, connectSolana } from "../../../wallets/core/solana.vibe"
 import { sessionSlots } from "../../../wallets/core/slots.ts"
 import { batchFlow } from "../../../wallets/owner/batchedDeposit.vibe"
-import { type MonthlySetting, type ProjectReward, type SettingReview, checkEvmSetting, evmVaultOf, reviewEvmSetting, sendEvmSetting } from "../../../wallets/owner/commitments.vibe"
-import { type EvmVault, type TransferCheck, type TransferReview, checkTransfer, reviewTransfer, sendTransfer } from "../../../wallets/owner/evmVault.vibe"
+import { baseUnits } from "../../../wallets/owner/commitmentCalls.ts"
+import { type MonthlySetting, type ProjectReward, type SettingReview, checkEvmSetting, evmVaultOf, familyOf, reviewEvmSetting, sendEvmSetting } from "../../../wallets/owner/commitments.vibe"
+import { batchCalls, batchPlan } from "../../../wallets/owner/evmCalls.ts"
+import { type EvmVault, type TransferCheck, type TransferReview, checkTransfer, plannedTransfer, reviewTransfer, sendTransfer } from "../../../wallets/owner/evmVault.vibe"
 import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts"
 import { ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
-import { type OwnerPlan, planOf } from "../../../wallets/owner/ownerPlans.schema.ts"
+import type { EvmBatchPlan, OwnerPlan } from "../../../wallets/owner/ownerPlans.schema.ts"
 import { type OwnerVaultPage, type Saved, ownerVaultPage } from "../../../wallets/owner/ownerVault.vibe"
 import { type ReviewedFunding, type SolanaVault, checkFunding, reviewFunding, sendFunding } from "../../../wallets/owner/solanaVault.vibe"
+import { pageHidden } from "./pageVisibility.ts"
 import type { FundingDeployment, FundingProject } from "./project.schema.ts"
-import { type Family, batchGross, evmTerms, familyOf, savedSetting, savedTransfer, solanaTerms } from "./savedPlans.ts"
+import { type SavedTransfer, type VaultKeys, evmTerms, sameBatch, savedSetting, solanaTerms, storedPlan, transferCandidates, vaultKeys } from "./savedPlans.ts"
 
-export type { Family, MonthlySetting, SettingReview, TransferReview, VaultTotals, WalletOffer }
+export type Family = "evm" | "solana"
+
+export type { MonthlySetting, SettingReview, TransferReview, VaultTotals, WalletOffer }
 
 export type Connection =
   | { readonly family: "evm"; readonly address: string; readonly evm: EvmConnection }
@@ -42,6 +53,10 @@ export interface Outcome {
 export error FundingStopped { message: string }
 
 export const autoSpacingMs = 3_000
+export const batchSlowSpacingMs = 15_000
+export const batchFastChecks = 20
+export const batchChecks = 240
+export const returnRefreshMs = 60_000
 
 export const fundingMessages = {
   unsupported: "This vault's network is not available for wallet actions here.",
@@ -57,6 +72,8 @@ export const fundingMessages = {
   settingOn: "Automatic monthly payment is on, verified on the finalized chain. ",
   settingOff: "Automatic monthly payment is off, verified on the finalized chain. ",
   cleared: "Local request cleared. Review again before sending.",
+  reviewChanged: "The vault review changed. Review the action again before signing.",
+  promiseUnread: "Withdrawals wait until this month's pool funding is read, so what contributors were shown stays in the vault. Deposits are open.",
 } as const
 
 type BatchFlow = Effect.Success<ReturnType<typeof batchFlow>>
@@ -64,13 +81,15 @@ type MonthlyPage = Effect.Success<ReturnType<typeof ownerMonthlyPage>>
 
 export service VaultDesk {
   readonly deployment: FundingDeployment
+  readonly monthlyPool: boolean
+  readonly unreadPool: PoolFacts
   readonly family: Family | undefined
   readonly evm: EvmVault | undefined
   readonly solana: SolanaVault | undefined
   readonly page: OwnerVaultPage
   readonly batch: BatchFlow
   readonly monthly: MonthlyPage
-  readonly keys: { readonly transfer: string; readonly batch: string; readonly setting: string }
+  readonly keys: VaultKeys
 }
 
 export service TotalsRead {
@@ -80,28 +99,34 @@ export service TotalsRead {
 const shared = Layer.provideMerge(walletChoiceServices, browserServices)
 const memo = Layer.makeMemoMapUnsafe()
 
+function unreadPool(monthlyPool: boolean, period: string): PoolFacts {
+  return { read: "PoolLoading", monthlyPool, period: parsePeriod(period) ?? 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false }
+}
+
 function deskOf(project: FundingProject, deployment: FundingDeployment, period: string) {
   return Layer.effect(VaultDesk, effect {
     const storage = sessionSlots()
-    const target = `${deployment.network}:${deployment.vault}:${deployment.asset}`
-    const keys = { transfer: `${storageKeys.vaultAction.key}${target}`, batch: `${storageKeys.vaultAction.key}${target}:batch`, setting: `${storageKeys.vaultMonthly.key}${deployment.network}:${deployment.vault}` }
-    const page = try ownerVaultPage(storage, { creation: `${storageKeys.vaultSetup.key}${project.id}`, transfer: keys.transfer }, true)
+    const keys = vaultKeys(project.id, deployment, period)
+    const page = try ownerVaultPage(storage, { creation: keys.creation, transfer: keys.transfer }, true)
     const batch = try batchFlow(storage, keys.batch)
-    const monthly = try ownerMonthlyPage(storage, { commitment: `${storageKeys.awardCommitment.key}${project.id}:${period}`, setting: keys.setting, release: `${storageKeys.monthlyRelease.key}${project.id}:${period}` }, project.id, period)
+    const monthly = try ownerMonthlyPage(storage, { commitment: keys.commitment, setting: keys.setting, release: keys.release }, project.id, period)
     const terms = solanaTerms(deployment)
     const solana: SolanaVault | undefined = terms === undefined ? undefined : { projectId: project.id, network: deployment.network, vault: deployment.vault, terms }
-    return { deployment, family: familyOf(deployment.network), evm: evmVaultOf(deployment), solana, page, batch, monthly, keys }
+    const monthlyPool = project.reward.kind === "monthly-pool"
+    return { deployment, monthlyPool, unreadPool: unreadPool(monthlyPool, period), family: familyOf(deployment), evm: evmVaultOf(deployment), solana, page, batch, monthly, keys }
   })
 }
 
-const machines = Layer.mergeAll(
-  Layer.effect(VaultMachine, effect { return (try VaultDesk).page.machine }),
-  Layer.effect(BatchMachine, effect { return (try VaultDesk).batch.machine }),
-  Layer.effect(MonthlyMachine, effect { return (try VaultDesk).monthly.machine }),
-)
+function machinesOf() {
+  return Layer.mergeAll(
+    Layer.effect(VaultMachine, effect { return (try VaultDesk).page.machine }),
+    Layer.effect(BatchMachine, effect { return (try VaultDesk).batch.machine }),
+    Layer.effect(MonthlyMachine, effect { return (try VaultDesk).monthly.machine }),
+  )
+}
 
 export function vaultServices(project: FundingProject, deployment: FundingDeployment, period: string) {
-  return Layer.provideMerge(machines, Layer.provideMerge(deskOf(project, deployment, period), shared))
+  return Layer.provideMerge(machinesOf(), Layer.provideMerge(deskOf(project, deployment, period), shared))
 }
 
 export type VaultServices = Layer.Success<ReturnType<typeof vaultServices>>
@@ -118,25 +143,53 @@ export function vaultRuntime(project: FundingProject, deployment: FundingDeploym
   return made
 }
 
-const totalsRead = Layer.effect(TotalsRead, effect { return { read: try projectVaultReads() } })
+export function totalsServicesOf() {
+  const read = Layer.effect(TotalsRead, effect { return { read: try projectVaultReads() } })
+  return Layer.provideMerge(Layer.effect(ReadMachine, effect { return (try TotalsRead).read.machine }), Layer.provideMerge(read, shared))
+}
 
-export const totalsServices = Layer.provideMerge(Layer.effect(ReadMachine, effect { return (try TotalsRead).read.machine }), Layer.provideMerge(totalsRead, shared))
-
-export type TotalsRuntime = ManagedRuntime.ManagedRuntime<Layer.Success<typeof totalsServices>, Layer.Error<typeof totalsServices>>
+export type TotalsRuntime = ManagedRuntime.ManagedRuntime<Layer.Success<ReturnType<typeof totalsServicesOf>>, Layer.Error<ReturnType<typeof totalsServicesOf>>>
 
 const totals = new Map<string, TotalsRuntime>()
 
 export function totalsRuntime(projectId: string): TotalsRuntime {
   const known = totals.get(projectId)
   if (known !== undefined) return known
-  const made = ManagedRuntime.make(totalsServices, { memoMap: memo })
+  const made = ManagedRuntime.make(totalsServicesOf(), { memoMap: memo })
   totals.set(projectId, made)
   return made
 }
 
-export effect function loadTotals(projectId: string) {
+function refreshDelay(totals: VaultTotals | undefined, settledAt: number): number {
+  const untilStale = Math.min(...(totals?.snapshots ?? []).map((snapshot) => millisOf(snapshot.observedAt) + staleAfterMs - settledAt))
+  return Number.isFinite(untilStale) && untilStale > 0 ? untilStale + 1_000 : Math.max(staleAfterMs, returnRefreshMs)
+}
+
+effect function due(at: number) {
+  try untilTime(at)
+  if (pageHidden()) try Effect.never
+}
+
+effect function returned(settledAt: number) {
+  while (true) {
+    try Effect.promise((signal) => nextRevalidation(signal))
+    if ((try Clock.currentTimeMillis) - settledAt >= returnRefreshMs) return
+  }
+}
+
+export effect function followTotals(projectId: string, show: (totals: VaultTotals | undefined) => void!!) {
   const { read } = try TotalsRead
   try read.select(projectId)
+  while (true) {
+    try read.load()
+    try show(read.value())
+    const settledAt = try Clock.currentTimeMillis
+    try Effect.raceFirst(due(settledAt + refreshDelay(read.value(), settledAt)), returned(settledAt))
+  }
+}
+
+export effect function reloadTotals() {
+  const { read } = try TotalsRead
   try read.load()
   return read.value()
 }
@@ -163,7 +216,7 @@ export effect function followVault(account: number) {
   return try (try VaultDesk).page.follow(account)
 }
 
-export effect function connectWallet(id: number) {
+export effect function connectWallet(id: number, forTransfer: boolean) {
   const { family, page, keys } = try VaultDesk
   if (family === undefined) throw stopped(fundingMessages.unsupported)
   let connection: Connection
@@ -174,24 +227,26 @@ export effect function connectWallet(id: number) {
     const solana = try connectSolana(id)
     connection = { family: "solana", address: solana.address, solana }
   }
+  if (!forTransfer) return connection
   const saved = try page.saved("Transfer")
-  const batched = slotOfText(readText(sessionSlots(), keys.batch))
-  const from = plannedFrom(saved.plan) ?? (batched.kind === "owned" ? plannedFrom(planOf(batched.slot.plan)) : undefined)
+  const from = plannedFrom(saved.plan) ?? plannedFrom(storedPlan(sessionSlots(), keys.batch))
   if (from !== undefined && from !== connection.address.toLowerCase()) throw stopped(`${fundingMessages.reconnect}${from}`)
   return connection
 }
 
-export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts, account: number) {
-  const { evm, solana, page, batch } = try VaultDesk
+export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number) {
+  const { evm, solana, page, batch, monthlyPool, unreadPool } = try VaultDesk
+  if (operation === "withdraw" && monthlyPool && pool === undefined) throw stopped(fundingMessages.promiseUnread)
+  const facts = pool ?? unreadPool
   if (connection.family === "solana") {
     if (solana === undefined) throw stopped(fundingMessages.unsupported)
     const funding = try reviewFunding(solana, connection.solana, operation, amount)
-    try page.review("Transfer", operation === "withdraw" ? BigInt(funding.plan.gross) : 0n, pool)
+    try page.review("Transfer", operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts)
     return { kind: "solana", funding } satisfies ActionReview
   }
   if (evm === undefined) throw stopped(fundingMessages.unsupported)
   const review = try reviewTransfer(connection.evm, evm, operation, amount, "finalized")
-  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, pool)
+  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, facts)
   let offered = false
   if (review.batch) offered = (try batch.review(account, review)).phase === "Offered"
   return { kind: "evm", review, batch: offered } satisfies ActionReview
@@ -201,7 +256,10 @@ export effect function sendAction(connection: Connection, reviewed: ActionReview
   const { evm, solana, page, batch } = try VaultDesk
   if (reviewed.kind === "solana") {
     if (solana === undefined || connection.family !== "solana") throw stopped(fundingMessages.unsupported)
-    return try page.submit("Transfer", (before) => sendFunding(solana, connection.solana, reviewed.funding, before))
+    const shown = reviewed.funding.plan
+    const current = try reviewFunding(solana, connection.solana, shown.operation, amount)
+    if (current.plan.gross !== shown.gross || current.plan.fee !== shown.fee || current.plan.net !== shown.net || current.plan.decimals !== shown.decimals) throw stopped(fundingMessages.reviewChanged)
+    return try page.submit("Transfer", (before) => sendFunding(solana, connection.solana, current, before))
   }
   if (evm === undefined || connection.family !== "evm") throw stopped(fundingMessages.unsupported)
   if (reviewed.batch) return (try batch.send(connection.evm, evm, amount, "finalized")).reference
@@ -222,6 +280,32 @@ function transferMessage(check: TransferCheck, operation: "deposit" | "withdraw"
   }
 }
 
+effect function savedTransfer(evm: EvmVault, plan: OwnerPlan | undefined) {
+  for (const candidate of transferCandidates(plan)) {
+    const planned = plannedTransfer(evm, candidate.operation, candidate.step, candidate.gross, plan) catch () => undefined
+    if (planned !== undefined) return candidate
+  }
+  return undefined
+}
+
+effect function batchGross(evm: EvmVault, plan: EvmBatchPlan) {
+  const last = plan.calls.at(-1)
+  const gross = last === undefined ? undefined : decodeUint(`0x${last.data.slice(-64)}`, U128_MAX)
+  if (gross === undefined || gross === 0n) return undefined
+  const calls = Effect.try(() => batchCalls(evmTerms(evm), gross, plan.calls.length === 3)) catch () => undefined
+  return calls !== undefined && sameBatch(plan, batchPlan(plan.from, evm.chainId, calls)) ? gross : undefined
+}
+
+export effect function savedAction() {
+  const { evm, keys } = try VaultDesk
+  const plan = storedPlan(sessionSlots(), keys.transfer)
+  if (plan?.kind === "solanaFunding") return plan.operation === "deposit" ? "Deposit" : "Withdrawal"
+  if (plan?.kind === "evmBatch") return "Deposit"
+  const transfer: SavedTransfer | undefined = evm === undefined ? undefined : try savedTransfer(evm, plan)
+  if (transfer === undefined) return "Transaction"
+  return transfer.step !== "send" ? "Token approval" : transfer.operation === "deposit" ? "Deposit" : "Withdrawal"
+}
+
 effect function readSaved(connection: Connection, saved: Saved) {
   const { deployment, evm, solana } = try VaultDesk
   const hash = savedHash(saved)
@@ -232,7 +316,7 @@ effect function readSaved(connection: Connection, saved: Saved) {
     const status: TransferCheck | Outcome = checkFunding(solana, connection.solana, saved.plan, hash) catch (error) => ({ answer: error._tag === "FundingRefused" ? "Refused" : "ReadFailed", message: error.message }) satisfies Outcome
     return typeof status === "string" ? transferMessage(status, operation, deployment.network, hash, fromWallet) : status
   }
-  const transfer = evm === undefined ? undefined : savedTransfer(evmTerms(deployment), saved.plan)
+  const transfer: SavedTransfer | undefined = evm === undefined ? undefined : try savedTransfer(evm, saved.plan)
   if (evm === undefined || connection.family !== "evm" || transfer === undefined) return { answer: "Refused", message: fundingMessages.planUnreadable } satisfies Outcome
   const checked: TransferCheck | Outcome = checkTransfer(connection.evm, evm, transfer.operation, transfer.step, transfer.gross, saved.plan, hash) catch (error) => ({ answer: error._tag === "VaultActionRefused" ? "Refused" : "ReadFailed", message: error.message }) satisfies Outcome
   return typeof checked === "string" ? transferMessage(checked, transfer.operation, deployment.network, hash, fromWallet) : checked
@@ -266,24 +350,41 @@ export effect function confirmTransferUnsent() {
   return try (try VaultDesk).page.confirmUnsent("Transfer")
 }
 
-export effect function lookupBatch(connection: Connection) {
-  const { evm, batch } = try VaultDesk
-  if (evm === undefined || connection.family !== "evm") throw stopped(fundingMessages.unsupported)
-  return try batch.lookup(connection.evm, evm)
-}
-
-export effect function recoverBatch(candidate: string, account: number) {
-  return try (try VaultDesk).batch.recoverHash(candidate, account)
+function batchOutcome(state: Batch, network: string): Outcome {
+  if (state.phase === "Verified") return { answer: "FinalRead", message: `Deposit verified on the finalized chain. ${state.transaction}` }
+  if (state.evidence === "ChainIncluded") return transferMessage("received", "deposit", network, state.transaction, true)
+  return { answer: "StillPending", message: fundingMessages.waitingWallet }
 }
 
 export effect function observeBatch(connection: Connection) {
   const { deployment, evm, batch, keys } = try VaultDesk
-  const stored = slotOfText(readText(sessionSlots(), keys.batch))
-  const plan = stored.kind === "owned" ? planOf(stored.slot.plan) : undefined
-  const gross = plan?.kind === "evmBatch" ? batchGross(evmTerms(deployment), plan) : undefined
+  const plan = storedPlan(sessionSlots(), keys.batch)
+  const gross = evm === undefined || plan?.kind !== "evmBatch" ? undefined : try batchGross(evm, plan)
   if (evm === undefined || connection.family !== "evm" || gross === undefined) throw stopped(fundingMessages.planUnreadable)
-  const state = try batch.observe(connection.evm, evm, gross)
-  return { state, message: state.phase === "Verified" ? `Deposit verified on the finalized chain. ${state.transaction}` : state.evidence === "ChainIncluded" ? transferMessage("received", "deposit", deployment.network, state.transaction, true).message : fundingMessages.waitingWallet }
+  return batchOutcome(try batch.observe(connection.evm, evm, gross), deployment.network)
+}
+
+export effect function lookupBatch(connection: Connection) {
+  const { deployment, evm, batch } = try VaultDesk
+  if (evm === undefined || connection.family !== "evm") throw stopped(fundingMessages.unsupported)
+  const state = try batch.lookup(connection.evm, evm)
+  return state.phase === "HashKnown" ? try observeBatch(connection) : batchOutcome(state, deployment.network)
+}
+
+export effect function recoverBatch(connection: Connection, candidate: string, account: number) {
+  try (try VaultDesk).batch.recoverHash(candidate, account)
+  return try observeBatch(connection)
+}
+
+export effect function watchBatch(connection: Connection, report: (outcome: Outcome) => void!!) {
+  const { batch } = try VaultDesk
+  for (let check = 0; check < batchChecks; check++) {
+    try sleep(check < batchFastChecks ? autoSpacingMs : batchSlowSpacingMs)
+    const phase = (try batch.machine.get()).phase
+    if (phase !== "WalletReference" && phase !== "HashKnown") return
+    const outcome: Outcome = lookupBatch(connection) catch (error) => ({ answer: "ReadFailed", message: error.message }) satisfies Outcome
+    try report(outcome)
+  }
 }
 
 export effect function unreadableSaved() {
@@ -297,6 +398,15 @@ export effect function clearUnreadableSaved() {
   const transfer = try page.clearUnreadable("Transfer")
   const batched = try batch.clearUnreadable()
   return transfer || batched
+}
+
+export effect function unreadableSetting() {
+  const { keys } = try VaultDesk
+  return slotOfText(readText(sessionSlots(), keys.setting)).kind === "unreadable"
+}
+
+export effect function clearUnreadableSetting() {
+  return try (try VaultDesk).monthly.clearUnreadable("Setting")
 }
 
 export effect function followMonthly(account: number, githubId: string) {
@@ -346,8 +456,4 @@ export effect function enterSettingHash(connection: Connection, candidate: strin
 
 export effect function confirmSettingUnsent() {
   return try (try VaultDesk).monthly.confirmUnsent("Setting")
-}
-
-export effect function savedSettingTarget() {
-  return savedSetting((try (try VaultDesk).monthly.saved("Setting")).plan)
 }

@@ -1,0 +1,245 @@
+// spec/slopbot/closeCapacity.md, "Confirmed closes in the rolling day plus every unresolved attempt consume the daily cap"; spec/slopbot/closeCapacity.md, "The reopen-rate breaker stops new reservations after more than one in ten recent closes was reversed"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/slopbot/closeCapacity.md, "A reservation, its confirmation and its rejection are each recorded once, on GitHub's evidence"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { Registry } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
+import { type Admission, type Capacity, type Event, type Fence, type RegistryRead, type ReversalKind, NotAState, admission, apply, decodeState, defaultDailyCap, enabled, maxDailyCap, weekSeconds } from "../../gen/slopbot__closeCapacity.effect.vibe"
+
+schema AttemptRow {
+  readonly ordinal: number
+  readonly attempt_id: string
+  readonly item_node_id: string
+  readonly revision: string
+  readonly state: string
+  readonly closed_at: string | null
+}
+schema ReversalRow { readonly item: string; readonly at: string; readonly kind: "human_reopen" | "appeal_upheld" }
+schema LeaseRow { readonly claim_token: string | null; readonly status: string; readonly lease_expires_at: string | null }
+schema CountRow { readonly n: number }
+
+export interface CloseFence {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly enforcementGeneration: number
+}
+
+export interface CapacityScope {
+  readonly repositoryId: number
+  readonly itemNodeId: string
+  readonly reviewKey: string
+}
+
+export interface Reservation extends CapacityScope {
+  readonly repositoryPath: string
+  readonly claimToken: string
+  readonly authorId: number
+  readonly revision: string
+  readonly dailyCap: number
+  readonly penaltyEligible: boolean
+  readonly recovery: string
+  readonly fence: CloseFence
+}
+
+export interface CapacityLoaded {
+  readonly capacity: Capacity
+  readonly attempts: ReadonlyArray<typeof AttemptRow.Type>
+  readonly lease: typeof LeaseRow.Type | undefined
+  readonly iso: string
+}
+
+export type Reserved =
+  | { readonly kind: "admitted"; readonly attemptId: number; readonly attemptKey: string }
+  | { readonly kind: "refused"; readonly admission: Exclude<Admission, "Admitted"> }
+
+export interface Confirmation extends CapacityScope {
+  readonly attemptKey: string
+  readonly revision: string
+  readonly closedAt: string
+  readonly also: ReadonlyArray<Statement>
+}
+
+export interface Refusal extends CapacityScope {
+  readonly attemptKey: string
+  readonly status: number
+}
+
+export error CloseAttemptMissing { attemptKey: string }
+
+const kinds: Readonly<Record<typeof ReversalRow.Type["kind"], ReversalKind>> = { human_reopen: "MaintainerReopen", appeal_upheld: "UpheldFindingAppeal" }
+const always = sql`1`
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function reversalsSince(repositoryId: number, since: string) {
+  return sql`SELECT item_node_id AS item, created_at AS at, 'human_reopen' AS kind FROM slopbot_actions
+      WHERE repository_id = ${repositoryId} AND action = 'human_reopen' AND created_at > ${since}
+    UNION ALL
+    SELECT item_node_id AS item, resolved_at AS at, 'appeal_upheld' AS kind FROM slopbot_appeals
+      WHERE repository_id = ${repositoryId} AND resolution = 'upheld' AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at > ${since}`
+}
+
+function attemptsRead(scope: CapacityScope, since: string) {
+  return sql`SELECT ordinal, attempt_id, item_node_id, revision, state, closed_at FROM (
+      SELECT attempt_id, item_node_id, revision, state, closed_at, ROW_NUMBER() OVER (ORDER BY rowid) AS ordinal
+      FROM slopbot_close_attempts WHERE repository_id = ${scope.repositoryId})
+    WHERE state != 'confirmed' OR closed_at > ${since} OR item_node_id = ${scope.itemNodeId}
+      OR item_node_id IN (SELECT item FROM (${reversalsSince(scope.repositoryId, since)}))
+    ORDER BY ordinal`
+}
+
+function capacityVersion(scope: CapacityScope, fence: Statement) {
+  return sql`SELECT (SELECT count(*) || ':' || coalesce(sum(state = 'pending'), 0) || ':' || coalesce(sum(state = 'rejected'), 0) || ':' || coalesce(max(closed_at), '-')
+      FROM slopbot_close_attempts WHERE repository_id = ${scope.repositoryId})
+    || '|' || (SELECT count(*) FROM slopbot_actions WHERE repository_id = ${scope.repositoryId} AND action = 'human_reopen')
+    || '|' || (SELECT count(*) FROM slopbot_appeals WHERE repository_id = ${scope.repositoryId} AND resolution = 'upheld')
+    || '|' || coalesce((SELECT status || ':' || coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') FROM slopbot_reviews WHERE review_key = ${scope.reviewKey}), '-')
+    || '|' || (CASE WHEN ${fence} THEN 1 ELSE 0 END) AS version`
+}
+
+effect function capacityOf(scope: CapacityScope, dailyCap: number, rows: ReadonlyArray<Rows>) {
+  const [attemptRows, countRows, reversalRows, leaseRows] = rows
+  const attempts = try decoded(AttemptRow, attemptRows ?? [], "close attempts")
+  const [count] = try decoded(CountRow, countRows ?? [], "close attempt count")
+  const reversals = try decoded(ReversalRow, reversalRows ?? [], "close reversals")
+  const [lease] = try decoded(LeaseRow, leaseRows ?? [], "review lease")
+  const millis = try Clock.currentTimeMillis
+  const confirmed = attempts.filter((row) => row.state === "confirmed")
+  const closes = confirmed.map((row) => ({ key: { item: row.item_node_id, revision: row.revision }, attemptId: row.ordinal, closedAt: seconds(row.closed_at ?? "") }))
+  const now = Math.max(Math.floor(millis / 1000), ...closes.map((close) => close.closedAt))
+  const capacity = try decodeState({
+    repository: scope.repositoryId,
+    now,
+    dailyCap,
+    closes,
+    pending: attempts.filter((row) => row.state === "pending").map((row) => ({ key: { item: row.item_node_id, revision: row.revision }, attemptId: row.ordinal })),
+    rejected: attempts.filter((row) => row.state === "rejected").map((row) => row.ordinal),
+    reversals: reversals.map((row) => ({ item: row.item, at: seconds(row.at), kind: kinds[row.kind] })),
+    lastAttempt: count?.n ?? 0,
+  } satisfies Capacity)
+  return { capacity, attempts, lease, iso: try isoAt(millis) } satisfies CapacityLoaded
+}
+
+function capacityAggregate(scope: CapacityScope, dailyCap: number, fence: Statement, since: string): Aggregate<CapacityLoaded, NotAState | RowMismatch, never> {
+  return {
+    name: `close capacity of repository ${scope.repositoryId}`,
+    version: capacityVersion(scope, fence),
+    reads: [
+      attemptsRead(scope, since),
+      sql`SELECT count(*) AS n FROM slopbot_close_attempts WHERE repository_id = ${scope.repositoryId}`,
+      sql`SELECT item, at, kind FROM (${reversalsSince(scope.repositoryId, since)}) ORDER BY at, item`,
+      sql`SELECT claim_token, status, lease_expires_at FROM slopbot_reviews WHERE review_key = ${scope.reviewKey}`,
+    ],
+    decode: (rows) => capacityOf(scope, dailyCap, rows),
+  }
+}
+
+effect function weekAgo() {
+  return try isoAt(try Clock.currentTimeMillis - weekSeconds * 1000)
+}
+
+effect function fenceStatement(reservation: Reservation) {
+  const { fence } = reservation
+  const registered = try (try Registry).fence({ projectId: fence.projectId, revision: fence.revision, manifestSha256: fence.manifestSha256, repositoryKeys: [reservation.repositoryPath.toLowerCase()] })
+  const enforced = try (try Enforcement).fence({ enforcementGeneration: fence.enforcementGeneration })
+  return sql`(${registered}) AND (${enforced})`
+}
+
+function modelFence(fence: CloseFence, project: number): Fence {
+  return { project, projectRevision: fence.revision, manifestDigest: fence.manifestSha256, enforcementPosition: fence.enforcementGeneration }
+}
+
+effect function registryRead(reservation: Reservation, loaded: CapacityLoaded) {
+  const view = try (try Registry).project(reservation.fence.projectId)
+  const generation = (try (try Enforcement).project(reservation.fence.projectId)).enforcementGeneration
+  const { lease } = loaded
+  const now = loaded.capacity.now
+  const current: Fence = view === undefined
+    ? { project: 0, projectRevision: 0, manifestDigest: "", enforcementPosition: generation }
+    : modelFence({ projectId: view.projectId, revision: view.revision, manifestSha256: view.manifestSha256, enforcementGeneration: generation }, view.projectId === reservation.fence.projectId ? 1 : 0)
+  return {
+    fence: current,
+    projectActive: view?.rowStatus === "Active" && view.manifestStatus === "Active",
+    listed: view !== undefined && view.listingTier !== "Retired" && view.retirement === "NotRetired",
+    repositoriesRegistered: view?.repositories.some((repository) => repository.fullName.toLowerCase() === reservation.repositoryPath.toLowerCase()) === true,
+    leaseToken: lease?.claim_token == null ? 0 : lease.claim_token === reservation.claimToken ? 1 : 2,
+    leaseRunning: lease?.status === "running",
+    leaseExpiresAt: lease?.lease_expires_at == null ? 0 : seconds(lease.lease_expires_at),
+    at: now,
+  } satisfies RegistryRead
+}
+
+function reservationWrite(reservation: Reservation, at: string): Statement {
+  return sql`INSERT INTO slopbot_close_attempts (attempt_id, review_key, repository_id, project_id, item_node_id, author_id, revision,
+      recovery_json, penalty_eligible, state, created_at)
+    VALUES (${reservation.claimToken}, ${reservation.reviewKey}, ${reservation.repositoryId}, ${reservation.fence.projectId}, ${reservation.itemNodeId},
+      ${reservation.authorId}, ${reservation.revision}, ${reservation.recovery}, ${reservation.penaltyEligible ? 1 : 0}, 'pending', ${at})`
+}
+
+export function closeActionWrite(attemptKey: string, closedAt: string): Statement {
+  return sql`INSERT OR IGNORE INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at)
+    SELECT review_key, repository_id, item_node_id, 'close',
+      json_object('category', json_extract(recovery_json, '$.verdict.category'),
+        'penaltyEligible', json(CASE penalty_eligible WHEN 1 THEN 'true' ELSE 'false' END)), ${closedAt}
+    FROM slopbot_close_attempts WHERE attempt_id = ${attemptKey} AND state = 'pending'`
+}
+
+function confirmWrite(attemptKey: string, closedAt: string): Statement {
+  return sql`UPDATE slopbot_close_attempts SET state = 'confirmed', closed_at = ${closedAt}
+    WHERE attempt_id = ${attemptKey} AND state = 'pending'
+      AND EXISTS (SELECT 1 FROM slopbot_actions a WHERE a.review_key = slopbot_close_attempts.review_key AND a.action = 'close')`
+}
+
+function rejectWrite(attemptKey: string, at: string): Statement {
+  return sql`UPDATE slopbot_close_attempts SET state = 'rejected', rejected_at = ${at} WHERE attempt_id = ${attemptKey} AND state = 'pending'`
+}
+
+function reserved(value: Reserved, writes: ReadonlyArray<Statement>): Decision<Reserved> {
+  return { value, writes }
+}
+
+function ordinalOf(loaded: CapacityLoaded, attemptKey: string) {
+  return loaded.attempts.find((row) => row.attempt_id === attemptKey)?.ordinal
+}
+
+export effect function capacityState(scope: CapacityScope) {
+  return (try load(capacityAggregate(scope, defaultDailyCap, always, try weekAgo()))).state
+}
+
+export effect function reserveSlot(reservation: Reservation) {
+  const fence = try fenceStatement(reservation)
+  const dailyCap = Math.min(Math.max(reservation.dailyCap, 0), maxDailyCap)
+  return try update(capacityAggregate(reservation, dailyCap, fence, try weekAgo()), (loaded) => effect {
+    const registry = try registryRead(reservation, loaded)
+    const request = { key: { item: reservation.itemNodeId, revision: reservation.revision }, attemptId: loaded.capacity.lastAttempt + 1, fence: modelFence(reservation.fence, 1), leaseToken: 1 }
+    const decided = admission(loaded.capacity, request, registry)
+    if (decided !== "Admitted") return reserved({ kind: "refused", admission: decided }, [])
+    try apply(loaded.capacity, { type: "reserve", request, registry })
+    return reserved({ kind: "admitted", attemptId: request.attemptId, attemptKey: reservation.claimToken }, [reservationWrite(reservation, loaded.iso)])
+  })
+}
+
+export effect function confirmSlot(confirmation: Confirmation) {
+  return try update(capacityAggregate(confirmation, defaultDailyCap, always, try weekAgo()), (loaded) => effect {
+    const attemptId = ordinalOf(loaded, confirmation.attemptKey)
+    if (attemptId === undefined) throw new CloseAttemptMissing({ attemptKey: confirmation.attemptKey })
+    const event: Event = { type: "confirm", closeEvent: { attemptId, item: confirmation.itemNodeId, revision: confirmation.revision, actor: "SlopbotApp", closedAt: seconds(confirmation.closedAt) } }
+    if (!enabled(loaded.capacity, event)) return { value: false, writes: [] } satisfies Decision<boolean>
+    try apply(loaded.capacity, event)
+    return { value: true, writes: [closeActionWrite(confirmation.attemptKey, confirmation.closedAt), confirmWrite(confirmation.attemptKey, confirmation.closedAt), ...confirmation.also] } satisfies Decision<boolean>
+  })
+}
+
+export effect function rejectSlot(refusal: Refusal) {
+  return try update(capacityAggregate(refusal, defaultDailyCap, always, try weekAgo()), (loaded) => effect {
+    const attemptId = ordinalOf(loaded, refusal.attemptKey)
+    if (attemptId === undefined) throw new CloseAttemptMissing({ attemptKey: refusal.attemptKey })
+    const event: Event = { type: "reject", githubRefusal: { attemptId, status: refusal.status } }
+    if (!enabled(loaded.capacity, event)) return { value: false, writes: [] } satisfies Decision<boolean>
+    try apply(loaded.capacity, event)
+    return { value: true, writes: [rejectWrite(refusal.attemptKey, loaded.iso)] } satisfies Decision<boolean>
+  })
+}

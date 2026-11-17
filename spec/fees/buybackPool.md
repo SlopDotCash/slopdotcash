@@ -99,29 +99,51 @@ pure def alwaysRuntimeSound(p: Pool): bool = R::alwaysPublishedPassedPreflight(p
 
 A Robinhood Chain run starts with an empty run total. Its purchase
 evaluation checks, in order: run cap or rolling daily cap reached (skipped);
-no route; a quote above the remaining cap or beyond safe integer accounting
-(skipped); below 25 USDG or below ten times the gas cost (pending, waits in
-the pool); unknown price impact or impact above 3% (skipped); a minimum
+a remaining value cap below 25 USDG (pending); for an input other than USDG,
+a valuation that is unavailable (no route); an input valued below 25 USDG
+(pending); no SLOP route; a quote above the remaining cap or beyond safe
+integer accounting (skipped); below ten times the gas cost (pending, waits
+in the pool); unknown price impact or impact above 3% (skipped); a minimum
 output outside 1% slippage (skipped); a dry run with acceptable terms is
 recorded as quoted and signs nothing. A repeated decision with the same
 leg, state, reason, value and mode adds no record.
 
+`spent` is the stablecoin value of the input: for USDG the input itself,
+the lesser of the credit and the finalized balance, cut to the remaining
+cap only while some cap is left (`purchaseInput`), so a reached cap is
+recorded with the whole held amount; for another asset its valuation quote into USDG,
+taken before any SLOP route is requested, so a small fee is never routed
+for its many base units. `ValueUnavailable` is a valuation that failed: no
+SLOP route is requested. A requote while fitting the input inside the caps
+is valued again and waits as pending below 25 USDG. Nothing below the
+minimum requests a route; reconciliation of sends, arrivals and owed burns
+never waits on it.
+
 ```quint
-type RouteResult = RouteFound | NoRouteResult
+type RouteResult = RouteFound | NoRouteResult | ValueUnavailable
 type PurchaseQuote = { route: RouteResult, tx: int, spent: int, minimum: M::Amount, gasValue: int, slippageBps: int,
   impactBps: int, receiver: str, tokenPaused: bool, balance: int }
 pure val maximumSafeValue = 9007199254740991
+pure val minimumPurchase = 25000000
 pure def remaining(p: Pool): int =
   val runLeft = runCap - p.runSpent
   val dayLeft = dayCap - B::spentInWindow(p.purchaseSpends, p.clock)
   if (runLeft < dayLeft) runLeft else dayLeft
+pure def purchaseInput(p: Pool, balance: int): int =
+  val held = if (p.credit < balance) p.credit else balance
+  val left = remaining(p)
+  if (held <= 0) 0 else if (left > 0 and held > left) left else held
+pure def sometimesPurchaseWaitsBeforeRoute(p: Pool): bool =
+  p.decisions.some(d => d.leg == PurchaseLeg and d.state == Pending and d.reason == BelowMinimum)
 pure def purchaseDecision(p: Pool, quote: PurchaseQuote): PoolDecision =
   val base = { leg: PurchaseLeg, state: Skipped, reason: NoReason, value: quote.spent, live: p.runtime.buybackMode == R::Live, at: p.clock }
   if (remaining(p) <= 0) { ...base, reason: if (runCap - p.runSpent <= 0) RunCapReached else DayCapReached }
+  else if (remaining(p) < minimumPurchase) { ...base, state: Pending, reason: BelowMinimum }
+  else if (quote.route == ValueUnavailable) { ...base, state: NoRoute, reason: NoRouteFound }
+  else if (quote.spent < minimumPurchase) { ...base, state: Pending, reason: BelowMinimum }
   else if (quote.route == NoRouteResult) { ...base, state: NoRoute, reason: NoRouteFound }
   else if (quote.spent > remaining(p)) { ...base, reason: ExceedsRemaining }
   else if (quote.spent > maximumSafeValue) { ...base, reason: UnsafeValue }
-  else if (quote.spent < 25000000) { ...base, state: Pending, reason: BelowMinimum }
   else if (quote.spent < quote.gasValue * 10) { ...base, state: Pending, reason: BelowGasMultiple }
   else if (quote.impactBps < 0) { ...base, reason: ImpactUnknown }
   else if (quote.impactBps > 300) { ...base, reason: ImpactAbove }
@@ -293,7 +315,9 @@ pure val quoteValues = Set(
   { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 5000000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
   { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 101, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
   { route: NoRouteResult, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: 600000000 },
-  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 24999999 })
+  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 24999999 },
+  { route: NoRouteResult, tx: 24, spent: 20000000, minimum: List(5), gasValue: 1000, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: 600000000 },
+  { route: ValueUnavailable, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: 600000000 })
 pure val swapValues = Set({ tx: 24, succeeded: true, finalized: true, output: List(6), toFeeWallet: true, slopToken: true },
   { tx: 24, succeeded: false, finalized: true, output: List(0), toFeeWallet: true, slopToken: true },
   { tx: 24, succeeded: true, finalized: true, output: List(6), toFeeWallet: false, slopToken: true })

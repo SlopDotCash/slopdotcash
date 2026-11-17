@@ -23,3 +23,4 @@ verification remain external evidence boundaries for the future shell.
 - [Registry-wide repository identity and restriction binding](./projectRegistry.md)
 - [Optional X profile connection](./xConnection.md)
 - [Repository merge activity](./mergeActivity.md)
+- [Slopbot ready-label settings](./readyLabelSettings.md)

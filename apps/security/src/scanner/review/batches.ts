@@ -4,7 +4,7 @@ import { DETERMINISTIC_COVERAGE_ID, INVENTORY_SCHEMA, MAX_INVENTORY_BYTES, MAX_I
 import type { InventoryItem, RepositoryInspection } from "../inspect/model.ts";
 import { surfacesOf } from "../inspect/surfaces.ts";
 import { type ReviewPass, SCAN_REVIEW_AREAS, type ScannerEvidence } from "../providers/review.ts";
-import { batchEnds, fittedAliasCount } from "./plan.ts";
+import { fittedAliasCount, prefixSums, spanStarts, worstRank } from "./plan.ts";
 
 export const DEFAULT_BATCH_TOKENS = 150_000;
 export const BYTES_PER_TOKEN = 3;
@@ -100,17 +100,22 @@ export function planReview(inspection: RepositoryInspection, batchTokens = DEFAU
   const prepared = ordered.map((item) => {
     const aliases = sameBytes.get(item.id) ?? [];
     const base = byteLength(batchEvidence(widest, widest, [item], { [item.id]: [] }));
-    const fitted = aliases.slice(0, aliases.length === 0 ? 0 : fittedAliasCount(base, aliases.map((alias) => byteLength(JSON.stringify(alias))), limit));
+    const fitted = aliases.slice(0, fittedAliasCount(base, prefixSums(aliases.map((alias) => byteLength(JSON.stringify(alias)))), limit));
     const aliasBytes = fitted.length === 0 ? 0 : byteLength(JSON.stringify({ [item.id]: fitted }));
     return { item, aliases: fitted, rest: aliases.slice(fitted.length), bytes: itemBytes(item) + aliasBytes };
   });
-  const ends = batchEnds(prepared.map((entry) => entry.bytes), prepared.map((entry) => entry.rest.length > 0), BATCH_OVERHEAD_BYTES, limit, MAX_INVENTORY_ITEMS);
-  const groups = ends.map((end, index) => prepared.slice(index === 0 ? 0 : ends[index - 1], end));
+  const starts = spanStarts(prefixSums(prepared.map((entry) => entry.bytes)), prepared.map((entry) => entry.rest.length > 0), BATCH_OVERHEAD_BYTES, limit, MAX_INVENTORY_ITEMS);
+  const groups: (typeof prepared)[] = [];
+  const groupOf: number[] = [];
+  prepared.forEach((entry, position) => {
+    if (starts[position] === position) groups.push([]);
+    groups.at(-1)?.push(entry);
+    groupOf.push(groups.length - 1);
+  });
   const batches = groups.map((group, index) =>
     planned(batchEvidence(index + 1, groups.length, group.map((entry) => entry.item), Object.fromEntries(group.filter((entry) => entry.aliases.length > 0).map((entry) => [entry.item.id, entry.aliases]))), group.length),
   );
-  const groupOf = (position: number) => ends.findIndex((end) => position < end);
-  const sameBytesOutsideBatches = prepared.flatMap((entry, position) => (entry.rest.length > 0 ? [{ sourcePath: entry.item.id, sourceSha256: entry.item.sha256, batch: `batch-${groupOf(position) + 1}`, paths: entry.rest }] : []));
+  const sameBytesOutsideBatches = prepared.flatMap((entry, position) => (entry.rest.length > 0 ? [{ sourcePath: entry.item.id, sourceSha256: entry.item.sha256, batch: `batch-${(groupOf[position] ?? 0) + 1}`, paths: entry.rest }] : []));
   return { mode: "batched", batches, batchTokens, sameBytesOutsideBatches };
 }
 
@@ -215,17 +220,21 @@ export function failedReview(evidence: ScannerEvidence, inventorySha256: string,
   return { ...evidence, review: { ...evidence.review, inputManifestSha256: inventorySha256 }, passes };
 }
 
-const RANK = { "no-findings": 0, findings: 1, "malicious-suspected": 2 } as const;
-const COVERAGE_RANK = { complete: 0, partial: 1, missing: 2 } as const;
+const VERDICTS = ["no-findings", "findings", "malicious-suspected"] as const;
+const COVERAGES = ["complete", "partial", "missing"] as const;
+
+function worstOf<T extends string>(order: readonly [T, T, T], values: ReadonlyArray<T>): T {
+  return order[worstRank(values.map((value) => order.indexOf(value)))] ?? order[2];
+}
 
 /** @throws {never} */
 export function combine(inventorySha256: string, batchResults: ReadonlyArray<ScannerEvidence>, last: ScannerEvidence, passes: ReadonlyArray<ReviewPass>): ScannerEvidence {
   const results = [...batchResults, last];
   const completed = results.every((result) => result.review.status === "completed");
   const coverage = completed
-    ? (Object.fromEntries(SCAN_REVIEW_AREAS.map((area) => [area, results.map((result) => result.coverage?.[area] ?? "missing").reduce((worst, state) => (COVERAGE_RANK[state] > COVERAGE_RANK[worst] ? state : worst))])) as ScannerEvidence["coverage"])
+    ? (Object.fromEntries(SCAN_REVIEW_AREAS.map((area) => [area, worstOf(COVERAGES, results.map((result) => result.coverage?.[area] ?? "missing"))])) as ScannerEvidence["coverage"])
     : null;
-  const verdict = completed ? results.map((result) => result.review.verdict ?? "no-findings").reduce((worst, value) => (RANK[value] > RANK[worst] ? value : worst)) : null;
+  const verdict = completed ? worstOf(VERDICTS, results.map((result) => result.review.verdict ?? "no-findings")) : null;
   const findings = completed ? results.flatMap((result) => result.findings) : [];
   const usage = results.every((result) => result.usage !== null)
     ? results.reduce(

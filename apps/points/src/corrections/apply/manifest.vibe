@@ -1,5 +1,6 @@
 // spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"
 import { sha256Hex } from "@repo/platform/crypto"
+import { MergeResolution } from "@repo/platform/git/evidence"
 import { correctionRule, digestOf } from "../collect/inventory.vibe"
 import { assertCorrectionRegistry } from "../collect/registry.vibe"
 
@@ -7,17 +8,19 @@ export error CorrectionRefused { message: string }
 
 export schema CorrectionActor { readonly id: string; readonly login: string; readonly kind: string }
 export schema CorrectionFile { readonly path: string; readonly additions: number; readonly deletions: number }
+export schema RetainedCopy { readonly originalSourceId: string; readonly originalCommitSha: string; readonly boundPaths: ReadonlyArray<string>; readonly bindingDigest: string }
+export schema CorrectionClaim { readonly id: string; readonly sourceId: string; readonly commitSha: string; readonly path: string }
 export schema CorrectionCommit {
   readonly sha: string
   readonly parentCount: number
-  readonly mergeResolution?: Schema.Unknown
+  readonly mergeResolution?: MergeResolution
   readonly parentShas?: ReadonlyArray<string>
   readonly author: CorrectionActor | null
   readonly additions: number | null
   readonly deletions: number | null
   readonly firstAcceptedSourceId: string | null
   readonly files?: ReadonlyArray<CorrectionFile>
-  readonly retainedCopy?: Schema.Unknown
+  readonly retainedCopy?: RetainedCopy
 }
 export schema CorrectionSource {
   readonly repository: string
@@ -41,7 +44,7 @@ export schema CompleteProof {
   readonly independentClaimIds?: Schema.Unknown
   readonly decisionDigest?: string
   readonly expectedClaimIds?: ReadonlyArray<string>
-  readonly claims?: Schema.Unknown
+  readonly claims?: ReadonlyArray<CorrectionClaim>
 }
 export schema ExpectedPredecessor { readonly key: string; readonly revisionId: string }
 export schema ManifestCandidate {
