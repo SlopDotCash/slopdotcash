@@ -185,6 +185,7 @@ function failedReconciliation(db: unknown, failingTransactionId: string) {
     try {
       await reconcileFailedAttempts(
         db as never,
+        ["solana-localnet"],
         [
           {
             network: "solana-localnet",
