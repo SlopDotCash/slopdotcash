@@ -2161,7 +2161,7 @@ for (const result of [
       if (result === "failed triage" || result === "unverified model") {
         expect(
           run.sql("SELECT outcome FROM slopbot_costs ORDER BY id"),
-        ).toEqual([{ outcome: "failed" }]);
+        ).toEqual([{ outcome: "failed" }, { outcome: "failed" }]);
       }
     });
   });

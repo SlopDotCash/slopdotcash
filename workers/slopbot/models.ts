@@ -21,15 +21,16 @@ type Step = {
 // spending denial skips the remaining Surplus steps, which share that budget,
 // and goes straight to Orbio. Confirmation reuses this route as a second
 // independent call at higher effort.
-// Operator decision (17 November 2026): Surplus gpt-6.1-terra is removed from
-// this route. From 15 to 17 November it returned an output that failed the
-// verdict schema on 34 of its 50 calls, and none of those jobs was rescued by
-// a later step in the same route.
 export const TRIAGE_ROUTE: Step[] = [
   {
     provider: "surplus",
     model: "claude-sonnet-5.5",
     priceKey: "surplus/claude-sonnet-5.5",
+  },
+  {
+    provider: "surplus",
+    model: "gpt-6.1-terra",
+    priceKey: "surplus/gpt-6.1-terra",
   },
   {
     provider: "orbio",
