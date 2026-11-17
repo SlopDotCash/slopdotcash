@@ -4810,9 +4810,12 @@
     },
     {
       "path": "scripts/rotate-fee-solana-rpc.ts",
-      "sha256": "d28cff44fd991d50a30baa689c65ba3d72f456e07a75bc1f88b5678b1c6f344d",
+      "sha256": "e97e568c1587bf2a9c24ca3fbfcaa535249a76827e799aaad283f903bb3be3dc",
       "models": ["formal/models/release/release_publication.qnt"],
-      "candidateLines": [40, 41, 42, 43, 45, 111, 153, 183, 305, 343, 364, 460],
+      "candidateLines": [
+        40, 41, 42, 43, 45, 111, 153, 176, 191, 192, 220, 221, 246, 368, 406,
+        427, 524
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -14875,7 +14878,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "4c8cf61648d267e4d1b32f3d8a76a369f281f3fb89defa6c7fd15fb5ccd9885e",
+      "sha256": "d043886d571fa5c0d26bcfddf0c2efea12db6b3eabeadbedb330f6678612f031",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/check-retained-release-data.ts",
@@ -14912,9 +14915,11 @@
         "rpcRotationAmbiguousDeployRemainsUncertainTest",
         "rpcRotationCannotWriteOtherServicesTest",
         "rpcRotationChangedVersionCannotPromoteTest",
+        "rpcRotationCommandFailureThenReadbackConfirmsTest",
         "rpcRotationMissingPreflightCannotUploadTest",
         "rpcRotationNeedsManualMainTest",
         "rpcRotationOnlyPublishesCandidateTest",
+        "rpcRotationUnconfirmedReadbackCannotRedeployTest",
         "sourceAdvanceAfterUploadIsPartialTest",
         "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",
