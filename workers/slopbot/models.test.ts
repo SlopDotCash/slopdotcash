@@ -375,6 +375,35 @@ test("model and schema guards preserve known and unknown attempt costs", async (
     "provider did not report the requested model",
     "schema-invalid verdict",
   ]);
+  expect(result.calls.map((call) => call.failureDetail)).toEqual([
+    undefined,
+    "unexpected field extra",
+  ]);
+});
+
+test("a refused reply records which part failed, never its text", async () => {
+  const { result } = await run([
+    {
+      body: message({
+        content: [{ type: "text", text: '```json\n{"accepted":true}\n```' }],
+      }),
+    },
+    {
+      body: message({
+        model: SURPLUS_ROUTE[1].model,
+        content: [{ type: "text", text: '{"accepted":"yes"}' }],
+      }),
+    },
+  ]);
+  expect(result.verdict).toBeNull();
+  expect(result.calls.map((call) => call.failure)).toEqual([
+    "schema-invalid verdict",
+    "schema-invalid verdict",
+  ]);
+  expect(result.calls.map((call) => call.failureDetail)).toEqual([
+    "reply was wrapped in a Markdown fence",
+    "field accepted is string, expected boolean",
+  ]);
 });
 
 test("fallback authority denial preserves the first attempt receipt", async () => {

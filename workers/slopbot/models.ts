@@ -1,7 +1,13 @@
 // Model route (PRD BOT-09). The model gets no tools, secrets or network access;
 // it returns one schema-valid verdict about the item it was shown, nothing else.
 import Anthropic from "@anthropic-ai/sdk";
-import { type Usage, VERDICT_SCHEMA, validateVerdict } from "./contracts";
+import {
+  explainVerdict,
+  type Usage,
+  VERDICT_SCHEMA,
+  validateVerdict,
+} from "./contracts";
+import { rejectionDetail, unreadableDetail } from "./schema-mismatch";
 
 export type ModelEnv = {
   ORBIO_API_KEY?: string;
@@ -47,6 +53,8 @@ export type CallRecord = {
   priceKey: string;
   outcome: "ok" | "failed";
   failure: string | null;
+  /** Which part of a refused reply failed, never reply text (0135). */
+  failureDetail?: string;
   usage: Usage;
   providerCostMicroUsd: number | null;
   providerRequestId: string | null;
@@ -72,6 +80,7 @@ export async function runRoute(
       name: "slopbot_verdict",
       schema: VERDICT_SCHEMA,
       validate: validateVerdict,
+      explain: explainVerdict,
     },
     mayCall,
   );
@@ -122,6 +131,7 @@ export async function runStructuredRoute<T>(
     name: string;
     schema: Record<string, unknown>;
     validate(value: unknown): T | null;
+    explain?(value: unknown): string | null;
   },
   mayCall: () => Promise<boolean>,
 ): Promise<{
@@ -179,6 +189,11 @@ export async function runStructuredRoute<T>(
         result.json === null ? null : output.validate(result.json);
       if (verdict === null) {
         record.failure = result.failure ?? "schema-invalid verdict";
+        if (result.failure === null)
+          record.failureDetail =
+            result.json === null
+              ? unreadableDetail(result.text)
+              : rejectionDetail(result.json, output.schema, output.explain);
         calls.push(record);
         continue;
       }
@@ -227,6 +242,8 @@ export async function runStructuredRoute<T>(
 
 type CallResult = {
   json: unknown;
+  /** The reply's text block, kept only to describe why it was unreadable. */
+  text?: string;
   usage: Usage;
   servedModel: string | null;
   failure: string | null;
@@ -400,6 +417,7 @@ async function callModel(
   )?.text;
   return {
     json: parseJson(text),
+    text,
     usage,
     servedModel: response.model,
     failure: null,

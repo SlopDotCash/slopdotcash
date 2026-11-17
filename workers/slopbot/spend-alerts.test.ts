@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { handleNotifyRequest } from "../notify/handler";
 import { dispatchFailureAlert } from "./failure-alerts";
+import { recordCalls } from "./persistence";
 import { dispatchSpendAlert } from "./spend-alerts";
 import { reconcileValueBudget, reserveValueBudget } from "./value-budget";
 import { runValueInference } from "./value-inference";
@@ -27,6 +28,7 @@ function harness(rejectMail = false) {
     "0120_slopbot_value_attempt_completion.sql",
     "0122_orbio_provider_failure_notices.sql",
     "0133_slopbot_failure_notice_suppressions.sql",
+    "0135_slopbot_call_failure_details.sql",
   ]);
   const mail: string[] = [];
   const notify = {
@@ -713,6 +715,50 @@ test("a Surplus spending denial is mailed even when Orbio served the job", async
     await dispatchFailureAlert(h.db, h.notify);
     expect(h.mail).toHaveLength(1);
     expect(h.mail[0]).toContain("provider budget was exhausted");
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a refused call stores which part failed beside its cost row", async () => {
+  const h = harness();
+  try {
+    const base = {
+      provider: "surplus" as const,
+      requestedModel: "claude-sonnet-5.5",
+      servedModel: "claude-sonnet-5.5",
+      priceKey: "surplus/claude-sonnet-5.5",
+      usage: { input: 1, cacheWrite: 0, cacheRead: 0, output: 1 },
+      providerCostMicroUsd: 1,
+      providerRequestId: null,
+    };
+    await recordCalls(h.db, "detail-review", 1, "triage", [
+      {
+        ...base,
+        routeStep: 1,
+        outcome: "failed",
+        failure: "schema-invalid verdict",
+        failureDetail: "missing required field summary",
+      },
+      { ...base, routeStep: 2, outcome: "failed", failure: "max_tokens" },
+      { ...base, routeStep: 3, outcome: "ok", failure: null },
+    ]);
+    const rows = h.sqlite
+      .prepare(
+        `SELECT c.route_step, c.failure, d.detail FROM slopbot_costs c
+         LEFT JOIN slopbot_call_failure_details d ON d.call_id = c.id
+         WHERE c.review_key = 'detail-review' ORDER BY c.route_step`,
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        route_step: 1,
+        failure: "schema-invalid verdict",
+        detail: "missing required field summary",
+      },
+      { route_step: 2, failure: "max_tokens", detail: null },
+      { route_step: 3, failure: null, detail: null },
+    ]);
   } finally {
     h.sqlite.close();
   }
