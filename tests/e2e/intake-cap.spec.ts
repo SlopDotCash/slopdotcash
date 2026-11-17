@@ -135,7 +135,9 @@ test("a project at its intake cap is left out of the home page and sponsors, and
     "This project has paused new contributors.",
   );
   await expect(
-    page.getByRole("link", { name: "Project owner: review setup" }),
+    page
+      .locator("#start")
+      .getByRole("link", { name: "Owner setup", exact: true }),
   ).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("project-intake-paused.png"),
@@ -236,9 +238,7 @@ test("the owner sets, changes and clears the intake cap on the manage page", asy
   });
   const published = (revision: number) =>
     expect(
-      page
-        .getByRole("status")
-        .filter({ hasText: `Published revision ${revision}.` }),
+      page.getByRole("status").getByText(`Rev ${revision}`, { exact: true }),
     ).toBeVisible();
   try {
     await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
