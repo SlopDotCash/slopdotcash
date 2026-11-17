@@ -576,30 +576,30 @@ pure def claimAdmitted(f: Fee, c: VaultClaim): bool =
   val v = vaultOf(f, c.vault)
   v.vault > 0 and v.deployment == c.deployment and c.recipient == wallet(f) and holding(f, v.token).vault == c.vault
     and c.amount > 0 and c.amount <= holding(f, v.token).accrued and c.valueMicro >= 5000000 and c.valueMicro >= c.gasValue * 10
-pure def canClaim(f: Fee, runId: int, claim: VaultClaim, by: R::Sender): bool =
-  val maximum = worstCase(f, claim.gasLimit, claim.fees)
-  val token = vaultOf(f, claim.vault).token
+pure def canClaim(f: Fee, runId: int, vaultClaim: VaultClaim, by: R::Sender): bool =
+  val maximum = worstCase(f, vaultClaim.gasLimit, vaultClaim.fees)
+  val token = vaultOf(f, vaultClaim.vault).token
   by == R::Worker and leaseHeld(f, runId) and f.trigger == Recovery and R::networkSigns(f.runtime, f.network) and f.runtime.converterMode == R::Live
     and (R::converts(f.network) or R::buybackSigns(f.runtime, f.network))
-    and not(f.overrun) and claimAdmitted(f, claim) and openRows(f, token) == 0
+    and not(f.overrun) and claimAdmitted(f, vaultClaim) and openRows(f, token) == 0
     and pendingIntent(f, runId).id == 0 and ownReservation(f, runId).id == 0
-    and claim.tx > 0 and not(txUsed(f, claim.tx)) and claim.gasLimit > 0 and claim.fees.maxFee > 0
-    and claim.fees.priority >= 0 and claim.fees.priority <= claim.fees.maxFee
-    and (if (f.network == R::Solana) claim.nonce == solanaSequence(f) and claim.blockhashSlot > 0
-      else claim.nonce >= nonceFloor(f) and claim.blockhashSlot == 0)
+    and vaultClaim.tx > 0 and not(txUsed(f, vaultClaim.tx)) and vaultClaim.gasLimit > 0 and vaultClaim.fees.maxFee > 0
+    and vaultClaim.fees.priority >= 0 and vaultClaim.fees.priority <= vaultClaim.fees.maxFee
+    and (if (f.network == R::Solana) vaultClaim.nonce == solanaSequence(f) and vaultClaim.blockhashSlot > 0
+      else vaultClaim.nonce >= nonceFloor(f) and vaultClaim.blockhashSlot == 0)
     and maximum > 0 and maximum <= R::transactionCeilingOf(f.network)
-    and liabilityOf(f.gas.append({ ...noGas, id: f.gas.length() + 1, nonce: claim.nonce, maximum: maximum, state: Signed, settled: false }), day(f))
+    and liabilityOf(f.gas.append({ ...noGas, id: f.gas.length() + 1, nonce: vaultClaim.nonce, maximum: maximum, state: Signed, settled: false }), day(f))
       <= R::dailyCeilingOf(f.network)
-pure def claim(f: Fee, runId: int, claim: VaultClaim, by: R::Sender): Fee =
+pure def claim(f: Fee, runId: int, vaultClaim: VaultClaim, by: R::Sender): Fee =
   val id = f.rows.length() + 1
-  val token = vaultOf(f, claim.vault).token
+  val token = vaultOf(f, vaultClaim.vault).token
   val h = holding(f, token)
-  { ...f, holdings: withHolding(token, { ...h, accrued: h.accrued - claim.amount }, f),
+  { ...f, holdings: withHolding(token, { ...h, accrued: h.accrued - vaultClaim.amount }, f),
     rows: f.rows.append({ ...noRow, id: id, token: token, kind: Claim, live: true, state: Submitted, runId: runId, wallet: wallet(f),
-      amountIn: claim.amount, valueMicro: claim.valueMicro, nonce: claim.nonce, gasLimit: claim.gasLimit, createdAt: f.clock,
-      attempts: List({ tx: claim.tx, maxFee: claim.fees.maxFee, priority: claim.fees.priority, at: f.clock }) }),
-    gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: claim.nonce, maximum: worstCase(f, claim.gasLimit, claim.fees),
-      state: Signed, row: id, tx: claim.tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: claim.blockhashSlot }) }
+      amountIn: vaultClaim.amount, valueMicro: vaultClaim.valueMicro, nonce: vaultClaim.nonce, gasLimit: vaultClaim.gasLimit, createdAt: f.clock,
+      attempts: List({ tx: vaultClaim.tx, maxFee: vaultClaim.fees.maxFee, priority: vaultClaim.fees.priority, at: f.clock }) }),
+    gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: vaultClaim.nonce, maximum: worstCase(f, vaultClaim.gasLimit, vaultClaim.fees),
+      state: Signed, row: id, tx: vaultClaim.tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: vaultClaim.blockhashSlot }) }
 pure def sometimesClaimFinalized(f: Fee): bool = f.holdings.some(h => h.claimed > 0)
 ```
 
@@ -668,6 +668,7 @@ pure val sendValues = Set(
   { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Unresolved, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0 },
   { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 5000000, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40 })
 pure val receiptValues = Set({ tx: 11, succeeded: true, output: 450000000, actualNative: 40000, finalized: true },
+  { tx: 11, succeeded: true, output: 0, actualNative: 40000, finalized: true },
   { tx: 11, succeeded: false, output: 0, actualNative: 40000, finalized: true },
   { tx: 11, succeeded: true, output: 450000000, actualNative: 60000, finalized: true },
   { tx: 11, succeeded: true, output: 400000000, actualNative: 40000, finalized: true },
@@ -686,7 +687,7 @@ pure val proofValues = Set(
   { tx: 11, a: { operator: 1, invalidBlockhash: true, signatureFound: false, transactionFound: false },
     b: { operator: 1, invalidBlockhash: true, signatureFound: false, transactionFound: false }, blockhashSlot: 40,
     coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 } })
-pure val claimValues = Set(
+pure val vaultClaimValues = Set(
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
     fees: { maxFee: 50, priority: 2 }, blockhashSlot: 0 },
   { vault: 7, deployment: 71, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,

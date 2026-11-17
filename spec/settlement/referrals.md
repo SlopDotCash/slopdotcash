@@ -59,6 +59,7 @@ pure def alwaysActivationReady(r: Referral): bool = r.mode == Posting implies
 type PostingNetwork = RobinhoodTestnet | RobinhoodMainnet
 pure def mayPostOn(r: Referral, network: PostingNetwork): bool =
   if (network == RobinhoodTestnet) r.mode != Off else r.mode == Posting
+pure def alwaysWatcherIndependent(r: Referral): bool = r.watcherOperating implies r.watcher != "" and r.watcher != r.poster
 pure def alwaysMainnetOnlyWhenPosting(r: Referral): bool = mayPostOn(r, RobinhoodMainnet) implies r.mode == Posting
 pure def sometimesDeactivatedAfterPosting(r: Referral): bool = r.mode == Off and r.activations > 0
 pure def sometimesDryRun(r: Referral): bool = r.mode == DryRun

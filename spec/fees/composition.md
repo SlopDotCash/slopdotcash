@@ -141,39 +141,40 @@ pure def outputFor(s: FeeFlow, id: int): Output = s.outputs.foldl({ row: 0, outp
 pure def booked(s: FeeFlow, caseId: int, amount: M::Amount): bool = s.journal.entries.some(row => row.caseId == caseId
   and row.sourceKey.network == s.fee.network and M::equalAmounts(row.amount, amount))
 pure def credited(s: FeeFlow, key: B::IncomeKey): bool = s.credits.some(c => c.key == key)
-pure def canAdvanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): bool = by == R::Worker and B::canAdvanceClock(s.buyback, now)
-pure def advanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): FeeFlow = { ...s, buyback: B::advanceClock(s.buyback, now) }
+pure def keyOf(kind: B::IncomeKind, network: R::Network, id: int): B::IncomeKey = { kind: kind, network: network, id: id }
+pure def canAdvanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): bool = by == R::Worker and B::canAdvanceClock(s.buyback, now, R::Worker)
+pure def advanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): FeeFlow = { ...s, buyback: B::advanceClock(s.buyback, now, R::Worker) }
 pure def canCreditUsdcFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sender): bool =
   val e = entryFor(s, feeReceipt)
-  val key = { kind: B::UsdcClaim, network: s.fee.network, id: feeReceipt }
+  val key = keyOf(B::UsdcClaim, s.fee.network, feeReceipt)
   by == R::Worker and s.fee.network == s.buyback.source and e.receipt > 0 and e.source == PayoutFee and e.usdc
     and chainTime == e.chainTime and not(credited(s, key))
-    and B::canRecordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime)
+    and B::canRecordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker)
 pure def creditUsdcFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sender): FeeFlow =
   val e = entryFor(s, feeReceipt)
-  val key = { kind: B::UsdcClaim, network: s.fee.network, id: feeReceipt }
-  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime),
+  val key = keyOf(B::UsdcClaim, s.fee.network, feeReceipt)
+  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker),
     credits: s.credits.append({ key: key, amount: M::smallAmount(e.amount) }) }
 pure def canCreditConversion(s: FeeFlow, id: int, chainTime: int, by: R::Sender): bool =
   val o = outputFor(s, id)
-  val key = { kind: B::ConversionOutput, network: s.fee.network, id: id }
+  val key = keyOf(B::ConversionOutput, s.fee.network, id)
   by == R::Worker and s.fee.network == s.buyback.source and o.row > 0 and not(credited(s, key))
-    and B::canRecordIncome(s.buyback, key, M::smallAmount(o.output), chainTime)
+    and B::canRecordIncome(s.buyback, key, M::smallAmount(o.output), chainTime, R::Worker)
 pure def creditConversion(s: FeeFlow, id: int, chainTime: int, by: R::Sender): FeeFlow =
   val o = outputFor(s, id)
-  val key = { kind: B::ConversionOutput, network: s.fee.network, id: id }
-  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(o.output), chainTime),
+  val key = keyOf(B::ConversionOutput, s.fee.network, id)
+  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(o.output), chainTime, R::Worker),
     credits: s.credits.append({ key: key, amount: M::smallAmount(o.output) }) }
 pure def canCreditDirectFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sender): bool =
   val e = entryFor(s, feeReceipt)
-  val key = { kind: B::DirectFee, network: s.fee.network, id: feeReceipt }
+  val key = keyOf(B::DirectFee, s.fee.network, feeReceipt)
   by == R::Worker and s.fee.network == s.buyback.source and e.receipt > 0 and e.source == DirectAwardFee and e.usdc
     and booked(s, e.caseId, M::smallAmount(e.amount)) and chainTime == e.chainTime and not(credited(s, key))
-    and B::canRecordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime)
+    and B::canRecordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker)
 pure def creditDirectFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sender): FeeFlow =
   val e = entryFor(s, feeReceipt)
-  val key = { kind: B::DirectFee, network: s.fee.network, id: feeReceipt }
-  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime),
+  val key = keyOf(B::DirectFee, s.fee.network, feeReceipt)
+  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker),
     credits: s.credits.append({ key: key, amount: M::smallAmount(e.amount) }) }
 pure def backed(s: FeeFlow, credit: Credit): bool =
   if (credit.key.kind == B::ConversionOutput) s.outputs.some(o => o.row == credit.key.id and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
