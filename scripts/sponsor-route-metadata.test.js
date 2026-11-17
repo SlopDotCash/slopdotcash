@@ -72,26 +72,24 @@ test("the sponsor card the head names is a published file", async () => {
 
 test("other pages and slop.tech keep the shell head", async () => {
   const home = await served("https://slop.cash/");
-  expect(home).toContain(
-    "<title>Slop: make money shipping open source</title>",
-  );
+  expect(home).toContain("<title>Slop: ship and maintain open source</title>");
   expect(tag(home, "property", "og:url")).toBe("https://slop.cash/");
 
   const project = await served("https://slop.cash/projects/eliza");
   expect(tag(project, "property", "og:title")).toBe(
-    "MAKE MONEY SHIPPING OPEN SOURCE.",
+    "Slop: ship and maintain open source",
   );
 
   const tech = await served("https://slop.tech/sponsors");
   expect(tag(tech, "property", "og:title")).toBe(
-    "MAKE MONEY SHIPPING OPEN SOURCE.",
+    "Slop: ship and maintain open source",
   );
   expect(tag(tech, "property", "og:url")).toBe("https://slop.tech/");
 });
 
 test("a shell the rewrite does not recognise is served unchanged", async () => {
   const drifted = shell.replace(
-    "<title>Slop: make money shipping open source</title>",
+    "<title>Slop: ship and maintain open source</title>",
     "<title>Slop</title>",
   );
   // staging host: no analytics tag is added, so the bytes must be identical.
