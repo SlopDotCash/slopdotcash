@@ -570,6 +570,8 @@ function prospectiveFinancialChange(
       chain: _chain,
       currency: _currency,
       feeBasisPoints: _fee,
+      // A published promise changes display only, never amounts or payments.
+      honorSystem: _honorSystem,
       // Checked for every revision by assertPayoutExclusionTransition.
       payoutExclusions: _exclusions,
       ...rest
@@ -589,7 +591,7 @@ function prospectiveFinancialChange(
     fail(
       422,
       "financial_change_restricted",
-      "Only the monthly amount, network and asset change through owner self-service",
+      "Only the monthly amount, network, asset and honor-system promise change through owner self-service",
     );
   const cycleId = utcPeriodOf(now);
   if (assetChanged) {

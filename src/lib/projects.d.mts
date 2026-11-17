@@ -34,6 +34,8 @@ export interface ProjectReviewBudgetPolicy {
 }
 
 export interface ProjectRewardPolicy {
+  /** Owner opts to advertise the stated pool as a promise without vault funding. */
+  readonly honorSystem?: true;
   /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
   readonly cycleCaps?: readonly {
     readonly cycleId: string;

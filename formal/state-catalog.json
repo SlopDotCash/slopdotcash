@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6bcc22e220db70171a0f50a12da7e1ee2a03a5d4989a9151ca04ba010dae7fe2",
+  "inventorySha256": "e7e0552bc88cbbf6e290375eb554ce7e64bcfdd187d37e2c28b7f3d88dd3f0c1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -148,7 +148,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2653,
+      "line": 2655,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -184,7 +184,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2857,
+      "line": 2859,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2477,7 +2477,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1072,
+      "line": 1103,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2707,7 +2707,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1032,
+      "line": 1062,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2731,7 +2731,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1509,
+      "line": 1544,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2755,7 +2755,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2373,
+      "line": 2411,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2779,7 +2779,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2378,
+      "line": 2416,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2803,7 +2803,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2385,
+      "line": 2423,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],

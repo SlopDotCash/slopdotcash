@@ -1015,6 +1015,7 @@ function validateReward(
   const hasCycleCaps = Object.hasOwn(reward, "cycleCaps");
   const hasExternalEvaluations = Object.hasOwn(reward, "externalEvaluations");
   const hasPayoutExclusions = Object.hasOwn(reward, "payoutExclusions");
+  const hasHonorSystem = Object.hasOwn(reward, "honorSystem");
   exactKeys(
     reward,
     [
@@ -1027,6 +1028,7 @@ function validateReward(
       ...(hasCycleCaps ? ["cycleCaps"] : []),
       "feeBasisPoints",
       "fundingState",
+      ...(hasHonorSystem ? ["honorSystem"] : []),
       "kind",
       "monthlyCapDisplay",
       "monthlyCapMinor",
@@ -1057,6 +1059,15 @@ function validateReward(
     reward.committedMinor,
     `${field}.committedMinor`,
   );
+  if (
+    hasHonorSystem &&
+    (reward.honorSystem !== true ||
+      reward.kind !== "monthly-pool" ||
+      BigInt(monthlyCapMinor) === 0n)
+  )
+    throw new TypeError(
+      `${field}.honorSystem must be true on a positive monthly pool, or omitted`,
+    );
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") {
     throw new TypeError(`${field}.paymentMode is invalid`);
   }
