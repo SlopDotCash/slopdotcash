@@ -62,7 +62,7 @@ function verifyPackageFiles(root, directory, hashes) {
   for (const entry of readdirSync(join(root, directory), {
     withFileTypes: true,
   })) {
-    const path = join(directory, entry.name);
+    const path = directory === "" ? entry.name : `${directory}/${entry.name}`;
     // Bun adds an empty patch-cache marker outside the published package bytes.
     if (
       directory === "" &&
