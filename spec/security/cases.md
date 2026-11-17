@@ -53,9 +53,10 @@ type TriageState = NoTriage | TriageQueued | TriageRunning | TriageComplete | Tr
 type Authority = { epoch: int, technical: List[int], financial: List[int], moderators: List[int], banned: List[int],
   relatedParties: List[int], programRestricted: bool }
 type AppealRecord = { from: Receipt, resolution: AppealState, by: int }
-type Triage = { state: TriageState, appealRevision: int, attempt: int, startedAt: int, escalated: bool, belowFloor: bool, returnDraft: bool }
+type Triage = { state: TriageState, appealRevision: int, attempt: int, startedAt: int, escalated: bool, belowFloor: bool, returnDraft: bool,
+  exclusions: T::ExclusionContext, matchedLine: int }
 type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSource, terms: T::ReceiptTerms, revision: int,
-  reportVersion: int, authority: Authority, triagers: List[int], revokedTriagers: List[int], memberEvents: int,
+  reportVersion: int, authority: Authority, triagers: List[int], triagerEpoch: int, revokedTriagers: List[int], memberEvents: int,
   receipt: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int,
   award: Award, grossChosen: M::Amount, commitment: Commitment, payment: PaymentState,
   related: Related, relatedReview: RelatedReview, deciders: List[int],
@@ -63,9 +64,10 @@ type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSourc
 pure val noAuthority: Authority = { epoch: 0, technical: List(), financial: List(), moderators: List(), banned: List(),
   relatedParties: List(), programRestricted: false }
 pure val noAppealRecord: AppealRecord = { from: Received, resolution: NoAppeal, by: 0 }
-pure val noTriage: Triage = { state: NoTriage, appealRevision: 0, attempt: 0, startedAt: 0, escalated: false, belowFloor: false, returnDraft: false }
+pure val noTriage: Triage = { state: NoTriage, appealRevision: 0, attempt: 0, startedAt: 0, escalated: false, belowFloor: false, returnDraft: false,
+  exclusions: T::noExclusions, matchedLine: 0 }
 pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: NoSource, terms: T::unpaidTerms(0, 0), revision: 0,
-  reportVersion: 0, authority: noAuthority, triagers: List(), revokedTriagers: List(), memberEvents: 0,
+  reportVersion: 0, authority: noAuthority, triagers: List(), triagerEpoch: 0, revokedTriagers: List(), memberEvents: 0,
   receipt: Received, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0,
   award: NotApplicable, grossChosen: M::zero, commitment: NoCommitment, payment: PaymentNotApplicable,
   related: NotAssessed, relatedReview: ReviewNotApplicable, deciders: List(),
@@ -113,15 +115,21 @@ pure def sometimesUnpaidReceipt(c: PrivateCase): bool = c.submission == Verified
 
 A newer verified snapshot replaces every role at once. A current technical
 approver assigns or revokes a triager; the reporter can never triage their own
-case. Membership history and its audit event stay with the case revision.
+case. A triager reads the case only under an assignment made under the current
+snapshot (PRD section 8, "Private data and retention": only currently
+authorized case reviewers read retained bodies), so a newer snapshot revokes
+every triager, and a current technical approver assigns again whoever still
+triages. Membership history and its audit event stay with the case revision.
 
 ```quint
 pure def canObserveAuthority(c: PrivateCase, snapshot: Authority): bool = snapshot.epoch > c.authority.epoch
-pure def observeAuthority(c: PrivateCase, snapshot: Authority): PrivateCase = { ...c, authority: snapshot }
+pure def observeAuthority(c: PrivateCase, snapshot: Authority): PrivateCase =
+  { ...c, authority: snapshot, triagers: List(), revokedTriagers: c.revokedTriagers.concat(c.triagers),
+    memberEvents: c.memberEvents + c.triagers.length(), revision: if (c.triagers.length() > 0) c.revision + 1 else c.revision }
 pure def canAssignTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): bool = c.submission == Verified
   and technicalNow(c, by, checkedEpoch) and actor > 0 and actor != c.reporter and not(c.triagers.includes(actor))
 pure def assignTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): PrivateCase =
-  { ...c, triagers: c.triagers.append(actor), revision: c.revision + 1, memberEvents: c.memberEvents + 1 }
+  { ...c, triagers: c.triagers.append(actor), triagerEpoch: checkedEpoch, revision: c.revision + 1, memberEvents: c.memberEvents + 1 }
 pure def canRevokeTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): bool = c.submission == Verified
   and technicalNow(c, by, checkedEpoch) and c.triagers.includes(actor)
 pure def revokeTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): PrivateCase =
@@ -138,9 +146,13 @@ pure def mayReadAward(c: PrivateCase, actor: int, checkedEpoch: int): bool = may
   or (checkedEpoch == c.authority.epoch and c.authority.financial.includes(actor) and (c.award == Approved or c.award == Reserved))
 pure def alwaysTriagersExcludeReporter(c: PrivateCase): bool = not(c.triagers.includes(c.reporter))
 pure def alwaysMembershipAudited(c: PrivateCase): bool = c.memberEvents >= c.revokedTriagers.length() and c.memberEvents >= 0
+pure def alwaysTriagersAssignedUnderCurrentSnapshot(c: PrivateCase): bool =
+  c.triagers.length() > 0 implies c.triagerEpoch == c.authority.epoch and c.triagerEpoch > 0
 pure def stepMembershipHistoryRetained(before: PrivateCase, after: PrivateCase): bool =
   before.revokedTriagers.every(t => after.revokedTriagers.includes(t)) and after.memberEvents >= before.memberEvents
 pure def sometimesTriagerRevoked(c: PrivateCase): bool = c.revokedTriagers.length() > 0
+pure def sometimesTriagerReassignedAfterSnapshot(c: PrivateCase): bool = c.triagers.length() > 0 and c.authority.epoch > 1
+  and c.revokedTriagers.includes(c.triagers.nthOr(0, 0))
 ```
 
 ## Story: Obtain a human decision without automatic rejection
@@ -278,13 +290,17 @@ confirmed finding without an award. The appeal queues one Slopbot triage of
 that appeal revision (`security_appeal_triages`, prompt
 `slop-security-appeal-triage-1`, Surplus `claude-sonnet-5.5`). A draft is
 advice only and records the escalation reason `private-security-case`, and
-`confidence-below-floor` below 0.9. Failed, unavailable and lost attempts
+`confidence-below-floor` below 0.9. A draft also records the exclusion context
+the triage received, Slop's default exclusions and the owner's lines of the
+case's receipt-time terms ([terms](./terms.md)), and may name a matching line;
+neither decides anything. Failed, unavailable and lost attempts
 (running for more than 15 minutes) may be retried by a moderator. A late
 result of an older attempt or appeal cannot finish. The reporter's view omits
 the draft.
 
 ```quint
-type TriageOutcome = Drafted({ returnCase: bool, confidencePercent: int }) | TriageFailedResult | TriageUnavailableResult
+type TriageOutcome = Drafted({ returnCase: bool, confidencePercent: int, exclusions: T::ExclusionContext, matchedLine: int })
+  | TriageFailedResult | TriageUnavailableResult
 pure def appealable(c: PrivateCase): bool = c.receipt == Duplicate or c.receipt == OutOfScope or c.receipt == Rejected
   or (c.receipt == Confirmed and (c.award == Ineligible or c.award == CapacityExhausted))
 pure def canAppeal(c: PrivateCase, by: int): bool = c.submission == Verified and by == c.reporter and c.appeal != AppealOpen and appealable(c)
@@ -296,10 +312,14 @@ pure def startTriage(c: PrivateCase, nowMs: int): PrivateCase =
   { ...c, triage: { ...c.triage, state: TriageRunning, attempt: c.triage.attempt + 1, startedAt: nowMs } }
 pure def canFinishTriage(c: PrivateCase, appealRevision: int, attempt: int, result: TriageOutcome): bool =
   c.appeal == AppealOpen and c.triage.state == TriageRunning and appealRevision == c.triage.appealRevision
-    and attempt == c.triage.attempt and (match result { | Drafted(d) => d.confidencePercent >= 0 and d.confidencePercent <= 100 | _ => true })
+    and attempt == c.triage.attempt and (match result {
+      | Drafted(d) => d.confidencePercent >= 0 and d.confidencePercent <= 100
+        and d.exclusions == T::receiptExclusions(c.terms) and T::namesExclusionLine(d.exclusions, d.matchedLine)
+      | _ => true })
 pure def finishTriage(c: PrivateCase, appealRevision: int, attempt: int, result: TriageOutcome): PrivateCase =
   match result {
-    | Drafted(d) => { ...c, triage: { ...c.triage, state: TriageComplete, escalated: true, belowFloor: d.confidencePercent < 90, returnDraft: d.returnCase } }
+    | Drafted(d) => { ...c, triage: { ...c.triage, state: TriageComplete, escalated: true, belowFloor: d.confidencePercent < 90, returnDraft: d.returnCase,
+      exclusions: d.exclusions, matchedLine: d.matchedLine } }
     | TriageFailedResult => { ...c, triage: { ...c.triage, state: TriageFailed } }
     | TriageUnavailableResult => { ...c, triage: { ...c.triage, state: TriageUnavailable } }
   }
@@ -308,6 +328,8 @@ pure def canRetryTriage(c: PrivateCase, by: int, checkedEpoch: int, nowMs: int):
     or (c.triage.state == TriageRunning and nowMs >= c.triage.startedAt and nowMs - c.triage.startedAt > 900000))
 pure def retryTriage(c: PrivateCase, by: int, checkedEpoch: int, nowMs: int): PrivateCase = { ...c, triage: { ...c.triage, state: TriageQueued } }
 pure def alwaysTriageEscalates(c: PrivateCase): bool = c.triage.state == TriageComplete implies c.triage.escalated
+pure def alwaysTriageUsesReceiptExclusions(c: PrivateCase): bool = c.triage.state == TriageComplete implies
+  c.triage.exclusions == T::receiptExclusions(c.terms) and T::namesExclusionLine(c.triage.exclusions, c.triage.matchedLine)
 pure def alwaysTriageBoundToAppeal(c: PrivateCase): bool = c.triage.attempt >= 0 and (c.triage.state != NoTriage implies c.triage.appealRevision > 0)
   and (c.triage.state == TriageRunning implies c.triage.attempt > 0 and c.triage.startedAt > 0)
 pure def stepTriageIsAdvice(before: PrivateCase, via: str, after: PrivateCase): bool =
@@ -374,8 +396,9 @@ pure val clearanceValues = Set(2, 3, 4, 5).fold(Set(), (cs, revision) => cs.unio
 pure val nowMsValues = Set(1, 900002)
 pure val appealRevisionValues = Set(2, 3, 4, 5, 6)
 pure val attemptValues = Set(1, 2)
-pure val resultValues = Set(Drafted({ returnCase: true, confidencePercent: 95 }), Drafted({ returnCase: false, confidencePercent: 40 }),
-  TriageFailedResult, TriageUnavailableResult)
+pure val resultValues = Set(T::standardTerms, T::unpaidTerms(1, 2)).fold(Set(TriageFailedResult, TriageUnavailableResult), (results, t) => results.union(Set(
+  Drafted({ returnCase: true, confidencePercent: 95, exclusions: T::receiptExclusions(t), matchedLine: 11 }),
+  Drafted({ returnCase: false, confidencePercent: 40, exclusions: T::receiptExclusions(t), matchedLine: 0 }))))
 pure val weight_decide = 8
 pure val weight_decideAward = 8
 pure val weight_appeal = 6

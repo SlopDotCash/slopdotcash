@@ -22,7 +22,7 @@ const exported = ["apps", "packages"].flatMap((parent) => readdirSync(parent).fi
   return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+"))
 }))
 // Files copied byte for byte from development and pinned by SHA-256 in frozen.json: records, never linted or rewritten.
-const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
+const frozen = JSON.parse(readFileSync(`${import.meta.dirname}/frozen.json`, "utf8")).ignore
 // ARCHITECTURE D14: a signing key is reached only from its own src/signer/ and that key's Worker or program entry.
 const custody = "A signing key stays in its app's src/signer/ and its own entry (ARCHITECTURE D14)"
 const signing = {
@@ -121,9 +121,10 @@ export default defineConfig(
   // VibeLang's parser gives .vibe files typescript-eslint's tree without a program, so the rules that need types stay off: `vibelang --noEmit` checks them.
   { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibelang, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
   // React belongs to interfaces: the tools apart from Studio's page, and schemas, contracts, drivers and the shell everywhere, do without it.
+  // @repo/ui's drivers are the exception: they mount its React components to check them against their specs.
   {
     files: ["vibestack/**", "**/*.{schema,contract}.ts", "**/test/drivers/**", "**/*.vibe"],
-    ignores: ["vibestack/studio/src/page/**"],
+    ignores: ["vibestack/studio/src/page/**", "packages/ui/test/drivers/**"],
     rules: { "no-restricted-imports": ["error", noReact] },
   },
   // A key's own files may sign, but never reach the root poster's module; the poster's files are its own; tests and the

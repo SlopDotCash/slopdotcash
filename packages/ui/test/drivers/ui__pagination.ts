@@ -3,8 +3,9 @@ import { createElement, type FunctionComponent } from "react";
 import type { Driver, Options } from "../../gen/ui__pagination.conformance.ts";
 import type { Event, Pages } from "../../gen/ui__pagination.ts";
 import { closeComponents, loadComponent, mount, type Page } from "./ui__confirmation.ts";
+import type * as PagingModule from "../../src/components/Pagination.tsx";
 
-type Paging = typeof import("../../src/components/Pagination.tsx");
+type Paging = typeof PagingModule;
 
 const labels = { back: "Previous page", forward: "Next page" } as const;
 const label = "Projects";

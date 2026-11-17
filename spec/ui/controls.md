@@ -35,3 +35,23 @@ pure def lawValidFieldShowsNoError(f: Field): bool = not(f.invalid) implies not(
 pure val fValues = Set({ invalid: false, hasError: false, hasHint: true }, { invalid: true, hasError: true, hasHint: true },
   { invalid: true, hasError: true, hasHint: false }, { invalid: false, hasError: true, hasHint: false })
 ```
+
+## Story: Sort a table by a column
+
+### A sortable column says its order and asks to sort when activated
+
+A column that can sort the rows tells assistive technology its order, `none`
+while another column sorts, and its header is a button that asks for the
+sort. A column that cannot sort says nothing about order.
+
+```quint
+type Order = Ascending | Descending | Unsorted
+type Column = { sortable: bool, order: Order }
+pure def announcesOrder(column: Column): bool = column.sortable or column.order != Unsorted
+pure def asksToSort(column: Column): bool = column.sortable
+pure def lawSortableColumnSaysItsOrder(column: Column): bool = column.sortable implies announcesOrder(column)
+pure def lawPlainColumnIsSilent(column: Column): bool =
+  not(column.sortable) and column.order == Unsorted implies not(announcesOrder(column)) and not(asksToSort(column))
+pure val columnValues = Set({ sortable: true, order: Unsorted }, { sortable: true, order: Descending },
+  { sortable: false, order: Unsorted }, { sortable: false, order: Ascending })
+```

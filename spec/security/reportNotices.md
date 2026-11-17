@@ -38,11 +38,9 @@ import email as E from "../backend/email"
 type SecretReportBody = str
 type BodyDigest = { object: int, version: str }
 type ReportNotices = { journey: J::Journey, inbox: N::Inbox, directCase: C::PrivateCase, directChecked: bool,
-  directAdvisory: F::Copy, bindingCopies: List[F::Copy], bodies: List[SecretReportBody],
-  screeningContext: ExclusionContext, assessmentContext: ExclusionContext, triageContext: ExclusionContext }
+  directAdvisory: F::Copy, bodies: List[SecretReportBody] }
 pure val initial: ReportNotices = { journey: J::initial, inbox: N::initial, directCase: C::initial, directChecked: false,
-  directAdvisory: F::noCopy, bindingCopies: List(), bodies: List(),
-  screeningContext: noContext, assessmentContext: noContext, triageContext: noContext }
+  directAdvisory: F::noCopy, bodies: List() }
 pure def caseReporter(r: ReportNotices): int = r.journey.privateCase.reporter
 type ReportNotice = ReportReceived | OwnersRouted | DirectReportReceived
 pure def noticeCode(notice: ReportNotice): int = if (notice == ReportReceived) 1 else if (notice == OwnersRouted) 2 else 3
@@ -174,49 +172,45 @@ pure def sometimesRevisedBodyRetained(r: ReportNotices): bool = r.bodies.length(
 
 ### The receipt-time exclusion context reaches screening, assessment and appeal triage
 
-Slop's default "Does not qualify" list and the owner's exclusions of the
-case's receipt-time terms revision accompany every automatic screening,
-assessment and appeal triage, and each records the context it ran with. A
-later terms revision applies only to later reports. The context is advice:
-it is recorded beside the result, and no guard or decision field reads it.
+[Screening](./screening.md), the [assessment](./assessment.md) and appeal
+[triage](./cases.md) each record the exclusion context they ran with and the
+line they named; the [composed flow](./journey.md) binds that context to the
+case's receipt-time [terms](./terms.md), and no decision reads it.
 
 ```quint
-type ExclusionContext = { defaults: int, ownerRevision: int }
-pure val noContext: ExclusionContext = { defaults: 0, ownerRevision: 0 }
-pure val slopDefaultsId = 1
-pure def exclusionContext(r: ReportNotices): ExclusionContext =
-  { defaults: slopDefaultsId, ownerRevision: r.journey.privateCase.terms.revision }
 pure def canClaimScreening(r: ReportNotices, seenRevision: int, nowMs: int): bool = J::canClaimScreening(r.journey, seenRevision, nowMs)
 pure def claimScreening(r: ReportNotices, seenRevision: int, nowMs: int): ReportNotices =
   { ...r, journey: J::claimScreening(r.journey, seenRevision, nowMs) }
-pure def canFinishScreening(r: ReportNotices, token: S::Claim, input: S::Input, observation: S::Observation, context: ExclusionContext): bool =
-  J::canFinishScreening(r.journey, token, input, observation) and context == exclusionContext(r)
-pure def finishScreening(r: ReportNotices, token: S::Claim, input: S::Input, observation: S::Observation, context: ExclusionContext): ReportNotices =
-  { ...r, journey: J::finishScreening(r.journey, token, input, observation), screeningContext: context }
+pure def canFinishScreening(r: ReportNotices, token: S::Claim, input: S::Input, observation: S::Observation): bool =
+  J::canFinishScreening(r.journey, token, input, observation)
+pure def finishScreening(r: ReportNotices, token: S::Claim, input: S::Input, observation: S::Observation): ReportNotices =
+  { ...r, journey: J::finishScreening(r.journey, token, input, observation) }
 pure def canObserveQualified(r: ReportNotices): bool = J::canObserveQualified(r.journey)
 pure def observeQualified(r: ReportNotices): ReportNotices = { ...r, journey: J::observeQualified(r.journey) }
 pure def canStartAssessment(r: ReportNotices, nowMs: int): bool = J::canStartAssessment(r.journey, nowMs)
 pure def startAssessment(r: ReportNotices, nowMs: int): ReportNotices = { ...r, journey: J::startAssessment(r.journey, nowMs) }
-pure def canFinishAssessment(r: ReportNotices, attempt: int, complete: bool, elapsedMs: int, context: ExclusionContext): bool =
-  J::canFinishAssessment(r.journey, attempt, complete, elapsedMs) and context == exclusionContext(r)
-pure def finishAssessment(r: ReportNotices, attempt: int, complete: bool, elapsedMs: int, context: ExclusionContext): ReportNotices =
-  { ...r, journey: J::finishAssessment(r.journey, attempt, complete, elapsedMs), assessmentContext: context }
+pure def canFinishAssessment(r: ReportNotices, attempt: int, complete: bool, elapsedMs: int): bool =
+  J::canFinishAssessment(r.journey, attempt, complete, elapsedMs)
+pure def finishAssessment(r: ReportNotices, attempt: int, complete: bool, elapsedMs: int): ReportNotices =
+  { ...r, journey: J::finishAssessment(r.journey, attempt, complete, elapsedMs) }
 pure def canDecide(r: ReportNotices, by: int, checkedEpoch: int, decision: C::Decision): bool = J::canDecide(r.journey, by, checkedEpoch, decision)
 pure def decide(r: ReportNotices, by: int, checkedEpoch: int, decision: C::Decision): ReportNotices =
   { ...r, journey: J::decide(r.journey, by, checkedEpoch, decision) }
 pure def canAppeal(r: ReportNotices, by: int): bool = C::canAppeal(r.journey.privateCase, by)
 pure def appeal(r: ReportNotices, by: int): ReportNotices =
   { ...r, journey: { ...r.journey, privateCase: C::appeal(r.journey.privateCase, by) } }
-pure def canStartTriage(r: ReportNotices, nowMs: int, context: ExclusionContext): bool =
-  C::canStartTriage(r.journey.privateCase, nowMs) and context == exclusionContext(r)
-pure def startTriage(r: ReportNotices, nowMs: int, context: ExclusionContext): ReportNotices =
-  { ...r, journey: { ...r.journey, privateCase: C::startTriage(r.journey.privateCase, nowMs) }, triageContext: context }
-pure def alwaysAdviceUsesReceiptExclusions(r: ReportNotices): bool =
-  List(r.screeningContext, r.assessmentContext, r.triageContext).every(c => c == noContext or c == exclusionContext(r))
-pure def sometimesTriageWithContext(r: ReportNotices): bool = r.journey.privateCase.triage.state == C::TriageRunning
-  and r.triageContext == exclusionContext(r)
+pure def canStartTriage(r: ReportNotices, nowMs: int): bool = C::canStartTriage(r.journey.privateCase, nowMs)
+pure def startTriage(r: ReportNotices, nowMs: int): ReportNotices =
+  { ...r, journey: { ...r.journey, privateCase: C::startTriage(r.journey.privateCase, nowMs) } }
+pure def canFinishTriage(r: ReportNotices, appealRevision: int, attempt: int, result: C::TriageOutcome): bool =
+  C::canFinishTriage(r.journey.privateCase, appealRevision, attempt, result)
+pure def finishTriage(r: ReportNotices, appealRevision: int, attempt: int, result: C::TriageOutcome): ReportNotices =
+  { ...r, journey: { ...r.journey, privateCase: C::finishTriage(r.journey.privateCase, appealRevision, attempt, result) } }
+pure def alwaysAdviceUsesReceiptExclusions(r: ReportNotices): bool = J::alwaysAdviceUsesReceiptExclusions(r.journey)
+pure def sometimesTriageWithContext(r: ReportNotices): bool = r.journey.privateCase.triage.state == C::TriageComplete
+  and r.journey.privateCase.triage.matchedLine > r.journey.privateCase.triage.exclusions.defaults
 pure def sometimesAssessedWithContext(r: ReportNotices): bool = J::sometimesAssessmentShown(r.journey)
-  and r.assessmentContext == exclusionContext(r) and r.assessmentContext.ownerRevision > 0
+  and r.journey.assessment.attempts.getOr(r.journey.assessment.shown, A::noAttempt).exclusions.owner.length() > 0
 ```
 
 ## Story: Forward to GitHub and bind one verified receipt
@@ -224,12 +218,9 @@ pure def sometimesAssessedWithContext(r: ReportNotices): bool = J::sometimesAsse
 ### Created and reconciled copies bind the earliest canonical GHSA
 
 Forwarding runs on the composed report's journal with the reporter's own
-requests. The copies that bind the canonical GHSA are retained with it: the
-created copy with the complete listing of a resend, or the complete
-reconciliation listing. The earliest of them is canonical, and the
-duplicates hold every other one and never the canonical copy. An empty
-complete listing after the quiet window reopens the draft and leaves the
-case unchanged.
+requests and keeps [forwarding's](./forwarding.md) earliest canonical copy
+among its binding copies. An empty complete listing after the quiet window
+reopens the draft and leaves the case unchanged.
 
 ```quint
 pure def canClaimSend(r: ReportNotices, request: F::Request, startedAtMs: int): bool =
@@ -256,23 +247,15 @@ pure def canRecordCreated(r: ReportNotices, claim: F::SendClaim, accepted: F::Co
   F::canRecordCreated(r.journey.forwarding, claim, accepted, listing)
     and not(namesDirectCase(r, accepted)) and not(listing.copies.some(copy => namesDirectCase(r, copy)))
 pure def recordCreated(r: ReportNotices, claim: F::SendClaim, accepted: F::Copy, listing: F::Listing): ReportNotices =
-  { ...withForwarding(F::recordCreated(r.journey.forwarding, claim, accepted, listing), r),
-    bindingCopies: F::createdCandidates(r.journey.forwarding, accepted, listing).append(accepted) }
+  withForwarding(F::recordCreated(r.journey.forwarding, claim, accepted, listing), r)
 pure def canReconcileCopies(r: ReportNotices, request: F::Request, listing: F::Listing, nowMs: int): bool =
   request.actor == caseReporter(r) and F::canReconcile(r.journey.forwarding, request, listing, nowMs)
     and not(listing.copies.some(copy => namesDirectCase(r, copy)))
 pure def reconcileCopies(r: ReportNotices, request: F::Request, listing: F::Listing, nowMs: int): ReportNotices =
-  val binds = F::exactListing(r.journey.forwarding, listing) and F::earliestCopy(listing.copies, F::noCopy).ghsa > 0
-  { ...withForwarding(F::reconcile(r.journey.forwarding, request, listing, nowMs), r),
-    bindingCopies: if (binds) listing.copies else r.bindingCopies }
-pure def alwaysCanonicalIsEarliestBindingCopy(r: ReportNotices): bool =
-  val f = r.journey.forwarding
-  f.canonical.ghsa > 0 implies f.canonical == F::earliestCopy(r.bindingCopies, F::noCopy)
-    and not(f.duplicateGhsas.includes(f.canonical.ghsa))
-    and r.bindingCopies.every(copy => copy.ghsa == f.canonical.ghsa or f.duplicateGhsas.includes(copy.ghsa))
+  withForwarding(F::reconcile(r.journey.forwarding, request, listing, nowMs), r)
+pure def alwaysCanonicalIsEarliestBindingCopy(r: ReportNotices): bool = F::alwaysCanonicalIsEarliestBindingCopy(r.journey.forwarding)
 pure def stepCanonicalFixed(before: ReportNotices, after: ReportNotices): bool =
   F::stepCanonicalFixed(before.journey.forwarding, after.journey.forwarding)
-    and (before.journey.forwarding.canonical.ghsa > 0 implies after.bindingCopies == before.bindingCopies)
 pure def sometimesSubmittedWithDuplicates(r: ReportNotices): bool = r.journey.forwarding.phase == F::Submitted
   and F::sometimesDuplicates(r.journey.forwarding)
 pure def sometimesReopenedAfterEmptyListing(r: ReportNotices): bool = r.journey.forwarding.phase == F::Draft
@@ -354,7 +337,6 @@ pure def sometimesDirectReceived(r: ReportNotices): bool = r.directCase.source =
 ```quint
 pure val bodyValues = Set("report", "revision")
 pure val digestOfValues = Set({ object: 1, version: "revised" }, { object: 1, version: "new" })
-pure val contextValues = Set({ defaults: 1, ownerRevision: 1 }, { defaults: 1, ownerRevision: 2 })
 pure val availabilityValues = Set(I::Unavailable, I::Enabled)
 pure val directValues = Set({ ghsa: 3, repository: 1, reporter: 1 }, { ghsa: 2, repository: 1, reporter: 1 }, { ghsa: 3, repository: 1, reporter: 3 })
 pure val byValues = Set(1, 2)
@@ -368,9 +350,12 @@ pure val acceptedValues = Set(F::earlyCopy)
 pure val githubFirstReceipt: F::AdvisoryRead = { ...F::earlyReceipt, facts: { ...F::earlyCopy, ghsa: 3, marker: 0, digest: "direct" } }
 pure val advisoryReadValues = Set(F::earlyReceipt, githubFirstReceipt)
 pure val tokenValues = Set({ revision: 2, version: 1, digest: "original" }, { revision: 3, version: 2, digest: "revised" })
-pure val inputValues = Set({ exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus })
-pure val observationValues = Set(S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }),
-  S::Proposal({ phase: S::Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }))
+pure val offerExclusions: T::ExclusionContext = { defaults: T::slopDefaultExclusionCount, owner: P::standardOffer.excludedFindings }
+pure val inputValues = Set({ exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions })
+pure val observationValues = Set(S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false, matchedLine: 12 }),
+  S::Proposal({ phase: S::Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false, matchedLine: 0 }))
+pure val resultValues = Set(C::Drafted({ returnCase: false, confidencePercent: 95, exclusions: offerExclusions, matchedLine: 12 }),
+  C::TriageFailedResult)
 pure val decisionValues = Set({ finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0,
   duplicateOf: 0, declareRelated: false })
 pure val attemptValues = Set(1)
@@ -392,4 +377,5 @@ pure val weight_markInterrupted = 10
 pure val weight_reconcileCopies = 30
 pure val weight_readReceipt = 30
 pure val weight_expireVerification = 10
+pure val weight_finishTriage = 10
 ```

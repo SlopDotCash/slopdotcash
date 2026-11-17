@@ -24,14 +24,37 @@ type AwardSplit = StandardSplit | FullAward
 type FundingPolicy = AfterApproval | Prefunded
 type Eligibility = InScopeSecurity | CriticalLossOfFunds
 type ReceiptTerms = { revision: int, publishedAt: int, receivedAt: int, paidTerms: bool, fundingPolicy: FundingPolicy,
-  eligibility: Eligibility, offeredGross: M::Amount, split: AwardSplit, asset: str }
+  eligibility: Eligibility, offeredGross: M::Amount, split: AwardSplit, asset: str, excludedFindings: List[int] }
 pure def unpaidTerms(revision: int, receivedAt: int): ReceiptTerms = { revision: revision, publishedAt: 0, receivedAt: receivedAt,
-  paidTerms: false, fundingPolicy: AfterApproval, eligibility: InScopeSecurity, offeredGross: M::zero, split: StandardSplit, asset: "" }
+  paidTerms: false, fundingPolicy: AfterApproval, eligibility: InScopeSecurity, offeredGross: M::zero, split: StandardSplit, asset: "",
+  excludedFindings: List() }
 pure def validPaidTerms(t: ReceiptTerms): bool = t.revision > 0 and t.paidTerms and t.publishedAt >= 0 and t.publishedAt <= t.receivedAt
   and t.asset != "" and M::validAmount(t.offeredGross) and M::positiveAmount(t.offeredGross)
   and (if (t.split == StandardSplit) M::privateSplitPossible(t.offeredGross) else t.fundingPolicy == AfterApproval)
-pure def validReceipt(t: ReceiptTerms): bool = t.revision > 0 and t.receivedAt > 0 and (if (t.paidTerms) validPaidTerms(t)
+pure def validReceipt(t: ReceiptTerms): bool = t.revision > 0 and t.receivedAt > 0 and exclusionLinesValid(t.excludedFindings) and (if (t.paidTerms) validPaidTerms(t)
   else t.offeredGross == M::zero and t.asset == "")
+```
+
+### Exclusions are frozen with the terms and stay advice
+
+PRD section 8 ("Offers and report intake") shows Slop's default "Does not
+qualify" list, ten lines in one constant, beside the owner's own
+exclusions: at most 20 more lines of 3 to 300 characters, modelled by their
+lengths. Paid terms carry the owner's lines of the revision in force at
+receipt; terms without them have none. Screening, case analysis and appeal
+triage receive both lists and may name a matching line, counted from the
+first default line; the line is advice and decides no validity, award or
+payment.
+
+```quint
+type ExclusionContext = { defaults: int, owner: List[int] }
+pure val slopDefaultExclusionCount = 10
+pure val noExclusions: ExclusionContext = { defaults: 0, owner: List() }
+pure def exclusionLinesValid(lines: List[int]): bool = lines.length() <= 20 and lines.every(n => n >= 3 and n <= 300)
+pure def receiptExclusions(t: ReceiptTerms): ExclusionContext = { defaults: slopDefaultExclusionCount, owner: t.excludedFindings }
+pure def validExclusions(context: ExclusionContext): bool = context.defaults == slopDefaultExclusionCount and exclusionLinesValid(context.owner)
+pure def namesExclusionLine(context: ExclusionContext, line: int): bool = line >= 0 and line <= context.defaults + context.owner.length()
+pure def lawReceiptExclusionsValid(t: ReceiptTerms): bool = validReceipt(t) implies validExclusions(receiptExclusions(t))
 ```
 
 ### A finding qualifies only under its frozen eligibility class
@@ -75,7 +98,7 @@ pure def lawZeroIsNoAward(t: ReceiptTerms): bool = not(amountAllowed(t, M::zero)
 
 ```quint
 pure val standardTerms: ReceiptTerms = { revision: 1, publishedAt: 1, receivedAt: 2, paidTerms: true, fundingPolicy: AfterApproval,
-  eligibility: InScopeSecurity, offeredGross: List(100), split: StandardSplit, asset: "usdc" }
+  eligibility: InScopeSecurity, offeredGross: List(100), split: StandardSplit, asset: "usdc", excludedFindings: List(3) }
 pure val fullTerms: ReceiptTerms = { ...standardTerms, split: FullAward, offeredGross: List(101) }
 pure val historicalTerms: ReceiptTerms = { ...standardTerms, fundingPolicy: Prefunded, eligibility: CriticalLossOfFunds }
 pure val tValues = Set(standardTerms, fullTerms, historicalTerms, unpaidTerms(1, 2), { ...standardTerms, publishedAt: 3 },

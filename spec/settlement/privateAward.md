@@ -9,7 +9,9 @@ award and payment step. This machine holds the [project bounty
 machine](../security/bounty.md), one [vault-backed obligation](./composition.md),
 one [direct standard award journal](./directBounty.md) and the
 [Inbox](../operations/notifications.md), and supplies every cross-machine fact
-from their state. A full award binds neither rail.
+from their state. A full award binds neither rail. Restoring these records
+from backup is an open owner decision gate, kept with [case
+continuity](../security/continuity.md).
 
 ## Story: Commit a private award with its funds
 
@@ -18,11 +20,13 @@ from their state. A full award binds neither rail.
 The bounty machine's funds snapshot is read from the finalized vault itself.
 When a human approval commits a vault reservation, directly or after an
 approved related-party review, the private standard obligation is configured
-for that case's gross amount and reserves the vault in the same step. Only
-a committed standard 75/25 case holds that obligation, and every hold keeps
-matching its case. The bounty's reserved total never counts less than the
-vault holds in reserve. A confirmed award stays pending without a
-reservation while vault funds are short.
+for that case's gross amount and reserves the vault in the same step. Its
+target names the case's reporter as the award actor, the case as the
+obligation, this bounty vault and the case's receipt-time asset. Only a
+committed standard 75/25 case holds that obligation, and every hold keeps
+matching its case. The bounty's reserved total is exactly what the vault
+holds in reserve. A confirmed award stays pending without a reservation while
+vault funds are short.
 
 ```quint
 import money as M from "./money"
@@ -73,11 +77,13 @@ pure def canDecide(s: PrivateAward, id: int, by: int, checkedEpoch: int, version
   B::canDecide(s.bounty, id, by, checkedEpoch, version, decision)
 pure def decide(s: PrivateAward, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): PrivateAward =
   withBounty(B::decide(s.bounty, id, by, checkedEpoch, version, decision), s)
-pure def vaultObligation(s: PrivateAward, gross: M::Amount): SC::Settlement =
-  SC::configure(s.settlement, P::PrivateStandard, P::StandardBountyVault, gross)
+pure def awardTarget(s: PrivateAward, id: int): D::Target = { ...s.settlement.payment.target, actor: caseOf(s, id).reporter,
+  obligation: id, vault: s.settlement.vault.id, asset: caseOf(s, id).terms.asset }
+pure def vaultObligation(s: PrivateAward, id: int, gross: M::Amount): SC::Settlement =
+  SC::configure(s.settlement, P::PrivateStandard, P::StandardBountyVault, gross, awardTarget(s, id))
 pure def vaultCommitmentReady(s: PrivateAward, id: int, gross: M::Amount): bool = s.vaultCase == 0
-  and caseOf(s, id).terms.asset == s.settlement.vault.asset
-  and SC::canConfigure(s.settlement, P::PrivateStandard, P::StandardBountyVault, gross) and SC::canReserve(vaultObligation(s, gross))
+  and SC::canConfigure(s.settlement, P::PrivateStandard, P::StandardBountyVault, gross, awardTarget(s, id))
+  and SC::canReserve(vaultObligation(s, id, gross))
 pure def caseRecipients(c: C::PrivateCase): List[int] = List(c.reporter).concat(c.authority.technical).concat(c.authority.financial)
 pure def notifyCase(inbox: N::Inbox, key: int, c: C::PrivateCase): N::Inbox =
   caseRecipients(c).foldl(inbox, (i, t) => N::save(i, key, N::SecurityCase, t))
@@ -87,7 +93,7 @@ pure def withCommitment(id: int, s: PrivateAward, bounty: B::Bounty, gross: M::A
   val after = B::caseOf(bounty, id)
   val reserves = after.commitment == C::VaultReservation and not(C::committed(caseOf(s, id)))
   val notified = if (C::committed(after) and not(C::committed(caseOf(s, id)))) notifyCase(s.inbox, noticeKey(AwardCommitted, id), after) else s.inbox
-  withInbox(notified, withSettlement(if (reserves) SC::reserve(vaultObligation(s, gross)) else s.settlement,
+  withInbox(notified, withSettlement(if (reserves) SC::reserve(vaultObligation(s, id, gross)) else s.settlement,
     { ...withBounty(bounty, s), vaultCase: if (reserves) id else s.vaultCase }))
 pure def canDecideAward(s: PrivateAward, id: int, by: int, checkedEpoch: int, amount: M::Amount): bool =
   val after = B::caseOf(B::decideAward(s.bounty, id, by, checkedEpoch, amount), id)
@@ -113,8 +119,10 @@ pure def alwaysVaultAwardReserved(s: PrivateAward): bool =
     and caseOf(s, s.vaultCase).terms.split == T::StandardSplit
     and M::equalAmounts(p.gross, caseOf(s, s.vaultCase).grossChosen) and (SC::hasReserve(s.settlement) or p.phase == P::Paid))
 pure def alwaysHoldsKeepCaseRules(s: PrivateAward): bool = B::alwaysHoldsMatchCases(s.bounty) and B::alwaysCasesKeepAwardRules(s.bounty)
-pure def alwaysBountyCountsVaultReserve(s: PrivateAward): bool =
-  M::compareAmounts(s.settlement.vault.reserved, s.bounty.reserved) <= 0
+  and B::alwaysReservedIsOpenVaultHolds(s.bounty)
+pure def alwaysVaultTargetMatchesAward(s: PrivateAward): bool = s.vaultCase > 0 implies
+  s.settlement.payment.target == { ...awardTarget(s, s.vaultCase), scope: D::PrivateBounty } and s.settlement.payment.obligation == s.vaultCase
+pure def alwaysBountyReserveIsVaultReserve(s: PrivateAward): bool = M::equalAmounts(s.settlement.vault.reserved, s.bounty.reserved)
 pure def alwaysBountyCoverIsVaultFree(s: PrivateAward): bool = s.bounty.funds.asset == "" or (s.bounty.funds.asset == s.settlement.vault.asset
   and (M::compareAmounts(s.bounty.reserved, s.bounty.funds.free) > 0
     or M::compareAmounts(M::subtractAmounts(s.bounty.funds.free, s.bounty.reserved), s.settlement.vault.free) <= 0))
@@ -129,18 +137,24 @@ pure def sometimesPendingWhileShort(s: PrivateAward): bool = B::caseIds.some(id 
   and M::compareAmounts(s.settlement.vault.free, caseOf(s, id).terms.offeredGross) < 0)
 ```
 
-### A finalized vault payout records the obligation paid and notifies the case
+### A finalized vault payout records the obligation paid, settles its hold and notifies the case
 
 The reporter's wallet authorization and recovery go through the bounty-vault
-dispatch; the reservation and the award actor stay unchanged.
+dispatch; the reservation and the award actor stay unchanged. The finalized
+payout that marks the obligation paid settles the bounty's vault hold in the
+same step.
 
 ```quint
 pure def canUpdateDelivery(s: PrivateAward, update: SC::DeliveryUpdate): bool = SC::canUpdateDelivery(s.settlement, update)
 pure def updateDelivery(s: PrivateAward, update: SC::DeliveryUpdate): PrivateAward = withSettlement(SC::updateDelivery(s.settlement, update), s)
+pure def vaultPayout(evidence: SC::FinalizedPayment): B::VaultPayout =
+  { receipt: evidence.receipt, gross: evidence.amounts.gross, finalized: evidence.scanner.finalized }
 pure def canReconcile(s: PrivateAward, evidence: SC::FinalizedPayment): bool = s.vaultCase > 0
-  and SC::canReconcile(s.settlement, evidence) and recipientsValid(s.inbox, noticeKey(AwardPaid, s.vaultCase), caseOf(s, s.vaultCase))
+  and SC::canReconcile(s.settlement, evidence) and B::canSettleVaultHold(s.bounty, s.vaultCase, vaultPayout(evidence))
+  and recipientsValid(s.inbox, noticeKey(AwardPaid, s.vaultCase), caseOf(s, s.vaultCase))
 pure def reconcile(s: PrivateAward, evidence: SC::FinalizedPayment): PrivateAward =
-  withInbox(notifyCase(s.inbox, noticeKey(AwardPaid, s.vaultCase), caseOf(s, s.vaultCase)), withSettlement(SC::reconcile(s.settlement, evidence), s))
+  withInbox(notifyCase(s.inbox, noticeKey(AwardPaid, s.vaultCase), caseOf(s, s.vaultCase)),
+    withBounty(B::settleVaultHold(s.bounty, s.vaultCase, vaultPayout(evidence)), withSettlement(SC::reconcile(s.settlement, evidence), s)))
 ```
 
 ## Story: Pay a direct award only under current financial authority
@@ -331,7 +345,10 @@ pure val observedAtValues = Set(2, 3)
 pure val nowMsValues = Set(4)
 pure val routeValues = Set({ asset: "asset", qualified: true, observedAt: 2 })
 pure val approveValues = Set(true)
-pure val evidenceValues = Set(SC::bountyReceipt, SC::ordinaryReceipt)
+pure def awardReceipt(id: int): SC::FinalizedPayment = { ...SC::bountyReceipt,
+  scanner: { ...SC::bountyReceipt.scanner, target: { ...SC::bountyReceipt.scanner.target, actor: 1, obligation: id } },
+  amounts: { ...SC::bountyReceipt.amounts, obligation: id } }
+pure val evidenceValues = Set(awardReceipt(1), awardReceipt(2), SC::bountyReceipt, SC::ordinaryReceipt)
 pure val updateValues = Set(SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }))
 pure val journalTerms: DB::Terms = { caseId: 2, project: 1, finding: 2, payerActor: 5, reporterActor: 1,
   network: FR::Base, asset: "asset", feeWallet: "fees", gross: List(4), split: T::StandardSplit }

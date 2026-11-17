@@ -29,6 +29,7 @@ PRD sections 2, 3, 6, 7, 8, 10, 11 and 12 govern these financial state machines.
 - [Direct standard private-award journal](./directBounty.md)
 - [Private award settlement and notices](./privateAward.md)
 - [Private-award destination recovery](./recovery.md)
+- [Private award settlement and notices](./privateAward.md)
 - [Wrong-total reserve release](./reserveRelease.md)
 - [Signer limits and binding transaction journal](./signer.md)
 - [Mainnet execution switch and production payment networks](./attesterActivation.md)

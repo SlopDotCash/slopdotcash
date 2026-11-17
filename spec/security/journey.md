@@ -67,15 +67,16 @@ pure def sometimesPausedAfterPaidReceipt(r: Journey): bool = r.privateCase.terms
 
 ### Screening, human routing review and owner notification use the live records
 
-Only received reports are screened. Routing review and the routing context
-come from the case's current technical roles; the reporter never reviews
-their own report. Screening routes the only owner notification.
+Only received reports are screened, with the exclusion context of the case's
+receipt-time terms. Routing review and the routing context come from the
+case's current technical roles; the reporter never reviews their own report.
+Screening routes the only owner notification.
 
 ```quint
 pure def canClaimScreening(r: Journey, seenRevision: int, nowMs: int): bool = received(r) and S::canClaim(r.screening, seenRevision, nowMs, true)
 pure def claimScreening(r: Journey, seenRevision: int, nowMs: int): Journey = { ...r, screening: S::claim(r.screening, seenRevision, nowMs, true) }
 pure def canFinishScreening(r: Journey, token: S::Claim, input: S::Input, observation: S::Observation): bool =
-  received(r) and S::canFinish(r.screening, token, input, observation)
+  received(r) and S::canFinish(r.screening, token, input, observation) and input.exclusions == T::receiptExclusions(r.privateCase.terms)
 pure def finishScreening(r: Journey, token: S::Claim, input: S::Input, observation: S::Observation): Journey =
   { ...r, screening: S::finish(r.screening, token, input, observation) }
 pure def canReviewReport(r: Journey, by: int, checkedEpoch: int, seenRevision: int, routingDecision: S::Review): bool = received(r)
@@ -131,16 +132,27 @@ pure def sometimesRevisedThenDecided(r: Journey): bool = r.screening.version > 1
 
 ### The maintainer assessment starts only for a qualified current version
 
+The automatic assessment receives the exclusion context of the case's
+receipt-time terms. Screening, the assessment and appeal triage keep the
+context they ran with as advice.
+
 ```quint
 pure def canObserveQualified(r: Journey): bool = received(r) and S::qualified(r.screening)
   and A::canObserveQualified(r.assessment, r.screening.version)
 pure def observeQualified(r: Journey): Journey = { ...r, assessment: A::observeQualified(r.assessment, r.screening.version) }
-pure def canStartAssessment(r: Journey, nowMs: int): bool = A::canStartAutomatic(r.assessment, nowMs)
-pure def startAssessment(r: Journey, nowMs: int): Journey = { ...r, assessment: A::startAutomatic(r.assessment, nowMs) }
+pure def canStartAssessment(r: Journey, nowMs: int): bool = A::canStartAutomatic(r.assessment, nowMs, T::receiptExclusions(r.privateCase.terms))
+pure def startAssessment(r: Journey, nowMs: int): Journey =
+  { ...r, assessment: A::startAutomatic(r.assessment, nowMs, T::receiptExclusions(r.privateCase.terms)) }
 pure def canFinishAssessment(r: Journey, attempt: int, complete: bool, elapsedMs: int): bool = A::canFinish(r.assessment, attempt, complete, elapsedMs)
 pure def finishAssessment(r: Journey, attempt: int, complete: bool, elapsedMs: int): Journey =
   { ...r, assessment: A::finish(r.assessment, attempt, complete, elapsedMs) }
 pure def alwaysQualifiedVersionNotAhead(r: Journey): bool = r.assessment.qualifiedVersion <= r.screening.version
+pure def alwaysAdviceUsesReceiptExclusions(r: Journey): bool =
+  val context = T::receiptExclusions(r.privateCase.terms)
+  (r.screening.exclusions == T::noExclusions or r.screening.exclusions == context)
+  and (r.assessment.count > 0 implies A::latest(r.assessment).exclusions == context)
+  and (r.assessment.shown > 0 implies r.assessment.attempts.getOr(r.assessment.shown, A::noAttempt).exclusions == context)
+  and C::alwaysTriageUsesReceiptExclusions(r.privateCase)
 pure def sometimesAssessmentShown(r: Journey): bool = r.assessment.shown > 0
 ```
 
@@ -196,6 +208,8 @@ pure val ownerValues = Set({ actor: 7, project: "umia", projectRevision: 1 })
 pure val offerValues = Set({ ...P::standardOffer, status: P::Paused })
 pure val seenRevisionValues = Set(1, 2, 3, 4, 5, 6)
 pure val startedAtMsValues = Set(1000000)
+pure val inputValues = Set(P::standardOffer.excludedFindings, List()).fold(Set(), (inputs, owner) =>
+  inputs.union(S::inputValues.map(i => { ...i, exclusions: { defaults: T::slopDefaultExclusionCount, owner: owner } })))
 pure val weight_commitReceipt = 10
 pure val weight_begin = 6
 pure val weight_verifyObject = 8

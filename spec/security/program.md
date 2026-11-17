@@ -17,7 +17,9 @@ authority service (`backend/projects/`, checked through Slopbot) as a
 project identity is bound once from the D1 registry row. Only the
 platform project `slopdotcash` may publish the full-award split, and only
 with an audited administrator split approval recorded for that exact program
-revision. A standard split divides exactly by four. A full award is an
+revision. A standard split divides exactly by four. The owner's exclusion
+lines are part of the revision ([terms](./terms.md)), so a change applies
+only to later reports. A full award is an
 after-approval pledge (CLAUDE.md, 28 October 2026): it binds no 75/25 bounty
 vault.
 
@@ -28,12 +30,12 @@ type ProgramStatus = Unpublished | PendingApproval | Open | Paused | Closed
 type FundingState = Pledged | VerifiedAvailable
 type VerifiedOwner = { actor: int, project: str, projectRevision: int }
 type Offer = { status: ProgramStatus, policy: T::FundingPolicy, eligibility: T::Eligibility, gross: M::Amount,
-  split: T::AwardSplit, asset: str }
+  split: T::AwardSplit, asset: str, excludedFindings: List[int] }
 type Program = { project: str, projectRevision: int, offer: Offer, revision: int, publishedAt: int,
   revisions: List[int], splitApprovals: List[int], funding: FundingState, fundingObservedAt: int }
 pure val platformProject = "slopdotcash"
 pure val noOffer: Offer = { status: Unpublished, policy: T::AfterApproval, eligibility: T::InScopeSecurity, gross: M::zero,
-  split: T::StandardSplit, asset: "" }
+  split: T::StandardSplit, asset: "", excludedFindings: List() }
 pure val initial: Program = { project: "", projectRevision: 1, offer: noOffer, revision: 0, publishedAt: 0,
   revisions: List(), splitApprovals: List(), funding: Pledged, fundingObservedAt: 0 }
 pure def canBindProject(p: Program, project: str): bool = p.project == "" and project != ""
@@ -41,6 +43,7 @@ pure def bindProject(p: Program, project: str): Program = { ...p, project: proje
 pure def ownerMatches(p: Program, owner: VerifiedOwner, by: int): bool =
   owner.actor == by and by > 0 and owner.project == p.project and owner.projectRevision == p.projectRevision
 pure def offerShapeValid(p: Program, offer: Offer, revision: int): bool = offer.status != Unpublished and offer.asset != ""
+  and T::exclusionLinesValid(offer.excludedFindings)
   and M::validAmount(offer.gross) and M::positiveAmount(offer.gross)
   and (if (offer.split == T::StandardSplit) M::privateSplitPossible(offer.gross)
     else p.project == platformProject and offer.policy == T::AfterApproval and p.splitApprovals.includes(revision))
@@ -96,7 +99,8 @@ cannot grant an award to an earlier report.
 pure def receiptTerms(p: Program, receivedAt: int): T::ReceiptTerms =
   if (p.offer.status == Open and p.revision > 0 and p.publishedAt <= receivedAt)
     { revision: p.revision, publishedAt: p.publishedAt, receivedAt: receivedAt, paidTerms: true, fundingPolicy: p.offer.policy,
-      eligibility: p.offer.eligibility, offeredGross: p.offer.gross, split: p.offer.split, asset: p.offer.asset }
+      eligibility: p.offer.eligibility, offeredGross: p.offer.gross, split: p.offer.split, asset: p.offer.asset,
+      excludedFindings: p.offer.excludedFindings }
   else T::unpaidTerms(p.projectRevision, receivedAt)
 pure def alwaysFullAwardPlatformOnly(p: Program): bool = p.offer.split == T::FullAward and p.offer.status != Unpublished implies
   p.project == platformProject and p.offer.policy == T::AfterApproval and p.splitApprovals.includes(p.revision)
@@ -123,9 +127,10 @@ pure val ownerValues = Set({ actor: 7, project: "umia", projectRevision: 1 }, { 
 pure val byValues = Set(7, 18633264)
 pure val projectValues = Set("umia", "slopdotcash")
 pure val standardOffer: Offer = { status: Open, policy: T::AfterApproval, eligibility: T::InScopeSecurity, gross: List(100),
-  split: T::StandardSplit, asset: "usdc" }
+  split: T::StandardSplit, asset: "usdc", excludedFindings: List(3, 300) }
 pure val offerValues = Set(standardOffer, { ...standardOffer, policy: T::Prefunded }, { ...standardOffer, status: Paused },
-  { ...standardOffer, status: Closed }, { ...standardOffer, split: T::FullAward, gross: List(101) }, { ...standardOffer, gross: List(101) })
+  { ...standardOffer, status: Closed }, { ...standardOffer, split: T::FullAward, gross: List(101) }, { ...standardOffer, gross: List(101) },
+  { ...standardOffer, excludedFindings: List(2) })
 pure val snapshotValues = Set({ finalized: true, observedAt: 1, asset: "usdc", free: List(500) },
   { finalized: false, observedAt: 2, asset: "usdc", free: List(500) }, { finalized: true, observedAt: 3, asset: "usdc", free: List(0) })
 pure val nowMsValues = Set(1, 2, 1800002)

@@ -38,6 +38,7 @@ lemma ContrastLiteral()
     Pair(Role.Foreground, Role.Background, 45), Pair(Role.Foreground, Role.Muted, 45),
     Pair(Role.MutedForeground, Role.Popover, 45), Pair(Role.CardForeground, Role.Card, 45),
     Pair(Role.PopoverForeground, Role.Popover, 45), Pair(Role.PrimaryForeground, Role.Primary, 45),
+    Pair(Role.PrimaryForeground, Role.PrimaryHover, 45), Pair(Role.PrimaryForeground, Role.PrimaryPressed, 45),
     Pair(Role.SecondaryForeground, Role.Secondary, 45), Pair(Role.MutedForeground, Role.Muted, 45),
     Pair(Role.AccentForeground, Role.Accent, 45), Pair(Role.DestructiveForeground, Role.Destructive, 45),
     Pair(Role.MutedForeground, Role.Background, 45), Pair(Role.MutedForeground, Role.Card, 45),
@@ -69,6 +70,33 @@ lemma MaxFoldAll<T>(m: T -> bool, k: T -> int, xs: seq<T>)
   }
 }
 
+// Of any such fold, by membership rather than by index, for any list: proved
+// once here so no lemma unfolds the literal requiredContrast.
+lemma MaxFoldMembers<T>(m: T -> bool, k: T -> int, xs: seq<T>)
+  ensures forall f: (int, T) -> int {:trigger Std.Collections.Seq.FoldLeft(f, 0, xs)} ::
+    (forall a, x :: f(a, x) == (if m(x) && k(x) > a then k(x) else a)) ==>
+      Std.Collections.Seq.FoldLeft(f, 0, xs) >= 0
+      && (forall x :: x in xs && m(x) ==> Std.Collections.Seq.FoldLeft(f, 0, xs) >= k(x))
+      && (Std.Collections.Seq.FoldLeft(f, 0, xs) == 0
+        || exists x :: x in xs && m(x) && Std.Collections.Seq.FoldLeft(f, 0, xs) == k(x))
+{
+  MaxFoldAll(m, k, xs);
+  forall f: (int, T) -> int | forall a, x :: f(a, x) == (if m(x) && k(x) > a then k(x) else a)
+    ensures forall x :: x in xs && m(x) ==> Std.Collections.Seq.FoldLeft(f, 0, xs) >= k(x)
+    ensures Std.Collections.Seq.FoldLeft(f, 0, xs) == 0
+      || exists x :: x in xs && m(x) && Std.Collections.Seq.FoldLeft(f, 0, xs) == k(x)
+  {
+    var r := Std.Collections.Seq.FoldLeft(f, 0, xs);
+    forall x | x in xs && m(x) ensures r >= k(x) {
+      var i :| 0 <= i < |xs| && xs[i] == x;
+    }
+    if r != 0 {
+      var i :| 0 <= i < |xs| && m(xs[i]) && r == k(xs[i]);
+      assert xs[i] in xs;
+    }
+  }
+}
+
 // The field that holds a pair's contrast is named with a word proof files
 // may not contain, so these lemmas read it by matching the constructor.
 lemma RequiredBounds(text: Role, surface: Role)
@@ -79,20 +107,7 @@ lemma RequiredBounds(text: Role, surface: Role)
     || exists p :: (p in requiredContrast && p.text == text && p.surface == surface
       && required(text, surface) == (match p case Pair(_, _, n) => n))
 {
-  var m := (p: Pair) => p.text == text && p.surface == surface;
-  var k := (p: Pair) => (match p case Pair(_, _, n) => n);
-  MaxFoldAll(m, k, requiredContrast);
-  var r := required(text, surface);
-  assert r >= 0;
-  forall p | p in requiredContrast && p.text == text && p.surface == surface
-    ensures r >= k(p)
-  {
-    var i :| 0 <= i < |requiredContrast| && requiredContrast[i] == p;
-  }
-  if r != 0 {
-    var i :| 0 <= i < |requiredContrast| && m(requiredContrast[i]) && r == k(requiredContrast[i]);
-    assert requiredContrast[i] in requiredContrast;
-  }
+  MaxFoldMembers((p: Pair) => p.text == text && p.surface == surface, (p: Pair) => (match p case Pair(_, _, n) => n), requiredContrast);
 }
 
 lemma RequiredIs(text: Role, surface: Role, v: int)
@@ -121,6 +136,17 @@ lemma lawForegroundsAreReadable_ensures(role: Role)
     RequiredIs(Role.AccentForeground, Role.Accent, 45);
   } else if role.DestructiveForeground? {
     RequiredIs(Role.DestructiveForeground, Role.Destructive, 45);
+  }
+}
+
+lemma lawPrimaryStatesAreReadable_ensures(fill: Role)
+  ensures (lawPrimaryStatesAreReadable(fill) == true)
+{
+  ContrastLiteral();
+  if fill.PrimaryHover? {
+    RequiredIs(Role.PrimaryForeground, Role.PrimaryHover, 45);
+  } else if fill.PrimaryPressed? {
+    RequiredIs(Role.PrimaryForeground, Role.PrimaryPressed, 45);
   }
 }
 
