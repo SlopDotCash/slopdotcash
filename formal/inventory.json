@@ -5333,7 +5333,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "dad3aeffa9fb6756d5d6a9896ee820b751dc7fc38066894215c430ea21339e21",
+      "sha256": "0bb840963dd2ef6bbf9f6012cbd9bbf4a8ceab836bd8ed0040d12b988da58fd1",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5354,14 +5354,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        19, 21, 324, 334, 344, 355, 364, 365, 366, 367, 368, 370, 371, 432, 488,
-        489, 490, 493, 516, 582, 613, 650, 720, 798, 799, 809, 819, 1053, 1068,
-        1086, 1132, 1136, 1141, 1143, 1146, 1213, 1216, 1218, 1222, 1223, 1228,
-        1245, 1249, 1257, 1258, 1261, 1263, 1271, 1302, 1348, 1351, 1366, 1367,
-        1417, 1420, 1423, 1424, 1425, 1426, 1432, 1435, 1455, 1457, 1474, 1538,
-        1539, 1544, 1545, 1550, 1556, 1597, 1598, 1601, 1602, 1605, 1606, 1627,
-        1628, 1634, 1639, 1641, 1645, 1646, 1685, 1708, 1718, 1749, 1751, 1776,
-        1777, 1793, 1794, 1805, 1807, 1820, 1823
+        21, 23, 328, 338, 348, 359, 368, 369, 370, 371, 372, 374, 375, 436, 492,
+        493, 494, 497, 520, 586, 617, 654, 727, 794, 872, 873, 883, 893, 1116,
+        1131, 1149, 1195, 1199, 1204, 1206, 1209, 1276, 1279, 1281, 1285, 1286,
+        1291, 1308, 1312, 1320, 1321, 1324, 1326, 1334, 1365, 1411, 1414, 1429,
+        1430, 1480, 1483, 1486, 1487, 1488, 1489, 1495, 1498, 1518, 1520, 1537,
+        1601, 1602, 1607, 1608, 1613, 1619, 1660, 1661, 1664, 1665, 1668, 1669,
+        1690, 1691, 1697, 1702, 1704, 1708, 1709, 1748, 1771, 1781, 1812, 1814,
+        1839, 1840, 1856, 1857, 1868, 1870, 1883, 1886
       ],
       "review": "mapped-abstraction"
     },
@@ -6485,7 +6485,7 @@
     },
     {
       "path": "src/lib/home-projects.ts",
-      "sha256": "51c905a9b4c3f1462cb05f6bc54bb7c9c96d288e79b1e6ba3b20e560f29f394a",
+      "sha256": "805a5b495bf8625e6244ffe6627448d5eb5ce7bcf2bdee2bb66ffc18ad47713d",
       "models": ["formal/models/ui/ui_project_listing.qnt"],
       "candidateLines": [1, 7, 8],
       "review": "mapped-abstraction",
@@ -6843,13 +6843,13 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "b7e09385706ac03218be732b7b1ae57437f2f53cacb229cacfab9ec4c3953d93",
+      "sha256": "229272b1969df7b9701f5ae773e79e018e07393cc44fba278a720a02e196dc40",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 287, 340, 370, 372
+        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 287, 358, 386, 388
       ],
       "review": "mapped-abstraction"
     },
@@ -18644,7 +18644,7 @@
     },
     {
       "path": "formal/models/ui/ui_pool_funding.qnt",
-      "sha256": "b4c0849966ea20ad1ec2b1c6d47c61b64bccb23575009c0f3c8ae40b899f6465",
+      "sha256": "8738fd5ed6b0c5b3155f9a1cdd4c976e8a848dbc9e7d77f92bb79cecf19e4844",
       "sources": [
         "backend/projects/pool-funding.ts",
         "migrations/0127_vault_month_starts.sql",
@@ -18654,8 +18654,13 @@
       "scenarios": [
         "decemberFundedOnTheFirstTest",
         "decemberNeedsTheFirstTest",
+        "detailsWithoutOptInShowNoAmountTest",
         "freeFundsWithoutPledgeShowNoMoneyTest",
         "fundedReadReplacesPromiseWarningTest",
+        "homeConfiguredAmountIsNotVerifiedMoneyTest",
+        "homeFundedReadRemovesConfiguredWarningTest",
+        "homeOptOutKeepsConfiguredAmountTest",
+        "homeShortReadShowsConfiguredWarningTest",
         "loadingShowsNoMoneyTest",
         "novemberLiveRuleTest",
         "optOutRemovesPromiseTest",
@@ -18871,7 +18876,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_listing.qnt",
-      "sha256": "49f0c73fed4308533a6f67c246942687eba1d2588c52d44dc63d7b6698497293",
+      "sha256": "85e75f3cf38539e2fcec8a18211b5b1e4a25b57a7c175da5c55f80db28d3e301",
       "sources": [
         "backend/projects/pool-funding.ts",
         "backend/projects/skill-publication.ts",
@@ -18882,16 +18887,22 @@
         "src/lib/pool-funding.ts"
       ],
       "scenarios": [
+        "communityPagesCoverRowsOnceTest",
+        "emptiedRegistryKeepsNoVisibleRowsTest",
+        "emptyCommunityHasNoNextPageTest",
+        "emptyCommunityHasNoPreviousPageTest",
         "externalPrizeStaysListedTest",
         "failedFundingReadKeepsHomeCardTest",
         "failedReadsListAsBeforeTest",
         "fundedPoolIsListedTest",
         "fundingLossKeepsHomeCardTest",
+        "fundingReadsDoNotChangeCommunityPageTest",
         "fundingTheMonthListsItTest",
         "honorSystemDoesNotQualifyForDiscoveryTest",
         "loadingListsAsBeforeTest",
         "pausedProjectKeepsItsListingTest",
         "registryEligibilityStillGatesHomeTest",
+        "registryShrinkClampsRenderedPageTest",
         "securityProgramStaysListedTest",
         "unfundedPoolStaysOnHomeTest"
       ]

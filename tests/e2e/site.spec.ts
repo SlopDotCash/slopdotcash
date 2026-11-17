@@ -29,6 +29,7 @@ import { enlargeText } from "../text-size";
 import {
   expect,
   expectAccessible,
+  expectAccessibleReflow,
   servePublicProjectReads,
   test,
 } from "./fixtures";
@@ -504,7 +505,7 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     "href",
     "https://github.com/SlopDotCash/slopdotcash",
   );
-  // Both registry tiers have named sections and keep every eligible card.
+  // Both registry tiers have named sections and keep every eligible project.
   const projects = page.locator("#projects");
   for (const [tier, name] of [
     ["featured", "Featured"],
@@ -517,12 +518,21 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     await expect(
       section.getByRole("heading", { name, exact: true }),
     ).toBeVisible();
-    await expect(section.locator(".project-grid")).toHaveCount(1);
-    await expect(section.locator(".project-card")).toHaveCount(expected.length);
-    for (const project of expected)
-      await expect(
-        section.locator(`a.project-card[href="/projects/${project.slug}"]`),
-      ).toBeVisible();
+    const format = tier === "featured" ? ".project-card" : ".project-row";
+    await expect(
+      section.locator(tier === "featured" ? ".project-grid" : ".project-rows"),
+    ).toHaveCount(1);
+    const entries = section.locator(`a${format}`);
+    await expect(entries).toHaveCount(
+      tier === "featured" ? expected.length : Math.min(expected.length, 10),
+    );
+    const visible = await entries.evaluateAll((links) =>
+      links.map((link) => link.getAttribute("href")),
+    );
+    expect(new Set(visible).size).toBe(visible.length);
+    expect(expected.map((project) => `/projects/${project.slug}`)).toEqual(
+      expect.arrayContaining(visible),
+    );
   }
   await expect(page.locator("main")).not.toContainText("Pledged");
   await expect(projects).not.toContainText("Last merge");
@@ -532,18 +542,20 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     (project) => project.status === "paused",
   )) {
     await expect(
-      page.locator(`a.project-card[href="/projects/${project.id}"]`),
+      projects.locator(`a[href="/projects/${project.id}"]`),
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  // The frozen project has a pledge and no verified vault funding.
-  await expect(
-    elizaCard.getByText("Points only", { exact: true }),
-  ).toBeVisible();
-  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
+  // The configured amount has no verified vault and no owner promise.
+  await expect(elizaCard.locator(".project-bounty strong")).toHaveText(
+    "$1,000",
+  );
+  await expect(elizaCard.locator(".project-bounty")).toContainText(
+    "Configured · Not vaulted",
+  );
   // An external prize leads with points; the card never headlines its amount.
   const deltaStar = projects.locator(
-    'a.project-card[href="/projects/delta-star"]',
+    'a.project-row[href="/projects/delta-star"]',
   );
   await expect(deltaStar).toContainText("Points + external prize");
   await expect(deltaStar).not.toContainText("$1m");
@@ -644,6 +656,129 @@ test("shows agent setup and keeps contribution records available", async ({
   for (const cell of shareCells) {
     expect(cell).toMatch(/^\d+\.\d{2}%$/u);
   }
+});
+
+test("community pagination keeps every project reachable and bounds discovery descriptions", async ({
+  page,
+}, info) => {
+  const communityProject = PROJECTS.find(
+    (project) => project.id === "thenetwork",
+  );
+  const featuredProject = PROJECTS.find((project) => project.id === "eliza");
+  if (!communityProject || !featuredProject)
+    throw new Error("Missing discovery fixtures");
+  const atLimit = `${"A useful description. ".repeat(24).slice(0, 499)}🧭`;
+  const description = `${atLimit} Additional details remain on the project page.`;
+  const communityProjects = Array.from({ length: 21 }, (_, index) => {
+    const number = index + 1;
+    const id = `community-fixture-${String(number).padStart(2, "0")}`;
+    const repository = `e2e-home/${id}`;
+    const githubUrl = `https://github.com/${repository}`;
+    return {
+      ...communityProject,
+      id,
+      slug: id,
+      name: `Community fixture ${number}`,
+      listingTier: "community",
+      description: number === 11 ? description : communityProject.description,
+      authority: {
+        ...communityProject.authority,
+        repositoryId: String(980000000 + number),
+        repositoryNodeId: `R_e2e_home_${number}`,
+      },
+      repositories: [
+        {
+          ...communityProject.repositories[0],
+          id: repository,
+          displayName: repository,
+          githubUrl,
+        },
+      ],
+      skill: {
+        id: `contribute-to-${id}`,
+        publishAtRoot: false,
+        sourcePath: `skills/contribute-to-${id}`,
+        publicPath: `/projects/${id}/skill.md`,
+      },
+      reviewSkill: {
+        id: `review-${id}-contributions`,
+        sourcePath: `skills/review-${id}-contributions`,
+      },
+      funding: { ...communityProject.funding, recordsPath: `funding/${id}` },
+      links: { repository: githubUrl, issues: `${githubUrl}/issues` },
+    };
+  });
+  await servePublicProjectReads(page);
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/u,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: [
+            { ...featuredProject, listingTier: "featured", description },
+            ...communityProjects,
+          ],
+        },
+      }),
+  );
+  await page.goto("/", { waitUntil: "networkidle" });
+  const projects = page.locator("#projects");
+  const featured = projects.getByRole("region", {
+    name: "Featured",
+    exact: true,
+  });
+  await expect(featured.locator(".project-card .project-summary")).toHaveText(
+    `${atLimit}...`,
+  );
+  const community = projects.getByRole("region", {
+    name: "Community",
+    exact: true,
+  });
+  const rows = community.getByRole("list").getByRole("listitem");
+  const pagination = community.getByRole("navigation", {
+    name: "Community project pages",
+    exact: true,
+  });
+  const previous = pagination.getByRole("button", {
+    name: "Previous page",
+    exact: true,
+  });
+  const next = pagination.getByRole("button", {
+    name: "Next page",
+    exact: true,
+  });
+  const expectPage = async (number: number) => {
+    await expect(
+      pagination.getByText(`${number} / 3`, { exact: true }),
+    ).toBeVisible();
+    const expected = communityProjects.slice((number - 1) * 10, number * 10);
+    await expect(rows).toHaveCount(expected.length);
+    expect(
+      await rows
+        .getByRole("link")
+        .evaluateAll((links) => links.map((link) => link.getAttribute("href"))),
+    ).toEqual(expected.map((project) => `/projects/${project.slug}`));
+  };
+  await expectPage(1);
+  await expect(previous).toBeDisabled();
+  await next.focus();
+  await page.keyboard.press("Enter");
+  await expectPage(2);
+  await expect(rows.first()).toContainText(`${atLimit}...`);
+  await expect(rows.first()).not.toContainText("Additional details");
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeEnabled();
+  await next.click();
+  await expectPage(3);
+  await expect(next).toBeDisabled();
+  await previous.click();
+  await expectPage(2);
+  await page.screenshot({
+    path: info.outputPath("community-page-two.png"),
+    fullPage: true,
+  });
+  await expectAccessibleReflow(page, "community-page-two");
 });
 
 test("never presents Delta Star's external prize as platform money", async ({

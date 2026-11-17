@@ -773,12 +773,15 @@ label {
 .project-rows {
   margin: 0;
   padding: 0;
-  list-style: none;
   border-top: 1px solid var(--line);
 }
 
 .project-rows li {
   border-bottom: 1px solid var(--line);
+}
+
+.project-rows li::marker {
+  color: transparent;
 }
 
 .project-row {
@@ -810,18 +813,19 @@ label {
 }
 
 .project-row-name small {
-  overflow: hidden;
   color: var(--muted);
   font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .project-row-amount {
+  max-inline-size: 36%;
+  display: grid;
+  gap: 4px;
   font-family: var(--brand-font-data);
   font-size: 15px;
   font-weight: 700;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .project-row > svg {
@@ -1105,8 +1109,21 @@ label {
     padding: 24px;
   }
 
+  .project-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px 12px;
+  }
+
   .project-row-amount {
-    display: none;
+    grid-column: 2;
+    max-inline-size: none;
+  }
+
+  .project-row > svg {
+    grid-column: 3;
+    grid-row: 1;
   }
 }
 

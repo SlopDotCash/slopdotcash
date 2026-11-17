@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   asShown,
+  homePoolReward,
   listedThisMonth,
   type PoolFundingIndex,
   poolFunded,
@@ -51,6 +52,9 @@ test("a vault holding the monthly amount shows the money", () => {
   expect(asShown(project("250000000"), index({}), NOW).reward).toMatchObject({
     monthlyCapMinor: "250000000",
   });
+  expect(
+    homePoolReward(project("250000000"), index({}), NOW).warning,
+  ).toBeNull();
 });
 
 test("a vault short of the monthly amount reads as points only", () => {
@@ -78,6 +82,43 @@ test("an owner promise distinguishes a short vault from an unread vault", () => 
   expect(promised.project.reward.monthlyCapDisplay).toBe("$250");
   expect(poolFunded(optedIn, short, NOW)).toBe(false);
   expect(publicPoolReward(optedIn, index({}), NOW).promise).toBeNull();
+  expect(homePoolReward(optedIn, short, NOW)).toEqual({
+    project: promised.project,
+    warning: promised.promise,
+  });
+});
+
+test("home shows a configured amount without treating it as an owner promise or verified funding", () => {
+  const configured = project("250000000");
+  const unread = homePoolReward(configured, null, NOW);
+  expect(unread.warning).toBe("Configured · Vault funding unverified");
+  expect(unread.project.reward.monthlyCapMinor).toBe("250000000");
+  const short = index({ freeBalance: "249999999" });
+  const shown = homePoolReward(configured, short, NOW);
+  expect(shown.warning).toBe("Configured · Not vaulted");
+  expect(shown.project.reward.monthlyCapDisplay).toBe("$250");
+  expect(poolFunded(configured, short, NOW)).toBe(false);
+  const details = publicPoolReward(configured, short, NOW);
+  expect(details.promise).toBeNull();
+  expect(details.project.reward.monthlyCapMinor).toBe("0");
+  expect(configured.reward.honorSystem).toBeUndefined();
+});
+
+test("home does not replace a zero current-month override with the positive base cap", () => {
+  const capped = project("250000000", "base-mainnet", {
+    cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
+  });
+  const home = homePoolReward(capped, null, NOW);
+  expect(home.warning).toBeNull();
+  expect(home.project.reward.monthlyCapMinor).toBe("0");
+  expect(home.project.reward.monthlyCapDisplay).toBe("$0");
+  const details = publicPoolReward(capped, null, NOW);
+  expect(details.promise).toBeNull();
+  expect(details.project.reward.monthlyCapMinor).toBe("0");
+  expect(capped.reward.monthlyCapMinor).toBe("250000000");
+  expect(capped.reward.cycleCaps).toEqual([
+    { cycleId: "2026-11", monthlyCapMinor: "0" },
+  ]);
 });
 
 test("only the project's own recorded vault on a paying network counts", () => {
@@ -107,6 +148,10 @@ test("this month's amount comes from the month's own cap when one is listed", ()
   } as Partial<ProjectDefinition["reward"]>);
   expect(poolFunded(capped, index({}), NOW)).toBe(false);
   expect(asShown(capped, index({}), NOW).reward.cycleCaps).toBeUndefined();
+  expect(homePoolReward(capped, index({}), NOW)).toMatchObject({
+    project: { reward: { monthlyCapMinor: "500000000" } },
+    warning: "Configured · Not vaulted",
+  });
 });
 
 test("a points-only pool and other reward kinds pass through unchanged", () => {
