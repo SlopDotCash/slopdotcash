@@ -141,8 +141,9 @@ test("home keeps unfunded community projects and labels promises while sponsors 
     name: "Community",
     exact: true,
   });
-  const promise = community.locator('a[href="/projects/asi"]');
+  const promise = community.locator('a.project-row[href="/projects/asi"]');
   const funded = featured.locator('a[href="/projects/eliza"]');
+  const configured = featured.locator('a[href="/projects/slopdotcash"]');
   try {
     for (const id of ["eliza", "slopdotcash"])
       await expect(featured.locator(`a[href="/projects/${id}"]`)).toBeVisible();
@@ -150,10 +151,10 @@ test("home keeps unfunded community projects and labels promises while sponsors 
       await expect(
         community.locator(`a[href="/projects/${id}"]`),
       ).toBeVisible();
-    await expect(promise.locator(".project-bounty strong")).toHaveText(
+    await expect(promise.locator(".project-row-amount")).toContainText(
       "$1,250",
     );
-    await expect(promise.locator(".project-bounty")).toContainText(
+    await expect(promise.locator(".project-row-amount")).toContainText(
       "Promised · Not vaulted",
     );
     await expect(funded.locator(".project-bounty")).toContainText(
@@ -165,14 +166,23 @@ test("home keeps unfunded community projects and labels promises while sponsors 
   // A successful funding read updates amounts without removing community work.
   await expect(funded).not.toContainText("Promised");
   await expect(funded.locator(".project-bounty strong")).toHaveText("$1k");
-  await expect(promise.locator(".project-bounty")).toContainText(
+  await expect(promise.locator(".project-row-amount")).toContainText(
     "Promised · Not vaulted",
   );
-  for (const id of ["slopdotcash", "thenetwork"]) {
-    const card = projects.locator(`a[href="/projects/${id}"]`);
-    await expect(card.locator(".project-bounty")).toHaveText("Points only");
-    await expect(card).not.toContainText("Promised");
-  }
+  await expect(configured.locator(".project-bounty strong")).toHaveText(
+    "$1,000",
+  );
+  await expect(configured.locator(".project-bounty")).toContainText(
+    "Configured · Not vaulted",
+  );
+  await expect(configured.locator(".project-bounty")).not.toContainText(
+    "Promised",
+  );
+  await expect(
+    community.locator(
+      'a.project-row[href="/projects/thenetwork"] .project-row-amount',
+    ),
+  ).toHaveText("Points only");
   // Funding changes amounts, while registry placement and ordering remain intact.
   expect(
     await featured
@@ -181,7 +191,7 @@ test("home keeps unfunded community projects and labels promises while sponsors 
   ).toEqual(["/projects/eliza", "/projects/slopdotcash"]);
   expect(
     await community
-      .locator("a.project-card")
+      .locator("a.project-row")
       .evaluateAll((cards) => cards.map((card) => card.getAttribute("href"))),
   ).toEqual(["/projects/asi", "/projects/delta-star", "/projects/thenetwork"]);
   await expect(projects).not.toContainText("Last merge");
@@ -252,12 +262,12 @@ test("a failed funding read lists every project as before", async ({
   await failPoolFundingRead(page, diagnostics);
   await page.goto("/", { waitUntil: "networkidle" });
   const projects = page.locator("#projects");
-  for (const [name, ids] of [
-    ["Featured", ["eliza", "slopdotcash"]],
-    ["Community", ["asi", "thenetwork", "delta-star"]],
+  for (const [name, format, ids] of [
+    ["Featured", ".project-card", ["eliza", "slopdotcash"]],
+    ["Community", ".project-row", ["asi", "thenetwork", "delta-star"]],
   ] as const) {
     const section = projects.getByRole("region", { name, exact: true });
-    await expect(section.locator(".project-card")).toHaveCount(ids.length);
+    await expect(section.locator(format)).toHaveCount(ids.length);
     for (const id of ids)
       await expect(section.locator(`a[href="/projects/${id}"]`)).toBeVisible();
   }
