@@ -14,13 +14,22 @@ not force.
 - **Boundaries.** `input` outlines a field and `ring` shows focus; both meet 3:1 against the page and a card
   (WCAG 1.4.11). `border` divides content and is decorative.
 - **Type.** Bricolage Grotesque for every word, with optical sizing; JetBrains Mono for amounts, addresses,
-  hashes and commands, with tabular numbers.
+  hashes and commands, with tabular numbers, in 400 to 700. Sizes are a named scale, each with its line
+  height: `text-ui` (13px) is the dense interface size, `text-copy` (15px) running copy, and `xs` to `2xl`
+  keep Tailwind's steps. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
+  the large headings, `label` for small capitals. `font-strong` (650) and `font-heavy` (750) sit between
+  Tailwind's weights where development's headings did.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from
-  it, and `rounded-full` is the pill and the avatar. One `panel` shadow, for what floats.
+  it, and `rounded-full` is the pill and the avatar. `rounded-chip` (0.6rem) is a chip or tag and
+  `rounded-card` (16px) a large card. One `panel` shadow, for what floats; `shadow-underline` marks the
+  selected tab.
 - **Controls.** A button is 48px high, 40px small; a text field or select is 52px. Every control can be hit
   in a 44px square, however small it is drawn.
-- **Motion.** `fast` for hover and press, `base` for most changes, `slow` for entering and leaving. Reduced
-  motion removes all of it.
+- **Motion.** `fast` for hover and press, `base` for most changes, `slow` for entering and leaving.
+  `animate-caret` blinks the typing caret. Reduced motion removes all of it.
+- **Focus.** The ring is 3px wide and 3px off the element, as in development, in `ring`.
+- **Layers.** `z-raised` lifts a cell over its neighbours, `z-header` is the sticky header, and `z-modal`
+  holds menus, dialogs and the backdrop behind them, above the header.
 - **Width.** `sm`, `md` and `lg` are the phone, the narrow column and the two-column layout.
 
 Network marks (Base, Ethereum, Robinhood Chain, Solana: `NetworkMark`) and the Slop mark (`Logo`) keep their
@@ -48,7 +57,12 @@ translucent `line` and `inputBorder` have no token: the token schema of `vibesta
 of colors and one radius. This is an open gap, not a decision: development's button hover (`accentHover`),
 pressed state and raised, faint disabled look are not ported, and buttons still darken the accent on hover
 and fade to half opacity while inactive, until that schema takes more colors and `size` and `radius`
-groups. A hex or TypeScript export for the identity Worker and the social image renderer waits until those
+groups. The type, weight, leading, tracking, layer and focus values above came from development's
+stylesheets, with near-duplicates merged: line heights 0.86 to 0.98 are `display`, 1.1 and 1.15 `tight`,
+1.3 and 1.35 `snug`, 1.55 to 1.65 `body`, 1.4 and 1.45 `text-ui`'s; letter spacing -0.03em is `tight`'s
+-0.02em, -0.06em `display`'s -0.055em, and 0.12em and 0.13em `label`'s 0.08em. Its 45 fluid `clamp()`
+sizes, its off-grid spacing and control sizes, and its `font-synthesis` and `text-rendering` rules have no
+token: the schema takes fixed lengths only and has no spacing or size group. A hex or TypeScript export for the identity Worker and the social image renderer waits until those
 are ported.
 
 ## Changing it
@@ -97,9 +111,49 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `font.sans` | "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif |
 | `font.mono` | "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace |
 | `shadow.panel` | 0 24px 60px oklch(0 0 0 / 0.55) |
+| `shadow.underline` | inset 0 -2px var(--primary) |
 | `breakpoint.sm` | 30rem |
 | `breakpoint.md` | 42.5rem |
 | `breakpoint.lg` | 56.25rem |
+| `rounded.chip` | 0.6rem |
+| `rounded.card` | 16px |
+| `text.xs.size` | 0.75rem |
+| `text.xs.leading` | 1rem |
+| `text.ui.size` | 13px |
+| `text.ui.leading` | 1.45 |
+| `text.sm.size` | 0.875rem |
+| `text.sm.leading` | 1.25rem |
+| `text.copy.size` | 15px |
+| `text.copy.leading` | 1.6 |
+| `text.base.size` | 1rem |
+| `text.base.leading` | 1.5rem |
+| `text.lg.size` | 1.125rem |
+| `text.lg.leading` | 1.75rem |
+| `text.xl.size` | 1.25rem |
+| `text.xl.leading` | 1.75rem |
+| `text.2xl.size` | 1.5rem |
+| `text.2xl.leading` | 2rem |
+| `weight.medium` | 500 |
+| `weight.semibold` | 600 |
+| `weight.strong` | 650 |
+| `weight.bold` | 700 |
+| `weight.heavy` | 750 |
+| `leading.display` | 0.9 |
+| `leading.none` | 1 |
+| `leading.tight` | 1.15 |
+| `leading.snug` | 1.3 |
+| `leading.body` | 1.6 |
+| `tracking.display` | -0.055em |
+| `tracking.tighter` | -0.04em |
+| `tracking.tight` | -0.02em |
+| `tracking.label` | 0.08em |
+| `z.raised` | 1 |
+| `z.header` | 20 |
+| `z.modal` | 50 |
+| `focus.width` | 3px |
+| `focus.offset` | 3px |
+| `keyframes.typewriter-caret` | 50%{opacity:0} |
+| `animate.caret` | typewriter-caret 720ms steps(1, end) infinite |
 | `duration.fast` | 160ms |
 | `duration.base` | 180ms |
 | `duration.slow` | 300ms |

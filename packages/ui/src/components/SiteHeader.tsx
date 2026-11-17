@@ -16,7 +16,7 @@ export type SiteHeaderProps = Omit<ComponentProps<"header">, "children"> & {
  */
 export function SiteHeader({ brand, nav, account, className, ...props }: SiteHeaderProps) {
   return (
-    <header className={cn("sticky top-0 z-40 border-b border-border bg-background", className)} {...props}>
+    <header className={cn("sticky top-0 z-header border-b border-border bg-background", className)} {...props}>
       <div className="mx-auto flex h-14 max-w-(--breakpoint-lg) items-center gap-4 px-4">
         {brand}
         {/* Room inside the scroller for the focus ring and each link's 44px hit area, which it would otherwise clip. */}
