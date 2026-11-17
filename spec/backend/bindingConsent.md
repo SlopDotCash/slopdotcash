@@ -171,8 +171,8 @@ vault, whether it is still reserved, the claim of its open payout attempt
 case whose reporter owns it. These identities never change once reported,
 and a released reservation never returns. A prepare needs that evidence:
 the obligation is the requester's, reserved, with an open attempt on the
-requester's currently authorized Solana claim (otherwise
-`binding_not_ready`), and exactly one Solana deployment for its network and
+requester's currently authorized Solana claim, which the admission below
+opens when the obligation has none (otherwise `binding_not_ready`), and exactly one Solana deployment for its network and
 vault with a program ID, project account and network domain (otherwise
 `binding_deployment_unavailable`). The attester then half-signs one
 transaction whose blockhash stays valid for 150 blocks after the finalized

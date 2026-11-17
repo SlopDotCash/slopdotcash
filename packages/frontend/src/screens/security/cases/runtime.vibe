@@ -1,0 +1,226 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"
+import type { PageRuntime, PageServices } from "../../../app/runtime.vibe"
+import { actOnSecurityCase, requestKey, securityCase, securityCases } from "../../../flows/security/cases.vibe"
+import { closeReportDetail, detailStamp, openReportDetail } from "../../../flows/security/details.vibe"
+import { type Private, privateMessages } from "../../../flows/security/private.vibe"
+import { Registry, listedProjects, registryLayer } from "../../../reads/registry.vibe"
+import { BrowserSession } from "../../../session/browserSession.vibe"
+import { type CaseList, type SecurityCase, caseListOf, caseOf } from "./case.schema.ts"
+
+export const caseMessages = {
+  invalid: "The private case answer could not be read. Retry.",
+} as const
+
+export type Loaded<T> =
+  | { readonly status: "loading" }
+  | { readonly status: "signedOut" }
+  | { readonly status: "problem"; readonly message: string }
+  | { readonly status: "failed"; readonly message: string }
+  | { readonly status: "ready"; readonly value: T; readonly refreshError: string | null }
+
+export interface ProgramChoice {
+  readonly id: string
+  readonly name: string
+}
+
+export interface DetailShown {
+  readonly owner: string | null
+  readonly caseId: string | null
+  readonly loaded: Loaded<SecurityCase>
+}
+
+export type Acted =
+  | { readonly kind: "saved"; readonly key: string; readonly record: SecurityCase | null }
+  | { readonly kind: "refused"; readonly key: string; readonly message: string }
+
+type Outcome<T> =
+  | { readonly kind: "value"; readonly value: T }
+  | { readonly kind: "signedOut" }
+  | { readonly kind: "problem"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "closed" }
+
+function outcomeOf<A, T>(result: Private<A>, decode: (value: A) => T | undefined): Outcome<T> {
+  switch (result.kind) {
+    case "done": {
+      const value = decode(result.value)
+      return value === undefined ? { kind: "failed", message: caseMessages.invalid } : { kind: "value", value }
+    }
+    case "failed": {
+      const failure = result.failure
+      if (failure._tag === "Refused" && failure.status === 401) return { kind: "signedOut" }
+      if (failure._tag === "Refused" && [403, 404, 410].includes(failure.status)) return { kind: "problem", message: result.message }
+      return { kind: "failed", message: result.message }
+    }
+    case "unverified":
+    case "accountChanged":
+      return { kind: "problem", message: result.message }
+    case "closed":
+      return { kind: "closed" }
+  }
+}
+
+function settled<T>(prior: Loaded<T>, outcome: Outcome<T>): Loaded<T> | undefined {
+  switch (outcome.kind) {
+    case "value": return { status: "ready", value: outcome.value, refreshError: null }
+    case "signedOut": return { status: "signedOut" }
+    case "problem": return { status: "problem", message: outcome.message }
+    case "failed": return prior.status === "ready" ? { ...prior, refreshError: outcome.message } : { status: "failed", message: outcome.message }
+    case "closed": return undefined
+  }
+}
+
+export service CaseDesk {
+  readonly lists: Stream.Stream<Loaded<CaseList>>
+  readonly details: Stream.Stream<DetailShown>
+  loadList(owner: string): void!!
+  openCase(owner: string, caseId: string | null): void!!
+  reloadCase(owner: string): void!!
+  replaceCase(owner: string, record: SecurityCase): void!!
+}
+
+export const caseDesk = Layer.effect(CaseDesk, effect {
+  const context = try Effect.context<PageServices>()
+  const list = try SubscriptionRef.make<Loaded<CaseList>>({ status: "loading" })
+  const detail = try SubscriptionRef.make<DetailShown>({ owner: null, caseId: null, loaded: { status: "loading" } })
+  let listRound = 0
+  let detailRound = 0
+  let mounted: string | null = null
+  let listOwner: string | null = null
+
+  effect function loadList(owner: string) {
+    listRound += 1
+    const mine = listRound
+    const same = listOwner === owner
+    listOwner = owner
+    try SubscriptionRef.update(list, (prior): Loaded<CaseList> => (same && prior.status === "ready" ? prior : { status: "loading" }))
+    const outcome = outcomeOf(try securityCases(owner), caseListOf)
+    if (mine !== listRound) return
+    const shown = settled(try SubscriptionRef.get(list), outcome)
+    if (shown !== undefined) try SubscriptionRef.set(list, shown)
+  }
+
+  effect function release() {
+    const closing = mounted
+    mounted = null
+    if (closing !== null) try closeReportDetail(closing)
+  }
+
+  effect function readCase(owner: string, caseId: string, mine: number) {
+    const stamp = try detailStamp()
+    const outcome = outcomeOf(try securityCase(owner, caseId), (answer) => caseOf(answer.case))
+    if (mine !== detailRound) return
+    if (outcome.kind === "value" && mounted !== caseId) {
+      if (!(try openReportDetail(stamp, caseId, true))) {
+        try SubscriptionRef.set(detail, { owner, caseId, loaded: { status: "problem", message: privateMessages.accountChanged } })
+        return
+      }
+      mounted = caseId
+    }
+    const shown = settled((try SubscriptionRef.get(detail)).loaded, outcome)
+    if (shown !== undefined) try SubscriptionRef.set(detail, { owner, caseId, loaded: shown })
+  }
+
+  effect function openCase(owner: string, caseId: string | null) {
+    detailRound += 1
+    const mine = detailRound
+    if (mounted !== caseId) try release()
+    try SubscriptionRef.set(detail, { owner, caseId, loaded: { status: "loading" } })
+    if (caseId !== null) try readCase(owner, caseId, mine)
+  }
+
+  effect function reloadCase(owner: string) {
+    const shown = try SubscriptionRef.get(detail)
+    if (shown.caseId === null || shown.owner !== owner) return
+    detailRound += 1
+    try readCase(owner, shown.caseId, detailRound)
+  }
+
+  effect function replaceCase(owner: string, record: SecurityCase) {
+    const shown = try SubscriptionRef.get(detail)
+    if (shown.caseId !== record.id || shown.owner !== owner) return
+    const prior = shown.loaded
+    if (prior.status === "ready" && record.revision === prior.value.revision) {
+      try reloadCase(owner)
+      return
+    }
+    if (prior.status === "ready" && record.revision < prior.value.revision) return
+    detailRound += 1
+    try SubscriptionRef.set(detail, { owner, caseId: record.id, loaded: { status: "ready", value: record, refreshError: null } })
+  }
+
+  return {
+    lists: SubscriptionRef.changes(list),
+    details: SubscriptionRef.changes(detail),
+    loadList: (owner: string) => Effect.provideContext(loadList(owner), context),
+    openCase: (owner: string, caseId: string | null) => Effect.provideContext(openCase(owner, caseId), context),
+    reloadCase: (owner: string) => Effect.provideContext(reloadCase(owner), context),
+    replaceCase: (owner: string, record: SecurityCase) => Effect.provideContext(replaceCase(owner, record), context),
+  }
+})
+
+export type CasesRuntime = ReturnType<typeof makeCasesRuntime>
+
+function makeCasesRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(Layer.mergeAll(caseDesk, registryLayer), Layer.effectContext(page.contextEffect)))
+}
+
+const sections = new WeakMap<PageRuntime, CasesRuntime>()
+
+export function casesRuntime(page: PageRuntime): CasesRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeCasesRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function watchCases(show: (shown: Loaded<CaseList>) => void!!) {
+  for try (const shown of (try CaseDesk).lists) try show(shown)
+}
+
+export effect function watchCase(show: (shown: DetailShown) => void!!) {
+  for try (const shown of (try CaseDesk).details) try show(shown)
+}
+
+export effect function loadCases(owner: string) {
+  try (try CaseDesk).loadList(owner)
+}
+
+export effect function openCase(owner: string, caseId: string | null) {
+  try (try CaseDesk).openCase(owner, caseId)
+}
+
+export effect function reloadCase(owner: string) {
+  try (try CaseDesk).reloadCase(owner)
+}
+
+export effect function caseChanged(owner: string, record: SecurityCase | null) {
+  const desk = try CaseDesk
+  if (record === null) try desk.reloadCase(owner)
+  else try desk.replaceCase(owner, record)
+  try desk.loadList(owner)
+}
+
+export effect function actOnCase(owner: string, record: SecurityCase, action: string, fields: Readonly<Record<string, unknown>>, key: string | null) {
+  const used = key ?? (try requestKey())
+  const result = try actOnSecurityCase(owner, { caseId: record.id, action, expectedRevision: record.revision, idempotencyKey: used, fields })
+  if (result.kind !== "done") return { kind: "refused", key: used, message: result.message } satisfies Acted
+  return { kind: "saved", key: used, record: caseOf(result.value.case) ?? null } satisfies Acted
+}
+
+function choiceOf(project: Readonly<Record<string, unknown>>): ProgramChoice | undefined {
+  return typeof project.id === "string" && typeof project.name === "string" ? { id: project.id, name: project.name } : undefined
+}
+
+export type Choices = { readonly kind: "ready"; readonly projects: ReadonlyArray<ProgramChoice> } | { readonly kind: "failed"; readonly message: string }
+
+export effect function programChoices() {
+  const boot = try (try Registry).load()
+  if (boot.error !== undefined) return { kind: "failed", message: boot.error } satisfies Choices
+  return { kind: "ready", projects: listedProjects(boot).map(choiceOf).filter((choice): choice is ProgramChoice => choice !== undefined) } satisfies Choices
+}
+
+export effect function recheckSession() {
+  try (try BrowserSession).observe("revalidate")
+}

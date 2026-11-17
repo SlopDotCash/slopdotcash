@@ -18,8 +18,11 @@ per-assessment record (`recordOf`). The shell supplies both from the stored
 assessment row, which it parses through this machine's state (composition
 obligation recorded in the area report).
 
-PRD section 5 (owner decision of 11 November 2026) routes repository scanning
-through Orbio, then Surplus Sonnet, then Surplus Terra, while PRD section 8
+PRD section 5 (operator decision of 16 November 2026, replacing the
+Orbio-first order of 11 November) routes repository scanning through Surplus
+Sonnet, then Surplus Terra, then Orbio Sonnet as the backstop; a Surplus
+spending denial goes directly to Orbio, and the request waits for the Surplus
+reset only when Orbio serves no valid result. PRD section 8
 routes admission scans through Surplus Sonnet with a specialist only for
 ambiguous or high-risk findings. This is an owner decision gate: until the
 owner confirms, the narrower confidential Surplus route of section 8 governs

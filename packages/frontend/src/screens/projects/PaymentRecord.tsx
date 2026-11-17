@@ -95,24 +95,22 @@ export function VaultPaymentHistory({ payments, nameOf }: VaultPaymentHistoryPro
   return (
     <section aria-label="Finalized project payments" className="flex flex-col gap-4">
       <h2 className="text-xl font-semibold text-foreground">Finalized project payments</h2>
-      <DataState status={payments.status} onRetry={payments.onRetry} retryLabel="Retry project payments">
-        {rows.length === 0 ? (
-          <p className="text-muted-foreground">No finalized project-vault payments recorded.</p>
-        ) : (
-          <>
-            <ul className="flex flex-col divide-y divide-border">
-              {(showAll ? rows : rows.slice(0, recentPayments)).map((payment) => (
-                <VaultPaymentRecord key={payment.id} payment={payment} projectName={nameOf(payment.projectId)} />
-              ))}
-            </ul>
-            {rows.length > recentPayments ? (
-              <Button variant="outline" size="sm" className="self-start" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
-                {showAll ? "Show recent payments" : `Show all ${rows.length} payments`}
-              </Button>
-            ) : null}
-          </>
-        )}
-      </DataState>
+      {payments.status === "Empty" ? (
+        <p className="text-muted-foreground">No finalized project-vault payments recorded.</p>
+      ) : (
+        <DataState status={payments.status} onRetry={payments.onRetry} retryLabel="Retry project payments">
+          <ul className="flex flex-col divide-y divide-border">
+            {(showAll ? rows : rows.slice(0, recentPayments)).map((payment) => (
+              <VaultPaymentRecord key={payment.id} payment={payment} projectName={nameOf(payment.projectId)} />
+            ))}
+          </ul>
+          {rows.length > recentPayments ? (
+            <Button variant="outline" size="sm" className="self-start" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+              {showAll ? "Show recent payments" : `Show all ${rows.length} payments`}
+            </Button>
+          ) : null}
+        </DataState>
+      )}
     </section>
   );
 }

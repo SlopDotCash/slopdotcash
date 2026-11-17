@@ -25,7 +25,7 @@ const spamText = "Buy cheap tokens at spam-shop today and get rich."
 const spamQuote = "Buy cheap tokens at spam-shop"
 const scamText = "Send your wallet seed phrase to claim the airdrop now."
 const scamQuote = "Send your wallet seed phrase"
-const moderators = ["900", "901"]
+const moderators = ["18633264", "202660855"]
 const day = 86_400_000
 const holdMillis = 604_800_000
 const release = JSON.stringify({ sequence: 1, branch: "main", workflow: "production-release", reviewedPullRequest: 77, sourceSha: "release-1" })
@@ -35,7 +35,7 @@ const qualified = JSON.stringify({
   qualifications: [qualification("Spam"), qualification("Scam")],
 })
 const projects = [repo, capped, brakes].map((target) => ({ projectId: target.projectId, path: target.path, repositoryId: String(target.id), rowStatus: "Active", retirement: "NotRetired", restriction: "Clear", closureConsent: true }))
-const authors = ["mia", "sam", "cap1", "cap2", "brk1", "brk2", "slow", "rej", "reo", "late", "wait", "act", "who", "kim"]
+const authors = ["mia", "sam", "cap1", "cap2", "brk1", "brk2", "slow", "rej", "reo", "late", "dis", "wait", "act", "who", "kim"]
 const blockedByCapacity = "_This item was not closed: closure authority changed, the daily cap was reached, or a close is already pending._"
 
 function verdict(category: string, summary: string, quote: string) {
@@ -67,6 +67,7 @@ async function seed() {
     rej: await pullOf(world, repo.path, "rej", "REJ-TOKEN tokens", spamText),
     reo: await pullOf(world, repo.path, "reo", "REO-TOKEN tokens", spamText),
     late: await pullOf(world, repo.path, "late", "LATE-TOKEN tokens", spamText),
+    dis: await pullOf(world, repo.path, "dis", "DIS-TOKEN tokens", spamText),
     wait: await pullOf(world, repo.path, "wait", "WAIT-TOKEN tokens", spamText),
     act: await pullOf(world, repo.path, "act", "ACT-TOKEN tokens", spamText),
     who: await pullOf(world, repo.path, "who", "WHO-TOKEN tokens", spamText),
@@ -229,13 +230,19 @@ effect function reopenedOnGitHub(login: Author) {
   })
 }
 
-effect function confirmedReopen(area: AreaShape, login: Author, revision: string, occurredAt: string) {
+effect function confirmedDelivery(area: AreaShape, login: Author, revision: string, occurredAt: string) {
   const { items } = try World
   const target = targetOf(login)
   const item = try itemOf(login)
   const source = JSON.stringify({ installationId, repositoryId: target.id, itemKind: "pull_request", number: items[login], senderId: 100, itemNodeId: item.nodeId, revision, occurredAt })
   const at = try isoNow()
   try area.sql("INSERT INTO slopbot_deliveries (delivery_id, event, received_at, reopen_source, reopen_confirmed_at) VALUES (?, 'pull_request', ?, ?, ?)", `reopen-${login}-${revision}`, at, source, at)
+}
+
+effect function confirmedReopen(area: AreaShape, login: Author, revision: string, occurredAt: string) {
+  const target = targetOf(login)
+  const item = try itemOf(login)
+  try confirmedDelivery(area, login, revision, occurredAt)
   try area.sql("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'human_reopen', '100', ?)", `reopen:${item.nodeId}:${revision}`, target.id, item.nodeId, occurredAt)
 }
 
@@ -341,11 +348,11 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('A maintainer reopen reverses the debit once and is never closed again at that revision, and a late reopen of an older revision keeps a later head\'s debit (spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
+  it.effect('A maintainer reopen reverses the debit once and is never closed again at that revision, a reopen confirmed between the decision and the recheck stops the close with no label, and a late reopen of an older revision keeps a later head\'s debit (spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
     const area = try Area
     const { net } = try World
     try installed(area)
-    for (const login of ["reo", "late"] as const) {
+    for (const login of ["reo", "late", "dis"] as const) {
       try eligible(area, login)
       try answers(login, spam, spam)
     }
@@ -360,9 +367,14 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const earlier = new Date(millisOf(try isoNow()) - day).toISOString()
     try confirmedReopen(area, "late", olderRevision, earlier)
     const lateReversal = try reopenOf(area, "late", olderRevision, earlier)
+    try reopenedOnGitHub("dis")
+    try confirmedDelivery(area, "dis", try headOf("dis"), try isoNow())
+    const disputedClose = try closeOf(area, "dis")
     try same({
       closes,
       reversals,
+      disputedClose,
+      dis: { written: try written("dis"), attempts: try attemptsOf(area, "dis"), penalty: try penaltyOf(area, "dis"), patches: try closePatches("dis"), labelPosts: try labelPosts("dis") },
       reo: { penalty: (try penaltyOf(area, "reo")).map((row) => [row.reversal, row.reversed]), state: (try written("reo")).state, patches: try closePatches("reo"), again: (reviewedAgain as { readonly kind?: string }).kind === "close" },
       lateReversal,
       late: { penalty: (try penaltyOf(area, "late")).map((row) => [row.reversal, row.reversed]), state: (try written("late")).state, patches: try closePatches("late") },
@@ -370,6 +382,14 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }, {
       closes: [{ kind: "close", result: "closed (spam)" }, { kind: "close", result: "closed (spam)" }],
       reversals: [{ cleaned: true, reversed: true }, { cleaned: true, reversed: false }],
+      disputedClose: { kind: "close", result: "maintainer reopened this revision; finding removed" },
+      dis: {
+        written: { header: "**Slopbot review:** `spam`", blocked: "_This item was not closed: source, policy, evidence or eligibility changed before closure._", penalty: null, labels: [], state: "open" },
+        attempts: [],
+        penalty: [],
+        patches: 0,
+        labelPosts: 0,
+      },
       reo: { penalty: [["maintainer_reopen", 1]], state: "open", patches: 1, again: false },
       lateReversal: { cleaned: false, reversed: false },
       late: { penalty: [[null, 0]], state: "closed", patches: 1 },
@@ -381,14 +401,15 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const area = try Area
     const { fake, items, net, providers } = try World
     try installed(area)
-    const held = ["wait", "act", "who"] as const
+    const held = ["act", "who", "wait"] as const
     for (const login of held) {
       try eligible(area, login)
       try answers(login, spam, busywork)
     }
     const holds = []
     for (const login of held) holds.push(try closeOf(area, login))
-    const nodes = [(try itemOf("wait")).nodeId, (try itemOf("act")).nodeId, (try itemOf("who")).nodeId]
+    const nodes: string[] = []
+    for (const login of held) nodes.push((try itemOf(login)).nodeId)
     const rows = try area.sql("SELECT item_node_id AS node, held_at, due_at FROM slopbot_maintainer_holds ORDER BY held_at")
     const heldAt = new Map(rows.map((row) => [String(row.node), millisOf(String(row.held_at))]))
     const dueAt = new Map(rows.map((row) => [String(row.node), String(row.due_at)]))
@@ -398,21 +419,22 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try Effect.try(() => fake.world.addComment(repo.path, items.who, { author: "kim", body: "Looks like spam to me." }))
     const early = (try area.post("/test/holds/dispatch", { now: first + holdMillis - 1000 })).body
     const queuedEarly = try area.sql("SELECT count(*) AS n FROM close_jobs WHERE kind = 'maintainer_hold'")
+    const [waitHeld] = try area.sql("SELECT job_json FROM slopbot_maintainer_holds WHERE item_node_id = ?", (try itemOf("wait")).nodeId)
+    const waitJob = try Effect.try(() => JSON.parse(String(waitHeld?.job_json)) as unknown)
+    const waitEarly = (try area.post("/test/holds/apply", { job: waitJob, now: last + holdMillis - 1000 })).body
     const due = (try area.post("/test/holds/dispatch", { now: last + holdMillis })).body
     const queued = try area.sql("SELECT body FROM close_jobs WHERE kind = 'maintainer_hold'")
     const jobs = try Effect.try(() => queued.map((row) => JSON.parse(String(row.body)) as { readonly number: number }))
-    const startOf = (login: (typeof held)[number]) => heldAt.get(nodes[held.indexOf(login)] ?? "") ?? 0
-    const applying = (login: (typeof held)[number], offset: number) => area.post("/test/holds/apply", { job: jobs.find((job) => job.number === items[login]), now: startOf(login) + offset })
-    const waitEarly = (try applying("wait", holdMillis - 1000)).body
-    const waitDue = (try applying("wait", holdMillis)).body
-    const waitReplay = (try applying("wait", holdMillis + 1000)).body
-    const acted = (try applying("act", holdMillis)).body
+    const applying = (login: (typeof held)[number], offset: number) => area.post("/test/holds/apply", { job: jobs.find((job) => job.number === items[login]), now: last + holdMillis + offset })
+    const waitDue = (try applying("wait", 0)).body
+    const waitReplay = (try applying("wait", 1000)).body
+    const acted = (try applying("act", 0)).body
     try Effect.try(() => fake.failNext(new RegExp(`^GET .*/repositories/${repo.id}/collaborators/kim/permission`, "u"), { status: 500 }))
-    const unknown = (try applying("who", holdMillis)).body
-    const retried = (try applying("who", holdMillis + 60_000)).body
+    const unknown = (try applying("who", 0)).body
+    const retried = (try applying("who", 60_000)).body
     const later = (try area.post("/test/holds/dispatch", { now: last + holdMillis + 2 * day })).body
     const outcomes = try area.sql("SELECT item_node_id AS node, outcome FROM slopbot_maintainer_holds ORDER BY held_at")
-    const labeledBefore = { wait: try written("wait"), act: try written("act"), who: try written("who") }
+    const labeledBefore = { act: try written("act"), who: try written("who"), wait: try written("wait") }
     const waitHead = try headOf("wait")
     const reopenedAt = try isoNow()
     try reopenedOnGitHub("wait")
@@ -454,7 +476,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       unknown: { result: "retried: maintainer status is unknown; the hold is retried" },
       retried: { result: "labeled after the maintainer window (spam)" },
       later: { dispatched: 0 },
-      outcomes: [[0, "labeled"], [1, "maintainer_acted"], [2, "labeled"]],
+      outcomes: [[0, "maintainer_acted"], [1, "labeled"], [2, "labeled"]],
       labels: { wait: ["slopbot:uncertain"], act: [], who: ["slopbot:uncertain"] },
       headers: held.map(() => "**Slopbot review (uncertain, maintainer decides):** `spam`"),
       labelPosts: [1, 0, 1],

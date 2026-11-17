@@ -1,10 +1,13 @@
 // spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation's recheck or a later one"; spec/slopbot/closeAttempt.md, "Only GitHub's own close event confirms and only a definitive refusal releases"
 import { millisOf } from "@repo/platform/clock"
 import { type Statement, first, sql } from "@repo/platform/d1"
+import { Registry } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
 import { type Candidate, type CloseAttempt, type Event, type ProjectFence, Machine, decodeState, initial, machineOver, noAttempt, noFence, noLease, unreadItem } from "../../gen/slopbot__closeAttempt.effect.vibe"
-import { type GateObservation, unobserved } from "../../gen/slopbot__closure.effect.vibe"
+import { type AssessedVerdict, type GateObservation, unobserved } from "../../gen/slopbot__closure.effect.vibe"
+import type { CloseFence } from "../closeCapacity/store.vibe"
 import type { CallRecord } from "../route/route.vibe"
-import { type Verdict, validateVerdict } from "../review/verdict.vibe"
+import { type Verdict, findingOf, hundredths, validateVerdict } from "../review/verdict.vibe"
 
 schema RecoveredUsage { readonly input: number; readonly output: number; readonly cacheRead: number; readonly cacheWrite: number }
 schema RecoveredCall {
@@ -21,8 +24,15 @@ schema RecoveredCall {
 }
 schema RecoveredFence { readonly project: number; readonly projectRevision: number; readonly manifestDigest: string; readonly enforcementPosition: number }
 schema DecidedAt { readonly decidedSeq: number }
+schema ReviewedRow { readonly repository_id: number; readonly item_kind: string; readonly item_node_id: string; readonly author_id: number; readonly revision: string; readonly content_digest: string }
 
-const Recovery = Schema.Struct({ verdict: Schema.Unknown, triage: Schema.NullOr(RecoveredCall), confirm: Schema.NullOr(RecoveredCall), candidate: Schema.Unknown, fence: RecoveredFence })
+const Recovery = Schema.Struct({
+  verdict: Schema.Unknown,
+  triage: Schema.NullOr(RecoveredCall),
+  confirm: Schema.NullOr(RecoveredCall),
+  candidate: Schema.optionalKey(Schema.Unknown),
+  fence: Schema.optionalKey(RecoveredFence),
+})
 
 export schema AttemptRow {
   readonly attempt_id: string
@@ -50,6 +60,11 @@ export interface AttemptRecord {
   readonly machine: Machine.Shape
   readonly rechecks: Ref.Ref<number>
   readonly reads: Ref.Ref<number>
+}
+
+export interface Fenced {
+  readonly model: ProjectFence
+  readonly capacity: CloseFence
 }
 
 export interface StoredAttempt {
@@ -102,17 +117,63 @@ export function recoveryJson(verdict: Verdict, triage: CallRecord | undefined, c
   return JSON.stringify({ verdict, triage: triage ?? null, confirm: confirm ?? null, candidate, fence })
 }
 
-export effect function restoredAttempt(recoveryText: string, stored: StoredAttempt, moderatorLabel: boolean) {
-  const parsed = try Effect.try({ try: () => JSON.parse(recoveryText) as unknown, catch: () => new RecoveryUnreadable({ reason: "recovery JSON is malformed" }) })
+export effect function projectFence(projectId: string) {
+  const view = try (try Registry).project(projectId)
+  const generation = (try (try Enforcement).project(projectId)).enforcementGeneration
+  if (view === undefined) return { model: { ...noFence, enforcementPosition: generation }, capacity: { projectId, revision: 0, manifestSha256: "", enforcementGeneration: generation } } satisfies Fenced
+  return {
+    model: { project: 1, projectRevision: view.revision, manifestDigest: view.manifestSha256, enforcementPosition: generation },
+    capacity: { projectId, revision: view.revision, manifestSha256: view.manifestSha256, enforcementGeneration: generation },
+  } satisfies Fenced
+}
+
+function attestedOf(verdict: Verdict, callId: string): AssessedVerdict {
+  return {
+    verdict: {
+      callId,
+      category: findingOf(verdict.category),
+      confidenceHundredths: hundredths(verdict.confidence),
+      limitations: verdict.limitations.length > 0,
+      objectiveDefect: verdict.objective_defect ?? "",
+      deterministic: false,
+    },
+    grounded: true,
+    related: verdict.category === "duplicate",
+  }
+}
+
+effect function reservedCandidate(reviewKey: string, verdict: Verdict) {
+  const reviewed: typeof ReviewedRow.Type | undefined = try first(ReviewedRow, sql`SELECT repository_id, item_kind, item_node_id, author_id, revision, content_digest FROM slopbot_reviews WHERE review_key = ${reviewKey}`)
+  if (reviewed === undefined) throw new RecoveryUnreadable({ reason: "the reserved review is unavailable" })
+  return {
+    identity: {
+      project: 1,
+      repository: reviewed.repository_id,
+      kind: reviewed.item_kind === "pull_request" ? "PullRequest" : "Issue",
+      itemNode: reviewed.item_node_id,
+      revision: reviewed.revision,
+      contentDigest: reviewed.content_digest,
+      author: reviewed.author_id,
+    },
+    triage: attestedOf(verdict, "triage"),
+    confirm: attestedOf(verdict, "confirm"),
+    decidedSeq: 1,
+  } satisfies Candidate
+}
+
+export effect function restoredAttempt(row: typeof AttemptRow.Type, stored: StoredAttempt, moderatorLabel: boolean) {
+  const parsed = try Effect.try({ try: () => JSON.parse(row.recovery_json) as unknown, catch: () => new RecoveryUnreadable({ reason: "recovery JSON is malformed" }) })
   const recovery = Schema.decodeUnknownEffect(Recovery)(parsed) catch effect () => { throw new RecoveryUnreadable({ reason: "recovery does not name the decided close" }) }
   const verdict = validateVerdict(recovery.verdict)
   if (verdict === undefined) throw new RecoveryUnreadable({ reason: "recovered verdict is invalid" })
-  const decided = Schema.decodeUnknownEffect(DecidedAt)(recovery.candidate) catch effect () => { throw new RecoveryUnreadable({ reason: "recovery does not name the decided close" }) }
+  const candidate: unknown = recovery.candidate === undefined ? try reservedCandidate(row.review_key, verdict) : recovery.candidate
+  const fence = recovery.fence === undefined ? (try projectFence(row.project_id)).model : recovery.fence
+  const decided = Schema.decodeUnknownEffect(DecidedAt)(candidate) catch effect () => { throw new RecoveryUnreadable({ reason: "recovery does not name the decided close" }) }
   const reservedSeq = decided.decidedSeq + 1
   const confirmed = stored.state === "confirmed"
   const state = try decodeState({
-    candidate: recovery.candidate,
-    recheck: { gate: { ...unobserved, seq: reservedSeq }, fence: recovery.fence, lease: noLease },
+    candidate,
+    recheck: { gate: { ...unobserved, seq: reservedSeq }, fence, lease: noLease },
     attempt: {
       state: confirmed ? "Confirmed" : "Pending",
       id: stored.attemptId,
@@ -120,7 +181,7 @@ export effect function restoredAttempt(recoveryText: string, stored: StoredAttem
       closedAt: confirmed ? Math.floor(millisOf(stored.closedAt ?? "") / 1000) : 0,
       commentConfirmed: confirmed && stored.commentConfirmed,
       leaseToken: 1,
-      fence: recovery.fence,
+      fence,
       reservedSeq,
     },
     rejected: [],

@@ -1,0 +1,91 @@
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { publicProject } from "@repo/backend/client"
+import { type EditorAccountChanged, publishRevision, removeProject, requireEditorActor } from "../../../flows/projects/api.vibe"
+import { ProjectDrafts, draftSaver, legacyUpdateDraft, projectDrafts, updateDraftKey } from "../../../flows/projects/draftStore.vibe"
+import { type CallFailure, call } from "../../../platform/api.vibe"
+import { bootedRegistry, findProject } from "../../../reads/registry.vibe"
+import { Session } from "../../../session/session.vibe"
+
+export const revisionLimitBytes = 2_097_152
+export const revisionUnreadable = "Cannot read the current revision."
+export const publicationUnconfirmed = "Publication could not be confirmed."
+export const removalUnconfirmed = "Removal could not be confirmed. Try again."
+export const monthChanged = "The month changed, so an added repository counts from a later month. Reload the page, then publish again."
+
+export error RevisionUnavailable { message: string }
+export error EditorRefused { message: string; staleRevision: boolean; accessLost: boolean }
+
+export interface CurrentRevision {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifest: unknown
+}
+
+export interface Publication {
+  readonly projectId: string
+  readonly manifest: unknown
+  readonly expectedRevision: number
+  readonly monthlyAmount: string | null
+  readonly actor: string
+}
+
+type Failure = CallFailure | EditorAccountChanged
+
+export effect function currentRevision(segment: string) {
+  const boot = try bootedRegistry()
+  const found = findProject(boot, segment)
+  const projectId = typeof found?.id === "string" ? found.id : undefined
+  if (projectId === undefined) {
+    if (boot.error !== undefined) throw new RevisionUnavailable({ message: boot.error })
+    return undefined
+  }
+  const answer = call(publicProject, { params: { id: projectId } }, { limitBytes: revisionLimitBytes }) catch effect (failure) => { throw new RevisionUnavailable({ message: failure.message === "" ? revisionUnreadable : failure.message }) }
+  return { projectId, revision: answer.revision, manifest: answer.project } satisfies CurrentRevision
+}
+
+effect function openedUpdateDraft(projectId: string) {
+  const legacy = try legacyUpdateDraft(projectId)
+  return try draftSaver(try (try ProjectDrafts).open(updateDraftKey(projectId), legacy))
+}
+
+export function openUpdateDraft(projectId: string) {
+  return Effect.provide(openedUpdateDraft(projectId), projectDrafts)
+}
+
+function accessLost(failure: Failure): boolean {
+  return failure._tag === "EditorAccountChanged" || failure._tag === "ActorChanged" || (failure._tag === "Refused" && (failure.status === 401 || failure.status === 403))
+}
+
+effect function refused(failure: Failure, actor: string, fallback: string) {
+  const checked = accessLost(failure) ? failure : try Effect.match(requireEditorActor(actor), { onSuccess: () => failure, onFailure: (recheck) => recheck })
+  const lost = accessLost(checked)
+  if (lost) try (try Session).refresh()
+  const code = checked._tag === "Refused" ? checked.error : ""
+  return new EditorRefused({
+    message: code === "invalid_repository_start" ? monthChanged : checked.message === "" ? fallback : checked.message,
+    staleRevision: code === "stale_revision",
+    accessLost: lost,
+  })
+}
+
+effect function published(publication: Publication) {
+  try requireEditorActor(publication.actor)
+  const answer = try publishRevision({ projectId: publication.projectId, manifest: publication.manifest, expectedRevision: publication.expectedRevision, note: "", monthlyAmount: publication.monthlyAmount, expectedActor: publication.actor })
+  try requireEditorActor(publication.actor)
+  return answer
+}
+
+export effect function publishUpdate(publication: Publication) {
+  return published(publication) catch effect (failure) => { throw try refused(failure, publication.actor, publicationUnconfirmed) }
+}
+
+effect function removed(projectId: string, expectedRevision: number, actor: string) {
+  try requireEditorActor(actor)
+  const answer = try removeProject(projectId, expectedRevision, actor)
+  try requireEditorActor(actor)
+  return answer
+}
+
+export effect function removeManaged(projectId: string, expectedRevision: number, actor: string) {
+  return removed(projectId, expectedRevision, actor) catch effect (failure) => { throw try refused(failure, actor, removalUnconfirmed) }
+}

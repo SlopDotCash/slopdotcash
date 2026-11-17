@@ -176,7 +176,7 @@ export function entryAttempt(entry: JournalEntry | undefined): Attempt {
   const bytesId = transactionBytes(entry.transaction);
   if (entry.requestId !== undefined) return { identity: entry.requestId, bytesId, hash: entry.hash ?? "", candidate: entry.candidate ?? "" };
   const legacy = entry.candidate ?? entry.hash ?? "";
-  if (legacy !== "") return { identity: "", bytesId, hash: "", candidate: legacy };
+  if (legacy !== "") return { identity: "", bytesId, hash: entry.hash ?? "", candidate: legacy };
   return { identity: legacyIdentity(entry.transaction.nonce), bytesId, hash: "", candidate: "" };
 }
 

@@ -135,9 +135,9 @@ pure def canDeploy(r: Rotation, check: BoundaryCheck): bool = r.phase == Uploade
 pure def deploy(r: Rotation, check: BoundaryCheck): Rotation =
   if (sameWorker(r, r.candidate) and boundaryHolds(check)) enter(Deploying, { ...r, activation: r.candidate.version })
   else stop(Refused, r)
-pure def canConfirmActivation(r: Rotation, outcome: ActivationOutcome): bool = r.phase == Deploying
-pure def confirmActivation(r: Rotation, outcome: ActivationOutcome): Rotation =
-  if (outcome == Confirmed) enter(Verified, r) else stop(Uncertain, r)
+pure def canConfirmActivation(r: Rotation, result: ActivationOutcome): bool = r.phase == Deploying
+pure def confirmActivation(r: Rotation, result: ActivationOutcome): Rotation =
+  if (result == Confirmed) enter(Verified, r) else stop(Uncertain, r)
 pure def alwaysOnlyCandidateActivated(r: Rotation): bool = r.activation == 0
   or (r.activation == r.candidate.version and r.activation != r.base.version and sameWorker(r, r.candidate)
     and (r.phase == Deploying or r.phase == Verified or r.phase == Uncertain))
@@ -212,5 +212,5 @@ pure val checkValues = Set({ passed: true, mainUnchanged: true, baseActive: true
 pure val uploadedValues = Set({ ...baseSample, version: 11, number: 5, source: 8, rpc: pairSample }, noVersion,
   { ...baseSample, version: 11, number: 5, source: 8, settings: 4, rpc: pairSample })
 pure val acquiredValues = Set(true, false)
-pure val outcomeValues = Set(Confirmed, Ambiguous)
+pure val resultValues = Set(Confirmed, Ambiguous)
 ```

@@ -1,0 +1,92 @@
+// spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"
+import { base58Encode, base64Decode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import { storageKeys } from "../../platform/storage.vibe"
+import { type SolanaConnection, connectSolana, solanaSignMessage } from "../core/solana.vibe"
+import { type SlotStorage, readSlotText, writeSlotText } from "../core/slots.ts"
+import { openDirectPayment } from "./directPrompt.vibe"
+import { type HistorySignatureEntry, type PaymentCase, cancellationAuthority, expiredModes, historyAuthority, paidWith, paymentMessages, refused, sessionActor, verifyFoundPayment } from "./paymentCase.vibe"
+import { readHistory, signatureBytes, transactionOf } from "./records.ts"
+import type { SolanaPaymentForm } from "./solanaPayment.vibe"
+
+export { verifyFoundPayment }
+
+export const recoveryMessages = {
+  connect: "Connect the original payer's Solana wallet.",
+  signIn: "Sign in and connect the original payer wallet.",
+  accountChanged: "Your account changed. Reload before checking payment history.",
+  invalidSignature: "Your wallet returned an invalid recovery signature. Reconnect and try again.",
+} as const
+
+export function historyKey(caseId: string, generation: number, owner: string): string {
+  return `${storageKeys.bountyHistory.key}${caseId}:${generation}:${owner}`
+}
+
+effect function validSignature(text: string, message: Uint8Array, payer: Uint8Array) {
+  const bytes = signatureBytes(text)
+  if (bytes === undefined || base58Encode(bytes) !== text) return false
+  return try verifyMessageSignature(payer, message, bytes)
+}
+
+export effect function openCancellation(storage: SlotStorage | undefined, seen: PaymentCase) {
+  const recovery = seen.settlement?.recovery
+  const transaction = recovery?.cancellationRequest === undefined ? undefined : transactionOf(recovery.cancellationRequest)
+  if (recovery === null || recovery === undefined || recovery.mode !== "cancellation-required" || recovery.consented !== true || transaction === undefined) throw refused(paymentMessages.stateChanged)
+  const form = try openDirectPayment(storage, { caseId: seen.id, generation: recovery.generation, payer: transaction.from, network: seen.settlement?.network ?? "", transactions: [transaction], cancellation: true })
+  return { form, authority: cancellationAuthority(form.owner, seen) }
+}
+
+export effect function connectRecoveryPayer(id: number, owner: string, seen: PaymentCase) {
+  const payer = seen.settlement?.recovery?.payer
+  try historyAuthority(owner, seen).authorize
+  const connection = try connectSolana(id)
+  if (payer === undefined || connection.address !== payer) throw refused(recoveryMessages.connect)
+  return connection
+}
+
+export effect function checkExpiredPayment(storage: SlotStorage | undefined, owner: string, seen: PaymentCase, connection: SolanaConnection, form: SolanaPaymentForm | undefined) {
+  const recovery = seen.settlement?.recovery
+  const payer = recovery?.payer
+  const messages = recovery?.messages ?? []
+  if (recovery === null || recovery === undefined || payer === undefined || messages.length === 0 || !expiredModes.includes(recovery.mode)) throw refused(paymentMessages.stateChanged)
+  const actor = try sessionActor()
+  const payerKey = publicKey(payer)
+  if (actor === undefined || actor !== owner || connection.address !== payer || payerKey === undefined) throw refused(recoveryMessages.signIn)
+  const authority = historyAuthority(owner, seen)
+  const tracked = form !== undefined && (try form.tracksHistory())
+  const request = tracked && form !== undefined ? try form.beginHistory() : undefined
+
+  effect function checkAuthority() {
+    try authority.authorize
+    if ((try sessionActor()) !== actor) throw refused(recoveryMessages.accountChanged)
+  }
+
+  const key = historyKey(seen.id, recovery.generation, actor)
+  const saved = { ...readHistory(readSlotText(storage, key)) }
+  const signatures: HistorySignatureEntry[] = []
+  for (const message of messages) {
+    try checkAuthority()
+    const bytes = base64Decode(message.message)
+    if (bytes === undefined) throw refused(paymentMessages.stateChanged)
+    const cached = saved[message.messageId]
+    const reused = cached !== undefined && cached.message === message.message && (try validSignature(cached.signature, bytes, payerKey))
+    if (reused) {
+      signatures.push({ messageId: message.messageId, signature: cached.signature })
+      continue
+    }
+    const signature = base58Encode(try solanaSignMessage(connection, bytes))
+    if (!(try validSignature(signature, bytes, payerKey))) throw refused(recoveryMessages.invalidSignature)
+    try checkAuthority()
+    saved[message.messageId] = { message: message.message, signature }
+    Effect.try(() => writeSlotText(storage, key, JSON.stringify(saved))) catch () => undefined
+    signatures.push({ messageId: message.messageId, signature })
+  }
+  try checkAuthority()
+  const next = try authority.recover(signatures)
+  if (request !== undefined && form !== undefined) {
+    const found = paidWith(next, "") || next.settlement?.recovery?.mode === "payment-found"
+    const plan = next.settlement?.ownerRequest?.solana
+    const successor = plan !== undefined && (next.settlement?.generation !== seen.settlement?.generation || plan.messageId !== seen.settlement?.ownerRequest?.solana?.messageId)
+    if (found || successor) try form.endHistory(request, found)
+  }
+  return next
+}

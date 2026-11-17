@@ -5,7 +5,8 @@ months in an upgraded vault. One owner transaction pledges an amount for each
 of 1, 3, 6 or 12 months from the vault's own current UTC month, only from
 free funds not already pledged. A pledge can be raised, never lowered or
 cancelled, and the contract refuses a withdrawal or an owner award that would
-take pledged funds. Sources at Slop development `df21e37b7`:
+take pledged funds. The vault contract can still be upgraded by Slop's
+upgrade key, so a lock is not a guarantee against that key. Sources at Slop development `df21e37b7`:
 `src/lib/evm-month-lock.ts` (`reviewMonthLock`, `assertWithdrawalOutsideLocks`),
 `src/lib/month-lock.ts` (`LOCK_MONTH_COUNTS`, `lockPeriods`, `lockEnds`,
 `lockReleasable`), `src/VaultMonthLock.tsx` (`LockedMonths`),
@@ -35,6 +36,7 @@ these refusals are the browser's EVM review.
 ```quint
 import money as M from "../settlement/money"
 import calendar as C from "../settlement/calendar"
+import ledger as L from "../contracts/ledger"
 import monthPledges as MP from "../settlement/monthPledges"
 import projections as P from "./projections"
 type LockRefusal = NoLockRefusal | LockCountRefused | NotVaultOwner | BelowMonthlyAmount | LowersLockedMonth
@@ -83,8 +85,8 @@ Months are `YYYYMM`, counted by the [calendar](../settlement/calendar.md)'s
 month the browser computed. A month leaves the lock when it is
 reserved for payout. One never reserved stays locked after its commit window
 closes, at 00:00 UTC on the 4th of the second month after it (the
-calendar's `lockLapsesAt`, which the month pledges' `lockReleasable` reads;
-the shell passes the current instant in seconds), until a release
+[escrow ledger](../contracts/ledger.md)'s `closesAt`, where both contracts
+let a pledge expire; the shell passes the current instant in seconds), until a release
 transaction is sent (`expirePledge` on EVM, `expire_pledge` on Solana); any
 connected wallet may send it. The card lists every open lock: an open month
 before then says it is locked until paid out and from which day it can be
@@ -97,7 +99,7 @@ type LockedLine = NotListed | LockedUntilPaid | ReleasableMonth
 pure val noLockedMonthsText = "No months are locked in this vault."
 pure def lockPeriod(firstPeriod: int, index: int): int = C::addPeriods(firstPeriod, index)
 pure def lockedLine(month: MP::ChainPledge, now: int): LockedLine =
-  if (not(month.open)) NotListed else if (MP::lockReleasable(month.period, now)) ReleasableMonth else LockedUntilPaid
+  if (not(month.open)) NotListed else if (now >= L::closesAt(month.period)) ReleasableMonth else LockedUntilPaid
 pure def lawLockStartsAtItsMonth(firstPeriod: int): bool =
   MP::validPledgePeriod(firstPeriod) implies lockPeriod(firstPeriod, 0) == firstPeriod
 pure def lawDecemberRollsIntoJanuary(index: int): bool = index == 1 implies lockPeriod(202612, index) == 202701

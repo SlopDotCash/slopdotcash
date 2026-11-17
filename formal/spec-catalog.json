@@ -762,7 +762,7 @@
     },
     {
       "path": "spec/backend/index.md",
-      "sha256": "158e3bf42be677491e7fe84cdc84ba066fedcd0690bc4b651ac975365664b2a4",
+      "sha256": "b001a68ad0cf8f22c0bf9c59416ebcd6cf0c487d3b3d8d230c34196c2ef16723",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -843,12 +843,16 @@
         {
           "target": "./mergeActivity.md",
           "line": 25
+        },
+        {
+          "target": "./readyLabelSettings.md",
+          "line": 26
         }
       ]
     },
     {
       "path": "spec/backend/projects.md",
-      "sha256": "13d9ea84b1e8dc69e6edfa655edf7d413a1ddca4a498d9d0fcedcad9996c9cc5",
+      "sha256": "99a0f9c64d8a38a4ea6ba5c776017cead46b7bb0480bcc978f919657b0bcb290",
       "module": "backend__projects",
       "stories": [
         {
@@ -861,7 +865,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval",
-          "line": 360
+          "line": 364
         }
       ],
       "rules": [
@@ -980,7 +984,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Appending a repository pauses the project and its work counts from next month",
-          "line": 273,
+          "line": 275,
           "definitions": [
             "Append",
             "canAppendRepository",
@@ -997,7 +1001,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Automatic-closure consent changes only by an owner revision",
-          "line": 312,
+          "line": 314,
           "definitions": [
             "ConsentEdit",
             "canEditConsent",
@@ -1007,7 +1011,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A current maintainer removes a project and a lost reply can be retried",
-          "line": 329,
+          "line": 331,
           "definitions": [
             "Removal",
             "canRemove",
@@ -1021,7 +1025,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Administrators hold, delist, change the steward or place a project",
-          "line": 362,
+          "line": 366,
           "definitions": [
             "AdminKind",
             "Exception",
@@ -1036,7 +1040,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / A restriction retires the listing and reinstatement restores only a paused Community listing",
-          "line": 405,
+          "line": 409,
           "definitions": [
             "retirableForRestriction",
             "withRestrictionRetirement",
@@ -1049,7 +1053,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Funding is observed separately and the clock only advances",
-          "line": 431,
+          "line": 435,
           "definitions": [
             "FundingEvidence",
             "canRecordFunding",
@@ -1064,7 +1068,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Reachable registry outcomes",
-          "line": 454,
+          "line": 458,
           "definitions": [
             "listed",
             "sometimesCreatedPaused",
@@ -1113,14 +1117,22 @@
           "line": 18
         },
         {
+          "target": "../frontend/projectLinks.md",
+          "line": 216
+        },
+        {
           "target": "./projectComposition.md",
-          "line": 230
+          "line": 232
+        },
+        {
+          "target": "./projectComposition.md",
+          "line": 337
         }
       ]
     },
     {
       "path": "spec/backend/listing.md",
-      "sha256": "ba0f0589ca7f61b2fd3e6c76fe6ad0dd0c2b6db1b5ecff51f5fbfd1265fa5639",
+      "sha256": "0e4e907423e05193db84b763dcfef8cdbe94c85e568611b930a2058d59bfd315",
       "module": "backend__listing",
       "stories": [
         {
@@ -1179,12 +1191,16 @@
         {
           "target": "./projectRegistry.md",
           "line": 10
+        },
+        {
+          "target": "../frontend/poolListing.md",
+          "line": 66
         }
       ]
     },
     {
       "path": "spec/backend/referralCodes.md",
-      "sha256": "7062744e44808be9106a51bda16da78c5a2cd5ffaa7b869807a37e6b79726bbc",
+      "sha256": "dd5650a6b95a8be5792fe5cf74333c50cd1949e334ece8dd81d717bc32926426",
       "module": "backend__referralCodes",
       "stories": [
         {
@@ -1243,7 +1259,7 @@
         },
         {
           "heading": "Story: Follow a referral link to the project form / The referral path without a name opens Settings without a database read",
-          "line": 142,
+          "line": 149,
           "definitions": [
             "ReferralPath",
             "ReferralRoute",
@@ -3450,7 +3466,7 @@
     },
     {
       "path": "spec/fees/buyback.md",
-      "sha256": "c6af49ce5cf077b235cbcc313410a019110e9c60224894712fa73756e7ffcfdd",
+      "sha256": "1c77c4a687d8e3cb718c8320b3ec396273dcc39382bbc566513508b656523b55",
       "module": "fees__buyback",
       "stories": [
         {
@@ -3459,11 +3475,11 @@
         },
         {
           "heading": "Story: Bridge the available share through one exact order at a time",
-          "line": 148
+          "line": 161
         },
         {
           "heading": "Story: Continue without counting income, shares or orders twice",
-          "line": 286
+          "line": 301
         }
       ],
       "rules": [
@@ -3521,6 +3537,8 @@
           "definitions": [
             "BridgeRoute",
             "BridgeQuote",
+            "minimumBridge",
+            "maximumBridgeCostBps",
             "maximumSafeValue",
             "nativeFeeCeiling",
             "bridgeDecision",
@@ -3536,7 +3554,7 @@
         },
         {
           "heading": "Story: Bridge the available share through one exact order at a time / An EVM order first approves exactly its amount to the pinned bridge",
-          "line": 150,
+          "line": 163,
           "definitions": [
             "BridgeOrder",
             "unreleased",
@@ -3550,12 +3568,13 @@
             "settleApproval",
             "canOrder",
             "order",
-            "sometimesApprovalRefusedCostChange"
+            "sometimesApprovalRefusedCostChange",
+            "sometimesMinimumBridgeOrdered"
           ]
         },
         {
           "heading": "Story: Bridge the available share through one exact order at a time / A deposit is in transit only from its finalized order receipt; a failed order releases its share",
-          "line": 207,
+          "line": 222,
           "definitions": [
             "BridgeReceipt",
             "canLoseSend",
@@ -3569,7 +3588,7 @@
         },
         {
           "heading": "Story: Bridge the available share through one exact order at a time / An unfilled order stays in transit until fulfillment or refund is proven",
-          "line": 232,
+          "line": 247,
           "definitions": [
             "ArrivalEvidence",
             "RefundEvidence",
@@ -3596,7 +3615,7 @@
         },
         {
           "heading": "Story: Continue without counting income, shares or orders twice / Cumulative accounting stays within its shares and every journal entry is past and positive",
-          "line": 288,
+          "line": 303,
           "definitions": [
             "openSend",
             "alwaysShareBounded",
@@ -3756,7 +3775,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "05d34eaa86c3bdf598d46e009feff176dabb0b6fceb05c6706055b6d1e8c5ff5",
+      "sha256": "336b08110f6d290e46588eeb86f32624d583b6adcde90c2eaf029fb53cff2d75",
       "module": "fees__conversion",
       "stories": [
         {
@@ -3765,27 +3784,27 @@
         },
         {
           "heading": "Story: Know what the wallet received before anything converts",
-          "line": 121
+          "line": 166
         },
         {
           "heading": "Story: Evaluate each wallet token once per run and record why it waits",
-          "line": 179
+          "line": 224
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send",
-          "line": 260
+          "line": 305
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts",
-          "line": 372
+          "line": 417
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults",
-          "line": 570
+          "line": 615
         },
         {
           "heading": "Story: Keep every journal record and its evidence",
-          "line": 616
+          "line": 661
         }
       ],
       "rules": [
@@ -3829,8 +3848,27 @@
           ]
         },
         {
+          "heading": "Story: Run one network at a time under a fenced lease / An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile",
+          "line": 97,
+          "definitions": [
+            "rotationHolds",
+            "runHolds",
+            "journalQuiet",
+            "canAcquireRotationLease",
+            "acquireRotationLease",
+            "canRenewRotationLease",
+            "renewRotationLease",
+            "canReleaseRotationLease",
+            "releaseRotationLease",
+            "alwaysRotationExcludesRuns",
+            "stepRotationBlocksRuns",
+            "stepRotationOnlyWhenQuiet",
+            "sometimesRotationHoldsLease"
+          ]
+        },
+        {
           "heading": "Story: Run one network at a time under a fenced lease / The Worker configuration and the reviewed vaults are published components",
-          "line": 96,
+          "line": 141,
           "definitions": [
             "canPublishWorker",
             "publishWorker",
@@ -3849,7 +3887,7 @@
         },
         {
           "heading": "Story: Know what the wallet received before anything converts / Only finalized fee receipts and claims are fee income; gas top-ups never are",
-          "line": 123,
+          "line": 168,
           "definitions": [
             "FinalizedTransfer",
             "VaultAccrual",
@@ -3877,7 +3915,7 @@
         },
         {
           "heading": "Story: Evaluate each wallet token once per run and record why it waits / Each evaluation records one outcome from the pinned order of checks",
-          "line": 181,
+          "line": 226,
           "definitions": [
             "RouteResult",
             "Quote",
@@ -3910,7 +3948,7 @@
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send / Native gas is reserved before signing and committed atomically with the signed row",
-          "line": 262,
+          "line": 307,
           "definitions": [
             "EvmFees",
             "RouteInspection",
@@ -3951,7 +3989,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / Only a finalized receipt of one of the row's own attempts settles it",
-          "line": 374,
+          "line": 419,
           "definitions": [
             "SendReceipt",
             "landedIn",
@@ -3970,7 +4008,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / An unknown send is rebroadcast unchanged; only proven expiry retires it",
-          "line": 428,
+          "line": 473,
           "definitions": [
             "DeadlineEvidence",
             "Coverage",
@@ -4002,7 +4040,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / A same-nonce EVM replacement changes only its fees, in bounded steps",
-          "line": 525,
+          "line": 570,
           "definitions": [
             "NetworkFeeObservation",
             "firstAttempt",
@@ -4019,7 +4057,7 @@
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults / A claim delivers the accrued amount to the configured fee wallet and shares the native budget",
-          "line": 572,
+          "line": 617,
           "definitions": [
             "VaultClaim",
             "claimAdmitted",
@@ -4030,7 +4068,7 @@
         },
         {
           "heading": "Story: Keep every journal record and its evidence / Rows and reservations are append-only and settled records never change",
-          "line": 618,
+          "line": 663,
           "definitions": [
             "settledState",
             "rowFrozen",
@@ -4040,6 +4078,7 @@
             "alwaysDryRowsNeverSign",
             "elapsedValues",
             "runIdValues",
+            "rotationIdValues",
             "idValues",
             "txValues",
             "nonceValues",
@@ -4097,8 +4136,16 @@
           "line": 18
         },
         {
+          "target": "./solanaRpcRotation.md",
+          "line": 99
+        },
+        {
+          "target": "./buyback.md",
+          "line": 106
+        },
+        {
           "target": "../settlement/feeReplacement.md",
-          "line": 531
+          "line": 576
         }
       ]
     },
@@ -4397,7 +4444,7 @@
     },
     {
       "path": "spec/fees/index.md",
-      "sha256": "f6220ca5bf77bfddd9e62752b7f1581fd33b90edf1d96e01415d1cc77936bc44",
+      "sha256": "e3838795e0f87d000c107a983f0ea3a9b18e0d7089a2deba635bcebaf81fb1ab",
       "module": "fees",
       "stories": [],
       "rules": [],
@@ -4412,36 +4459,40 @@
           "line": 6
         },
         {
-          "target": "./directBountyIncome.md",
+          "target": "./solanaRpcRotation.md",
           "line": 7
         },
         {
-          "target": "./buyback.md",
+          "target": "./directBountyIncome.md",
           "line": 8
         },
         {
-          "target": "./buybackPool.md",
+          "target": "./buyback.md",
           "line": 9
         },
         {
-          "target": "./buybackRpc.md",
+          "target": "./buybackPool.md",
           "line": 10
         },
         {
-          "target": "./composition.md",
+          "target": "./buybackRpc.md",
           "line": 11
         },
         {
-          "target": "./buybackBinding.md",
+          "target": "./composition.md",
           "line": 12
         },
         {
-          "target": "./feeReport.md",
+          "target": "./buybackBinding.md",
           "line": 13
         },
         {
-          "target": "../settlement/",
+          "target": "./feeReport.md",
           "line": 14
+        },
+        {
+          "target": "../settlement/",
+          "line": 15
         }
       ]
     },
@@ -4680,7 +4731,7 @@
     },
     {
       "path": "spec/frontend/index.md",
-      "sha256": "1eb548964675e4daea2dd99cea23b6f1e25a5ef1415290b5e60e8ff8160d331f",
+      "sha256": "b49f439ff951509038df99b5a8e61f05dabed5cceaabe18a0bccbb4f1b701735",
       "module": "frontend",
       "stories": [],
       "rules": [],
@@ -4785,6 +4836,26 @@
         {
           "target": "./views.md",
           "line": 36
+        },
+        {
+          "target": "./vaultLocks.md",
+          "line": 37
+        },
+        {
+          "target": "./monthLock.md",
+          "line": 38
+        },
+        {
+          "target": "./poolListing.md",
+          "line": 39
+        },
+        {
+          "target": "./projectLinks.md",
+          "line": 40
+        },
+        {
+          "target": "./readyLabelForm.md",
+          "line": 41
         }
       ]
     },
@@ -5063,7 +5134,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "0269faec9660dce0543a8a7946ddb8143c5c78d42a6d46c0c695b62f468ae444",
+      "sha256": "807493ff8dfcaa8becd3ce02c7fbb5f5c1ed6f6faba20d8393348c55193b75ba",
       "module": "frontend__projections",
       "stories": [
         {
@@ -5084,7 +5155,7 @@
         },
         {
           "heading": "Story: Show public cuts, merge activity and their freshness",
-          "line": 259
+          "line": 289
         }
       ],
       "rules": [
@@ -5188,14 +5259,18 @@
             "promisedAtStart",
             "poolDisplay",
             "lawOnlyCurrentReadsShowMoney",
+            "lockedByPledges",
             "lawFundedIsCovered",
             "lawPromiseNeedsTheFirst",
-            "lawWithdrawnNeedsWithdrawal"
+            "lawWithdrawnNeedsWithdrawal",
+            "lawPledgedMonthIsLockedFunded",
+            "lawLockedMonthNeedsItsPledges",
+            "lawShortPledgeKeepsTheFreeFundsRule"
           ]
         },
         {
           "heading": "Story: Show a monthly amount only while the vault holds it / Slop's pages refuse a withdrawal below the promised amount",
-          "line": 236,
+          "line": 258,
           "definitions": [
             "withdrawalAllowedOnSlopPages",
             "lawWithdrawalKeepsPromise",
@@ -5207,7 +5282,7 @@
         },
         {
           "heading": "Story: Show public cuts, merge activity and their freshness / The cycle page lists public cuts with distinct loading, error, empty and list states",
-          "line": 261,
+          "line": 291,
           "definitions": [
             "CutListView",
             "noCutsText",
@@ -5219,7 +5294,7 @@
         },
         {
           "heading": "Story: Show public cuts, merge activity and their freshness / The merge line stays hidden until a repository is read, and a failed read shows its date",
-          "line": 287,
+          "line": 317,
           "definitions": [
             "MergeRow",
             "MergeLine",
@@ -5253,16 +5328,24 @@
           "line": 207
         },
         {
-          "target": "../settlement/monthly.md",
-          "line": 263
+          "target": "./vaultLocks.md",
+          "line": 213
         },
         {
-          "target": "./requests.md",
+          "target": "./vaultLocks.md",
           "line": 266
         },
         {
+          "target": "../settlement/monthly.md",
+          "line": 293
+        },
+        {
+          "target": "./requests.md",
+          "line": 296
+        },
+        {
           "target": "../backend/mergeActivity.md",
-          "line": 290
+          "line": 320
         }
       ]
     },
@@ -6337,7 +6420,7 @@
     },
     {
       "path": "spec/operations/index.md",
-      "sha256": "d8c5944253bf30c0b89b7731b14669268b1b613d35fdf9f6803bf34b900c5d38",
+      "sha256": "dd22a23d1792ada3f33163960756f5b74ba08e9b5f0e4aa7d902b90650f252bf",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -6360,48 +6443,76 @@
           "line": 9
         },
         {
-          "target": "./moderation.md",
+          "target": "./payoutAudience.md",
           "line": 10
         },
         {
-          "target": "./release.md",
+          "target": "./moderation.md",
           "line": 11
         },
         {
-          "target": "./publicationLock.md",
+          "target": "./release.md",
           "line": 12
         },
         {
-          "target": "./intakeHealth.md",
+          "target": "./stagingOrder.md",
           "line": 13
         },
         {
-          "target": "./escrowQualification.md",
+          "target": "./retainedFreshness.md",
           "line": 14
         },
         {
-          "target": "./releaseCoverage.md",
+          "target": "./rpcRotationRun.md",
           "line": 15
         },
         {
-          "target": "./paymentJobs.md",
+          "target": "./identityApp.md",
           "line": 16
         },
         {
-          "target": "./paymentRun.md",
+          "target": "./slopbotRuntime.md",
           "line": 17
         },
         {
-          "target": "./extendedQualification.md",
+          "target": "./intakeHistory.md",
           "line": 18
         },
         {
-          "target": "./upgradeVerification.md",
+          "target": "./publicationLock.md",
           "line": 19
         },
         {
-          "target": "../slopbot/assessmentInbox.md",
+          "target": "./intakeHealth.md",
+          "line": 20
+        },
+        {
+          "target": "./escrowQualification.md",
+          "line": 21
+        },
+        {
+          "target": "./releaseCoverage.md",
+          "line": 22
+        },
+        {
+          "target": "./paymentJobs.md",
+          "line": 23
+        },
+        {
+          "target": "./paymentRun.md",
+          "line": 24
+        },
+        {
+          "target": "./extendedQualification.md",
+          "line": 25
+        },
+        {
+          "target": "./upgradeVerification.md",
           "line": 26
+        },
+        {
+          "target": "../slopbot/assessmentInbox.md",
+          "line": 33
         }
       ]
     },
@@ -6640,7 +6751,7 @@
     },
     {
       "path": "spec/operations/notifications.md",
-      "sha256": "6980ea2d1012525a6bfb41f85fc0620531903819daaa166753286592f72bccd9",
+      "sha256": "ef492e9799316214b7bb9f1b8283dc8e4d72df4ee388a5f52d8823f46d31fbda",
       "module": "operations__notifications",
       "stories": [
         {
@@ -6657,7 +6768,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices",
-          "line": 434
+          "line": 439
         }
       ],
       "rules": [
@@ -6794,7 +6905,7 @@
         },
         {
           "heading": "Story: Deliver each attempt once and never resend an uncertain one / Only independent provider evidence for the exact attempt and destination settles a send",
-          "line": 353,
+          "line": 358,
           "definitions": [
             "Finding",
             "ProviderEvidence",
@@ -6811,7 +6922,7 @@
         },
         {
           "heading": "Story: Deliver each attempt once and never resend an uncertain one / The Inbox shows one delivery word and never the address, digest, provider reference or attempt count",
-          "line": 391,
+          "line": 396,
           "definitions": [
             "EmailWord",
             "InboxItem",
@@ -6823,7 +6934,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices / Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment",
-          "line": 436,
+          "line": 441,
           "definitions": [
             "canRead",
             "read",
@@ -6834,7 +6945,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices / A failed or overdue case notice escalates once to a backup with current access",
-          "line": 452,
+          "line": 457,
           "definitions": [
             "failedDelivery",
             "overdue",
@@ -6849,7 +6960,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices / Simulation samples exercise replays, consent changes and conflicting evidence",
-          "line": 500,
+          "line": 505,
           "definitions": [
             "keyValues",
             "kindValues",
@@ -6893,8 +7004,12 @@
           "line": 31
         },
         {
+          "target": "./payoutAudience.md",
+          "line": 289
+        },
+        {
           "target": "./moderation.md",
-          "line": 409
+          "line": 414
         }
       ]
     },
@@ -8979,7 +9094,7 @@
     },
     {
       "path": "spec/security/enforcement.md",
-      "sha256": "e6ceae96f0467fec73ea6b13a91b10b05a89e1841d0508f69eebc4842b0a7d85",
+      "sha256": "4ddc017c996b11ed05057e4cbd4136b149741b11e7662bc58b44bc4f424e8ccf",
       "module": "security__enforcement",
       "stories": [
         {
@@ -8988,15 +9103,15 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant",
-          "line": 332
+          "line": 342
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it",
-          "line": 436
+          "line": 446
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently",
-          "line": 552
+          "line": 621
         }
       ],
       "rules": [
@@ -9108,7 +9223,7 @@
         },
         {
           "heading": "Story: Clear each repository by its own admission before work / An appended repository needs its own admission and the registry mirror stays current",
-          "line": 298,
+          "line": 308,
           "definitions": [
             "canAppendRepository",
             "appendRepository",
@@ -9126,7 +9241,7 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant / The frozen migration-0075 rows cover only original repositories",
-          "line": 334,
+          "line": 344,
           "definitions": [
             "FrozenRow",
             "canRecognizeFrozen",
@@ -9137,7 +9252,7 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant / An administrator records an audited exemption only for a current authorized steward",
-          "line": 348,
+          "line": 358,
           "definitions": [
             "Access",
             "StewardCheck",
@@ -9154,7 +9269,7 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant / Revocation is its own audited record and restores ordinary admission",
-          "line": 410,
+          "line": 420,
           "definitions": [
             "RevokeRequest",
             "canRevokeExemption",
@@ -9165,7 +9280,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / Flagger standing is read at filing time and bound to the current revision",
-          "line": 438,
+          "line": 448,
           "definitions": [
             "StandingRead",
             "FlagStanding",
@@ -9177,7 +9292,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / The second distinct active flag quarantines a clear project and later flags only record",
-          "line": 462,
+          "line": 472,
           "definitions": [
             "canFlag",
             "flag",
@@ -9196,7 +9311,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction",
-          "line": 502,
+          "line": 512,
           "definitions": [
             "FlagView",
             "flagView",
@@ -9207,20 +9322,31 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / A fresh clean scan of every repository lifts a flag-only pause",
-          "line": 528,
+          "line": 538,
           "definitions": [
             "PinState",
             "PinRead",
-            "pinsMatch",
+            "pinUnavailable",
+            "atLivePin",
+            "pinsComplete",
+            "completedAtPin",
+            "decidingAt",
+            "freshAtPin",
+            "allFreshAtPin",
+            "coversActiveFlagsAt",
+            "provenance",
+            "noEntry",
+            "provenanceOf",
             "allFresh",
             "canReinstateFlagPause",
             "reinstateFlagPause",
+            "stepScanReinstatementNamesEveryRepository",
             "pinsValues"
           ]
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / A moderator quarantines a clear project or bans it, and decides a service ban",
-          "line": 554,
+          "line": 623,
           "definitions": [
             "independent",
             "canQuarantine",
@@ -9237,7 +9363,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / The steward, the listing account, a banned account or a moderator files one open project appeal",
-          "line": 599,
+          "line": 668,
           "definitions": [
             "canRequestAppeal",
             "requestAppeal",
@@ -9247,7 +9373,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / An independent moderator reinstates only after fresh clean scans of every repository",
-          "line": 623,
+          "line": 692,
           "definitions": [
             "canReinstate",
             "reinstate",
@@ -9259,7 +9385,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Restriction state, appeals and findings stay consistent",
-          "line": 647,
+          "line": 720,
           "definitions": [
             "alwaysClearHoldsNoRestrictionState",
             "alwaysRestrictedEpoch",
@@ -9278,7 +9404,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Journals only append and lifting a human restriction needs its decision",
-          "line": 671,
+          "line": 744,
           "definitions": [
             "keeps",
             "stepJournalsOnlyAppend",
@@ -9290,7 +9416,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Reachable outcomes",
-          "line": 709,
+          "line": 782,
           "definitions": [
             "sometimesFlagPaused",
             "sometimesFlagPauseLifted",
@@ -9315,6 +9441,9 @@
             "sometimesRevisionPending",
             "sometimesCleared",
             "sometimesBannedAccountAppealed",
+            "sometimesFlagPauseLiftedPastPendingInvestigation",
+            "sometimesFlagPauseLiftedPastOtherPin",
+            "sometimesEarlierAssessmentUnverified",
             "readyToLiftFlagPause",
             "leadsToFlagPauseLifted",
             "fair_reinstateFlagPause",
@@ -9343,17 +9472,17 @@
         },
         {
           "target": "../backend/access.md",
-          "line": 566
+          "line": 635
         },
         {
           "target": "../backend/access.md",
-          "line": 607
+          "line": 676
         }
       ]
     },
     {
       "path": "spec/backend/projectComposition.md",
-      "sha256": "11bb9a1daf426f22d805e1029672c41f554f4577958befefee1d2a59374b621f",
+      "sha256": "239c49cceb9692b7f3a872d3ad0960ff1fae4a32089d0282b8d3d8b7c51e9ffb",
       "module": "backend__projectComposition",
       "stories": [
         {
@@ -9362,7 +9491,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project",
-          "line": 322
+          "line": 330
         }
       ],
       "rules": [
@@ -9463,7 +9592,7 @@
         },
         {
           "heading": "Story: Perform every project action on registry and security together / Flags, restrictions and reinstatement change the registry only through their revisions",
-          "line": 247,
+          "line": 254,
           "definitions": [
             "canFlag",
             "flag",
@@ -9502,7 +9631,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / Collection and skills need an active, unrestricted, cleared project at the current revision",
-          "line": 324,
+          "line": 332,
           "definitions": [
             "RegistryObservation",
             "Coverage",
@@ -9526,7 +9655,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / Slopbot scope and monthly eligibility derive from the same state",
-          "line": 381,
+          "line": 389,
           "definitions": [
             "ReviewScope",
             "RetirementEvidence",
@@ -9540,7 +9669,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / The setup status names one next state from the same checks",
-          "line": 421,
+          "line": 429,
           "definitions": [
             "SetupState",
             "setupState",
@@ -9550,7 +9679,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / A cleared, ready project is activated by the setup refresh",
-          "line": 449,
+          "line": 457,
           "definitions": [
             "readyToActivate",
             "leadsToActivation",
@@ -9559,7 +9688,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / Reachable composed outcomes",
-          "line": 468,
+          "line": 476,
           "definitions": [
             "sometimesCollectable",
             "sometimesFlagPausedActiveManifest",
@@ -9659,24 +9788,24 @@
         },
         {
           "target": "../contributor/skillRendering.md",
-          "line": 334
+          "line": 342
         }
       ]
     },
     {
       "path": "spec/security/admission.md",
-      "sha256": "d9de16f1e9920e8d9d3de7e050f6379e3fc4e2d8d9a178c1f0dea82a816aab31",
+      "sha256": "2251fa32a8fd575e469c2397f1848b92dffb27536280733d19b4405edb4e650e",
       "module": "security__admission",
       "stories": [
         {
           "heading": "Story: Review every acquired item before granting admission",
-          "line": 28
+          "line": 31
         }
       ],
       "rules": [
         {
           "heading": "Story: Review every acquired item before granting admission / An assessment is bound to its queued revision, commit and template",
-          "line": 34,
+          "line": 37,
           "definitions": [
             "Disposition",
             "Refusal",
@@ -9701,7 +9830,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Each attempt starts from nothing and a service failure leaves the assessment pending",
-          "line": 83,
+          "line": 86,
           "definitions": [
             "ServiceFailure",
             "resetRun",
@@ -9715,7 +9844,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Acquisition binds one shallow fetch of the exact commit",
-          "line": 122,
+          "line": 125,
           "definitions": [
             "FetchOutcome",
             "Fetch",
@@ -9728,7 +9857,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / A replaced template requeues the pending assessment with its original commit",
-          "line": 167,
+          "line": 170,
           "definitions": [
             "canRequeueWithTemplate",
             "requeueWithTemplate",
@@ -9738,7 +9867,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Every reviewed batch covers the next unreviewed inventory entries",
-          "line": 186,
+          "line": 189,
           "definitions": [
             "canReviewBatch",
             "reviewBatch",
@@ -9753,7 +9882,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Risky artifacts run in an isolated sandbox without network or secrets",
-          "line": 215,
+          "line": 218,
           "definitions": [
             "BehaviorAnalysis",
             "ArtifactRun",
@@ -9765,7 +9894,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / The primary review decides and an ambiguous or high-risk finding needs the specialist",
-          "line": 244,
+          "line": 247,
           "definitions": [
             "PrimaryOutcome",
             "SpecialistOutcome",
@@ -9784,7 +9913,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Synthesis decides the repository result and confirmed malice needs trusted evidence",
-          "line": 281,
+          "line": 284,
           "definitions": [
             "reviewsComplete",
             "cleanEvidence",
@@ -9798,7 +9927,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / A reused clean result cites one original clean scan of the same repository and commit",
-          "line": 309,
+          "line": 312,
           "definitions": [
             "ReuseOrigin",
             "canReuse",
@@ -9811,7 +9940,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Evidence durability precedes a clean or malicious publication",
-          "line": 347,
+          "line": 350,
           "definitions": [
             "Retention",
             "canRetain",
@@ -9822,7 +9951,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Publication records its intent, sends once, keeps uncertainty and records the result exactly once",
-          "line": 372,
+          "line": 375,
           "definitions": [
             "ReceiptKind",
             "Receipt",
@@ -9854,7 +9983,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window",
-          "line": 443,
+          "line": 446,
           "definitions": [
             "signatureWindowMs",
             "SignedFields",
@@ -9872,7 +10001,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / An explicit later investigation controls admission while it is open",
-          "line": 494,
+          "line": 497,
           "definitions": [
             "canOpenInvestigation",
             "openInvestigation",
@@ -9887,7 +10016,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / The outcome and the per-assessment record are what enforcement reads",
-          "line": 521,
+          "line": 524,
           "definitions": [
             "Outcome",
             "AssessmentRecord",
@@ -9919,7 +10048,7 @@
         },
         {
           "heading": "Story: Review every acquired item before granting admission / Simulation weights steer runs to each outcome",
-          "line": 580,
+          "line": 583,
           "definitions": [
             "weight_acquire",
             "weight_reviewBatch",
@@ -9950,15 +10079,15 @@
         },
         {
           "target": "./sandbox.md",
-          "line": 217
+          "line": 220
         },
         {
           "target": "./evidence.md",
-          "line": 356
+          "line": 359
         },
         {
           "target": "./enforcement.md",
-          "line": 460
+          "line": 463
         }
       ]
     },
@@ -10294,7 +10423,7 @@
     },
     {
       "path": "spec/security/screening.md",
-      "sha256": "4bd05214f6f9b783e845cbcbcbde3d8ea716e61e270c3a4f2be99528f025f83c",
+      "sha256": "ac32b8563a80b366dc92c3017521f18d112a0fec90c794521aa38ceddfdf8faf",
       "module": "security__screening",
       "stories": [
         {
@@ -10350,7 +10479,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / A late result cannot replace human review or a newly saved version",
-          "line": 122,
+          "line": 124,
           "definitions": [
             "RevisionEvidence",
             "canReviewReport",
@@ -10365,7 +10494,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Routing writes only private references for the current qualified version",
-          "line": 158,
+          "line": 160,
           "definitions": [
             "Routing",
             "canRoute",
@@ -10378,7 +10507,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Samples exercise missing, stale, duplicate and current screening evidence",
-          "line": 184,
+          "line": 186,
           "definitions": [
             "seenRevisionValues",
             "nowMsValues",
@@ -10405,11 +10534,11 @@
       "references": [
         {
           "target": "./terms.md",
-          "line": 64
+          "line": 66
         },
         {
           "target": "./journey.md",
-          "line": 125
+          "line": 127
         }
       ]
     },
@@ -10897,7 +11026,7 @@
     },
     {
       "path": "spec/security/terms.md",
-      "sha256": "1c563238a5f6ebeb281a9f2387e2c4b5201c8d08d9e4654215cfd26f681ab3d5",
+      "sha256": "85d4d297109cfacee9e3315457e4a895c4260b84efa43803b974990585c0e5d3",
       "module": "security__terms",
       "stories": [
         {
@@ -10935,7 +11064,7 @@
         },
         {
           "heading": "Story: Decide an award under the terms that accompanied the report / A finding qualifies only under its frozen eligibility class",
-          "line": 60,
+          "line": 63,
           "definitions": [
             "Severity",
             "LossFinding",
@@ -10946,7 +11075,7 @@
         },
         {
           "heading": "Story: Decide an award under the terms that accompanied the report / A fixed offer permits its receipt-time gross amount or no award",
-          "line": 80,
+          "line": 83,
           "definitions": [
             "fixedOffer",
             "amountAllowed",
@@ -10957,7 +11086,7 @@
         },
         {
           "heading": "Story: Decide an award under the terms that accompanied the report / Simulation samples include absent, early and current paid terms",
-          "line": 97,
+          "line": 100,
           "definitions": [
             "standardTerms",
             "fullTerms",
@@ -11156,7 +11285,7 @@
     },
     {
       "path": "spec/settlement/paymentDispatch.md",
-      "sha256": "1e41504ff1c43e10ddb3dc4196fe17a86f2071c27f449f92ca391cc1d6f1e882",
+      "sha256": "2a11a4b4367c625c97f266ec9ba99f2a10542556c1be2745bc0cd978f8813299",
       "module": "settlement__paymentDispatch",
       "stories": [
         {
@@ -11165,11 +11294,11 @@
         },
         {
           "heading": "Story: Recover uncertainty without opening a competing transfer",
-          "line": 163
+          "line": 188
         },
         {
           "heading": "Story: Index the canonical finalized payment independently of callback order",
-          "line": 231
+          "line": 256
         }
       ],
       "rules": [
@@ -11226,7 +11355,7 @@
         },
         {
           "heading": "Story: Dispatch under the current outbox lease / New wallet authority keeps an uncertain former wallet attempt held",
-          "line": 112,
+          "line": 113,
           "definitions": [
             "canAuthorizeWallet",
             "mayRelease",
@@ -11242,8 +11371,17 @@
           ]
         },
         {
+          "heading": "Story: Dispatch under the current outbox lease / A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready",
+          "line": 164,
+          "definitions": [
+            "canPrepareBinding",
+            "prepareBinding",
+            "sometimesBindingPreparedBeforeDispatch"
+          ]
+        },
+        {
           "heading": "Story: Recover uncertainty without opening a competing transfer / Classify the exact executor journal result",
-          "line": 165,
+          "line": 190,
           "definitions": [
             "canRecoverExecutor",
             "acceptJournalSubmission",
@@ -11254,7 +11392,7 @@
         },
         {
           "heading": "Story: Recover uncertainty without opening a competing transfer / A reverted receipt names the attempt observed before the asynchronous read",
-          "line": 202,
+          "line": 227,
           "definitions": [
             "canInspectFailure",
             "inspectFailure",
@@ -11264,7 +11402,7 @@
         },
         {
           "heading": "Story: Index the canonical finalized payment independently of callback order / A scanner receipt commits through the canonical financial owner",
-          "line": 233,
+          "line": 258,
           "definitions": [
             "exactReceipt",
             "canIndexFinalized",
@@ -11284,7 +11422,7 @@
         },
         {
           "heading": "Story: Index the canonical finalized payment independently of callback order / Finite inputs exercise overlapping leases, claims and receipts",
-          "line": 292,
+          "line": 317,
           "definitions": [
             "ordinaryTarget",
             "privateTarget",
@@ -11328,11 +11466,11 @@
         },
         {
           "target": "./composition.md",
-          "line": 257
+          "line": 282
         },
         {
           "target": "./payment.md",
-          "line": 258
+          "line": 283
         }
       ]
     },
@@ -11669,7 +11807,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "7477a03eea1d306c97ba9a78d122863d606c5005f0cef914df985f75cb58abe6",
+      "sha256": "54623f1179fc8fe598480756d4837658f947bfa67c5aa00e1731ebba156e7ae4",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -11704,156 +11842,160 @@
           "line": 11
         },
         {
-          "target": "./allocation.md",
+          "target": "./monthPledges.md",
           "line": 12
         },
         {
-          "target": "./payoutExclusions.md",
+          "target": "./allocation.md",
           "line": 13
         },
         {
-          "target": "./monthly.md",
+          "target": "./payoutExclusions.md",
           "line": 14
         },
         {
-          "target": "./monthlySettings.md",
+          "target": "./monthly.md",
           "line": 15
         },
         {
-          "target": "./monthlyCommitment.md",
+          "target": "./monthlySettings.md",
           "line": 16
         },
         {
-          "target": "./monthlySettlement.md",
+          "target": "./monthlyCommitment.md",
           "line": 17
         },
         {
-          "target": "./monthlyExecution.md",
+          "target": "./monthlySettlement.md",
           "line": 18
         },
         {
-          "target": "./octoberImport.md",
+          "target": "./monthlyExecution.md",
           "line": 19
         },
         {
-          "target": "./ownerTransactions.md",
+          "target": "./octoberImport.md",
           "line": 20
         },
         {
-          "target": "./payment.md",
+          "target": "./ownerTransactions.md",
           "line": 21
         },
         {
-          "target": "./paymentDispatch.md",
+          "target": "./payment.md",
           "line": 22
         },
         {
-          "target": "./paymentInvestigation.md",
+          "target": "./paymentDispatch.md",
           "line": 23
         },
         {
-          "target": "./evmScan.md",
+          "target": "./paymentInvestigation.md",
           "line": 24
         },
         {
-          "target": "./solanaScan.md",
+          "target": "./evmScan.md",
           "line": 25
         },
         {
-          "target": "./directTransfers.md",
+          "target": "./solanaScan.md",
           "line": 26
         },
         {
-          "target": "./publicRecords.md",
+          "target": "./directTransfers.md",
           "line": 27
         },
         {
-          "target": "./composition.md",
+          "target": "./publicRecords.md",
           "line": 28
         },
         {
-          "target": "./directBounty.md",
+          "target": "./composition.md",
           "line": 29
         },
         {
-          "target": "./privateAward.md",
+          "target": "./directBounty.md",
           "line": 30
         },
         {
-          "target": "./recovery.md",
+          "target": "./privateAward.md",
           "line": 31
         },
         {
-          "target": "./privateAward.md",
+          "target": "./recovery.md",
           "line": 32
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./privateAward.md",
           "line": 33
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 34
         },
         {
-          "target": "./attesterActivation.md",
+          "target": "./signer.md",
           "line": 35
         },
         {
-          "target": "./feeReplacement.md",
+          "target": "./attesterActivation.md",
           "line": 36
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./feeReplacement.md",
           "line": 37
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 38
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./keeperScan.md",
           "line": 39
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 40
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 41
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 42
         },
         {
-          "target": "./referralAccrual.md",
+          "target": "./referrals.md",
           "line": 43
         },
         {
-          "target": "./referralHolds.md",
+          "target": "./referralAccrual.md",
           "line": 44
         },
         {
-          "target": "./referralFiles.md",
+          "target": "./referralHolds.md",
           "line": 45
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralFiles.md",
           "line": 46
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 47
         },
         {
-          "target": "./referralWatch.md",
+          "target": "./referralDistributor.md",
           "line": 48
         },
         {
-          "target": "../fees/",
+          "target": "./referralWatch.md",
           "line": 49
+        },
+        {
+          "target": "../fees/",
+          "line": 50
         }
       ]
     },
@@ -12266,7 +12408,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "52d16270614f6f8b7fa43b206fc558b76eec8bd254fc440ad6162e5d8a5681a9",
+      "sha256": "17bea132ebba14d6a2d57dc452a8f70e66b4c2f3b0deb004897873ca0003df24",
       "module": "settlement__monthly",
       "stories": [
         {
@@ -12283,11 +12425,11 @@
         },
         {
           "heading": "Story: Create obligations only when the whole month is covered",
-          "line": 272
+          "line": 311
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact",
-          "line": 351
+          "line": 397
         }
       ],
       "rules": [
@@ -12403,8 +12545,20 @@
           ]
         },
         {
+          "heading": "Story: Freeze exactly one execution snapshot / A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project",
+          "line": 275,
+          "definitions": [
+            "canObservePledge",
+            "observePledge",
+            "pledgeConsents",
+            "stepPledgeKept",
+            "sometimesPledgedMonthFrozen",
+            "pledgeVaultValues"
+          ]
+        },
+        {
           "heading": "Story: Create obligations only when the whole month is covered / Fresh finalized free funds must cover this month and every earlier unreserved obligation",
-          "line": 274,
+          "line": 313,
           "definitions": [
             "VaultObservation",
             "banFor",
@@ -12422,7 +12576,7 @@
         },
         {
           "heading": "Story: Create obligations only when the whole month is covered / A finalized award reserves an obligation and a ledger payment pays it",
-          "line": 308,
+          "line": 354,
           "definitions": [
             "AwardFact",
             "obligationFor",
@@ -12442,7 +12596,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The allocation is conserved within the month's pool",
-          "line": 353,
+          "line": 399,
           "definitions": [
             "alwaysAllocationConserved",
             "proposedPhase",
@@ -12452,21 +12606,21 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Every cut keeps its reason bounds, its change and exactly one Inbox notice",
-          "line": 368,
+          "line": 414,
           "definitions": [
             "alwaysCutsRecorded"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The public cut list is exactly each contributor's latest change when that change is a cut",
-          "line": 380,
+          "line": 426,
           "definitions": [
             "alwaysPublicCutsCurrent"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / A month with a cut freezes no earlier than 24 hours after the latest cut",
-          "line": 390,
+          "line": 436,
           "definitions": [
             "alwaysAutomaticHonoursCutNotice",
             "alwaysFreezeAfterCutNotice"
@@ -12474,7 +12628,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Obligations follow the frozen shares exactly, excluding only banned accounts",
-          "line": 404,
+          "line": 450,
           "definitions": [
             "alwaysObligationsMatchShares",
             "alwaysEveryPayableShareAccounted",
@@ -12487,7 +12641,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Frozen amounts, recorded triggers and obligation progress never move backwards",
-          "line": 427,
+          "line": 473,
           "definitions": [
             "frozenPhase",
             "stepFrozenStable",
@@ -12502,7 +12656,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Proposals, changes, cuts, freezes, exclusions and payments are reachable",
-          "line": 453,
+          "line": 499,
           "definitions": [
             "sometimesWalletlessReserve",
             "sometimesCompleted",
@@ -12577,6 +12731,14 @@
         {
           "target": "./escrow.md",
           "line": 23
+        },
+        {
+          "target": "./monthPledges.md",
+          "line": 279
+        },
+        {
+          "target": "./monthPledges.md",
+          "line": 321
         }
       ]
     },
@@ -13617,7 +13779,7 @@
     },
     {
       "path": "spec/settlement/vaultSnapshots.md",
-      "sha256": "42d7881b44ba4845caf7d05e3e9921e441b60c50aedcd4682dbb186c41901be6",
+      "sha256": "ad05806c353fb77d36f1bb4d19ca34fb3e058944a16f5f7adf1e783987b0547b",
       "module": "settlement__vaultSnapshots",
       "stories": [
         {
@@ -13626,15 +13788,19 @@
         },
         {
           "heading": "Story: Recover or refresh with exact finalized evidence",
-          "line": 150
+          "line": 153
         },
         {
           "heading": "Story: Keep each vault's first read of the month",
-          "line": 321
+          "line": 327
+        },
+        {
+          "heading": "Story: Keep each vault's month pledges with its finalized read",
+          "line": 369
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero",
-          "line": 363
+          "line": 410
         }
       ],
       "rules": [
@@ -13700,7 +13866,7 @@
         },
         {
           "heading": "Story: Recover or refresh with exact finalized evidence / Only a reviewed registry binding can obtain totals",
-          "line": 152,
+          "line": 155,
           "definitions": [
             "canBeginRead",
             "beginBoundRead",
@@ -13723,7 +13889,7 @@
         },
         {
           "heading": "Story: Recover or refresh with exact finalized evidence / The write compares the latest row atomically",
-          "line": 216,
+          "line": 219,
           "definitions": [
             "countersAdvance",
             "isOlder",
@@ -13773,7 +13939,7 @@
         },
         {
           "heading": "Story: Keep each vault's first read of the month / The first finalized read of each UTC month is recorded once per vault and never changes",
-          "line": 323,
+          "line": 329,
           "definitions": [
             "sameMonthStart",
             "monthStartOf",
@@ -13784,8 +13950,23 @@
           ]
         },
         {
+          "heading": "Story: Keep each vault's month pledges with its finalized read / An ordinary vault read stores its month pledges, keeping the newest read of each month",
+          "line": 371,
+          "definitions": [
+            "withMonthPledges",
+            "alwaysPledgesOfTheOrdinaryVault",
+            "stepStoredPledgesNeverDropped",
+            "sometimesOpenPledgeStored",
+            "sometimesClosedPledgeKept",
+            "pledgeSample",
+            "pledgedRead",
+            "closedPledgeRead",
+            "unsupportedPledgeRead"
+          ]
+        },
+        {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero / A failed refresh keeps the last totals marked stale",
-          "line": 365,
+          "line": 412,
           "definitions": [
             "Freshness",
             "ShownBalance",
@@ -13802,6 +13983,7 @@
       ],
       "imports": [
         "settlement__money",
+        "settlement__monthPledges",
         "settlement__calendar"
       ],
       "references": [
@@ -13811,7 +13993,11 @@
         },
         {
           "target": "../frontend/projections.md",
-          "line": 339
+          "line": 345
+        },
+        {
+          "target": "./monthPledges.md",
+          "line": 374
         }
       ]
     },
@@ -14326,7 +14512,7 @@
     },
     {
       "path": "spec/slopbot/index.md",
-      "sha256": "4e73ae15d2ac1d8ed836cf8384579aa49a83beed198ae4036acaf564460f63e5",
+      "sha256": "8789b71b87f1da5d76e3ab5ba5b203ab7a48db15aa97094d8c8018c94e2639e5",
       "module": "slopbot",
       "stories": [],
       "rules": [],
@@ -14353,117 +14539,125 @@
           "line": 11
         },
         {
-          "target": "./review.md",
+          "target": "./reviewCap.md",
           "line": 12
         },
         {
-          "target": "./reviewLease.md",
+          "target": "./review.md",
           "line": 13
         },
         {
-          "target": "./budgetBlocks.md",
+          "target": "./readyLabel.md",
           "line": 14
         },
         {
-          "target": "./spendAlerts.md",
+          "target": "./reviewLease.md",
           "line": 15
         },
         {
-          "target": "./valueRequests.md",
+          "target": "./budgetBlocks.md",
           "line": 16
         },
         {
-          "target": "./valueInference.md",
+          "target": "./spendAlerts.md",
           "line": 17
         },
         {
-          "target": "./valueHistory.md",
+          "target": "./valueRequests.md",
           "line": 18
         },
         {
-          "target": "./workUnits.md",
+          "target": "./valueInference.md",
           "line": 19
         },
         {
-          "target": "./historicalImport.md",
+          "target": "./valueHistory.md",
           "line": 20
         },
         {
-          "target": "./assessmentInbox.md",
+          "target": "./workUnits.md",
           "line": 21
         },
         {
-          "target": "./valueEvidence.md",
+          "target": "./historicalImport.md",
           "line": 22
         },
         {
-          "target": "./categories.md",
+          "target": "./assessmentInbox.md",
           "line": 23
         },
         {
-          "target": "./closure.md",
+          "target": "./valueEvidence.md",
           "line": 24
         },
         {
-          "target": "./closureActivation.md",
+          "target": "./categories.md",
           "line": 25
         },
         {
-          "target": "./closeCapacity.md",
+          "target": "./closure.md",
           "line": 26
         },
         {
-          "target": "./closeAttempt.md",
+          "target": "./closureActivation.md",
           "line": 27
         },
         {
-          "target": "./maintainerHold.md",
+          "target": "./closeCapacity.md",
           "line": 28
         },
         {
-          "target": "./appeals.md",
+          "target": "./closeAttempt.md",
           "line": 29
         },
         {
-          "target": "./composition.md",
+          "target": "./maintainerHold.md",
           "line": 30
         },
         {
-          "target": "./valueDisputes.md",
+          "target": "./appeals.md",
           "line": 31
         },
         {
-          "target": "./pointsDisputes.md",
+          "target": "./composition.md",
           "line": 32
         },
         {
-          "target": "./reportingReadiness.md",
+          "target": "./valueDisputes.md",
           "line": 33
         },
         {
-          "target": "./publicFeeds.md",
+          "target": "./pointsDisputes.md",
           "line": 34
+        },
+        {
+          "target": "./reportingReadiness.md",
+          "line": 35
+        },
+        {
+          "target": "./publicFeeds.md",
+          "line": 36
         }
       ]
     },
     {
       "path": "spec/slopbot/review.md",
-      "sha256": "46aa10a39129a48f0ae4cca91b1c49d2ea223b2d9825b5da6812412fb6c5387e",
+      "sha256": "90679cc5ad2e91b65af1711ba94e695963d678a62ef71f481391acf746ac1e51",
       "module": "slopbot__review",
       "stories": [
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes",
-          "line": 21
+          "line": 26
         },
         {
           "heading": "Story: Read the whole bounded input and keep one disclosed review comment",
-          "line": 263
+          "line": 323
         }
       ],
       "rules": [
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / A routed item is reviewed only with isolation and an exact bound source",
-          "line": 23,
+          "line": 28,
           "definitions": [
             "Provider",
             "CallKind",
@@ -14488,8 +14682,22 @@
           ]
         },
         {
+          "heading": "Story: Review registered work and preserve incomplete outcomes / A bound review of a new item over the month's free-review cap is skipped before any call",
+          "line": 75,
+          "definitions": [
+            "canAdmitMonthly",
+            "admitMonthly",
+            "canRefuseMonthlyCap",
+            "refuseMonthlyCap",
+            "lawAdmittedItemIsNeverRefused",
+            "alwaysCallsNeedAdmission",
+            "sometimesMonthlyCapSkipped",
+            "usedThisMonthValues"
+          ]
+        },
+        {
           "heading": "Story: Review registered work and preserve incomplete outcomes / Each provider step first rechecks the live registry",
-          "line": 69,
+          "line": 113,
           "definitions": [
             "canRecheckRegistry",
             "recheckRegistry",
@@ -14498,22 +14706,26 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / Each call is recorded free, and only a Surplus spending denial blocks the route",
-          "line": 86,
+          "line": 130,
           "definitions": [
             "noCall",
             "expectedModel",
             "nextProvider",
+            "routeEnd",
             "validVerdict",
             "canSkipMissingCredential",
             "skipMissingCredential",
             "canRecordCall",
             "recordCall",
-            "stepEveryCallFollowsARecheck"
+            "stepEveryCallFollowsARecheck",
+            "alwaysRememberedResetHasItsDenial",
+            "sometimesOrbioAfterADenial",
+            "sometimesOrbioServesAfterADenial"
           ]
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / A closure needs a second, agreeing review, and limited coverage stays advisory",
-          "line": 131,
+          "line": 190,
           "definitions": [
             "hasFinding",
             "agrees",
@@ -14532,7 +14744,7 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / Every call is free, attributed and accounted",
-          "line": 178,
+          "line": 237,
           "definitions": [
             "alwaysFreeAndAttributed",
             "alwaysOnlySurplusBlocks",
@@ -14543,7 +14755,7 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / A failed review restarts on a new delivery, and a blocked one only after its reset",
-          "line": 196,
+          "line": 255,
           "definitions": [
             "canRetry",
             "retry",
@@ -14562,7 +14774,7 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / Simulation samples exercise each call outcome, verdict and coverage",
-          "line": 230,
+          "line": 289,
           "definitions": [
             "sure",
             "okOrbio",
@@ -14582,7 +14794,7 @@
         },
         {
           "heading": "Story: Read the whole bounded input and keep one disclosed review comment / Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB",
-          "line": 269,
+          "line": 329,
           "definitions": [
             "ComparedFile",
             "DiffTally",
@@ -14610,7 +14822,7 @@
         },
         {
           "heading": "Story: Read the whole bounded input and keep one disclosed review comment / Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized",
-          "line": 336,
+          "line": 396,
           "definitions": [
             "IssueComment",
             "CommentHistory",
@@ -14637,40 +14849,49 @@
       ],
       "imports": [
         "slopbot__routing",
-        "slopbot__repositoryScope"
+        "slopbot__repositoryScope",
+        "slopbot__reviewCap"
       ],
       "references": [
         {
+          "target": "./reviewCap.md",
+          "line": 10
+        },
+        {
           "target": "./routing.md",
-          "line": 15
+          "line": 20
         },
         {
           "target": "./reviewLease.md",
-          "line": 16
+          "line": 21
         },
         {
           "target": "./budgetBlocks.md",
-          "line": 17
+          "line": 22
         },
         {
           "target": "./jobQueue.md",
-          "line": 18
+          "line": 23
         },
         {
           "target": "./spendAlerts.md",
-          "line": 19
+          "line": 24
+        },
+        {
+          "target": "./reviewCap.md",
+          "line": 78
         },
         {
           "target": "./jobQueue.md",
-          "line": 200
+          "line": 259
         },
         {
           "target": "./budgetBlocks.md",
-          "line": 201
+          "line": 260
         },
         {
           "target": "./closure.md",
-          "line": 281
+          "line": 341
         }
       ]
     },
@@ -14750,7 +14971,7 @@
     },
     {
       "path": "spec/slopbot/valueInference.md",
-      "sha256": "c6dc57629973ae410a8c1fead714f0f2c7b8d12d41d786f15a9f5914348eefa0",
+      "sha256": "3257af8dcece1e77725bc6337a649350f78a92b7aa658730b93d87a1f100a4eb",
       "module": "slopbot__valueInference",
       "stories": [
         {
@@ -14763,11 +14984,11 @@
         },
         {
           "heading": "Story: Retain only a proposal the collected evidence supports",
-          "line": 286
+          "line": 296
         },
         {
           "heading": "Story: Publish under the current exact authority",
-          "line": 443
+          "line": 453
         }
       ],
       "rules": [
@@ -14860,12 +15081,13 @@
             "canSkipUnavailable",
             "skipUnavailable",
             "canEndWithoutCall",
-            "endWithoutCall"
+            "endWithoutCall",
+            "sometimesOrbioAfterADenial"
           ]
         },
         {
           "heading": "Story: Hold paid attempts until exact usage reconciles / Usage precedes retained output and explicit completion",
-          "line": 228,
+          "line": 238,
           "definitions": [
             "canSaveUsage",
             "saveUsage",
@@ -14883,7 +15105,7 @@
         },
         {
           "heading": "Story: Retain only a proposal the collected evidence supports / A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence",
-          "line": 292,
+          "line": 302,
           "definitions": [
             "ProposalStatus",
             "ProposalTier",
@@ -14930,7 +15152,7 @@
         },
         {
           "heading": "Story: Publish under the current exact authority / A retained inference survives stale publication without another charge",
-          "line": 445,
+          "line": 455,
           "definitions": [
             "canCaptureFence",
             "captureFence",
@@ -15006,27 +15228,27 @@
         },
         {
           "target": "./spendAlerts.md",
-          "line": 145
+          "line": 151
         },
         {
           "target": "./spendAlerts.md",
-          "line": 237
+          "line": 247
         },
         {
           "target": "./assessmentInbox.md",
-          "line": 245
+          "line": 255
         },
         {
           "target": "./workUnits.md",
-          "line": 301
+          "line": 311
         },
         {
           "target": "../points/allocation.md",
-          "line": 318
+          "line": 328
         },
         {
           "target": "./workUnits.md",
-          "line": 325
+          "line": 335
         }
       ]
     },
@@ -15328,7 +15550,7 @@
     },
     {
       "path": "spec/backend/bindingConsent.md",
-      "sha256": "0d8bcceffd8ae6ef636616cc69937c3fbe55d4ef0bfe3a040820b48bfdb49790",
+      "sha256": "1c1456065d91894a1ddbc3321e75f8bb87699ed87bfcb2bdd5e02b2c5c5cf19f",
       "module": "backend__bindingConsent",
       "stories": [
         {
@@ -15423,8 +15645,23 @@
           ]
         },
         {
-          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / The wallet registries move underneath through their own guarded events",
+          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox",
           "line": 279,
+          "definitions": [
+            "canSolanaAdmitAttempt",
+            "solanaAdmitAttempt",
+            "lawAdmissionOpensOnlyForTheCurrentClaim",
+            "lawCompletionOpensNoAttempt",
+            "lawEarlierClaimAttemptKeepsObligation",
+            "lawAdmittedAttemptIsPreparable",
+            "sometimesPrepareOpenedFirstAttempt",
+            "sometimesPrivateAttemptAdmitted",
+            "weight_solanaAdmitAttempt"
+          ]
+        },
+        {
+          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / The wallet registries move underneath through their own guarded events",
+          "line": 324,
           "definitions": [
             "canObserveTime",
             "observeTime",
@@ -15457,7 +15694,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / Renewal, replacement, expiry, private completion and a replaced Solana claim are reachable",
-          "line": 330,
+          "line": 375,
           "definitions": [
             "authorizedSample",
             "initial",
@@ -15511,12 +15748,16 @@
         {
           "target": "../settlement/signer.md",
           "line": 18
+        },
+        {
+          "target": "../settlement/paymentDispatch.md",
+          "line": 285
         }
       ]
     },
     {
       "path": "spec/backend/identity.md",
-      "sha256": "5d4d8d1506b758288a2d63b4a107dd9cf62871acdc9765610393c4c5cbc3ce9e",
+      "sha256": "a9e1ca5da0b404adbb4cd1064f268932300345d1eec261dfb6977c8c6658d4e4",
       "module": "backend__identity",
       "stories": [
         {
@@ -15591,7 +15832,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / At most one poll receives the flow's identity",
-          "line": 164,
+          "line": 174,
           "definitions": [
             "PollOutcome",
             "pollOutcome",
@@ -15613,7 +15854,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / The assertion is consumed atomically by its own audience before it expires",
-          "line": 235,
+          "line": 245,
           "definitions": [
             "ConsumeOutcome",
             "consumeOutcome",
@@ -15628,7 +15869,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / Time advances and the hourly job removes only expired rows",
-          "line": 265,
+          "line": 275,
           "definitions": [
             "canAdvanceTime",
             "advanceTime",
@@ -15643,7 +15884,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / Every sign-in outcome is reachable",
-          "line": 296,
+          "line": 306,
           "definitions": [
             "sometimesIssued",
             "sometimesConsumed",
@@ -15693,7 +15934,7 @@
     },
     {
       "path": "spec/backend/mergeActivity.md",
-      "sha256": "82685b9ee06e57a0be74cfd6691ba6e3080f5ec0b4d10b527001f575431f4fe2",
+      "sha256": "9c0c6b627133c5248907656774dd2605d080f736c4d09a944b800002084a84f2",
       "module": "backend__mergeActivity",
       "stories": [
         {
@@ -15765,8 +16006,23 @@
           ]
         },
         {
-          "heading": "Story: Read each repository once a day and keep the last values on failure / Rules",
+          "heading": "Story: Read each repository once a day and keep the last values on failure / A path the project no longer lists is never read again and the next run deletes its row",
           "line": 128,
+          "definitions": [
+            "canUnlistPath",
+            "unlistPath",
+            "canPrune",
+            "prune",
+            "stepUnlistedStaysUnlisted",
+            "stepOnlyUnlistedRowsDeleted",
+            "stepUnlistedPathNotRead",
+            "sometimesTransferredRowDeleted",
+            "sometimesPausedRowKept"
+          ]
+        },
+        {
+          "heading": "Story: Read each repository once a day and keep the last values on failure / Rules",
+          "line": 158,
           "definitions": [
             "stepWritesOnlyMergeRows",
             "stepFailureKeepsLastValues",
@@ -16042,7 +16298,7 @@
     },
     {
       "path": "spec/contracts/evmEscrow.md",
-      "sha256": "968a150dd65368ab99a0071f4e45a83fdbf4ccd1430ee549d02ac403c3111711",
+      "sha256": "7284cca148a2941c5b1cc695469f65de11c0b9c87f76090f4d7b50c7cf93d482",
       "module": "contracts__evmEscrow",
       "stories": [
         {
@@ -16051,27 +16307,31 @@
         },
         {
           "heading": "Story: Create one vault per owner, project, token and purpose",
-          "line": 181
+          "line": 182
         },
         {
           "heading": "Story: Hold deposits in one free balance",
-          "line": 222
+          "line": 223
         },
         {
           "heading": "Story: Commit awards from free funds",
-          "line": 266
+          "line": 267
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap",
-          "line": 323
+          "line": 327
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably",
+          "line": 490
         },
         {
           "heading": "Story: Bind each actor's destination with the attester and the wallet",
-          "line": 472
+          "line": 554
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly",
-          "line": 535
+          "line": 617
         }
       ],
       "rules": [
@@ -16082,6 +16342,7 @@
             "VaultKey",
             "Binding",
             "Month",
+            "Pledge",
             "Reservation",
             "Vault",
             "Escrow",
@@ -16098,14 +16359,14 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Block time is positive",
-          "line": 72,
+          "line": 73,
           "definitions": [
             "alwaysClockStarted"
           ]
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Upgrade control moves only to an accepting recipient that holds no service key",
-          "line": 82,
+          "line": 83,
           "definitions": [
             "canProposeUpgradeAuthority",
             "proposeUpgradeAuthority",
@@ -16121,7 +16382,7 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / The registrar rotates the identity authority with no delay the current authority can block",
-          "line": 109,
+          "line": 110,
           "definitions": [
             "canProposeIdentityAuthority",
             "proposeIdentityAuthority",
@@ -16135,7 +16396,7 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Factory roles stay distinct through every transfer and rotation",
-          "line": 137,
+          "line": 138,
           "definitions": [
             "alwaysFactoryRolesSeparate",
             "alwaysUninitializedEmpty",
@@ -16144,7 +16405,7 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Only the upgrade authority changes logic and only a rotation changes the identity authority",
-          "line": 160,
+          "line": 161,
           "definitions": [
             "stepAuthorityChanges",
             "stepConfigurationFixed",
@@ -16156,7 +16417,7 @@
         },
         {
           "heading": "Story: Create one vault per owner, project, token and purpose / The caller becomes the owner of the only vault for its key",
-          "line": 183,
+          "line": 184,
           "definitions": [
             "keyOf",
             "canCreate",
@@ -16172,7 +16433,7 @@
         },
         {
           "heading": "Story: Hold deposits in one free balance / Anyone deposits the exact amount, and only credited deposits enter the free balance",
-          "line": 224,
+          "line": 225,
           "definitions": [
             "canDeposit",
             "deposit",
@@ -16183,7 +16444,7 @@
         },
         {
           "heading": "Story: Hold deposits in one free balance / Every credited unit stays in exactly one bucket and the asset balance covers them all",
-          "line": 242,
+          "line": 243,
           "definitions": [
             "alwaysConserved",
             "alwaysBalanceCovers",
@@ -16193,7 +16454,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split",
-          "line": 268,
+          "line": 269,
           "definitions": [
             "recordable",
             "recorded",
@@ -16206,7 +16467,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards",
-          "line": 298,
+          "line": 302,
           "definitions": [
             "alwaysReservedMatchesAwards",
             "alwaysPaidMatchesAwards",
@@ -16217,7 +16478,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / The owner sets the cap and turns monthly commitments on or off",
-          "line": 325,
+          "line": 329,
           "definitions": [
             "canSetMonthlyCommitment",
             "setMonthlyCommitment",
@@ -16226,7 +16487,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / A legacy allocation commits all its new awards at once and counts an existing identical award once",
-          "line": 341,
+          "line": 345,
           "definitions": [
             "noMonth",
             "hasMonth",
@@ -16234,6 +16495,8 @@
             "withMonth",
             "sumRemaining",
             "admissionOpen",
+            "capFor",
+            "closePledge",
             "existingMatches",
             "freshEntries",
             "canCommitMonthly",
@@ -16243,7 +16506,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / A version-2 reservation reserves the unfunded remainder against the current source sequence",
-          "line": 376,
+          "line": 392,
           "definitions": [
             "canReserveMonthly",
             "reserveMonthly"
@@ -16251,7 +16514,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / Anyone commits a proved leaf from its period's reserve without charging the free balance again",
-          "line": 402,
+          "line": 420,
           "definitions": [
             "leafProves",
             "canCommitMonthlyLeaf",
@@ -16262,7 +16525,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / The owner releases the whole untouched reserve of a wrong-total period once, with the attester's signature",
-          "line": 427,
+          "line": 445,
           "definitions": [
             "canReleaseMonthlyReserve",
             "releaseMonthlyReserve",
@@ -16271,7 +16534,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / Each period has one root, its gross stays within the cap at admission, and the pending reserve is the sum of remainders",
-          "line": 451,
+          "line": 469,
           "definitions": [
             "alwaysMonthsWellFormed",
             "alwaysPendingMatchesMonths",
@@ -16280,8 +16543,43 @@
           ]
         },
         {
+          "heading": "Story: Pledge free funds to future months irrevocably / The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge",
+          "line": 492,
+          "definitions": [
+            "noPledge",
+            "pledgeOf",
+            "unpledged",
+            "openPledged",
+            "pledgePeriods",
+            "pledgeable",
+            "raisedBy",
+            "addedBy",
+            "canPledgeMonths",
+            "pledgeMonths"
+          ]
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably / Anyone expires a pledge whose period's window closed without admission",
+          "line": 529,
+          "definitions": [
+            "canExpirePledge",
+            "expirePledge",
+            "sometimesPledgeAdmitted",
+            "sometimesPledgeExpired"
+          ]
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably / Free funds always cover the open pledges, a pledged month is never admitted, and a pledge only rises until it closes",
+          "line": 541,
+          "definitions": [
+            "alwaysPledgesCovered",
+            "alwaysPledgedMonthUnadmitted",
+            "stepPledgeIrrevocable"
+          ]
+        },
+        {
           "heading": "Story: Bind each actor's destination with the attester and the wallet / The identity authority binds a wallet that co-signed the exact binding, activating it at once",
-          "line": 474,
+          "line": 556,
           "definitions": [
             "noBinding",
             "hasBinding",
@@ -16294,7 +16592,7 @@
         },
         {
           "heading": "Story: Bind each actor's destination with the attester and the wallet / The owner cancels the latest unpaid binding only inside a review window and within the cap",
-          "line": 504,
+          "line": 586,
           "definitions": [
             "lastCommittedAt",
             "canCancelBinding",
@@ -16305,7 +16603,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone pays a matured award to its actor's latest uncancelled binding",
-          "line": 537,
+          "line": 619,
           "definitions": [
             "canPay",
             "pay",
@@ -16315,7 +16613,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / The owner withdraws free funds to itself less the 2% fee",
-          "line": 568,
+          "line": 650,
           "definitions": [
             "canWithdrawUnused",
             "withdrawUnused",
@@ -16325,7 +16623,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone moves all accrued fees to the fee recipient",
-          "line": 590,
+          "line": 672,
           "definitions": [
             "canClaimFees",
             "claimFees",
@@ -16334,7 +16632,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Simulation samples cover distinct and colliding keys, windows, allocations and signatures",
-          "line": 603,
+          "line": 685,
           "definitions": [
             "byValues",
             "registrarValues",
@@ -16380,7 +16678,11 @@
             "weight_releaseMonthlyReserve",
             "weight_cancelBinding",
             "weight_withdrawUnused",
-            "weight_claimFees"
+            "weight_claimFees",
+            "fromPeriodValues",
+            "countValues",
+            "weight_pledgeMonths",
+            "weight_expirePledge"
           ]
         }
       ],
@@ -16541,7 +16843,7 @@
     },
     {
       "path": "spec/contracts/solanaEscrow.md",
-      "sha256": "3cde419e8c0610dab7c96c33708bcdffa809e587bfa145d7de583199a318ad27",
+      "sha256": "e5e4f4cd9280911be91145e2736c8a6a49c61f517fe4e48828f935c4f0d8fa5d",
       "module": "contracts__solanaEscrow",
       "stories": [
         {
@@ -16550,35 +16852,39 @@
         },
         {
           "heading": "Story: Admit only the supported asset behavior",
-          "line": 93
+          "line": 96
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose",
-          "line": 119
+          "line": 122
         },
         {
           "heading": "Story: Rotate the identity authority with the owner and the rotation authority",
-          "line": 202
+          "line": 231
         },
         {
           "heading": "Story: Hold funds in one vault",
-          "line": 246
+          "line": 275
         },
         {
           "heading": "Story: Commit awards from free funds",
-          "line": 289
+          "line": 318
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap",
-          "line": 334
+          "line": 366
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably",
+          "line": 522
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet",
-          "line": 467
+          "line": 643
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly",
-          "line": 532
+          "line": 708
         }
       ],
       "rules": [
@@ -16593,6 +16899,7 @@
             "AccountFacts",
             "SolBinding",
             "Veto",
+            "Pledge",
             "SolMonth",
             "Program",
             "maxDelay",
@@ -16613,14 +16920,14 @@
         },
         {
           "heading": "Story: Pin the program's authorities / Block time is positive",
-          "line": 83,
+          "line": 86,
           "definitions": [
             "alwaysClockStarted"
           ]
         },
         {
           "heading": "Story: Admit only the supported asset behavior / A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner",
-          "line": 95,
+          "line": 98,
           "definitions": [
             "admittedMint",
             "admittedAccount",
@@ -16630,7 +16937,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The owner creates a token or native project with the Config's identity authority and fee recipient",
-          "line": 121,
+          "line": 124,
           "definitions": [
             "projectKeysValid",
             "opened",
@@ -16642,7 +16949,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The earlier build's project grows to the current layout with new counters at zero",
-          "line": 156,
+          "line": 159,
           "definitions": [
             "canCreateLegacyProject",
             "createLegacyProject",
@@ -16654,8 +16961,18 @@
           ]
         },
         {
+          "heading": "Story: Create one project per owner, project ID and purpose / The pre-pledge build's 332-byte project grows to the current layout with no open pledges",
+          "line": 207,
+          "definitions": [
+            "canCreatePrePledgeProject",
+            "createPrePledgeProject",
+            "alwaysPrePledgeShape",
+            "sometimesPrePledgeMigrated"
+          ]
+        },
+        {
           "heading": "Story: Rotate the identity authority with the owner and the rotation authority / The owner proposes, the rotation authority confirms and anyone executes after the delay",
-          "line": 204,
+          "line": 233,
           "definitions": [
             "live",
             "canProposeAuthorityRotation",
@@ -16673,7 +16990,7 @@
         },
         {
           "heading": "Story: Hold funds in one vault / Anyone deposits the exact amount, and only credited deposits enter the free balance",
-          "line": 248,
+          "line": 277,
           "definitions": [
             "free",
             "held",
@@ -16687,7 +17004,7 @@
         },
         {
           "heading": "Story: Hold funds in one vault / The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve",
-          "line": 271,
+          "line": 300,
           "definitions": [
             "alwaysVaultCovers",
             "alwaysFeesAccounted",
@@ -16697,7 +17014,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split",
-          "line": 291,
+          "line": 320,
           "definitions": [
             "recordable",
             "fundable",
@@ -16709,7 +17026,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / Reserves are exactly the unpaid awards plus outstanding monthly gross, and paid totals are exactly the paid awards",
-          "line": 316,
+          "line": 348,
           "definitions": [
             "alwaysReservedMatches",
             "alwaysPaidMatches",
@@ -16720,7 +17037,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / The owner sets the cap and turns monthly commitments on or off",
-          "line": 336,
+          "line": 368,
           "definitions": [
             "canSetMonthlyCommitment",
             "setMonthlyCommitment"
@@ -16728,20 +17045,23 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone records a signed, fully funded allocation once per period inside its window",
-          "line": 347,
+          "line": 380,
           "definitions": [
             "noSolMonth",
             "hasMonth",
             "monthFor",
             "withMonth",
             "sumUnsettled",
+            "namedPledge",
+            "capFor",
+            "closeNamed",
             "canCommitMonthly",
             "commitMonthly"
           ]
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone commits a proved leaf from its month's reserve",
-          "line": 373,
+          "line": 428,
           "definitions": [
             "leafProves",
             "settleable",
@@ -16753,7 +17073,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone returns a leaf that can never commit, and never a selective refund",
-          "line": 402,
+          "line": 457,
           "definitions": [
             "neverCommits",
             "canReleaseMonthlyAward",
@@ -16763,7 +17083,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / The owner releases the whole untouched reserve of a wrong-total month once, with the attester's signature",
-          "line": 423,
+          "line": 478,
           "definitions": [
             "canReleaseMonthlyReserve",
             "releaseMonthlyReserve",
@@ -16772,7 +17092,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Each period has one month within the cap at admission, and outstanding gross is the sum of unsettled totals",
-          "line": 444,
+          "line": 499,
           "definitions": [
             "alwaysMonthsWellFormed",
             "alwaysOutstandingMatchesMonths",
@@ -16781,8 +17101,63 @@
           ]
         },
         {
+          "heading": "Story: Pledge free funds to future months irrevocably / The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering",
+          "line": 527,
+          "definitions": [
+            "noPledge",
+            "pledgeOf",
+            "unpledged",
+            "openPledged",
+            "pledgeable",
+            "raisedBy",
+            "canPledgeMonth",
+            "pledgeMonth",
+            "lawElevenMonthsAhead",
+            "weight_pledgeMonth"
+          ]
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably / Anyone closes an open pledge once its period is committed or the period's window has closed",
+          "line": 569,
+          "definitions": [
+            "closePledge",
+            "canExpirePledge",
+            "expirePledge",
+            "weight_expirePledge"
+          ]
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably / The owner deletes a closed pledge account for its rent, and its ended period is never pledged again",
+          "line": 589,
+          "definitions": [
+            "canCloseMonthPledge",
+            "closeMonthPledge",
+            "weight_closeMonthPledge"
+          ]
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably / Open pledges never exceed the free balance, and a closed pledge's period was committed or its window closed",
+          "line": 603,
+          "definitions": [
+            "alwaysPledgesCovered",
+            "alwaysClosedPledgeEnded",
+            "sometimesPledgeOpen",
+            "sometimesPledgeAdmittedWhileOff",
+            "sometimesPledgeExpired",
+            "sometimesPledgeOpenAfterAdmission"
+          ]
+        },
+        {
+          "heading": "Story: Pledge free funds to future months irrevocably / A pledge's open amount never falls, and only a commit, a lapse or the owner's deletion ends it",
+          "line": 628,
+          "definitions": [
+            "stepPledgeIrrevocable",
+            "stepPledgeRecordKept"
+          ]
+        },
+        {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet / The identity authority and the destination both sign a binding for the project's network",
-          "line": 469,
+          "line": 645,
           "definitions": [
             "noSolBinding",
             "hasBinding",
@@ -16795,7 +17170,7 @@
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet / The owner vetoes the latest unpaid binding version once, inside a review window and within the cap",
-          "line": 500,
+          "line": 676,
           "definitions": [
             "vetoed",
             "canVetoBinding",
@@ -16806,7 +17181,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone pays a matured obligation to its actor's latest unvetoed binding",
-          "line": 534,
+          "line": 710,
           "definitions": [
             "payable",
             "paidOut",
@@ -16823,7 +17198,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / The owner withdraws free funds to its own account less the 2% fee",
-          "line": 575,
+          "line": 751,
           "definitions": [
             "refundable",
             "refunded",
@@ -16836,7 +17211,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone moves all accrued fees to the fee recipient",
-          "line": 597,
+          "line": 775,
           "definitions": [
             "feesClaimed",
             "canClaimFees",
@@ -16848,7 +17223,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Simulation samples cover admitted and refused assets, windows, allocations and signers",
-          "line": 614,
+          "line": 792,
           "definitions": [
             "byValues",
             "successorValues",
@@ -16882,6 +17257,7 @@
             "claimValues",
             "expiresAtValues",
             "timestampValues",
+            "nowValues",
             "weight_upgradeProgram",
             "weight_initializeConfig",
             "weight_initialize",
@@ -17438,7 +17814,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "02bc32d1fe208b808717db2abef642503169746e109960cff9a0663f9d2618f7",
+      "sha256": "4726c812bd76a494ca5d9deb7c7f731548d1407c648401f4374eb7f58de99e23",
       "module": "contributor__publication",
       "stories": [
         {
@@ -17447,11 +17823,11 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance",
-          "line": 187
+          "line": 224
         },
         {
           "heading": "Story: Publish the bootstrap skill and agent discovery files from one source",
-          "line": 295
+          "line": 332
         }
       ],
       "rules": [
@@ -17508,8 +17884,21 @@
           ]
         },
         {
+          "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project",
+          "line": 158,
+          "definitions": [
+            "MonthListing",
+            "monthListingOf",
+            "lawUnfundedProjectNotDiscovered",
+            "lawFailedFundingReadListsAsBefore",
+            "lawFundingReadDecidesOnlyWhenRead",
+            "lawUnfundedProjectServesByDirectLink",
+            "lawDiscoveryIsInstallerGateListedThisMonth"
+          ]
+        },
+        {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD",
-          "line": 156,
+          "line": 193,
           "definitions": [
             "ArtifactResponse",
             "handled",
@@ -17521,7 +17910,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The template index binds templateSha256 to the template, renderer and accepted-revision digests",
-          "line": 197,
+          "line": 234,
           "definitions": [
             "RevisionStatus",
             "SourceFile",
@@ -17542,7 +17931,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / Only bytes equal to the build commit's tracked tree are labelled committed",
-          "line": 246,
+          "line": 283,
           "definitions": [
             "sourceStatus",
             "groupStatus",
@@ -17554,7 +17943,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The server renders only template files whose bytes match the index digest",
-          "line": 274,
+          "line": 311,
           "definitions": [
             "ServedTemplateFile",
             "maxTemplateFileBytes",
@@ -17565,7 +17954,7 @@
         },
         {
           "heading": "Story: Publish the bootstrap skill and agent discovery files from one source / The served bootstrap skill and the agent-skills index carry the same digest",
-          "line": 304,
+          "line": 341,
           "definitions": [
             "BootstrapSource",
             "BootstrapOutputs",
@@ -17576,14 +17965,14 @@
         },
         {
           "heading": "Story: Publish the bootstrap skill and agent discovery files from one source / llms.txt and skill-manifest.json state the build commit and its committed or working-tree status",
-          "line": 332,
+          "line": 369,
           "definitions": [
             "lawBootstrapStatusIsExact"
           ]
         },
         {
           "heading": "Story: Publish the bootstrap skill and agent discovery files from one source / The bootstrap's renderer contract names files that exist byte-identical at the build commit",
-          "line": 348,
+          "line": 385,
           "definitions": [
             "guideRendererPaths",
             "guideRendererRevision",
@@ -17594,7 +17983,7 @@
         },
         {
           "heading": "Story: Publish the bootstrap skill and agent discovery files from one source / Protocol documents are generated from their one maintained source and historical protocol links stay immutable",
-          "line": 372,
+          "line": 409,
           "definitions": [
             "ProtocolDocument",
             "DocumentSource",
@@ -17609,13 +17998,15 @@
         },
         {
           "heading": "Story: Publish the bootstrap skill and agent discovery files from one source / Simulation samples cover listed, paused, restricted and unverified projects and committed and working-tree builds",
-          "line": 403,
+          "line": 440,
           "definitions": [
             "servedFacts",
             "knownValues",
             "openProjectView",
             "viewValues",
             "repositoriesValues",
+            "listingValues",
+            "factsValues",
             "projectIdValues",
             "artifactNameValues",
             "committedFile",
@@ -17633,7 +18024,8 @@
       ],
       "imports": [
         "backend__listing",
-        "frontend__projections"
+        "frontend__projections",
+        "frontend__poolListing"
       ],
       "references": [
         {
@@ -17650,11 +18042,15 @@
         },
         {
           "target": "./skillAuthority.md",
-          "line": 134
+          "line": 135
+        },
+        {
+          "target": "../frontend/poolListing.md",
+          "line": 167
         },
         {
           "target": "./skillAuthority.md",
-          "line": 254
+          "line": 291
         }
       ]
     },
@@ -18339,7 +18735,7 @@
     },
     {
       "path": "spec/fees/buybackPool.md",
-      "sha256": "c7ec04c92d84662f2f2af8d5432f2ec80b7690ff74950c6df948b101e1c343a1",
+      "sha256": "f345fff8f22d2f49dafcbec381dc310606e112dab645eea9d8c24dc90da715d2",
       "module": "fees__buybackPool",
       "stories": [
         {
@@ -18352,11 +18748,11 @@
         },
         {
           "heading": "Story: Burn half of everything acquired, once",
-          "line": 194
+          "line": 216
         },
         {
           "heading": "Story: Keep the pool's totals within their shares",
-          "line": 249
+          "line": 271
         }
       ],
       "rules": [
@@ -18412,7 +18808,10 @@
             "RouteResult",
             "PurchaseQuote",
             "maximumSafeValue",
+            "minimumPurchase",
             "remaining",
+            "purchaseInput",
+            "sometimesPurchaseWaitsBeforeRoute",
             "purchaseDecision",
             "lastDecision",
             "note",
@@ -18429,7 +18828,7 @@
         },
         {
           "heading": "Story: Buy SLOP only within one set of caps and only from receipts / A purchase never spends more than the Robinhood fee wallet's finalized USDG balance",
-          "line": 156,
+          "line": 178,
           "definitions": [
             "withinUsdgBalance",
             "sometimesPurchaseBelowCredit"
@@ -18437,7 +18836,7 @@
         },
         {
           "heading": "Story: Buy SLOP only within one set of caps and only from receipts / Acquired SLOP is credited only from the finalized swap receipt",
-          "line": 170,
+          "line": 192,
           "definitions": [
             "SwapReceipt",
             "SendReceipt",
@@ -18451,7 +18850,7 @@
         },
         {
           "heading": "Story: Burn half of everything acquired, once / Half of all acquired SLOP is burned, and a failed burn retries the same share",
-          "line": 196,
+          "line": 218,
           "definitions": [
             "BurnRequest",
             "canReceiveSlopFee",
@@ -18471,7 +18870,7 @@
         },
         {
           "heading": "Story: Keep the pool's totals within their shares / One run cap, one rolling cap and one burn share bound the whole pool",
-          "line": 251,
+          "line": 273,
           "definitions": [
             "alwaysPoolBounded",
             "alwaysBurnBounded",
@@ -18483,7 +18882,7 @@
         },
         {
           "heading": "Story: Keep the pool's totals within their shares / Simulation samples exercise matching, refused and failed evidence",
-          "line": 276,
+          "line": 298,
           "definitions": [
             "nowValues",
             "arrivalValues",
@@ -18693,7 +19092,7 @@
     },
     {
       "path": "spec/fees/feeReport.md",
-      "sha256": "ed6b0c0101b8cf7090f95b76ad94a5485a40d28ad244ddd9f0e00d856d8e3e68",
+      "sha256": "1a6f20780486fee34d728c96b0a9a43a89e42e0d4ae36877b92a14cf4e20f8ee",
       "module": "fees__feeReport",
       "stories": [
         {
@@ -18755,6 +19154,25 @@
             "legTotal",
             "legTotals",
             "feeReport"
+          ]
+        },
+        {
+          "heading": "Story: Show administrators what the fee wallets did / The claims block shows the latest 100 claim attempts, finalized live claim totals per network, fee wallet and token, and 24-hour claim state counts",
+          "line": 136,
+          "definitions": [
+            "ClaimLine",
+            "ClaimTotal",
+            "ClaimBlock",
+            "claimKinds",
+            "claimLineOf",
+            "latestClaimLines",
+            "settledClaim",
+            "sameClaimGroup",
+            "claimTotal",
+            "claimTotals",
+            "claimInLastDay",
+            "claimStateCounts",
+            "claimBlock"
           ]
         }
       ],
@@ -19127,7 +19545,7 @@
     },
     {
       "path": "spec/frontend/ownerVault.md",
-      "sha256": "504baa1415d51834f583231fed2210156a0777c1578a6c4eaefbeb6897220ddf",
+      "sha256": "96324263a9eec0099befc6e95750ffac50bbf4296011b471c819712329581082",
       "module": "frontend__ownerVault",
       "stories": [
         {
@@ -19136,7 +19554,7 @@
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner",
-          "line": 141
+          "line": 150
         }
       ],
       "rules": [
@@ -19154,7 +19572,9 @@
             "server",
             "adapter",
             "timer",
+            "tab",
             "autoAskLimit",
+            "hiddenAskLimit",
             "refusalLimit",
             "idleFlow",
             "initial",
@@ -19170,7 +19590,7 @@
         },
         {
           "heading": "Story: Create and register the vault without asking the wallet twice / A withdrawal that would break the month's promise is refused on Slop's pages",
-          "line": 77,
+          "line": 81,
           "definitions": [
             "review",
             "canSend",
@@ -19179,7 +19599,7 @@
         },
         {
           "heading": "Story: Create and register the vault without asking the wallet twice / A wallet reply settles only its own attempt; an unclear one waits for the owner",
-          "line": 101,
+          "line": 110,
           "definitions": [
             "canWalletReply",
             "walletReply",
@@ -19191,17 +19611,19 @@
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner / A timer asks only for a wallet-returned hash the owner is not editing",
-          "line": 143,
+          "line": 152,
           "definitions": [
             "canEdit",
             "edit",
             "canAsk",
-            "ask"
+            "ask",
+            "canSetTabHidden",
+            "setTabHidden"
           ]
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner / Only a finalized matching result registers or counts, and failures keep the saved request",
-          "line": 169,
+          "line": 192,
           "definitions": [
             "canAnswer",
             "answer"
@@ -19209,7 +19631,7 @@
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner / Rules",
-          "line": 196,
+          "line": 219,
           "definitions": [
             "flowSaved",
             "alwaysLiveRequestsAreSaved",
@@ -19219,6 +19641,7 @@
             "alwaysSignedOutIsIdle",
             "alwaysAttemptsFresh",
             "alwaysNoAutoCheckWhileEditing",
+            "alwaysBackgroundAsksWithinLimit",
             "stepOwnerCheckNeverRetired",
             "stepLateReplyChangesNothingShown",
             "stepOnlyFinalResultsComplete",
@@ -19226,6 +19649,9 @@
             "sometimesUnclearResumed",
             "sometimesOtherAccountSeesNothing",
             "sometimesWithdrawalRefused",
+            "sometimesLockedFundsRefused",
+            "sometimesRegisteredFromBackgroundTab",
+            "sometimesHiddenCreationWaits",
             "sometimesReceived",
             "sometimesCounted",
             "sometimesTimerStopped",
@@ -19237,6 +19663,7 @@
             "identityValues",
             "hashValues",
             "candidateValues",
+            "locksValues",
             "weight_review",
             "weight_send",
             "weight_walletReply",
@@ -19248,6 +19675,7 @@
       "imports": [
         "frontend__walletAttempt",
         "frontend__projections",
+        "frontend__vaultLocks",
         "settlement__money"
       ],
       "references": [
@@ -19273,7 +19701,11 @@
         },
         {
           "target": "./projections.md",
-          "line": 82
+          "line": 86
+        },
+        {
+          "target": "./vaultLocks.md",
+          "line": 91
         }
       ]
     },
@@ -20361,7 +20793,7 @@
     },
     {
       "path": "spec/operations/moderation.md",
-      "sha256": "8ec50c652b97112b48114735c72add59a172b5fa89c89d518e1a39eb78b54878",
+      "sha256": "8237a709f8eccf20d39ba0198ec4369df60c5d6e645ec8a5b51988463f805865",
       "module": "operations__moderation",
       "stories": [
         {
@@ -20370,7 +20802,7 @@
         },
         {
           "heading": "Story: A moderator reads only what current authority allows and records each decision with a reason",
-          "line": 156
+          "line": 159
         }
       ],
       "rules": [
@@ -20451,7 +20883,7 @@
         },
         {
           "heading": "Story: A moderator reads only what current authority allows and records each decision with a reason / Every open rechecks the current roster and refuses a stale or unavailable check",
-          "line": 158,
+          "line": 161,
           "definitions": [
             "AuthorityCheck",
             "visible",
@@ -20473,7 +20905,7 @@
         },
         {
           "heading": "Story: A moderator reads only what current authority allows and records each decision with a reason / A decision records its reason once, its resulting state is confirmed, and history stays",
-          "line": 208,
+          "line": 211,
           "definitions": [
             "canDecide",
             "decide",
@@ -20486,7 +20918,7 @@
         },
         {
           "heading": "Story: A moderator reads only what current authority allows and records each decision with a reason / Simulation samples cover authors, appellants, former moderators and stale checks",
-          "line": 243,
+          "line": 246,
           "definitions": [
             "byValues",
             "itemNodeValues",
@@ -20537,6 +20969,10 @@
         {
           "target": "../settlement/monthly.md",
           "line": 22
+        },
+        {
+          "target": "./payoutAudience.md",
+          "line": 133
         }
       ]
     },
@@ -21073,18 +21509,18 @@
     },
     {
       "path": "spec/points/ingestion.md",
-      "sha256": "52abe36d9ef9a94c0e7a953029f8b79bd2fe1d04b4b243f9018a6ab36e288ea9",
+      "sha256": "468b0e1f18bdba0978285b5367469fad91e35c13d765c41b60f2625a417e0b44",
       "module": "points__ingestion",
       "stories": [
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success",
-          "line": 22
+          "line": 24
         }
       ],
       "rules": [
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success / A read classifies each response and waits only for a rate limit",
-          "line": 24,
+          "line": 26,
           "definitions": [
             "Method",
             "Origin",
@@ -21110,8 +21546,10 @@
             "stepCheckpointRefusesLater",
             "lawAuthorizationNotRetried",
             "lawUnhintedLimitWaitsOneMinute",
+            "lawUnhintedSecondaryLimitWaitsOneMinute",
             "sometimesRetriedThenReturned",
             "lawFifthLimitIsReturned",
+            "lawFifthSecondaryLimitIsReturned",
             "sometimesSecondAttempt",
             "sometimesWriteReturnedOnce",
             "sometimesCheckpointed"
@@ -21119,7 +21557,7 @@
         },
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success / A multi-part leaderboard is read as one content-addressed generation",
-          "line": 74,
+          "line": 82,
           "definitions": [
             "Part",
             "PartsManifest",
@@ -21134,13 +21572,14 @@
         },
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success / Simulation samples include limits, authorization refusals and generations",
-          "line": 104,
+          "line": 112,
           "definitions": [
             "xValues",
             "atValues",
             "statusValues",
             "primaryDelayValues",
             "retryAfterValues",
+            "secondaryMessageValues",
             "mValues",
             "readValues",
             "wholeDigestValues"
@@ -23227,7 +23666,7 @@
     },
     {
       "path": "spec/security/vettingComposition.md",
-      "sha256": "6256d663adff86cddf722a8d3770497d18f6114f9b2abc65996dc9742c8aa964",
+      "sha256": "5b7f76e56727af28932c0d1b3a7afbdf1f4465583577907c4567792d44fee5f9",
       "module": "security__vettingComposition",
       "stories": [
         {
@@ -23258,12 +23697,13 @@
           "definitions": [
             "canReinstateFlagPause",
             "reinstateFlagPause",
+            "alwaysCompletedCleanHasQualifiedRecord",
             "stepFlagPauseLiftsOnlyOnFreshRecords"
           ]
         },
         {
           "heading": "Story: Only a qualified clean scan of the exact repository identity clears it / Requests, flags and the registry mirror run under enforcement's own guards",
-          "line": 83,
+          "line": 94,
           "definitions": [
             "canObserveRevision",
             "observeRevision",
@@ -23277,7 +23717,7 @@
         },
         {
           "heading": "Story: Only a qualified clean scan of the exact repository identity clears it / Reachable outcomes",
-          "line": 104,
+          "line": 115,
           "definitions": [
             "sometimesClearedByScan",
             "sometimesUnreadableEvidenceUnverified",
@@ -23324,6 +23764,10 @@
         {
           "target": "../backend/projectComposition.md",
           "line": 13
+        },
+        {
+          "target": "./enforcement.md",
+          "line": 71
         }
       ]
     },
@@ -23575,12 +24019,16 @@
     },
     {
       "path": "spec/settlement/calendar.md",
-      "sha256": "4f0a87a86b58f3e44a7487679fba543f274bc08bb29aedc01036675898f71005",
+      "sha256": "25d1815612708aa6bfc678b81c59e6f6ab1779cac680b1ccf6d39ce33993f427",
       "module": "settlement__calendar",
       "stories": [
         {
           "heading": "Story: Name the month of an instant",
           "line": 10
+        },
+        {
+          "heading": "Story: Count whole months",
+          "line": 33
         }
       ],
       "rules": [
@@ -23590,6 +24038,13 @@
           "definitions": [
             "utcPeriod",
             "ordinalPeriod"
+          ]
+        },
+        {
+          "heading": "Story: Count whole months / Adding months counts on the ordinal month, so December 2026 plus two is February 2027",
+          "line": 35,
+          "definitions": [
+            "addPeriods"
           ]
         }
       ],
@@ -24153,7 +24608,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "69ceaa806b49a40ed08b2526a5c551d1e0559afa7f7b5fb31a5451a85dcb25f1",
+      "sha256": "b51bcf2f3f68e444001657de3f4de5ef2191e1c00e52b64da5b9f1ff949e50c7",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -24162,11 +24617,11 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state",
-          "line": 190
+          "line": 201
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 260
+          "line": 271
         }
       ],
       "rules": [
@@ -24200,7 +24655,7 @@
         },
         {
           "heading": "Story: Sign the frozen allocation without changing it / The first authorization records the frozen funded allocation once",
-          "line": 77,
+          "line": 79,
           "definitions": [
             "canAuthorize",
             "authorize"
@@ -24208,7 +24663,7 @@
         },
         {
           "heading": "Story: Sign the frozen allocation without changing it / The journal reads the chain only at a newer finalized height",
-          "line": 99,
+          "line": 101,
           "definitions": [
             "canObserve",
             "observe"
@@ -24216,18 +24671,19 @@
         },
         {
           "heading": "Story: Sign the frozen allocation without changing it / The attester re-reads the signing facts at the same finalized height and refuses without signing",
-          "line": 113,
+          "line": 115,
           "definitions": [
             "canObserveFacts",
             "observeFacts",
             "signingRefusal",
+            "pledgeWaives",
             "canRefuseSigning",
             "refuseSigning"
           ]
         },
         {
           "heading": "Story: Sign the frozen allocation without changing it / EVM signs the remaining sources at one finalized block; a source change makes a new attempt",
-          "line": 145,
+          "line": 156,
           "definitions": [
             "remainingLeaves",
             "latestAttempt",
@@ -24238,7 +24694,7 @@
         },
         {
           "heading": "Story: Sign the frozen allocation without changing it / Solana signs one freeze time and refuses a month whose source is already consumed",
-          "line": 170,
+          "line": 181,
           "definitions": [
             "canSignSolana",
             "signSolana"
@@ -24246,7 +24702,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized admitted root that matches a signed attempt admits the month",
-          "line": 192,
+          "line": 203,
           "definitions": [
             "canAdmit",
             "admit"
@@ -24254,7 +24710,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 203,
+          "line": 214,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -24264,7 +24720,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 225,
+          "line": 236,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -24273,7 +24729,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 239,
+          "line": 250,
           "definitions": [
             "canComplete",
             "complete"
@@ -24281,7 +24737,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 250,
+          "line": 261,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -24289,7 +24745,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 262,
+          "line": 273,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -24301,7 +24757,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 281,
+          "line": 292,
           "definitions": [
             "alwaysAttemptsBounded",
             "alwaysAuthorizedWithinCap",
@@ -24322,13 +24778,14 @@
             "sometimesUnknownRoot",
             "sometimesAutomaticOffRefused",
             "sometimesRestrictedRefused",
+            "sometimesPledgedSignedWithAutomaticOff",
             "sometimesBeforeWindowRefused",
             "sometimesChainCapRefused"
           ]
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 318,
+          "line": 331,
           "definitions": [
             "familyValues",
             "monthSample",
@@ -24362,6 +24819,10 @@
         {
           "target": "./monthlySettings.md",
           "line": 27
+        },
+        {
+          "target": "./monthPledges.md",
+          "line": 125
         }
       ]
     },
@@ -24513,7 +24974,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "a35f38590877deff63012919d4d9ff5e7097e51a74a91d85f147f89f9727fd09",
+      "sha256": "685da4c8a929e5e960a5b3b9cb21c4da0fd4d088a10d5721abfa07e8e2f0ae4c",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -24522,7 +24983,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree",
-          "line": 242
+          "line": 251
         }
       ],
       "rules": [
@@ -24574,7 +25035,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may prepare one funded obligation by hand, and only while no pool gross is pending",
-          "line": 101,
+          "line": 102,
           "definitions": [
             "obligationOf",
             "awardFact",
@@ -24584,7 +25045,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may also commit any source by hand on chain; the month observes it",
-          "line": 124,
+          "line": 125,
           "definitions": [
             "canCommitManualAward",
             "commitManualAward",
@@ -24606,7 +25067,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / Anyone admits the attester-signed root of exactly the month's unreserved obligations",
-          "line": 166,
+          "line": 167,
           "definitions": [
             "canAdmitRoot",
             "admitRoot",
@@ -24616,7 +25077,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized",
-          "line": 193,
+          "line": 194,
           "definitions": [
             "leavesPerCall",
             "leafInCall",
@@ -24627,7 +25088,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The vault keeps its other operations while the month is reserved",
-          "line": 224,
+          "line": 233,
           "definitions": [
             "canWithdraw",
             "withdraw",
@@ -24637,7 +25098,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / An obligation is reserved, paid or conflicted only as the vault's finalized award shows",
-          "line": 244,
+          "line": 253,
           "definitions": [
             "obligationMatches",
             "alwaysObligationsMatchVault",
@@ -24656,7 +25117,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 280,
+          "line": 289,
           "definitions": [
             "assetValues",
             "mintValues",
@@ -24740,11 +25201,11 @@
         },
         {
           "target": "./paymentInvestigation.md",
-          "line": 228
+          "line": 237
         },
         {
           "target": "./bindingAuthority.md",
-          "line": 229
+          "line": 238
         }
       ]
     },
@@ -24852,7 +25313,7 @@
     },
     {
       "path": "spec/settlement/ownerTransactions.md",
-      "sha256": "400509f2becdfbb773d07e1c7092415cb6b22826a2816136116acaad1f78a732",
+      "sha256": "ebff0ddcde80c276e46f0f30be9743a8c9f316766dcc3702a7b0d802cfe8e22a",
       "module": "settlement__ownerTransactions",
       "stories": [
         {
@@ -24880,7 +25341,7 @@
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / The pending request is saved before the wallet call and recovered without resubmission",
-          "line": 56,
+          "line": 71,
           "definitions": [
             "allowedPrefix",
             "canSavePending",
@@ -24891,7 +25352,7 @@
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / Only the exact finalized submitted transaction completes the request",
-          "line": 72,
+          "line": 87,
           "definitions": [
             "canCheckResult",
             "checkResult",
@@ -24899,12 +25360,14 @@
             "stepPlanFixed",
             "stepTerminal",
             "sometimesFinalized",
-            "sometimesFailedAfterExpiry"
+            "sometimesFailedAfterExpiry",
+            "sometimesMonthsLocked",
+            "sometimesLapsedLockReleased"
           ]
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / Simulation samples",
-          "line": 94,
+          "line": 111,
           "definitions": [
             "kindValues",
             "factsSample",
@@ -24916,7 +25379,12 @@
         }
       ],
       "imports": [],
-      "references": []
+      "references": [
+        {
+          "target": "./monthPledges.md",
+          "line": 40
+        }
+      ]
     },
     {
       "path": "spec/settlement/paymentInvestigation.md",
@@ -25848,18 +26316,18 @@
     },
     {
       "path": "spec/slopbot/budgetBlocks.md",
-      "sha256": "f97f0d9558ab5d7ec8e4b614ff295de6ee245231e58cc68a88f9873f4970fbd9",
+      "sha256": "490166fb3af6bede1e7fecfc67b7399b2ccf07869d92570b55744486ee0d16d0",
       "module": "slopbot__budgetBlocks",
       "stories": [
         {
           "heading": "Story: Block a review on a Surplus spending denial and resume it once",
-          "line": 18
+          "line": 19
         }
       ],
       "rules": [
         {
           "heading": "Story: Block a review on a Surplus spending denial and resume it once / Only the current claim owner records an immutable block",
-          "line": 20,
+          "line": 21,
           "definitions": [
             "RowStatus",
             "DenialSource",
@@ -25886,7 +26354,7 @@
         },
         {
           "heading": "Story: Block a review on a Surplus spending denial and resume it once / A due block is sent once while its claim is still the failed current one",
-          "line": 67,
+          "line": 70,
           "definitions": [
             "resumable",
             "canSendResume",
@@ -25923,15 +26391,19 @@
       "references": [
         {
           "target": "./reviewLease.md",
-          "line": 13
-        },
-        {
-          "target": "./review.md",
           "line": 14
         },
         {
-          "target": "./installation.md",
+          "target": "./review.md",
           "line": 15
+        },
+        {
+          "target": "./installation.md",
+          "line": 16
+        },
+        {
+          "target": "./review.md",
+          "line": 24
         }
       ]
     },
@@ -26855,7 +27327,7 @@
     },
     {
       "path": "spec/slopbot/jobQueue.md",
-      "sha256": "2365145b3ed8caa14578c6f925e0d1c1c82e2ce832942ed4622168f36ed717ae",
+      "sha256": "ede2e43a19a6ed91b861df4825a7e7b96bdb568fd683166cf98fcfec137aa597",
       "module": "slopbot__jobQueue",
       "stories": [
         {
@@ -28720,6 +29192,1390 @@
         {
           "target": "../designSystem/",
           "line": 13
+        }
+      ]
+    },
+    {
+      "path": "spec/backend/readyLabelSettings.md",
+      "sha256": "1388197e708cc64fe47e0ac28236aac1f739ecb81387f4454b173fd01479a4da",
+      "module": "backend__readyLabelSettings",
+      "stories": [
+        {
+          "heading": "Story: Owners turn on the ready label within fixed bounds",
+          "line": 20
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Owners turn on the ready label within fixed bounds / Ready-label settings are bounded, off when absent or disabled, and only add protected paths",
+          "line": 27,
+          "definitions": [
+            "ProtectedPath",
+            "ReadyLabelConfig",
+            "ReadyLabelSetting",
+            "presentSetting",
+            "minApprovals",
+            "maxApprovals",
+            "minChangedLines",
+            "maxChangedLinesLimit",
+            "minChangedFiles",
+            "maxChangedFilesLimit",
+            "maxProtectedPaths",
+            "maxProtectedPathLength",
+            "defaultApprovals",
+            "defaultMaxChangedLines",
+            "defaultMaxChangedFiles",
+            "boundsHold",
+            "readyLabelValid",
+            "readyLabelOn",
+            "protectedPatterns",
+            "lawAbsentMeansOff",
+            "lawDefaultsAreValid",
+            "lawOwnerPatternsOnlyAdd",
+            "lawSettingsChangePublishAsPresentation",
+            "ownerPath",
+            "sampleSettings",
+            "settingValues",
+            "builtInValues"
+          ]
+        }
+      ],
+      "imports": [
+        "backend__projects"
+      ],
+      "references": [
+        {
+          "target": "./projects.md",
+          "line": 17
+        }
+      ]
+    },
+    {
+      "path": "spec/fees/solanaRpcRotation.md",
+      "sha256": "39f046b4155873e2710cd69d79f8be59dd4e9f535dc2c8bb6b694288f6524091",
+      "module": "fees__solanaRpcRotation",
+      "stories": [
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker",
+          "line": 27
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / A rotation starts only from protected manual main, the exact pinned active version and byte-identical fee source",
+          "line": 29,
+          "definitions": [
+            "RotationPhase",
+            "RpcPair",
+            "WorkerVersion",
+            "RotationRequest",
+            "Rotation",
+            "noPair",
+            "noVersion",
+            "initial",
+            "independentPair",
+            "enter",
+            "stop",
+            "canStartRotation",
+            "startRotation",
+            "sometimesQualifying"
+          ]
+        },
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / A prior failed run's witness supplies history only, never authority",
+          "line": 67,
+          "definitions": [
+            "PriorWitness",
+            "canSupplyPriorWitness",
+            "supplyPriorWitness",
+            "stepPriorWitnessOnlyHistory",
+            "sometimesPriorHistoryUsed"
+          ]
+        },
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / The rotation takes the Solana lease only after qualifying the new pair, and stops at any boundary where the version, main or lease changed",
+          "line": 91,
+          "definitions": [
+            "BoundaryCheck",
+            "boundaryHolds",
+            "canQualify",
+            "qualify",
+            "canLeaseOutcome",
+            "leaseOutcome",
+            "canUpload",
+            "upload",
+            "sometimesRefusedHoldingLease",
+            "sometimesRefusedBeforeLease"
+          ]
+        },
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated",
+          "line": 118,
+          "definitions": [
+            "ActivationOutcome",
+            "sameWorker",
+            "canDeploy",
+            "deploy",
+            "canConfirmActivation",
+            "confirmActivation",
+            "alwaysOnlyCandidateActivated",
+            "alwaysActivationNeedsLease",
+            "alwaysLeaseHeldWhileWorking",
+            "sometimesVerified",
+            "sometimesCandidateRefused"
+          ]
+        },
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / An uncertain activation keeps its lease until it expires, and every other end releases only its own lease",
+          "line": 151,
+          "definitions": [
+            "canReleaseLease",
+            "releaseLease",
+            "alwaysUncertainKeepsLease",
+            "alwaysReleasedOnlyOnce",
+            "sometimesUncertain"
+          ]
+        },
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / Each phase is in the receipt before the next starts, and phases only move forward",
+          "line": 166,
+          "definitions": [
+            "rank",
+            "terminal",
+            "alwaysReceiptsRecordPhase",
+            "stepPhasesForward"
+          ]
+        },
+        {
+          "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / Simulation samples cover matching, changed and refused pins",
+          "line": 189,
+          "definitions": [
+            "pairSample",
+            "baseSample",
+            "requestValues",
+            "witnessValues",
+            "checkValues",
+            "uploadedValues",
+            "acquiredValues",
+            "resultValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./runtime.md",
+          "line": 14
+        },
+        {
+          "target": "./conversion.md",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/monthLock.md",
+      "sha256": "0b0bd8e8a8b7eeb9de85993a78af32a31b363963374b49199202a7658bbd4d89",
+      "module": "frontend__monthLock",
+      "stories": [
+        {
+          "heading": "Story: Lock months from the owner's wallet",
+          "line": 26
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Lock months from the owner's wallet / The card appears only once the finalized read shows pledge support",
+          "line": 28,
+          "definitions": [
+            "LockPhase",
+            "LockKind",
+            "LockReply",
+            "LockResult",
+            "LockNotice",
+            "MonthLock",
+            "reader",
+            "adapter",
+            "timer",
+            "checkLimit",
+            "checkIntervalMs",
+            "initial",
+            "canReadVault",
+            "readVault",
+            "canConnect",
+            "connect"
+          ]
+        },
+        {
+          "heading": "Story: Lock months from the owner's wallet / A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent",
+          "line": 67,
+          "definitions": [
+            "canReview",
+            "review",
+            "canRequestLock",
+            "requestLock"
+          ]
+        },
+        {
+          "heading": "Story: Lock months from the owner's wallet / A lapsed month stays locked until any connected wallet sends its release",
+          "line": 94,
+          "definitions": [
+            "canLapse",
+            "lapse",
+            "canRequestRelease",
+            "requestRelease"
+          ]
+        },
+        {
+          "heading": "Story: Lock months from the owner's wallet / A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times",
+          "line": 112,
+          "definitions": [
+            "canWalletAnswer",
+            "walletAnswer"
+          ]
+        },
+        {
+          "heading": "Story: Lock months from the owner's wallet / A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it",
+          "line": 129,
+          "definitions": [
+            "canCheck",
+            "check",
+            "canFinalizedRead",
+            "finalizedRead"
+          ]
+        },
+        {
+          "heading": "Story: Lock months from the owner's wallet / Rules",
+          "line": 158,
+          "definitions": [
+            "pendingLock",
+            "pendingRelease",
+            "alwaysLocksWithinFreeFunds",
+            "alwaysPendingLockFits",
+            "alwaysPendingReleaseIsLapsed",
+            "alwaysOnlyTheOwnerLocks",
+            "alwaysChecksWithinLimit",
+            "alwaysValidAmounts",
+            "stepOnlyIncludedTransactionsMoveLocks",
+            "sometimesLockShownAfterFinality",
+            "sometimesBelowMonthlyRefused",
+            "sometimesLowerLockRefused",
+            "sometimesShortFundsRefused",
+            "sometimesUnbatchedDepositRefused",
+            "sometimesOtherWalletRefused",
+            "sometimesCountRefused",
+            "sometimesFailedLockLocksNothing",
+            "sometimesReleaseFailed",
+            "sometimesWalletDeclined",
+            "sometimesCheckUnreadable",
+            "sometimesDepositAndLockIncluded",
+            "sometimesReleasedByAnotherWallet",
+            "sometimesUnclearKeepsTheReview",
+            "byValues",
+            "walletValues",
+            "ownerValues",
+            "freeValues",
+            "lockedValues",
+            "countValues",
+            "amountValues",
+            "monthlyValues",
+            "existingValues",
+            "depositValues",
+            "monthAmountValues"
+          ]
+        }
+      ],
+      "imports": [
+        "frontend__vaultLocks",
+        "settlement__money",
+        "settlement__monthPledges"
+      ],
+      "references": [
+        {
+          "target": "./vaultLocks.md",
+          "line": 12
+        },
+        {
+          "target": "./walletAttempt.md",
+          "line": 21
+        },
+        {
+          "target": "../settlement/ownerTransactions.md",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/poolListing.md",
+      "sha256": "7b92a663c5ea1420b4b53df81276f4e75af09dc70c8f1bc1a64eae928df7e69c",
+      "module": "frontend__poolListing",
+      "stories": [
+        {
+          "heading": "Story: List a monthly pool only in a month it is funded",
+          "line": 18
+        },
+        {
+          "heading": "Story: Pick a project from one home grid",
+          "line": 73
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: List a monthly pool only in a month it is funded / An active monthly pool without an open security program is listed only while its pool shows as funded",
+          "line": 23,
+          "definitions": [
+            "ListingFacts",
+            "fundingKnown",
+            "listedThisMonth",
+            "lawUnreadFundingListsEverything",
+            "lawOnlyUnfundedActiveMonthlyPoolsLeave",
+            "lawOpenSecurityProgramStaysListed",
+            "lawLockedMonthIsListed",
+            "listingValues"
+          ]
+        },
+        {
+          "heading": "Story: List a monthly pool only in a month it is funded / A project left out of the lists still opens by direct link and says why",
+          "line": 59,
+          "definitions": [
+            "notListedText",
+            "notListedInstallText",
+            "showsNotListed",
+            "lawNoticeNeedsACurrentRead",
+            "lawListedProjectHasNoNotice"
+          ]
+        },
+        {
+          "heading": "Story: Pick a project from one home grid / Home shows one grid of the open Featured and Community projects that are listed this month, leaving bounty cards to the security bounties section",
+          "line": 75,
+          "definitions": [
+            "HomeEntry",
+            "onHomeGrid",
+            "lawBountyCardsLeaveTheGrid",
+            "lawUnplacedProjectsLeaveTheGrid",
+            "entryValues"
+          ]
+        },
+        {
+          "heading": "Story: Pick a project from one home grid / The home grid orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order",
+          "line": 97,
+          "definitions": [
+            "HomeGroup",
+            "HomeCard",
+            "homeGroup",
+            "groupRank",
+            "homeBefore",
+            "lawHomeOrderIsIrreflexive",
+            "lawHomeOrderIsAsymmetric",
+            "lawHomeOrderSeparatesEntries",
+            "lawUnfundedPoolSortsAsPoints",
+            "leftValues",
+            "rightValues",
+            "shownAmountValues"
+          ]
+        }
+      ],
+      "imports": [
+        "frontend__projections",
+        "frontend__views",
+        "settlement__money"
+      ],
+      "references": [
+        {
+          "target": "./projections.md",
+          "line": 5
+        },
+        {
+          "target": "../backend/listing.md",
+          "line": 12
+        },
+        {
+          "target": "../contributor/publication.md",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/projectLinks.md",
+      "sha256": "24627b597613a6ead5d1bf0739b68d4241ff53b79fc733834e5f33a2836a0b39",
+      "module": "frontend__projectLinks",
+      "stories": [
+        {
+          "heading": "Story: See where a project's money and links live",
+          "line": 12
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: See where a project's money and links live / The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present",
+          "line": 14,
+          "definitions": [
+            "VaultNetwork",
+            "ProjectLinks",
+            "withNetwork",
+            "projectNetworks",
+            "showsWebsite",
+            "showsXAccount",
+            "lawNoVaultNoNetwork",
+            "lawEachNetworkOnce",
+            "lawEveryVaultNetworkListed",
+            "lawDisagreeingSymbolsShowNone",
+            "ethereumUsdc",
+            "deploymentsValues",
+            "firstVaultValues",
+            "secondVaultValues",
+            "linksValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../backend/projects.md",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/readyLabelForm.md",
+      "sha256": "34f5b5a6aa39eb3972a6402dbaa0bc7b81436757f2b828a07abcf065e486781f",
+      "module": "frontend__readyLabelForm",
+      "stories": [
+        {
+          "heading": "Story: Turn the ready label on in project settings",
+          "line": 13
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Turn the ready label on in project settings / The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off",
+          "line": 18,
+          "definitions": [
+            "formDefaults",
+            "formStart",
+            "draftSavable",
+            "savedReadyLabel",
+            "lawFormStartsOffWithoutSettings",
+            "lawOnOnlyWhenChecked",
+            "lawSavedSettingIsValid",
+            "lawTurningOffKeepsTheNumbers",
+            "savedValues",
+            "settingsValues",
+            "draftValues"
+          ]
+        }
+      ],
+      "imports": [
+        "backend__readyLabelSettings"
+      ],
+      "references": [
+        {
+          "target": "../backend/readyLabelSettings.md",
+          "line": 6
+        },
+        {
+          "target": "../slopbot/readyLabel.md",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/vaultLocks.md",
+      "sha256": "14c2bd29a5459e1e56edec5969d5eea46a738bb2bbc47a30c93b0268d8d471af",
+      "module": "frontend__vaultLocks",
+      "stories": [
+        {
+          "heading": "Story: Review a month lock before the wallet is asked",
+          "line": 19
+        },
+        {
+          "heading": "Story: Withdraw only funds the month's promise or locks leave free",
+          "line": 116
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Review a month lock before the wallet is asked / A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order",
+          "line": 21,
+          "definitions": [
+            "LockRefusal",
+            "LockRequest",
+            "validLockCount",
+            "lockAdded",
+            "lowersALock",
+            "freeFundsCover",
+            "lockRefusal",
+            "lawAcceptedLockFundsTheMonth",
+            "lawALockIsNeverLowered",
+            "lawAcceptedLockFitsFreeFunds",
+            "lawDepositOnlyAsOneRequest",
+            "unlockedMonth",
+            "lockRequest",
+            "requestValues"
+          ]
+        },
+        {
+          "heading": "Story: Review a month lock before the wallet is asked / A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it",
+          "line": 81,
+          "definitions": [
+            "LockedLine",
+            "noLockedMonthsText",
+            "lockPeriod",
+            "lockedLine",
+            "lawLockStartsAtItsMonth",
+            "lawDecemberRollsIntoJanuary",
+            "lawReleasableFromTheFourth",
+            "lawClosedLockIsNotListed",
+            "firstPeriodValues",
+            "indexValues",
+            "monthValues",
+            "nowValues"
+          ]
+        },
+        {
+          "heading": "Story: Withdraw only funds the month's promise or locks leave free / A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them",
+          "line": 118,
+          "definitions": [
+            "VaultLocks",
+            "lockedFundsText",
+            "lockRefusesWithdrawal",
+            "pageGuardApplies",
+            "withdrawalAllowed",
+            "lawAllowedWithdrawalLeavesTheLocks",
+            "lawUnreadLocksLeaveItToTheContract",
+            "lawLockVaultSkipsThePageGuard",
+            "lawVaultWithoutLocksKeepsThePromise",
+            "noLocks",
+            "locksValues"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money",
+        "settlement__calendar",
+        "contracts__ledger",
+        "settlement__monthPledges",
+        "frontend__projections"
+      ],
+      "references": [
+        {
+          "target": "./monthLock.md",
+          "line": 15
+        },
+        {
+          "target": "./ownerVault.md",
+          "line": 16
+        },
+        {
+          "target": "../settlement/monthPledges.md",
+          "line": 26
+        },
+        {
+          "target": "./batchedDeposit.md",
+          "line": 30
+        },
+        {
+          "target": "../settlement/calendar.md",
+          "line": 83
+        },
+        {
+          "target": "../contracts/ledger.md",
+          "line": 88
+        },
+        {
+          "target": "./projections.md",
+          "line": 130
+        },
+        {
+          "target": "../settlement/monthPledges.md",
+          "line": 134
+        }
+      ]
+    },
+    {
+      "path": "spec/operations/identityApp.md",
+      "sha256": "ce378e067e8c2309059ced98cb765518c7302f7e6dd03eb8947fa4e7c7d98aab",
+      "module": "operations__identityApp",
+      "stories": [
+        {
+          "heading": "Story: Contributors can still find the unchanged Slop Identity App",
+          "line": 13
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Contributors can still find the unchanged Slop Identity App / The public App lookup is retried on refusal and its contract fields must match exactly",
+          "line": 15,
+          "definitions": [
+            "IdentityVerdict",
+            "AppContract",
+            "AppLookup",
+            "maxLookups",
+            "retriedStatus",
+            "retryAfter",
+            "retryWaitSeconds",
+            "contractHolds",
+            "identityVerdict",
+            "lawDriftedContractFails",
+            "lawPublicPageOnlyWhenRateLimited",
+            "lawFourthRefusalNotRetried",
+            "goodContract",
+            "lookupValues",
+            "statusValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./release.md",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "path": "spec/operations/intakeHistory.md",
+      "sha256": "4c2d5c46382937cb95f75a93520290e6ca07bf99f524fdedcbf17a7761c82015",
+      "module": "operations__intakeHistory",
+      "stories": [
+        {
+          "heading": "Story: Report a bounded, unsampled and stable projection of retained intake failures",
+          "line": 13
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Report a bounded, unsampled and stable projection of retained intake failures / An inspection is admitted only for a valid window, and makes at most three dry calls",
+          "line": 15,
+          "definitions": [
+            "HistoryPhase",
+            "HistoryWindow",
+            "IntakeHistory",
+            "maximumEvents",
+            "maxWindowMs",
+            "lookbackMs",
+            "maxHistoryCalls",
+            "initial",
+            "validWindow",
+            "canAdmit",
+            "admit",
+            "canReadMetadata",
+            "readMetadata",
+            "alwaysCallsNeedAuthority",
+            "sometimesInvalidWindowRefused",
+            "windowValues"
+          ]
+        },
+        {
+          "heading": "Story: Report a bounded, unsampled and stable projection of retained intake failures / Only a bounded, unsampled answer over an unchanged deployment yields rows, and only a complete one passes",
+          "line": 59,
+          "definitions": [
+            "maxMatchedEvents",
+            "canQuery",
+            "query",
+            "canRecheck",
+            "recheck",
+            "alwaysRowsOnlyFromCompleteProjection",
+            "stepFinalPhases",
+            "sometimesComplete",
+            "sometimesIncompleteWithRows",
+            "sometimesTruncatedRefused",
+            "sometimesSampledRefused",
+            "rowsValues",
+            "matchedValues",
+            "projectedValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/operations/payoutAudience.md",
+      "sha256": "9e8434c6229c4ef4aec7febd1eaede8779af42eca8a3c2075bf8664404951447",
+      "module": "operations__payoutAudience",
+      "stories": [
+        {
+          "heading": "Story: A payout exception reaches an account that can sign in",
+          "line": 15
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: A payout exception reaches an account that can sign in / The account that listed a project is its source application's applicant, else the actor of its first revision",
+          "line": 17,
+          "definitions": [
+            "Listing",
+            "listedBy",
+            "lawListerIsRecorded",
+            "listingValues"
+          ]
+        },
+        {
+          "heading": "Story: A payout exception reaches an account that can sign in / A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded",
+          "line": 41,
+          "definitions": [
+            "StewardAccount",
+            "PayoutProject",
+            "payoutRecipient",
+            "inPayoutAudience",
+            "lawUserStewardKeepsPayoutException",
+            "lawOrganizationStewardPayoutReachesLister",
+            "lawUnlistedOrganizationKeepsSteward",
+            "projectValues",
+            "recipientValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./notifications.md",
+          "line": 11
+        },
+        {
+          "target": "./moderation.md",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "path": "spec/operations/retainedFreshness.md",
+      "sha256": "2b6077a4eb7e08621fc16e7dd5902726a583b841d3639e5971327d92c5662ee0",
+      "module": "operations__retainedFreshness",
+      "stories": [
+        {
+          "heading": "Story: A retained release never moves production back to older data",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: A retained release never moves production back to older data / A retained snapshot is refused when its leaderboard or profiles were generated before production's current ones",
+          "line": 19,
+          "definitions": [
+            "GenerationTime",
+            "SnapshotTimes",
+            "notOlder",
+            "retainedCurrent",
+            "freshnessChecked",
+            "lawOlderRetainedRefused",
+            "lawInvalidTimeRefused",
+            "lawSameGenerationPasses",
+            "retainedValues",
+            "publishedValues"
+          ]
+        },
+        {
+          "heading": "Story: A retained release never moves production back to older data / A manual main release on retained data prepares in its own concurrency group",
+          "line": 54,
+          "definitions": [
+            "PreparationEvent",
+            "retainedPreparationGroup",
+            "cancelsRunningPreparation",
+            "lawOnlyManualMainRetainedSeparates",
+            "branchValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./release.md",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "spec/operations/rpcRotationRun.md",
+      "sha256": "a9aeef94d5c4768ef832a266a97bbde086ede4cafde838f126238ddea9ef405d",
+      "module": "operations__rpcRotationRun",
+      "stories": [
+        {
+          "heading": "Story: A rotation run changes one endpoint and never counts as a release",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: A rotation run changes one endpoint and never counts as a release / A rotation run prepares only on main from a manual dispatch",
+          "line": 19,
+          "definitions": [
+            "RunMode",
+            "canPrepareRun",
+            "lawRotationNeedsManualMain"
+          ]
+        },
+        {
+          "heading": "Story: A rotation run changes one endpoint and never counts as a release / A rotation run writes only its own candidate version, and a normal run never writes one",
+          "line": 33,
+          "definitions": [
+            "ReleaseWrite",
+            "mayWrite",
+            "lawRotationWritesOnlyItsCandidate",
+            "lawNormalRunNeverRotates"
+          ]
+        },
+        {
+          "heading": "Story: A rotation run changes one endpoint and never counts as a release / A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release",
+          "line": 49,
+          "definitions": [
+            "RotationOutcome",
+            "RunVerdict",
+            "releaseVerified",
+            "rotationVerdict",
+            "lawRotationNeverVerifiedRelease",
+            "lawUncertainNeverConfirmed",
+            "lawConfirmedNeedsCandidate"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../fees/solanaRpcRotation.md",
+          "line": 5
+        },
+        {
+          "target": "./retainedFreshness.md",
+          "line": 12
+        },
+        {
+          "target": "./release.md",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "path": "spec/operations/slopbotRuntime.md",
+      "sha256": "b59d14d520291b82fc9e2672cd6aa71dfe19fa0b2c02d1706b370217cb0764c3",
+      "module": "operations__slopbotRuntime",
+      "stories": [
+        {
+          "heading": "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source",
+          "line": 19
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source / A readback is selected alone, for an exact source, before any credential is used",
+          "line": 21,
+          "definitions": [
+            "RuntimePhase",
+            "UsageModel",
+            "RuntimeReadback",
+            "maxCpuMs",
+            "maxCalls",
+            "initial",
+            "validRuntime",
+            "canSelectReadback",
+            "selectReadback",
+            "canAdmit",
+            "admit",
+            "alwaysNoReadBeforeAdmission",
+            "sometimesMixedSelectionRefused"
+          ]
+        },
+        {
+          "heading": "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source / An observation needs one 100% version of the expected source, a valid runtime and an unchanged deployment",
+          "line": 58,
+          "definitions": [
+            "reading",
+            "canReadDeployment",
+            "readDeployment",
+            "canReadVersion",
+            "readVersion",
+            "canRereadDeployment",
+            "rereadDeployment",
+            "canRefuseCall",
+            "refuseCall",
+            "alwaysObservedFromThreeAgreeingReads",
+            "stepUnavailableIsFinal",
+            "sometimesObserved",
+            "sometimesWrongSourceRefused",
+            "sometimesDeploymentDrifted",
+            "cpuMsValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/operations/stagingOrder.md",
+      "sha256": "ac02703dfe243dd189a11ad3d9b5eff716543329040288bc6c021a9e2c2b9b97",
+      "module": "operations__stagingOrder",
+      "stories": [
+        {
+          "heading": "Story: Allow staging publication only from one complete, fresh history read",
+          "line": 26
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Allow staging publication only from one complete, fresh history read / A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline",
+          "line": 28,
+          "definitions": [
+            "OrderPhase",
+            "StagingOrder",
+            "retryBudgetMs",
+            "initial",
+            "orderDeadline",
+            "active",
+            "withinDeadline",
+            "quotaStatus",
+            "canBegin",
+            "begin",
+            "canInspect",
+            "inspect",
+            "canReadHistory",
+            "readHistory",
+            "canFailRead",
+            "failRead",
+            "canAdvanceClock",
+            "advanceClock",
+            "canResume",
+            "resume",
+            "canExpire",
+            "expire",
+            "canFinish",
+            "finish",
+            "alwaysOneBoundedRetry",
+            "alwaysFreshPassAfterRetry",
+            "alwaysAllowedFromCompleteRead",
+            "stepRetryNeverRepeats",
+            "sometimesAllowedFirstPass",
+            "sometimesAllowedAfterRetry",
+            "sometimesWaitingForQuota",
+            "sometimesRetriedThenRefused",
+            "sometimesNonReleaseSkipped"
+          ]
+        },
+        {
+          "heading": "Story: Allow staging publication only from one complete, fresh history read / Simulation samples cover quota and other refusals, short and long delays, and both deadlines",
+          "line": 100,
+          "definitions": [
+            "candidateValues",
+            "jobDeadlineValues",
+            "revisionValues",
+            "statusValues",
+            "delayValues",
+            "elapsedValues",
+            "weight_readHistory",
+            "weight_finish"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./release.md",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "path": "spec/settlement/monthPledges.md",
+      "sha256": "b9ddf7e1d83c9342d1d763e4389f8b1a81045f136271e70c0f5a45d6a18406d4",
+      "module": "settlement__monthPledges",
+      "stories": [
+        {
+          "heading": "Story: Keep each vault's month pledges with its finalized read",
+          "line": 32
+        },
+        {
+          "heading": "Story: A pledge is the owner's consent to reserve its month",
+          "line": 148
+        },
+        {
+          "heading": "Story: The owner locks months and anyone releases a lapsed lock",
+          "line": 193
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep each vault's month pledges with its finalized read / A finalized read reports no pledge support, or each month's pledge and the vault's open total",
+          "line": 34,
+          "definitions": [
+            "ChainPledge",
+            "PledgeRead",
+            "StoredPledge",
+            "StoredTotal",
+            "noChainPledge",
+            "noStoredPledge",
+            "noStoredTotal",
+            "validPledgePeriod",
+            "validPledges",
+            "acceptedRead"
+          ]
+        },
+        {
+          "heading": "Story: Keep each vault's month pledges with its finalized read / Each month keeps the read of the newest block, and a read not taken changes nothing",
+          "line": 66,
+          "definitions": [
+            "samePledge",
+            "readFor",
+            "refreshedPledge",
+            "storePledges",
+            "storePledgeRead",
+            "storedTotalAfter",
+            "lawUnreadChangesNothing",
+            "lawUnsupportedKeepsRowsAndClearsTotal",
+            "storedPledgesValues",
+            "storedTotalValues"
+          ]
+        },
+        {
+          "heading": "Story: Keep each vault's month pledges with its finalized read / A refresh reads the previous UTC month, the next eleven after the current one, and every month still stored open",
+          "line": 110,
+          "definitions": [
+            "pledgeReadWindow",
+            "storedOpenPeriods",
+            "readsPeriod"
+          ]
+        },
+        {
+          "heading": "Story: Keep each vault's month pledges with its finalized read / Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open",
+          "line": 127,
+          "definitions": [
+            "servedPledge",
+            "servedPledges"
+          ]
+        },
+        {
+          "heading": "Story: A pledge is the owner's consent to reserve its month / Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project",
+          "line": 150,
+          "definitions": [
+            "pledgedIn",
+            "pledgeConsents"
+          ]
+        },
+        {
+          "heading": "Story: A pledge is the owner's consent to reserve its month / Publication, a newer attempt and on-chain admission need a pledge in the run's own vault or the automatic default on",
+          "line": 165,
+          "definitions": [
+            "runConsent"
+          ]
+        },
+        {
+          "heading": "Story: A pledge is the owner's consent to reserve its month / Another month's open pledge is held back from this month's funding",
+          "line": 179,
+          "definitions": [
+            "ownOpenPledge",
+            "otherOpenPledges"
+          ]
+        },
+        {
+          "heading": "Story: The owner locks months and anyone releases a lapsed lock / A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount",
+          "line": 195,
+          "definitions": [
+            "lockMonthCounts",
+            "validLockRequest",
+            "lockPeriods"
+          ]
+        },
+        {
+          "heading": "Story: The owner locks months and anyone releases a lapsed lock / A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount",
+          "line": 211,
+          "definitions": [
+            "LockRefusal",
+            "readRefusal",
+            "lockRefusal",
+            "lockPlanPeriods",
+            "lockPlanned",
+            "openAtMost",
+            "lawLockNeverLowers",
+            "pledgeReadValues",
+            "lockAmountValues"
+          ]
+        },
+        {
+          "heading": "Story: The owner locks months and anyone releases a lapsed lock / A release needs an open pledge, and closing a pledge account needs a closed one",
+          "line": 246,
+          "definitions": [
+            "canPlanRelease",
+            "canPlanClosePledge"
+          ]
+        },
+        {
+          "heading": "Story: The owner locks months and anyone releases a lapsed lock / A withdrawal review refuses to take funds the open pledges hold",
+          "line": 263,
+          "definitions": [
+            "withdrawTakesPledgedFunds"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money",
+        "settlement__calendar"
+      ],
+      "references": [
+        {
+          "target": "../contracts/evmEscrow.md",
+          "line": 17
+        },
+        {
+          "target": "../contracts/solanaEscrow.md",
+          "line": 17
+        },
+        {
+          "target": "./vaultSnapshots.md",
+          "line": 18
+        },
+        {
+          "target": "./monthly.md",
+          "line": 19
+        },
+        {
+          "target": "./monthlyCommitment.md",
+          "line": 20
+        },
+        {
+          "target": "./ownerTransactions.md",
+          "line": 21
+        },
+        {
+          "target": "./publicRecords.md",
+          "line": 136
+        },
+        {
+          "target": "../contracts/ledger.md",
+          "line": 250
+        }
+      ]
+    },
+    {
+      "path": "spec/slopbot/readyLabel.md",
+      "sha256": "9bacb9f748244822fc194d3d27c3cf567e70ddbfb0686ade07e8667b2411129f",
+      "module": "slopbot__readyLabel",
+      "stories": [
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head",
+          "line": 22
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / The owner's settings are off unless saved on, and stay within their bounds",
+          "line": 29,
+          "definitions": [
+            "readyLabelName",
+            "readyLineMarker",
+            "savedSetting",
+            "readyLabelOn",
+            "lawAbsentSettingsAreOff"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / A changed file is protected when it is deleted, on a default or owner path, or has no text diff",
+          "line": 51,
+          "definitions": [
+            "FileChange",
+            "ChangedFile",
+            "protectedFile",
+            "protectedChange",
+            "lawOwnerCannotUnprotectADefaultPath",
+            "cleanFile",
+            "changedValues"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / Only the latest decision of each other account with write access counts, and only at the head",
+          "line": 86,
+          "definitions": [
+            "ReviewDecision",
+            "PullReview",
+            "ReviewRead",
+            "reviewPageLimit",
+            "permissionLookupLimit",
+            "decisive",
+            "latestDecisions",
+            "approvesAtHead",
+            "requestsChanges",
+            "reviewsUsable",
+            "writerApprovals",
+            "writerRequestedChanges",
+            "lawReadOnlyApprovalNeverCounts",
+            "lawAuthorNeverApprovesTheirOwnPull",
+            "lawIncompleteReviewsCountNothing",
+            "approval",
+            "fetchedValues",
+            "authorValues"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / The decision takes the first failing condition, and only a running review or unsettled mergeability is pending",
+          "line": 136,
+          "definitions": [
+            "ReviewVerdict",
+            "SlopbotReviewRow",
+            "MergeState",
+            "ReadyReason",
+            "ReadyFacts",
+            "ReadyDecision",
+            "largeDeletionLines",
+            "changedFilePageLimit",
+            "verdictOf",
+            "mergeableState",
+            "mergePending",
+            "notReady",
+            "readyDecision",
+            "lawReadyNeedsEveryCondition",
+            "lawPendingOnlyForARunningReviewOrUnsettledMergeability",
+            "lawLimitationsMakeTheVerdictLimited",
+            "readyFacts",
+            "enabledSettings",
+            "factsValues",
+            "settingsValues",
+            "reviewRowValues"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved",
+          "line": 227,
+          "definitions": [
+            "PullStatus",
+            "RowState",
+            "ReadyLine",
+            "HeadAtWrite",
+            "ReadyObservation",
+            "ReadyPull",
+            "pendingRecheckSeconds",
+            "readyRecheckSeconds",
+            "pendingWindowSeconds",
+            "initial",
+            "nextCheckAfter",
+            "canRefresh",
+            "refresh",
+            "alwaysReadyRowIsLabelled",
+            "alwaysHeadsAndClock",
+            "alwaysOffRowHasNoNextCheck",
+            "stepSlopbotLabelsOnlyWhenEveryConditionHolds",
+            "stepTurningOffClearsAnOpenPull",
+            "stepClosedPullKeepsItsLabel"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's",
+          "line": 309,
+          "definitions": [
+            "TriggerEvent",
+            "TriggerAction",
+            "ReadyTrigger",
+            "readyCheckWanted",
+            "readyAction",
+            "queuesReadyCheck",
+            "queuesAfterReview",
+            "lawClosingQueuesNoCheck",
+            "lawOffWithoutReadyRowQueuesNothing",
+            "sampleTrigger",
+            "tValues",
+            "canPushCommit",
+            "pushCommit",
+            "canClosePull",
+            "closePull",
+            "canReopenPull",
+            "reopenPull",
+            "canElapse",
+            "elapse"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / Only a human merges",
+          "line": 356,
+          "definitions": [
+            "canHumanMerge",
+            "humanMerge",
+            "stepOnlyAHumanMerges"
+          ]
+        },
+        {
+          "heading": "Story: Label a pull request ready only while every condition holds at its head / A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready",
+          "line": 368,
+          "definitions": [
+            "readyDispatchBatch",
+            "canClaimDue",
+            "claimDue",
+            "stepDueClaimMovesTheNextCheck",
+            "lawPendingRecheckStopsAfterTheWindow",
+            "lawReadyIsRecheckedHourly",
+            "dValues",
+            "firstSeenValues",
+            "sometimesReady",
+            "sometimesPendingRecheck",
+            "sometimesPendingWindowClosed",
+            "sometimesHeadMovedDuringACheck",
+            "sometimesTurnedOff",
+            "sometimesMergedKeepsItsLabel",
+            "sometimesDueClaimed",
+            "readyObservation",
+            "observedValues",
+            "secondsValues",
+            "weight_refresh"
+          ]
+        }
+      ],
+      "imports": [
+        "backend__readyLabelSettings"
+      ],
+      "references": [
+        {
+          "target": "./review.md",
+          "line": 16
+        },
+        {
+          "target": "./jobQueue.md",
+          "line": 18
+        },
+        {
+          "target": "../backend/readyLabelSettings.md",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "path": "spec/slopbot/reviewCap.md",
+      "sha256": "870f681c75680369e9fff1aeff21b76c0934319e45c0f4d66c19ae5ba6add57f",
+      "module": "slopbot__reviewCap",
+      "stories": [
+        {
+          "heading": "Story: Keep free advisory review within a monthly item cap",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep free advisory review within a monthly item cap / A review admits its item before any call, and a full month refuses only a new item",
+          "line": 19,
+          "definitions": [
+            "MonthItem",
+            "freeReviewsPerRepositoryPerMonth",
+            "monthlyReviewCapReason",
+            "admitsReview",
+            "sameMonth",
+            "monthUsed",
+            "admitsItem",
+            "admitItem",
+            "lawAdmittedItemIsAlwaysReadmitted",
+            "lawFullMonthRefusesANewItem",
+            "lawAdmissionNeverPassesTheCap",
+            "lawOtherRepositoriesAndMonthsAreUnaffected",
+            "lawRefusalNeedsAFullMonth",
+            "firstItem",
+            "entryValues",
+            "otherValues",
+            "rowsValues",
+            "usedThisMonthValues"
+          ]
+        }
+      ],
+      "imports": [
+        "slopbot__routing"
+      ],
+      "references": [
+        {
+          "target": "./review.md",
+          "line": 14
         }
       ]
     }

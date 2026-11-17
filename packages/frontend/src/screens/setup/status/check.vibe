@@ -1,0 +1,79 @@
+// spec/backend/projects.md, "The setup check activates a paused project that passes every check"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import type { SetupStatus } from "@repo/backend/client"
+import { checkProjectSetup } from "../../../flows/projects/api.vibe"
+import type { CallFailure } from "../../../platform/api.vibe"
+import { nextRevalidation } from "../../../session/signals.ts"
+import { Session } from "../../../session/session.vibe"
+
+export const setupAccountChanged = "Your account changed. Reload the project setup."
+export const setupIdentityUnavailable = "Your account could not be checked. Try again."
+export const setupMismatch = "The setup response did not match this project. Try again."
+export const setupUnfinished = "The setup check did not finish."
+
+export interface SetupView {
+  readonly setup: SetupStatus | null
+  readonly busy: boolean
+  readonly error: string | null
+}
+
+export interface SetupFollow {
+  readonly projectId: string
+  readonly actorId: string
+  readonly requestScan: boolean
+  readonly initial: SetupStatus | null
+  readonly checkFirst: boolean
+}
+
+export error SetupLost { message: string }
+
+effect function requireSetupActor(actorId: string) {
+  const current = (try Session).current() catch effect () => { throw new SetupLost({ message: setupIdentityUnavailable }) }
+  if (current?.githubId !== actorId) throw new SetupLost({ message: setupAccountChanged })
+}
+
+effect function checked(projectId: string, requestScan: boolean, actorId: string) {
+  try requireSetupActor(actorId)
+  const setup = try checkProjectSetup(projectId, requestScan, actorId)
+  try requireSetupActor(actorId)
+  if (setup.projectId !== projectId) throw new SetupLost({ message: setupMismatch })
+  return setup
+}
+
+function lostAccess(failure: CallFailure): boolean {
+  return failure._tag === "ActorChanged" || failure._tag === "InvalidResponse" || (failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status))
+}
+
+effect function failed(prior: SetupStatus | null, failure: CallFailure | SetupLost, actorId: string) {
+  if (failure._tag === "SetupLost") return { setup: null, busy: false, error: failure.message } satisfies SetupView
+  const message = failure.message === "" ? setupUnfinished : failure.message
+  if (lostAccess(failure)) return { setup: null, busy: false, error: message } satisfies SetupView
+  const identity = try Effect.match(requireSetupActor(actorId), { onSuccess: () => undefined, onFailure: (lost) => lost.message })
+  return { setup: identity === undefined ? prior : null, busy: false, error: identity ?? message } satisfies SetupView
+}
+
+effect function checkOnce(prior: SetupStatus | null, follow: SetupFollow, requestScan: boolean) {
+  const setup = checked(follow.projectId, requestScan, follow.actorId) catch effect (failure) => { return try failed(prior, failure, follow.actorId) }
+  return "busy" in setup ? setup : ({ setup, busy: false, error: null } satisfies SetupView)
+}
+
+function waits(setup: SetupStatus | null): boolean {
+  return setup !== null && setup.state !== "ready" && setup.state !== "restricted"
+}
+
+export effect function followSetup(follow: SetupFollow, show: (view: SetupView) => void!!) {
+  let view: SetupView = { setup: follow.initial, busy: false, error: null }
+  let requestScan = follow.requestScan
+  if (!follow.checkFirst) {
+    if (!waits(view.setup)) return
+    try Effect.promise((signal) => nextRevalidation(signal))
+  }
+  while (true) {
+    view = { ...view, busy: true, error: null }
+    try show(view)
+    view = try checkOnce(view.setup, follow, requestScan)
+    try show(view)
+    requestScan = false
+    if (!waits(view.setup)) return
+    try Effect.promise((signal) => nextRevalidation(signal))
+  }
+}

@@ -7,8 +7,8 @@ import { storageKeys } from "../../platform/storage.vibe"
 import { actorNumber } from "../../session/session.vibe"
 import { type EvmConnection, type EvmTransaction, connectEvm, estimateGas, evmAccount, evmChainId, evmRequest, sendTransaction, switchChain } from "../core/evm.vibe"
 import { type SlotStorage, readSlotText, slotWritable, writeSlotText } from "../core/slots.ts"
-import { type Authority, BountyRefused, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
-import { type DirectTransaction, type Journal, type JournalEntry, type JournalRead, attemptEntry, entryAttempt, isEvmHash, journalText, nonceNumber, quantityOf, readJournal, sameAddress, sameAttempt, transactionBytes, transactionOfBytes } from "./records.ts"
+import { type Authority, BountyRefused, type PaymentCase, evmPaymentAuthority, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
+import { type DirectTransaction, type Journal, type JournalEntry, type JournalRead, attemptEntry, entryAttempt, isEvmHash, journalText, nonceNumber, quantityOf, readJournal, sameAddress, sameAttempt, transactionBytes, transactionOf, transactionOfBytes } from "./records.ts"
 
 export type { DirectTransaction, Slot, Surface }
 
@@ -335,3 +335,19 @@ function directPaymentForm(storage: SlotStorage | undefined, prompt: DirectPromp
 }
 
 export type DirectPaymentForm = ReturnType<typeof directPaymentForm>
+
+const unpayableModes: ReadonlyArray<string> = ["retirement-required", "retirement-unproven"]
+
+export effect function openCasePayment(storage: SlotStorage | undefined, seen: PaymentCase) {
+  const settlement = seen.settlement
+  const request = settlement?.ownerRequest
+  const generation = settlement?.generation
+  const transactions = (request?.transactions ?? []).flatMap((value) => {
+    const parsed = transactionOf(value)
+    return parsed === undefined ? [] : [parsed]
+  })
+  if (seen.paymentRail !== "direct" || settlement === null || settlement === undefined || request === null || request === undefined || generation === undefined
+    || transactions.length === 0 || transactions.length !== (request.transactions ?? []).length || unpayableModes.includes(settlement.recovery?.mode ?? "")) throw refused(paymentMessages.stateChanged)
+  const form = try openDirectPayment(storage, { caseId: seen.id, generation, payer: request.payer.address, network: settlement.network, transactions, cancellation: false })
+  return { form, authority: evmPaymentAuthority(form.owner, seen) }
+}

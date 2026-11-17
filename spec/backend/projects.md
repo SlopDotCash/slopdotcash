@@ -211,7 +211,9 @@ pure def alwaysActiveRequirements(p: Project): bool =
 
 The server classifies the submitted manifest against the current one
 (`classifyRevisionChanges`): presentation, executable skill inputs and
-financial policy. The five classification fields of `OwnerChange`
+financial policy. The project's website and X account (`links.website`,
+`links.x`), which an owner sets or clears, are presentation links, not
+material terms ([project page links](../frontend/projectLinks.md)). The five classification fields of `OwnerChange`
 (`presentation`, `executable`, `financial`, `restrictedField`,
 `fieldsComplete`) are that classifier's output over the stored and the
 submitted manifest, computed by the project API; a client never supplies

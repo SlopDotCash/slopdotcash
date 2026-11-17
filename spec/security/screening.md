@@ -50,10 +50,12 @@ pure def stepRevisionAdvancesOnce(before: Screening, after: Screening): bool =
 Check exact evidence duplication within the project before a call. Exact
 duplication holds for private review without spending. Private automatic
 screening uses Surplus and records the requested `claude-sonnet-5.5` id.
-PRD section 5 (owner decision of 11 November 2026) routes private-report
-analysis through Orbio, then Surplus Sonnet, then Surplus Terra, while PRD
-section 8 requires the existing Surplus account with no provider fallback.
-This is an owner decision gate: until the owner confirms, the narrower
+PRD section 5 (operator decision of 16 November 2026, replacing the
+Orbio-first order of 11 November) routes private-report analysis through
+Surplus Sonnet, then Surplus Terra, then Orbio Sonnet as the backstop; a
+Surplus spending denial goes directly to Orbio, and the request waits for the
+Surplus reset only when Orbio serves no valid result. PRD section 8 requires
+the existing Surplus account with no provider fallback. This is an owner decision gate: until the owner confirms, the narrower
 confidential Surplus route governs private-report analysis.
 Credentials, exact retained bytes, complete response and validated schema
 gate a recommendation. Truncated, malformed, refused and timed-out answers

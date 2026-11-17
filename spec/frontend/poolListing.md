@@ -123,12 +123,11 @@ pure def lawHomeOrderSeparatesEntries(left: HomeCard, right: HomeCard): bool =
   left.index != right.index implies (homeBefore(left, right) or homeBefore(right, left))
 pure def lawUnfundedPoolSortsAsPoints(reward: V::RewardKind, stablecoin: bool): bool =
   reward == V::MonthlyPoolReward implies homeGroup(reward, M::zero, stablecoin) == PointsOnlyGroup
-pure val homeCards = Set({ group: StablecoinPool, amount: List(5), featured: false, index: 0 },
+pure val leftValues = Set({ group: StablecoinPool, amount: List(5), featured: false, index: 0 },
   { group: StablecoinPool, amount: List(9), featured: false, index: 1 },
   { group: StablecoinPool, amount: List(5), featured: true, index: 2 },
   { group: TokenPool, amount: List(9), featured: true, index: 3 },
   { group: PointsOnlyGroup, amount: List(0), featured: false, index: 1 })
-pure val leftValues = homeCards
-pure val rightValues = homeCards
+pure val rightValues = leftValues
 pure val shownAmountValues = Set(List(0), List(5))
 ```

@@ -41,7 +41,7 @@ import readyLabelSettings as RLS from "../backend/readyLabelSettings"
 pure val readyLabelName = "slopbot:ready"
 pure val readyLineMarker = "<!-- slopbot:ready -->"
 pure def savedSetting(saved: bool, settings: RLS::ReadyLabelConfig): RLS::ReadyLabelSetting =
-  if (saved) RLS::ReadyLabelPresent(settings) else RLS::ReadyLabelAbsent
+  if (saved) RLS::presentSetting(settings) else RLS::ReadyLabelAbsent
 pure def readyLabelOn(setting: RLS::ReadyLabelSetting, contributorWork: bool): bool =
   RLS::readyLabelOn(setting) and contributorWork
 pure def lawAbsentSettingsAreOff(contributorWork: bool): bool =
@@ -72,14 +72,14 @@ a matching directory.
 ```quint
 type FileChange = FileAdded | FileModified | FileRemoved | FileRenamed | FileOther
 type ChangedFile = { change: FileChange, defaultProtected: bool, ownerProtected: bool, patched: bool, lines: int }
-pure def protectedFile(f: ChangedFile): bool =
-  f.change == FileRemoved or f.defaultProtected or f.ownerProtected
-    or (not(f.patched) and not(f.change == FileRenamed and f.lines == 0))
-pure def protectedChange(files: List[ChangedFile]): bool = files.some(f => protectedFile(f))
-pure def lawOwnerCannotUnprotectADefaultPath(f: ChangedFile): bool = f.defaultProtected implies protectedFile(f)
+pure def protectedFile(changed: ChangedFile): bool =
+  changed.change == FileRemoved or changed.defaultProtected or changed.ownerProtected
+    or (not(changed.patched) and not(changed.change == FileRenamed and changed.lines == 0))
+pure def protectedChange(files: List[ChangedFile]): bool = files.some(changed => protectedFile(changed))
+pure def lawOwnerCannotUnprotectADefaultPath(changed: ChangedFile): bool = changed.defaultProtected implies protectedFile(changed)
 pure val cleanFile: ChangedFile = { change: FileModified, defaultProtected: false, ownerProtected: false,
   patched: true, lines: 12 }
-pure val fValues = Set(cleanFile, { ...cleanFile, defaultProtected: true }, { ...cleanFile, change: FileRemoved },
+pure val changedValues = Set(cleanFile, { ...cleanFile, defaultProtected: true }, { ...cleanFile, change: FileRemoved },
   { ...cleanFile, patched: false }, { ...cleanFile, change: FileRenamed, patched: false, lines: 0 })
 ```
 
@@ -267,21 +267,21 @@ pure def nextCheckAfter(d: ReadyDecision, now: int, firstSeen: int): int =
 pure def canRefresh(p: ReadyPull, observed: ReadyObservation): bool =
   observed.facts.open == (p.pr == PullOpen) and RLS::readyLabelValid(savedSetting(observed.saved, observed.settings))
 pure def refresh(p: ReadyPull, observed: ReadyObservation): ReadyPull =
-  val head = p.pullHead
+  val currentHead = p.pullHead
   val isOpen = p.pr == PullOpen
   val labelOn = readyLabelOn(savedSetting(observed.saved, observed.settings), observed.contributorWork)
-  val firstSeen = if (p.row != NoReadyRow and p.rowHead == head) p.firstSeenAt else p.now
+  val firstSeen = if (p.row != NoReadyRow and p.rowHead == currentHead) p.firstSeenAt else p.now
   val decided = readyDecision(observed.facts, observed.settings)
   val decision = if (decided.ready and not(observed.commentFound)) notReady(CommentUnavailable, false) else decided
   val writes = decision.ready != p.labelled or observed.commentFound
-  val seenHead = if (observed.headAtWrite == MovedHead) head + 1 else head
+  val seenHead = if (observed.headAtWrite == MovedHead) currentHead + 1 else currentHead
   if (not(labelOn) and p.row != ReadyRow) p
   else if (not(observed.installationActive) or not(observed.pullReadable)) p
   else if (not(labelOn))
-    { ...p, row: OffRow, rowHead: head, firstSeenAt: firstSeen, nextCheckAt: 0, reason: LabelOff,
+    { ...p, row: OffRow, rowHead: currentHead, firstSeenAt: firstSeen, nextCheckAt: 0, reason: LabelOff,
       labelled: p.labelled and not(isOpen), line: if (isOpen) NoReadyLine else p.line }
   else if (not(isOpen))
-    { ...p, row: if (p.labelled) ReadyRow else NotReadyRow, rowHead: head, firstSeenAt: firstSeen, nextCheckAt: 0,
+    { ...p, row: if (p.labelled) ReadyRow else NotReadyRow, rowHead: currentHead, firstSeenAt: firstSeen, nextCheckAt: 0,
       reason: NotOpen }
   else if (writes and observed.headAtWrite != SameHead)
     { ...p, pullHead: seenHead, labelled: p.labelled and observed.headAtWrite == UnreadableHead, row: NotReadyRow,
@@ -289,7 +289,7 @@ pure def refresh(p: ReadyPull, observed: ReadyObservation): ReadyPull =
   else
     { ...p, labelled: decision.ready,
       line: if (not(observed.commentFound)) p.line else if (decision.ready) LabelledLine else NotLabelledLine,
-      row: if (decision.ready) ReadyRow else NotReadyRow, rowHead: head, firstSeenAt: firstSeen, reason: decision.reason,
+      row: if (decision.ready) ReadyRow else NotReadyRow, rowHead: currentHead, firstSeenAt: firstSeen, reason: decision.reason,
       nextCheckAt: nextCheckAfter(decision, p.now, firstSeen) }
 pure def alwaysReadyRowIsLabelled(p: ReadyPull): bool = p.row == ReadyRow implies p.labelled
 pure def alwaysHeadsAndClock(p: ReadyPull): bool =

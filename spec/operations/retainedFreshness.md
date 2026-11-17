@@ -28,8 +28,8 @@ before the writes is a composition obligation of the release run.
 ```quint
 type GenerationTime = { valid: bool, millis: int }
 type SnapshotTimes = { leaderboard: GenerationTime, profiles: GenerationTime }
-pure def notOlder(retained: GenerationTime, published: GenerationTime): bool =
-  retained.valid and published.valid and retained.millis >= published.millis
+pure def notOlder(kept: GenerationTime, served: GenerationTime): bool =
+  kept.valid and served.valid and kept.millis >= served.millis
 pure def retainedCurrent(retained: SnapshotTimes, published: SnapshotTimes): bool =
   notOlder(retained.leaderboard, published.leaderboard) and notOlder(retained.profiles, published.profiles)
 pure def freshnessChecked(usePublishedData: bool, superseded: bool, rotatesRpc: bool): bool =

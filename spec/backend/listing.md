@@ -63,7 +63,7 @@ operator decision of 16 November 2026 (PRD section 10), the home page,
 /sponsors and agent discovery leave out an active monthly pool that is not
 funded this month, while a failed funding read lists every project; that
 month listing is `listedThisMonth` of the
-[public projections](../frontend/projections.md), applied on top of these
+[monthly listing](../frontend/poolListing.md), applied on top of these
 predicates, and never moves a project between tiers.
 
 ```quint

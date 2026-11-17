@@ -555,6 +555,18 @@
           "rules": [
             "Story: Confirm an irreversible step"
           ]
+        },
+        {
+          "spec": "spec/backend/readyLabelSettings.md",
+          "rules": [
+            "Story: Owners turn on the ready label within fixed bounds"
+          ]
+        },
+        {
+          "spec": "spec/frontend/readyLabelForm.md",
+          "rules": [
+            "Story: Turn the ready label on in project settings"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -779,6 +791,24 @@
           "rules": [
             "Story: Give the maintainer seven days to decide an uncertain finding"
           ]
+        },
+        {
+          "spec": "spec/backend/readyLabelSettings.md",
+          "rules": [
+            "Story: Owners turn on the ready label within fixed bounds"
+          ]
+        },
+        {
+          "spec": "spec/frontend/readyLabelForm.md",
+          "rules": [
+            "Story: Turn the ready label on in project settings"
+          ]
+        },
+        {
+          "spec": "spec/slopbot/readyLabel.md",
+          "rules": [
+            "Story: Label a pull request ready only while every condition holds at its head"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -807,6 +837,18 @@
           "spec": "spec/slopbot/budgetBlocks.md",
           "rules": [
             "Story: Block a review on a Surplus spending denial and resume it once"
+          ]
+        },
+        {
+          "spec": "spec/slopbot/readyLabel.md",
+          "rules": [
+            "Story: Label a pull request ready only while every condition holds at its head"
+          ]
+        },
+        {
+          "spec": "spec/slopbot/reviewCap.md",
+          "rules": [
+            "Story: Keep free advisory review within a monthly item cap"
           ]
         }
       ],
@@ -982,6 +1024,12 @@
           "rules": [
             "Story: Reuse the exact current assessment before spending again"
           ]
+        },
+        {
+          "spec": "spec/slopbot/reviewCap.md",
+          "rules": [
+            "Story: Keep free advisory review within a monthly item cap"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -1076,6 +1124,26 @@
           "spec": "spec/ui/confirmation.md",
           "rules": [
             "Story: Confirm an irreversible step"
+          ]
+        },
+        {
+          "spec": "spec/settlement/monthPledges.md",
+          "rules": [
+            "Story: The owner locks months and anyone releases a lapsed lock",
+            "Story: Keep each vault's month pledges with its finalized read"
+          ]
+        },
+        {
+          "spec": "spec/frontend/vaultLocks.md",
+          "rules": [
+            "Story: Review a month lock before the wallet is asked",
+            "Story: Withdraw only funds the month's promise or locks leave free"
+          ]
+        },
+        {
+          "spec": "spec/frontend/monthLock.md",
+          "rules": [
+            "Story: Lock months from the owner's wallet"
           ]
         }
       ],
@@ -1191,6 +1259,26 @@
           "spec": "spec/settlement/octoberImport.md",
           "rules": [
             "Story: Write each reviewed October proposal once"
+          ]
+        },
+        {
+          "spec": "spec/settlement/monthPledges.md",
+          "rules": [
+            "Story: A pledge is the owner's consent to reserve its month",
+            "Story: Keep each vault's month pledges with its finalized read",
+            "Story: The owner locks months and anyone releases a lapsed lock"
+          ]
+        },
+        {
+          "spec": "spec/frontend/vaultLocks.md",
+          "rules": [
+            "Story: Review a month lock before the wallet is asked"
+          ]
+        },
+        {
+          "spec": "spec/frontend/monthLock.md",
+          "rules": [
+            "Story: Lock months from the owner's wallet"
           ]
         }
       ],
@@ -1422,6 +1510,12 @@
           "spec": "spec/fees/feeReport.md",
           "rules": [
             "Story: Show administrators what the fee wallets did"
+          ]
+        },
+        {
+          "spec": "spec/fees/solanaRpcRotation.md",
+          "rules": [
+            "Story: Replace the Solana RPC pair of the exact active fee Worker"
           ]
         }
       ],
@@ -1917,6 +2011,19 @@
           "spec": "spec/slopbot/publicFeeds.md",
           "rules": [
             "Story: Serve published history from stored records only"
+          ]
+        },
+        {
+          "spec": "spec/frontend/poolListing.md",
+          "rules": [
+            "Story: Pick a project from one home grid",
+            "Story: List a monthly pool only in a month it is funded"
+          ]
+        },
+        {
+          "spec": "spec/frontend/projectLinks.md",
+          "rules": [
+            "Story: See where a project's money and links live"
           ]
         }
       ],
@@ -2496,6 +2603,12 @@
             "Story: Each source writes its Inbox rows once, to the right audience",
             "Story: A moderator reads only what current authority allows and records each decision with a reason"
           ]
+        },
+        {
+          "spec": "spec/operations/payoutAudience.md",
+          "rules": [
+            "Story: A payout exception reaches an account that can sign in"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -2605,6 +2718,18 @@
           "rules": [
             "Story: Reuse a recent snapshot and retry a failed read once",
             "Story: Several consumers share a public read without accepting stale completions"
+          ]
+        },
+        {
+          "spec": "spec/operations/intakeHistory.md",
+          "rules": [
+            "Story: Report a bounded, unsampled and stable projection of retained intake failures"
+          ]
+        },
+        {
+          "spec": "spec/operations/slopbotRuntime.md",
+          "rules": [
+            "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source"
           ]
         }
       ],
@@ -2806,6 +2931,36 @@
           "spec": "spec/security/scanController.md",
           "rules": [
             "Story: Dispatch a scan only for the deployed release of the branch head"
+          ]
+        },
+        {
+          "spec": "spec/fees/solanaRpcRotation.md",
+          "rules": [
+            "Story: Replace the Solana RPC pair of the exact active fee Worker"
+          ]
+        },
+        {
+          "spec": "spec/operations/identityApp.md",
+          "rules": [
+            "Story: Contributors can still find the unchanged Slop Identity App"
+          ]
+        },
+        {
+          "spec": "spec/operations/retainedFreshness.md",
+          "rules": [
+            "Story: A retained release never moves production back to older data"
+          ]
+        },
+        {
+          "spec": "spec/operations/rpcRotationRun.md",
+          "rules": [
+            "Story: A rotation run changes one endpoint and never counts as a release"
+          ]
+        },
+        {
+          "spec": "spec/operations/stagingOrder.md",
+          "rules": [
+            "Story: Allow staging publication only from one complete, fresh history read"
           ]
         }
       ],

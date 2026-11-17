@@ -1,0 +1,65 @@
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import type { SetupApplication, SetupStatus } from "@repo/backend/client"
+import { cancelProjectApplication, publishStoredApplication, setupList } from "../../../flows/projects/api.vibe"
+import type { CallFailure } from "../../../platform/api.vibe"
+import { Session } from "../../../session/session.vibe"
+
+export const applicationsAccountChanged = "Your account changed. Reload your saved applications."
+export const applicationsUnavailable = "Saved applications are unavailable. Reload them."
+export const applicationsUnchecked = "Your private session could not be checked. Reload your saved applications."
+export const applicationsUnloaded = "Saved applications could not load."
+export const cancellationUnconfirmed = "Cancellation could not be confirmed. Try again."
+export const applicationUnpublished = "The saved application could not be published."
+
+export type ApplicationAction = "publish" | "cancel"
+
+export type ApplicationOutcome =
+  | { readonly kind: "cancelled" }
+  | { readonly kind: "published"; readonly projectId: string; readonly setup: SetupStatus }
+
+export error ApplicationsLost { message: string }
+export error ApplicationRefused { message: string; installSlopbot: boolean }
+
+effect function requireApplicationActor(actorId: string) {
+  const current = (try Session).current() catch effect () => { throw new ApplicationsLost({ message: applicationsUnchecked }) }
+  if (current?.githubId !== actorId) throw new ApplicationsLost({ message: applicationsAccountChanged })
+}
+
+effect function listed(actorId: string) {
+  const { applications } = setupList(actorId) catch effect (failure) => { throw new ApplicationsLost({ message: failure.message === "" ? applicationsUnloaded : failure.message }) }
+  try requireApplicationActor(actorId)
+  return applications.filter((application) => application.status === "pending")
+}
+
+export effect function pendingApplications(actorId: string) {
+  return try listed(actorId)
+}
+
+effect function acted(action: ApplicationAction, application: SetupApplication, actorId: string) {
+  try requireApplicationActor(actorId)
+  if (action === "cancel") {
+    try cancelProjectApplication(application.id, actorId)
+    try requireApplicationActor(actorId)
+    return { kind: "cancelled" } satisfies ApplicationOutcome
+  }
+  const answer = try publishStoredApplication(application.id, actorId)
+  try requireApplicationActor(actorId)
+  return { kind: "published", projectId: answer.project.id, setup: answer.setup } satisfies ApplicationOutcome
+}
+
+function lostAccess(failure: CallFailure): boolean {
+  return failure._tag === "ActorChanged" || (failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status))
+}
+
+effect function refused(action: ApplicationAction, failure: CallFailure | ApplicationsLost, actorId: string) {
+  if (failure._tag === "ApplicationsLost") return failure
+  if (lostAccess(failure)) return new ApplicationsLost({ message: failure._tag === "ActorChanged" ? applicationsAccountChanged : failure.message === "" ? applicationsUnavailable : failure.message })
+  const lost = try Effect.match(requireApplicationActor(actorId), { onSuccess: () => undefined, onFailure: () => new ApplicationsLost({ message: applicationsUnchecked }) })
+  if (lost !== undefined) return lost
+  const fallback = action === "cancel" ? cancellationUnconfirmed : applicationUnpublished
+  return new ApplicationRefused({ message: failure.message === "" ? fallback : failure.message, installSlopbot: failure._tag === "Refused" && failure.error === "slopbot_required" })
+}
+
+export effect function actOnApplication(action: ApplicationAction, application: SetupApplication, actorId: string) {
+  return acted(action, application, actorId) catch effect (failure) => { throw try refused(action, failure, actorId) }
+}

@@ -23,6 +23,8 @@ export schema HoldRow {
 schema ReviewedRow { readonly repository_id: number; readonly item_kind: string; readonly author_id: number; readonly content_digest: string }
 schema FlagsRow { readonly reopened: number; readonly upheld: number }
 
+export error HoldClockBehind { reviewKey: string }
+
 export interface HoldScope {
   readonly reviewKey: string
   readonly finding: HeldFinding
@@ -69,13 +71,15 @@ effect function holdOf(scope: HoldScope, rows: ReadonlyArray<Rows>) {
   const [row] = try decoded(HoldRow, holdRows ?? [], "maintainer hold")
   const [flags] = try decoded(FlagsRow, flagRows ?? [], "maintainer hold reversals")
   const millis = try Clock.currentTimeMillis
+  const now = Math.floor(millis / 1000)
   const heldAt = row === undefined ? 0 : seconds(row.held_at)
   const queuedAt = row?.queued_at == null ? 0 : seconds(row.queued_at)
+  if (heldAt > now || queuedAt > now) throw new HoldClockBehind({ reviewKey: scope.reviewKey })
   const status: HoldStatus = row === undefined ? "NoHold" : row.outcome === null ? "WaitingForMaintainer" : statuses[row.outcome]
   const hold = try decodeState({
     finding: scope.finding,
     gate: scope.gate,
-    now: Math.max(Math.floor(millis / 1000), heldAt, queuedAt),
+    now,
     heldAt,
     queuedAt,
     hold: status,
@@ -86,7 +90,7 @@ effect function holdOf(scope: HoldScope, rows: ReadonlyArray<Rows>) {
   return { hold, row, iso: try isoAt(millis) } satisfies HoldLoaded
 }
 
-function holdAggregate(scope: HoldScope): Aggregate<HoldLoaded, NotAState | RowMismatch, never> {
+function holdAggregate(scope: HoldScope): Aggregate<HoldLoaded, NotAState | RowMismatch | HoldClockBehind, never> {
   const flags = flagsRead(scope.finding.identity)
   return {
     name: `maintainer hold ${scope.reviewKey}`,

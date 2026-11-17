@@ -32,6 +32,7 @@ interface Fresh {
   readonly labels: ReadonlyArray<string>
   readonly owner: typeof Account.Type | undefined
   readonly revisionChanged: boolean
+  readonly unreadable: boolean
 }
 
 const scopes: Readonly<Record<Scope, RepositoryScope>> = { Unregistered: "Unregistered", Contributor: "Active", SecurityOnly: "SecurityOnly", ReversalOnly: "ReversalOnly" }
@@ -39,8 +40,12 @@ const passiveEvents = new Set(["mentioned", "subscribed", "unsubscribed"])
 const timelinePages = 30
 const freshSeq = 1
 
-function freshOf(fresh: Fresh): Fresh {
-  return fresh
+function freshOf(fresh: Omit<Fresh, "unreadable">): Fresh {
+  return { ...fresh, unreadable: false }
+}
+
+function unreadableOf(known: SourceObservation, owner: typeof Account.Type | undefined): Fresh {
+  return { source: { ...known, source: "SourceSuperseded", installation: "InstallationActive", item: "ItemClosed", coverage: "CoverageComplete" }, labels: [], owner, revisionChanged: false, unreadable: true }
 }
 
 function scopedOf(job: MaintainerHoldJob, projectId: string, itemNodeId: string): ScopedItem {
@@ -62,9 +67,9 @@ effect function freshSource(scope: HoldScope, observed: Observed) {
   const base = `/repositories/${job.repositoryId}`
   const repository = try absentOn404(github.json(base, RepositoryRead))
   const issue = try absentOn404(github.json(`${base}/issues/${job.number}`, IssueRead))
-  if (repository === undefined || issue === undefined || issue.node_id !== identity.itemNode) return freshOf({ source: { ...known, installation: "InstallationActive" }, labels: [], owner: repository?.owner, revisionChanged: false })
+  if (repository === undefined || issue === undefined || issue.node_id !== identity.itemNode) return unreadableOf(known, repository?.owner)
   const pull = job.itemKind === "pull_request" ? try absentOn404(github.json(`${base}/pulls/${job.number}`, PullRead)) : undefined
-  if (job.itemKind === "pull_request" && pull === undefined) return freshOf({ source: { ...known, installation: "InstallationActive" }, labels: [], owner: repository.owner, revisionChanged: false })
+  if (job.itemKind === "pull_request" && pull === undefined) return unreadableOf(known, repository.owner)
   const comparison = try comparisonOf(job.repositoryId, pull)
   const revision = pull?.head.sha ?? try sha256Hex(`${issue.title}\n${issue.body ?? ""}`)
   const digest = try sha256Hex(reviewedItemText(issue, pull, comparison))
@@ -120,6 +125,7 @@ function supersededReason(fresh: Fresh) {
   if (source.scope === "Unregistered" || source.scope === "ReversalOnly") return "repository is not registered in the Slop registry"
   if (source.scope === "SecurityOnly") return "security review only"
   if (source.installation !== "InstallationActive") return "installation removed or suspended"
+  if (fresh.unreadable) return "item not readable"
   if (source.coverage === "CoverageLimited") return "comparison coverage is incomplete"
   if (source.item !== "ItemOpen") return "item is no longer open"
   if (source.draft) return "item is a draft"
@@ -136,8 +142,11 @@ export effect function applyMaintainerHold(job: MaintainerHoldJob, settings: Rev
   const stored = try storedHold(job)
   if (stored === undefined || stored.row.resolved_at !== null) return "hold already resolved"
   const { scope } = stored
-  const base = try loadHold(scope)
-  if (!holdDue(base.hold)) return "hold not due"
+  const base = loadHold(scope) catch effect (error) => {
+    if (error._tag === "HoldClockBehind") return undefined
+    throw error
+  }
+  if (base === undefined || !holdDue(base.hold)) return "hold not due"
   const current = try observeScope({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })
   const fresh = try freshSource(scope, current)
   const gate = gateOf(fresh.source)

@@ -12,6 +12,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Release and operational qualification](./release.md)
 - [Staging order check with one quota retry](./stagingOrder.md)
 - [Retained production data freshness](./retainedFreshness.md)
+- [RPC rotation release runs](./rpcRotationRun.md)
 - [Slop Identity App check after publication](./identityApp.md)
 - [Slopbot runtime metadata readback](./slopbotRuntime.md)
 - [Value intake history inspection](./intakeHistory.md)

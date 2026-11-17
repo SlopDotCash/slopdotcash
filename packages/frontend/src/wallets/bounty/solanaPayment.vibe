@@ -8,8 +8,8 @@ import { storageKeys } from "../../platform/storage.vibe"
 import { actorNumber } from "../../session/session.vibe"
 import { WalletFailed } from "../core/discovery.vibe"
 import { type SolanaConnection, connectSolana, solanaSignAndSend } from "../core/solana.vibe"
-import { slotWritable, writeSlotText } from "../core/slots.ts"
-import { type Authority, BountyRefused, type PaymentCase, type SolanaPlanView, expiryEstablished, paidWith, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
+import { readSlotText, slotWritable, writeSlotText } from "../core/slots.ts"
+import { type Authority, BountyRefused, type PaymentCase, type SolanaPlanView, expiryEstablished, paidWith, paymentMessages, refused, sameActor, sessionActor, solanaPaymentAuthority } from "./paymentCase.vibe"
 import { type ListedStorage, type SolanaRead, attemptSolanaRecord, isSolanaSignature, keysWithPrefix, payerMessage, readSolanaRecord, sameAttempt, solanaAttempt } from "./records.ts"
 
 export const solanaChain = "solana:mainnet"
@@ -38,7 +38,7 @@ interface KnownMessage {
   readonly transaction: string
 }
 
-export interface SolanaPrompt_ {
+export interface SolanaJournal {
   readonly machine: Machine.Shape
   know(message: number, messageId: string, transaction: string): void!!
   written(event: Event, by: number): (SolanaPrompt | undefined)!Rejected
@@ -68,7 +68,7 @@ export effect function solanaPromptOver(storage: ListedStorage | undefined, pref
     const own = keys.find((key) => account > 0 && ownerOf(key) === account)
     const key = own ?? keys[0]
     if (key === undefined) return undefined
-    return { key, owner: ownerOf(key), read: readSolanaRecord(storage === undefined ? null : storage.getItem(key), entry.transaction), entry }
+    return { key, owner: ownerOf(key), read: readSolanaRecord(readSlotText(storage, key), entry.transaction), entry }
   }
 
   function readAt(message: number, account: number) {
@@ -124,7 +124,7 @@ export effect function solanaPromptOver(storage: ListedStorage | undefined, pref
     },
     written,
     readAt: effect (message: number, account: number) => readAt(message, account),
-  } satisfies SolanaPrompt_
+  } satisfies SolanaJournal
 }
 
 export interface SolanaPaymentInput {
@@ -142,8 +142,9 @@ export effect function connectSolanaPayer<R>(id: number, payer: string, authorit
 }
 
 export effect function openSolanaPayment(storage: ListedStorage | undefined, input: SolanaPaymentInput) {
-  const owner = try sessionActor()
-  if (owner === undefined) throw refused(solanaMessages.signIn)
+  const signedIn = try sessionActor()
+  if (signedIn === undefined) throw refused(solanaMessages.signIn)
+  const owner: string = signedIn
   const account = actorNumber(owner)
   const prompt = try solanaPromptOver(storage, solanaPrefix(input.caseId, input.generation))
   const plans = new Map<number, SolanaPlanView>()
@@ -230,7 +231,9 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
 
   effect function observe(seen: PaymentCase) {
     const next = seen.settlement?.ownerRequest?.solana
-    if (next !== undefined && seen.settlement?.generation === input.generation) try receive(next) catch () => undefined
+    if (next !== undefined && seen.settlement?.generation === input.generation) {
+      receive(next) catch () => undefined
+    }
     const state = try current()
     if (expiryEstablished(seen) && canObserveHeight(state, state.lastValid + 1, heightReader)) try prompt.written({ type: "observeHeight", height: state.lastValid + 1 }, heightReader)
     return try current()
@@ -242,15 +245,15 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     return try current()
   }
 
-  effect function verify<R>(input: string | undefined, authority: Authority<R>) {
+  effect function verify<R>(entered: string | undefined, authority: Authority<R>) {
     const before = try current()
     if (try unreadable(before)) throw refused(solanaMessages.unreadable)
     try guarded(authority.authorizeVerification)
     const read = visible(before)
-    const candidate = input?.trim() ?? ""
+    const candidate = entered?.trim() ?? ""
     if (candidate !== "" && isSolanaSignature(candidate) && candidate !== read.candidate && canEnterCandidate(before, read, candidate, account)) {
-      const entered = try prompt.written({ type: "enterCandidate", read, candidate }, account)
-      if (entered === undefined) throw refused(solanaMessages.storageBlocked)
+      const saved = try prompt.written({ type: "enterCandidate", read, candidate }, account)
+      if (saved === undefined) throw refused(solanaMessages.storageBlocked)
     }
     const ready = try current()
     if (!canVerify(ready, account)) throw refused(solanaMessages.uncertainShown)
@@ -309,8 +312,22 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     beginHistory,
     endHistory,
     leave,
+    tracksHistory: effect () => {
+      const state = try current()
+      return state.phase === "HistoryCheck" || (state.phase === "Expired" && !sameAttempt(visible(state), noAttempt))
+    },
     unreadable: effect () => try unreadable(try current()),
   }
 }
 
 export type SolanaPaymentForm = Effect.Success<ReturnType<typeof openSolanaPayment>>
+
+export effect function openCaseSolanaPayment(storage: ListedStorage | undefined, seen: PaymentCase) {
+  const settlement = seen.settlement
+  const request = settlement?.ownerRequest
+  const plan = request?.solana
+  const generation = settlement?.generation
+  if (seen.paymentRail !== "direct" || request === null || request === undefined || plan === undefined || generation === undefined) throw refused(paymentMessages.stateChanged)
+  const form = try openSolanaPayment(storage, { caseId: seen.id, generation, payer: request.payer.address, plan })
+  return { form, authority: solanaPaymentAuthority(form.owner, seen) }
+}

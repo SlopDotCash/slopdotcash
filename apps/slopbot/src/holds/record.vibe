@@ -44,7 +44,11 @@ export effect function dispatchMaintainerHolds() {
     if (job.kind !== "maintainer_hold") continue
     const stored = try storedHold(job)
     if (stored === undefined) continue
-    if (!canDispatchHold((try loadHold(stored.scope)).hold)) continue
+    const loaded = Effect.map(loadHold(stored.scope), (hold) => hold.hold) catch effect (error) => {
+      if (error._tag === "HoldClockBehind") return undefined
+      throw error
+    }
+    if (loaded === undefined || !canDispatchHold(loaded)) continue
     try send(job)
     const marked = Effect.as(commitHold(stored.scope, () => [{ type: "dispatchHold" }]), true) catch effect (error) => {
       if (error._tag === "Rejected") return false

@@ -1,8 +1,9 @@
-// spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"
+// spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"
 import { millisOf } from "@repo/platform/clock"
 import { first, rows, sql } from "@repo/platform/d1"
-import { canObserveReopen, canReopenOwnClose } from "../../gen/slopbot__closeAttempt.effect.vibe"
-import type { ReopenEvidence } from "../../gen/slopbot__closure.effect.vibe"
+import { canObserveAppealOutcome, canObserveAuthorAppeal, canObserveReopen, canReopenOwnClose } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import type { AppealOutcome, ReopenEvidence } from "../../gen/slopbot__closure.effect.vibe"
+import { recordedReopens } from "../closure/store.vibe"
 import { activeInstallation } from "../installation/store.vibe"
 import { categoryLabel, removeLabel, uncertainLabel } from "../publish/labels.vibe"
 import { type ScopedItem, requireScope } from "../publish/scope.vibe"
@@ -16,6 +17,7 @@ import { type AttemptRecord, attemptState, confirmedAttempt, nextRead, openAttem
 schema ReopenRow { readonly sender_id: number; readonly occurred_at: string }
 schema CategoriesRow { readonly categories: string }
 schema HeldRow { readonly n: number }
+schema AppealRow { readonly appellant: string; readonly resolution: string | null }
 
 export interface ReopenSubject {
   readonly ref: RepositoryRef
@@ -65,6 +67,20 @@ export effect function observeConfirmedReopens(record: AttemptRecord) {
   }
 }
 
+export effect function observeDisputes(record: AttemptRecord) {
+  try observeConfirmedReopens(record)
+  const { identity } = (try attemptState(record)).candidate
+  for (const reopen of try recordedReopens(identity)) {
+    if (canObserveReopen(try attemptState(record), reopen)) try sendAttempt(record, { type: "observeReopen", reopen })
+  }
+  const appeal = try first(AppealRow, sql`SELECT appellant_github_id AS appellant, resolution FROM slopbot_appeals WHERE appeal_key = ${`appeal:${identity.itemNode}:${identity.revision}`}`)
+  if (appeal === undefined) return
+  const appellant = Number(appeal.appellant)
+  if (canObserveAuthorAppeal(try attemptState(record), appellant)) try sendAttempt(record, { type: "observeAuthorAppeal", appellant })
+  const upheld: AppealOutcome = { itemNode: identity.itemNode, revision: identity.revision, verdict: "AppealUpheld" }
+  if (appeal.resolution === "upheld" && canObserveAppealOutcome(try attemptState(record), upheld)) try sendAttempt(record, { type: "observeAppealOutcome", appealOutcome: upheld })
+}
+
 export effect function observeCurrent(record: AttemptRecord, subject: ReopenSubject, current: CurrentItem) {
   const closed = current.issue.state === "closed"
   try sendAttempt(record, {
@@ -84,13 +100,13 @@ effect function confirmedRecord(subject: ReopenSubject) {
   const row = try confirmedAttempt(subject.itemNodeId, subject.revision)
   const stored = row === undefined ? undefined : storedOf(row)
   if (row === undefined || stored === undefined) return undefined
-  return try openAttempt((try restoredAttempt(row.recovery_json, stored, false)).state)
+  return try openAttempt((try restoredAttempt(row, stored, false)).state)
 }
 
 effect function reopenedOwnClose(subject: ReopenSubject, current: CurrentItem, given: AttemptRecord | undefined) {
   const record = given ?? try confirmedRecord(subject)
   if (record === undefined) return false
-  try observeConfirmedReopens(record)
+  try observeDisputes(record)
   try observeCurrent(record, subject, current)
   if (!canReopenOwnClose(try attemptState(record))) return false
   try requireScope(scopedOf(subject), "security")

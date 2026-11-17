@@ -124,6 +124,27 @@ pure def readsPeriod(blockTime: int, stored: List[StoredPledge], network: str, v
   pledgeReadWindow(blockTime).includes(period) or storedOpenPeriods(stored, network, vault).includes(period)
 ```
 
+### Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open
+
+Each vault row of `GET /api/v1/pool-funding` carries the stored open total as
+`openPledgedGross` in base units, null for a vault without pledge support,
+and its stored pledges above zero (`pledges`, each a `YYYY-MM` month, an
+amount in base units and whether it is open) for the UTC month before the
+request and every later month, and every pledge still open, so an owner sees
+a lapsed lock until its release; a vault without pledge support serves none.
+They are served in ascending month order, under the same testnet rule as the
+other rows of that route ([public payment records](./publicRecords.md)).
+Source: development `backend/projects/pool-funding.ts`
+(`readPoolFundingProjects`, `recentPeriods`).
+
+```quint
+pure def servedPledge(row: StoredPledge, network: str, vault: str, now: int): bool =
+  row.network == network and row.vault == vault and M::positiveAmount(row.amount)
+    and (row.open or row.period >= C::addPeriods(C::utcPeriod(now), -1))
+pure def servedPledges(total: StoredTotal, stored: List[StoredPledge], network: str, vault: str, now: int): List[StoredPledge] =
+  if (total.supported) stored.select(row => servedPledge(row, network, vault, now)) else List()
+```
+
 ## Story: A pledge is the owner's consent to reserve its month
 
 ### Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project

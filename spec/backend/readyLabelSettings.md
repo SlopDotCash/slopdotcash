@@ -51,6 +51,8 @@ type ProtectedPath = { pattern: str, length: int, wellFormed: bool }
 type ReadyLabelConfig = { enabled: bool, approvals: int, maxChangedLines: int, maxChangedFiles: int,
   protectedPaths: List[ProtectedPath] }
 type ReadyLabelSetting = ReadyLabelAbsent | ReadyLabelPresent(ReadyLabelConfig)
+pure def presentSetting(c: ReadyLabelConfig): ReadyLabelSetting = ReadyLabelPresent({ enabled: c.enabled, approvals: c.approvals,
+  maxChangedLines: c.maxChangedLines, maxChangedFiles: c.maxChangedFiles, protectedPaths: c.protectedPaths })
 pure val minApprovals = 1
 pure val maxApprovals = 10
 pure val minChangedLines = 1
@@ -83,8 +85,8 @@ pure def protectedPatterns(builtIn: Set[str], setting: ReadyLabelSetting): Set[s
 }
 pure def lawAbsentMeansOff(setting: ReadyLabelSetting): bool =
   setting == ReadyLabelAbsent implies not(readyLabelOn(setting)) and readyLabelValid(setting)
-pure def lawDefaultsAreValid(enabled: bool): bool =
-  readyLabelValid(ReadyLabelPresent({ enabled: enabled, approvals: defaultApprovals, maxChangedLines: defaultMaxChangedLines,
+pure def lawDefaultsAreValid(isEnabled: bool): bool =
+  readyLabelValid(ReadyLabelPresent({ enabled: isEnabled, approvals: defaultApprovals, maxChangedLines: defaultMaxChangedLines,
     maxChangedFiles: defaultMaxChangedFiles, protectedPaths: List() }))
 pure def lawOwnerPatternsOnlyAdd(builtIn: Set[str], setting: ReadyLabelSetting): bool =
   builtIn.subseteq(protectedPatterns(builtIn, setting))

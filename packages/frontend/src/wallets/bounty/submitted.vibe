@@ -1,0 +1,81 @@
+// spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "Direct reconciliation requires a retained exact attempt"
+import { storageKeys } from "../../platform/storage.vibe"
+import { readSlotText, writeSlotText } from "../core/slots.ts"
+import { type PaymentCase, existingAuthority, refused, sessionActor } from "./paymentCase.vibe"
+import { type ListedStorage, isEvmHash, isSolanaSignature, keysWithPrefix, parsedRecord } from "./records.ts"
+
+export const submittedMessages = {
+  unreadable: "Saved transaction details could not be read. Use the case verification action.",
+  accountChanged: "Your account changed. Reload before verifying payment.",
+  changed: "The saved transaction changed. Reload before checking it again.",
+} as const
+
+export interface SubmittedRow {
+  readonly key: string
+  readonly item: string | null
+  readonly saved: string
+  readonly value: string
+}
+
+export interface Submitted {
+  readonly owner: string | undefined
+  readonly solana: boolean
+  readonly rows: ReadonlyArray<SubmittedRow>
+}
+
+function solanaCase(seen: PaymentCase): boolean {
+  return (seen.settlement?.network ?? "").startsWith("solana")
+}
+
+function validFor(solana: boolean, value: string): boolean {
+  return solana ? isSolanaSignature(value) : isEvmHash(value)
+}
+
+function confirmedBy(seen: PaymentCase, solana: boolean, value: string): boolean {
+  return (seen.settlement?.confirmedTransactionIds ?? []).some((id) => (solana ? id === value : id.toLowerCase() === value.toLowerCase()))
+}
+
+function textOf(value: unknown): string {
+  return typeof value === "string" ? value : ""
+}
+
+function rowsOf(key: string, source: Readonly<Record<string, unknown>>, solana: boolean): ReadonlyArray<SubmittedRow> {
+  if (solana) return [{ key, item: null, saved: JSON.stringify(source), value: textOf(source.candidate) || textOf(source.signature) }]
+  return Object.entries(source).map(([item, entry]) => {
+    const fields = parsedRecord(JSON.stringify(entry)) ?? {}
+    return { key, item, saved: JSON.stringify(entry), value: textOf(fields.candidate) || textOf(fields.hash) }
+  })
+}
+
+export effect function submittedPayments(storage: ListedStorage | undefined, seen: PaymentCase) {
+  const owner = try sessionActor()
+  const solana = solanaCase(seen)
+  const generation = seen.settlement?.generation
+  if (owner === undefined || generation === undefined) return { owner, solana, rows: [] } satisfies Submitted
+  const prefix = solana ? `${storageKeys.bountySolana.key}${seen.id}:${generation}:` : `${storageKeys.bountySend.key}${seen.id}:${generation}:pay:`
+  const rows: SubmittedRow[] = []
+  for (const key of keysWithPrefix(storage, prefix)) {
+    if (!key.endsWith(`:${owner}`)) continue
+    const source = parsedRecord(readSlotText(storage, key))
+    if (source === undefined) throw refused(submittedMessages.unreadable)
+    rows.push(...rowsOf(key, source, solana))
+  }
+  return { owner, solana, rows: rows.filter((row) => !confirmedBy(seen, solana, row.value.trim())) } satisfies Submitted
+}
+
+export effect function verifySubmitted(storage: ListedStorage | undefined, seen: PaymentCase, submitted: Submitted) {
+  const owner = submitted.owner
+  if (owner === undefined || (try sessionActor()) !== owner) throw refused(submittedMessages.accountChanged)
+  const authority = existingAuthority(owner, seen)
+  try authority.authorize
+  const ready = submitted.rows.filter((row) => validFor(submitted.solana, row.value.trim()))
+  for (const row of ready) {
+    const source = parsedRecord(readSlotText(storage, row.key))
+    const current = row.item === null ? source : source?.[row.item]
+    if (source === undefined || JSON.stringify(current) !== row.saved) throw refused(submittedMessages.changed)
+    const candidate = row.value.trim()
+    const next = row.item === null ? { ...source, candidate } : { ...source, [row.item]: { ...(parsedRecord(JSON.stringify(current)) ?? {}), candidate } }
+    try Effect.try({ try: () => writeSlotText(storage, row.key, JSON.stringify(next)), catch: () => refused(submittedMessages.changed) })
+  }
+  return try authority.verify(ready.map((row) => row.value.trim()))
+}

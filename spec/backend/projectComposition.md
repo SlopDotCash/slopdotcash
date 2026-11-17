@@ -518,7 +518,11 @@ pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 }, { au
 pure val requestValues = Set({ ...E::goodGrant, kind: E::OwnerApproved, branch: E::IntegrationBranch })
 pure val fenceValues = E::fenceValues
 pure val rowValues = Set({ projectId: 1, repository: 1 })
-pure val pinsValues = Set(List({ repository: 1, pin: E::PinMatches }, { repository: 2, pin: E::PinMatches }))
+pure val pinsValues = tuples(0.to(2), 0.to(2), 0.to(2))
+  .map(x => List({ repository: x._1, assessment: 1, pin: E::PinMatches }, { repository: x._2, assessment: 2, pin: E::PinMatches },
+    { repository: x._3, assessment: 3, pin: E::PinMatches }).select(p => p.repository > 0))
+  .union(tuples(1.to(3), 1.to(3)).filter(x => x._1 != x._2)
+    .map(x => List({ repository: 1, assessment: x._1, pin: E::PinMatches }, { repository: 1, assessment: x._2, pin: E::PinChanged })))
 pure val scanOutcomeValues = tuples(Set(1, 2, 3), 1.to(3), Set(A::DClean, A::DMalicious)).map(x =>
   { assessment: x._1, repository: if (x._1 == 3) 2 else 1, revision: x._2, disposition: x._3,
     confirmation: if (x._3 == A::DMalicious) A::ReproducibleBehavior else A::NoConfirmation, reused: false, retained: true })

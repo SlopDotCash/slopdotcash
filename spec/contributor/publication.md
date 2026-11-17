@@ -164,26 +164,24 @@ throws or returns nothing is `FundingUnread`: it logs `project discovery pool
 funding unavailable` and lists every cleared project as before, so a funding
 outage never empties discovery. A successful read, an empty one included,
 gives each candidate `ListedThisMonth` when `listedThisMonth` of the
-[public projections](../frontend/projections.md) holds (a project whose
-status is not active, any reward kind other than a monthly pool, an open
-security program, or a monthly pool whose `poolDisplay` is `PoolFunded` for
-the current period) and `UnfundedThisMonth` otherwise; the shell evaluates it
-on the funding read and passes the result to `monthListingOf`. The discovery answer is `no-store` like every other, so the next
-request reads the funding again. The month listing changes discovery only:
+[monthly listing](../frontend/poolListing.md) holds for its listing facts on
+that read, and `UnfundedThisMonth` otherwise. The discovery answer is
+`no-store` like every other, so the next request reads the funding again. The month listing changes discovery only:
 the project's skills, guides, archives and `terms.json` keep serving by
 direct link, and the installer's gate is unchanged.
 
 ```quint
+import poolListing as PL from "../frontend/poolListing"
 type MonthListing = ListedThisMonth | UnfundedThisMonth | FundingUnread
-pure def monthListingOf(fundingRead: bool, predicateHolds: bool): MonthListing =
-  if (not(fundingRead)) FundingUnread else if (predicateHolds) ListedThisMonth else UnfundedThisMonth
+pure def monthListingOf(fundingRead: bool, facts: PL::ListingFacts): MonthListing =
+  if (not(fundingRead)) FundingUnread else if (PL::listedThisMonth(facts)) ListedThisMonth else UnfundedThisMonth
 pure def lawUnfundedProjectNotDiscovered(known: ArtifactFacts): bool =
   known.monthListing == UnfundedThisMonth implies not(discoverable(known))
 pure def lawFailedFundingReadListsAsBefore(known: ArtifactFacts): bool =
   discoverable({ ...known, monthListing: FundingUnread }) iff discoverable({ ...known, monthListing: ListedThisMonth })
-pure def lawFundingReadDecidesOnlyWhenRead(predicateHolds: bool): bool =
-  monthListingOf(false, predicateHolds) == FundingUnread
-  and (monthListingOf(true, predicateHolds) == UnfundedThisMonth iff not(predicateHolds))
+pure def lawFundingReadDecidesOnlyWhenRead(facts: PL::ListingFacts): bool =
+  monthListingOf(false, facts) == FundingUnread
+  and (monthListingOf(true, facts) == UnfundedThisMonth iff not(PL::listedThisMonth(facts)))
 pure def lawUnfundedProjectServesByDirectLink(known: ArtifactFacts, route: RouteKind): bool =
   route != DiscoveryRoute implies
     artifactAnswer(route, { ...known, monthListing: UnfundedThisMonth })
@@ -455,6 +453,7 @@ pure val viewValues = Set(openProjectView, { ...openProjectView, paused: true },
   { ...openProjectView, retired: true }, { ...openProjectView, cleared: false })
 pure val repositoriesValues = Set(List(), List({ id: "o/r", lastAlias: "" }, { id: "o/s", lastAlias: "n/s" }))
 pure val listingValues = Set(ListedThisMonth, UnfundedThisMonth, FundingUnread)
+pure val factsValues = PL::listingValues
 pure val projectIdValues = Set("p")
 pure val artifactNameValues = Set("SKILL.md", "review/SKILL.md", "terms.json")
 pure val committedFile: SourceFile = { path: "SKILL.md", working: "a", committed: "a" }

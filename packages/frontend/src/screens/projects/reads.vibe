@@ -1,7 +1,7 @@
 // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
 import { millisOf } from "@repo/platform/clock"
 import type { RepositoryRegistry } from "@repo/points/client"
-import { type CycleIndex, type DirectTransfer, cycleIndexUrl } from "@repo/settlement/client"
+import { CycleIndex, type DirectTransfer, cycleIndexUrl } from "@repo/settlement/client"
 import { Machine as ReadMachine } from "../../../gen/frontend__requests.effect.vibe"
 import type { PageRuntime } from "../../app/runtime.vibe"
 import { fetchBounded } from "../../platform/bounded.vibe"
@@ -20,7 +20,7 @@ export const cycleIndexLimitBytes = 8 * 1024 * 1024
 export const projectMessages = {
   unreadable: "This project's record could not be read.",
   discoveryInvalid: "Invalid discovery registry",
-  cyclesInvalid: "cycle index is not canonically ordered",
+  cyclesInvalid: "The cycle index could not be verified.",
 } as const
 
 const uncached: globalThis.RequestInit = { cache: "no-store" }
@@ -40,6 +40,7 @@ export interface ShownRead<T> {
 export interface Work {
   readonly board: Leaderboard
   readonly stale: boolean
+  readonly refreshFailed: boolean
 }
 
 export type RepositoryRegistryOf = (boot: RegistryBoot) => RepositoryRegistry
@@ -52,10 +53,13 @@ function shownRead<T>(read: Resource<T>): ShownRead<T> {
   return { read, runtime: ManagedRuntime.make(Layer.succeed(ReadMachine, read.machine)) }
 }
 
-function canonical(index: CycleIndex): boolean {
+const baseUnits = /^(?:0|[1-9][0-9]*)$/u
+
+function indexValid(index: CycleIndex): boolean {
   return index.cycles.every((current, position) => {
     const previous = index.cycles[position - 1]
-    return previous === undefined || previous.cycleId > current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) <= 0)
+    const ordered = previous === undefined || previous.cycleId > current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) <= 0)
+    return ordered && [current.reward.approvedMinor, current.reward.feeMinor, current.reward.paidMinor].every((minor) => baseUnits.test(minor))
   })
 }
 
@@ -70,7 +74,7 @@ effect function loadCycleIndex(attempt: number) {
   provide FetchHttpClient.RequestInit = uncached {
     const body = try fetchBounded(`${cycleIndexUrl}?attempt=${attempt}`, cycleIndexLimitBytes, "cycle index")
     const index: CycleIndex = Schema.decodeUnknownEffect(CycleIndex)(body) catch effect () => { throw new Unreadable({ message: projectMessages.cyclesInvalid }) }
-    if (!canonical(index)) throw new Unreadable({ message: projectMessages.cyclesInvalid })
+    if (!indexValid(index)) throw new Unreadable({ message: projectMessages.cyclesInvalid })
     return index
   }
 }
@@ -148,6 +152,12 @@ export effect function loadWork(boot: RegistryBoot, registryOf: RepositoryRegist
   const { board, consumer } = try ProjectReads
   const registry = registries.get(boot) ?? registryOf(boot)
   registries.set(boot, registry)
-  const read = try board.cache.read(consumer, registry, force)
-  return { board: read, stale: try stale(millisOf(read.snapshot.generatedAt)) } satisfies Work
+  const answer = effect {
+    return { read: try board.cache.read(consumer, registry, force), refreshFailed: false }
+  } catch effect (failed) => {
+    const retained = try board.cache.shown(consumer)
+    if (retained === undefined) throw failed
+    return { read: retained, refreshFailed: true }
+  }
+  return { board: answer.read, stale: try stale(millisOf(answer.read.snapshot.generatedAt)), refreshFailed: answer.refreshFailed } satisfies Work
 }
