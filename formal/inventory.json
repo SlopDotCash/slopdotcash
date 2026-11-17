@@ -43,7 +43,7 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "73046a65fccda53691f345c097fed54f35481af99fac3311441a2ff33ef8a5cb",
+      "sha256": "d3061786f833f8bdb2087f0f639886c8bb88303d2fb722b8b8c2d62033dd7d56",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [22, 53, 75],
       "review": "mapped-abstraction"
@@ -4145,12 +4145,12 @@
     },
     {
       "path": "scripts/inspect-slopbot-runtime.ts",
-      "sha256": "db38c58d810523daf8994a9262f774fdd45ea83f5a14480d7741a590394d2735",
+      "sha256": "78adec70fd02a47681942591fac938d37cdd12e0ef5597fc3c5b6faf4c27dc36",
       "models": [
         "formal/models/release/slopbot_runtime_metadata.qnt",
         "formal/models/release/workflow_authority.qnt"
       ],
-      "candidateLines": [99, 101, 107, 110, 148, 164, 195],
+      "candidateLines": [116, 118, 124, 127, 165, 181, 226],
       "review": "mapped-abstraction"
     },
     {
@@ -14885,7 +14885,7 @@
     },
     {
       "path": "formal/models/release/slopbot_runtime_metadata.qnt",
-      "sha256": "1a127485a24cff0ad1116c2f3bd5ac54cdd307307ea326c2b0e44df740847707",
+      "sha256": "8e9b7233e66f0716d1019e6e77700fcab4f00011376d0ae1e946dbb9f618f36d",
       "sources": ["scripts/inspect-slopbot-runtime.ts"],
       "scenarios": [
         "deniedRefusedTest",
@@ -14895,8 +14895,10 @@
         "malformedExpectedSourceTest",
         "malformedRefusedTest",
         "missingAuthorityTest",
+        "mixedSelectionRefusedTest",
         "positiveMetadataTest",
         "privacyProjectionTest",
+        "pureReadbackSelectionTest",
         "wrongSourceRefusedTest"
       ]
     },

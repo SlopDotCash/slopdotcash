@@ -20,6 +20,10 @@ plan before retrying an import. This budget does not guarantee completion.
 
 The protected main `fee-worker-bindings.yml` workflow accepts an optional exact
 `slopbot_source` SHA for a separate read-only metadata job. Its
+selection skips the fee job and its publication concurrency group. Combining
+it with any fee probe, rotation or prior-proof input is refused in a
+credential-free step before the metadata read. With `slopbot_source` empty,
+the existing fee workflow keeps its original input behavior. The
 `slopbot-runtime.json` artifact retains only the matching source, active version,
 CPU limit, usage model and deployment stability. Missing, denied, malformed or
 changing metadata stays unavailable. The receipt does not verify Paid plan

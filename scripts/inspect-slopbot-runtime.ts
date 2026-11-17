@@ -12,6 +12,23 @@ const object = (value: unknown): Record<string, unknown> | null =>
     ? (value as Record<string, unknown>)
     : null;
 
+/** A metadata-only dispatch must never select the fee workflow's write path. */
+export function slopbotReadbackSelection(input: {
+  expectedSource: string;
+  probeSolanaRpc: string;
+  rotateSolanaFrom: string;
+  rotateSolanaSource: string;
+  priorProofRun: string;
+}) {
+  return (
+    sha.test(input.expectedSource) &&
+    input.probeSolanaRpc === "false" &&
+    input.rotateSolanaFrom === "" &&
+    input.rotateSolanaSource === "" &&
+    input.priorProofRun === ""
+  );
+}
+
 type Stage =
   | "authority"
   | "expected-source"
@@ -174,10 +191,24 @@ export async function inspectSlopbotRuntime(input: {
 }
 
 if (import.meta.main) {
-  if (
-    process.env.GITHUB_REF !== "refs/heads/main" ||
-    !process.env.RUNNER_TEMP
+  // This branch reads no Cloudflare authority. The workflow runs it once in a
+  // credential-free step; normal execution repeats the same selection guard.
+  const selected = slopbotReadbackSelection({
+    expectedSource: process.env.SLOP_SLOPBOT_EXPECTED_SOURCE ?? "",
+    probeSolanaRpc: process.env.SLOP_SLOPBOT_PROBE_SOLANA_RPC ?? "",
+    rotateSolanaFrom: process.env.SLOP_SLOPBOT_ROTATE_SOLANA_FROM ?? "",
+    rotateSolanaSource: process.env.SLOP_SLOPBOT_ROTATE_SOLANA_SOURCE ?? "",
+    priorProofRun: process.env.SLOP_SLOPBOT_PRIOR_PROOF_RUN ?? "",
+  });
+  if (process.env.GITHUB_REF !== "refs/heads/main" || !selected) {
+    process.stderr.write("Slopbot-only protected main selection required.\n");
+    process.exitCode = 1;
+  } else if (
+    process.argv.length === 3 &&
+    process.argv[2] === "--validate-selection"
   ) {
+    process.stdout.write("Slopbot-only metadata selection accepted.\n");
+  } else if (process.argv.length !== 2 || !process.env.RUNNER_TEMP) {
     process.stderr.write("Protected main runner required.\n");
     process.exitCode = 1;
   } else {
