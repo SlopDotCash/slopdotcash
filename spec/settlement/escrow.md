@@ -408,10 +408,10 @@ names the exact current remainder of that period. Committed
 leaves, awards and fees do not change, the period stays committed, and a later
 leaf still proves while its gross fits the remainder. No transition releases a
 reserve because time passed. The application service approves only the whole
-untouched wrong-total remainder under [reserve release](./reserveRelease.md).
-The EVM contract also accepts a partial release that the authority signed;
-the Solana program releases only the whole remainder of a month with no
-settled leaf.
+untouched wrong-total remainder under [reserve release](./reserveRelease.md),
+and both contracts accept only that: the whole remainder of a month with no
+committed or released leaf (`packages/contracts/README.md`, "Monthly reserve
+release").
 
 ```quint
 type ReleaseAuthorization = { period: int, expectedRemaining: M::Amount, releasedGross: M::Amount, signer: str }
@@ -420,10 +420,9 @@ pure def canReleaseReserve(e: Escrow, release: ReleaseAuthorization, ev: ChainEv
   later(e, ev) and by == e.owner and e.implementation == ReleaseCapable and month.period > 0 and release.signer == e.authority
     and M::validAmount(release.expectedRemaining) and M::equalAmounts(release.expectedRemaining, month.remaining)
     and M::validAmount(release.releasedGross) and M::positiveAmount(release.releasedGross)
-    and M::compareAmounts(release.releasedGross, month.remaining) <= 0 and M::compareAmounts(e.pending, release.releasedGross) >= 0
-    and M::compareAmounts(e.committed, release.releasedGross) >= 0
-    and (e.asset.network != Solana or (M::equalAmounts(release.releasedGross, month.remaining)
-      and M::equalAmounts(month.remaining, month.admittedGross) and not(M::positiveAmount(month.released))))
+    and M::equalAmounts(release.releasedGross, month.remaining) and M::equalAmounts(month.remaining, month.admittedGross)
+    and not(M::positiveAmount(month.released))
+    and M::compareAmounts(e.pending, release.releasedGross) >= 0 and M::compareAmounts(e.committed, release.releasedGross) >= 0
 pure def releaseReserve(e: Escrow, release: ReleaseAuthorization, ev: ChainEvent, by: str): Escrow =
   { ...advance(ev, e), pending: M::subtractAmounts(e.pending, release.releasedGross), free: M::addAmounts(e.free, release.releasedGross),
     committed: M::subtractAmounts(e.committed, release.releasedGross),
@@ -648,7 +647,8 @@ pure val proofValues = Set(leafSample)
   .union(Set({ ...leafSample, index: 1, source: sampleKey(202611, 2), actor: 2, gross: List(4) }))
   .union(Set({ ...leafSample, index: 1, actor: 2, gross: List(4) }))
   .union(Set({ ...leafSample, index: 1, source: sampleKey(202611, 2), actor: 0, gross: List(4) }))
-pure val releaseValues = Set({ period: 202611, expectedRemaining: List(4), releasedGross: List(4), signer: "attester" },
+pure val releaseValues = Set({ period: 202611, expectedRemaining: List(5), releasedGross: List(5), signer: "attester" },
+  { period: 202611, expectedRemaining: List(4), releasedGross: List(4), signer: "attester" },
   { period: 202611, expectedRemaining: List(5), releasedGross: List(5), signer: "next" })
 pure val bindingValues = Set({ actor: 1, destination: "w1", version: 1 }, { actor: 2, destination: "w2", version: 1 },
   { actor: 1, destination: "w1", version: 0 })
