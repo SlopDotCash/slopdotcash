@@ -195,9 +195,9 @@ test("an octopus with a newly added path stays held until every parent snapshot 
   }
 });
 
-/** `git merge one two` from the base: a three-parent octopus whose two
- * branches edit different lines of one file. */
-function threeParentOctopus(result: string) {
+/** `git merge --no-ff one two` from the base: a three-parent octopus whose
+ * two branches edit different lines of one file. */
+function threeParentOctopus(result: string, name = "fix.ts") {
   const path = mkdtempSync(join(tmpdir(), "slop-octopus-three-"));
   const env = {
     ...process.env,
@@ -221,7 +221,7 @@ function threeParentOctopus(result: string) {
   const tree = (text: string) =>
     git(
       ["mktree"],
-      `100644 blob ${git(["hash-object", "-w", "--stdin"], text)}\tfix.ts\n`,
+      `100644 blob ${git(["hash-object", "-w", "--stdin"], text)}\t${name}\n`,
     );
   const commit = (value: string, parents: string[], message: string) =>
     git(["commit-tree", value, ...parents.flatMap((p) => ["-p", p])], message);
@@ -243,7 +243,7 @@ function threeParentOctopus(result: string) {
   source.evidence.pull.closed_at = source.evidence.pull.merged_at;
   source.evidence.pull.merge_commit_sha = head;
   source.evidence.commitAttribution = [];
-  source.evidence.files[0].filename = "fix.ts";
+  source.evidence.files[0].filename = name;
   return { path, source, native };
 }
 
@@ -261,6 +261,46 @@ test("a clean three-parent octopus records no resolution edit", async () => {
     expect(resolution.paths).toEqual([]);
     expect(resolution.patch).toBe("");
     expect(mergeResolutionLineCounts(resolution, input.native)).toEqual([]);
+  } finally {
+    rmSync(input.path, { recursive: true, force: true });
+  }
+});
+
+test("a clean three-parent octopus skips a path that starts like a hunk header", async () => {
+  // The section's first line is the path, so "@@@@ x.ts" must not be read
+  // as the hunk header of a three-parent combined diff.
+  const input = threeParentOctopus("A\nb\nc\nd\nE\n", "@@@@ x.ts");
+  try {
+    verifyMergeObjectStore([mergeInput(input.source.evidence)], input.path);
+    const resolutions = await collectVerifiedMergeResolutions(
+      mergeInput(input.source.evidence),
+      input.path,
+    );
+    const resolution = resolutions[0];
+    expect(resolutions).toHaveLength(1);
+    if (resolution?.kind !== "combined-parent-delta") throw Error("fixture");
+    expect(resolution.paths).toEqual([]);
+    expect(resolution.patch).toBe("");
+    expect(mergeResolutionLineCounts(resolution, input.native)).toEqual([]);
+  } finally {
+    rmSync(input.path, { recursive: true, force: true });
+  }
+});
+
+test("a three-parent octopus keeps an edit to a path that starts like a hunk header", async () => {
+  const input = threeParentOctopus("A\nb\nc\nresolved\nd\nE\n", "@@@@ x.ts");
+  try {
+    verifyMergeObjectStore([mergeInput(input.source.evidence)], input.path);
+    const resolutions = await collectVerifiedMergeResolutions(
+      mergeInput(input.source.evidence),
+      input.path,
+    );
+    const resolution = resolutions[0];
+    if (resolution?.kind !== "combined-parent-delta") throw Error("fixture");
+    expect(resolution.paths).toEqual(["@@@@ x.ts"]);
+    expect(mergeResolutionLineCounts(resolution, input.native)).toEqual([
+      { path: "@@@@ x.ts", additions: 1, deletions: 0 },
+    ]);
   } finally {
     rmSync(input.path, { recursive: true, force: true });
   }

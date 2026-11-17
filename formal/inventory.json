@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "06ba282a853c7def225039d743259ba7701287be963f0099592faf61e0456321",
+      "sha256": "d3061786f833f8bdb2087f0f639886c8bb88303d2fb722b8b8c2d62033dd7d56",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [18, 49, 71],
+      "candidateLines": [22, 53, 75],
       "review": "mapped-abstraction"
     },
     {
@@ -150,6 +150,13 @@
       "path": ".github/workflows/unsafe-destination-transitions.yml",
       "sha256": "2ea9e462c83f121340201d7582e92f35604da7f4dc2f1ea5f9a7102eb1bfb6ed",
       "models": ["formal/models/release/trusted_base_gate.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": ".github/workflows/value-intake-diagnostic.yml",
+      "sha256": "9c8267bc7c975017ddbe1702e9927ae21d1e9c041226aebc1848acdf5b1b612a",
+      "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -4137,6 +4144,33 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/inspect-slopbot-runtime.ts",
+      "sha256": "78adec70fd02a47681942591fac938d37cdd12e0ef5597fc3c5b6faf4c27dc36",
+      "models": [
+        "formal/models/release/slopbot_runtime_metadata.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [116, 118, 124, 127, 165, 181, 226],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-value-intake-history.ts",
+      "sha256": "26277d9800886d4830b1c19d8f81778b4ab7736257fda1f94275df7d632ca913",
+      "models": [
+        "formal/models/release/intake_history_projection.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [177, 184, 240],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-value-intake.ts",
+      "sha256": "ad36e272cc02d0b00a58cd59a55d1c2a80866ea0e5dccbcc9c91921b663a0bf5",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [20, 66, 132, 133, 134, 247, 309, 315, 388],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/install-ci-chromium.sh",
       "sha256": "8dea3d439d4de289f68fabab2f956e45d772ffbb75745cb93421c963981357e0",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -5017,9 +5051,9 @@
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "77a29ff69411bb91b6742016aedcdeca7180ae7470d8df499e83bfc0611c8746",
+      "sha256": "2ff36a0430a94c8da799e4175c41eb2b1504f1657ad1d6cfbf69ae7308b2d7d5",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [262, 263, 273, 415, 431, 483, 489, 512, 533, 535],
+      "candidateLines": [262, 263, 273, 417, 433, 485, 491, 514, 535, 537],
       "review": "mapped-abstraction"
     },
     {
@@ -5196,7 +5230,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "52edb93b2af4890be28eb6cc1640aa13dd425443891dea937fb2175ab442d9d5",
+      "sha256": "ad9126031fec69ff2bd0e4b8f62e1b4a35d5696f24260ac4789b83fcb3d0df46",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -5215,14 +5249,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        14, 16, 302, 312, 322, 333, 342, 343, 344, 345, 346, 348, 349, 410, 465,
-        466, 467, 470, 493, 559, 590, 627, 673, 677, 679, 687, 740, 801, 857,
-        887, 895, 1099, 1114, 1128, 1138, 1176, 1178, 1181, 1245, 1248, 1250,
-        1254, 1255, 1263, 1282, 1286, 1294, 1295, 1302, 1306, 1341, 1385, 1388,
-        1405, 1406, 1456, 1459, 1462, 1463, 1464, 1465, 1469, 1472, 1492, 1494,
-        1571, 1572, 1577, 1578, 1583, 1621, 1622, 1625, 1626, 1629, 1630, 1649,
-        1650, 1656, 1661, 1663, 1667, 1668, 1726, 1736, 1767, 1769, 1794, 1795,
-        1812, 1813, 1824, 1826, 1839, 1842, 1853
+        7, 9, 295, 305, 315, 326, 335, 336, 337, 338, 339, 341, 342, 403, 458,
+        459, 460, 463, 486, 552, 583, 620, 667, 671, 679, 697, 753, 783, 792,
+        982, 997, 1011, 1021, 1059, 1061, 1064, 1128, 1131, 1133, 1137, 1138,
+        1146, 1165, 1169, 1177, 1178, 1185, 1189, 1224, 1268, 1271, 1288, 1289,
+        1339, 1342, 1345, 1346, 1347, 1348, 1352, 1355, 1375, 1377, 1454, 1455,
+        1460, 1461, 1466, 1504, 1505, 1508, 1509, 1512, 1513, 1532, 1533, 1539,
+        1544, 1546, 1550, 1551, 1609, 1619, 1650, 1652, 1677, 1678, 1695, 1696,
+        1707, 1709, 1722, 1725, 1736
       ],
       "review": "mapped-abstraction"
     },
@@ -6345,9 +6379,9 @@
     },
     {
       "path": "src/lib/home-projects.ts",
-      "sha256": "4fe398bf9cfd99d27bc37ec67e4ad945cf16058d85dad9a1da0be0b86c77d6f6",
+      "sha256": "421bc3013d2cdc664c9ab99f7b10946b31d0b1827d254c2727fd606a1f053f75",
       "models": [],
-      "candidateLines": [1, 6, 7],
+      "candidateLines": [1, 7, 8],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure filters over the immutable runtime registry and bounty status. Registry transitions are owned by project policy/boot models."
     },
@@ -7565,7 +7599,10 @@
     {
       "path": "workers/fee-converter/buyback-config.ts",
       "sha256": "b80298700a56b26d71a2c48c9f6d4271515675fc39d9304050a5271c3732e411",
-      "models": ["formal/models/fees/buyback_market.qnt"],
+      "models": [
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt"
+      ],
       "candidateLines": [39, 49, 123],
       "review": "mapped-abstraction"
     },
@@ -7585,18 +7622,19 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "9c99922657b795f0b0e1497386de34abbf30d77a34e42b165695a0e9572be3dc",
+      "sha256": "ce96452a5e44626a87e3f7de95b53aeb7b857fc8e97ba02ffbc7a6091cc65099",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
       "candidateLines": [
-        4, 16, 86, 93, 95, 96, 110, 115, 127, 211, 312, 328, 330, 337, 342, 343,
-        344, 349, 376, 378, 385, 389, 403, 404, 411, 412, 432, 477, 510, 607,
-        636, 641, 751, 755, 841, 847, 849, 884, 885, 886
+        4, 16, 86, 93, 95, 96, 110, 115, 127, 213, 314, 330, 332, 339, 344, 345,
+        346, 351, 378, 380, 387, 391, 405, 406, 413, 414, 434, 479, 512, 609,
+        638, 643, 707, 718, 747, 783, 787, 873, 879, 881, 916, 917, 918
       ],
       "review": "mapped-abstraction"
     },
@@ -7604,6 +7642,7 @@
       "path": "workers/fee-converter/config.ts",
       "sha256": "1541d6103506568e1e9e8feeaeabaee909ebe18708e75a873f386bed536e112c",
       "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
@@ -7676,10 +7715,11 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "17ebba2a9cfa9a758976a7ce9424d05263e7ebb3b3e9eb45f9653a3c7743f890",
+      "sha256": "61af438ac617a02be5f0e9391a7e3f250aed79c3c8bf1fd653c6ded3f83bb27e",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -7868,6 +7908,7 @@
       "sha256": "12eabf3a9e6c778ad5408ddd08879046e7cbdc22de630775351c8e185f057f49",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt"
       ],
       "candidateLines": [],
@@ -7930,15 +7971,21 @@
     },
     {
       "path": "workers/fee-converter/wrangler.staging.toml",
-      "sha256": "da8dada8cc508e35f7ecc6020a995a1874b250132c7cdfe7084f8579d43c2781",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "sha256": "e28350524d1e15dc8c588fd527717372c18c97de0dacbb3f47ac01494b304b91",
+      "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
+        "formal/models/payments/payment_worker_run.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "b369860dbab16dab769a582566c24235ca0c4a4a9a674b1c9c9e8718f94910f2",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "sha256": "4f98232cc1e86f6a85079811d1d75848f63d3b23948d05e5e95bf2ea275dde07",
+      "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
+        "formal/models/payments/payment_worker_run.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -8727,12 +8774,12 @@
     },
     {
       "path": "workers/slopbot/registry.ts",
-      "sha256": "4f643a1c6c632dd6bcc5353d714d3b437b77d85dece7a914f2fdb8e6954eed34",
+      "sha256": "7c4d3a42c1255cf51f7d6bf50e6f14b5aa8b46d3f6d9dab26b1d4ff29c4fe2ab",
       "models": [
         "formal/models/slopbot/bot_value_freshness.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [113, 117, 142, 151, 171, 172, 173, 178],
+      "candidateLines": [111, 127, 141, 188, 189, 190],
       "review": "mapped-abstraction"
     },
     {
@@ -8989,8 +9036,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-import-diagnostics.ts",
+      "sha256": "6f1d12a768600a1dc983712615462e87859d771df82c59366c7f25149f65ea41",
+      "models": ["formal/models/slopbot/bot_historical_import.qnt"],
+      "candidateLines": [136],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/value-import-service.ts",
-      "sha256": "0cdbc30a6a25717a38498ef522e69b15c7e9260864c9425df689fcd444f8bcb9",
+      "sha256": "74323860304da2081dacb0c299403994a86f17d01303773d1933fd361a4b0b3b",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -9000,12 +9054,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "856c2b1a56f3270ab3467d2aabd2e6b47f64ad330a13dbd700d81ae99100289a",
+      "sha256": "9e6d64b76e3f697ee6e249c419d139dad45539f435cb77eb0dd7098b763242e6",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [176],
+      "candidateLines": [200],
       "review": "mapped-abstraction"
     },
     {
@@ -9345,7 +9399,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "5b0cbea63d87b82c7d5cea292a47b9cee0bb7ae1ab1db2c3b28eb6e0cc71efc3",
+      "sha256": "6011bcf5967b63ccbdf938acefd49151a1c7866a4ca79091f3d3d9cb8eb33f46",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -12678,6 +12732,36 @@
       ]
     },
     {
+      "path": "formal/models/fees/buyback_quote_eligibility.qnt",
+      "sha256": "3ee77d1be3e12f39b33e56db191d87142c4af92d70db0f055166f2e20a6a64d4",
+      "sources": [
+        "workers/fee-converter/buyback-config.ts",
+        "workers/fee-converter/buyback.ts",
+        "workers/fee-converter/config.ts",
+        "workers/fee-converter/evm.ts",
+        "workers/fee-converter/verified-buyback.ts",
+        "workers/fee-converter/wrangler.staging.toml",
+        "workers/fee-converter/wrangler.toml"
+      ],
+      "scenarios": [
+        "aboveTenPercentCostRefusedTest",
+        "belowHalfEntitlementDoesNotQuoteTest",
+        "exactlyThresholdQuotesTest",
+        "owedBurnRemainsPossibleBelowQuoteThresholdTest",
+        "ownerTopupIsNotFeeIncomeTest",
+        "priorCommitmentLeavesOnlyRemainderTest",
+        "referenceArrivalIsNotHalvedAgainTest",
+        "refundRestoresEntitlementWithoutErasingCapUsageTest",
+        "remainingCapStopsNewQuoteTest",
+        "sweepBoundsActualAvailableFundsTest",
+        "tenPercentAllInBridgeCostAcceptedTest",
+        "tokenUnitsNeedValuationTest",
+        "unavailableValuationDoesNotRequestSlopTest",
+        "unfinalizedFeeWaitsForEvidenceTest",
+        "valuedOtherAssetCanRequestSlopRouteTest"
+      ]
+    },
+    {
       "path": "formal/models/fees/buyback_slop_accounting.qnt",
       "sha256": "a9d36778fb1ac7022eee57c87472f93a684a9546c03165c4e5ed2c559d14c4a0",
       "sources": [
@@ -14624,6 +14708,19 @@
       ]
     },
     {
+      "path": "formal/models/release/intake_history_projection.qnt",
+      "sha256": "3057ecb131dc32497de906c23fb2f87c1eb978feb814e9466eb22c6c99e2758b",
+      "sources": ["scripts/inspect-value-intake-history.ts"],
+      "scenarios": [
+        "boundedStableProjectionTest",
+        "changedDeploymentKeepsNoRowsTest",
+        "invalidWindowHasNoCallsTest",
+        "refusedQueryKeepsNoRowsTest",
+        "sampledQueryRefusedTest",
+        "truncatedQueryNotCompleteTest"
+      ]
+    },
+    {
       "path": "formal/models/release/pages_metadata_retry.qnt",
       "sha256": "1ea2e34bddc640fee9e7fe3d0fd79936f6b2e4f72202e8c87204d43dfeb598d5",
       "sources": ["scripts/prepare-vetting-public-key.ts"],
@@ -14788,6 +14885,25 @@
       ]
     },
     {
+      "path": "formal/models/release/slopbot_runtime_metadata.qnt",
+      "sha256": "8e9b7233e66f0716d1019e6e77700fcab4f00011376d0ae1e946dbb9f618f36d",
+      "sources": ["scripts/inspect-slopbot-runtime.ts"],
+      "scenarios": [
+        "deniedRefusedTest",
+        "deploymentDriftRefusedTest",
+        "incoherentVersionRefusedTest",
+        "invalidRuntimeRefusedTest",
+        "malformedExpectedSourceTest",
+        "malformedRefusedTest",
+        "missingAuthorityTest",
+        "mixedSelectionRefusedTest",
+        "positiveMetadataTest",
+        "privacyProjectionTest",
+        "pureReadbackSelectionTest",
+        "wrongSourceRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/release/staging_release_order.qnt",
       "sha256": "91db17ebec6009138aaa6d46aa0f6b764675bbe05e2ea9baa5e95bf4a2f297db",
       "sources": [
@@ -14842,7 +14958,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "6bd5090cda24bc0db486f66f41faa5b33813d46bb58234510638b9dd7118b936",
+      "sha256": "e096e271a97e60f4efa7dab7bb559af00fbda31f3a0514312e1e65910dd40767",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -14852,9 +14968,13 @@
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
+        ".github/workflows/value-intake-diagnostic.yml",
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
         "scripts/inspect-fee-worker-operations.ts",
+        "scripts/inspect-slopbot-runtime.ts",
+        "scripts/inspect-value-intake-history.ts",
+        "scripts/inspect-value-intake.ts",
         "scripts/probe-fee-solana-rpc.ts",
         "scripts/run-vetting-controller.ts"
       ],
@@ -15438,8 +15558,9 @@
     },
     {
       "path": "formal/models/slopbot/bot_historical_import.qnt",
-      "sha256": "c3a7daa943c8f17026e5f5ae36b9301023bf3580db44defd26143d2dddef731a",
+      "sha256": "47bbd2b340d5467810db24bd213a1065e2d03abc38625e949ccae5c2a8513f5a",
       "sources": [
+        "workers/slopbot/value-import-diagnostics.ts",
         "workers/slopbot/value-import-service.ts",
         "workers/slopbot/value-import.ts",
         "workers/slopbot/value-merge-resolution.ts",
@@ -15952,7 +16073,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_freshness.qnt",
-      "sha256": "80a9bcd0f87d911ecd21b0347b70f8b06d0a720553395ca77fef9f9c1aca1bca",
+      "sha256": "02bf126aab57fab5fbb97836a934cf7f716d4c0120d4b846c6036c9b976a6fbe",
       "sources": [
         "workers/slopbot/registry.ts",
         "workers/slopbot/value-consumer.ts",
