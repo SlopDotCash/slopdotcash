@@ -144,7 +144,8 @@ export effect function censusRun(publishedLower: number = 0) {
   const start = decodeState({ ...initial, lowerDay: publishedLower }) catch effect () => {
     throw new CensusBroken({ message: `The published collection window ${publishedLower} is not a census day` })
   }
-  return try machineOver(start, () => Effect.void)
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
 }
 
 effect function failed(run: Machine.Shape) {

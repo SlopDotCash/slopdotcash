@@ -41,7 +41,11 @@ export effect function sharedSnapshot<K, T, E, R>(load: (key: K, attempt: number
     for (const read of [...transports.keys()]) if (read !== next.cacheVersion && !pendingRead(next, read)) transports.delete(read)
   }
 
-  const machine = try machineOver(initial, (next) => sync(() => kept(next)))
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => effect {
+    try Ref.set(held, next)
+    kept(next)
+  })
   const locked = <A, X>(work: A!X) => Semaphore.withPermit(lock, work)
 
   effect function send(event: Event) {

@@ -123,8 +123,9 @@ effect function readLeaderboard(ranked: Machine.Shape, registry: RepositoryRegis
   return { snapshot, sha256, payable: checked.result === "ScoreAndPayment" } satisfies Leaderboard
 }
 
-export function rankedChecks() {
-  return machineOver(initial, () => Effect.void)
+export effect function rankedChecks() {
+  const held = try Ref.make(initial)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
 }
 
 export effect function leaderboard() {

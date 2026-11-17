@@ -88,9 +88,11 @@ export effect function readReport(request: ReportRead) {
   const start = try orDie(decodeState({ ...initial, report: caseOf(found, roles) }))
   const db = try D1
   const at = try isoNow()
-  const machine = try machineOver(start, (next) => next.phase === "Audited"
-    ? Effect.asVoid(orDie(db.run(sql`INSERT INTO security_intake_access_log(submission_id,actor_github_id,action,at) VALUES(${intake.submission_id},${request.viewerGithubId},'read',${at})`)))
-    : Effect.void)
+  const held = try Ref.make(start)
+  const machine = try machineOver(() => Ref.get(held), (next) => effect {
+    if (next.phase === "Audited") try orDie(db.run(sql`INSERT INTO security_intake_access_log(submission_id,actor_github_id,action,at) VALUES(${intake.submission_id},${request.viewerGithubId},'read',${at})`))
+    try Ref.set(held, next)
+  })
   const send = (event: Event) => effect { return machine.send(event, viewer) catch effect () => { throw unreadable } }
   try send({ type: "requestRead", kind: "ReportBody" })
   try send({ type: "recordAudit" })
@@ -121,7 +123,8 @@ function minuteOf(millis: number) {
 export effect function scannerRead(grant: ScannerGrant) {
   const operator = githubNumber(grant.operatorGithubId)
   const grantedAt = Date.parse(grant.expiresAt) - grant.durationSeconds * 1000
-  const machine = try machineOver({ ...initial, clockMinute: minuteOf(grantedAt) }, () => Effect.void)
+  const held = try Ref.make({ ...initial, clockMinute: minuteOf(grantedAt) })
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
   try machine.send({ type: "requestRead", kind: "ScannerBody" }, operator)
   try machine.send({ type: "recordAudit" }, operator)
   return {

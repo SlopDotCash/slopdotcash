@@ -82,7 +82,8 @@ effect function keptWindow(previous: PublishedWindow) {
 
 export effect function windowRun(previous?: PublishedWindow) {
   const start = previous === undefined ? initial : try keptWindow(previous)
-  return try machineOver(start, () => Effect.void)
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
 }
 
 export effect function startWindow(run: Machine.Shape, bounds: WindowBounds) {

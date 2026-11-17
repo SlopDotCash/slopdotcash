@@ -49,8 +49,9 @@ const retryDelay = Duration.millis(1_000)
 const maxRedirects = 4
 
 export effect function begin(target: Target) {
+  const held = try Ref.make(initial)
   return {
-    machine: try machineOver(initial, () => Effect.void),
+    machine: try machineOver(() => Ref.get(held), (next) => Ref.set(held, next)),
     target,
     location: try Ref.make(target.url),
     note: try Ref.make<Note | undefined>(undefined),

@@ -46,9 +46,11 @@ export effect function resource<T, R>(loader: (key: string, attempt: number) => 
   let staged: T | undefined = undefined
   let failure: ReadFailure | undefined = undefined
   let running: Fiber.Fiber<Settled<T>> | undefined = undefined
-  const machine = try machineOver(initial, (next) => sync(() => {
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => effect {
+    try Ref.set(held, next)
     value = next.hasSnapshot ? staged ?? value : undefined
-  }))
+  })
 
   const locked = <A>(work: A!!) => Semaphore.withPermit(lock, work)
 

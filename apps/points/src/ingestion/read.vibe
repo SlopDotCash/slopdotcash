@@ -55,12 +55,13 @@ interface Answer {
 
 export effect function ingestionRun(deadline: number) {
   let checkpoint: Read | undefined = undefined
-  const keep = (next: Read) => effect {
-    if (next.checkpoint) checkpoint = next
-  }
   return {
     next: (now) => effect {
-      return try machineOver(checkpoint ?? { ...initial, now, deadline }, keep)
+      const held = try Ref.make<Read>(checkpoint ?? { ...initial, now, deadline })
+      return try machineOver(() => Ref.get(held), (next) => effect {
+        try Ref.set(held, next)
+        if (next.checkpoint) checkpoint = next
+      })
     },
     checkpointed: () => effect {
       return checkpoint !== undefined
