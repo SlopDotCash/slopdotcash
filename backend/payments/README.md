@@ -199,6 +199,39 @@ and appears in `payments` under the same source digest. A proposal that is
 still under the owner's private review is never returned to the contributor,
 and `monthlyAwards` never adds to `balances`.
 
+### Reserved-awards feed for an operator service
+
+`GET /api/v1/operator/reserved-awards` (`reserved-awards-feed.ts`; PRD
+section 9, operator decision of 17 November 2026) lets one operator service
+see which accounts have a funded award still reserved, so it can remind them.
+It answers only a request with `Authorization: Bearer <OPERATOR_FEED_TOKEN>`,
+compared in constant time. `OPERATOR_FEED_TOKEN` is an optional Pages secret
+of at least 32 characters; while it is unset, shorter, or the token is missing
+or wrong, the handler declines the request and the API returns its ordinary
+not-found answer, so the route cannot be discovered. The release workflow
+lists the secret as optional.
+
+The answer is `{"schema":"slop-reserved-awards-v1","generatedAt":...,"awards":[...]}`
+with `cache-control: no-store`. Each row is one contributor and project:
+`githubId`, `login`, `projectId`, `projectName`, `network` and `needs`. It
+never carries an amount, a wallet address, an award id or a month.
+
+- `needs: "wallet"`: the contributor has no confirmed wallet on the award's
+  network (none registered, or one registered but not confirmed).
+- `needs: "authorize"`: a confirmed wallet exists but no payout binding is on
+  record for it and the vault: no signed EVM binding authorization
+  (`payment_binding_authorizations`) and no Solana binding attempt that did
+  not fail (`payment_attempts`).
+
+An award whose wallet is confirmed and bound is being paid and is left out,
+as is a paid award. Administrators and moderators (`ADMIN_GITHUB_IDS`,
+`PROJECT_MODERATOR_GITHUB_IDS`) and closed accounts are left out, and
+production leaves test networks out. `login` is the member's current login,
+else the login a closed month recorded, else the login of a wallet claim, else
+null. A Solana binding that a contributor prepared but never co-signed leaves
+the same record as a completed one, so that contributor is not listed. The
+feed reads D1 only and changes no payment state.
+
 Migration `0021` changes `payment_obligations` to `asset_address`,
 `asset_decimals`, `gross_base` and `fee_base`. It copies each earlier row as
 the reviewed asset of its network (all 6 decimals). A row on a network with

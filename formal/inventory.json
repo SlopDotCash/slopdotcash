@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "5e0b2df969095c1bc8f0ca3dd3f986477822c1340e62c7dff7ed90d718327fac",
+      "sha256": "0054acebab37a368ea6fe9831387b076f6564f72effb0fcf389e6a8fecc8f645",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -25,9 +25,9 @@
       ],
       "candidateLines": [
         36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
-        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1389, 1391, 1392,
-        1596, 1679, 1832, 1834, 1864, 1973, 1995, 2066, 2077, 2102, 2173, 2186,
-        2199, 2208, 2209, 2210, 2227
+        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1391, 1393, 1394,
+        1598, 1681, 1834, 1836, 1866, 1975, 1997, 2068, 2079, 2104, 2175, 2188,
+        2201, 2210, 2211, 2212, 2229
       ],
       "review": "mapped-abstraction"
     },
@@ -346,12 +346,12 @@
     },
     {
       "path": "backend/pages.ts",
-      "sha256": "86b68581bbe12883cf9f89f1cfb210d9ce84860f508a603705e6ab72de3d6b1f",
+      "sha256": "3572cb84ce386f16550bdfdf66e755fea28a7602965282f9a3afbbdb3464550f",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/project_skill_publication.qnt"
       ],
-      "candidateLines": [100],
+      "candidateLines": [105],
       "review": "mapped-abstraction"
     },
     {
@@ -520,6 +520,13 @@
         "formal/models/payments/received_totals.qnt"
       ],
       "candidateLines": [28, 67, 85, 92, 177, 216, 217],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/payments/reserved-awards-feed.ts",
+      "sha256": "9357de84172d12ba73e318be4498e93b77410c452f8e71ff087ab277ab632cce",
+      "models": ["formal/models/api/api_reserved_awards_feed.qnt"],
+      "candidateLines": [18, 84, 96],
       "review": "mapped-abstraction"
     },
     {
@@ -2166,15 +2173,16 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "7e59776ff2e71e4a6116f6e73cf7fdb7bd3c7447e246e1150942fca6be01141d",
+      "sha256": "70dc2c064d98d209cacb76e78d6c8dc96a3563dced6998cc731a1d82638f8fed",
       "models": [
         "formal/models/api/api_request_composition.qnt",
+        "formal/models/api/api_reserved_awards_feed.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/trace_route_authorization.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [534, 535, 571, 584],
+      "candidateLines": [545, 546, 582, 595],
       "review": "mapped-abstraction"
     },
     {
@@ -10574,6 +10582,28 @@
         "brokenPaymentAllowsSignoutTest",
         "brokenPaymentCannotPayTest",
         "changedActorCannotReadTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_reserved_awards_feed.qnt",
+      "sha256": "8aed735de35ee8684cd37d32b240839f9a49e356e6076f325bf5ce9460600b51",
+      "sources": [
+        "backend/payments/reserved-awards-feed.ts",
+        "functions/api/v1/[[path]].ts"
+      ],
+      "scenarios": [
+        "askingChangesNoPaymentStateTest",
+        "boundAwardIsNotListedTest",
+        "closedAccountIsNotListedTest",
+        "confirmedWalletNeedsAuthorizeTest",
+        "failedBindingIsListedAgainTest",
+        "paidAwardIsNotListedTest",
+        "removedSecretClosesTheRouteTest",
+        "teamAccountIsNotListedTest",
+        "unconfirmedWalletStillNeedsWalletTest",
+        "unsetSecretIsNotFoundTest",
+        "walletlessAwardNeedsWalletTest",
+        "wrongOrMissingTokenIsNotFoundTest"
       ]
     },
     {

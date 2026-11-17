@@ -660,6 +660,8 @@ Use one Inbox for wallet changes, payout exceptions, project decisions, appeals,
 
 Activity email is optional. Show the verified destination before consent and bind consent to its exact version. A changed address needs new consent. Opt-out cancels queued activity mail, including during outages. Opt-in does not send old history. Wallet-security and private-case notices use their separate policies.
 
+An operator service may read which accounts have a funded award still reserved, with the project, the network and whether the account still needs a confirmed wallet or the payout authorization, and without amounts or wallet addresses, to remind them (`GET /api/v1/operator/reserved-awards`, answered only with the `OPERATOR_FEED_TOKEN` Pages secret as a bearer token and otherwise not found; team accounts and closed accounts are left out). Operator decision, 17 November 2026.
+
 Recheck roles and destinations before sending. Provider acceptance does not prove inbox delivery or user acknowledgment. Verify actual receipt separately. Bound retries and reconcile uncertain sends before retry. Escalate failed or overdue case notices to a current approved backup. Notification failure never deletes a case.
 
 ### Dependencies and local operation
