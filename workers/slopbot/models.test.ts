@@ -10,16 +10,9 @@ type Packet = {
   prefix?: string;
 };
 
-// Two explicit Surplus steps exercise accounting across a Surplus fallback.
-// The production route has one Surplus step since 17 November 2026.
-const SURPLUS_ROUTE = [
-  ...TRIAGE_ROUTE.filter((step) => step.provider === "surplus"),
-  {
-    provider: "surplus" as const,
-    model: "gpt-6.1-terra",
-    priceKey: "surplus/gpt-6.1-terra",
-  },
-];
+const SURPLUS_ROUTE = TRIAGE_ROUTE.filter(
+  (step) => step.provider === "surplus",
+);
 const ORBIO_ROUTE = TRIAGE_ROUTE.filter((step) => step.provider === "orbio");
 
 const DENIAL = {
@@ -412,6 +405,7 @@ test("the full route asks Surplus first and does not call Orbio after a Surplus 
   );
   expect(TRIAGE_ROUTE.map((step) => [step.provider, step.model])).toEqual([
     ["surplus", "claude-sonnet-5.5"],
+    ["surplus", "gpt-6.1-terra"],
     ["orbio", "anthropic/claude-sonnet-5.5"],
   ]);
   expect(requests.map((request) => request.model)).toEqual([
@@ -445,11 +439,11 @@ test("Orbio handles the backstop call with its credential and retains unknown bi
   ]);
   expect(result.verdict).toEqual({ accepted: true });
   expect(result.servedBy?.provider).toBe("orbio");
-  expect(result.servedBy?.routeStep).toBe(2);
+  expect(result.servedBy?.routeStep).toBe(3);
   expect(result.servedBy?.providerCostMicroUsd).toBeNull();
 });
 
-test("a Surplus spending denial skips the remaining Surplus steps and returns the Orbio verdict", async () => {
+test("a Surplus spending denial skips Surplus Terra and returns the Orbio verdict", async () => {
   for (const status of [200, 400]) {
     const { result, requests } = await run(
       [
@@ -468,7 +462,7 @@ test("a Surplus spending denial skips the remaining Surplus steps and returns th
     expect(result.verdict).toEqual({ accepted: true });
     expect(result.blocked).toBe(false);
     expect(result.budgetResetAt).toBeUndefined();
-    expect(result.calls.map((call) => call.routeStep)).toEqual([1, 2]);
+    expect(result.calls.map((call) => call.routeStep)).toEqual([1, 3]);
     expect(result.calls.map((call) => call.failure)).toEqual([
       "provider budget exhausted",
       null,
@@ -527,7 +521,7 @@ test("a Surplus spending denial with no Orbio credential stops with one free rec
   ]);
 });
 
-test("a second Surplus step's spending denial after a Sonnet failure still reaches Orbio", async () => {
+test("a Surplus Terra spending denial after a Sonnet failure still reaches Orbio", async () => {
   const { result, requests } = await run(
     [
       { status: 503, body: { error: { type: "api_error" } } },
@@ -535,7 +529,7 @@ test("a second Surplus step's spending denial after a Sonnet failure still reach
       { body: message({ model: ORBIO_ROUTE[0].model }) },
     ],
     async () => true,
-    [...SURPLUS_ROUTE, ...ORBIO_ROUTE],
+    TRIAGE_ROUTE,
   );
   expect(requests.map((request) => request.model)).toEqual([
     "claude-sonnet-5.5",
@@ -579,10 +573,10 @@ test("missing Surplus credentials use Orbio without invented call records", asyn
   expect(checks).toBe(1);
   expect(result.calls).toHaveLength(1);
   expect(result.servedBy?.provider).toBe("orbio");
-  expect(result.servedBy?.routeStep).toBe(2);
+  expect(result.servedBy?.routeStep).toBe(3);
 });
 
-test("authority loss before the Orbio step preserves the failed Surplus attempt", async () => {
+test("authority loss before Surplus Terra preserves the failed Surplus attempt", async () => {
   let checks = 0;
   const { result, requests } = await run(
     [{ status: 503, body: { error: { type: "api_error" } } }],
@@ -613,7 +607,7 @@ test("Orbio Terra supports an explicit route with its catalogue identity", async
   expect(result.verdict).toEqual({ accepted: true });
 });
 
-test("every failed request leaves an unavailable result with complete attempt records", async () => {
+test("all three failed requests leave an unavailable result with complete attempt records", async () => {
   const { result, requests } = await run(
     TRIAGE_ROUTE.map(() => ({
       status: 503,
@@ -624,12 +618,13 @@ test("every failed request leaves an unavailable result with complete attempt re
   );
   expect(requests.map((request) => request.model)).toEqual([
     "claude-sonnet-5.5",
+    "gpt-6.1-terra",
     "anthropic/claude-sonnet-5.5",
   ]);
   expect(result.verdict).toBeNull();
   expect(result.servedBy).toBeNull();
   expect(result.budgetResetAt).toBeUndefined();
-  expect(result.calls.map((call) => call.routeStep)).toEqual([1, 2]);
+  expect(result.calls.map((call) => call.routeStep)).toEqual([1, 2, 3]);
   expect(result.calls.every((call) => call.outcome === "failed")).toBe(true);
   expect(JSON.stringify(result)).not.toContain("private-detail");
 });
