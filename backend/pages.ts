@@ -54,6 +54,8 @@ export type PagesEnv = {
   OPERATOR_FEED_TOKEN?: string;
   /** GitHub numeric actor IDs allowed to handle project exceptions. */
   ADMIN_GITHUB_IDS?: string;
+  /** One current admin eligible for the seven-day owner site session. */
+  OWNER_SESSION_GITHUB_ID?: string;
   /**
    * GitHub numeric actor IDs with the project moderation role: Quarantine,
    * Ban and reinstatement (PRD ADM-06). Unset keeps those actions closed.
