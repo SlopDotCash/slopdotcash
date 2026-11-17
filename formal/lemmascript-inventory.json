@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 804,
-    "functions": 12524,
+    "files": 805,
+    "functions": 12529,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12336,
+    "unprovedFunctions": 12341,
     "nonTypeScriptFiles": 59
   },
   "limits": [
@@ -4404,6 +4404,13 @@
 {"name":"<Constructor@475>","kind":"Constructor","line":475,"sha256":"da6386768e6e5e215cf7ad1fbb4fc775555e92c5ee033c9c10ded54144d354f5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@500>","kind":"ArrowFunction","line":500,"sha256":"a64eb763780a6043ddc6209f810ee72b3b68c6b171ec515b93d1e008785e97bc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@521>","kind":"ArrowFunction","line":521,"sha256":"e41df6e8393ce3180824ca564f789cd8d55e1dfe198d856cc9430d70211efa38","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+]},
+{"path":"scripts/inspect-slopbot-runtime.ts","sha256":"db38c58d810523daf8994a9262f774fdd45ea83f5a14480d7741a590394d2735","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"object","kind":"ArrowFunction","line":10,"sha256":"dc2ed620bde5da4e60f72593d0103140fb833609fc2803b1a7c2fa2511f8f3eb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<Constructor@26>","kind":"Constructor","line":26,"sha256":"811cc6f67e3046a4acea5b1c06e88975b5dcda6c91125327072d1f7e46750fa8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"active","kind":"FunctionDeclaration","line":34,"sha256":"159ebb63f892d218a3a475983d460b42f17586f6b2251ca55a352f1e28e9cf9a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"inspectSlopbotRuntime","kind":"FunctionDeclaration","line":54,"sha256":"edf8bbbcf178d695d9e5b72038bbdd76214e628f7857ca255aa97fa3695d93d9","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"get","kind":"ArrowFunction","line":76,"sha256":"0d49c09132d9afc78b4f75cd2685e2589de78238689ad1c085142c436b990e83","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"scripts/inspect-value-intake-history.ts","sha256":"26277d9800886d4830b1c19d8f81778b4ab7736257fda1f94275df7d632ca913","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"object","kind":"ArrowFunction","line":10,"sha256":"dc2ed620bde5da4e60f72593d0103140fb833609fc2803b1a7c2fa2511f8f3eb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
