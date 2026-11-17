@@ -155,7 +155,7 @@
     },
     {
       "path": ".github/workflows/value-intake-diagnostic.yml",
-      "sha256": "b5304e54f13028e741e2a5b77a22ecab3363be5f3a18b6aac31fce9b4cdba4b6",
+      "sha256": "9c8267bc7c975017ddbe1702e9927ae21d1e9c041226aebc1848acdf5b1b612a",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4142,6 +4142,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/inspect-value-intake-history.ts",
+      "sha256": "26277d9800886d4830b1c19d8f81778b4ab7736257fda1f94275df7d632ca913",
+      "models": [
+        "formal/models/release/intake_history_projection.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [177, 184, 240],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/inspect-value-intake.ts",
       "sha256": "ad36e272cc02d0b00a58cd59a55d1c2a80866ea0e5dccbcc9c91921b663a0bf5",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -5029,9 +5039,9 @@
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "9ab37e64df36bcc90479c078724b0c1ef74477ce251d272c7fa927756e38c297",
+      "sha256": "2ff36a0430a94c8da799e4175c41eb2b1504f1657ad1d6cfbf69ae7308b2d7d5",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [262, 263, 273, 409, 425, 477, 483, 506, 527, 529],
+      "candidateLines": [262, 263, 273, 417, 433, 485, 491, 514, 535, 537],
       "review": "mapped-abstraction"
     },
     {
@@ -14676,6 +14686,19 @@
       ]
     },
     {
+      "path": "formal/models/release/intake_history_projection.qnt",
+      "sha256": "3057ecb131dc32497de906c23fb2f87c1eb978feb814e9466eb22c6c99e2758b",
+      "sources": ["scripts/inspect-value-intake-history.ts"],
+      "scenarios": [
+        "boundedStableProjectionTest",
+        "changedDeploymentKeepsNoRowsTest",
+        "invalidWindowHasNoCallsTest",
+        "refusedQueryKeepsNoRowsTest",
+        "sampledQueryRefusedTest",
+        "truncatedQueryNotCompleteTest"
+      ]
+    },
+    {
       "path": "formal/models/release/pages_metadata_retry.qnt",
       "sha256": "1ea2e34bddc640fee9e7fe3d0fd79936f6b2e4f72202e8c87204d43dfeb598d5",
       "sources": ["scripts/prepare-vetting-public-key.ts"],
@@ -14894,7 +14917,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "950800798e32ed957d37e4db16d50eaf15bf6aaec290c70ed0700dcb6cbadb86",
+      "sha256": "4e37824e0dfe9f88fca111fe636106d98c831d3089b859a1874ca7a814829a00",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -14908,6 +14931,7 @@
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
         "scripts/inspect-fee-worker-operations.ts",
+        "scripts/inspect-value-intake-history.ts",
         "scripts/inspect-value-intake.ts",
         "scripts/probe-fee-solana-rpc.ts",
         "scripts/run-vetting-controller.ts"
