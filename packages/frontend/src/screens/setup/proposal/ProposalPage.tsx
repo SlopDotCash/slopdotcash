@@ -21,7 +21,6 @@ import {
   draftPayload,
   firstErrorOf,
   fundingOf,
-  invalidPriorField,
   type Lookup,
   lookupKey,
   poolOf,
@@ -30,8 +29,7 @@ import {
   shownError,
   type StepIndex,
   stepOfField,
-  withAttempted,
-  withFacts,
+  withLookup,
   withField,
   withRepository,
   type Wizard,
@@ -111,25 +109,20 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
   const loginHref = loginHrefFor(shown, signInReturn);
   const saved = view.wizard;
   const key = actor === undefined ? undefined : lookupKey(saved);
-  const read = useRun(
-    runtime,
-    key === undefined ? undefined : `lookup:${key}`,
-    () => lookupAfterPause(normalizeRepositoryInput(saved.proposal.repository)),
-    "Repository could not load.",
-    (facts) => {
-      if (key !== undefined) store.update((wizard) => withFacts(wizard, key, facts));
-    },
-  );
+  const settleLookup = (settled: Lookup) => {
+    if (key !== undefined) store.update((current) => withLookup(current, key, settled));
+  };
+  const read = useRun(runtime, key === undefined ? undefined : `lookup:${key}`, () => lookupAfterPause(normalizeRepositoryInput(saved.proposal.repository)), "Repository could not load.", {
+    settle: (facts) => settleLookup({ state: "done", facts }),
+    fail: (message) => settleLookup({ state: "error", message }),
+  });
   const lookup = lookupOf(key, read);
   const p = saved.proposal;
   const errors = setupErrors(p, lookup);
   const valid = Object.keys(errors).length === 0;
-  const prior = invalidPriorField(saved, errors, lookup);
-  const priorStep = prior === undefined ? undefined : stepOfField(prior);
-  const wizard: Wizard = priorStep === undefined ? saved : withAttempted({ ...saved, step: priorStep }, priorStep);
-  const step = wizard.step;
+  const step = saved.step;
   const facts = branchesOf(p, lookup);
-  const shownFor = (field: ProposalField) => shownError(wizard, errors, field);
+  const shownFor = (field: ProposalField) => shownError(saved, errors, field);
   const { manifest, bounty } = draftManifest({ proposal: p, actor, valid, now: new Date().toISOString() });
 
   const update = (change: (current: Wizard) => Wizard) => store.update(change);
@@ -234,8 +227,8 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
             picker={picker}
             branches={facts?.branches ?? []}
             branchesLoading={lookup.state === "loading"}
-            extraRuleFields={wizard.extraRuleFields}
-            imageKey={wizard.generation}
+            extraRuleFields={saved.extraRuleFields}
+            imageKey={saved.generation}
             shown={shownFor}
             onChange={change}
           />

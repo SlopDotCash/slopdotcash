@@ -36,7 +36,7 @@ A waiting copy is delivered no earlier than its retry time, so its delivery
 advances the clock to that time when the clock is behind it.
 
 ```quint
-type JobKind = NoKind | ReviewJob | MaintainerHoldJob | AppealCommandJob | AppealDueJob | HumanSignalJob
+type JobKind = NoKind | ReviewJob | MaintainerHoldJob | AppealCommandJob | AppealDueJob | HumanSignalJob | ReadyLabelJob
 type CopyState = Queued | Delivered | Acked | Waiting | DeadLettered
 type HandlerResult = Done | Resolved | SourceChanged | Busy | Failed
 type Copy = { id: int, state: CopyState, deliveries: int, availableAt: int }

@@ -98,3 +98,43 @@ export function reportReference(submission: SubmissionView, record: CaseSummary 
   if (submission.caseId !== null) return caseTitle({ id: submission.caseId, advisory: record?.advisory ?? submission.advisory });
   return submission.advisory?.ghsa ?? null;
 }
+
+const linkFallbackFailures: ReadonlyArray<string> = ["not-private-report", "unverifiable"];
+
+/** Whether a report failed in a way GitHub cannot verify, so the maintainer-verified link is the way on. @throws {never} */
+export function needsLinkFallback(submissions: ReadonlyArray<SubmissionView>): boolean {
+  return submissions.some((entry) => entry.state === "failed" && linkFallbackFailures.includes(entry.failureCode ?? ""));
+}
+
+/** The reports a reporter is shown: an abandoned one only when a link points at it. @throws {never} */
+export function shownSubmissions(submissions: ReadonlyArray<SubmissionView>, focusId: string | null): ReadonlyArray<SubmissionView> {
+  return submissions.filter((entry) => entry.state !== "abandoned" || entry.id === focusId);
+}
+
+/** The cases the shown reports belong to. @throws {never} */
+export function knownCaseIds(submissions: ReadonlyArray<SubmissionView>, focusId: string | null): ReadonlyArray<string> {
+  return shownSubmissions(submissions, focusId).flatMap((entry) => (entry.caseId === null ? [] : [entry.caseId]));
+}
+
+/** The linked report first, then those that need the reporter, each kept only when `shows` accepts its case. @throws {never} */
+export function orderedSubmissions(
+  submissions: ReadonlyArray<SubmissionView>,
+  focusId: string | null,
+  caseOf: (submission: SubmissionView) => CaseSummary | undefined,
+  shows: (record: CaseSummary | undefined) => boolean,
+): ReadonlyArray<SubmissionView> {
+  return shownSubmissions(submissions, focusId)
+    .filter((submission) => shows(caseOf(submission)))
+    .toSorted((a, b) => Number(b.id === focusId) - Number(a.id === focusId) || Number(reportNeedsAction(b)) - Number(reportNeedsAction(a)));
+}
+
+/** Whether a Slop-held report may still be delivered privately to GitHub as its reporter. @throws {never} */
+export function deliverable(submission: SubmissionView): boolean {
+  const intake = submission.intake;
+  return intake !== null && intake.canForward && intake.canAuthorize && sendable(submission);
+}
+
+/** Whether a report Slop does not hold may be sent from this tab's kept text. @throws {never} */
+export function sendsFromTab(submission: SubmissionView): boolean {
+  return submission.intake === null && submission.origin === "slop" && sendable(submission);
+}

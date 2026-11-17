@@ -270,8 +270,8 @@ function runParts(scope: string, runId: string): { readonly base: string; readon
   return { base: local, trigger: "Recovery" }
 }
 
-function foreignRow(row: Conversion) {
-  return foreignKinds.includes(row.kind) || (row.kind === "approval" && row.route === "debridge")
+function foreignRow(row: Conversion, network: Network) {
+  return foreignKinds.includes(row.kind) || (row.kind === "approval" && (row.route === "debridge" || network === "Robinhood"))
 }
 
 function sum(rows: ReadonlyArray<Row>, token: number, keep: (row: Row) => boolean, value: (row: Row) => number) {
@@ -347,8 +347,8 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const nextRun = Math.max(0, ...runs.keys()) + 1
 
   const known = new Set(rows.map((row) => row.id))
-  const carriers = rows.filter((row) => !foreignRow(row))
-  const foreignIds = new Set(rows.filter(foreignRow).map((row) => row.id))
+  const carriers = rows.filter((row) => !foreignRow(row, network))
+  const foreignIds = new Set(rows.filter((row) => foreignRow(row, network)).map((row) => row.id))
   const modelIds = new Map(carriers.map((carrier, index) => [carrier.id, index + 1] as const))
   const isForeignGas = (row: Gas) => row.purpose === "bridge" || (row.conversion_id !== null && foreignIds.has(row.conversion_id))
   const solanaNonce = new Map(gasRows.flatMap((row) => row.tx_id === null ? [] : [[row.tx_id, row.nonce] as const]))

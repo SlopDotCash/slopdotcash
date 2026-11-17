@@ -1,5 +1,6 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
 import { Disclosure } from "@repo/ui";
+import { CHAIN_NAMES } from "../../../kernels/assetText.ts";
 import { ChoiceField, SelectField, TextField } from "./ProjectFields.tsx";
 import { type RewardAssetSelection, rewardChains, rewardNetwork, rewardSymbol } from "./rewardAsset.ts";
 
@@ -18,16 +19,19 @@ export function RewardAssetFields({ choice, onChange, error, networkFixed, compa
   const fieldName = (name: string) => (namePrefix ? `${namePrefix}-${name}` : name);
   const network = rewardNetwork(choice.network);
   const symbol = rewardSymbol(choice);
-  if (networkFixed) return <p className="text-sm text-muted-foreground">{compact ? `${symbol} · ${network.name}` : `Paid in ${symbol} on ${network.name} (fixed by the vault).`}</p>;
+  const name = CHAIN_NAMES[choice.network];
+  if (networkFixed) return <p className="text-sm text-muted-foreground">{compact ? `${symbol} · ${name}` : `Paid in ${symbol} on ${name} (fixed by the vault).`}</p>;
+  const Selection = compact ? ChoiceField : SelectField;
+  const networkField = <Selection label="Network" name={fieldName("settlementChain")} error={networkError} options={rewardChains} value={choice.network} onChange={(value) => onChange("network", value)} />;
+  if (network === undefined) return networkField;
   const assets = [
     ["stablecoin", compact ? network.stablecoin.symbol : `${network.stablecoin.symbol} (network stablecoin)`],
     ["native", network.native.symbol],
     ["token", "Another token"],
   ] as const;
-  const Selection = compact ? ChoiceField : SelectField;
   return (
     <>
-      <Selection label="Network" name={fieldName("settlementChain")} error={networkError} options={rewardChains} value={choice.network} onChange={(value) => onChange("network", value)} />
+      {networkField}
       <Selection label="Asset" name={fieldName("rewardKind")} options={assets} value={choice.assetKind} onChange={(value) => onChange("assetKind", value)} />
       {choice.assetKind === "token" ? (
         <>

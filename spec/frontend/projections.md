@@ -261,9 +261,11 @@ While the month is Funded, the owner withdrawal form on Slop's pages refuses
 an amount that would leave the free balance below what is owed now
 (`src/VaultActions.tsx:123–130,263–269`). A vault without month locks does
 not enforce this; for it the refusal is a promise of Slop's pages only. A
-vault with month locks, and a month Funded by its pledges, is guarded by the
-contract's locks instead ([month locks](./vaultLocks.md),
-`withdrawalAllowed`).
+vault with month locks, and a month Funded by its pledges
+(`lockedByPledges`), is guarded by the contract's locks instead
+([month locks](./vaultLocks.md), `withdrawalAllowed`): both lie outside
+`withdrawalAllowedOnSlopPages`, which still refuses in every Funded month,
+so a review calls it only through `withdrawalAllowed`.
 
 ```quint
 pure def withdrawalAllowedOnSlopPages(pool: PoolFacts, withdrawal: M::Amount): bool =

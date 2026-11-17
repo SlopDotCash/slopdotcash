@@ -3,7 +3,7 @@ import { emptyProposal, type Proposal } from "../../../flows/projects/proposal.t
 import { privateBountyCriteria, privateBountyTesting } from "../../../flows/security/program.vibe";
 import { vectors } from "../../../kernels/vectors.ts";
 import { facts, filled, monthly } from "./fixtures.ts";
-import { defaultCriteria, lookupKey, proposalErrors, restoredWizard, setupErrors, withFacts, withField, withRepository } from "./form.ts";
+import { defaultCriteria, type Lookup, lookupKey, proposalErrors, restoredWizard, setupErrors, withFacts, withField, withLookup, withReferrer, withRepository } from "./form.ts";
 import { draftManifest } from "./manifest.ts";
 
 const now = "2026-11-17T12:00:00.000Z";
@@ -91,4 +91,30 @@ export const branchesWaitForTheLookupOfTheSameRepository = vectors<readonly [str
     [["main", false], "Wait for the repository branches to load."],
   ],
   ([branch, loaded]) => setupErrors({ ...filled, integrationBranch: branch }, loaded ? { state: "done", facts } : { state: "loading" }).integrationBranch,
+);
+
+export const eachVisitKeepsItsOwnLinkReferrer = vectors<readonly [string | null, string], string | null>(
+  [
+    [["hubot", "?ref=octocat"], "octocat"],
+    [["hubot", ""], "hubot"],
+    [["hubot", "?ref=not a login!"], "hubot"],
+    [[null, "?ref=octocat"], "octocat"],
+  ],
+  ([referrer, search]) => withReferrer({ ...restoredWizard(null, ""), referrer }, search).referrer,
+);
+
+export const anInvalidEarlierStepIsWhereTheFormStays = vectors<readonly [Proposal, Lookup], readonly [number, boolean]>(
+  [
+    [[filled, { state: "done", facts }], [2, false]],
+    [[{ ...filled, name: "x" }, { state: "done", facts }], [0, true]],
+    [[{ ...filled, integrationBranch: "gone" }, { state: "done", facts }], [0, true]],
+    [[filled, { state: "error", message: "Repository could not load." }], [0, true]],
+    [[{ ...monthly, monthlyPool: "0" }, { state: "done", facts }], [1, false]],
+  ],
+  ([proposal, lookup]) => {
+    const opened = restoredWizard(saved(proposal, 2), "");
+    const key = lookupKey(opened) ?? "";
+    const settled = withLookup(opened, key, lookup);
+    return [settled.step, settled.attempted[0]] as const;
+  },
 );

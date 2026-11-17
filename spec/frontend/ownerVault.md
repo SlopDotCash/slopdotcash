@@ -162,7 +162,11 @@ checked and spends nothing, and a creation keeps being asked on its own
 limit of 120 background asks, spending no attempt; past it the timer waits
 until the tab is shown (PRD section 6, operator decision, 17 November 2026;
 development `src/lib/vault-auto-register.ts` and
-`formal/models/ui/ui_vault_auto_register.qnt` at `df21e37b7`).
+`formal/models/ui/ui_vault_auto_register.qnt` at `df21e37b7`). A creation
+that has spent all 120 background asks lies beyond a simulation's twenty
+events; `alwaysBackgroundAsksWithinLimit` bounds it, and
+`sometimesHiddenCreationWaits` witnesses a sent creation waiting in a hidden
+tab.
 
 ```quint
 pure def canEdit(v: OwnerVault, editing: bool, by: int): bool = v.owner > 0 and by == v.owner and editing != v.editing
@@ -254,6 +258,7 @@ pure def sometimesOtherAccountSeesNothing(v: OwnerVault): bool = v.owner > 0 and
 pure def sometimesWithdrawalRefused(v: OwnerVault): bool = v.notice == WithdrawalRefused
 pure def sometimesLockedFundsRefused(v: OwnerVault): bool = v.notice == LockedFundsRefused
 pure def sometimesRegisteredFromBackgroundTab(v: OwnerVault): bool = v.creation.phase == Done and v.creation.hiddenAsks > 0
+pure def sometimesHiddenCreationWaits(v: OwnerVault): bool = v.hidden and v.creation.phase == Sent and v.creation.inflight == NoCheck
 pure def sometimesReceived(v: OwnerVault): bool = v.notice == Received and v.transfer.phase == Sent
 pure def sometimesCounted(v: OwnerVault): bool = v.transfer.phase == Done
 pure def sometimesTimerStopped(v: OwnerVault): bool = v.creation.stopped and v.creation.phase == Sent

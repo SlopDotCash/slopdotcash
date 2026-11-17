@@ -14,8 +14,9 @@ reward cap at the current UTC month, a vault re-read after a lock) and
 One instance is the card of one registered vault. Its chain facts are the
 vault's free funds, its open locked total and the part of it whose month
 lapsed unreserved; the card shows the locked total of the last finalized
-read. The sender `by` is a connected wallet (positive; `vaultOwner` is the
-vault owner's), the finalized vault read (`0`), the wallet and chain adapter
+read. The sender `by` is a connected wallet (positive; the vault owner's
+wallet is the `owner` the finalized read reports, development
+`deployment.owner`), the finalized vault read (`0`), the wallet and chain adapter
 (`-1`) or the card's check timer (`-2`). Development keeps a sent lock or
 release only in page memory, not in a saved [wallet attempt](./walletAttempt.md);
 whether it is saved before the wallet prompt
@@ -27,35 +28,36 @@ D1, pending, and this model follows development.
 ### The card appears only once the finalized read shows pledge support
 
 A vault without pledge support has no card. The first finalized read gives
-the free funds and the open locked total; the locked total never exceeds the
-free funds.
+the vault owner's wallet, the free funds and the open locked total, taken as
+the chain reports them: development's own model lets the open locked total
+exceed the free funds outside an included lock
+(`ui_vault_month_lock.qnt`, `invariant`), and the card still appears.
 
 ```quint
 import vaultLocks as VL from "./vaultLocks"
 import money as M from "../settlement/money"
+import monthPledges as MP from "../settlement/monthPledges"
 type LockPhase = LockHidden | LockIdle | LockReviewed | LockAwaiting | LockChecking | LockIncluded
 type LockKind = LockingMonths | ReleasingMonth
 type LockReply = LockSigned | LockDeclined | LockUnclear
 type LockResult = ChainPending | ChainFailed | ChainIncluded | ChainUnreadable
 type LockNotice = LockQuiet | LockSentNotice | WalletDeclinedNotice | WalletUnclearNotice | LockFailedNotice
   | ReleaseFailedNotice | LockedNotice | ReleasedNotice | CheckUnreadableNotice
-type MonthLock = { phase: LockPhase, wallet: int, free: M::Amount, locked: M::Amount, lapsed: M::Amount,
+type MonthLock = { phase: LockPhase, wallet: int, owner: int, free: M::Amount, locked: M::Amount, lapsed: M::Amount,
   shownLocked: M::Amount, kind: LockKind, added: M::Amount, deposit: M::Amount, released: M::Amount,
   refusal: VL::LockRefusal, notice: LockNotice, checks: int }
-pure val vaultOwner = 1
 pure val reader = 0
 pure val adapter = -1
 pure val timer = -2
 pure val checkLimit = 720
 pure val checkIntervalMs = 5000
-pure val initial: MonthLock = { phase: LockHidden, wallet: 0, free: M::zero, locked: M::zero, lapsed: M::zero,
+pure val initial: MonthLock = { phase: LockHidden, wallet: 0, owner: 0, free: M::zero, locked: M::zero, lapsed: M::zero,
   shownLocked: M::zero, kind: LockingMonths, added: M::zero, deposit: M::zero, released: M::zero,
   refusal: VL::NoLockRefusal, notice: LockQuiet, checks: 0 }
-pure def canReadVault(m: MonthLock, supported: bool, free: M::Amount, locked: M::Amount, by: int): bool =
-  by == reader and m.phase == LockHidden and M::validAmount(free) and M::validAmount(locked)
-    and M::compareAmounts(locked, free) <= 0
-pure def readVault(m: MonthLock, supported: bool, free: M::Amount, locked: M::Amount, by: int): MonthLock =
-  if (supported) { ...m, phase: LockIdle, free: free, locked: locked, lapsed: M::zero, shownLocked: locked } else m
+pure def canReadVault(m: MonthLock, supported: bool, owner: int, free: M::Amount, locked: M::Amount, by: int): bool =
+  by == reader and m.phase == LockHidden and owner > 0 and M::validAmount(free) and M::validAmount(locked)
+pure def readVault(m: MonthLock, supported: bool, owner: int, free: M::Amount, locked: M::Amount, by: int): MonthLock =
+  if (supported) { ...m, phase: LockIdle, owner: owner, free: free, locked: locked, lapsed: M::zero, shownLocked: locked } else m
 pure def canConnect(m: MonthLock, wallet: int, by: int): bool = wallet > 0 and by == wallet and wallet != m.wallet
   and (m.phase == LockHidden or m.phase == LockIdle or m.phase == LockReviewed)
 pure def connect(m: MonthLock, wallet: int, by: int): MonthLock =
@@ -65,20 +67,22 @@ pure def connect(m: MonthLock, wallet: int, by: int): MonthLock =
 ### A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent
 
 The review reads the months of the lock's range through the wallet
-(`existing`, one entry per month for a valid count). A refused review shows
+(`existing`, one pledge per month for a valid count). The owner check
+compares the connected wallet with the owner of the card's read. A refused review shows
 its refusal and keeps the card idle. An accepted one records what the lock
 adds and the deposit sent with it.
 
 ```quint
-pure def canReview(m: MonthLock, count: int, amount: M::Amount, monthly: M::Amount, existing: List[M::Amount],
+pure def canReview(m: MonthLock, count: int, amount: M::Amount, monthly: M::Amount, existing: List[MP::ChainPledge],
   deposit: M::Amount, batches: bool, by: int): bool =
   m.wallet > 0 and by == m.wallet and (m.phase == LockIdle or m.phase == LockReviewed)
-    and M::validAmount(amount) and M::validAmount(monthly) and M::validAmount(deposit) and existing.every(e => M::validAmount(e))
+    and M::validAmount(amount) and M::validAmount(monthly) and M::validAmount(deposit)
+    and existing.every(e => M::validAmount(e.amount))
     and (VL::validLockCount(count) implies existing.length() == count)
-pure def review(m: MonthLock, count: int, amount: M::Amount, monthly: M::Amount, existing: List[M::Amount],
+pure def review(m: MonthLock, count: int, amount: M::Amount, monthly: M::Amount, existing: List[MP::ChainPledge],
   deposit: M::Amount, batches: bool, by: int): MonthLock =
   val request = { count: count, amount: amount, monthly: monthly, existing: existing, depositGross: deposit,
-    batches: batches, owner: m.wallet == vaultOwner, free: m.free, locked: m.locked }
+    batches: batches, owner: m.wallet == m.owner, free: m.free, locked: m.locked }
   val refusal = VL::lockRefusal(request)
   if (refusal != VL::NoLockRefusal) { ...m, phase: LockIdle, refusal: refusal, notice: LockQuiet }
   else { ...m, phase: LockReviewed, kind: LockingMonths, added: VL::lockAdded(request), deposit: deposit,
@@ -110,7 +114,9 @@ pure def requestRelease(m: MonthLock, monthAmount: M::Amount, by: int): MonthLoc
 A declined request says "You declined the wallet request. Nothing was sent.";
 an unclear one says to check wallet activity before another attempt. Both
 return the card to its review, or to idle for a release. A returned hash or
-batch reference starts the automatic check.
+batch reference starts the automatic check. A check loop that reaches its
+720th check takes an hour of five-second checks and lies beyond a
+simulation's run; `alwaysChecksWithinLimit` bounds it.
 
 ```quint
 pure def canWalletAnswer(m: MonthLock, reply: LockReply, by: int): bool = by == adapter and m.phase == LockAwaiting
@@ -155,13 +161,14 @@ pure def finalizedRead(m: MonthLock, by: int): MonthLock = { ...m, phase: LockId
 pure def pendingLock(m: MonthLock): bool = m.kind == LockingMonths
   and (m.phase == LockReviewed or m.phase == LockAwaiting or m.phase == LockChecking)
 pure def pendingRelease(m: MonthLock): bool = m.kind == ReleasingMonth and (m.phase == LockAwaiting or m.phase == LockChecking)
-pure def alwaysLocksWithinFreeFunds(m: MonthLock): bool = M::compareAmounts(m.locked, m.free) <= 0
+pure def alwaysLocksWithinFreeFunds(m: MonthLock): bool =
+  ((m.phase == LockIncluded and m.kind == LockingMonths) implies M::compareAmounts(m.locked, m.free) <= 0)
   and M::compareAmounts(m.lapsed, m.locked) <= 0 and M::compareAmounts(m.shownLocked, m.locked) <= 0
 pure def alwaysPendingLockFits(m: MonthLock): bool = pendingLock(m) implies
   M::compareAmounts(M::addAmounts(m.locked, m.added), M::addAmounts(m.free, m.deposit)) <= 0
 pure def alwaysPendingReleaseIsLapsed(m: MonthLock): bool = pendingRelease(m) implies
   M::positiveAmount(m.released) and M::compareAmounts(m.released, m.lapsed) <= 0
-pure def alwaysOnlyTheOwnerLocks(m: MonthLock): bool = pendingLock(m) implies m.wallet == vaultOwner
+pure def alwaysOnlyTheOwnerLocks(m: MonthLock): bool = pendingLock(m) implies m.wallet == m.owner
 pure def alwaysChecksWithinLimit(m: MonthLock): bool = m.checks >= 0 and m.checks <= checkLimit
 pure def alwaysValidAmounts(m: MonthLock): bool = M::validAmount(m.free) and M::validAmount(m.locked) and M::validAmount(m.lapsed)
   and M::validAmount(m.shownLocked) and M::validAmount(m.added) and M::validAmount(m.deposit) and M::validAmount(m.released)
@@ -174,19 +181,25 @@ pure def sometimesLowerLockRefused(m: MonthLock): bool = m.refusal == VL::Lowers
 pure def sometimesShortFundsRefused(m: MonthLock): bool = m.refusal == VL::FreeFundsShort
 pure def sometimesUnbatchedDepositRefused(m: MonthLock): bool = m.refusal == VL::DepositNotBatched
 pure def sometimesOtherWalletRefused(m: MonthLock): bool = m.refusal == VL::NotVaultOwner
+pure def sometimesCountRefused(m: MonthLock): bool = m.refusal == VL::LockCountRefused
 pure def sometimesFailedLockLocksNothing(m: MonthLock): bool = m.notice == LockFailedNotice
+pure def sometimesReleaseFailed(m: MonthLock): bool = m.notice == ReleaseFailedNotice
+pure def sometimesWalletDeclined(m: MonthLock): bool = m.notice == WalletDeclinedNotice
+pure def sometimesCheckUnreadable(m: MonthLock): bool = m.notice == CheckUnreadableNotice
 pure def sometimesDepositAndLockIncluded(m: MonthLock): bool = m.phase == LockIncluded and m.kind == LockingMonths
   and M::positiveAmount(m.deposit)
-pure def sometimesReleasedByAnotherWallet(m: MonthLock): bool = m.notice == ReleasedNotice and m.wallet != vaultOwner
+pure def sometimesReleasedByAnotherWallet(m: MonthLock): bool = m.notice == ReleasedNotice and m.wallet != m.owner
 pure def sometimesUnclearKeepsTheReview(m: MonthLock): bool = m.notice == WalletUnclearNotice and m.phase == LockReviewed
 pure val byValues = Set(1, 2, reader, adapter, timer)
 pure val walletValues = Set(1, 2)
+pure val ownerValues = Set(1)
 pure val freeValues = Set(List(4))
 pure val lockedValues = Set(List(0), List(2))
 pure val countValues = Set(1, 2)
 pure val amountValues = Set(List(1), List(2), List(3))
 pure val monthlyValues = Set(List(2))
-pure val existingValues = Set(List(List(0)), List(List(3)))
+pure val existingValues = Set(List({ period: 202612, amount: List(0), open: false }),
+  List({ period: 202612, amount: List(3), open: true }))
 pure val depositValues = Set(List(0), List(2))
 pure val monthAmountValues = Set(List(2))
 ```

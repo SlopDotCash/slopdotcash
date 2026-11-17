@@ -1,0 +1,150 @@
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
+import type { WorkItem, WorkQueue } from "@repo/points/client";
+import type { CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
+import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
+import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
+import type { PoolRead } from "../../../gen/frontend__projections.ts";
+import type { ReadStatus } from "../../../gen/frontend__requests.ts";
+import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
+import type { NetworkPays } from "../public/funding.ts";
+import { bootstrapPrompt, siteOrigin } from "../home/agentLinks.ts";
+import type { ShownProject } from "./project.schema.ts";
+
+export interface FundingVaults {
+  readonly status: ReadStatus;
+  readonly vaults: Parameters<typeof poolFunding>[0]["vaults"] | undefined;
+}
+
+export interface DirectMonth {
+  readonly month: string;
+  readonly amountMicro: bigint;
+  readonly count: number;
+  readonly paidOn: string;
+}
+
+export const workShown = 10;
+
+export const historyShown = 3;
+
+const cycleStates: Readonly<Record<CycleIndexEntry["state"], string>> = {
+  "closed-no-awards": "Closed, no awards",
+  "external-provisional": "Provisional external shares",
+  review: "Under review",
+  "payment-ready": "Approved",
+  "settlement-planned": "Approved, payment ready",
+  paid: "Paid",
+  "wound-up": "Approved, payment held",
+};
+
+const dayFormat = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", timeZone: "UTC", year: "numeric" });
+const monthFormat = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC", year: "numeric" });
+
+/** @throws {RangeError} */
+export function formatDate(iso: string): string {
+  return dayFormat.format(new Date(iso));
+}
+
+/** "December 2026" for "2026-12". @throws {RangeError} */
+export function formatMonth(month: string): string {
+  return monthFormat.format(new Date(`${month}-01T00:00:00.000Z`));
+}
+
+/** @throws {never} */
+export function poolReadOf(status: ReadStatus): PoolRead {
+  switch (status) {
+    case "Current":
+    case "Empty":
+      return "PoolCurrent";
+    case "Stale":
+      return "PoolStale";
+    case "Idle":
+    case "Loading":
+      return "PoolLoading";
+    case "Denied":
+    case "Invalid":
+    case "Unavailable":
+    case "Failed":
+    case "Cancelled":
+      return "PoolFailed";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+/** @throws {never} */
+export function capOf(project: ShownProject, period: Period): bigint {
+  const month = formatPeriod(period);
+  return project.reward.cycleCaps.find((cap) => cap.cycleId === month)?.monthlyCapMinor ?? project.reward.monthlyCapMinor;
+}
+
+/** This month's pool funding as the vaults' cached finalized reads show it. @throws {RangeError} */
+export function projectFunding({ project, read, networkPays, nowMs }: { project: ShownProject; read: FundingVaults; networkPays: NetworkPays; nowMs: number }): PoolFunding {
+  return poolFunding({
+    pool: { monthlyPool: project.reward.kind === "monthly-pool", deployments: project.deployments, capFor: (period) => capOf(project, period) },
+    read: poolReadOf(read.status),
+    vaults: read.vaults ?? [],
+    networkPays,
+    nowMs,
+  });
+}
+
+/** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */
+export function shownReward(project: ShownProject, funding: PoolFunding): ShownProject {
+  const zeroed = zeroedPoolCap(
+    { monthlyPool: project.reward.kind === "monthly-pool", monthlyCapMinor: project.reward.monthlyCapMinor, hasCycleCaps: project.reward.cycleCaps.length > 0, assetKind: project.rewardAsset?.kind },
+    funding,
+  );
+  return zeroed === undefined ? project : { ...project, reward: { ...project.reward, ...zeroed, cycleCaps: [] } };
+}
+
+/** The repository the prompt names: its current path after a transfer. @throws {never} */
+export function contributionRepository(project: Pick<ShownProject, "repositories">): string | undefined {
+  const target = project.repositories[0];
+  return target?.aliases?.at(-1) ?? target?.id;
+}
+
+/** @throws {never} */
+export function projectPrompt(project: Pick<ShownProject, "repositories">, origin: string): string {
+  const repository = contributionRepository(project);
+  return repository === undefined ? bootstrapPrompt(origin) : `Read ${siteOrigin(origin)}/SKILL.md and follow it to contribute to github.com/${repository}.`;
+}
+
+/** The snapshot's suggested work in the project's repositories that nothing blocks. @throws {never} */
+export function suggestedWork(queue: WorkQueue, project: Pick<ShownProject, "repositories">): ReadonlyArray<WorkItem> {
+  const repositories = new Set(project.repositories.map(({ id }) => id));
+  return [queue.issues, queue.pullRequests].flatMap((items) => items.filter((item) => repositories.has(item.repository) && item.selection.status === "candidate"));
+}
+
+/** Direct payments by contribution month, newest month first. @throws {never} */
+export function directMonths(transfers: ReadonlyArray<DirectTransfer>): ReadonlyArray<DirectMonth> {
+  const months = new Map<string, DirectMonth>();
+  for (const transfer of transfers) {
+    const known = months.get(transfer.contributionMonth);
+    const amount = parseBaseUnits(transfer.amountMicro) ?? 0n;
+    months.set(transfer.contributionMonth, {
+      month: transfer.contributionMonth,
+      amountMicro: (known?.amountMicro ?? 0n) + amount,
+      count: (known?.count ?? 0) + 1,
+      paidOn: known === undefined || transfer.blockTime > known.paidOn ? transfer.blockTime : known.paidOn,
+    });
+  }
+  return [...months.values()].sort((left, right) => right.month.localeCompare(left.month));
+}
+
+/** The project's published cycles, newest first. @throws {never} */
+export function projectCycles(cycles: ReadonlyArray<CycleIndexEntry>, projectId: string): ReadonlyArray<CycleIndexEntry> {
+  return cycles.filter((cycle) => cycle.projectId === projectId).sort((left, right) => right.cycleId.localeCompare(left.cycleId));
+}
+
+/** The months whose monthly-pool cycle lists contributors, for the owner's award review. @throws {never} */
+export function awardMonths(cycles: ReadonlyArray<CycleIndexEntry>, projectId: string): ReadonlyArray<string> {
+  return cycles.filter((cycle) => cycle.projectId === projectId && cycle.kind === "monthly-pool" && cycle.contributors.length > 0).map((cycle) => cycle.cycleId);
+}
+
+/** @throws {never} */
+export function cycleLabel(cycle: Pick<CycleIndexEntry, "approvedAt" | "reviewEndsAt" | "state">, nowMs: number): string {
+  const awaiting = cycle.state === "review" && cycle.approvedAt === null && cycle.reviewEndsAt !== null && Date.parse(cycle.reviewEndsAt) <= nowMs;
+  return awaiting ? "Under review, awaiting approval" : cycleStates[cycle.state];
+}

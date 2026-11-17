@@ -15,8 +15,8 @@ Development's own model is `formal/models/slopbot/bot_ready_label.qnt`.
 This unit owns one pull request's ready row in `slopbot_ready_labels` and
 the label and line Slopbot leaves on it. [Review](./review.md) owns the
 review whose verdict it reads and the review comment it edits; the
-[job queue](./jobQueue.md) retries a failed ready check like any other
-job. The shell reads GitHub and the database, and its protected-path
+[job queue](./jobQueue.md) retries a failed ready check, its non-durable
+`ReadyLabelJob`, like any other job. The shell reads GitHub and the database, and its protected-path
 tables and owner glob matcher decide which changed paths are protected.
 
 ## Story: Label a pull request ready only while every condition holds at its head
@@ -28,37 +28,24 @@ tables and owner glob matcher decide which changed paths are protected.
 
 ### The owner's settings are off unless saved on, and stay within their bounds
 
-The setting is `project.slopbot.readyLabel` with exactly the fields
-`enabled`, `approvals`, `maxChangedLines`, `maxChangedFiles` and
-`protectedPaths`, each change an immutable revision of the project. The
-defaults are one approval, 400 changed lines and 20 changed files. The
-approvals are 1 to 10, the line cap 1 to 5,000, the file cap 1 to 300, and
-at most 50 distinct owner paths of at most 200 characters, each a
-repository-relative glob of letters, digits and `._-/*@+` with no `.` or
-`..` segment, no leading `/`, no `//` and no run of three `*`. The label is
-on only when the setting is saved enabled and the project offers
-contributor work.
+The setting, its fields, bounds, defaults and validity are the backend's
+[ready-label settings](../backend/readyLabelSettings.md), "Ready-label
+settings are bounded, off when absent or disabled, and only add protected
+paths"; Slopbot reads the saved setting and acts only on a valid one. The
+label is on only when that rule says the setting is on and the project
+still offers contributor work (`registeredProject` in
+`workers/slopbot/registry.ts`, lines 276 to 279).
 
 ```quint
-type ReadySettings = { enabled: bool, approvals: int, maxChangedLines: int, maxChangedFiles: int,
-  protectedPathCount: int }
+import readyLabelSettings as RLS from "../backend/readyLabelSettings"
 pure val readyLabelName = "slopbot:ready"
 pure val readyLineMarker = "<!-- slopbot:ready -->"
-pure val maxReadyApprovals = 10
-pure val maxReadyChangedLines = 5000
-pure val maxReadyChangedFiles = 300
-pure val maxProtectedPaths = 50
-pure val maxProtectedPathLength = 200
-pure val defaultReadySettings: ReadySettings = { enabled: false, approvals: 1, maxChangedLines: 400,
-  maxChangedFiles: 20, protectedPathCount: 0 }
-pure def validReadySettings(s: ReadySettings): bool =
-  s.approvals >= 1 and s.approvals <= maxReadyApprovals and s.maxChangedLines >= 1
-    and s.maxChangedLines <= maxReadyChangedLines and s.maxChangedFiles >= 1
-    and s.maxChangedFiles <= maxReadyChangedFiles and s.protectedPathCount >= 0
-    and s.protectedPathCount <= maxProtectedPaths
-pure def readyLabelOn(s: ReadySettings, contributorWork: bool): bool = s.enabled and contributorWork
+pure def savedSetting(saved: bool, settings: RLS::ReadyLabelConfig): RLS::ReadyLabelSetting =
+  if (saved) RLS::ReadyLabelPresent(settings) else RLS::ReadyLabelAbsent
+pure def readyLabelOn(setting: RLS::ReadyLabelSetting, contributorWork: bool): bool =
+  RLS::readyLabelOn(setting) and contributorWork
 pure def lawAbsentSettingsAreOff(contributorWork: bool): bool =
-  not(readyLabelOn(defaultReadySettings, contributorWork)) and validReadySettings(defaultReadySettings)
+  not(readyLabelOn(RLS::ReadyLabelAbsent, contributorWork))
 ```
 
 ### A changed file is protected when it is deleted, on a default or owner path, or has no text diff
@@ -191,7 +178,7 @@ pure def mergeableState(m: MergeState): bool = m == MergeClean or m == MergeHasH
 pure def mergePending(m: MergeState): bool =
   m == MergeNotReported or m == MergeUnknown or m == MergeUnstable or m == MergeBlocked or m == MergeBehind
 pure def notReady(reason: ReadyReason, pending: bool): ReadyDecision = { ready: false, pending: pending, reason: reason }
-pure def readyDecision(f: ReadyFacts, s: ReadySettings): ReadyDecision =
+pure def readyDecision(f: ReadyFacts, s: RLS::ReadyLabelConfig): ReadyDecision =
   if (not(f.open)) notReady(NotOpen, false)
   else if (f.draft) notReady(IsDraft, false)
   else if (f.verdict == VerdictRunning) notReady(StillReviewing, true)
@@ -207,13 +194,13 @@ pure def readyDecision(f: ReadyFacts, s: ReadySettings): ReadyDecision =
   else if (f.approvals < s.approvals) notReady(TooFewApprovals, false)
   else if (not(f.mergeable and mergeableState(f.mergeState))) notReady(NotMergeable, mergePending(f.mergeState))
   else { ready: true, pending: false, reason: AllConditionsHold }
-pure def lawReadyNeedsEveryCondition(facts: ReadyFacts, settings: ReadySettings): bool =
+pure def lawReadyNeedsEveryCondition(facts: ReadyFacts, settings: RLS::ReadyLabelConfig): bool =
   readyDecision(facts, settings).ready implies (facts.open and not(facts.draft) and facts.verdict == VerdictNone
     and facts.additions + facts.deletions <= settings.maxChangedLines and facts.changedFiles <= settings.maxChangedFiles
     and facts.deletions <= largeDeletionLines and facts.filesRead and facts.files.length() == facts.changedFiles
     and not(protectedChange(facts.files)) and not(facts.changesRequested) and facts.approvals >= settings.approvals
     and facts.mergeable and mergeableState(facts.mergeState))
-pure def lawPendingOnlyForARunningReviewOrUnsettledMergeability(facts: ReadyFacts, settings: ReadySettings): bool =
+pure def lawPendingOnlyForARunningReviewOrUnsettledMergeability(facts: ReadyFacts, settings: RLS::ReadyLabelConfig): bool =
   readyDecision(facts, settings).pending implies (facts.verdict == VerdictRunning or mergePending(facts.mergeState))
 pure def lawLimitationsMakeTheVerdictLimited(reviewRow: SlopbotReviewRow): bool =
   (reviewRow.found and not(reviewRow.running) and reviewRow.completed and reviewRow.parsed and not(reviewRow.finding)
@@ -221,7 +208,8 @@ pure def lawLimitationsMakeTheVerdictLimited(reviewRow: SlopbotReviewRow): bool 
 pure val readyFacts: ReadyFacts = { open: true, draft: false, mergeable: true, mergeState: MergeClean,
   verdict: VerdictNone, additions: 10, deletions: 2, changedFiles: 1, filesRead: true, files: List(cleanFile),
   approvals: 1, changesRequested: false }
-pure val enabledSettings: ReadySettings = { ...defaultReadySettings, enabled: true }
+pure val enabledSettings: RLS::ReadyLabelConfig = { enabled: true, approvals: RLS::defaultApprovals,
+  maxChangedLines: RLS::defaultMaxChangedLines, maxChangedFiles: RLS::defaultMaxChangedFiles, protectedPaths: List() }
 pure val factsValues = Set(readyFacts, { ...readyFacts, verdict: VerdictRunning },
   { ...readyFacts, mergeable: false, mergeState: MergeUnknown }, { ...readyFacts, mergeState: MergeDirty },
   { ...readyFacts, files: List({ ...cleanFile, defaultProtected: true }) }, { ...readyFacts, approvals: 0 },
@@ -263,8 +251,8 @@ type PullStatus = PullOpen | PullClosed | PullMerged
 type RowState = NoReadyRow | NotReadyRow | ReadyRow | OffRow
 type ReadyLine = NoReadyLine | LabelledLine | NotLabelledLine
 type HeadAtWrite = SameHead | MovedHead | UnreadableHead
-type ReadyObservation = { contributorWork: bool, installationActive: bool, pullReadable: bool, settings: ReadySettings,
-  facts: ReadyFacts, commentFound: bool, headAtWrite: HeadAtWrite }
+type ReadyObservation = { contributorWork: bool, installationActive: bool, pullReadable: bool, saved: bool,
+  settings: RLS::ReadyLabelConfig, facts: ReadyFacts, commentFound: bool, headAtWrite: HeadAtWrite }
 type ReadyPull = { now: int, pr: PullStatus, pullHead: int, row: RowState, rowHead: int, firstSeenAt: int,
   nextCheckAt: int, reason: ReadyReason, labelled: bool, line: ReadyLine, dispatches: int }
 pure val pendingRecheckSeconds = 600
@@ -277,11 +265,11 @@ pure def nextCheckAfter(d: ReadyDecision, now: int, firstSeen: int): int =
   else if (d.pending and now - firstSeen < pendingWindowSeconds) now + pendingRecheckSeconds
   else 0
 pure def canRefresh(p: ReadyPull, observed: ReadyObservation): bool =
-  observed.facts.open == (p.pr == PullOpen) and validReadySettings(observed.settings)
+  observed.facts.open == (p.pr == PullOpen) and RLS::readyLabelValid(savedSetting(observed.saved, observed.settings))
 pure def refresh(p: ReadyPull, observed: ReadyObservation): ReadyPull =
   val head = p.pullHead
   val isOpen = p.pr == PullOpen
-  val labelOn = readyLabelOn(observed.settings, observed.contributorWork)
+  val labelOn = readyLabelOn(savedSetting(observed.saved, observed.settings), observed.contributorWork)
   val firstSeen = if (p.row != NoReadyRow and p.rowHead == head) p.firstSeenAt else p.now
   val decided = readyDecision(observed.facts, observed.settings)
   val decision = if (decided.ready and not(observed.commentFound)) notReady(CommentUnavailable, false) else decided
@@ -413,16 +401,16 @@ pure def sometimesTurnedOff(p: ReadyPull): bool = p.row == OffRow and p.pr == Pu
 pure def sometimesMergedKeepsItsLabel(p: ReadyPull): bool = p.pr == PullMerged and p.labelled
 pure def sometimesDueClaimed(p: ReadyPull): bool = p.dispatches > 0
 pure val readyObservation: ReadyObservation = { contributorWork: true, installationActive: true, pullReadable: true,
-  settings: enabledSettings, facts: readyFacts, commentFound: true, headAtWrite: SameHead }
+  saved: true, settings: enabledSettings, facts: readyFacts, commentFound: true, headAtWrite: SameHead }
 pure val observedValues = Set(readyObservation,
   { ...readyObservation, facts: { ...readyFacts, verdict: VerdictRunning } },
   { ...readyObservation, facts: { ...readyFacts, mergeable: false, mergeState: MergeUnknown } },
   { ...readyObservation, facts: { ...readyFacts, files: List({ ...cleanFile, defaultProtected: true }) } },
   { ...readyObservation, commentFound: false },
   { ...readyObservation, headAtWrite: MovedHead }, { ...readyObservation, headAtWrite: UnreadableHead },
-  { ...readyObservation, settings: defaultReadySettings },
+  { ...readyObservation, saved: false },
   { ...readyObservation, facts: { ...readyFacts, open: false } },
-  { ...readyObservation, settings: defaultReadySettings, facts: { ...readyFacts, open: false } })
+  { ...readyObservation, settings: { ...enabledSettings, enabled: false }, facts: { ...readyFacts, open: false } })
 pure val secondsValues = Set(600, 3600, 1209600)
 pure val weight_refresh = 5
 ```

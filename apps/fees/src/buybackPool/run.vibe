@@ -1,19 +1,20 @@
 // spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "A purchase never spends more than the Robinhood fee wallet's finalized USDG balance"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"
 import type { Address, Hex } from "@repo/platform/chain/evm"
+import { nowSeconds } from "@repo/platform/clock"
 import { positiveAmount, zero } from "../../gen/settlement__money.effect.vibe"
 import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, maximumSafeValue, purchaseDecision, remaining, signs } from "../../gen/fees__buybackPool.effect.vibe"
 import { deadAddress, openSend } from "../../gen/fees__buyback.effect.vibe"
 import { amountOf } from "../buyback/codec.vibe"
 import { exactNumber, pausedCalldata, transferCalldata } from "../evm/abi.ts"
 import { approvalNeeded, approvalSettled } from "../evm/approval.vibe"
-import { attemptStatus, broadcast, credited, feesPerGas, gasLimit, nativeCost, readWord, tokenBalance } from "../evm/client.vibe"
+import { type Unlanded, attemptStatus, broadcast, credited, feesPerGas, gasLimit, nativeCost, readWord, tokenBalance } from "../evm/client.vibe"
 import { type KyberSettings, nativeValue, quote } from "../kyber/route.vibe"
-import { type EvmSigned, type Signed, FeeWallet } from "../signer/feeWallet.vibe"
+import { type EvmSigned, type Signed, FeeWallet, SignRefused } from "../signer/feeWallet.vibe"
 import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { burnAddress, robinhoodUsdg, slopToken } from "../runtime/pins.ts"
-import type { PoolInstance, SendRecord } from "./codec.vibe"
+import { type PoolInstance, type SendRecord, closedUnlanded } from "./codec.vibe"
 import { burnTransfers } from "./burnTransfers.ts"
-import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval } from "./store.vibe"
+import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, closeApproval, failPreparation, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval, settleClosed } from "./store.vibe"
 
 module verified {
   import { boundedSend as bounded } from "../kernels/buybackShares.ts"
@@ -84,17 +85,45 @@ effect function broadcastOf(running: Running, raw: Hex, txId: string, what: stri
   return sent
 }
 
-effect function settleSend(running: Running, record: SendRecord) {
-  const status = try attemptStatus(record.txs.map((attempt) => attempt as Hex))
-  if (status.kind !== "Landed") {
-    if (status.kind === "Unlanded" && record.state === "unknown") {
-      const again = try broadcast(record.latestRaw as Hex)
-      try Effect.logInfo("fee_send_rebroadcast", { network: "Robinhood", txId: record.txs[record.txs.length - 1] ?? record.tx, accepted: again.kind === "Accepted" })
-    }
+function open(record: SendRecord) {
+  return record.state === "submitted" || record.state === "unknown"
+}
+
+effect function expire(running: Running, record: SendRecord) {
+  const swap = { tx: running.instance.names.number("tx", record.tx), succeeded: false, finalized: true, output: zero, toFeeWallet: false, slopToken: false }
+  if (!canSettlePurchase(running.state, swap)) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: record.tx })
+  try step(running, { type: "settlePurchase", swap }, { expired: true })
+}
+
+effect function unlanded(running: Running, record: SendRecord, status: Unlanded) {
+  const nonce = try big(String(record.nonce ?? -1))
+  const consumed = record.nonce !== null && status.latestNonce > nonce
+  if (record.kind === "buyback" && record.expiresAt !== null && (try nowSeconds()) > record.expiresAt + 60) {
+    if (status.seen.length === 0 && !consumed) try expire(running, record)
     return
   }
+  if (record.kind === "approval" && status.seen.length === 0 && record.nonce !== null && status.finalizedNonce > nonce) {
+    try closeApproval(running.instance, record.id)
+    running.records.push("closeApproval")
+    return
+  }
+  if (status.latestSeen || (status.seen.length === 0 && consumed)) return
+  const again = try broadcast(record.latestRaw as Hex)
+  try Effect.logInfo("fee_send_rebroadcast", { network: "Robinhood", txId: record.txs[record.txs.length - 1] ?? record.tx, accepted: again.kind === "Accepted" })
+}
+
+effect function settleSend(running: Running, record: SendRecord) {
+  const status = try attemptStatus(record.txs.map((attempt) => attempt as Hex))
+  const closed = closedUnlanded(record)
+  if (status.kind === "Unlanded" && !closed) return try unlanded(running, record, status)
+  if (status.kind !== "Landed") return
   const receipt = { landedTxId: status.tx, actualWei: (try nativeCost(status.receipt)).toString(), blockHash: status.receipt.blockHash }
   const succeeded = status.receipt.status === "success"
+  if (closed) {
+    if (succeeded && record.kind === "buyback") try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: status.tx })
+    try settleClosed(running.instance, record.id, { receipt })
+    return
+  }
   const tx = running.instance.names.number("tx", record.tx)
   if (record.kind === "approval") {
     const evidence = try approvalSettled(status, { token: record.token as Address, spender: "Router", amount: try big(record.amountIn), nonce: try big(String(record.nonce ?? -1)) })
@@ -121,8 +150,8 @@ effect function settleSend(running: Running, record: SendRecord) {
 
 effect function reconcile(running: Running) {
   const ledger = try poolOf(running.instance)
-  for (const record of ledger.sends) if (record.state === "submitted" || record.state === "unknown") try settleSend(running, record)
-  return (try poolOf(running.instance)).sends.some((record) => record.kind === "approval" && (record.state === "submitted" || record.state === "unknown"))
+  for (const record of ledger.sends) if (open(record) || closedUnlanded(record)) try settleSend(running, record)
+  return (try poolOf(running.instance)).sends.some((record) => record.kind === "approval" && open(record))
 }
 
 effect function decidedPurchase(running: Running, purchaseQuote: PurchaseQuote, facts: Facts) {
@@ -135,12 +164,26 @@ effect function decidedBurn(running: Running, request: BurnRequest, facts: Facts
   try Effect.logWarning("fee_buyback_undecided", { network: "Robinhood", leg: "burn", value: request.value, decision: burnDecision(running.state, request).state, mode: running.state.runtime.buybackMode })
 }
 
-effect function approve(running: Running, amount: bigint, summary: string) {
+effect function refusedPurchase(running: Running, purchaseQuote: PurchaseQuote, quoted: QuoteFacts, detail: string) {
+  const { settings } = running
+  try failPreparation(running.instance, { kind: "buyback", runId: settings.runId, wallet: settings.wallet, amount: String(purchaseQuote.spent), value: purchaseQuote.spent, minAmountOut: fromAmount(purchaseQuote.minimum).toString(), quote: quoted, detail })
+  running.records.push("failPreparation")
+}
+
+effect function refusedBurn(running: Running, request: BurnRequest, detail: string) {
+  const { settings } = running
+  try failPreparation(running.instance, { kind: "burn", runId: settings.runId, wallet: settings.wallet, amount: fromAmount(request.quantity).toString(), value: request.value, minAmountOut: null, quote: undefined, detail })
+  running.records.push("failPreparation")
+}
+
+effect function approve(running: Running, amount: bigint, purchaseQuote: PurchaseQuote, quoted: QuoteFacts) {
   const floors = try sendFloors(running.instance)
   const wallet = try FeeWallet
-  const signed = try signedEvm(try wallet.sign({ kind: "KyberApprove", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amount }, () => Effect.void), "approvePurchase")
+  const signing = wallet.sign({ kind: "KyberApprove", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amount }, () => Effect.void) catch effect (error) => { return error }
+  if (signing instanceof SignRefused) return try refusedPurchase(running, purchaseQuote, quoted, signing.issue)
+  const signed = try signedEvm(signing, "approvePurchase")
   const { settings } = running
-  try journalApproval(running.instance, { amount, runId: settings.runId, wallet: settings.wallet, summary, signed: signedFacts(settings, signed) })
+  try journalApproval(running.instance, { amount, runId: settings.runId, wallet: settings.wallet, summary: quoted.summary, signed: signedFacts(settings, signed) })
   running.records.push("approvePurchase")
   const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_approval_submitted")
   if (sent.kind === "Accepted") return
@@ -154,10 +197,12 @@ effect function buy(running: Running, purchaseQuote: PurchaseQuote, slippageBps:
   const floors = try sendFloors(running.instance)
   const wallet = try FeeWallet
   const minimumOutput = fromAmount(purchaseQuote.minimum)
-  const signed = try signedEvm(try wallet.sign({ kind: "KyberSwap", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amountIn: amount, minimumOutput, slippageBps }, () => Effect.void), "purchase")
+  const signing = wallet.sign({ kind: "KyberSwap", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amountIn: amount, minimumOutput, slippageBps }, () => Effect.void) catch effect (error) => { return error }
+  if (signing instanceof SignRefused) return try refusedPurchase(running, purchaseQuote, quoted, signing.issue)
+  const signed = try signedEvm(signing, "purchase")
   const tx = running.instance.names.number("tx", signed.txId)
   const signedQuote = { ...purchaseQuote, tx, minimum: amountOf(signed.prepared.minimumOutput) }
-  if (!canPurchase(running.state, signedQuote)) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "buyback", reason: "the signed purchase is outside the pool's terms" })
+  if (!canPurchase(running.state, signedQuote)) return try refusedPurchase(running, purchaseQuote, quoted, "the signed purchase is outside the pool's terms")
   try step(running, { type: "purchase", quote: signedQuote }, { quote: quoted, signed: signedFacts(running.settings, signed) })
   const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_buyback_submitted")
   if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
@@ -201,7 +246,7 @@ effect function purchaseLeg(running: Running) {
   const verdict = purchaseDecision(running.state, purchaseQuote)
   if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decidedPurchase(running, purchaseQuote, { quote: quoted })
   if (paused) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "buyback", reason: "SLOP transfers are paused" })
-  if (try approvalNeeded(usdg, amount, "Router")) return try approve(running, amount, quoted.summary)
+  if (try approvalNeeded(usdg, amount, "Router")) return try approve(running, amount, purchaseQuote, quoted)
   try buy(running, purchaseQuote, slippageBps, quoted)
 }
 
@@ -230,10 +275,12 @@ effect function burnLeg(running: Running) {
   if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decidedBurn(running, request, {})
   const floors = try sendFloors(running.instance)
   const wallet = try FeeWallet
-  const signed = try signedEvm(try wallet.sign({ kind: "SlopBurn", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: try big(String(value)), amount: quantity }, () => Effect.void), "burn")
+  const signing = wallet.sign({ kind: "SlopBurn", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: try big(String(value)), amount: quantity }, () => Effect.void) catch effect (error) => { return error }
+  if (signing instanceof SignRefused) return try refusedBurn(running, request, signing.issue)
+  const signed = try signedEvm(signing, "burn")
   const tx = running.instance.names.number("tx", signed.txId)
   const signedRequest = { ...request, tx }
-  if (!canBurn(running.state, signedRequest)) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "the signed burn is outside the pool's terms" })
+  if (!canBurn(running.state, signedRequest)) return try refusedBurn(running, request, "the signed burn is outside the pool's terms")
   try step(running, { type: "burn", burnRequest: signedRequest }, { signed: signedFacts(settings, signed) })
   const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_burn_submitted")
   if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })

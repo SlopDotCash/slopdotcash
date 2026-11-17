@@ -14,7 +14,7 @@ guarantee against that key.
 This library states what Slop does with the facts a finalized vault read
 gives: each month's pledge amount and whether it is open, and the vault's
 open pledged total. The contract rules themselves are the contracts area's
-([EVM escrow](../contracts/evmEscrow.md), [month pledges](../contracts/monthPledge.md)).
+([EVM escrow](../contracts/evmEscrow.md), [Solana escrow](../contracts/solanaEscrow.md)).
 [Vault observations](./vaultSnapshots.md) keep the pledges read with each
 ordinary vault read; [monthly allocations](./monthly.md), the
 [root authorization journal](./monthlyCommitment.md) and
@@ -226,9 +226,8 @@ pure val lockAmountValues = Set(List(3), List(5), List(7))
 
 Anyone may release a lapsed lock: the plan names one month and needs its
 open pledge ("This month has no open pledge."); the program's simulation
-refuses a month whose window has not closed. The release is offered from
-the month's lapse instant (00:00 UTC on the 4th of the second month after
-it). The owner's return of a closed pledge account's rent needs a pledge
+refuses a month whose window has not closed (the [ledger](../contracts/ledger.md)'s
+`closesAt`). The owner's return of a closed pledge account's rent needs a pledge
 above zero that is no longer open.
 
 ```quint
@@ -238,7 +237,6 @@ pure def canPlanRelease(read: PledgeRead, period: int): bool = match read {
 pure def canPlanClosePledge(read: PledgeRead, period: int): bool = match read {
   | PledgesRead(x) => x.pledges.some(p => p.period == period and M::positiveAmount(p.amount) and not(p.open))
   | _ => false }
-pure def lockReleasable(period: int, now: int): bool = now >= C::lockLapsesAt(period)
 ```
 
 ### A withdrawal review refuses to take funds the open pledges hold

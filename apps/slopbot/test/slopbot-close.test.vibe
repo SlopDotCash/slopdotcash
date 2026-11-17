@@ -1,0 +1,467 @@
+// spec/slopbot/closeAttempt.md, "Story: Confirm or release an attempt only on GitHub's evidence"; spec/slopbot/closeCapacity.md, "Story: Reserve a close slot before any GitHub request"; spec/slopbot/maintainerHold.md, "Story: Give the maintainer seven days to decide an uncertain finding"; spec/points/penalties.md, "Story: Debit an eligible author once per pull request"
+import { assert, layer } from "@effect/vitest"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+
+type Fake = ReturnType<typeof githubFake>
+
+interface Target {
+  readonly id: number
+  readonly path: string
+  readonly projectId: string
+}
+
+const installationId = 9600
+const repo: Target = { id: 8201, path: "ada/closing", projectId: "close-project" }
+const capped: Target = { id: 8202, path: "ada/capped", projectId: "capped-project" }
+const brakes: Target = { id: 8203, path: "ada/brakes", projectId: "brakes-project" }
+const policy = { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": "Every change must link an approved issue before review.\n" }
+const oneCloseADay = { ...policy, ".github/slopbot.json": JSON.stringify({ version: 1, audience: "protection", closure: true, dailyCloseCap: 1 }) }
+const spamText = "Buy cheap tokens at spam-shop today and get rich."
+const spamQuote = "Buy cheap tokens at spam-shop"
+const scamText = "Send your wallet seed phrase to claim the airdrop now."
+const scamQuote = "Send your wallet seed phrase"
+const moderators = ["900", "901"]
+const day = 86_400_000
+const holdMillis = 604_800_000
+const release = JSON.stringify({ sequence: 1, branch: "main", workflow: "production-release", reviewedPullRequest: 77, sourceSha: "release-1" })
+const qualification = (category: string) => ({ by: 4, review: { category, realCases: 3, counterexamples: 2, evidenceDigest: `reviewed-${category}`, reviewer: 7, elapsedDays: 1 } })
+const qualified = JSON.stringify({
+  decisions: [{ kind: "QualifierNamed", reference: "test decision naming the qualifier", actor: 4 }],
+  qualifications: [qualification("Spam"), qualification("Scam")],
+})
+const projects = [repo, capped, brakes].map((target) => ({ projectId: target.projectId, path: target.path, repositoryId: String(target.id), rowStatus: "Active", retirement: "NotRetired", restriction: "Clear", closureConsent: true }))
+const authors = ["mia", "sam", "cap1", "cap2", "brk1", "brk2", "slow", "rej", "reo", "late", "wait", "act", "who", "kim"]
+const blockedByCapacity = "_This item was not closed: closure authority changed, the daily cap was reached, or a close is already pending._"
+
+function verdict(category: string, summary: string, quote: string) {
+  return JSON.stringify({ category, confidence: 0.97, rule_refs: [{ source: "universal", quote }], evidence: [quote], summary, limitations: [], objective_defect: null })
+}
+
+async function pullOf(world: Fake["world"], path: string, author: string, title: string, body: string) {
+  const base = world.addCommit(path, { message: `Target tip for ${title}` })
+  const head = world.addCommit(path, { branch: `contribution-${author}`, parents: [base], files: { [`notes/${author}.txt`]: `${title}\n` } })
+  return world.addPull({ repo: path, author, title, body, headRef: `contribution-${author}`, headSha: head })
+}
+
+async function seed() {
+  const fake = githubFake()
+  const world = fake.world
+  world.addUser({ id: 100, login: "ada" })
+  authors.forEach((login, index) => world.addUser({ id: 601 + index, login }))
+  world.addRepo({ id: repo.id, owner: "ada", name: "closing", files: policy })
+  world.addRepo({ id: capped.id, owner: "ada", name: "capped", files: oneCloseADay })
+  world.addRepo({ id: brakes.id, owner: "ada", name: "brakes", files: policy })
+  const items = {
+    mia: await pullOf(world, repo.path, "mia", "MIA-TOKEN tokens", spamText),
+    sam: await pullOf(world, repo.path, "sam", "SAM-TOKEN airdrop", scamText),
+    cap1: await pullOf(world, capped.path, "cap1", "CAP1-TOKEN tokens", spamText),
+    cap2: await pullOf(world, capped.path, "cap2", "CAP2-TOKEN tokens", spamText),
+    brk1: await pullOf(world, brakes.path, "brk1", "BRK1-TOKEN tokens", spamText),
+    brk2: await pullOf(world, brakes.path, "brk2", "BRK2-TOKEN tokens", spamText),
+    slow: await pullOf(world, repo.path, "slow", "SLOW-TOKEN tokens", spamText),
+    rej: await pullOf(world, repo.path, "rej", "REJ-TOKEN tokens", spamText),
+    reo: await pullOf(world, repo.path, "reo", "REO-TOKEN tokens", spamText),
+    late: await pullOf(world, repo.path, "late", "LATE-TOKEN tokens", spamText),
+    wait: await pullOf(world, repo.path, "wait", "WAIT-TOKEN tokens", spamText),
+    act: await pullOf(world, repo.path, "act", "ACT-TOKEN tokens", spamText),
+    who: await pullOf(world, repo.path, "who", "WHO-TOKEN tokens", spamText),
+  }
+  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
+  const providers = providerFake()
+  const net = internet({ github: fake.handler, providers: providers.handler })
+  return { fake, providers, items, net, token: fake.tokens.installation(installationId) }
+}
+
+type Seeded = Awaited<ReturnType<typeof seed>>
+type Author = keyof Seeded["items"]
+
+service World {
+  readonly fake: Fake
+  readonly providers: Seeded["providers"]
+  readonly items: Seeded["items"]
+  readonly net: Seeded["net"]
+}
+
+const Closing = Layer.unwrap(effect {
+  const seeded = try promise(() => seed())
+  return Layer.mergeAll(
+    areaLayer({
+      root: new URL("..", import.meta.url).pathname,
+      entry: "close",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: {
+        GITHUB_API: seeded.fake.authority,
+        GITHUB_TOKEN: seeded.token,
+        ORBIO_API_KEY: "orbio-test-credential",
+        SURPLUS_API_KEY: "surplus-test-credential",
+        SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
+        SLOPBOT_CLOSURE_ENABLED: "true",
+        SLOPBOT_RELEASE: release,
+        ADMIN_GITHUB_IDS: moderators.join(","),
+        PROJECT_MODERATOR_GITHUB_IDS: moderators.join(","),
+        TEST_PROJECTS: JSON.stringify(projects),
+        TEST_ACTIVATION_RECORDS: qualified,
+      },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+    webCrypto,
+  )
+})
+
+const idOf = (login: string) => 601 + authors.indexOf(login)
+const targetOf = (login: Author) => login.startsWith("cap") ? capped : login.startsWith("brk") ? brakes : repo
+
+function about(token: string) {
+  return (call: ProviderCall) => call.route === "orbio" && call.messages.some((message) => message.content.includes(token))
+}
+
+function jobOf(login: Author, number: number) {
+  const target = targetOf(login)
+  const [owner = "", name = ""] = target.path.split("/")
+  return { kind: "review", deliveryId: `close-delivery-${target.id}-${number}`, installationId, repositoryId: target.id, owner, repo: name, itemKind: "pull_request", number }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function installed(area: AreaShape) {
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, try isoNow())
+  try area.sql("CREATE TABLE IF NOT EXISTS close_jobs (kind TEXT NOT NULL, body TEXT NOT NULL)")
+}
+
+effect function itemOf(login: Author) {
+  const { fake, items } = try World
+  return try Effect.try(() => fake.world.item(targetOf(login).path, items[login]))
+}
+
+effect function headOf(login: Author) {
+  const { fake, items } = try World
+  return (try Effect.try(() => fake.world.pull(targetOf(login).path, items[login]))).headSha
+}
+
+effect function eligible(area: AreaShape, login: Author) {
+  const githubId = String(idOf(login))
+  const node = (try itemOf(login)).nodeId
+  const at = try isoNow()
+  const run = `run-${login}`
+  const target = targetOf(login)
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 0, 5)", `actor-${login}`, githubId, login, at)
+  try area.sql("INSERT INTO trace_runs (id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, created_at, create_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, '3', 'p', 'm', 'c', '1', 'awaiting_trace', ?, ?)", run, `pr_opened_${node}`, githubId, login, target.projectId, target.path, at, run)
+  try area.sql("INSERT INTO run_progress_events (id, run_id, github_user_id, kind, occurred_at, source, github_object_id, created_at, idempotency_key) VALUES (?, ?, ?, 'pull_request_opened', ?, 'agent', ?, ?, ?)", `event-${run}`, run, githubId, at, node, at, `event-${run}`)
+}
+
+effect function answers(login: Author, ...replies: ReadonlyArray<string>) {
+  const { providers } = try World
+  for (const text of replies) providers.reply(about(`${login.toUpperCase()}-TOKEN`), { text })
+}
+
+const spam = verdict("spam", `This is an advertisement: ${spamText}`, spamQuote)
+const scam = verdict("scam", "This asks for wallet secrets.", scamQuote)
+const busywork = verdict("busywork", "This only reshuffles notes.", spamQuote)
+
+effect function closeOf(area: AreaShape, login: Author) {
+  const { items } = try World
+  return (try area.post("/test/close", jobOf(login, items[login]))).body
+}
+
+effect function written(login: Author) {
+  const { fake } = try World
+  const item = try itemOf(login)
+  const body = item.comments.find((comment) => comment.author.id === fake.app.bot.id)?.body ?? ""
+  const lines = body.split("\n")
+  return {
+    header: lines[1] ?? null,
+    blocked: lines.find((line) => line.startsWith("_This item was not closed")) ?? null,
+    penalty: lines.find((line) => line.startsWith("_Under the published penalty table")) ?? null,
+    labels: item.labels.map((label) => label.name),
+    state: item.state,
+  }
+}
+
+effect function closePatches(login: Author) {
+  const { fake, items } = try World
+  const path = `/repositories/${targetOf(login).id}/pulls/${items[login]}`
+  return fake.requests.filter((request) => request.method === "PATCH" && new URL(request.url).pathname.endsWith(path)).length
+}
+
+effect function labelPosts(login: Author) {
+  const { fake, items } = try World
+  const path = `/repositories/${targetOf(login).id}/issues/${items[login]}/labels`
+  return fake.requests.filter((request) => request.method === "POST" && new URL(request.url).pathname.endsWith(path)).length
+}
+
+effect function attemptsOf(area: AreaShape, login: Author) {
+  const node = (try itemOf(login)).nodeId
+  return try area.sql("SELECT state, comment_confirmed FROM slopbot_close_attempts WHERE item_node_id = ? ORDER BY rowid", node)
+}
+
+effect function penaltyOf(area: AreaShape, login: Author) {
+  const node = (try itemOf(login)).nodeId
+  return try area.sql("SELECT category, debit_thirds, period, moderator_review, recorded_at, reversal, reversed_at IS NOT NULL AS reversed FROM slopbot_penalties WHERE item_node_id = ?", node)
+}
+
+effect function closedMonth(login: Author) {
+  const closedAt = (try itemOf(login)).closedAt ?? ""
+  return { period: closedAt.slice(0, 7), recordedAt: closedAt }
+}
+
+effect function penaltyLine(login: Author, points: number, moderated: boolean) {
+  const { period } = try closedMonth(login)
+  return `_Under the published penalty table, this close removes ${points} points from the author's ${period} Slop Score. A month never goes below zero, and approved, scheduled or paid awards do not change.${moderated ? " A Slop moderator also reviews the account." : ""}_`
+}
+
+effect function reopenedOnGitHub(login: Author) {
+  const { fake } = try World
+  const item = try itemOf(login)
+  try Effect.try(() => {
+    if (item.state === "closed") {
+      item.state = "open"
+      item.closedAt = null
+    } else fake.world.record(item, "closed", fake.world.account("ada"))
+    fake.world.record(item, "reopened", fake.world.account("ada"))
+  })
+}
+
+effect function confirmedReopen(area: AreaShape, login: Author, revision: string, occurredAt: string) {
+  const { items } = try World
+  const target = targetOf(login)
+  const item = try itemOf(login)
+  const source = JSON.stringify({ installationId, repositoryId: target.id, itemKind: "pull_request", number: items[login], senderId: 100, itemNodeId: item.nodeId, revision, occurredAt })
+  const at = try isoNow()
+  try area.sql("INSERT INTO slopbot_deliveries (delivery_id, event, received_at, reopen_source, reopen_confirmed_at) VALUES (?, 'pull_request', ?, ?, ?)", `reopen-${login}-${revision}`, at, source, at)
+  try area.sql("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'human_reopen', '100', ?)", `reopen:${item.nodeId}:${revision}`, target.id, item.nodeId, occurredAt)
+}
+
+effect function reopenOf(area: AreaShape, login: Author, revision: string, occurredAt: string) {
+  const { items } = try World
+  const itemNodeId = (try itemOf(login)).nodeId
+  return (try area.post("/test/reopen", { job: jobOf(login, items[login]), itemNodeId, revision, occurredAt })).body
+}
+
+layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A confirmed close records the debit in GitHub\'s close month, a scam close adds the moderator label and one notice per moderator, and a reached cap or a tripped breaker labels instead (spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation\'s recheck or a later one"; spec/slopbot/closeAttempt.md, "A close that a later recheck or capacity refuses is labeled instead and never retried for this revision"; spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"; spec/slopbot/closeCapacity.md, "Confirmed closes in the rolling day plus every unresolved attempt consume the daily cap"; spec/slopbot/closeCapacity.md, "The reopen-rate breaker stops new reservations after more than one in ten recent closes was reversed"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
+    const area = try Area
+    const { items, net, providers } = try World
+    try installed(area)
+    for (const login of ["mia", "sam", "cap1", "cap2", "brk1", "brk2"] as const) try eligible(area, login)
+    for (const login of ["mia", "cap1", "cap2", "brk1", "brk2"] as const) try answers(login, spam, spam)
+    try answers("sam", scam, scam)
+    const outcomes = {
+      mia: try closeOf(area, "mia"),
+      sam: try closeOf(area, "sam"),
+      cap1: try closeOf(area, "cap1"),
+      cap2: try closeOf(area, "cap2"),
+      brk1: try closeOf(area, "brk1"),
+    }
+    const reversedNode = (try itemOf("brk1")).nodeId
+    try area.sql("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'human_reopen', '100', ?)", `reopen:${reversedNode}:${try headOf("brk1")}`, brakes.id, reversedNode, try isoNow())
+    const tripped = try closeOf(area, "brk2")
+    const samNode = (try itemOf("sam")).nodeId
+    try same({
+      outcomes: { ...outcomes, brk2: tripped },
+      writes: { mia: try written("mia"), sam: try written("sam"), cap1: try written("cap1"), cap2: try written("cap2"), brk2: try written("brk2") },
+      attempts: { mia: try attemptsOf(area, "mia"), sam: try attemptsOf(area, "sam"), cap2: try attemptsOf(area, "cap2"), brk2: try attemptsOf(area, "brk2") },
+      penalties: { mia: try penaltyOf(area, "mia"), sam: try penaltyOf(area, "sam"), cap2: try penaltyOf(area, "cap2") },
+      notices: try area.sql("SELECT recipient_github_id AS recipient, kind, action_path FROM notifications WHERE event_key = ? ORDER BY recipient_github_id", `slopbot-scam-review:${samNode}`),
+      patches: [try closePatches("mia"), try closePatches("sam"), try closePatches("cap2"), try closePatches("brk2")],
+      unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
+    }, {
+      outcomes: {
+        mia: { kind: "close", result: "closed (spam)" },
+        sam: { kind: "close", result: "closed (scam)" },
+        cap1: { kind: "close", result: "closed (spam)" },
+        cap2: { kind: "close", result: "labeled (spam)" },
+        brk1: { kind: "close", result: "closed (spam)" },
+        brk2: { kind: "close", result: "labeled (spam)" },
+      },
+      writes: {
+        mia: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("mia", 30, false), labels: [], state: "closed" },
+        sam: { header: "**Slopbot closed this item** under the repository's `scam` rule.", blocked: null, penalty: try penaltyLine("sam", 240, true), labels: ["slopbot: moderator"], state: "closed" },
+        cap1: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("cap1", 30, false), labels: [], state: "closed" },
+        cap2: { header: "**Slopbot review:** `spam`", blocked: blockedByCapacity, penalty: null, labels: ["slopbot: spam"], state: "open" },
+        brk2: { header: "**Slopbot review:** `spam`", blocked: blockedByCapacity, penalty: null, labels: ["slopbot: spam"], state: "open" },
+      },
+      attempts: { mia: [{ state: "confirmed", comment_confirmed: 1 }], sam: [{ state: "confirmed", comment_confirmed: 1 }], cap2: [], brk2: [] },
+      penalties: {
+        mia: [{ category: "spam", debit_thirds: 3, period: (try closedMonth("mia")).period, moderator_review: 0, recorded_at: (try closedMonth("mia")).recordedAt, reversal: null, reversed: 0 }],
+        sam: [{ category: "scam", debit_thirds: 24, period: (try closedMonth("sam")).period, moderator_review: 1, recorded_at: (try closedMonth("sam")).recordedAt, reversal: null, reversed: 0 }],
+        cap2: [],
+      },
+      notices: moderators.map((recipient) => ({ recipient, kind: "slopbot_scam_review", action_path: `/api/v1/notifications/scam-reviews/${repo.path}/pull/${items.sam}` })),
+      patches: [1, 1, 0, 0],
+      unexpected: [0, 0, 0],
+    })
+  })
+
+  it.effect('An unknown close answer keeps the slot pending and the replay reconciles from GitHub\'s close without a second request, while a definitive refusal releases it (spec/slopbot/closeAttempt.md, "Only GitHub\'s own close event confirms and only a definitive refusal releases"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation\'s recheck or a later one"; spec/slopbot/closeCapacity.md, "A reservation, its confirmation and its rejection are each recorded once, on GitHub\'s evidence")', () => effect {
+    const area = try Area
+    const { fake, items, net, providers } = try World
+    try installed(area)
+    for (const login of ["slow", "rej"] as const) {
+      try eligible(area, login)
+      try answers(login, spam, spam)
+    }
+    try Effect.try(() => fake.failNext(new RegExp(`^PATCH .*/repositories/${repo.id}/pulls/${items.slow}$`, "u"), { status: 504, applied: true }))
+    try Effect.try(() => fake.failNext(new RegExp(`^PATCH .*/repositories/${repo.id}/pulls/${items.rej}$`, "u"), { status: 422 }))
+    const timedOut = try closeOf(area, "slow")
+    const pending = try attemptsOf(area, "slow")
+    const pendingPenalty = try penaltyOf(area, "slow")
+    const replayed = try closeOf(area, "slow")
+    const refused = try closeOf(area, "rej")
+    try same({
+      timedOut,
+      pending,
+      pendingPenalty,
+      replayed,
+      slow: { attempts: try attemptsOf(area, "slow"), penalty: try penaltyOf(area, "slow"), written: try written("slow"), patches: try closePatches("slow") },
+      refused,
+      rej: { attempts: (try attemptsOf(area, "rej")).map((row) => row.state), penalty: try penaltyOf(area, "rej"), state: (try written("rej")).state, patches: try closePatches("rej") },
+      unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
+    }, {
+      timedOut: { kind: "failed", result: "CloseUnconfirmed" },
+      pending: [{ state: "pending", comment_confirmed: 0 }],
+      pendingPenalty: [],
+      replayed: { kind: "reconciled", result: "closed (spam)" },
+      slow: {
+        attempts: [{ state: "confirmed", comment_confirmed: 1 }],
+        penalty: [{ category: "spam", debit_thirds: 3, period: (try closedMonth("slow")).period, moderator_review: 0, recorded_at: (try closedMonth("slow")).recordedAt, reversal: null, reversed: 0 }],
+        written: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("slow", 30, false), labels: [], state: "closed" },
+        patches: 1,
+      },
+      refused: { kind: "failed", result: "CloseRefused" },
+      rej: { attempts: ["rejected"], penalty: [], state: "open", patches: 1 },
+      unexpected: [0, 0, 0],
+    })
+  })
+
+  it.effect('A maintainer reopen reverses the debit once and is never closed again at that revision, and a late reopen of an older revision keeps a later head\'s debit (spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
+    const area = try Area
+    const { net } = try World
+    try installed(area)
+    for (const login of ["reo", "late"] as const) {
+      try eligible(area, login)
+      try answers(login, spam, spam)
+    }
+    const closes = [try closeOf(area, "reo"), try closeOf(area, "late")]
+    const reoHead = try headOf("reo")
+    const reopenedAt = try isoNow()
+    try reopenedOnGitHub("reo")
+    try confirmedReopen(area, "reo", reoHead, reopenedAt)
+    const reversals = [try reopenOf(area, "reo", reoHead, reopenedAt), try reopenOf(area, "reo", reoHead, reopenedAt)]
+    const reviewedAgain = try closeOf(area, "reo")
+    const olderRevision = "1".repeat(40)
+    const earlier = new Date(millisOf(try isoNow()) - day).toISOString()
+    try confirmedReopen(area, "late", olderRevision, earlier)
+    const lateReversal = try reopenOf(area, "late", olderRevision, earlier)
+    try same({
+      closes,
+      reversals,
+      reo: { penalty: (try penaltyOf(area, "reo")).map((row) => [row.reversal, row.reversed]), state: (try written("reo")).state, patches: try closePatches("reo"), again: (reviewedAgain as { readonly kind?: string }).kind === "close" },
+      lateReversal,
+      late: { penalty: (try penaltyOf(area, "late")).map((row) => [row.reversal, row.reversed]), state: (try written("late")).state, patches: try closePatches("late") },
+      unexpected: [net.unexpected.length, area.outboundErrors.length],
+    }, {
+      closes: [{ kind: "close", result: "closed (spam)" }, { kind: "close", result: "closed (spam)" }],
+      reversals: [{ cleaned: true, reversed: true }, { cleaned: true, reversed: false }],
+      reo: { penalty: [["maintainer_reopen", 1]], state: "open", patches: 1, again: false },
+      lateReversal: { cleaned: false, reversed: false },
+      late: { penalty: [[null, 0]], state: "closed", patches: 1 },
+      unexpected: [0, 0],
+    })
+  })
+
+  it.effect('An uncertain finding waits exactly seven days: nothing at 604,799 s, one uncertain label at 604,800 s, never a close; a maintainer comment in the window keeps the decision, an unknown role retries, and a maintainer reopen removes the label (spec/slopbot/maintainerHold.md, "The first durable maintainer notice starts the window once"; spec/slopbot/maintainerHold.md, "The scheduled dispatcher queues each due hold and requeues a lost message after a day"; spec/slopbot/maintainerHold.md, "The due hold resolves on every known source: the maintainer acted, it is superseded, or it is labeled"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"; spec/slopbot/jobQueue.md, "A due maintainer hold or appeal is sent when due and again after a day without resolution")', () => effect {
+    const area = try Area
+    const { fake, items, net, providers } = try World
+    try installed(area)
+    const held = ["wait", "act", "who"] as const
+    for (const login of held) {
+      try eligible(area, login)
+      try answers(login, spam, busywork)
+    }
+    const holds = []
+    for (const login of held) holds.push(try closeOf(area, login))
+    const nodes = [(try itemOf("wait")).nodeId, (try itemOf("act")).nodeId, (try itemOf("who")).nodeId]
+    const rows = try area.sql("SELECT item_node_id AS node, held_at, due_at FROM slopbot_maintainer_holds ORDER BY held_at")
+    const heldAt = new Map(rows.map((row) => [String(row.node), millisOf(String(row.held_at))]))
+    const dueAt = new Map(rows.map((row) => [String(row.node), String(row.due_at)]))
+    const first = Math.min(...heldAt.values())
+    const last = Math.max(...heldAt.values())
+    try Effect.try(() => fake.world.addComment(repo.path, items.act, { author: "ada", body: "I will decide this one myself." }))
+    try Effect.try(() => fake.world.addComment(repo.path, items.who, { author: "kim", body: "Looks like spam to me." }))
+    const early = (try area.post("/test/holds/dispatch", { now: first + holdMillis - 1000 })).body
+    const queuedEarly = try area.sql("SELECT count(*) AS n FROM close_jobs WHERE kind = 'maintainer_hold'")
+    const due = (try area.post("/test/holds/dispatch", { now: last + holdMillis })).body
+    const queued = try area.sql("SELECT body FROM close_jobs WHERE kind = 'maintainer_hold'")
+    const jobs = try Effect.try(() => queued.map((row) => JSON.parse(String(row.body)) as { readonly number: number }))
+    const startOf = (login: (typeof held)[number]) => heldAt.get(nodes[held.indexOf(login)] ?? "") ?? 0
+    const applying = (login: (typeof held)[number], offset: number) => area.post("/test/holds/apply", { job: jobs.find((job) => job.number === items[login]), now: startOf(login) + offset })
+    const waitEarly = (try applying("wait", holdMillis - 1000)).body
+    const waitDue = (try applying("wait", holdMillis)).body
+    const waitReplay = (try applying("wait", holdMillis + 1000)).body
+    const acted = (try applying("act", holdMillis)).body
+    try Effect.try(() => fake.failNext(new RegExp(`^GET .*/repositories/${repo.id}/collaborators/kim/permission`, "u"), { status: 500 }))
+    const unknown = (try applying("who", holdMillis)).body
+    const retried = (try applying("who", holdMillis + 60_000)).body
+    const later = (try area.post("/test/holds/dispatch", { now: last + holdMillis + 2 * day })).body
+    const outcomes = try area.sql("SELECT item_node_id AS node, outcome FROM slopbot_maintainer_holds ORDER BY held_at")
+    const labeledBefore = { wait: try written("wait"), act: try written("act"), who: try written("who") }
+    const waitHead = try headOf("wait")
+    const reopenedAt = try isoNow()
+    try reopenedOnGitHub("wait")
+    try confirmedReopen(area, "wait", waitHead, reopenedAt)
+    const removed = try reopenOf(area, "wait", waitHead, reopenedAt)
+    try same({
+      holds,
+      due: held.map((login) => dueAt.get(nodes[held.indexOf(login)] ?? "") ?? ""),
+      early,
+      queuedEarly,
+      dueDispatch: due,
+      jobs: jobs.length,
+      waitEarly,
+      waitDue,
+      waitReplay,
+      acted,
+      unknown,
+      retried,
+      later,
+      outcomes: outcomes.map((row) => [nodes.indexOf(String(row.node)), row.outcome]),
+      labels: { wait: labeledBefore.wait.labels, act: labeledBefore.act.labels, who: labeledBefore.who.labels },
+      headers: held.map((login) => labeledBefore[login].header),
+      labelPosts: [try labelPosts("wait"), try labelPosts("act"), try labelPosts("who")],
+      patches: [try closePatches("wait"), try closePatches("act"), try closePatches("who")],
+      removed,
+      afterReopen: (try written("wait")).labels,
+      unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
+    }, {
+      holds: held.map((login) => ({ kind: "hold", result: `held for maintainer until ${dueAt.get(nodes[held.indexOf(login)] ?? "") ?? ""} (spam)` })),
+      due: held.map((login) => new Date((heldAt.get(nodes[held.indexOf(login)] ?? "") ?? 0) + holdMillis).toISOString()),
+      early: { dispatched: 0 },
+      queuedEarly: [{ n: 0 }],
+      dueDispatch: { dispatched: 3 },
+      jobs: 3,
+      waitEarly: { result: "hold not due" },
+      waitDue: { result: "labeled after the maintainer window (spam)" },
+      waitReplay: { result: "hold already resolved" },
+      acted: { result: "maintainer acted; no label" },
+      unknown: { result: "retried: maintainer status is unknown; the hold is retried" },
+      retried: { result: "labeled after the maintainer window (spam)" },
+      later: { dispatched: 0 },
+      outcomes: [[0, "labeled"], [1, "maintainer_acted"], [2, "labeled"]],
+      labels: { wait: ["slopbot:uncertain"], act: [], who: ["slopbot:uncertain"] },
+      headers: held.map(() => "**Slopbot review (uncertain, maintainer decides):** `spam`"),
+      labelPosts: [1, 0, 1],
+      patches: [0, 0, 0],
+      removed: { cleaned: true, reversed: false },
+      afterReopen: [],
+      unexpected: [0, 0, 0],
+    })
+  })
+})

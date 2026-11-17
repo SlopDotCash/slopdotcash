@@ -1,0 +1,337 @@
+// spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"
+import { randomId } from "@repo/platform/crypto"
+import { type Candidate, type CheckOutcome, type Event, Machine, type Plan, type Prompt, Rejected, type Slot, type Surface, type WalletResult, blocksSend, canCheck, canDepart, canMount, canReserve, conflicts, entry, initial, machineOver, noCandidate, noEntries, noEntry, noPlan, plan, validPlan, view } from "../../../gen/frontend__directBountyPrompt.effect.vibe"
+import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { modelNumber } from "../../flows/security/private.vibe"
+import { storageKeys } from "../../platform/storage.vibe"
+import { actorNumber } from "../../session/session.vibe"
+import { type EvmConnection, type EvmTransaction, connectEvm, estimateGas, evmAccount, evmChainId, evmRequest, sendTransaction, switchChain } from "../core/evm.vibe"
+import { type SlotStorage, readSlotText, slotWritable, writeSlotText } from "../core/slots.ts"
+import { type Authority, BountyRefused, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
+import { type DirectTransaction, type Journal, type JournalEntry, type JournalRead, attemptEntry, entryAttempt, isEvmHash, journalText, nonceNumber, quantityOf, readJournal, sameAddress, sameAttempt, transactionBytes, transactionOfBytes } from "./records.ts"
+
+export type { DirectTransaction, Slot, Surface }
+
+export const directMessages = {
+  unreadable: "The saved wallet request cannot be read. Check wallet activity before continuing.",
+  invalid: "The prepared payment request is invalid. Refresh the case.",
+  connect: "Connect the payer wallet shown above.",
+  payerChanged: "The prepared payer wallet changed.",
+  walletChanged: "The wallet account or network changed. Reconnect before continuing.",
+  nonceUnchecked: "The wallet nonce could not be checked. Retry.",
+  earlier: "Complete earlier wallet transactions before this queued payment.",
+  nonceUsed: "This nonce is pending or used. Refresh the case to verify or recover it.",
+  alreadySent: "Already sent. Check this transaction before sending again.",
+  storageBlocked: "Your browser could not save this request, so nothing was sent to your wallet. Allow site storage and try again.",
+  declined: "You declined the wallet request. That transfer was not sent.",
+  uncertain: "The wallet result is uncertain. Check wallet activity and enter its hash; do not send again.",
+  uncertainShown: "Wallet result uncertain. Enter its transaction hash to continue.",
+  mismatched: "The saved payment differs from this request. Check wallet activity before continuing.",
+  requestChanged: "The saved wallet request changed. Reload before checking this hash.",
+  enterHash: "Enter the matching transaction hash from your wallet.",
+  submitted: "Transfers submitted. Verify them after finality.",
+  cancellationSubmitted: "Cancellation submitted. Verify it after finality.",
+  verified: "Finalized evidence verified.",
+} as const
+
+export error JournalUnreadable { message: string }
+export error JournalUnwritable { message: string }
+
+export interface DirectPaymentInput {
+  readonly caseId: string
+  readonly generation: number
+  readonly payer: string
+  readonly network: string
+  readonly transactions: ReadonlyArray<DirectTransaction>
+  readonly cancellation: boolean
+}
+
+export interface LegView {
+  readonly slot: Slot
+  readonly transaction: DirectTransaction
+  readonly saved: Attempt
+  readonly mismatched: boolean
+}
+
+export interface DirectFormView {
+  readonly legs: ReadonlyArray<LegView>
+  readonly unsent: number
+  readonly uncertain: boolean
+  readonly mismatched: boolean
+  readonly warning: boolean
+}
+
+export interface HashInputs {
+  readonly first?: string
+  readonly second?: string
+}
+
+export interface DirectPrompt {
+  readonly machine: Machine.Shape
+  written(event: Event, by: number): (CheckOutcome | undefined)!Rejected
+  journalNow(payer: string): JournalRead
+}
+
+const slots: ReadonlyArray<Slot> = ["FirstLeg", "SecondLeg"]
+
+export function directKey(caseId: string, generation: number, cancellation: boolean, owner: string): string {
+  return `${storageKeys.bountySend.key}${caseId}:${generation}:${cancellation ? "cancel" : "pay"}:${owner}`
+}
+
+function planOf(transaction: DirectTransaction | undefined): Plan | undefined {
+  if (transaction === undefined) return noPlan
+  const nonce = nonceNumber(transaction.nonce)
+  return nonce === undefined ? undefined : { nonce, bytesId: transactionBytes(transaction) }
+}
+
+function candidateOf(text: string | undefined): Candidate {
+  if (text === undefined) return noCandidate
+  const trimmed = text.trim()
+  return { supplied: true, hash: isEvmHash(trimmed) ? trimmed : "" }
+}
+
+function slotRead(journal: Journal, ready: Plan) {
+  const transaction = validPlan(ready) ? transactionOfBytes(ready.bytesId) : undefined
+  const found = transaction === undefined ? undefined : journal[transaction.nonce]
+  const mismatched = found !== undefined && transactionBytes(found.transaction) !== ready.bytesId
+  return { transaction, found, mismatched, shown: found === undefined || mismatched ? noEntry : entryAttempt(found) }
+}
+
+export effect function directPromptOver(storage: SlotStorage | undefined, key: string) {
+  const local = try Ref.make<Prompt>(initial)
+
+  function journalNow(payer: string) {
+    return readJournal(readSlotText(storage, key), payer)
+  }
+
+  effect function load() {
+    const held = try Ref.get(local)
+    if (!held.opened) return held
+    const read = journalNow(held.scope.payer)
+    if (read.kind === "unreadable") throw new JournalUnreadable({ message: directMessages.unreadable })
+    const first = slotRead(read.journal, held.plans.firstPlan).shown
+    const second = slotRead(read.journal, held.plans.secondPlan).shown
+    const found = [first.identity, second.identity].filter((identity) => identity !== "" && !held.used.includes(identity))
+    return { ...held, store: { first, second }, used: [...held.used, ...found] } satisfies Prompt
+  }
+
+  effect function keep(next: Prompt) {
+    if (next.opened) {
+      const read = journalNow(next.scope.payer)
+      const journal: Record<string, JournalEntry> = read.kind === "read" ? { ...read.journal } : {}
+      let changed = false
+      for (const slot of slots) {
+        const ready = plan(next.plans, slot)
+        const wanted = entry(next.store, slot)
+        const found = slotRead(read.kind === "read" ? read.journal : {}, ready)
+        if (sameAttempt(wanted, found.shown)) continue
+        if (read.kind === "unreadable" || found.mismatched || found.transaction === undefined) try die(new JournalUnwritable({ message: directMessages.unreadable }))
+        const transaction = found.transaction
+        if (transaction === undefined) continue
+        if (sameAttempt(wanted, noEntry)) delete journal[transaction.nonce]
+        else journal[transaction.nonce] = attemptEntry(wanted, transaction)
+        changed = true
+      }
+      if (changed) try orDie(Effect.try({ try: () => writeSlotText(storage, key, journalText(journal)), catch: () => new JournalUnwritable({ message: directMessages.storageBlocked }) }))
+    }
+    try Ref.set(local, { ...next, store: noEntries })
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function written(event: Event, by: number) {
+    const sent = Effect.map(machine.send(event, by), (outcome) => ({ outcome }))
+    const kept = try catchDefect(sent, (defect) => defect instanceof JournalUnwritable ? Effect.succeed(undefined) : Effect.die(defect))
+    return kept?.outcome
+  }
+
+  return { machine, written, journalNow } satisfies DirectPrompt
+}
+
+export effect function connectPayer<R>(id: number, payer: string, authority: Authority<R>) {
+  try authority.authorize
+  const connection = try connectEvm(id, false)
+  if (!sameAddress(connection.address, payer)) throw refused(directMessages.connect)
+  return connection
+}
+
+export effect function openDirectPayment(storage: SlotStorage | undefined, input: DirectPaymentInput) {
+  const owner = try sessionActor()
+  if (owner === undefined) throw refused(paymentMessages.signIn)
+  const [first, second] = input.transactions
+  const firstPlan = planOf(first)
+  const secondPlan = planOf(second)
+  if (first === undefined || firstPlan === undefined || secondPlan === undefined || input.transactions.length > (input.cancellation ? 1 : 2)
+    || input.transactions.some((transaction) => !sameAddress(transaction.from, input.payer) || quantityOf(transaction.chainId) === undefined)) throw refused(directMessages.invalid)
+  const key = directKey(input.caseId, input.generation, input.cancellation, owner)
+  const prompt = try directPromptOver(storage, key)
+  if (prompt.journalNow(input.payer).kind === "unreadable") throw refused(directMessages.unreadable)
+  const actor = actorNumber(owner)
+  const scope = { caseId: try modelNumber(input.caseId), generation: input.generation, actor, purpose: input.cancellation ? "Cancel" : "Pay", payer: input.payer.toLowerCase(), network: input.network } as const
+  const opened = prompt.written({ type: "open", scope, plans: { firstPlan, secondPlan }, captured: true }, actor) catch effect () => { throw refused(directMessages.invalid) }
+  if (opened === undefined) throw refused(directMessages.unreadable)
+  return directPaymentForm(storage, prompt, input, owner, actor)
+}
+
+function directPaymentForm(storage: SlotStorage | undefined, prompt: DirectPrompt, input: DirectPaymentInput, owner: string, actor: number) {
+  const { machine, written } = prompt
+
+  function legsOf(state: Prompt, surface: Surface) {
+    const read = prompt.journalNow(input.payer)
+    const journal = read.kind === "read" ? read.journal : {}
+    return slots.flatMap((slot) => {
+      const ready = plan(state.plans, slot)
+      const found = slotRead(journal, ready)
+      if (!validPlan(ready) || found.transaction === undefined) return []
+      return [{ slot, transaction: found.transaction, saved: entry(view(state, surface).local, slot), mismatched: found.mismatched } satisfies LegView]
+    })
+  }
+
+  function shown(state: Prompt, surface: Surface) {
+    const legs = legsOf(state, surface)
+    const local = view(state, surface).local
+    return {
+      legs,
+      unsent: legs.filter((leg) => sameAttempt(leg.saved, noEntry) && !leg.mismatched).length,
+      uncertain: blocksSend(state.plans.firstPlan, local.first) || blocksSend(state.plans.secondPlan, local.second),
+      mismatched: legs.some((leg) => leg.mismatched) || prompt.journalNow(input.payer).kind === "unreadable",
+      warning: view(state, surface).warning,
+    } satisfies DirectFormView
+  }
+
+  effect function mounted(surface: Surface) {
+    if (!view(try machine.get(), surface).mounted) throw refused(paymentMessages.closed)
+  }
+
+  effect function checkIdentity<R>(surface: Surface, authorize: void!BountyRefused!R) {
+    try mounted(surface)
+    try sameActor(owner)
+    try authorize
+    try mounted(surface)
+  }
+
+  effect function checkWallet(connection: EvmConnection, transaction: DirectTransaction) {
+    if (!sameAddress(connection.address, transaction.from) || !sameAddress(input.payer, transaction.from)) throw refused(directMessages.payerChanged)
+    const wanted = quantityOf(transaction.chainId) ?? -1n
+    let chain = try evmChainId(connection)
+    if (chain !== wanted) {
+      try switchChain(connection, wanted)
+      chain = try evmChainId(connection)
+    }
+    const account = try evmAccount(connection)
+    if (chain !== wanted || !sameAddress(account, input.payer)) throw refused(directMessages.walletChanged)
+    const answer = try evmRequest(connection, "eth_getTransactionCount", [input.payer, input.cancellation ? "latest" : "pending"])
+    const nonce = typeof answer === "string" ? quantityOf(answer) : undefined
+    const expected = quantityOf(transaction.nonce)
+    if (nonce === undefined || expected === undefined) throw refused(directMessages.nonceUnchecked)
+    if (nonce < expected) throw refused(directMessages.earlier)
+    if (nonce > expected) throw refused(directMessages.nonceUsed)
+    return wanted
+  }
+
+  effect function reserve(surface: Surface, slot: Slot, identity: string) {
+    const before = try machine.get()
+    const ready = slotWritable(storage)
+    if (!canReserve(before, surface, slot, identity, true, ready, actor)) throw refused(view(before, surface).mounted ? directMessages.alreadySent : paymentMessages.closed)
+    const event = { type: "reserve", surface, slot, identity, walletReady: true, stored: ready } as const
+    const first = try written(event, actor)
+    if (first === undefined) try written({ ...event, stored: false }, actor)
+    const after = try machine.get()
+    if (view(after, surface).pending.identity !== identity) throw refused(view(after, surface).warning ? directMessages.storageBlocked : directMessages.alreadySent)
+  }
+
+  effect function settle(surface: Surface, identity: string, walletResult: WalletResult, hash: string) {
+    const event = { type: "resolve", surface, identity, walletResult, hash, stored: slotWritable(storage) } as const
+    const first = try written(event, actor)
+    if (first === undefined) try written({ ...event, stored: false }, actor)
+    return try machine.get()
+  }
+
+  effect function sendLeg<R>(surface: Surface, leg: LegView, connection: EvmConnection, authorize: void!BountyRefused!R) {
+    try checkIdentity(surface, authorize)
+    try checkWallet(connection, leg.transaction)
+    const request: EvmTransaction & { readonly chainId: string; readonly nonce: string } = { ...leg.transaction }
+    try estimateGas(connection, request)
+    try checkIdentity(surface, authorize)
+    const chainId = try checkWallet(connection, leg.transaction)
+    const identity = try randomId()
+    let reserved = false
+    const hash = sendTransaction(connection, chainId, request, effect {
+      try reserve(surface, leg.slot, identity)
+      reserved = true
+    }) catch effect (error) => {
+      if (!reserved) throw error
+      if (error._tag === "WalletDeclined") {
+        try settle(surface, identity, "Declined", "")
+        throw refused(directMessages.declined)
+      }
+      try settle(surface, identity, "Unknown", "")
+      throw refused(directMessages.uncertain)
+    }
+    const after = try settle(surface, identity, "Returned", hash)
+    if (entry(after.store, leg.slot).hash === hash) return hash
+    const known = entry(view(after, surface).local, leg.slot).hash === hash
+    throw refused(known ? `Submitted ${hash}. Keep this hash; browser storage could not save it.` : `Submitted ${hash}. Keep this hash; the saved request changed.`)
+  }
+
+  effect function sendAll<R>(surface: Surface, connection: EvmConnection, authority: Authority<R>) {
+    const before = shown(try machine.get(), surface)
+    if (before.mismatched) throw refused(directMessages.mismatched)
+    if (before.uncertain) throw refused(directMessages.uncertainShown)
+    for (const leg of before.legs) {
+      if (!sameAttempt(leg.saved, noEntry)) continue
+      try sendLeg(surface, leg, connection, authority.authorize)
+    }
+    return input.cancellation ? directMessages.cancellationSubmitted : directMessages.submitted
+  }
+
+  effect function checkHashes<R>(surface: Surface, inputs: HashInputs, authority: Authority<R>) {
+    try checkIdentity(surface, authority.authorizeVerification)
+    const before = try machine.get()
+    if (shown(before, surface).mismatched) throw refused(directMessages.mismatched)
+    const candidates = { firstInput: candidateOf(inputs.first), secondInput: candidateOf(inputs.second) }
+    const local = view(before, surface).local
+    const known = [local.first.hash, local.second.hash].filter((hash) => hash !== "")
+    const conflict = conflicts(before.store.first, local.first, before.plans.firstPlan, candidates.firstInput) || conflicts(before.store.second, local.second, before.plans.secondPlan, candidates.secondInput)
+    const ready = slotWritable(storage)
+    if (!canCheck(before, surface, candidates, ready, true, actor)) throw refused(paymentMessages.closed)
+    const event = { type: "check", surface, candidates, storageReady: ready, authorized: true } as const
+    const first = try written(event, actor)
+    const outcome = first ?? (try written({ ...event, storageReady: false }, actor))
+    const saved = ready && first !== undefined
+    const [verification] = outcome?.out ?? []
+    if (verification === undefined) {
+      if (!saved && known.length > 0) throw refused(`Could not save. Keep ${known.length === 1 ? "this hash" : "these hashes"}: ${known.join(", ")}.`)
+      if (conflict) throw refused(directMessages.requestChanged)
+      throw refused(saved ? directMessages.enterHash : directMessages.storageBlocked)
+    }
+    const hashes = [verification.hashes.firstHash, verification.hashes.secondHash].filter((hash) => hash !== "")
+    const current = try authority.verify(hashes)
+    return { current, message: directMessages.verified }
+  }
+
+  effect function mount() {
+    const state = try machine.get()
+    const surface: Surface | undefined = canMount(state, "FirstView", actor) ? "FirstView" : canMount(state, "SecondView", actor) ? "SecondView" : undefined
+    if (surface === undefined) throw refused(paymentMessages.closed)
+    try written({ type: "mount", surface }, actor)
+    return surface
+  }
+
+  effect function depart(surface: Surface) {
+    if (canDepart(try machine.get(), surface)) try written({ type: "depart", surface }, actor)
+  }
+
+  return {
+    owner,
+    key: directKey(input.caseId, input.generation, input.cancellation, owner),
+    machine,
+    shown: effect (surface: Surface) => shown(try machine.get(), surface),
+    mount,
+    depart,
+    send: sendAll,
+    check: checkHashes,
+  }
+}
+
+export type DirectPaymentForm = ReturnType<typeof directPaymentForm>

@@ -123,6 +123,12 @@ export function restoredWizard(saved: string | null, search: string): Wizard {
 }
 
 /** @throws {never} */
+export function withReferrer(wizard: Wizard, search: string): Wizard {
+  const referrer = referrerOf(search, wizard.referrer);
+  return referrer === wizard.referrer ? wizard : { ...wizard, referrer };
+}
+
+/** @throws {never} */
 export function clearedWizard(wizard: Wizard, referrer: string | null): Wizard {
   return { proposal: { ...emptyProposal }, step: 0, referrer, attempted: notAttempted, generation: wizard.generation + 1, suggested: noSuggestion, extraRuleFields: [] };
 }
@@ -233,7 +239,7 @@ export function fundingOf(proposal: Proposal): FundingChoice {
 export function poolOf(proposal: Proposal): MonthlyPoolValue {
   const kind = rewardKindOf(proposal);
   const chain = chainOf(proposal);
-  const token = kind === "token" ? { symbol: proposal.rewardAssetSymbol } : kind === "native" && chain !== undefined ? rewardNetwork(chain).native : undefined;
+  const token = kind === "token" ? { symbol: proposal.rewardAssetSymbol } : kind === "native" && chain !== undefined ? rewardNetwork(chain)?.native : undefined;
   return monthlyPoolValue(proposal.monthlyPool, token);
 }
 
@@ -331,6 +337,19 @@ export function invalidPriorField(wizard: Wizard, errors: FieldErrors, lookup: L
   const pendingBranches = (field: ProposalField) =>
     field === "integrationBranch" && wizard.proposal.repositoryNumericId !== "" && branchesOf(wizard.proposal, lookup) === undefined && lookup.state !== "error";
   return (Object.keys(errors) as ProposalField[]).find((field) => (stepOfField(field) ?? wizard.step) < wizard.step && !pendingBranches(field));
+}
+
+/** @throws {never} */
+export function withPriorStep(wizard: Wizard, lookup: Lookup): Wizard {
+  const field = invalidPriorField(wizard, setupErrors(wizard.proposal, lookup), lookup);
+  const owner = field === undefined ? undefined : stepOfField(field);
+  return owner === undefined ? wizard : withAttempted({ ...wizard, step: owner }, owner);
+}
+
+/** @throws {never} */
+export function withLookup(wizard: Wizard, key: string, lookup: Lookup): Wizard {
+  if (lookupKey(wizard) !== key) return wizard;
+  return withPriorStep(lookup.state === "done" ? withFacts(wizard, key, lookup.facts) : wizard, lookup);
 }
 
 /** @throws {never} */

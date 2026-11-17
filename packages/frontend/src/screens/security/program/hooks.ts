@@ -1,6 +1,6 @@
 // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
 import { Cause, type Effect, Exit, type ManagedRuntime } from "effect";
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 export type Settled<A> = { readonly status: "running" } | { readonly status: "done"; readonly value: A } | { readonly status: "failed"; readonly message: string };
 
@@ -33,6 +33,12 @@ function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, ke
   entries.set(runtime, keyed);
   const known = keyed.get(key);
   if (known) return known;
+  const entry = newEntry(runtime, work);
+  keyed.set(key, entry);
+  return entry;
+}
+
+function newEntry<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, work: () => Effect.Effect<A, E, R>): Entry {
   const entry: Entry = {
     shown: { status: "running" },
     started: false,
@@ -49,12 +55,20 @@ function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, ke
       return () => entry.listeners.delete(notify);
     },
   };
-  keyed.set(key, entry);
   return entry;
+}
+
+function useShown<A>(entry: Entry): Settled<A> {
+  return useSyncExternalStore(entry.subscribe, () => entry.shown, () => entry.shown) as Settled<A>;
 }
 
 /** The answer of `work`, run once on `runtime` for each `key` the first time a component shows it. */
 export function useOnce<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string, work: () => Effect.Effect<A, E, R>): Settled<A> {
-  const entry = entryOf(runtime, key, work);
-  return useSyncExternalStore(entry.subscribe, () => entry.shown, () => entry.shown) as Settled<A>;
+  return useShown(entryOf(runtime, key, work));
+}
+
+/** The answer of `work`, run afresh for each mounted component and kept by nothing that outlives it. */
+export function useMounted<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, work: () => Effect.Effect<A, E, R>): Settled<A> {
+  const [entry] = useState(() => newEntry(runtime, work));
+  return useShown(entry);
 }

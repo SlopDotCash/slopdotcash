@@ -8,6 +8,5 @@ settlement, evidence and signer rules stay in [settlement](../settlement/);
 the referral distributor is [its own contract model](../settlement/referralDistributor.md).
 
 - [Escrow ledger shared by both chains](./ledger.md)
-- [Month pledges shared by both chains](./monthPledge.md)
 - [EVM project escrow](./evmEscrow.md)
 - [Solana project escrow program](./solanaEscrow.md)

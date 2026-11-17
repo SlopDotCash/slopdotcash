@@ -256,7 +256,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Robinhood Chain buys SLOP from the pooled arrivals and fee share within its caps and its finalized USDG balance, credits only the finalized swap output, burns exactly half of everything acquired once, returns a failed purchase\'s input, and holds a burn while SLOP is paused (spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "A purchase never spends more than the Robinhood fee wallet\'s finalized USDG balance"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackPool.md, "One run cap, one rolling cap and one burn share bound the whole pool"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network\'s fee journal and shares its lease, nonce floor and native reservation"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg")', () => effect {
+  it.effect('Robinhood Chain buys SLOP from the pooled arrivals and fee share within its caps and its finalized USDG balance, credits only the finalized swap output, burns exactly half of everything acquired once, returns a failed purchase\'s input, journals a refused purchase signature as a failed preparation, and holds a burn while SLOP is paused (spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "A purchase never spends more than the Robinhood fee wallet\'s finalized USDG balance"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackPool.md, "One run cap, one rolling cap and one burn share bound the whole pool"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network\'s fee journal and shares its lease, nonce floor and native reservation"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg")', () => effect {
     const { db, robinhood } = try Fixture
     const names = generationNames(generation)
     const world: World = { instance: { scope: `g${generation}:`, offset, held: generationInstance(generation, "Robinhood").held, names, wallet: walletOf(), arrivalEvidence: [], arrivals: [], feeEvidence: [], fees: [], reserved: [], slopEvidence: [], slopFees: [], runs: 0, runFrom: 0 }, names, clock: settableClock(offset + start + 2 * hour), db }
@@ -326,7 +326,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       resumed: [recorded(resumed), whole(resumed.state.burnQuantity)],
       settled: [recorded(settled), whole(settled.state.burned), whole(settled.state.burnCommitted), settled.state.burn.phase],
       reloadedEqual: JSON.stringify(reloaded) === JSON.stringify(settled.state),
-      sends: sends.map((row) => [row.kind, row.state, row.mode, row.reason, row.amount_in]),
+      sends: sends.map((row) => [row.kind, row.state, row.mode, row.reason?.startsWith("prepare: ") === true ? "prepare: " : row.reason, row.amount_in]),
     }, {
       forged: "PoolRefused",
       loaded: { credit: 545_000_000, arrivals: 1, rhIncome: "100000000", rhCommitted: "50000000" },
@@ -339,13 +339,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       afterBurn: [half.toString(), half.toString()],
       reapproving: [["beginRun", "approvePurchase"], 300_000_000],
       failing: [["beginRun", "settleApproval", "purchase"], 0],
-      failed: [["beginRun", "settlePurchase"], "Failed", 300_000_000, [[545_000_000, false], [300_000_000, true]]],
+      failed: [["beginRun", "settlePurchase", "failPreparation"], "Failed", 300_000_000, [[545_000_000, false], [300_000_000, true]]],
       paused: [
         [["beginRun", "decideBurn"], [["Pending", "TokenPaused"]]],
         [["beginRun", "decideBurn"], [["Pending", "TokenPaused"]]],
       ],
-      resumed: [["beginRun", "burn"], (25n * 10n ** 18n).toString()],
-      settled: [["beginRun", "settleBurn"], (half + 25n * 10n ** 18n).toString(), (half + 25n * 10n ** 18n).toString(), "Finalized"],
+      resumed: [["beginRun", "failPreparation", "burn"], (25n * 10n ** 18n).toString()],
+      settled: [["beginRun", "settleBurn", "failPreparation"], (half + 25n * 10n ** 18n).toString(), (half + 25n * 10n ** 18n).toString(), "Finalized"],
       reloadedEqual: true,
       sends: [
         ["buyback", "quoted", "dry_run", null, "545000000"],
@@ -354,8 +354,11 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         ["burn", "finalized", "live", null, half.toString()],
         ["approval", "finalized", "live", null, "300000000"],
         ["buyback", "failed", "live", "swap transaction reverted", "300000000"],
+        ["buyback", "failed", "live", "prepare: ", "300000000"],
         ["burn", "pending", "live", "SLOP transfers are paused", (25n * 10n ** 18n).toString()],
+        ["buyback", "failed", "live", "prepare: ", "300000000"],
         ["burn", "finalized", "live", null, (25n * 10n ** 18n).toString()],
+        ["buyback", "failed", "live", "prepare: ", "300000000"],
       ],
     })
   })

@@ -286,12 +286,15 @@ and `freezeMonthlyPeriod`, `month-pledges.ts` `pledgeKeepsMonth`, and
 development's model `monthly_month_pledge`): the coordinator freezes it at
 the cutoff with the automatic default off and while the project is paused
 or restricted, but not once it is retired, and a pledge in another vault of
-the project gives no consent. The freeze on a pledge also waits until 24
-hours after the latest cut, as the owner's finalization does: development's
-coordinator does not wait, so a cut made with the default off less than 24
-hours before it runs would otherwise be frozen with a shorter notice than
-"A month with a cut freezes no earlier than 24 hours after the latest cut"
-allows. The owner path is unchanged.
+the project gives no consent. Development freezes a pledged month at the
+cutoff without waiting after a cut (PRD: a pledged month freezes at the
+cutoff whatever the automatic default says). Here the freeze on a pledge
+also waits until 24 hours after the latest cut, as the owner's finalization
+does, because a cut made with the default off less than 24 hours before the
+cutoff would otherwise be frozen with a shorter notice than "A month with a
+cut freezes no earlier than 24 hours after the latest cut" allows. Whether
+a pledged month freezes at the cutoff as in development, which needs that
+rule changed, is the owner's decision, pending. The owner path is unchanged.
 
 ```quint
 pure def canObservePledge(m: Monthly, pledgeVault: str): bool =

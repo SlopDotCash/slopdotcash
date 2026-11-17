@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import type { DraftSaver, SaveView } from "../../../flows/projects/draftStore.vibe";
 import { openProposalDraft } from "./draft.vibe";
-import { draftPayload, restoredWizard, type Wizard } from "./form.ts";
+import { draftPayload, restoredWizard, type Wizard, withPriorStep, withReferrer } from "./form.ts";
 
 export interface WizardView {
   readonly wizard: Wizard;
@@ -19,18 +19,22 @@ export interface WizardStore {
 }
 
 interface Loader {
-  store: WizardStore | undefined;
-  readonly listeners: Set<() => void>;
   readonly subscribe: (notify: () => void) => () => void;
   readonly get: () => WizardStore | undefined;
 }
 
+interface Opened {
+  store: WizardStore | undefined;
+  readonly listeners: Set<() => void>;
+  readonly loaders: Map<string, Loader>;
+}
+
 let opening: Promise<DraftSaver> | undefined;
-const loaders = new WeakMap<PageRuntime, Loader>();
+const pages = new WeakMap<PageRuntime, Opened>();
 
 /** @throws {never} */
 export function wizardStore(initial: string | null, search: string, saver: DraftSaver): WizardStore {
-  let view: WizardView = { wizard: restoredWizard(initial, search), saving: false, saveFailed: false };
+  let view: WizardView = { wizard: withPriorStep(restoredWizard(initial, search), { state: "idle" }), saving: false, saveFailed: false };
   let saved = initial;
   const listeners = new Set<() => void>();
   const publish = (next: WizardView) => {
@@ -61,29 +65,33 @@ export function wizardStore(initial: string | null, search: string, saver: Draft
 }
 
 function loaderOf(runtime: PageRuntime, search: string): Loader {
-  const known = loaders.get(runtime);
+  const opened = pages.get(runtime) ?? { store: undefined, listeners: new Set(), loaders: new Map() };
+  pages.set(runtime, opened);
+  const known = opened.loaders.get(search);
   if (known) return known;
+  const refer = (wizard: Wizard) => withReferrer(wizard, search);
   const loader: Loader = {
-    store: undefined,
-    listeners: new Set(),
-    get: () => loader.store,
+    get: () => opened.store,
     subscribe: (notify) => {
-      loader.listeners.add(notify);
-      opening ??= runtime.runPromise(openProposalDraft());
-      void opening.then(async (saver) => {
-        const { payload } = await Effect.runPromise(saver.view());
-        if (loader.store !== undefined) return;
-        loader.store = wizardStore(payload, search, saver);
-        for (const listener of loader.listeners) listener();
-      });
-      return () => loader.listeners.delete(notify);
+      opened.listeners.add(notify);
+      if (opened.store !== undefined) opened.store.update(refer);
+      else {
+        opening ??= runtime.runPromise(openProposalDraft());
+        void opening.then(async (saver) => {
+          const { payload } = await Effect.runPromise(saver.view());
+          if (opened.store !== undefined) return opened.store.update(refer);
+          opened.store = wizardStore(payload, search, saver);
+          for (const listener of opened.listeners) listener();
+        });
+      }
+      return () => opened.listeners.delete(notify);
     },
   };
-  loaders.set(runtime, loader);
+  opened.loaders.set(search, loader);
   return loader;
 }
 
-/** The setup wizard of this page, restored from the document's draft slot once it is open; undefined until then. */
+/** The setup wizard of this page, restored from the document's draft slot once it is open and referred by the `?ref` of each visit; undefined until then. */
 export function useWizardStore(runtime: PageRuntime, search: string): WizardStore | undefined {
   const loader = loaderOf(runtime, search);
   return useSyncExternalStore(loader.subscribe, loader.get, loader.get);

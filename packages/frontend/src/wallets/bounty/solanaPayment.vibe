@@ -1,0 +1,316 @@
+// spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
+import { base58Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import { randomId } from "@repo/platform/crypto"
+import { type Event, type Keyed, Machine, Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
+import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { modelNumber } from "../../flows/security/private.vibe"
+import { storageKeys } from "../../platform/storage.vibe"
+import { actorNumber } from "../../session/session.vibe"
+import { WalletFailed } from "../core/discovery.vibe"
+import { type SolanaConnection, connectSolana, solanaSignAndSend } from "../core/solana.vibe"
+import { slotWritable, writeSlotText } from "../core/slots.ts"
+import { type Authority, BountyRefused, type PaymentCase, type SolanaPlanView, expiryEstablished, paidWith, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
+import { type ListedStorage, type SolanaRead, attemptSolanaRecord, isSolanaSignature, keysWithPrefix, payerMessage, readSolanaRecord, sameAttempt, solanaAttempt } from "./records.ts"
+
+export const solanaChain = "solana:mainnet"
+
+export const solanaMessages = {
+  unreadable: "The saved wallet request cannot be read. Check wallet activity before continuing.",
+  invalid: "The prepared payment request is invalid. Refresh the case.",
+  signIn: "Sign in before making a payment.",
+  connect: "Connect the payer's Solana wallet shown above.",
+  payerChanged: "The payer wallet changed.",
+  changed: "The saved request changed. Reload before continuing.",
+  storageBlocked: "Your browser could not save this request, so nothing was sent to your wallet. Allow site storage and try again.",
+  declined: "You declined the wallet request. Nothing was sent.",
+  uncertain: "The wallet result is uncertain. Check wallet activity and enter its signature; do not send again.",
+  unsigned: "The wallet did not return a signature for this action. Check wallet activity before another attempt.",
+  uncertainShown: "Wallet result uncertain. Enter its signature to continue.",
+  submitted: "Submitted. Verify finalized payment.",
+  verified: "Finalized evidence verified.",
+  accountChanged: "Your account changed. Reload before checking payment history.",
+} as const
+
+export error SolanaJournalUnwritable { message: string }
+
+interface KnownMessage {
+  readonly messageId: string
+  readonly transaction: string
+}
+
+export interface SolanaPrompt_ {
+  readonly machine: Machine.Shape
+  know(message: number, messageId: string, transaction: string): void!!
+  written(event: Event, by: number): (SolanaPrompt | undefined)!Rejected
+  readAt(message: number, account: number): SolanaRead!!
+}
+
+function ownerOf(key: string): number {
+  return actorNumber(key.slice(key.lastIndexOf(":") + 1))
+}
+
+export function solanaPrefix(caseId: string, generation: number): string {
+  return `${storageKeys.bountySolana.key}${caseId}:${generation}:`
+}
+
+export effect function solanaPromptOver(storage: ListedStorage | undefined, prefix: string) {
+  const local = try Ref.make<SolanaPrompt>(initial)
+  const known = new Map<number, KnownMessage>()
+
+  function keyOf(message: KnownMessage, account: number) {
+    return `${prefix}${message.messageId}:${account}`
+  }
+
+  function found(message: number, account: number) {
+    const entry = known.get(message)
+    if (entry === undefined) return undefined
+    const keys = keysWithPrefix(storage, `${prefix}${entry.messageId}:`)
+    const own = keys.find((key) => account > 0 && ownerOf(key) === account)
+    const key = own ?? keys[0]
+    if (key === undefined) return undefined
+    return { key, owner: ownerOf(key), read: readSolanaRecord(storage === undefined ? null : storage.getItem(key), entry.transaction), entry }
+  }
+
+  function readAt(message: number, account: number) {
+    return found(message, account)?.read ?? ({ kind: "empty" } satisfies SolanaRead)
+  }
+
+  function shownAt(message: number, account: number): Keyed | undefined {
+    const at = found(message, account)
+    if (at === undefined || at.read.kind === "empty") return undefined
+    return { owner: at.owner, attempt: at.read.kind === "read" ? solanaAttempt(at.read.record, at.entry.messageId) : noAttempt }
+  }
+
+  effect function load() {
+    const held = try Ref.get(local)
+    const slots: Record<number, Keyed> = { ...held.slots }
+    const used = [...held.used]
+    for (const message of known.keys()) {
+      const shown = shownAt(message, held.actor)
+      if (shown !== undefined) slots[message] = shown
+      else if (message in slots) slots[message] = { owner: slots[message]?.owner ?? held.actor, attempt: noAttempt }
+      const identity = shown?.attempt.identity ?? ""
+      if (identity !== "" && !used.includes(identity)) used.push(identity)
+    }
+    return { ...held, slots, used } satisfies SolanaPrompt
+  }
+
+  effect function keep(next: SolanaPrompt) {
+    for (const [message, entry] of known) {
+      const wanted = next.slots[message]
+      if (wanted === undefined) continue
+      const at = found(message, wanted.owner)
+      const current: Attempt = at === undefined || at.read.kind === "empty" || at.owner !== wanted.owner ? noAttempt : at.read.kind === "read" ? solanaAttempt(at.read.record, entry.messageId) : noAttempt
+      if (sameAttempt(current, wanted.attempt)) continue
+      if (at !== undefined && at.owner === wanted.owner && at.read.kind === "unreadable") try die(new SolanaJournalUnwritable({ message: solanaMessages.unreadable }))
+      const text = sameAttempt(wanted.attempt, noAttempt) ? null : JSON.stringify(attemptSolanaRecord(wanted.attempt, entry.transaction))
+      try orDie(Effect.try({ try: () => writeSlotText(storage, keyOf(entry, wanted.owner), text), catch: () => new SolanaJournalUnwritable({ message: solanaMessages.storageBlocked }) }))
+    }
+    try Ref.set(local, next)
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function written(event: Event, by: number) {
+    const sent = Effect.map(machine.send(event, by), (state) => ({ state }))
+    const kept = try catchDefect(sent, (defect) => defect instanceof SolanaJournalUnwritable ? Effect.succeed(undefined) : Effect.die(defect))
+    return kept?.state
+  }
+
+  return {
+    machine,
+    know: effect (message: number, messageId: string, transaction: string) => {
+      known.set(message, { messageId, transaction })
+    },
+    written,
+    readAt: effect (message: number, account: number) => readAt(message, account),
+  } satisfies SolanaPrompt_
+}
+
+export interface SolanaPaymentInput {
+  readonly caseId: string
+  readonly generation: number
+  readonly payer: string
+  readonly plan: SolanaPlanView
+}
+
+export effect function connectSolanaPayer<R>(id: number, payer: string, authority: Authority<R>) {
+  try authority.authorize
+  const connection = try connectSolana(id)
+  if (connection.address !== payer) throw refused(solanaMessages.connect)
+  return connection
+}
+
+export effect function openSolanaPayment(storage: ListedStorage | undefined, input: SolanaPaymentInput) {
+  const owner = try sessionActor()
+  if (owner === undefined) throw refused(solanaMessages.signIn)
+  const account = actorNumber(owner)
+  const prompt = try solanaPromptOver(storage, solanaPrefix(input.caseId, input.generation))
+  const plans = new Map<number, SolanaPlanView>()
+  let lifetime = 0
+  if (canSignIn(try prompt.machine.get(), account, account)) {
+    const signedIn = try prompt.written({ type: "signIn", account }, account)
+    lifetime = signedIn?.lifetime ?? 0
+  }
+
+  effect function current() {
+    return try prompt.machine.get()
+  }
+
+  effect function receive(plan: SolanaPlanView) {
+    const lastValid = plan.lastValidBlockHeight ?? 0
+    if (plan.messageId === "" || !Number.isSafeInteger(lastValid) || lastValid < 1 || payerMessage(plan.transaction, input.payer) === undefined) throw refused(solanaMessages.invalid)
+    const message = try modelNumber(plan.messageId)
+    if (plans.has(message)) return try current()
+    try prompt.know(message, plan.messageId, plan.transaction)
+    plans.set(message, plan)
+    const state = try current()
+    if (canReceivePlan(state, lifetime, message, lastValid, server)) try prompt.written({ type: "receivePlan", lifetime, message, lastValid }, server)
+    return try current()
+  }
+
+  try receive(input.plan)
+
+  function planNow(state: SolanaPrompt) {
+    return plans.get(state.message)
+  }
+
+  effect function unreadable(state: SolanaPrompt) {
+    return (try prompt.readAt(state.message, account)).kind === "unreadable"
+  }
+
+  effect function guarded<R>(authorize: void!BountyRefused!R) {
+    try sameActor(owner)
+    try authorize
+  }
+
+  effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string) {
+    return try prompt.written({ type: "walletReply", identity, reply, signature }, adapter)
+  }
+
+  effect function send<R>(connection: SolanaConnection, authority: Authority<R>) {
+    const state = try current()
+    const plan = planNow(state)
+    if (try unreadable(state)) throw refused(solanaMessages.unreadable)
+    if (plan === undefined || state.phase !== "Planned") throw refused(paymentMessages.stateChanged)
+    try guarded(authority.authorize)
+    if (connection.address !== input.payer) throw refused(solanaMessages.payerChanged)
+    const reviewed = payerMessage(plan.transaction, input.payer)
+    const key = publicKey(input.payer)
+    if (reviewed === undefined || key === undefined) throw refused(solanaMessages.invalid)
+    const identity = try randomId()
+    let requested = false
+    const signed = solanaSignAndSend(connection, solanaChain, reviewed.wire, effect {
+      const before = try current()
+      if (!canSend(before, identity, true, account)) throw refused(solanaMessages.changed)
+      const event = { type: "send", identity, stored: slotWritable(storage) } as const
+      const first = try prompt.written(event, account)
+      const after = first ?? (try prompt.written({ ...event, stored: false }, account))
+      if (after?.phase !== "Awaiting" || after.awaiting !== identity) throw refused(after?.notice === "StorageBlocked" || first === undefined ? solanaMessages.storageBlocked : solanaMessages.changed)
+      requested = true
+    }) catch effect (error) => {
+      if (!requested) throw error
+      if (error._tag === "WalletDeclined") {
+        try reply(identity, "Declined", "")
+        throw refused(solanaMessages.declined)
+      }
+      try reply(identity, "Uncertain", "")
+      throw refused(solanaMessages.uncertain)
+    }
+    if (!(try verifyMessageSignature(key, reviewed.message, signed))) {
+      try reply(identity, "Uncertain", "")
+      throw new WalletFailed({ message: solanaMessages.unsigned })
+    }
+    const signature = base58Encode(signed)
+    const after = try reply(identity, "Signed", signature)
+    if (after === undefined) throw refused(`Submitted ${signature}. Keep this signature; browser storage could not save it.`)
+    if (visible(after).hash !== signature) throw refused(`Submitted ${signature}. Keep this signature; the saved request changed.`)
+    return signature
+  }
+
+  effect function observe(seen: PaymentCase) {
+    const next = seen.settlement?.ownerRequest?.solana
+    if (next !== undefined && seen.settlement?.generation === input.generation) try receive(next) catch () => undefined
+    const state = try current()
+    if (expiryEstablished(seen) && canObserveHeight(state, state.lastValid + 1, heightReader)) try prompt.written({ type: "observeHeight", height: state.lastValid + 1 }, heightReader)
+    return try current()
+  }
+
+  effect function answered(request: number, result: Result) {
+    const state = try current()
+    if (canVerifyReply(state, lifetime, request, result, server)) try prompt.written({ type: "verifyReply", lifetime, request, result }, server)
+    return try current()
+  }
+
+  effect function verify<R>(input: string | undefined, authority: Authority<R>) {
+    const before = try current()
+    if (try unreadable(before)) throw refused(solanaMessages.unreadable)
+    try guarded(authority.authorizeVerification)
+    const read = visible(before)
+    const candidate = input?.trim() ?? ""
+    if (candidate !== "" && isSolanaSignature(candidate) && candidate !== read.candidate && canEnterCandidate(before, read, candidate, account)) {
+      const entered = try prompt.written({ type: "enterCandidate", read, candidate }, account)
+      if (entered === undefined) throw refused(solanaMessages.storageBlocked)
+    }
+    const ready = try current()
+    if (!canVerify(ready, account)) throw refused(solanaMessages.uncertainShown)
+    const checking = try prompt.written({ type: "verify" }, account)
+    const request = checking?.request ?? ready.request
+    const saved = visible(try current())
+    const signature = saved.candidate !== "" ? saved.candidate : saved.hash
+    const next = authority.verify([signature]) catch effect (error) => {
+      try answered(request, "CheckUnavailable")
+      throw error
+    }
+    if (paidWith(next, signature)) {
+      try answered(request, "FinalizedMatch")
+      return { current: next, message: solanaMessages.verified }
+    }
+    if (expiryEstablished(next)) {
+      try observe(next)
+      try answered(request, "ExpiredUnlanded")
+      return { current: next, message: paymentMessages.stateChanged }
+    }
+    try answered(request, "StillPending")
+    return { current: next, message: solanaMessages.submitted }
+  }
+
+  effect function beginHistory() {
+    const state = try current()
+    if (state.phase === "HistoryCheck") return state.request
+    const sessionId = try sessionActor()
+    const sessionNumber = sessionId === undefined ? 0 : actorNumber(sessionId)
+    if (!canCheckHistory(state, sessionNumber, account)) throw refused(paymentMessages.stateChanged)
+    const after = try prompt.written({ type: "checkHistory", sessionActor: sessionNumber }, account)
+    if (after === undefined || after.notice === "AccountChanged" || after.phase !== "HistoryCheck") throw refused(solanaMessages.accountChanged)
+    return after.request
+  }
+
+  effect function endHistory(request: number, paymentFound: boolean) {
+    const state = try current()
+    if (canHistoryReply(state, lifetime, request, paymentFound, server)) try prompt.written({ type: "historyReply", lifetime, request, found: paymentFound }, server)
+    return try current()
+  }
+
+  effect function leave() {
+    const state = try current()
+    if (canSignOut(state, account)) try prompt.written({ type: "signOut" }, account)
+  }
+
+  return {
+    owner,
+    payer: input.payer,
+    generation: input.generation,
+    machine: prompt.machine,
+    current,
+    observe,
+    send,
+    verify,
+    beginHistory,
+    endHistory,
+    leave,
+    unreadable: effect () => try unreadable(try current()),
+  }
+}
+
+export type SolanaPaymentForm = Effect.Success<ReturnType<typeof openSolanaPayment>>

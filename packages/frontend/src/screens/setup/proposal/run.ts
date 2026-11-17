@@ -22,7 +22,12 @@ export function failureMessage(cause: Cause.Cause<unknown>, fallback: string): s
   return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" && error.message !== "" ? error.message : fallback;
 }
 
-function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string, work: () => Effect.Effect<A, E, R>, fallback: string, settle?: (value: A) => void): Entry {
+interface Outcome<A> {
+  readonly settle?: (value: A) => void;
+  readonly fail?: (message: string) => void;
+}
+
+function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string, work: () => Effect.Effect<A, E, R>, fallback: string, { settle, fail }: Outcome<A>): Entry {
   const keyed = entries.get(runtime) ?? new Map<string, Entry>();
   entries.set(runtime, keyed);
   const known = keyed.get(key);
@@ -37,22 +42,31 @@ function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, ke
     listeners: new Set(),
     get: () => entry.shown,
     subscribe: (notify) => {
+      if (!keyed.has(key)) keyed.set(key, entry);
       entry.listeners.add(notify);
       if (entry.fiber === undefined && entry.shown.status === "running") {
         const fiber = runtime.runFork(work());
         entry.fiber = fiber;
         fiber.addObserver((exit) => {
+          if (entry.fiber !== fiber) return;
           if (Exit.isSuccess(exit)) {
             settle?.(exit.value);
             publish({ status: "done", value: exit.value });
-          } else if (!Cause.hasInterruptsOnly(exit.cause)) publish({ status: "failed", message: failureMessage(exit.cause, fallback) });
+          } else if (!Cause.hasInterruptsOnly(exit.cause)) {
+            const message = failureMessage(exit.cause, fallback);
+            fail?.(message);
+            publish({ status: "failed", message });
+          }
         });
       }
       return () => {
         entry.listeners.delete(notify);
         if (entry.listeners.size > 0) return;
-        if (entry.shown.status === "running") entry.fiber?.interruptUnsafe();
-        keyed.delete(key);
+        if (entry.shown.status === "running") {
+          entry.fiber?.interruptUnsafe();
+          entry.fiber = undefined;
+        }
+        if (keyed.get(key) === entry) keyed.delete(key);
       };
     },
   };
@@ -60,8 +74,8 @@ function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, ke
   return entry;
 }
 
-/** The answer of `work` for `key`, run on `runtime` while a component shows it and interrupted when none does before it settles; `settle` sees each success. No key, no work. */
-export function useRun<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string | undefined, work: () => Effect.Effect<A, E, R>, fallback: string, settle?: (value: A) => void): Settled<A> | undefined {
-  const store = key === undefined ? idle : entryOf(runtime, key, work, fallback, settle);
+/** The answer of `work` for `key`, run on `runtime` while a component shows it and interrupted, to run again on the next watch, when none does before it settles; `settle` sees each success and `fail` each failure. No key, no work. */
+export function useRun<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string | undefined, work: () => Effect.Effect<A, E, R>, fallback: string, outcome: Outcome<A> = {}): Settled<A> | undefined {
+  const store = key === undefined ? idle : entryOf(runtime, key, work, fallback, outcome);
   return useSyncExternalStore(store.subscribe, store.get, store.get) as Settled<A> | undefined;
 }

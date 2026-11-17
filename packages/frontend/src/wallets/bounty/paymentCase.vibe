@@ -1,0 +1,175 @@
+// spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { actOnSecurityCase, requestKey, securityCase } from "../../flows/security/cases.vibe"
+import type { Private } from "../../flows/security/private.vibe"
+import { Session } from "../../session/session.vibe"
+
+export schema PaymentTransactionView { chainId: string; from: string; nonce?: string; to: string; value: string; data: string }
+export schema SolanaPlanView { transaction: string; messageId: string; lastValidBlockHeight?: number }
+export schema PayerView { address: string }
+export schema OwnerRequestView { payer: PayerView; transactions?: ReadonlyArray<PaymentTransactionView>; solana?: SolanaPlanView }
+export schema RecoveryMessage { messageId: string; message: string }
+export schema RecoveryView {
+  generation: number
+  mode: string
+  consented?: boolean
+  cancellationRequest?: PaymentTransactionView
+  payer?: string
+  messages?: ReadonlyArray<RecoveryMessage>
+  transactionIds?: ReadonlyArray<string>
+  retirementNonce?: string
+  legIndex?: number
+}
+export schema SettlementView {
+  state: string
+  network: string
+  generation?: number
+  confirmedTransactionIds?: ReadonlyArray<string>
+  recovery?: RecoveryView | null
+  ownerRequest?: OwnerRequestView | null
+}
+export schema PaymentCase { id: string; revision: number; allowedActions: ReadonlyArray<string>; paymentRail?: string; settlement?: SettlementView | null }
+
+export error BountyRefused { message: string; current: PaymentCase | undefined }
+
+export interface Authority<R> {
+  readonly authorize: void!BountyRefused!R
+  readonly authorizeVerification: void!BountyRefused!R
+  verify(transactionIds: ReadonlyArray<string>): PaymentCase!BountyRefused!R
+}
+
+export const paymentMessages = {
+  stateChanged: "The payment state changed. Review the current case.",
+  requestChanged: "The payment request changed. Refresh the case before signing.",
+  solanaChanged: "The payment request changed. Review its current state before signing.",
+  cancellationChanged: "The recovery request changed. Refresh the case before signing.",
+  historyChanged: "The recovery request changed. Refresh before signing.",
+  recoveryChanged: "The recovery changed. Review its current state.",
+  exactCancellation: "Provide the exact cancellation transaction.",
+  signIn: "Sign in before connecting a payment wallet.",
+  accountChanged: "Your account changed. Reload before making a payment.",
+  closed: "The payment view was closed.",
+} as const
+
+export const expiredModes: ReadonlyArray<string> = ["signature-required", "history-check"]
+
+export function refused(message: string) {
+  return new BountyRefused({ message, current: undefined })
+}
+
+effect function decoded(value: unknown) {
+  return Schema.decodeUnknownEffect(PaymentCase)(value) catch effect () => { throw refused(paymentMessages.stateChanged) }
+}
+
+effect function settled<A>(result: Private<A>) {
+  if (result.kind !== "done") throw refused(result.message)
+  return result.value
+}
+
+export effect function readPaymentCase(owner: string, caseId: string) {
+  const answer = try settled(try securityCase(owner, caseId))
+  return try decoded(answer.case)
+}
+
+effect function acted(owner: string, seen: PaymentCase, action: string, expectedRevision: number, fields: Readonly<Record<string, unknown>>) {
+  const idempotencyKey = try requestKey()
+  const answer = try settled(try actOnSecurityCase(owner, { caseId: seen.id, action, expectedRevision, idempotencyKey, fields: { ...fields, confirmation: true } }))
+  return try decoded(answer.case)
+}
+
+effect function stillCurrent(owner: string, seen: PaymentCase, same: (current: PaymentCase) => boolean, message: string) {
+  const current = try readPaymentCase(owner, seen.id)
+  if (!same(current)) throw new BountyRefused({ message, current })
+  return current
+}
+
+export effect function sessionActor() {
+  const current = (try Session).current() catch () => null
+  return current?.githubId
+}
+
+export effect function sameActor(owner: string) {
+  if ((try sessionActor()) !== owner) throw refused(paymentMessages.accountChanged)
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function verifiable(seen: PaymentCase) {
+  return (current: PaymentCase) => current.allowedActions.includes("verify-payment") && current.settlement?.generation === seen.settlement?.generation
+}
+
+function recoverable(seen: PaymentCase, select: (recovery: RecoveryView | null | undefined) => unknown) {
+  return (current: PaymentCase) => current.revision === seen.revision && current.allowedActions.includes("recover-payment")
+    && current.settlement?.recovery?.generation === seen.settlement?.recovery?.generation
+    && sameJson(select(current.settlement?.recovery), select(seen.settlement?.recovery))
+}
+
+effect function existingVerified(owner: string, seen: PaymentCase, transactionIds: ReadonlyArray<string>) {
+  const current = try stillCurrent(owner, seen, verifiable(seen), paymentMessages.stateChanged)
+  return try acted(owner, current, "verify-payment", current.revision, { transactionIds })
+}
+
+export function existingAuthority(owner: string, seen: PaymentCase) {
+  return {
+    authorize: Effect.asVoid(stillCurrent(owner, seen, verifiable(seen), paymentMessages.stateChanged)),
+    authorizeVerification: Effect.asVoid(stillCurrent(owner, seen, verifiable(seen), paymentMessages.stateChanged)),
+    verify: (transactionIds: ReadonlyArray<string>) => existingVerified(owner, seen, transactionIds),
+  }
+}
+
+export function evmPaymentAuthority(owner: string, seen: PaymentCase) {
+  const sameRequest = (current: PaymentCase) => verifiable(seen)(current) && sameJson(current.settlement?.ownerRequest?.transactions, seen.settlement?.ownerRequest?.transactions)
+  return { ...existingAuthority(owner, seen), authorize: Effect.asVoid(stillCurrent(owner, seen, sameRequest, paymentMessages.requestChanged)) }
+}
+
+export function solanaPaymentAuthority(owner: string, seen: PaymentCase) {
+  const sameRequest = (current: PaymentCase) => verifiable(seen)(current) && sameJson(current.settlement?.ownerRequest?.solana, seen.settlement?.ownerRequest?.solana)
+  return { ...existingAuthority(owner, seen), authorize: Effect.asVoid(stillCurrent(owner, seen, sameRequest, paymentMessages.solanaChanged)) }
+}
+
+effect function cancellationVerified(owner: string, seen: PaymentCase, transactionIds: ReadonlyArray<string>) {
+  const [cancellationTransactionId] = transactionIds
+  if (transactionIds.length !== 1 || cancellationTransactionId === undefined) throw refused(paymentMessages.exactCancellation)
+  return try acted(owner, seen, "recover-payment", seen.revision, { cancellationTransactionId })
+}
+
+export function cancellationAuthority(owner: string, seen: PaymentCase) {
+  const previous = seen.settlement?.recovery
+  const sameLeg = (current: PaymentCase) => {
+    const next = current.settlement?.recovery
+    return current.allowedActions.includes("recover-payment") && next?.generation === previous?.generation && next?.legIndex === previous?.legIndex
+      && (next?.cancellationRequest?.nonce ?? next?.retirementNonce) === previous?.cancellationRequest?.nonce
+  }
+  return {
+    authorize: Effect.asVoid(stillCurrent(owner, seen, recoverable(seen, (recovery) => recovery?.cancellationRequest), paymentMessages.cancellationChanged)),
+    authorizeVerification: Effect.asVoid(stillCurrent(owner, seen, sameLeg, paymentMessages.recoveryChanged)),
+    verify: (transactionIds: ReadonlyArray<string>) => cancellationVerified(owner, seen, transactionIds),
+  }
+}
+
+export interface HistorySignatureEntry {
+  readonly messageId: string
+  readonly signature: string
+}
+
+export function historyAuthority(owner: string, seen: PaymentCase) {
+  return {
+    authorize: Effect.asVoid(stillCurrent(owner, seen, recoverable(seen, (recovery) => recovery?.messages), paymentMessages.historyChanged)),
+    recover: (signatures: ReadonlyArray<HistorySignatureEntry>) => acted(owner, seen, "recover-payment", seen.revision, { signatures }),
+  }
+}
+
+export effect function verifyFoundPayment(owner: string, seen: PaymentCase) {
+  return try acted(owner, seen, "verify-payment", seen.revision, { transactionIds: seen.settlement?.recovery?.transactionIds ?? [] })
+}
+
+export function paidWith(current: PaymentCase, transactionId: string): boolean {
+  const settlement = current.settlement
+  if (settlement === null || settlement === undefined) return false
+  return settlement.state === "paid" || (settlement.confirmedTransactionIds ?? []).includes(transactionId)
+}
+
+export function expiryEstablished(current: PaymentCase): boolean {
+  return expiredModes.includes(current.settlement?.recovery?.mode ?? "")
+}

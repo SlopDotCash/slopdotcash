@@ -1,0 +1,153 @@
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
+import { millisOf } from "@repo/platform/clock"
+import type { RepositoryRegistry } from "@repo/points/client"
+import { type CycleIndex, type DirectTransfer, cycleIndexUrl } from "@repo/settlement/client"
+import { Machine as ReadMachine } from "../../../gen/frontend__requests.effect.vibe"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { fetchBounded } from "../../platform/bounded.vibe"
+import { type MergeActivityIndex, type PoolFundingIndex, mergeActivityReads, poolFundingReads } from "../../reads/funding.vibe"
+import { directTransferReads } from "../../reads/payments.vibe"
+import { Registry, type RegistryBoot, findProject, registryLayer } from "../../reads/registry.vibe"
+import { type Resource, Unreadable, resource } from "../../reads/resource.vibe"
+import { type Leaderboard, leaderboard } from "../../reads/snapshot.vibe"
+import { stale } from "../../reads/snapshotCache.vibe"
+import { type ShownProject, projectOf } from "./project.schema.ts"
+
+export const discoveryPath = "/.well-known/slop/projects.json"
+export const discoveryLimitBytes = 4 * 1024 * 1024
+export const cycleIndexLimitBytes = 8 * 1024 * 1024
+
+export const projectMessages = {
+  unreadable: "This project's record could not be read.",
+  discoveryInvalid: "Invalid discovery registry",
+  cyclesInvalid: "cycle index is not canonically ordered",
+} as const
+
+const uncached: globalThis.RequestInit = { cache: "no-store" }
+
+export type ProjectRead =
+  | { readonly kind: "found"; readonly project: ShownProject; readonly boot: RegistryBoot }
+  | { readonly kind: "missing" }
+  | { readonly kind: "failed"; readonly message: string }
+
+export type ReadRuntime = ManagedRuntime.ManagedRuntime<ReadMachine, never>
+
+export interface ShownRead<T> {
+  readonly read: Resource<T>
+  readonly runtime: ReadRuntime
+}
+
+export interface Work {
+  readonly board: Leaderboard
+  readonly stale: boolean
+}
+
+export type RepositoryRegistryOf = (boot: RegistryBoot) => RepositoryRegistry
+
+schema DiscoveryEntry { readonly project_id: string }
+
+schema Discovery { readonly schemaVersion: "1"; readonly projects: ReadonlyArray<DiscoveryEntry> }
+
+function shownRead<T>(read: Resource<T>): ShownRead<T> {
+  return { read, runtime: ManagedRuntime.make(Layer.succeed(ReadMachine, read.machine)) }
+}
+
+function canonical(index: CycleIndex): boolean {
+  return index.cycles.every((current, position) => {
+    const previous = index.cycles[position - 1]
+    return previous === undefined || previous.cycleId > current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) <= 0)
+  })
+}
+
+effect function loadDiscovery() {
+  const body = try fetchBounded(discoveryPath, discoveryLimitBytes, "Agent setup")
+  const read = Schema.decodeUnknownEffect(Discovery)(body) catch effect () => { throw new Unreadable({ message: projectMessages.discoveryInvalid }) }
+  const cleared: ReadonlySet<string> = new Set(read.projects.map((entry) => entry.project_id))
+  return cleared
+}
+
+effect function loadCycleIndex(attempt: number) {
+  provide FetchHttpClient.RequestInit = uncached {
+    const body = try fetchBounded(`${cycleIndexUrl}?attempt=${attempt}`, cycleIndexLimitBytes, "cycle index")
+    const index: CycleIndex = Schema.decodeUnknownEffect(CycleIndex)(body) catch effect () => { throw new Unreadable({ message: projectMessages.cyclesInvalid }) }
+    if (!canonical(index)) throw new Unreadable({ message: projectMessages.cyclesInvalid })
+    return index
+  }
+}
+
+type Board = Effect.Success<ReturnType<typeof leaderboard>>
+
+export service ProjectReads {
+  readonly pool: ShownRead<PoolFundingIndex>
+  readonly merge: ShownRead<MergeActivityIndex>
+  readonly discovery: ShownRead<ReadonlySet<string>>
+  readonly direct: ShownRead<ReadonlyArray<DirectTransfer>>
+  readonly cycles: ShownRead<CycleIndex>
+  readonly board: Board
+  readonly consumer: number
+}
+
+const readsLayer = Layer.effect(ProjectReads, effect {
+  const board = try leaderboard()
+  return {
+    pool: shownRead(try poolFundingReads()),
+    merge: shownRead(try mergeActivityReads()),
+    discovery: shownRead(try resource((_key: string) => loadDiscovery(), (cleared: ReadonlySet<string>) => cleared.size)),
+    direct: shownRead(try directTransferReads()),
+    cycles: shownRead(try resource((_key: string, attempt: number) => loadCycleIndex(attempt), (index: CycleIndex) => index.cycles.length)),
+    board,
+    consumer: board.cache.consumer(),
+  }
+})
+
+export const projectSections = Layer.mergeAll(registryLayer, readsLayer)
+
+function makeProjectRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(projectSections, Layer.effectContext(page.contextEffect)))
+}
+
+export type ProjectRuntime = ReturnType<typeof makeProjectRuntime>
+
+const sections = new WeakMap<PageRuntime, ProjectRuntime>()
+
+export function projectRuntime(page: PageRuntime): ProjectRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeProjectRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function loadProject(reference: string) {
+  const boot = try (try Registry).load()
+  if (boot.error !== undefined) return { kind: "failed", message: boot.error } satisfies ProjectRead
+  const record = findProject(boot, reference)
+  if (record === undefined) return { kind: "missing" } satisfies ProjectRead
+  const project = projectOf(record)
+  if (project === undefined) return { kind: "failed", message: projectMessages.unreadable } satisfies ProjectRead
+  return { kind: "found", project, boot } satisfies ProjectRead
+}
+
+export function projectName(boot: RegistryBoot, projectId: string): string | undefined {
+  const name = findProject(boot, projectId)?.name
+  return typeof name === "string" ? name : undefined
+}
+
+export effect function projectReads() {
+  return try ProjectReads
+}
+
+export effect function loadRead<T>(shown: ShownRead<T>, key: string) {
+  try shown.read.select(key)
+  return try shown.read.load()
+}
+
+const registries = new WeakMap<RegistryBoot, RepositoryRegistry>()
+
+export effect function loadWork(boot: RegistryBoot, registryOf: RepositoryRegistryOf, force: boolean) {
+  const { board, consumer } = try ProjectReads
+  const registry = registries.get(boot) ?? registryOf(boot)
+  registries.set(boot, registry)
+  const read = try board.cache.read(consumer, registry, force)
+  return { board: read, stale: try stale(millisOf(read.snapshot.generatedAt)) } satisfies Work
+}

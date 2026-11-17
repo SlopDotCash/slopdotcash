@@ -11,8 +11,8 @@ default key. A required signer and the Ed25519 instruction that precedes an
 attested instruction are booleans the chain adapter verifies; Merkle-sum
 proofs are modeled by the allocation's leaves. A failed transfer fails the
 whole transaction. Every project instruction deserializes the current
-`Project` layout, so a project of the earlier 316-byte build accepts only
-`migrate_project`.
+`Project` layout, so a project of an earlier build, 316 or 332 bytes,
+accepts only `migrate_project`.
 
 ## Story: Pin the program's authorities
 
@@ -28,7 +28,6 @@ only by the project it created, is replaced by the current one.
 ```quint
 import ledger as L from "./ledger"
 import money as M from "../settlement/money"
-import monthPledge as MP from "./monthPledge"
 type Build = LegacyBuild | CurrentBuild
 type Layout = NoProject | LegacyLayout | PrePledgeLayout | CurrentLayout
 type TokenKind = ClassicSpl | Token2022 | OtherProgram
@@ -38,6 +37,7 @@ type AccountFacts = { kind: TokenKind, initialized: bool, extensions: List[str] 
 type SolBinding = { actor: int, network: str, authority: str, destination: str, claim: int, version: int, boundAt: int,
   walletSigned: bool, paidVersion: int, vetoes: int }
 type Veto = { actor: int, version: int }
+type Pledge = { period: int, amount: int, open: bool }
 type SolMonth = { period: int, root: str, committed: int, total: int, released: int, frozenAt: int, cap: int,
   wholeReleased: bool, leaves: List[L::Leaf], settled: List[int] }
 type Program = { build: Build, upgradeAuthority: str, now: int,
@@ -49,7 +49,7 @@ type Program = { build: Build, upgradeAuthority: str, now: int,
   accruedFees: int, monthlyOutstanding: int, monthlyCap: int, monthlyEnabled: bool,
   vaultAmount: int, unsolicited: int, claimedFees: int, ownerRefunded: int,
   awards: List[L::Award], monthlySources: List[int], months: List[SolMonth], bindings: List[SolBinding], vetoes: List[Veto],
-  pledgedOpen: int, pledges: List[MP::MonthPledge] }
+  pledges: List[Pledge], pledged: int }
 pure val maxDelay = 30 * 86400
 pure val maxRotationDelay = 90 * 86400
 pure val noMint: MintFacts = { kind: ClassicSpl, bytes: 0, mintAuthority: false, freezeAuthority: false, extensions: List(),
@@ -63,7 +63,7 @@ pure val initial: Program = { build: LegacyBuild, upgradeAuthority: "upgrader", 
   accruedFees: 0, monthlyOutstanding: 0, monthlyCap: 0, monthlyEnabled: false,
   vaultAmount: 0, unsolicited: 0, claimedFees: 0, ownerRefunded: 0,
   awards: List(), monthlySources: List(), months: List(), bindings: List(), vetoes: List(),
-  pledgedOpen: 0, pledges: List() }
+  pledges: List(), pledged: 0 }
 pure def canUpgradeProgram(p: Program, by: str): bool = p.build == LegacyBuild and p.upgradeAuthority != "" and by == p.upgradeAuthority
 pure def upgradeProgram(p: Program, by: str): Program = { ...p, build: CurrentBuild }
 pure def canSetUpgradeAuthority(p: Program, successor: str, by: str): bool = p.upgradeAuthority != "" and by == p.upgradeAuthority
@@ -210,10 +210,11 @@ The 332-byte build kept accrued fees and the monthly gate but had no
 `pledged_open`. `migrate_project` also accepts a program-owned `Project` of
 that size and reallocates it to the current 340 bytes, so the appended open
 pledge total starts at zero (`PRE_PLEDGE_PROJECT_SIZE`); no other
-instruction reads it. As for the 316-byte build, the model creates that
-build's project with deposits only, here under the network name
-`prePledge` so the two earlier layouts can be told apart, and nothing holds
-a pledge before the project has the current layout.
+instruction reads it. The program keeps that build's accrued fees and
+outstanding monthly gross as they are. As for the 316-byte build, the model
+creates that build's project with deposits only, so both are zero, here
+under the network name `prePledge` so the two earlier layouts can be told
+apart, and nothing holds a pledge before the project has the current layout.
 
 ```quint
 pure def canCreatePrePledgeProject(p: Program, project: str, identity: str, feeRecipient: str, amount: int, by: str): bool =
@@ -223,7 +224,7 @@ pure def createPrePledgeProject(p: Program, project: str, identity: str, feeReci
 pure def alwaysPrePledgeShape(p: Program): bool =
   (p.layout == PrePledgeLayout implies p.awards.length() == 0 and p.months.length() == 0 and p.bindings.length() == 0
     and p.accruedFees == 0 and p.monthlyOutstanding == 0 and p.reserved == 0)
-    and (p.layout != CurrentLayout implies p.pledgedOpen == 0 and p.pledges.length() == 0)
+    and (p.layout != CurrentLayout implies p.pledged == 0 and p.pledges.length() == 0)
 pure def sometimesPrePledgeMigrated(p: Program): bool = p.layout == CurrentLayout and p.network == "prePledge" and p.deposited > 0
 ```
 
@@ -319,9 +320,10 @@ pure def sometimesUnsolicited(p: Program): bool = p.unsolicited > 0
 ### The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split
 
 `commit` is for an ordinary project and refuses while an admitted month has
-uncommitted gross (`MonthlyOutstanding`) and when it would take the free
-balance below the open month pledges (`PledgedFunds`): an owner pays by hand
-only from unpledged funds. `commit_bounty` is for a bounty
+uncommitted gross (`MonthlyOutstanding`) and when the gross exceeds the
+unpledged free funds (`PledgedFunds`): an owner pays by hand only from
+unpledged funds. Unlike the EVM vault, it does not refuse while the period
+whose window is open has an open pledge. `commit_bounty` is for a bounty
 project and needs a gross divisible by four. Both reserve the whole gross
 from the free balance and the vault, refuse a zero actor or gross but not
 a zero source digest, and create the source's origin and obligation accounts, so a source commits
@@ -333,7 +335,7 @@ pure def recordable(p: Program, source: int, actor: int, gross: int): bool =
 pure def fundable(p: Program, gross: int): bool = p.vaultAmount >= held(p) + gross and free(p) >= gross
 pure def canCommit(p: Program, source: int, actor: int, gross: int, by: str): bool =
   live(p) and by == p.owner and p.purpose == L::Ordinary and p.monthlyOutstanding == 0
-    and recordable(p, source, actor, gross) and fundable(p, gross) and free(p) - gross >= p.pledgedOpen
+    and recordable(p, source, actor, gross) and fundable(p, gross) and gross <= unpledged(p)
 pure def commit(p: Program, source: int, actor: int, gross: int, by: str): Program =
   { ...p, reserved: p.reserved + gross, awards: p.awards.append(L::newAward(source, actor, gross, L::awardFee(p.purpose, gross), p.now)) }
 pure def canCommitBounty(p: Program, source: int, actor: int, gross: int, by: str): bool =
@@ -366,8 +368,8 @@ pure def stepFreeSpentByOwnerOrAttestation(before: Program, via: str, after: Pro
 ### The owner sets the cap and turns monthly commitments on or off
 
 `set_monthly_commitment` is for an ordinary project and refuses an enabled
-zero cap. Turning commitments off stops new admissions of periods without an
-open pledge only.
+zero cap. Turning commitments off stops only new admissions, and not of a
+period whose open pledge the commit names.
 
 ```quint
 pure def canSetMonthlyCommitment(p: Program, cap: int, on: bool, by: str): bool =
@@ -383,14 +385,15 @@ must be open, the freeze time between the window's opening and now, the
 total positive, within the cap and covered by the free balance and the
 vault. The month account exists once per period, and its total joins the
 reserve and the outstanding monthly gross. The caller may pass the period's
-pledge account (`month_pledge`), which must then exist: an open pledge it
-names lets the period commit with commitments off and sets the cap to
-`monthly_limit` (the larger of the cap and the pledge, or the pledge alone
-with commitments off), and closes on success. The total never takes free
-funds that another period's open pledge holds (`PledgedFunds`); a commit
-that does not name the pledge counts the period's own open pledge as
-another's, and leaves it open for `expire_pledge` to close at once. The
-month records the cap it was admitted under.
+pledge account (`month_pledge`), which must then exist. Only an open pledge
+the caller names counts: it lets the period commit with commitments off,
+raises the period's cap to the pledge (`monthly_limit`: the monthly cap
+while commitments are on, raised to the open pledge), and closes on
+success. The total never takes free funds that another period's open
+pledge holds (`PledgedFunds`). Unlike the EVM vault, a commit that does not
+name the pledge counts the period's own open pledge as another's and leaves
+it open, for `expire_pledge` to close at once. The month records the cap it
+was admitted under.
 
 ```quint
 pure val noSolMonth: SolMonth = { period: 0, root: "", committed: 0, total: 0, released: 0, frozenAt: 0, cap: 0,
@@ -399,24 +402,27 @@ pure def hasMonth(ms: List[SolMonth], period: int): bool = ms.some(m => m.period
 pure def monthFor(ms: List[SolMonth], period: int): SolMonth = ms.foldl(noSolMonth, (found, m) => if (m.period == period) m else found)
 pure def withMonth(ms: List[SolMonth], m: SolMonth): List[SolMonth] = ms.listMap(x => if (x.period == m.period) m else x)
 pure def sumUnsettled(ms: List[SolMonth]): int = ms.foldl(0, (t, m) => t + m.total - m.committed)
-pure def namedPledge(p: Program, period: int, pledgeAccount: bool): int =
-  if (pledgeAccount) MP::openAmount(p.pledges, period) else 0
-pure def monthlyLimitFor(p: Program, period: int, pledgeAccount: bool): int =
-  MP::monthlyLimit(p.monthlyEnabled, p.monthlyCap, namedPledge(p, period, pledgeAccount))
+pure def namedPledge(p: Program, period: int, pledgeAccount: bool): Pledge =
+  if (pledgeAccount) pledgeOf(p, period) else noPledge
+pure def capFor(p: Program, period: int, pledgeAccount: bool): int =
+  val cap = if (p.monthlyEnabled) p.monthlyCap else 0
+  val x = namedPledge(p, period, pledgeAccount)
+  if (x.open and x.amount > cap) x.amount else cap
+pure def closeNamed(p: Program, period: int, pledgeAccount: bool): Program =
+  if (pledgeAccount) closePledge(p, period) else p
 pure def canCommitMonthly(p: Program, period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
   pledgeAccount: bool): bool =
-  val pledged = namedPledge(p, period, pledgeAccount)
-  live(p) and p.purpose == L::Ordinary and (p.monthlyEnabled or pledged > 0) and L::inWindow(period, p.now)
-    and frozenAt >= L::opensAt(period) and frozenAt <= p.now and total > 0 and total <= monthlyLimitFor(p, period, pledgeAccount)
-    and free(p) >= total and p.vaultAmount >= held(p) + total and free(p) - total >= p.pledgedOpen - pledged
-    and attested and not(hasMonth(p.months, period)) and (pledgeAccount implies MP::hasPledge(p.pledges, period))
+  live(p) and p.purpose == L::Ordinary and (p.monthlyEnabled or namedPledge(p, period, pledgeAccount).open)
+    and L::inWindow(period, p.now) and frozenAt >= L::opensAt(period) and frozenAt <= p.now
+    and total > 0 and total <= capFor(p, period, pledgeAccount)
+    and free(p) >= total and p.vaultAmount >= held(p) + total and total <= unpledged(closeNamed(p, period, pledgeAccount))
+    and attested and not(hasMonth(p.months, period)) and (pledgeAccount implies p.pledges.some(x => x.period == period))
 pure def commitMonthly(p: Program, period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
   pledgeAccount: bool): Program =
-  val pledged = namedPledge(p, period, pledgeAccount)
-  { ...p, reserved: p.reserved + total, monthlyOutstanding: p.monthlyOutstanding + total,
-    months: p.months.append({ ...noSolMonth, period: period, root: root, total: total, frozenAt: frozenAt,
-      cap: monthlyLimitFor(p, period, pledgeAccount), leaves: leaves }),
-    pledgedOpen: p.pledgedOpen - pledged, pledges: if (pledged > 0) MP::closedPledge(p.pledges, period) else p.pledges }
+  val c = closeNamed(p, period, pledgeAccount)
+  { ...c, reserved: c.reserved + total, monthlyOutstanding: c.monthlyOutstanding + total,
+    months: c.months.append({ ...noSolMonth, period: period, root: root, total: total, frozenAt: frozenAt,
+      cap: capFor(p, period, pledgeAccount), leaves: leaves }) }
 ```
 
 ### Anyone commits a proved leaf from its month's reserve
@@ -513,7 +519,7 @@ pure def stepMonthsRetained(before: Program, after: Program): bool = before.mont
     and m.settled.every(s => o.settled.includes(s))))
 ```
 
-## Story: Pledge free funds to upcoming months
+## Story: Pledge free funds to future months irrevocably
 
 > As a project owner, I want to lock free funds to the coming months, so
 > that each pledged month is paid even if I turn monthly commitments off.
@@ -521,23 +527,42 @@ pure def stepMonthsRetained(before: Program, after: Program): bool = before.mont
 ### The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering
 
 `pledge_month` is signed by the owner of an ordinary project of the current
-layout and creates the period's `MonthPledge` account when it does not
-exist. It refuses a zero amount (`InvalidAmount`), a period that cannot be
-pledged ([month pledges](./monthPledge.md)) or whose existing pledge has
-closed (`PledgePeriodClosed`), and an amount below the open pledge
-(`PledgeTooLow`). An equal amount changes nothing; a higher one must leave
-every open pledge within the free balance (`InsufficientFreeBalance`).
-Clients batch several periods in one transaction. Funds do not move.
+layout (a bounty project: `WrongPurpose`) and creates the period's
+`MonthPledge` account when it does not exist. It refuses a zero amount (`InvalidAmount`), an invalid period
+(`InvalidPeriod`), a period before the current UTC month or twelve or more
+months after it (`MAX_PLEDGE_PERIODS_AHEAD` is 12) and a period whose
+existing pledge has closed (`PledgePeriodClosed`), and an amount below the
+open pledge (`PledgeTooLow`). An equal amount changes nothing; a higher one
+must leave every open pledge within the free balance
+(`InsufficientFreeBalance`). A period that can be pledged has not ended, so
+its window has not opened and it has no month. Unlike the EVM vault's
+`pledgeMonths`, one call pledges one period; clients batch several periods
+in one transaction. Funds do not move. On 1 November 2026 the periods from
+November 2026 through October 2027 can be pledged, as the program's unit
+test `pledges_reach_eleven_months_ahead` checks.
 
 ```quint
+pure val noPledge: Pledge = { period: 0, amount: 0, open: false }
+pure def pledgeOf(p: Program, period: int): Pledge = p.pledges.foldl(noPledge, (found, x) => if (x.period == period) x else found)
+pure def unpledged(p: Program): int = free(p) - p.pledged
+pure def openPledged(ps: List[Pledge]): int = ps.foldl(0, (t, x) => if (x.open) t + x.amount else t)
+pure def pledgeable(p: Program, period: int, now: int): bool =
+  L::validPeriod(period) and L::monthStart(L::nextPeriod(period)) > now
+    and L::monthStart(L::nextPeriod(period - 100)) <= now and not(hasMonth(p.months, period))
+pure def raisedBy(p: Program, period: int, amount: int): int =
+  if (pledgeOf(p, period).open) amount - pledgeOf(p, period).amount else amount
 pure def canPledgeMonth(p: Program, period: int, amount: int, by: str): bool =
-  val previous = MP::openAmount(p.pledges, period)
-  live(p) and by == p.owner and p.purpose == L::Ordinary and amount > 0 and MP::pledgeable(period, p.now)
-    and not(MP::hasPledge(p.pledges, period) and not(MP::pledgeFor(p.pledges, period).open))
-    and amount >= previous and (amount == previous or free(p) >= p.pledgedOpen + amount - previous)
+  live(p) and by == p.owner and p.purpose == L::Ordinary and amount > 0 and pledgeable(p, period, p.now)
+    and (p.pledges.some(x => x.period == period) implies pledgeOf(p, period).open)
+    and (not(pledgeOf(p, period).open) or pledgeOf(p, period).amount <= amount)
+    and (raisedBy(p, period, amount) == 0 or p.pledged + raisedBy(p, period, amount) <= free(p))
 pure def pledgeMonth(p: Program, period: int, amount: int, by: str): Program =
-  { ...p, pledgedOpen: p.pledgedOpen + amount - MP::openAmount(p.pledges, period),
-    pledges: MP::raisedTo(p.pledges, period, amount) }
+  if (raisedBy(p, period, amount) == 0) p
+  else { ...p, pledged: p.pledged + raisedBy(p, period, amount),
+    pledges: p.pledges.select(x => x.period != period).append({ period: period, amount: amount, open: true }) }
+pure def lawElevenMonthsAhead(now: int): bool = now == 1793491200 implies
+  pledgeable(initial, 202611, now) and pledgeable(initial, 202710, now) and not(pledgeable(initial, 202711, now))
+    and not(pledgeable(initial, 202610, now)) and not(pledgeable(initial, 202613, now))
 pure val weight_pledgeMonth = 25
 ```
 
@@ -546,14 +571,18 @@ pure val weight_pledgeMonth = 25
 `expire_pledge` refuses a pledge that is not open (`PledgeNotLapsed`). When
 the period's month account exists, because a commit did not name the
 pledge, it closes at once as reserved; otherwise only from the window's
-close, at 00:00 UTC on the 4th of the second month after the period. The
-amount returns to the owner's unpledged free funds.
+close, at 00:00 UTC on the 4th of the second month after the period, as on
+the EVM vault. The amount stays as a record and returns to the owner's
+unpledged free funds.
 
 ```quint
+pure def closePledge(p: Program, period: int): Program =
+  val x = pledgeOf(p, period)
+  if (x.open) { ...p, pledged: p.pledged - x.amount,
+    pledges: p.pledges.listMap(y => if (y.period == period) { ...y, open: false } else y) } else p
 pure def canExpirePledge(p: Program, period: int): bool =
-  live(p) and MP::openAmount(p.pledges, period) > 0 and (hasMonth(p.months, period) or p.now >= L::closesAt(period))
-pure def expirePledge(p: Program, period: int): Program =
-  { ...p, pledgedOpen: p.pledgedOpen - MP::openAmount(p.pledges, period), pledges: MP::closedPledge(p.pledges, period) }
+  live(p) and pledgeOf(p, period).open and (hasMonth(p.months, period) or p.now >= L::closesAt(period))
+pure def expirePledge(p: Program, period: int): Program = closePledge(p, period)
 pure val weight_expirePledge = 15
 ```
 
@@ -561,11 +590,11 @@ pure val weight_expirePledge = 15
 
 `close_month_pledge` is signed by the owner and refuses an open pledge
 (`PledgeOpen`). A closed pledge's period has ended, so `pledge_month` can
-never create its account again.
+never create its account again. The EVM vault has no such deletion.
 
 ```quint
 pure def canCloseMonthPledge(p: Program, period: int, by: str): bool =
-  live(p) and by == p.owner and MP::hasPledge(p.pledges, period) and not(MP::pledgeFor(p.pledges, period).open)
+  live(p) and by == p.owner and p.pledges.some(x => x.period == period) and not(pledgeOf(p, period).open)
 pure def closeMonthPledge(p: Program, period: int, by: str): Program =
   { ...p, pledges: p.pledges.select(x => x.period != period) }
 pure val weight_closeMonthPledge = 10
@@ -575,33 +604,40 @@ pure val weight_closeMonthPledge = 10
 
 `pledged_open` is the sum of the open pledges, and pledges, withdrawals,
 hand commits and `commit_monthly` keep the free balance at or above it.
-`commit_bounty` has no pledge check, and a bounty project holds no pledges.
-A closed pledge's period was committed or its window has closed, and every
-committed period has ended.
+Each period has at most one pledge, of a valid period and a positive
+amount. `commit_bounty` has no pledge check, and a bounty project holds no
+pledges. A closed pledge's period was committed or its window has closed,
+and every committed period has ended. Unlike the EVM vault, an open
+pledge's period may already have a month, until `expire_pledge` closes it.
 
 ```quint
-pure def alwaysPledgesWithinFree(p: Program): bool =
-  MP::pledgesWellFormed(p.pledges) and p.pledgedOpen == MP::openTotal(p.pledges)
-    and p.pledgedOpen >= 0 and p.pledgedOpen <= free(p)
-    and p.pledges.every(x => x.open or hasMonth(p.months, x.period) or p.now >= L::closesAt(x.period))
-    and p.months.every(m => MP::periodEnded(m.period, p.now))
+pure def alwaysPledgesCovered(p: Program): bool =
+  p.pledged == openPledged(p.pledges) and p.pledged <= free(p)
+    and p.pledges.every(x => x.amount > 0 and p.pledges.select(o => o.period == x.period).length() == 1)
+pure def alwaysClosedPledgeEnded(p: Program): bool =
+  p.pledges.every(x => L::validPeriod(x.period) and (x.open or hasMonth(p.months, x.period) or p.now >= L::closesAt(x.period)))
+    and p.months.every(m => p.now >= L::monthStart(L::nextPeriod(m.period)))
     and (p.pledges.length() > 0 implies p.purpose == L::Ordinary)
 pure def sometimesPledgeOpen(p: Program): bool = p.pledges.some(x => x.open)
-pure def sometimesPledgedPeriodCommittedWhileOff(p: Program): bool =
+pure def sometimesPledgeAdmittedWhileOff(p: Program): bool =
   not(p.monthlyEnabled) and p.months.some(m => p.pledges.some(x => x.period == m.period and not(x.open)))
-pure def sometimesPledgeLapsed(p: Program): bool = p.pledges.some(x => not(x.open) and not(hasMonth(p.months, x.period)))
-pure def sometimesUnnamedPledgeOpenAfterCommit(p: Program): bool = p.pledges.some(x => x.open and hasMonth(p.months, x.period))
+pure def sometimesPledgeExpired(p: Program): bool = p.pledges.some(x => not(x.open) and not(hasMonth(p.months, x.period)))
+pure def sometimesPledgeOpenAfterAdmission(p: Program): bool = p.pledges.some(x => x.open and hasMonth(p.months, x.period))
 ```
 
 ### A pledge's open amount never falls, and only a commit, a lapse or the owner's deletion ends it
 
+An open pledge stays open at the same or a higher amount until
+`commit_monthly` names it or `expire_pledge` closes it, as on the EVM vault.
+A closed pledge keeps its amount until the owner deletes its account.
+
 ```quint
-pure def pledgeKept(x: MP::MonthPledge, later: MP::MonthPledge, closers: List[str], via: str): bool =
-  not(x.open) or (if (later.open) later.amount >= x.amount else later.amount == x.amount and closers.includes(via))
-pure def stepPledgesOnlyRise(before: Program, via: str, after: Program): bool = before.pledges.every(x =>
-  (MP::hasPledge(after.pledges, x.period) or (not(x.open) and via == "closeMonthPledge"))
-    and (MP::hasPledge(after.pledges, x.period) implies
-      pledgeKept(x, MP::pledgeFor(after.pledges, x.period), List("commitMonthly", "expirePledge"), via)))
+pure def stepPledgeIrrevocable(before: Program, via: str, after: Program): bool = before.pledges.every(x => x.open implies
+  (pledgeOf(after, x.period).open and pledgeOf(after, x.period).amount >= x.amount)
+    or via == "commitMonthly" or via == "expirePledge")
+pure def stepPledgeRecordKept(before: Program, via: str, after: Program): bool = before.pledges.every(x =>
+  if (x.open) pledgeOf(after, x.period).open or pledgeOf(after, x.period) == { ...x, open: false }
+  else pledgeOf(after, x.period) == x or (via == "closeMonthPledge" and not(after.pledges.some(y => y.period == x.period))))
 ```
 
 ## Story: Bind each actor's wallet with the attester and the wallet
@@ -716,13 +752,13 @@ pure def sometimesBountyPaid(p: Program): bool = p.purpose == L::Bounty and p.pa
 
 `withdraw` sends to a token account the owner controls and `withdraw_native`
 to the owner's key. Both refuse a zero gross and a gross that the free
-balance or the vault above its holdings cannot cover, and one that would
-take the free balance below the open month pledges (`PledgedFunds`). The fee stays in the
+balance or the vault above its holdings cannot cover, and one that exceeds
+the unpledged free funds (`PledgedFunds`). The fee stays in the
 vault as accrued fees.
 
 ```quint
 pure def refundable(p: Program, gross: int, transferOk: bool): bool = live(p) and gross > 0
-  and p.vaultAmount >= held(p) + gross and free(p) >= gross and free(p) - gross >= p.pledgedOpen
+  and p.vaultAmount >= held(p) + gross and free(p) >= gross and gross <= unpledged(p)
   and (transferOk or gross - M::ordinaryFee(gross) == 0)
 pure def refunded(gross: int, p: Program): Program =
   val fee = M::ordinaryFee(gross)
@@ -810,6 +846,7 @@ pure val obligationValues = Set(0, 1, 10)
 pure val claimValues = Set(0, 7)
 pure val expiresAtValues = Set(1796342399, 1799020801)
 pure val timestampValues = Set(1796342400, 1796342401, 1799020800, 1801699200)
+pure val nowValues = Set(1793491200, 1796342400)
 pure val weight_upgradeProgram = 20
 pure val weight_initializeConfig = 20
 pure val weight_initialize = 20

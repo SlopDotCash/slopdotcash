@@ -1,0 +1,255 @@
+// spec/slopbot/closeAttempt.md, "Story: Recheck every gate before the slot is reserved and the request is sent"; spec/slopbot/closeAttempt.md, "Story: Confirm or release an attempt only on GitHub's evidence"; spec/slopbot/closeAttempt.md, "Story: A maintainer reopen or an upheld appeal undoes Slopbot's own close"; spec/slopbot/maintainerHold.md, "Story: Give the maintainer seven days to decide an uncertain finding"
+import type { D1Database } from "@repo/platform/bindings"
+import { jsonVar } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, decoded, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { answered, body, json, outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { settableClock } from "@repo/platform/testing/clock"
+import { worker } from "@repo/platform/worker"
+import { contributor } from "@repo/contributor/live"
+import { noticePorts } from "@repo/operations/live"
+import { ProjectStatus, type ProjectView, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import { RunEvidence } from "@repo/ports/contributor"
+import { Enforcement, Restriction } from "@repo/ports/security"
+import { ClosureActivation, type ReviewedRecords, activationFrom, releaseOf } from "../../src/activation/config.vibe"
+import { qualityHook } from "../../src/activation/quality.vibe"
+import { closeCandidate, closedItemNotices, reconcileClose } from "../../src/closeAttempt/close.vibe"
+import { reversePenalty } from "../../src/closeAttempt/penalty.vibe"
+import { type ReopenSubject, reconcileConfirmedReopen, reopenedHook } from "../../src/closeAttempt/reopen.vibe"
+import { decideFinding } from "../../src/closure/decide.vibe"
+import { Memberships, closureEligibility } from "../../src/closure/participation.vibe"
+import { dispatchMaintainerHolds, recordHold } from "../../src/holds/record.vibe"
+import { applyMaintainerHold } from "../../src/holds/timeline.vibe"
+import { JobQueue, MaintainerHoldJob, ReviewJob } from "../../src/jobs/job.vibe"
+import { type ReviewHooks, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
+import { routeProviders } from "../../src/route/route.vibe"
+import { Participation } from "../../src/routing/facts.vibe"
+import { observe } from "../../src/scope/facts.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly GITHUB_API: string
+  readonly GITHUB_TOKEN: string
+  readonly ORBIO_API_KEY: string
+  readonly SURPLUS_API_KEY: string
+  readonly SLOPBOT_APP_USER_ID: string
+  readonly SLOPBOT_CLOSURE_ENABLED: string
+  readonly SLOPBOT_RELEASE: string
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly TEST_PROJECTS: string
+  readonly TEST_ACTIVATION_RECORDS: string
+}
+
+schema TestProject {
+  readonly projectId: string
+  readonly path: string
+  readonly repositoryId: string
+  readonly rowStatus: ProjectStatus
+  readonly retirement: Retirement
+  readonly restriction: Restriction
+  readonly closureConsent: boolean
+}
+
+schema TestDecision { readonly kind: "QualifierNamed" | "VerifierLaunchLifted"; readonly reference: string; readonly actor: number }
+schema TestReview {
+  readonly category: "Spam" | "Scam" | "EmptyItem" | "Duplicate" | "Busywork" | "Gaming" | "LowQuality" | "OutOfScope" | "MissingEvidence" | "NoFinding"
+  readonly realCases: number
+  readonly counterexamples: number
+  readonly evidenceDigest: string
+  readonly reviewer: number
+  readonly elapsedDays: number
+}
+schema TestQualifying { readonly by: number; readonly review: TestReview }
+schema TestRecords { readonly decisions: ReadonlyArray<TestDecision>; readonly qualifications: ReadonlyArray<TestQualifying> }
+schema MemberRow { readonly closed_at: string | null }
+schema AtTime { readonly now: number }
+schema HoldAt { readonly job: MaintainerHoldJob; readonly now: number }
+schema ReopenAt { readonly job: ReviewJob; readonly itemNodeId: string; readonly revision: string; readonly occurredAt: string }
+
+const TestProjects = Schema.Array(TestProject)
+
+type ErrorOf<T> = T extends Effect.Effect<infer _A, infer E, infer _R> ? E : never
+type ServicesOf<T> = T extends Effect.Effect<infer _A, infer _E, infer R> ? R : never
+type Hooked = ReturnType<typeof closureEligibility> | ReturnType<ReturnType<typeof qualityHook>> | ReturnType<typeof closedItemNotices> | ReturnType<typeof reopenedHook>
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 3,
+    manifestSha256: "0".repeat(64),
+    rowStatus: project.rowStatus,
+    manifestStatus: project.rowStatus,
+    listingTier: "Community",
+    retirement: project.retirement,
+    stewardGithubId: "100",
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: project.closureConsent,
+  }
+}
+
+function registryOver(text: string) {
+  return Layer.unwrap(effect {
+    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
+    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          const found = projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return projects.map(viewOf) },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Enforcement, {
+        project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+    )
+  })
+}
+
+function membership(githubId: string) {
+  return sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`
+}
+
+const members = Layer.effect(Memberships, effect {
+  const db = try D1
+  return {
+    status: (githubId) => effect {
+      const [found] = try decoded(MemberRow, try db.all(membership(githubId)), "membership")
+      if (found === undefined) return "MemberAbsent"
+      return found.closed_at === null ? "MemberActive" : "MemberClosed"
+    },
+  }
+})
+
+const participants = Layer.effect(Participation, effect {
+  const db = try D1
+  return {
+    member: (githubId) => effect {
+      return (try decoded(MemberRow, try db.all(membership(githubId)), "membership")).length > 0
+    },
+  }
+})
+
+const recordedJobs = Layer.effect(JobQueue, effect {
+  const db = try D1
+  return {
+    send: (job) => effect {
+      try orDie(db.run(sql`INSERT INTO close_jobs (kind, body) VALUES (${job.kind}, ${JSON.stringify(job)})`))
+    },
+  }
+})
+
+function activationOver(env: Env) {
+  return Layer.effect(ClosureActivation, effect {
+    const records = try jsonVar("TEST_ACTIVATION_RECORDS", env.TEST_ACTIVATION_RECORDS, TestRecords)
+    const reviewed: ReviewedRecords = { decisions: records.decisions, qualifications: records.qualifications, verifiers: [] }
+    return { activation: try activationFrom(reviewed, try releaseOf(env)), trust: { verifierKey: "", profile: "" } }
+  })
+}
+
+service Settings { readonly current: ReviewSettings }
+
+effect function at<A, E, R>(now: number, program: A!E!R) {
+  const clock = settableClock(now).layer
+  provide clock {
+    return try program
+  }
+}
+
+effect function closeOutcome(job: typeof ReviewJob.Type) {
+  const { current } = try Settings
+  const hooks: ReviewHooks<ErrorOf<Hooked>, ServicesOf<Hooked>> = {
+    eligibility: closureEligibility,
+    quality: qualityHook(job.qualityCommentId),
+    closedItem: closedItemNotices,
+    onSkip: (session) => Effect.asVoid(reopenedHook(session)),
+  }
+  const reviewed = try reviewItem(job, current, hooks)
+  if (reviewed.kind === "settled") return { kind: "settled", result: reviewed.result }
+  if (reviewed.kind === "closeReconciliation") return { kind: "reconciled", result: try reconcileClose(reviewed, current) }
+  const decided = try decideFinding(reviewed.finding, { reopened: reopenedHook })
+  if (decided.kind === "settled") return { kind: "settled", result: decided.result }
+  if (decided.kind === "hold") return { kind: "hold", result: try recordHold(decided.hold) }
+  return { kind: "close", result: try closeCandidate(decided.request) }
+}
+
+effect function closed() {
+  return try answered(effect {
+    const job = try body(ReviewJob, 4)
+    const answer = closeOutcome(job) catch (error) => ({ kind: "failed", result: error._tag })
+    return json(answer)
+  })
+}
+
+effect function dispatched() {
+  return try answered(effect {
+    const { now } = try body(AtTime, 1)
+    return json({ dispatched: try at(now, dispatchMaintainerHolds()) })
+  })
+}
+
+effect function held() {
+  return try answered(effect {
+    const { job, now } = try body(HoldAt, 4)
+    const { current } = try Settings
+    const answer = at(now, applyMaintainerHold(job, current)) catch (error) => error._tag === "HoldUnresolved" ? `retried: ${error.reason}` : `failed: ${error._tag}`
+    return json({ result: answer })
+  })
+}
+
+effect function reopened() {
+  return try answered(effect {
+    const { job, itemNodeId, revision, occurredAt } = try body(ReopenAt, 4)
+    const { current } = try Settings
+    const ref = { owner: job.owner, repo: job.repo, repositoryId: job.repositoryId }
+    const observed = try observe(ref)
+    const subject: ReopenSubject = {
+      ref,
+      projectId: observed.projectId ?? "",
+      installationId: job.installationId,
+      item: { repositoryId: job.repositoryId, itemKind: job.itemKind, number: job.number },
+      itemNodeId,
+      revision,
+      appUserId: current.appUserId,
+    }
+    const cleaned = try reconcileConfirmedReopen(subject)
+    const reversed = try reversePenalty(itemNodeId, "maintainer_reopen", { revision, occurredAt })
+    return json({ cleaned, reversed })
+  })
+}
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOPBOT_DB), webCrypto, registryOver(env.TEST_PROJECTS))
+  return Layer.mergeAll(
+    base,
+    Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-close-test" }), outbound),
+    Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
+    Layer.provide(Layer.mergeAll(members, participants, recordedJobs, contributor.provides as Layer.Layer<RunEvidence, never, D1 | Registry>), base),
+    rolesFrom(env),
+    noticePorts,
+    activationOver(env),
+    Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: "" } }),
+  )
+}
+
+const routes = Layer.mergeAll(
+  HttpRouter.add("POST", "/test/close", closed()),
+  HttpRouter.add("POST", "/test/holds/dispatch", dispatched()),
+  HttpRouter.add("POST", "/test/holds/apply", held()),
+  HttpRouter.add("POST", "/test/reopen", reopened()),
+)
+
+export default worker({ services, routes })

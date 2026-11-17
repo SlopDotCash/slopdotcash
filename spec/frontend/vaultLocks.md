@@ -19,9 +19,11 @@ guard. The contract's own pledge rules belong to the escrow contracts.
 
 ### A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order
 
-`existing` holds, for each month in the lock's range, the amount of its open
-lock read through the wallet, zero for a month with none. A lock adds, for
-each month, what it raises that month by. The free funds, plus a deposit
+`existing` holds, for each month in the lock's range, its pledge read through
+the wallet. A lock adds, for each month, the whole amount when the month has
+no open pledge and otherwise what it raises the open pledge by. The counts
+are the [month pledges](../settlement/monthPledges.md)' `lockMonthCounts`,
+and an open month above the amount is refused as there (`openAtMost`). The free funds, plus a deposit
 sent in the same request, must cover the vault's open locked total plus what
 the lock adds. A deposit goes with the lock only as one atomic wallet request
 ([batched deposit](./batchedDeposit.md)); a wallet that cannot send it is
@@ -32,15 +34,19 @@ these refusals are the browser's EVM review.
 
 ```quint
 import money as M from "../settlement/money"
+import calendar as C from "../settlement/calendar"
+import monthPledges as MP from "../settlement/monthPledges"
 import projections as P from "./projections"
 type LockRefusal = NoLockRefusal | LockCountRefused | NotVaultOwner | BelowMonthlyAmount | LowersLockedMonth
   | FreeFundsShort | DepositNotBatched
-type LockRequest = { count: int, amount: M::Amount, monthly: M::Amount, existing: List[M::Amount], depositGross: M::Amount,
+type LockRequest = { count: int, amount: M::Amount, monthly: M::Amount, existing: List[MP::ChainPledge], depositGross: M::Amount,
   batches: bool, owner: bool, free: M::Amount, locked: M::Amount }
-pure def validLockCount(count: int): bool = Set(1, 3, 6, 12).contains(count)
+pure def validLockCount(count: int): bool = MP::lockMonthCounts.includes(count)
 pure def lockAdded(request: LockRequest): M::Amount = request.existing.foldl(M::zero, (total, month) =>
-  M::addAmounts(total, if (M::compareAmounts(request.amount, month) > 0) M::subtractAmounts(request.amount, month) else M::zero))
-pure def lowersALock(request: LockRequest): bool = request.existing.some(month => M::compareAmounts(month, request.amount) > 0)
+  M::addAmounts(total, if (not(month.open)) request.amount
+    else if (M::compareAmounts(request.amount, month.amount) > 0) M::subtractAmounts(request.amount, month.amount) else M::zero))
+pure def lowersALock(request: LockRequest): bool =
+  not(MP::openAtMost(MP::PledgesRead({ openPledged: request.locked, pledges: request.existing }), request.amount))
 pure def freeFundsCover(request: LockRequest): bool =
   M::compareAmounts(M::addAmounts(request.free, request.depositGross), M::addAmounts(request.locked, lockAdded(request))) >= 0
 pure def lockRefusal(request: LockRequest): LockRefusal =
@@ -55,24 +61,30 @@ pure def lawAcceptedLockFundsTheMonth(request: LockRequest): bool =
   lockRefusal(request) == NoLockRefusal implies request.owner and validLockCount(request.count)
     and M::compareAmounts(request.amount, request.monthly) >= 0
 pure def lawALockIsNeverLowered(request: LockRequest): bool =
-  lockRefusal(request) == NoLockRefusal implies request.existing.every(month => M::compareAmounts(month, request.amount) <= 0)
+  lockRefusal(request) == NoLockRefusal implies request.existing.every(month => not(month.open)
+    or M::compareAmounts(month.amount, request.amount) <= 0)
 pure def lawAcceptedLockFitsFreeFunds(request: LockRequest): bool =
   lockRefusal(request) == NoLockRefusal implies freeFundsCover(request)
 pure def lawDepositOnlyAsOneRequest(request: LockRequest): bool =
   (lockRefusal(request) == NoLockRefusal and M::positiveAmount(request.depositGross)) implies request.batches
-pure val lockRequest: LockRequest = { count: 1, amount: List(2), monthly: List(2), existing: List(List(0)), depositGross: List(0),
+pure val unlockedMonth: MP::ChainPledge = { period: 202612, amount: List(0), open: false }
+pure val lockRequest: LockRequest = { count: 1, amount: List(2), monthly: List(2), existing: List(unlockedMonth), depositGross: List(0),
   batches: true, owner: true, free: List(4), locked: List(0) }
 pure val requestValues = Set(lockRequest, { ...lockRequest, count: 2 }, { ...lockRequest, owner: false },
-  { ...lockRequest, amount: List(1) }, { ...lockRequest, existing: List(List(3)) }, { ...lockRequest, free: List(1) },
+  { ...lockRequest, amount: List(1) }, { ...lockRequest, existing: List({ ...unlockedMonth, amount: List(3), open: true }) },
+  { ...lockRequest, existing: List({ ...unlockedMonth, amount: List(3) }) }, { ...lockRequest, free: List(1) },
   { ...lockRequest, depositGross: List(2), batches: false }, { ...lockRequest, free: List(0), depositGross: List(2) })
 ```
 
 ### A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it
 
-Months are `YYYYMM`. A lock starts at the vault contract's `currentPeriod`,
-never a month the browser computed. A month leaves the lock when it is
+Months are `YYYYMM`, counted by the [calendar](../settlement/calendar.md)'s
+`addPeriods`. A lock starts at the vault contract's `currentPeriod`, never a
+month the browser computed. A month leaves the lock when it is
 reserved for payout. One never reserved stays locked after its commit window
-closes, at 00:00 UTC on the 4th of the second month after it, until a release
+closes, at 00:00 UTC on the 4th of the second month after it (the
+calendar's `lockLapsesAt`, which the month pledges' `lockReleasable` reads;
+the shell passes the current instant in seconds), until a release
 transaction is sent (`expirePledge` on EVM, `expire_pledge` on Solana); any
 connected wallet may send it. The card lists every open lock: an open month
 before then says it is locked until paid out and from which day it can be
@@ -81,29 +93,22 @@ listed, and a vault with no open lock says "No months are locked in this
 vault."
 
 ```quint
-import calendar as C from "../settlement/calendar"
-type LockedMonth = { period: int, amount: M::Amount, open: bool }
 type LockedLine = NotListed | LockedUntilPaid | ReleasableMonth
 pure val noLockedMonthsText = "No months are locked in this vault."
-pure def periodOfOrdinal(ordinal: int): int = (ordinal / 12) * 100 + ordinal % 12 + 1
-pure def validPeriod(period: int): bool = period > 0 and period % 100 >= 1 and period % 100 <= 12
-pure def lockPeriod(firstPeriod: int, index: int): int = periodOfOrdinal(C::ordinalPeriod(firstPeriod) + index)
-pure def releasable(period: int, nowPeriod: int, nowDay: int): bool =
-  C::ordinalPeriod(nowPeriod) > C::ordinalPeriod(period) + 2
-    or (C::ordinalPeriod(nowPeriod) == C::ordinalPeriod(period) + 2 and nowDay >= 4)
-pure def lockedLine(month: LockedMonth, nowPeriod: int, nowDay: int): LockedLine =
-  if (not(month.open)) NotListed else if (releasable(month.period, nowPeriod, nowDay)) ReleasableMonth else LockedUntilPaid
-pure def lawLockStartsAtItsMonth(firstPeriod: int): bool = validPeriod(firstPeriod) implies lockPeriod(firstPeriod, 0) == firstPeriod
+pure def lockPeriod(firstPeriod: int, index: int): int = C::addPeriods(firstPeriod, index)
+pure def lockedLine(month: MP::ChainPledge, now: int): LockedLine =
+  if (not(month.open)) NotListed else if (MP::lockReleasable(month.period, now)) ReleasableMonth else LockedUntilPaid
+pure def lawLockStartsAtItsMonth(firstPeriod: int): bool =
+  MP::validPledgePeriod(firstPeriod) implies lockPeriod(firstPeriod, 0) == firstPeriod
 pure def lawDecemberRollsIntoJanuary(index: int): bool = index == 1 implies lockPeriod(202612, index) == 202701
-pure def lawNoReleaseBeforeTheFourth(month: LockedMonth, nowDay: int): bool =
-  (validPeriod(month.period) and month.open and nowDay < 4) implies lockedLine(month, periodOfOrdinal(C::ordinalPeriod(month.period) + 2), nowDay) == LockedUntilPaid
-pure def lawClosedLockIsNotListed(month: LockedMonth, nowPeriod: int, nowDay: int): bool =
-  not(month.open) implies lockedLine(month, nowPeriod, nowDay) == NotListed
+pure def lawReleasableFromTheFourth(month: MP::ChainPledge): bool = (month.period == 202612 and month.open)
+  implies (lockedLine(month, 1801699199) == LockedUntilPaid and lockedLine(month, 1801699200) == ReleasableMonth)
+pure def lawClosedLockIsNotListed(month: MP::ChainPledge, now: int): bool =
+  not(month.open) implies lockedLine(month, now) == NotListed
 pure val firstPeriodValues = Set(202611, 202612)
 pure val indexValues = Set(0, 1, 11)
 pure val monthValues = Set({ period: 202612, amount: List(2), open: true }, { period: 202612, amount: List(2), open: false })
-pure val nowPeriodValues = Set(202612, 202702, 202703)
-pure val nowDayValues = Set(1, 3, 4)
+pure val nowValues = Set(1801699199, 1801699200)
 ```
 
 ## Story: Withdraw only funds the month's promise or locks leave free
@@ -117,11 +122,15 @@ vault without locks, and a Solana vault leave it false, and the review then
 passes on locks because the contract still refuses locked funds when the
 transaction is sent. `freeKnown` is false when the review could not read the
 free balance. A withdrawal that would leave the free funds below the open
-locked total is refused with "These funds are locked for a month that has not
+locked total is refused (development `assertWithdrawalOutsideLocks`, which
+also refuses a gross above the free funds when nothing is locked) with "These funds are locked for a month that has not
 been paid out yet. Withdraw only funds above the locked months." The page's
 promised-amount guard ([projections](./projections.md),
 `withdrawalAllowedOnSlopPages`) applies only when neither read shows locks
-and the month is not Funded by pledges.
+and the month is not Funded by pledges. A Solana vault's refusal is the
+server review's, `withdrawTakesPledgedFunds` of the
+[month pledges](../settlement/monthPledges.md), and reaches the page as a
+refused review.
 
 ```quint
 type VaultLocks = { cachedSupport: bool, walletRead: bool, freeKnown: bool, free: M::Amount, locked: M::Amount }

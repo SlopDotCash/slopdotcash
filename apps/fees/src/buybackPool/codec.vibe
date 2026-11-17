@@ -56,10 +56,15 @@ export interface SendRecord {
   readonly txs: readonly [string, ...string[]]
   readonly latestRaw: string
   readonly nonce: number | null
+  readonly expiresAt: number | null
   readonly token: string
   readonly amountIn: string
   readonly state: "submitted" | "unknown" | "finalized" | "failed"
   readonly gas: ReadonlyArray<GasRecord>
+}
+
+export function closedUnlanded(record: SendRecord) {
+  return record.state === "failed" && record.gas.some((gas) => gas.state === "signed" && gas.actualWei === null)
 }
 
 export interface Ledger {
@@ -96,7 +101,7 @@ const networkOf: Readonly<Record<string, Network>> = { base: "Base", ethereum: "
 
 schema SendRow {
   id: string; kind: string; mode: string; token: string; amount_in: string; min_amount_out: string | null
-  quote_value_micro: number | null; tx_id: string | null; raw_tx: string | null; evm_nonce: number | null
+  quote_value_micro: number | null; tx_id: string | null; raw_tx: string | null; evm_nonce: number | null; expires_at: number | null
   state: string; reason: string | null; created_at: string; amount_out: string | null
 }
 schema GasRow { id: string; conversion_id: string; state: string; actual_wei: string | null }
@@ -112,7 +117,7 @@ export function poolRows(scope: string): Statement {
 export function poolReads(instance: PoolInstance): ReadonlyArray<Statement> {
   const scope = poolRows(instance.scope)
   return [
-    sql`SELECT id, kind, mode, token, amount_in, min_amount_out, quote_value_micro, tx_id, raw_tx, evm_nonce, state, reason, created_at, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
+    sql`SELECT id, kind, mode, token, amount_in, min_amount_out, quote_value_micro, tx_id, raw_tx, evm_nonce, expires_at, state, reason, created_at, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
     sql`SELECT id, conversion_id, state, actual_wei FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
     sql`SELECT conversion_id, tx_id, raw_tx FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY conversion_id, attempt`,
   ]
@@ -210,6 +215,7 @@ export effect function decodePool(instance: PoolInstance, [sent, reserved, repla
       txs: [row.tx_id, ...later.map((entry) => entry.tx_id)],
       latestRaw: later[later.length - 1]?.raw_tx ?? row.raw_tx,
       nonce: row.evm_nonce,
+      expiresAt: row.expires_at,
       token: row.token,
       amountIn: row.amount_in,
       state: row.state,
