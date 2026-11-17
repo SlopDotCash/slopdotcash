@@ -73,11 +73,17 @@ export function publicationCommitPages() {
   const pages = new Map<string, string>();
   const identities = new Map<string, string>();
   const textPool = new Map<string, string>();
+  let retainedTextBytes = 0;
   const internText = (text: string) => {
     if (text.length < 1024) return text;
     const existing = textPool.get(text);
     if (existing !== undefined) return existing;
+    // Optional sharing uses the existing cache budget. Overflow is returned
+    // intact and is not retained here; evidence admission is unchanged.
+    const size = text.length * 2;
+    if (size > BYTE_LIMIT - retainedTextBytes) return text;
     textPool.set(text, text);
+    retainedTextBytes += size;
     return text;
   };
   let bytes = 0;

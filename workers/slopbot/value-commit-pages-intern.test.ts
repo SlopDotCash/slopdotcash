@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import {
@@ -8,12 +9,13 @@ import {
 import { publicationCommitPages } from "./value-commit-pages";
 import { collectValueContext } from "./value-context";
 import { collectValueEvidence } from "./value-evidence";
-import type { CommitChangeEvidence } from "./value-evidence-types";
+import type { CommitChangeEvidence, FileChange } from "./value-evidence-types";
 import {
   valueFileRecoveryCapture,
   verifiedValueFileClient,
 } from "./value-file-recovery";
 import { valueJsonDigest } from "./value-json-digest";
+import { addedValuePatchRecovery } from "./value-patch";
 
 const repository = "/repos/example/project";
 const sha = "a".repeat(40);
@@ -37,6 +39,75 @@ const page = () => ({
     },
   ],
   unknown: { order: [3, 1, 2] },
+});
+
+test("discarded unique text has bounded retained heap and overflow stays intact", () => {
+  const module = new URL("./value-commit-pages.ts", import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `
+    import { heapStats } from "bun:jsc";
+    const { publicationCommitPages } = await import(${JSON.stringify(module)});
+    const client = publicationCommitPages()({ async get() { return null; } });
+    Bun.gc(true);
+    const before = heapStats().heapSize;
+    for (let index = 0; index < 64; index++) {
+      const text = index.toString().padStart(6, "0") + "x".repeat(1024 * 1024);
+      if (client.internText(text) !== text) throw new Error("Overflow changed");
+    }
+    Bun.gc(true);
+    console.log(JSON.stringify({ retained: heapStats().heapSize - before }));
+  `,
+    ],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  // The old unbounded pool retains about 64 MiB here; the shared cache budget
+  // admits about 16 MiB of ASCII backing strings, including hash-table overhead.
+  expect(JSON.parse(result.stdout).retained).toBeLessThan(32 * 1024 * 1024);
+});
+
+test("rejected recovery does not intern a patch before its line count agrees", async () => {
+  const bytes = new TextEncoder().encode("verified source\n".repeat(256));
+  const blob = createHash("sha1")
+    .update(`blob ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+  const calls: string[] = [];
+  const recover = addedValuePatchRecovery(
+    {
+      async get<T>(): Promise<T | null> {
+        return null;
+      },
+      async verifiedFile() {
+        return { sha: blob, bytes };
+      },
+      internText(value) {
+        calls.push(value);
+        return value;
+      },
+    },
+    "example/project",
+  );
+  const rejected: FileChange = {
+    ...page().files[0],
+    additions: 255,
+    patch: undefined,
+  };
+  await recover([rejected], sha);
+  expect(rejected.patch).toBeUndefined();
+  expect(calls).toEqual([]);
+  const accepted: FileChange = { ...rejected, additions: 256 };
+  await recover([accepted], sha);
+  if (typeof accepted.patch !== "string")
+    throw new Error("Missing accepted patch");
+  expect(accepted.patch).toBe(
+    `@@ -0,0 +1,256 @@\n+${"verified source\n+".repeat(255)}verified source`,
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls).toEqual([accepted.patch]);
 });
 
 test("raw capture and parsed cache hits intern exact text without losing unknown fields or mutation isolation", async () => {
