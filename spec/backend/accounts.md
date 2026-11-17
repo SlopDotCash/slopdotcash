@@ -408,9 +408,9 @@ pure def requestEmail(s: Accounts, by: int, requestKey: int, address: str, addre
   val m = senderMember(s, by)
   { ...s, lastEmailId: s.lastEmailId + 1,
     members: withEmail(s, m, E::requestVerification(m.email, s.now, s.lastEmailId + 1, requestKey, address, addressKey, activity, security)) }
-pure def canMarkEmailDelivery(s: Accounts, by: int, githubId: int, id: int, nextState: E::DeliveryState): bool =
+pure def canMarkEmailDelivery(s: Accounts, by: int, githubId: int, id: int, nextState: E::VerificationDelivery): bool =
   by == mailService and hasGithubMember(s, githubId) and E::canMarkDelivery(memberByGithub(s, githubId).email, s.now, id, nextState)
-pure def markEmailDelivery(s: Accounts, by: int, githubId: int, id: int, nextState: E::DeliveryState): Accounts =
+pure def markEmailDelivery(s: Accounts, by: int, githubId: int, id: int, nextState: E::VerificationDelivery): Accounts =
   val m = memberByGithub(s, githubId)
   { ...s, members: withEmail(s, m, E::markDelivery(m.email, s.now, id, nextState)) }
 pure def canVerifyEmail(s: Accounts, by: int, token: int, checkedRevision: int): bool =

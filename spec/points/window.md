@@ -73,7 +73,7 @@ when a complete census proves the inventory empty.
 
 ```quint
 pure def censusVerified(c: C::Census): bool =
-  (c.phase == C::Ready or c.phase == C::Published) and C::alwaysCompleteWhenReady(c) and C::alwaysItemsDistinct(c) and
+  c.phase == C::ReadyForPublication and C::alwaysCompleteWhenReady(c) and C::alwaysItemsDistinct(c) and
   c.totalCount >= 0
 pure def canCompleteCensus(w: Window, c: C::Census): bool =
   w.phase == Building and w.censusTotal < 0 and censusVerified(c) and c.lowerDay <= w.from and
@@ -110,7 +110,7 @@ pure val eValues = Set(base, { ...base, id: 2, actorKind: Slopbot }, { ...base, 
   { ...base, id: 7, source: 9 })
 pure val upperValues = Set(35, 70, 71)
 pure val censusItem: C::Item = { ...C::human, id: 1 }
-pure val readyCensus: C::Census = { ...C::initial, phase: C::Ready, lowerDay: 0, cursorsSeen: List(0), expectedCursor: 0,
+pure val readyCensus: C::Census = { ...C::initial, phase: C::ReadyForPublication, lowerDay: 0, cursorsSeen: List(0), expectedCursor: 0,
   totalCount: 1, terminalSeen: true, items: List(censusItem) }
 pure val cValues = Set(readyCensus, { ...readyCensus, phase: C::Collecting }, { ...readyCensus, totalCount: 2 },
   { ...readyCensus, items: List(), totalCount: 0 })

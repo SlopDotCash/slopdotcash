@@ -50,15 +50,15 @@ pure def withAccounts(a: A::Accounts, s: Continuity): Continuity = { ...s, accou
 pure def reporterClosed(s: Continuity): bool = reporterMember(s).membership == A::Closed
 pure def canCloseReporter(s: Continuity, by: int, session: int, confirmation: str): bool = by == caseReporter(s)
   and A::senderActor(s.accounts, session) == s.reporterAccount and A::canClose(s.accounts, session, confirmation)
-  and N::canSetConsent(s.award.inbox, false, false, by)
+  and N::canCloseAccount(s.award.inbox, N::accountService, E::closeEnrollment(reporterMember(s).email))
 pure def closeReporter(s: Continuity, by: int, session: int, confirmation: str): Continuity =
-  { ...withAccounts(A::close(s.accounts, session, confirmation), withAward(PA::withInbox(N::setConsent(s.award.inbox, false, false, by), s.award), s)),
+  { ...withAccounts(A::close(s.accounts, session, confirmation), withAward(PA::withInbox(N::closeAccount(s.award.inbox, N::accountService, E::closeEnrollment(reporterMember(s).email)), s.award), s)),
     closedBeforePaid: s.award.settlement.payment.phase != P::Paid }
 pure def alwaysInboxConsentFollowsEnrollment(s: Continuity): bool =
-  (N::pref(s.award.inbox, caseReporter(s)).activity implies reporterMember(s).email.preference.activity)
-  and (N::pref(s.award.inbox, caseReporter(s)).security implies reporterMember(s).email.preference.security)
+  (N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.activity implies reporterMember(s).email.preference.activity)
+  and (N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.security implies reporterMember(s).email.preference.security)
 pure def alwaysClosedReporterWithdrawsConsent(s: Continuity): bool = reporterClosed(s) implies
-  not(N::pref(s.award.inbox, caseReporter(s)).activity) and not(N::pref(s.award.inbox, caseReporter(s)).security)
+  not(N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.activity) and not(N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.security)
 pure def alwaysAccountRules(s: Continuity): bool = A::alwaysClosedPrivate(s.accounts) and A::alwaysSessionsBelongToOpenMembers(s.accounts)
 pure def stepClosureKeepsObligations(before: Continuity, via: str, after: Continuity): bool = via == "closeReporter" implies
   after.award.bounty == before.award.bounty and after.award.settlement == before.award.settlement
@@ -142,10 +142,10 @@ them.
 
 ```quint
 pure val sampleAccount: A::Member = A::memberByActor(A::signedOld, 1101)
-pure val consentedAccounts: A::Accounts = { ...A::signedOld, members: A::withEmail(A::signedOld, sampleAccount,
-  { ...sampleAccount.email, destination: { address: "octo-mail", version: 1, verifiedAt: 1 },
-    preference: { stored: true, activity: true, security: true, version: 1, revision: 0 } }) }
-pure val consentedInbox: N::Inbox = N::setConsent(N::verifyDestination(N::initial, 1), true, true, 1)
+pure val consentedEmail: E::Enrollment = { ...sampleAccount.email, destination: { address: "octo-mail", version: 1, verifiedAt: 1 },
+  preference: { stored: true, activity: true, security: true, version: 1, revision: 0 } }
+pure val consentedAccounts: A::Accounts = { ...A::signedOld, members: A::withEmail(A::signedOld, sampleAccount, consentedEmail) }
+pure val consentedInbox: N::Inbox = N::observeEnrollment(N::initial, N::accountService, { ...consentedEmail, actor: 1 })
 pure val initial: Continuity = startingContinuity(PA::withInbox(consentedInbox, PA::initial), consentedAccounts, 1101)
 pure val idValues = Set(1)
 pure val sourceValues = Set(C::SlopReceived)

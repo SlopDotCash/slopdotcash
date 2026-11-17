@@ -34,6 +34,7 @@ import assessment as A from "./assessment"
 import forwarding as F from "./forwarding"
 import journey as J from "./journey"
 import notifications as N from "../operations/notifications"
+import email as E from "../backend/email"
 type SecretReportBody = str
 type BodyDigest = { object: int, version: str }
 type ReportNotices = { journey: J::Journey, inbox: N::Inbox, directCase: C::PrivateCase, directChecked: bool,

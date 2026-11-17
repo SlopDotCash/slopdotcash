@@ -40,7 +40,7 @@ lemma OwnAfterRequest(e: Enrollment, now: int, id: int, requestKey: int, address
   ensures ownByKey(requestVerification(e, now, id, requestKey, address, addressKey, activity, security), requestKey)
     == [requestVerification(e, now, id, requestKey, address, addressKey, activity, security).verifications[|e.verifications|]]
   ensures requestVerification(e, now, id, requestKey, address, addressKey, activity, security).verifications[|e.verifications|]
-    == Verification(id, requestKey, address, addressKey, id, activity, security, DeliveryState.Queued, now, (now + verificationLifetime), false, false, 0)
+    == Verification(id, requestKey, address, addressKey, id, activity, security, VerificationDelivery.Queued, now, (now + verificationLifetime), false, false, 0)
 {
   var xs := e.verifications;
   var all := requestVerification(e, now, id, requestKey, address, addressKey, activity, security).verifications;

@@ -35,6 +35,8 @@ import vault as V from "./vault"
 import composition as SC from "./composition"
 import directBounty as DB from "./directBounty"
 import notifications as N from "../operations/notifications"
+import email as E from "../backend/email"
+import runtime as FR from "../fees/runtime"
 type AmountsShown = { by: int, caseId: int, caseRevision: int, gross: M::Amount, researcher: M::Amount, slop: M::Amount }
 type PrivateAward = { bounty: B::Bounty, settlement: SC::Settlement, direct: DB::DirectBounty, inbox: N::Inbox,
   vaultCase: int, directCase: int, shown: AmountsShown, authorizedEpoch: int }
@@ -332,9 +334,9 @@ pure val approveValues = Set(true)
 pure val evidenceValues = Set(SC::bountyReceipt, SC::ordinaryReceipt)
 pure val updateValues = Set(SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }))
 pure val journalTerms: DB::Terms = { caseId: 2, project: 1, finding: 2, payerActor: 5, reporterActor: 1,
-  network: DB::Base, asset: "asset", feeWallet: "fees", gross: List(4), split: T::StandardSplit }
+  network: FR::Base, asset: "asset", feeWallet: "fees", gross: List(4), split: T::StandardSplit }
 pure val journalTermsValues = Set(journalTerms, { ...journalTerms, caseId: 1, finding: 1 })
-pure val qualifiedRouteValues = Set({ network: DB::Base, asset: "asset", feeWallet: "fees" })
+pure val qualifiedRouteValues = Set({ network: FR::Base, asset: "asset", feeWallet: "fees" })
 pure val payerWalletValues = Set(DB::payerOne)
 pure val reporterWalletValues = Set(DB::reporterOne)
 pure val authorizedReadValues = Set(true)
