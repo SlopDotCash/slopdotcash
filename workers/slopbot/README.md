@@ -29,6 +29,12 @@ CPU limit, usage model and deployment stability. Missing, denied, malformed or
 changing metadata stays unavailable. The receipt does not verify Paid plan
 entitlement, execution success or the cause of an earlier import failure.
 
+Optional publication-local text sharing retains at most the existing 32 MiB
+cache budget, measured conservatively as two bytes per UTF-16 code unit.
+Overflow is returned intact without retaining it in that pool. This does not
+limit evidence size or admission. Recovered added-file patches enter sharing
+only after their line counts match the accepted file metadata.
+
 ## Flow
 
 1. **Webhook.** `POST /github/webhook` verifies `X-Hub-Signature-256`, records

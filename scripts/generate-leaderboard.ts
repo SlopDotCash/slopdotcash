@@ -17,11 +17,17 @@ import {
  */
 
 import {
+  GitHubIngestionCheckpointError,
   githubIngestionReadTransport,
   githubPrimaryRateLimitDelay,
 } from "./github-ingestion-read";
 import type { ConnectionPage, PageInfo } from "./github-pagination";
 import { resolveGitHubToken } from "./github-token";
+import {
+  historicalDiscussionHasRateLimit,
+  historicalDiscussionQuery,
+  validateHistoricalDiscussion,
+} from "./historical-discussion-evidence";
 
 export { resolveGitHubToken } from "./github-token";
 
@@ -464,6 +470,10 @@ export interface GraphqlExecutor {
     page: number,
   ): Promise<JsonRecord>;
   execute(document: string, variables?: GraphqlVariables): Promise<JsonRecord>;
+  tryReferenceDiscussion?(
+    variables: { owner: string; name: string; number: number },
+    deadlineMs: number,
+  ): Promise<JsonRecord | null>;
   ensureBudget?(requiredCost: number): Promise<void>;
   getRequestCount(): number;
   getRateLimit(): RateLimitSnapshot;
@@ -2011,6 +2021,21 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     this.#recoverFiles = options.recoverFiles ?? recoverPullRequestGitFiles;
   }
 
+  #availableBudget(): number {
+    if (!this.#rateLimit) return 0;
+    // The window cap also counts points other consumers of the shared token
+    // spent since this run's first response in the window.
+    const windowDrain =
+      this.#startingRemaining === null
+        ? 0
+        : this.#startingRemaining - this.#rateLimit.remaining;
+    return Math.min(
+      this.#effectiveMaxGenerationCost() -
+        Math.max(this.#windowConsumedCost, windowDrain),
+      this.#rateLimit.remaining - this.#minimumRateLimitReserve,
+    );
+  }
+
   async ensureBudget(requiredCost: number): Promise<void> {
     if (!Number.isInteger(requiredCost) || requiredCost < 0) {
       throw new Error("requiredCost must be a non-negative integer");
@@ -2022,18 +2047,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `Required GitHub GraphQL cost ${requiredCost} exceeds the safe per-window budget ${effectiveMaxGenerationCost}`,
       );
     }
-    // The window cap also counts points other consumers of the shared token
-    // spent since this run's first response in the window.
-    const windowDrain =
-      this.#startingRemaining === null
-        ? 0
-        : this.#startingRemaining - this.#rateLimit.remaining;
-    const available = Math.min(
-      effectiveMaxGenerationCost -
-        Math.max(this.#windowConsumedCost, windowDrain),
-      this.#rateLimit.remaining - this.#minimumRateLimitReserve,
-    );
-    if (requiredCost <= available) return;
+    if (requiredCost <= this.#availableBudget()) return;
 
     const resetAt = Date.parse(this.#rateLimit.resetAt);
     if (!Number.isFinite(resetAt)) {
@@ -2064,7 +2078,22 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     document: string,
     variables: GraphqlVariables = {},
   ): Promise<JsonRecord> {
-    return this.#executeRequest(document, variables);
+    return this.#executeRequired(document, variables);
+  }
+
+  /** Start optional discovery only with headroom for its own query and the
+   * ordinary fallback timeline. Do not wait for quota just to probe. */
+  async tryReferenceDiscussion(
+    variables: { owner: string; name: string; number: number },
+    deadlineMs: number,
+  ): Promise<JsonRecord | null> {
+    if (this.#availableBudget() < 2) return null;
+    return this.#executeRequest(
+      historicalDiscussionQuery,
+      variables,
+      undefined,
+      { deadlineMs },
+    );
   }
 
   async compareCommitPage(
@@ -2074,7 +2103,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     page: number,
   ): Promise<JsonRecord> {
     const path = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/compare/${base}...${head}?per_page=${GRAPHQL_PAGE_SIZE}&page=${page}`;
-    return this.#executeRequest("", {}, path);
+    return this.#executeRequired("", {}, path);
   }
 
   async recoverPullRequestFiles(
@@ -2129,27 +2158,53 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     });
   }
 
-  async #executeRequest(
+  async #executeRequired(
     document: string,
     variables: GraphqlVariables,
     restPath?: string,
   ): Promise<JsonRecord> {
+    const data = await this.#executeRequest(document, variables, restPath);
+    if (data === null)
+      throw new Error("Required GitHub evidence is unavailable");
+    return data;
+  }
+
+  async #deferReferenceDiscussion(
+    delayMs: number | null,
+    deadlineMs: number,
+  ): Promise<null> {
+    if (delayMs === null)
+      throw new Error("GitHub GraphQL quota reset is unavailable");
+    if (Date.now() + delayMs >= deadlineMs)
+      throw new GitHubIngestionCheckpointError();
+    // Honor the provider's delay once, then use the ordinary evidence path.
+    await retryDelay(delayMs);
+    return null;
+  }
+
+  async #executeRequest(
+    document: string,
+    variables: GraphqlVariables,
+    restPath?: string,
+    discussion?: { deadlineMs: number },
+  ): Promise<JsonRecord | null> {
     const apiLabel = restPath ? "GitHub comparison" : "GitHub GraphQL";
+    const maxAttempts = discussion ? 1 : MAX_GRAPHQL_REQUEST_ATTEMPTS;
+    const timeoutMs = discussion
+      ? Math.min(this.#requestTimeoutMs, discussion.deadlineMs - Date.now())
+      : this.#requestTimeoutMs;
+    if (discussion && timeoutMs <= 0) return null;
     let response: Response | null = null;
     let payload: unknown;
     let parsedResponse = false;
     let activeVariables = variables;
-    for (
-      let attempt = 1;
-      attempt <= MAX_GRAPHQL_REQUEST_ATTEMPTS;
-      attempt += 1
-    ) {
-      if (!restPath) await this.ensureBudget(1);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (!restPath && !discussion) await this.ensureBudget(1);
       this.#requestCount += 1;
       const controller = new AbortController();
       const timeout = setTimeout(() => {
         controller.abort();
-      }, this.#requestTimeoutMs);
+      }, timeoutMs);
       let responseBody = "";
       try {
         response = await this.#fetch(
@@ -2172,16 +2227,23 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         );
         responseBody = await readGraphqlResponseBody(response);
       } catch (cause) {
+        if (
+          discussion &&
+          (controller.signal.aborted ||
+            cause instanceof GraphqlResponseBoundaryError ||
+            isTransientNetworkError(cause))
+        )
+          return null;
         if (cause instanceof GraphqlResponseBoundaryError) throw cause;
         // error-policy:J2 Retry only transient transport failures; the final
         // attempt rethrows with the request boundary and original cause.
         const timedOut = controller.signal.aborted;
         const retryable = timedOut || isTransientNetworkError(cause);
-        if (!retryable || attempt === MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        if (!retryable || attempt === maxAttempts) {
           throw new Error(
             timedOut
-              ? `${apiLabel} request timed out after ${this.#requestTimeoutMs}ms (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS})`
-              : `${apiLabel} network request failed (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS})`,
+              ? `${apiLabel} request timed out after ${this.#requestTimeoutMs}ms (${attempt}/${maxAttempts})`
+              : `${apiLabel} network request failed (${attempt}/${maxAttempts})`,
             { cause },
           );
         }
@@ -2196,7 +2258,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       const quotaDelay = restPath
         ? githubPrimaryRateLimitDelay(response)
         : null;
-      if (quotaDelay !== null && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+      if (quotaDelay !== null && attempt < maxAttempts) {
         await retryDelay(quotaDelay);
         continue;
       }
@@ -2204,7 +2266,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         GATEWAY_FAILURE_STATUSES.includes(response.status) ||
         (restPath !== undefined &&
           comparisonBuildTimedOut(response.status, responseBody));
-      if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+      if (retryableStatus && attempt < maxAttempts) {
         // error-policy:J2 Narrow a timed-out GraphQL page before backing off.
         // Comparison retries keep the exact immutable range and page; only
         // the recognized server timeout joins the existing bounded retry.
@@ -2217,10 +2279,44 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         response,
         responseBody,
       );
-      if (
-        secondaryLimitDelay !== null &&
-        attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS
-      ) {
+      if (discussion && (response.status === 403 || response.status === 429)) {
+        const primary = response.headers.get("x-ratelimit-remaining") === "0";
+        const rawRetry = response.headers.get("retry-after");
+        const parsedRetry =
+          rawRetry && /^\d+$/u.test(rawRetry)
+            ? Number(rawRetry) * 1_000
+            : Number.NaN;
+        const retryAfter = Number.isSafeInteger(parsedRetry)
+          ? parsedRetry
+          : null;
+        if (
+          primary ||
+          secondaryLimitDelay !== null ||
+          retryAfter !== null ||
+          response.status === 429
+        ) {
+          const reset = primary ? githubPrimaryRateLimitDelay(response) : null;
+          const delay =
+            primary && reset === null
+              ? null
+              : Math.max(
+                  reset ?? 0,
+                  secondaryLimitDelay ?? 0,
+                  retryAfter ?? 0,
+                  response.status === 429 &&
+                    !primary &&
+                    secondaryLimitDelay === null &&
+                    retryAfter === null
+                    ? 60_000
+                    : 0,
+                );
+          return this.#deferReferenceDiscussion(delay, discussion.deadlineMs);
+        }
+        // A bare forbidden response gives neither an authorized representation
+        // nor enough evidence to retry other endpoints against the same token.
+        throw new Error("GitHub GraphQL reference discovery is forbidden");
+      }
+      if (secondaryLimitDelay !== null && attempt < maxAttempts) {
         await retryDelay(secondaryLimitDelay);
         continue;
       }
@@ -2230,10 +2326,11 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         parsedResponse = true;
         break;
       } catch (cause) {
+        if (discussion) return null;
         const contentType = response.headers.get("content-type");
         const retryableMalformedJson =
           response.ok && isJsonContentType(contentType);
-        if (retryableMalformedJson && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        if (retryableMalformedJson && attempt < maxAttempts) {
           await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
           continue;
         }
@@ -2244,8 +2341,8 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         // keep their status so a node batch caller can split the batch
         // instead of failing the run.
         const message = retryableMalformedJson
-          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}; ${responseBody.length} body bytes)`
-          : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`;
+          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${maxAttempts}; ${contentType ?? "unknown content type"}; ${responseBody.length} body bytes)`
+          : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${maxAttempts}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`;
         if (
           retryableMalformedJson ||
           GATEWAY_FAILURE_STATUSES.includes(response.status)
@@ -2258,7 +2355,21 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (!response || !parsedResponse) {
       throw new Error("GitHub GraphQL request did not produce a response");
     }
+    if (
+      discussion &&
+      (!response.ok ||
+        payload === null ||
+        typeof payload !== "object" ||
+        Array.isArray(payload))
+    )
+      return null;
     const envelope = asRecord(payload, "GitHub GraphQL response");
+    if (
+      discussion &&
+      envelope.errors !== undefined &&
+      !Array.isArray(envelope.errors)
+    )
+      return null;
     if (!response.ok) {
       throw new Error(
         `${apiLabel} HTTP ${response.status}: ${sanitizeGraphqlError(envelope.message)}`,
@@ -2271,16 +2382,41 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     const statisticsFailure = restPath
       ? null
       : commitStatisticsFailure(document, envelope, activeVariables);
+    const errors: readonly unknown[] = Array.isArray(envelope.errors)
+      ? envelope.errors
+      : [];
+    const rejected =
+      errors.length > 0 && !unavailableNode && !statisticsFailure;
+    if (rejected && !discussion) {
+      const summary = errors.map(sanitizeGraphqlError).join("; ");
+      throw new Error(`${apiLabel} rejected the leaderboard query: ${summary}`);
+    }
     if (
-      Array.isArray(envelope.errors) &&
-      envelope.errors.length > 0 &&
-      !unavailableNode &&
-      !statisticsFailure
+      discussion &&
+      errors.some((error) =>
+        Boolean(
+          error &&
+            typeof error === "object" &&
+            "type" in error &&
+            error.type === "RATE_LIMITED",
+        ),
+      )
     ) {
-      const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
-      throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
+      const limits = (
+        envelope.data as { rateLimit?: { resetAt?: unknown } } | null
+      )?.rateLimit;
+      const reset =
+        typeof limits?.resetAt === "string"
+          ? Date.parse(limits.resetAt)
+          : Number.NaN;
+      return this.#deferReferenceDiscussion(
+        Number.isFinite(reset) ? Math.max(0, reset - Date.now() + 1_000) : null,
+        discussion.deadlineMs,
+      );
     }
     if (restPath) return envelope;
+    if (discussion && !historicalDiscussionHasRateLimit(envelope.data))
+      return null;
     const data = asRecord(envelope.data, "GitHub GraphQL response.data");
     const rateLimit = parseRateLimit(data.rateLimit);
     const resetAt = Date.parse(rateLimit.resetAt);
@@ -2324,6 +2460,8 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         ),
       });
     if (statisticsFailure) throw statisticsFailure;
+    if (discussion && (rejected || discussion.deadlineMs <= Date.now()))
+      return null;
     return data;
   }
 
@@ -4851,20 +4989,21 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
+  const discussionCheckpoint = options.discussionCheckpoint;
   const valueRead = githubIngestionReadTransport(
     fetch,
     undefined,
     undefined,
     undefined,
     {
-      discussionCache: options.discussionCheckpoint && {
-        directory: options.discussionCheckpoint.directory,
+      discussionCache: discussionCheckpoint && {
+        directory: discussionCheckpoint.directory,
         repositories: collections.map(({ repository, preflight }) => ({
           name: repository.id,
           nodeId: preflight.id,
         })),
       },
-      quotaDeadlineMs: options.discussionCheckpoint?.deadlineMs,
+      quotaDeadlineMs: discussionCheckpoint?.deadlineMs,
     },
   );
   const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
@@ -4880,6 +5019,20 @@ export async function generateLeaderboardFromGitHub(
       },
       graphql: async <T>(query: string, variables: Record<string, unknown>) =>
         (await client.execute(query, variables as GraphqlVariables)) as T,
+      readReferenceDiscussion: discussionCheckpoint
+        ? async (source, pull) => {
+            valueRead.assertNoCheckpoint();
+            const [owner, name] = source.repository.split("/");
+            const data = await client.tryReferenceDiscussion?.(
+              { owner, name, number: source.number },
+              discussionCheckpoint.deadlineMs,
+            );
+            valueRead.assertNoCheckpoint();
+            return data
+              ? validateHistoricalDiscussion(data, source, pull)
+              : null;
+          }
+        : undefined,
     },
     [...dedupedOutcomes, ...closedUnmergedPullRequests].filter((source) =>
       underValuePolicy(

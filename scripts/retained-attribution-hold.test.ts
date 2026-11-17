@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { fixture, repository } from "../tests/value-binary-fixture";
+import { validateHistoricalDiscussion } from "./historical-discussion-evidence";
 import { loadValueInputs, type ValueInputProgress } from "./value-ingestion";
 
 function candidate(
@@ -8,6 +9,7 @@ function candidate(
   baseRefName = "main",
   related = true,
   useRepositoryAlias = false,
+  countedDiscussion = false,
 ) {
   const f = fixture({ textOnly: true, direct: true });
   const target = findRegisteredRepositoryById("SlopDotCash/asi");
@@ -22,6 +24,27 @@ function candidate(
     isOriginalPull(number) ? originalId : `PR_accepted_${number}`;
   const carrierNumbers = useRepositoryAlias ? [2, 4] : [2];
   const reads: string[] = [];
+  const timeline = (number: number) => {
+    const referenceNumber = failure === "pull-number" && number === 4 ? 3 : 1;
+    return !isOriginalPull(number) && related
+      ? [
+          {
+            source: {
+              __typename: "PullRequest",
+              id: originalId,
+              number: referenceNumber,
+              url: `https://github.com/${route}/pull/${referenceNumber}`,
+              repository: { nameWithOwner: route, isPrivate: false },
+            },
+          },
+        ]
+      : [];
+  };
+  const page = <T>(nodes: T[]) => ({
+    nodes,
+    totalCount: nodes.length,
+    pageInfo: { hasNextPage: false, endCursor: null },
+  });
   const remap = <T>(value: T): T =>
     JSON.parse(
       JSON.stringify(value)
@@ -68,35 +91,49 @@ function candidate(
       variables: Record<string, unknown>,
     ): Promise<T> {
       const number = Number(variables.number);
-      const referenceNumber = failure === "pull-number" && number === 4 ? 3 : 1;
       return {
         repository: {
           pullRequest: {
             id: pullId(number),
-            timelineItems: {
-              nodes:
-                !isOriginalPull(number) && related
-                  ? [
-                      {
-                        source: {
-                          __typename: "PullRequest",
-                          id: originalId,
-                          number: referenceNumber,
-                          url: `https://github.com/${route}/pull/${referenceNumber}`,
-                          repository: {
-                            nameWithOwner: route,
-                            isPrivate: false,
-                          },
-                        },
-                      },
-                    ]
-                  : [],
-              pageInfo: { hasNextPage: false, endCursor: null },
-            },
+            timelineItems: page(timeline(number)),
           },
         },
       } as T;
     },
+    readReferenceDiscussion: countedDiscussion
+      ? async (
+          source: Parameters<typeof validateHistoricalDiscussion>[1],
+          pull: Parameters<typeof validateHistoricalDiscussion>[2],
+        ) => {
+          const verified = validateHistoricalDiscussion(
+            {
+              repository: {
+                id: target.expectedNodeId,
+                isPrivate: false,
+                nameWithOwner: source.repository,
+                pullRequest: {
+                  id: pull.node_id,
+                  number: pull.number,
+                  url: pull.html_url,
+                  state: "MERGED",
+                  headRefOid: pull.head.sha,
+                  mergedAt: pull.merged_at,
+                  updatedAt: pull.updated_at,
+                  body: pull.body,
+                  comments: page([]),
+                  reviewThreads: page([]),
+                  timelineItems: page(timeline(pull.number)),
+                },
+              },
+            },
+            source,
+            pull,
+          );
+          if (!verified) throw new Error("Fixture discussion was not verified");
+          reads.push("counted discussion");
+          return verified;
+        }
+      : undefined,
   };
   const transport = Object.assign(
     async () => {
@@ -143,6 +180,33 @@ test("unproven retained work becomes a source-specific attribution hold", async 
   expect(result.retainedCommitAuthors.size).toBe(0);
   expect(result.valueDecisions.size).toBe(0);
 });
+
+test.each([false, true])(
+  "counted discovery still requires the full retained-copy proof (repository alias: %s)",
+  async (alias) => {
+    const previous = candidate("proof", "main", true, alias);
+    const optimized = candidate("proof", "main", true, alias, true);
+    const before = await previous.run();
+    const after = await optimized.run();
+    expect(optimized.reads).toContain("counted discussion");
+    expect(after.retainedCommitAuthors).toEqual(before.retainedCommitAuthors);
+    expect(after.implementationAttributionHolds).toEqual(
+      before.implementationAttributionHolds,
+    );
+    expect(after.implementationAttributionHolds.has(optimized.acceptedId)).toBe(
+      true,
+    );
+    expect(
+      optimized.reads.filter((path) =>
+        /\/(?:files|commits)(?:\/|\?)/u.test(path),
+      ),
+    ).toEqual(
+      previous.reads.filter((path) =>
+        /\/(?:files|commits)(?:\/|\?)/u.test(path),
+      ),
+    );
+  },
+);
 
 test("two merged PRs can resolve the same retained original through a registered alias", async () => {
   const { run, route, canonical, reads } = candidate(
