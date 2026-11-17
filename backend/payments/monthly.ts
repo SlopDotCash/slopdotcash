@@ -1342,7 +1342,7 @@ export function monthlyOwnerService(deps: {
         new MonthlyPaymentError(
           409,
           "cut_notice_window",
-          `A contributor gets 24 hours of notice before a cut takes effect. With automatic finalization on, cuts close at ${utcMinute(noticeDeadline as Date)}, 24 hours before the cutoff.`,
+          `A contributor gets 24 hours of notice before a cut takes effect. Because this month freezes at the cutoff, cuts close at ${utcMinute(noticeDeadline as Date)}, 24 hours before the cutoff.`,
         );
       if (isCut && automatic && noticePassed && !cutoffPassed)
         throw cutNotice();

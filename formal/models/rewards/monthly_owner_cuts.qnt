@@ -13,7 +13,11 @@
 // paying vault (operator decision of 15 November 2026), so either closes cuts
 // in the final window and every change at the cutoff. A pledge names the
 // current or a later month (both contracts refuse an earlier one), so this
-// month's pledge comes at step 0, three days before the cutoff.
+// month's pledge comes at step 0, before the month ends. That is at least 24
+// hours before the cutoff only because the deployed schedule puts the cutoff
+// 72 hours after the month ends (owner decision D1, MONTHLY_PAYMENT_SCHEDULE
+// in wrangler.toml and wrangler.staging.toml); a cutoff under 24 hours after
+// the month ends is outside this model.
 module monthly_owner_cuts {
   type State = {now:int,automatic:bool,pledged:bool,amount:int,changes:int,
     cutRecords:int,notices:int,latestIsCut:bool,lastCutAt:int,frozen:bool,

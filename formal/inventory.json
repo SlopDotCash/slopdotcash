@@ -476,7 +476,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "f67fde842db695d64f439fc87bc92f63f05427a411d0bda0eb911ad2be9922dd",
+      "sha256": "ba915506ef4ad0f2eaf3a33bd3735801f9d21169ccd4cf84de0a6ee504af5869",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
@@ -15136,7 +15136,7 @@
     },
     {
       "path": "formal/models/rewards/monthly_owner_cuts.qnt",
-      "sha256": "deef2eb5829ed338855ef0deae631b466b183c55df5f1b90fd1087e394310b42",
+      "sha256": "7f5831e68b765ba02d9bfa74502c0da99a8a86b4a7b95fb6359c32504b97dc44",
       "sources": [
         "backend/notifications/events.ts",
         "backend/payments/handler.ts",

@@ -4149,7 +4149,12 @@ describe("owner cuts (operator decision, 15 November 2026)", () => {
       await service().setAutomatic(project.id, actor, false);
       pledgeNovember();
       clock = new Date(afterCutoff.getTime() - 2 * 60 * 60 * 1000);
-      await rejects(cut(), "cut_notice_window");
+      const refused = cut();
+      await rejects(refused, "cut_notice_window");
+      // Automatic finalization is off; the pledge is why the month freezes.
+      await expect(refused).rejects.toThrow(
+        "A contributor gets 24 hours of notice before a cut takes effect. Because this month freezes at the cutoff, cuts close at 2082-12-03 00:00 UTC, 24 hours before the cutoff.",
+      );
       expect(count("monthly_allocation_changes")).toBe(0);
       expect(cutNotices()).toEqual([]);
       // A change at the proposed amount is not a cut and needs no notice.
