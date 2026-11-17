@@ -8528,11 +8528,11 @@
     },
     {
       "path": "workers/payment-executor/binding-recovery.ts",
-      "sha256": "4571075cad04b5e0adca344272912ea1194c57d03c701c589da1baa52592a349",
+      "sha256": "f3ada090240714cd84542112f6d9f90149a2210836ccda9f73f36e6dc6e59261",
       "models": ["formal/models/payments/binding_cancellation.qnt"],
       "candidateLines": [
-        81, 105, 120, 146, 159, 160, 163, 170, 190, 206, 212, 216, 217, 218,
-        313, 317, 319, 325, 327, 330
+        81, 82, 108, 123, 128, 150, 163, 164, 167, 174, 194, 210, 215, 220, 224,
+        228, 232, 233, 234, 329, 333, 335, 341, 343, 346
       ],
       "review": "mapped-abstraction"
     },
@@ -8567,7 +8567,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "sha256": "7fbe52e20307846ee7970fb26260a4bc07e82ae08e655f76bf2b1ea8b4f0e763",
+      "sha256": "b275e61c429e9db2bf6ef660499fff66d0962a8a5d6662ed0c312e649794a8d9",
       "models": [
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
@@ -8583,14 +8583,14 @@
       ],
       "candidateLines": [
         109, 119, 146, 208, 209, 211, 212, 254, 256, 262, 263, 264, 265, 272,
-        274, 275, 280, 282, 283, 284, 285, 286, 290, 310, 315, 318, 568, 679,
-        686, 688, 708, 1037, 1039, 1040, 1060, 1062, 1064, 1076, 1077, 1226,
-        1258, 1267, 1270, 1280, 1305, 1384, 1385, 1386, 1387, 1393, 1401, 1417,
-        1509, 1514, 1515, 1516, 1522, 1526, 1527, 1528, 1531, 1532, 1535, 1576,
-        1584, 1586, 1594, 1718, 1719, 1720, 1747, 1776, 1782, 1786, 1803, 1808,
-        1830, 1831, 1838, 1857, 1858, 1862, 2016, 2017, 2047, 2048, 2054, 2058,
-        2165, 2211, 2222, 2229, 2230, 2239, 2282, 2289, 2316, 2346, 2347, 2392,
-        2402, 2500, 2502, 2503, 2507
+        274, 275, 280, 282, 283, 284, 285, 286, 290, 310, 315, 318, 572, 683,
+        690, 692, 712, 1041, 1043, 1044, 1064, 1066, 1068, 1080, 1081, 1230,
+        1262, 1271, 1274, 1284, 1309, 1388, 1389, 1390, 1391, 1397, 1405, 1421,
+        1513, 1518, 1519, 1520, 1526, 1530, 1531, 1532, 1535, 1536, 1539, 1580,
+        1588, 1590, 1598, 1722, 1723, 1724, 1751, 1780, 1786, 1790, 1807, 1812,
+        1834, 1835, 1842, 1861, 1862, 1866, 2020, 2021, 2076, 2077, 2083, 2087,
+        2194, 2240, 2251, 2258, 2259, 2268, 2311, 2318, 2345, 2375, 2376, 2421,
+        2431, 2529, 2531, 2532, 2536
       ],
       "review": "mapped-abstraction"
     },
@@ -13759,7 +13759,7 @@
     },
     {
       "path": "formal/models/payments/authority_rotation.qnt",
-      "sha256": "6cfd46c61c5e4aa8a7addc6b6307c71c900815ce171928060e230e53fb1bd8dd",
+      "sha256": "9a16f3add8d4acf97edf3ba34262f309e8bdbff88b2d14d749e8badc761030c1",
       "sources": [
         "contracts/evm/src/ProjectEscrow.sol",
         "contracts/solana/programs/slop-escrow/src/lib.rs",
@@ -13772,6 +13772,7 @@
         "minedBindingSurvivesAuthorityRotationTest",
         "noncanonicalReceiptKeepsBindingHeldTest",
         "rotatedAuthorityCannotRebroadcastHeldBindingTest",
+        "rotatedBindingRetiresWithoutReceiptTest",
         "solanaRotationTest"
       ]
     },
