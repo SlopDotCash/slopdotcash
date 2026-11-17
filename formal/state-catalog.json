@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "d10a0a6d8d8be5f4eca25ba1604ddf615e785a3ea5a3bd7c7616511f821de9e6",
+  "inventorySha256": "9b699b6a0e261983a4140525f28db4e5340e1c841b99145c36c339aed2ead622",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3302,7 +3302,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 33,
+      "line": 35,
       "name": "state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -3316,7 +3316,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 59,
+      "line": 61,
       "name": "MonthlyAwardState",
       "kind": "string-union",
       "values": [
