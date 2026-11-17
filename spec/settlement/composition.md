@@ -25,7 +25,7 @@ conformance require separately verified chain adapters.
 ### A verified deposit can fund a walletless award
 
 One reserved obligation belongs to a contributor actor and immutable payout
-terms. Reserving consumes free funds before a wallet is authorized and
+terms. Configuring binds the obligation's target to this vault and its asset. Reserving consumes free funds before a wallet is authorized and
 admits the corresponding outbox identity. The authorized wallet can change
 without rewriting the reservation. The [direct standard award journal](./directBounty.md) retains independent
 receipt and recovery rules. Direct full awards use the separately released
@@ -49,10 +49,11 @@ pure def canDeposit(s: Settlement, amount: M::Amount, asset: str, receipt: int, 
   V::canDeposit(s.vault, amount, asset, receipt, finalized)
 pure def deposit(s: Settlement, amount: M::Amount, asset: str, receipt: int, finalized: bool): Settlement =
   { ...s, vault: V::deposit(s.vault, amount, asset, receipt, finalized) }
-pure def canConfigure(s: Settlement, purpose: P::Purpose, rail: P::PaymentRail, gross: M::Amount): bool =
-  not(s.delivery.admitted) and not(P::directRail(rail)) and P::canConfigure(s.payment, purpose, rail, gross)
-pure def configure(s: Settlement, purpose: P::Purpose, rail: P::PaymentRail, gross: M::Amount): Settlement =
-  { ...s, payment: P::configure(s.payment, purpose, rail, gross) }
+pure def canConfigure(s: Settlement, purpose: P::Purpose, rail: P::PaymentRail, gross: M::Amount, target: D::Target): bool =
+  not(s.delivery.admitted) and not(P::directRail(rail)) and P::canConfigure(s.payment, purpose, rail, gross, target)
+    and target.vault == s.vault.id and target.asset == s.vault.asset
+pure def configure(s: Settlement, purpose: P::Purpose, rail: P::PaymentRail, gross: M::Amount, target: D::Target): Settlement =
+  { ...s, payment: P::configure(s.payment, purpose, rail, gross, target) }
 pure def canReserve(s: Settlement): bool = P::canReserveVault(s.payment)
   and V::canReserve(s.vault, s.payment.gross, s.payment.target.actor, s.payment.obligation)
   and D::canAdmit(s.delivery, s.payment.target, true)
@@ -150,6 +151,7 @@ pure def sometimesHistoricalDestination(s: Settlement): bool = s.payment.phase =
 ```quint
 pure val amountValues = Set(List(4), List(100))
 pure val grossValues = Set(List(4), List(100))
+pure val targetValues = Set(P::initial.target, { ...P::initial.target, actor: 8, obligation: 2 }, { ...P::initial.target, vault: "wrong" })
 pure val assetValues = Set("asset", "wrong")
 pure val receiptValues = Set(1, 2, 4)
 pure val updateValues = Set(SetWallet({claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address}),

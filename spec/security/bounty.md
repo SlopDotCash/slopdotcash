@@ -24,7 +24,7 @@ import money as M from "../settlement/money"
 import terms as T from "./terms"
 import cases as C from "./cases"
 type HoldKind = ProposalHold | VaultHold | DirectHold | FullAwardHold
-type Hold = { caseId: int, rootCause: int, kind: HoldKind, fundsObservedAt: int }
+type Hold = { caseId: int, rootCause: int, kind: HoldKind, fundsObservedAt: int, settledReceipt: int }
 type FundsSnapshot = { finalized: bool, observedAt: int, asset: str, free: M::Amount }
 type RouteObservation = { asset: str, qualified: bool, observedAt: int }
 type Bounty = { first: C::PrivateCase, second: C::PrivateCase, holds: List[Hold], funds: FundsSnapshot, reserved: M::Amount,
@@ -97,12 +97,38 @@ pure def railFor(b: Bounty, id: int, amount: M::Amount): C::Rail =
 pure def clearanceFor(b: Bounty, id: int, amount: M::Amount): C::ProjectClearance =
   { caseRevision: caseOf(b, id).revision, firstQualifying: firstQualifying(b, id), rootCauseFree: rootCauseFree(b, id), rail: railFor(b, id, amount) }
 pure def holdFor(b: Bounty, id: int, after: C::PrivateCase): Hold =
-  { caseId: id, rootCause: after.rootCause, fundsObservedAt: if (after.commitment == C::VaultReservation) b.funds.observedAt else 0,
+  { caseId: id, rootCause: after.rootCause, settledReceipt: 0, fundsObservedAt: if (after.commitment == C::VaultReservation) b.funds.observedAt else 0,
     kind: if (after.commitment == C::VaultReservation) VaultHold else if (after.commitment == C::DirectAward) DirectHold
       else if (after.commitment == C::FullAwardHeld) FullAwardHold else ProposalHold }
 pure def withHold(id: int, after: C::PrivateCase, amount: M::Amount, b: Bounty): Bounty =
   { ...putCase(id, after, b), holds: b.holds.select(h => h.caseId != id).append(holdFor(b, id, after)),
     reserved: if (after.commitment == C::VaultReservation) M::addAmounts(b.reserved, amount) else b.reserved }
+```
+
+### A finalized vault payout settles its hold and keeps the record
+
+Only finalized payment evidence of the case's chosen gross amount settles a
+vault hold, once. The paid amount leaves the reserved total and the latest
+funds snapshot, which counted it; the hold stays, so the root cause keeps
+its one award.
+
+```quint
+type VaultPayout = { receipt: int, gross: M::Amount, finalized: bool }
+pure def openVaultHold(b: Bounty, id: int): bool = b.holds.some(h => h.caseId == id and h.kind == VaultHold and h.settledReceipt == 0)
+pure def canSettleVaultHold(b: Bounty, id: int, receipt: VaultPayout): bool = known(id) and openVaultHold(b, id)
+  and receipt.finalized and receipt.receipt > 0 and M::equalAmounts(receipt.gross, caseOf(b, id).grossChosen)
+  and M::compareAmounts(b.reserved, receipt.gross) >= 0
+pure def settleVaultHold(b: Bounty, id: int, receipt: VaultPayout): Bounty =
+  { ...b, holds: b.holds.listMap(h => if (h.caseId == id and h.kind == VaultHold) { ...h, settledReceipt: receipt.receipt } else h),
+    reserved: M::subtractAmounts(b.reserved, receipt.gross),
+    funds: { ...b.funds, free: if (M::compareAmounts(b.funds.free, receipt.gross) >= 0) M::subtractAmounts(b.funds.free, receipt.gross) else M::zero } }
+pure def openVaultGross(b: Bounty): M::Amount = b.holds.foldl(M::zero, (total, h) =>
+  if (h.kind == VaultHold and h.settledReceipt == 0) M::addAmounts(total, caseOf(b, h.caseId).grossChosen) else total)
+pure def alwaysReservedIsOpenVaultHolds(b: Bounty): bool = M::equalAmounts(b.reserved, openVaultGross(b))
+  and b.holds.every(h => h.settledReceipt == 0 or h.kind == VaultHold)
+pure def stepVaultHoldsKept(before: Bounty, after: Bounty): bool = before.holds.every(h => h.kind != VaultHold
+  or after.holds.some(g => g.caseId == h.caseId and g.kind == VaultHold and g.rootCause == h.rootCause and (h.settledReceipt == 0 or g == h)))
+pure def sometimesVaultHoldSettled(b: Bounty): bool = b.holds.some(h => h.settledReceipt > 0)
 ```
 
 ### Awards, related-party reviews and appeals go through the case with project clearance
@@ -183,6 +209,8 @@ pure val fundsValues = Set({ finalized: true, observedAt: 2, asset: "usdc", free
 pure val routeValues = Set({ asset: "usdc", qualified: true, observedAt: 2 }, { asset: "usdc", qualified: false, observedAt: 3 })
 pure val byValues = Set(1, 2, 4)
 pure val checkedEpochValues = Set(1)
+pure val receiptValues = Set({ receipt: 1, gross: List(100), finalized: true }, { receipt: 1, gross: List(100), finalized: false },
+  { receipt: 2, gross: List(4), finalized: true })
 pure val weight_decide = 6
 pure val weight_decideAward = 8
 pure val weight_receive = 5

@@ -44,7 +44,7 @@ type Queue = NeedsWallet | Ready | Processing | Submitted | Held | Indexed
 type AttemptState = NoAttempt | Prepared | Unknown | AttemptSubmitted | Failed | AttemptFinalized
 type Flow = NoFlow | LeaseRead | ClaimRead | AwaitReply | Parked
 type Binding = { claim: str, digest: str, address: str }
-type Target = { scope: Scope, network: Network, project: str, vault: str, obligation: str, actor: str,
+type Target = { scope: Scope, network: Network, project: str, vault: str, obligation: int, actor: int,
   asset: str, decimals: int, sourceDigest: str, termsDigest: str }
 type Attempt = { key: str, binding: Binding, status: AttemptState, tx: str }
 type DispatchRequest = { token: int, phase: Flow, binding: Binding, key: str }
@@ -58,7 +58,7 @@ type Dispatch = { admitted: bool, target: Target, queue: Queue, now: int, token:
   highestToken: int, wallet: Binding, authorized: List[Binding], requests: List[DispatchRequest],
   attempts: List[Attempt], inspections: List[Inspection], receipt: Receipt }
 pure val noBinding: Binding = { claim: "", digest: "", address: "" }
-pure val noTarget: Target = { scope: Ordinary, network: Base, project: "", vault: "", obligation: "", actor: "",
+pure val noTarget: Target = { scope: Ordinary, network: Base, project: "", vault: "", obligation: 0, actor: 0,
   asset: "", decimals: 0, sourceDigest: "", termsDigest: "" }
 pure val noAttempt: Attempt = { key: "", binding: noBinding, status: NoAttempt, tx: "" }
 pure val noRequest: DispatchRequest = { token: 0, phase: NoFlow, binding: noBinding, key: "" }
@@ -68,8 +68,8 @@ pure val noReceipt: Receipt = { target: noTarget, tx: "", eventIndex: 0, block: 
 pure val initial: Dispatch = { admitted: false, target: noTarget, queue: NeedsWallet, now: 0, token: 0, leaseUntil: 0,
   highestToken: 0, wallet: noBinding, authorized: List(), requests: List(), attempts: List(), inspections: List(),
   receipt: noReceipt }
-pure def validTarget(target: Target): bool = target.project != "" and target.vault != "" and target.obligation != ""
-  and target.actor != "" and target.asset != "" and target.decimals >= 0 and target.sourceDigest != "" and target.termsDigest != ""
+pure def validTarget(target: Target): bool = target.project != "" and target.vault != "" and target.obligation > 0
+  and target.actor > 0 and target.asset != "" and target.decimals >= 0 and target.sourceDigest != "" and target.termsDigest != ""
 pure def validBinding(binding: Binding): bool = binding.claim != "" and binding.digest != "" and binding.address != ""
 pure def canAdmit(d: Dispatch, target: Target, reservedEvidence: bool): bool = not(d.admitted) and reservedEvidence and validTarget(target)
 pure def admit(d: Dispatch, target: Target, reservedEvidence: bool): Dispatch = { ...d, admitted: true, target: target }
@@ -294,8 +294,8 @@ pure def sometimesRetried(d: Dispatch): bool = d.requests.some(a => d.requests.s
 The sampled identifiers and times bound simulation only.
 
 ```quint
-pure val ordinaryTarget: Target = { ...noTarget, project: "project", vault: "vault", actor: "contributor",
-  obligation: "award", asset: "token", decimals: 9, sourceDigest: "source", termsDigest: "terms" }
+pure val ordinaryTarget: Target = { ...noTarget, project: "project", vault: "vault", actor: 9,
+  obligation: 1, asset: "token", decimals: 9, sourceDigest: "source", termsDigest: "terms" }
 pure val privateTarget: Target = { ...ordinaryTarget, scope: PrivateBounty, network: Solana }
 pure val targetValues = Set(ordinaryTarget, privateTarget)
 pure val walletOne: Binding = { claim: "claim-one", digest: "claim-digest-one", address: "wallet-one" }

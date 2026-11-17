@@ -1,16 +1,16 @@
-lemma configure_ensures(p: Payment, purpose: Purpose, rail: PaymentRail, gross: seq<int>)
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysPaidEvidence(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysUnconfiguredEmpty(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysAdmittedAttempts(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectRail(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysVaultPhase(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> stepPaidPermanent(p, configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> stepObligationPermanent(p, configure(p, purpose, rail, gross)))
+lemma configure_ensures(p: Payment, purpose: Purpose, rail: PaymentRail, gross: seq<int>, target: settlement__paymentDispatch_Target)
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysConserved(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysPaidEvidence(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysCorrectFee(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysUnconfiguredEmpty(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysAdmittedAttempts(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysCorrectRail(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> alwaysVaultPhase(configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> stepPaidPermanent(p, configure(p, purpose, rail, gross, target)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross, target) ==> stepObligationPermanent(p, configure(p, purpose, rail, gross, target)))
 {
-  if inv(p) && canConfigure(p, purpose, rail, gross) {
-    var after := configure(p, purpose, rail, gross);
+  if inv(p) && canConfigure(p, purpose, rail, gross, target) {
+    var after := configure(p, purpose, rail, gross, target);
     if purpose.Ordinary? {
       settlement__money_lawOrdinaryAmountsValid_ensures(gross);
       settlement__money_lawFullOrdinaryConservation_ensures(gross);

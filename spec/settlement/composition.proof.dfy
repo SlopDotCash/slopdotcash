@@ -12,17 +12,17 @@ lemma deposit_ensures(s: Settlement, amount: seq<int>, asset: string, receipt: i
   }
 }
 
-lemma configure_ensures(s: Settlement, purpose: settlement__payment_Purpose, rail: settlement__payment_PaymentRail, gross: seq<int>)
-  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysIdentityMatches(configure(s, purpose, rail, gross)))
-  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysDispatchReserved(configure(s, purpose, rail, gross)))
-  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysCanonicalReceiptAgrees(configure(s, purpose, rail, gross)))
-  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))
-  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysPaidConsumesReserve(configure(s, purpose, rail, gross)))
+lemma configure_ensures(s: Settlement, purpose: settlement__payment_Purpose, rail: settlement__payment_PaymentRail, gross: seq<int>, target: settlement__paymentDispatch_Target)
+  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross, target) ==> alwaysIdentityMatches(configure(s, purpose, rail, gross, target)))
+  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross, target) ==> alwaysDispatchReserved(configure(s, purpose, rail, gross, target)))
+  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross, target) ==> alwaysCanonicalReceiptAgrees(configure(s, purpose, rail, gross, target)))
+  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross, target) ==> alwaysChildRules(configure(s, purpose, rail, gross, target)))
+  ensures (inv(s) ==> canConfigure(s, purpose, rail, gross, target) ==> alwaysPaidConsumesReserve(configure(s, purpose, rail, gross, target)))
 {
-  if inv(s) && canConfigure(s, purpose, rail, gross) {
+  if inv(s) && canConfigure(s, purpose, rail, gross, target) {
     assert settlement__vault_inv(s.vault) && settlement__payment_inv(s.payment);
-    settlement__payment_configure_ensures(s.payment, purpose, rail, gross);
-    assert settlement__payment_inv(configure(s, purpose, rail, gross).payment);
+    settlement__payment_configure_ensures(s.payment, purpose, rail, gross, target);
+    assert settlement__payment_inv(configure(s, purpose, rail, gross, target).payment);
   }
 }
 

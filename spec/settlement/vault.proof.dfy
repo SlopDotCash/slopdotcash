@@ -1,4 +1,4 @@
-lemma reserve_ensures(v: Vault, amount: seq<int>, actor: string, obligation: int)
+lemma reserve_ensures(v: Vault, amount: seq<int>, actor: int, obligation: int)
   ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysSettlementTotal(reserve(v, amount, actor, obligation)))
   ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysConserved(reserve(v, amount, actor, obligation)))
   ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysValidAmounts(reserve(v, amount, actor, obligation)))
@@ -26,7 +26,7 @@ lemma reserve_ensures(v: Vault, amount: seq<int>, actor: string, obligation: int
     assert forall r :: r in v.reservations ==> r.obligation in v.obligations;
     assert forall r :: r in v.reservations ==> r.obligation != obligation;
     forall r | r in after.reservations
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor > 0 &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
         |ProofLib.Filter((other: Reservation) => (other.obligation == r.obligation), after.reservations)| == 1
     {
@@ -40,7 +40,7 @@ lemma reserve_ensures(v: Vault, amount: seq<int>, actor: string, obligation: int
     SettlementHistoryMeaning(v);
     SettlementHistoryMeaning(after);
     forall r | r in after.settled
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" && r.recipient != "" && r.transaction != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor > 0 && r.recipient != "" && r.transaction != "" &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
         r.receipt > 0 && r.receipt in after.receipts && r.height > 0 &&
         !(exists pending :: pending in after.reservations && pending.obligation == r.obligation) &&
@@ -53,7 +53,7 @@ lemma reserve_ensures(v: Vault, amount: seq<int>, actor: string, obligation: int
   }
 }
 
-lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: string, actor: string, recipient: string, obligation: int, receipt: int, finalizedHeight: int, transaction: string)
+lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: string, actor: int, recipient: string, obligation: int, receipt: int, finalizedHeight: int, transaction: string)
   ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysSettlementTotal(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
   ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysConserved(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
   ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysValidAmounts(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
@@ -89,7 +89,7 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
     }
     ComputeVaultPaymentTotals(v, after, matched, amount, obligation, added);
     forall r | r in after.reservations
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor > 0 &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) && r.obligation != obligation &&
         |ProofLib.Filter((other: Reservation) => (other.obligation == r.obligation), after.reservations)| == 1
     {
@@ -98,7 +98,7 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
     }
     assert forall r :: r in v.settled ==> r.obligation != obligation;
     forall r | r in after.settled
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" && r.recipient != "" && r.transaction != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor > 0 && r.recipient != "" && r.transaction != "" &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
         r.receipt > 0 && r.receipt in after.receipts && r.height > 0 &&
         !(exists pending :: pending in after.reservations && pending.obligation == r.obligation) &&
@@ -119,14 +119,14 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
 }
 
 lemma ReservationIdentityMeaning(v: Vault)
-  ensures alwaysReservationIdentity(v) == !(exists r :: (r in v.reservations && !(r.obligation > 0 && r.obligation in v.obligations && r.actor != "" &&
+  ensures alwaysReservationIdentity(v) == !(exists r :: (r in v.reservations && !(r.obligation > 0 && r.obligation in v.obligations && r.actor > 0 &&
     settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
     |ProofLib.Filter((other: Reservation) => (other.obligation == r.obligation), v.reservations)| == 1)))
 {
 }
 
 lemma SettlementHistoryMeaning(v: Vault)
-  ensures alwaysSettlementHistory(v) == !(exists r :: (r in v.settled && !(r.obligation > 0 && r.obligation in v.obligations && r.actor != "" && r.recipient != "" && r.transaction != "" &&
+  ensures alwaysSettlementHistory(v) == !(exists r :: (r in v.settled && !(r.obligation > 0 && r.obligation in v.obligations && r.actor > 0 && r.recipient != "" && r.transaction != "" &&
     settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
     r.receipt > 0 && r.receipt in v.receipts && r.height > 0 &&
     !(exists pending :: pending in v.reservations && pending.obligation == r.obligation) &&

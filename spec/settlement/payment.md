@@ -6,7 +6,7 @@ PRD sections 3, 6, 8 and 10 require exact reconciliation before paid. One instan
 
 ### An approved obligation retains its immutable amount and purpose
 
-The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. The standard bounty vault is the private-standard rail owned here. The [direct standard award journal](./directBounty.md) owns independent EVM payment legs and the atomic Solana transfer. An approved full-award case requires its separately released payment rail. No full-award payment path exists yet (Slop AGENTS, 28 October 2026). Only the platform owner releases it, with a recorded owner decision, the reviewed revision that implements it and its qualification run; a project owner cannot. Until then the full-award obligation stays held.
+The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose, and binds its target: the award actor, obligation, project, vault and asset the approval names, with the scope its rail implies. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. The standard bounty vault is the private-standard rail owned here. The [direct standard award journal](./directBounty.md) owns independent EVM payment legs and the atomic Solana transfer. An approved full-award case requires its separately released payment rail. No full-award payment path exists yet (Slop AGENTS, 28 October 2026). Only the platform owner releases it, with a recorded owner decision, the reviewed revision that implements it and its qualification run; a project owner cannot. Until then the full-award obligation stays held.
 
 ```quint
 import money as M from "./money"
@@ -28,14 +28,15 @@ pure val initial: Payment = { configured: false, phase: AwaitingWallet, purpose:
   attempt: 0, attempts: List(), failedAttempts: List(), canonical: 0, finalizedHeight: 0,
   observedPrincipal: M::zero, observedFee: M::zero, fullRailReleased: false }
 pure val grossValues = Set(List(1), List(4), List(100), List(0, 1))
-pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): bool =
-  p.phase == AwaitingWallet and not(p.configured) and M::validAmount(gross) and M::positiveAmount(gross)
+pure val targetValues = Set(initial.target, { ...initial.target, actor: 8, obligation: 2 }, { ...initial.target, actor: 0 })
+pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount, target: D::Target): bool =
+  p.phase == AwaitingWallet and not(p.configured) and M::validAmount(gross) and M::positiveAmount(gross) and D::validTarget(target)
     and rail != DirectStandard and (purpose != PrivateStandard or M::privateSplitPossible(gross)) and railMatchesPurpose(purpose, rail)
-pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): Payment =
+pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount, target: D::Target): Payment =
   val fee = if (purpose == Ordinary) M::ordinaryFeeAmount(gross) else if (purpose == PrivateStandard) M::privateFeeAmount(gross) else M::zero
   val principal = if (purpose == Ordinary) M::ordinaryNetAmount(gross) else if (purpose == PrivateStandard) M::privateResearcherAmount(gross) else gross
-  { ...p, configured: true, purpose: purpose, rail: rail,
-    target: { ...p.target, scope: if (rail == StandardBountyVault) D::PrivateBounty else D::Ordinary }, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: principal }
+  { ...p, configured: true, purpose: purpose, rail: rail, obligation: target.obligation, vault: target.vault, asset: target.asset,
+    target: { ...target, scope: if (rail == StandardBountyVault) D::PrivateBounty else D::Ordinary }, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: principal }
 type RailRelease = { rail: PaymentRail, decision: str, reviewedRevision: int, qualificationRun: str }
 pure def canReleaseFullRail(p: Payment, release: RailRelease, by: str): bool =
   p.phase != Paid and p.configured and p.purpose == PrivateFull and not(p.fullRailReleased)
