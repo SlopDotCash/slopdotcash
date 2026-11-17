@@ -2183,9 +2183,9 @@
     },
     {
       "path": "functions/index.ts",
-      "sha256": "d835f9b6371c3778432240d1a5f66c3e153870991d675089ede31df42198219a",
+      "sha256": "ffaf2dd500320d675f6db393f114f201b926a47a7ff46310899134d40b6386f5",
       "models": [],
-      "candidateLines": [159, 160, 167, 203, 220, 229, 256],
+      "candidateLines": [161, 162, 169, 205, 222, 231, 258],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Transforms one successful HTML response by request host and path and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
     },

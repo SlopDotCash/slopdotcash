@@ -74,8 +74,8 @@ function renderSocialMetadata(contents: string, hostname: string): string {
 
 /**
  * Head tags for a page that a sponsor is sent to. The app shell carries the
- * home page's contributor headline, so a shared link to one of these paths
- * would otherwise preview as "make money shipping open source".
+ * home page's general headline, so a shared link to one of these paths
+ * needs its own offer and image.
  */
 type RouteMetadata = {
   canonicalPath: string;
@@ -85,10 +85,11 @@ type RouteMetadata = {
   imageUrl: string;
 };
 
-const SHELL_TITLE = "<title>Slop: make money shipping open source</title>";
-const SHELL_HEADLINE = 'content="MAKE MONEY SHIPPING OPEN SOURCE."';
+const SHELL_TITLE = "<title>Slop: ship and maintain open source</title>";
+const SHELL_HEADLINE = 'content="Slop: ship and maintain open source"';
+const SHELL_IMAGE_ALT = 'content="MAKE MONEY SHIPPING OPEN SOURCE."';
 const SHELL_DESCRIPTION =
-  'content="Pick important public work, run your best coding agent, and ship an accepted result on GitHub."';
+  'content="Contribute to open source or maintain your project with your coding agent."';
 
 const SPONSOR_METADATA: RouteMetadata = {
   canonicalPath: "/sponsors",
@@ -116,7 +117,8 @@ export function renderRouteMetadata(
 ): string {
   const replacements: ReadonlyArray<readonly [string, string, number]> = [
     [SHELL_TITLE, `<title>${metadata.title}</title>`, 1],
-    [SHELL_HEADLINE, `content="${metadata.headline}"`, 4],
+    [SHELL_HEADLINE, `content="${metadata.headline}"`, 2],
+    [SHELL_IMAGE_ALT, `content="${metadata.headline}"`, 2],
     [SHELL_DESCRIPTION, `content="${metadata.description}"`, 3],
     [
       'href="https://slop.cash/"',
