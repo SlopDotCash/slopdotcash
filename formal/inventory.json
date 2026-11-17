@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "bc6215d9399de3ecbf3dc24600e0eed051a525e3a84902273148ecc5c396bb10",
+      "sha256": "5e0b2df969095c1bc8f0ca3dd3f986477822c1340e62c7dff7ed90d718327fac",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -27,7 +27,7 @@
         36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
         738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1389, 1391, 1392,
         1596, 1679, 1832, 1834, 1864, 1973, 1995, 2066, 2077, 2102, 2173, 2186,
-        2199, 2208, 2209, 2210
+        2199, 2208, 2209, 2210, 2227
       ],
       "review": "mapped-abstraction"
     },

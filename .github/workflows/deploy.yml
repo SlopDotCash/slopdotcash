@@ -2221,18 +2221,62 @@ jobs:
           # Run this after Pages verification so an identity configuration
           # failure cannot suppress an unrelated, already-verified site fix.
           github_app_response="$RUNNER_TEMP/slop-identity-github-app.json"
-          github_app_status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 65536 \
-              --output "$github_app_response" \
-              --write-out "%{http_code}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              https://api.github.com/apps/slop-identity
-          )"
+          github_app_headers="$RUNNER_TEMP/slop-identity-github-app.headers"
+          # Unauthenticated API calls share a small per-address quota on hosted
+          # runners, so a 403 or 429 is often GitHub refusing the runner, not
+          # the App. Retry a few times before deciding.
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            github_app_status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --max-filesize 65536 \
+                --dump-header "$github_app_headers" \
+                --output "$github_app_response" \
+                --write-out "%{http_code}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                https://api.github.com/apps/slop-identity
+            )" || github_app_status=000
+            case "$github_app_status" in
+              200) break ;;
+              403|429|000)
+                if [ "$attempt" -lt 4 ]; then
+                  echo "GitHub answered HTTP $github_app_status for the public App lookup; retrying (attempt $attempt)."
+                  sleep $((attempt * 15))
+                  continue
+                fi
+                ;;
+            esac
+            break
+          done
           if [ "$github_app_status" != "200" ]; then
+            rate_limited=false
+            if [ "$github_app_status" = "429" ] || grep -qi '^x-ratelimit-remaining: 0' "$github_app_headers" 2>/dev/null; then
+              rate_limited=true
+            fi
+            if [ "$rate_limited" = true ]; then
+              # The API quota for this runner address is spent. The public App
+              # page answers 404 for a private or missing App, so a 200 still
+              # proves contributors can find it. The contract fields are
+              # checked on the next release whose lookup is not refused.
+              page_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 30 \
+                  --output /dev/null \
+                  --write-out "%{http_code}" \
+                  https://github.com/apps/slop-identity
+              )" || page_status=000
+              if [ "$page_status" = "200" ]; then
+                echo "::warning::GitHub's unauthenticated API quota for this runner was spent (HTTP $github_app_status); the public Slop Identity App page answered 200, so the App is still public. Contract fields were not re-read this release."
+                exit 0
+              fi
+              echo "::error::The Slop Identity GitHub App lookup was rate limited (HTTP $github_app_status) and its public page answered HTTP $page_status."
+              exit 1
+            fi
             echo "::error::The Slop Identity GitHub App is not publicly discoverable (HTTP $github_app_status)."
             exit 1
           fi
