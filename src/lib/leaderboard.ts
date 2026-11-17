@@ -123,6 +123,7 @@ import {
 import {
   isDeclaredModelIdentifier,
   isExactClientIdentifier,
+  isExactModelIdentifier,
   isExactProviderIdentifier,
   isExactProviderModelIdentifier,
   isUnavailableModelIdentifier,
@@ -905,11 +906,19 @@ function parseMarker(
 /**
  * exactIdentifier drops a provider repeated at the start of the model, so the
  * rest must still be an exact model: `openai / openai/unknown` names none.
+ * The rest is checked whole, so `openai/n/a` is not split inside `n/a`, and
+ * a model that is only the provider (`openai / openai`) names none either.
  */
 function isPublishableIdentity(provider: string, model: string): boolean {
+  const prefix = `${provider.toLowerCase()}/`;
+  const named = model.toLowerCase().startsWith(prefix)
+    ? model.slice(prefix.length)
+    : model;
   return (
     isUnavailableModelIdentifier(model) ||
-    isExactProviderModelIdentifier(exactIdentifier(provider, model))
+    (isExactModelIdentifier(named) &&
+      named.toLowerCase() !== provider.toLowerCase() &&
+      isExactProviderModelIdentifier(exactIdentifier(provider, model)))
   );
 }
 

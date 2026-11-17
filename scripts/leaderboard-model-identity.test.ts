@@ -57,11 +57,15 @@ function openIssueWithComment(body: string): IssueRecord {
   };
 }
 
-function snapshotWith(model: string, place: "merged body" | "issue comment") {
+function snapshotWith(
+  provider: string,
+  model: string,
+  place: "merged body" | "issue comment",
+) {
   setSystemTime(new Date(AFTER_NOVEMBER));
   const input = penaltyScoreInput([]);
   if (place === "merged body") {
-    const body = `Fixes a defect.\n\n${footer("openai", model)}`;
+    const body = `Fixes a defect.\n\n${footer(provider, model)}`;
     for (const pull of [
       ...input.mergedPullRequests,
       ...(input.mergedPullRequestOutcomes ?? []),
@@ -70,7 +74,7 @@ function snapshotWith(model: string, place: "merged body" | "issue comment") {
     }
   } else {
     input.openIssues = [
-      openIssueWithComment(`AI provider/model: openai / ${model}`),
+      openIssueWithComment(`AI provider/model: ${provider} / ${model}`),
     ];
   }
   const snapshot = createLeaderboardSnapshot(input);
@@ -85,16 +89,29 @@ function snapshotWith(model: string, place: "merged body" | "issue comment") {
 // exactIdentifier drops a provider repeated at the start of the model, so
 // `openai / openai/unknown` would publish `openai/unknown`, which the snapshot
 // validator refuses. Such a declaration names no exact model and must not
-// abort the whole snapshot.
+// abort the whole snapshot. A model that is only the provider, or a
+// placeholder with a slash, names none either and must not be published.
+const GPT = ["openai/gpt-5"];
+const ROUTED = ["openrouter/anthropic/claude-sonnet-5.5"];
 test.each([
-  ["openai/unavailable", "merged body"],
-  ["openai/unknown", "merged body"],
-  ["openai/gpt", "merged body"],
-  ["openai/unknown", "issue comment"],
-  ["openai/gpt-5", "merged body"],
-  ["openai/gpt-5", "issue comment"],
-] as const)("model %s declared in the %s", (model, place) => {
-  const { reported, issueModels } = snapshotWith(model, place);
-  const published = model === "openai/gpt-5" ? ["openai/gpt-5"] : [];
-  expect(place === "merged body" ? reported : issueModels).toEqual(published);
-});
+  ["openai", "openai/unavailable", "merged body", []],
+  ["openai", "openai/unknown", "merged body", []],
+  ["openai", "openai/gpt", "merged body", []],
+  ["openai", "openai/unknown", "issue comment", []],
+  ["openai", "openai", "merged body", []],
+  ["openai", "openai/OPENAI", "merged body", []],
+  ["openai", "OPENAI", "issue comment", []],
+  ["openai", "openai/n/a", "merged body", []],
+  ["openai", "openai/n/a", "issue comment", []],
+  ["openai", "openai/gpt-5", "merged body", GPT],
+  ["openai", "openai/gpt-5", "issue comment", GPT],
+  ["openrouter", ROUTED[0], "merged body", ROUTED],
+] as const)(
+  "%s / %s declared in the %s",
+  (provider, model, place, published) => {
+    const { reported, issueModels } = snapshotWith(provider, model, place);
+    expect(place === "merged body" ? reported : issueModels).toEqual([
+      ...published,
+    ]);
+  },
+);
