@@ -48,6 +48,23 @@ function validPage(value: unknown, sha: string) {
   );
 }
 
+function internPage<T>(
+  value: T,
+  sha: string,
+  internText: (text: string) => string,
+): T {
+  if (!validPage(value, sha)) return value;
+  const page = value as CommitChangeEvidence;
+  return {
+    ...page,
+    files: page.files.map((file) =>
+      typeof file.patch === "string"
+        ? { ...file, patch: internText(file.patch) }
+        : file,
+    ),
+  } as T;
+}
+
 /** Each wrapped client rechecks live public repository identity before reuse.
  * PRs, discussions and installation membership always reach GitHub. Pinned
  * policy bytes may be shared; policy parsing and enforcement still run each time.
@@ -55,18 +72,36 @@ function validPage(value: unknown, sha: string) {
 export function publicationCommitPages() {
   const pages = new Map<string, string>();
   const identities = new Map<string, string>();
+  const textPool = new Map<string, string>();
+  const internText = (text: string) => {
+    if (text.length < 1024) return text;
+    const existing = textPool.get(text);
+    if (existing !== undefined) return existing;
+    textPool.set(text, text);
+    return text;
+  };
   let bytes = 0;
   return <T extends EvidenceClient & Partial<Pick<GitHubClient, "fileText">>>(
     client: T,
   ): T => {
     const verified = new Set<string>();
     const wrapped = Object.create(client) as T;
+    const clientInternText = client.internText?.bind(client);
+    // This closure also survives capture and verified-file wrappers forwarding
+    // the optional hook without changing an existing client's receiver.
+    const shareText = (text: string) =>
+      internText(clientInternText?.(text) ?? text);
+    wrapped.internText = shareText;
     wrapped.get = async <R>(path: string): Promise<R | null> => {
       const match = pagePath.exec(path);
       const authorized = match && verified.has(match[1]);
       const saved = authorized ? pages.get(path) : undefined;
-      if (saved !== undefined) return JSON.parse(saved) as R;
-      const value = await client.get<R>(path);
+      if (saved !== undefined && match)
+        return internPage(JSON.parse(saved) as R, match[2], shareText);
+      let value = await client.get<R>(path);
+      // Capture retains raw files before the collector normalizes them. Share
+      // text even when a valid page exceeds the existing cache admission bounds.
+      if (match) value = internPage(value, match[2], shareText);
       if (repositoryPath.test(path)) {
         const live = value as {
           id?: number;
@@ -110,8 +145,17 @@ export function publicationCommitPages() {
         const authorized = shaPattern.test(ref) && verified.has(repository);
         const key = JSON.stringify([repository, path, ref, maxBytes]);
         const saved = authorized ? pages.get(key) : undefined;
-        if (saved !== undefined) return JSON.parse(saved);
-        const value = await fileText(owner, repo, path, ref, maxBytes);
+        if (saved !== undefined) {
+          const value = JSON.parse(saved);
+          return { ...value, text: shareText(value.text) };
+        }
+        let value = await fileText(owner, repo, path, ref, maxBytes);
+        if (
+          shaPattern.test(ref) &&
+          value?.truncated === false &&
+          typeof value.text === "string"
+        )
+          value = { ...value, text: shareText(value.text) };
         if (
           authorized &&
           value &&

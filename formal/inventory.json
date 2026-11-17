@@ -8922,9 +8922,9 @@
     },
     {
       "path": "workers/slopbot/value-commit-pages.ts",
-      "sha256": "f8caa6293a9eaad5256b9a444335d3c6946efeb1968398784816f13a0098b92d",
+      "sha256": "1a429dca6ba89ac0dac35898fd7893aecbaaf8d1d8c38575e8a66d56196da315",
       "models": ["formal/models/points/value_source_cache.qnt"],
-      "candidateLines": [38, 39, 76],
+      "candidateLines": [38, 39, 111],
       "review": "mapped-abstraction"
     },
     {
@@ -14472,14 +14472,21 @@
     },
     {
       "path": "formal/models/points/value_source_cache.qnt",
-      "sha256": "0bca3b7f14e34fb46cd248cab5bbf391a8d456a0fd1956e67744a01cf5db0aeb",
+      "sha256": "008f724577af4bebe934ccf4a86014015a97028a6c0df909ab4f1199c1c472ad",
       "sources": ["workers/slopbot/value-commit-pages.ts"],
       "scenarios": [
         "currentPublicIdentityPermitsReuseTest",
+        "exactRepeatedAndDistinctValuesTest",
         "incompleteCannotRetainTest",
         "mutableCannotRetainTest",
         "newClientNeedsRepositoryTest",
-        "privateRepositoryCannotReuseTest"
+        "oversizedUncachedTextStillSharesTest",
+        "poolLifetimeIsPublicationTest",
+        "privateClientCanShareButNotReplayTest",
+        "privateRepositoryCannotReuseTest",
+        "shortTextDoesNotEnterPoolTest",
+        "textSharingCannotReplayTest",
+        "textSharingDoesNotAuthorizeTest"
       ]
     },
     {
