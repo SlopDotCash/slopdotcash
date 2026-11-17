@@ -7,6 +7,7 @@ import { findProject } from "../../src/lib/projects.mjs";
 import {
   type Fetch,
   handleMergeActivityApi,
+  readIntakeCounts,
   refreshMergeActivity,
   summarizeMergeActivity,
 } from "./merge-activity";
@@ -19,6 +20,9 @@ function d1() {
   const sqlite = new Database(":memory:");
   sqlite.exec(
     readFileSync("migrations/0125_repository_merge_activity.sql", "utf8"),
+  );
+  sqlite.exec(
+    readFileSync("migrations/0134_merge_activity_open_outside.sql", "utf8"),
   );
   const prepare = (sql: string) => {
     let values: unknown[] = [];
@@ -43,10 +47,16 @@ function d1() {
   return { db: { prepare } as never, sqlite };
 }
 
-function project(status: "active" | "paused") {
+function project(status: "active" | "paused", intakeCap?: number) {
   const original = findProject("asi");
   if (!original) throw new Error("Missing registry fixture");
-  return assertProjectDefinition({ ...original, status });
+  return assertProjectDefinition({
+    ...original,
+    status,
+    ...(intakeCap === undefined
+      ? {}
+      : { slopbot: { automaticClosure: false, intakeCap } }),
+  });
 }
 
 /** The same project after a reviewed transfer of its repository to `path`. */
@@ -87,11 +97,46 @@ async function served(db: never) {
   return body.projects.find((p) => p.projectId === "asi")?.repositories ?? [];
 }
 
-/** A fake GitHub GraphQL endpoint answering the two queries. */
-function github(options: { fail?: boolean } = {}): Fetch {
+/**
+ * A fake GitHub GraphQL endpoint answering the queries. `more` lists the
+ * count-only pages that follow the first open page, as draft flags of
+ * outside pull requests; `calls` records which query each request made.
+ */
+function github(
+  options: { fail?: boolean; more?: boolean[][]; calls?: string[] } = {},
+): Fetch {
   return async (_url, init) => {
     if (options.fail) return new Response("{}", { status: 502 });
-    const body = JSON.parse(String(init.body)) as { query: string };
+    const body = JSON.parse(String(init.body)) as {
+      query: string;
+      variables: { after: string | null };
+    };
+    const counting =
+      !body.query.includes("search(") && !body.query.includes("reviews(");
+    options.calls?.push(
+      body.query.includes("search(") ? "merged" : counting ? "count" : "open",
+    );
+    if (counting) {
+      const page = Number(String(body.variables.after).replace("count-", ""));
+      const drafts = options.more?.[page] ?? [];
+      return Response.json({
+        data: {
+          repository: {
+            pullRequests: {
+              pageInfo: {
+                hasNextPage: page + 1 < (options.more?.length ?? 0),
+                endCursor: `count-${page + 1}`,
+              },
+              nodes: drafts.map((isDraft) => ({
+                isDraft,
+                authorAssociation: "NONE",
+                author: { __typename: "User" },
+              })),
+            },
+          },
+        },
+      });
+    }
     if (body.query.includes("search("))
       return Response.json({
         data: {
@@ -129,7 +174,9 @@ function github(options: { fail?: boolean } = {}): Fetch {
         repository: {
           latest: { nodes: [{ mergedAt: daysAgo(1) }] },
           pullRequests: {
-            pageInfo: { hasNextPage: false, endCursor: null },
+            pageInfo: options.more?.length
+              ? { hasNextPage: true, endCursor: "count-0" }
+              : { hasNextPage: false, endCursor: null },
             nodes: [
               // waiting: outside, 10 days, no maintainer response
               {
@@ -233,6 +280,129 @@ describe("merge activity", () => {
     expect(activity.mergedOutside30d).toBe(2);
     expect(activity.medianMergeHours).toBe(48);
     expect(activity.lastMergedAt).toBe(daysAgo(1));
+    // Open outside pull requests count whether or not a maintainer answered
+    // and whatever their age; drafts and a maintainer's own do not.
+    expect(activity.openOutside).toBe(3);
+    expect(activity.openOutsideCapped).toBe(false);
+  });
+
+  test("the same read stores every open outside pull request, answered or not", async () => {
+    const { db, sqlite } = d1();
+    const calls: string[] = [];
+    await refreshMergeActivity(
+      db,
+      [project("active")],
+      async () => "token",
+      github({ calls }),
+      NOW,
+    );
+    // Waiting, answered and recent count; the draft and the owner's do not.
+    expect(
+      sqlite
+        .query(
+          "SELECT open_outside, open_outside_capped FROM repository_merge_activity",
+        )
+        .get(),
+    ).toEqual({ open_outside: 3, open_outside_capped: 0 });
+    // A short open list needs no count-only page.
+    expect(calls).toEqual(["open", "merged"]);
+    const response = await handleMergeActivityApi(
+      new Request("https://slop.cash/api/v1/merge-activity"),
+      { db },
+    );
+    const body = (await response?.json()) as {
+      projects: Array<{ repositories: Array<Record<string, unknown>> }>;
+    };
+    expect(body.projects[0].repositories[0]).toMatchObject({
+      openOutside: 3,
+      openOutsideCapped: false,
+    });
+    expect((await readIntakeCounts(db)).get("asi")).toEqual([
+      { openOutside: 3, observedAt: NOW.toISOString() },
+    ]);
+  });
+
+  test("open pull requests past the waiting pages are counted in lighter pages", async () => {
+    const { db, sqlite } = d1();
+    const calls: string[] = [];
+    await refreshMergeActivity(
+      db,
+      [project("active")],
+      async () => "token",
+      // Two more pages: two ready and one draft, then one ready.
+      github({ calls, more: [[false, false, true], [false]] }),
+      NOW,
+    );
+    expect(
+      sqlite
+        .query(
+          "SELECT open_outside, open_outside_capped, waiting_outside FROM repository_merge_activity",
+        )
+        .get(),
+    ).toEqual({ open_outside: 6, open_outside_capped: 0, waiting_outside: 1 });
+    expect(calls).toEqual(["open", "count", "count", "merged"]);
+  });
+
+  test("a count that runs out of pages is stored as a floor", async () => {
+    const { db, sqlite } = d1();
+    await refreshMergeActivity(
+      db,
+      [project("active")],
+      async () => "token",
+      github({ more: Array.from({ length: 9 }, () => [false]) }),
+      NOW,
+    );
+    expect(
+      sqlite
+        .query(
+          "SELECT open_outside, open_outside_capped FROM repository_merge_activity",
+        )
+        .get(),
+    ).toEqual({ open_outside: 10, open_outside_capped: 1 });
+  });
+
+  test("a row read before the count was added serves no open count", async () => {
+    const { db, sqlite } = d1();
+    sqlite
+      .query(
+        `INSERT INTO repository_merge_activity
+           (project_id, repository, observed_at, attempted_at, waiting_outside,
+            waiting_capped, merged_outside_30d)
+         VALUES ('asi', 'SlopDotCash/asi', ?, ?, 0, 0, 0)`,
+      )
+      .run(NOW.toISOString(), NOW.toISOString());
+    const response = await handleMergeActivityApi(
+      new Request("https://slop.cash/api/v1/merge-activity"),
+      { db },
+    );
+    const body = (await response?.json()) as {
+      projects: Array<{ repositories: Array<Record<string, unknown>> }>;
+    };
+    expect(body.projects[0].repositories[0]).toMatchObject({
+      openOutside: null,
+      openOutsideCapped: false,
+    });
+    expect((await readIntakeCounts(db)).size).toBe(0);
+  });
+
+  test("a project with an intake cap is read again at the next hourly run", async () => {
+    const { db } = d1();
+    const capped = project("active", 20);
+    await refreshMergeActivity(db, [capped], async () => "t", github(), NOW);
+    const soon = new Date(NOW.getTime() + 30 * 60_000);
+    expect(
+      await refreshMergeActivity(db, [capped], async () => "t", github(), soon),
+    ).toEqual({ read: 0, failed: 0 });
+    const nextHour = new Date(NOW.getTime() + 60 * 60_000);
+    expect(
+      await refreshMergeActivity(
+        db,
+        [capped],
+        async () => "t",
+        github(),
+        nextHour,
+      ),
+    ).toEqual({ read: 1, failed: 0 });
   });
 
   test("a scheduled read stores the active project's repository and the API serves it", async () => {

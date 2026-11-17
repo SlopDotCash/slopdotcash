@@ -771,9 +771,12 @@
     },
     {
       "path": "backend/projects/merge-activity.ts",
-      "sha256": "108bed3fa102252aeb5b9193f184e00eaccd5e5d92193d3d399e87e7985255fe",
-      "models": ["formal/models/api/api_merge_activity.qnt"],
-      "candidateLines": [30, 167, 285, 341, 373, 378, 408, 411],
+      "sha256": "49e9f52614d158606faf4e8a0300f281341d926320ef5bb1da17ac2ac4bcf4ad",
+      "models": [
+        "formal/models/api/api_intake_cap.qnt",
+        "formal/models/api/api_merge_activity.qnt"
+      ],
+      "candidateLines": [36, 197, 356, 429, 461, 467, 501, 504],
       "review": "mapped-abstraction"
     },
     {
@@ -818,15 +821,16 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "sha256": "a6b17a0120796322487a37ad3b135a17caa681a3d6a278e9b52daa460a71a4bb",
+      "sha256": "0e16e3482658e95d80c93dbbd17b1420ad33a027117c82a6112c104fa5e4e2d9",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "candidateLines": [
-        152, 154, 164, 189, 223, 234, 261, 264, 272, 290, 295, 331
+        160, 162, 172, 197, 246, 258, 285, 288, 296, 314, 319, 355
       ],
       "review": "mapped-abstraction"
     },
@@ -2162,8 +2166,9 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "91fb4b7107ffe372371c78c2f83c35f96775742e0a9d099859a3f859b18e5c11",
+      "sha256": "defbc99c86f7d750e39b364087f3235399e6a41bdcac82f1752619d193c5622a",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
@@ -3528,6 +3533,13 @@
       "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
       "sha256": "cccfefe22c0b0d964f6feee80044b910207a4be0a46e7d71e4681717654daa36",
       "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0134_merge_activity_open_outside.sql",
+      "sha256": "64d598dc5768c7940f9e5eeb5f09e14414ed555c29631c47dcdddf1942415edf",
+      "models": ["formal/models/api/api_intake_cap.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5254,8 +5266,9 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "96f280b1161d22cb011fe182f4f433553c6e62a4fc8e7580ab20cd54c2e2797f",
+      "sha256": "bf3299de11bc5f0217eb7abb4b7dbb4a0a6789504107a8b261693b15a4431cbf",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
@@ -5273,14 +5286,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        7, 9, 291, 301, 311, 322, 331, 332, 333, 334, 335, 337, 338, 399, 454,
-        455, 456, 459, 482, 548, 579, 616, 657, 678, 752, 939, 954, 968, 978,
-        1016, 1018, 1021, 1085, 1088, 1090, 1094, 1095, 1103, 1122, 1126, 1134,
-        1135, 1142, 1146, 1181, 1225, 1228, 1245, 1246, 1296, 1299, 1302, 1303,
-        1304, 1305, 1309, 1312, 1332, 1334, 1411, 1412, 1417, 1418, 1423, 1461,
-        1462, 1465, 1466, 1469, 1470, 1489, 1490, 1496, 1501, 1503, 1507, 1508,
-        1566, 1576, 1607, 1609, 1634, 1635, 1652, 1653, 1664, 1666, 1679, 1682,
-        1693
+        7, 9, 296, 306, 316, 327, 336, 337, 338, 339, 340, 342, 343, 404, 459,
+        460, 461, 464, 487, 553, 584, 621, 662, 683, 757, 767, 958, 973, 987,
+        997, 1035, 1039, 1044, 1046, 1049, 1115, 1118, 1120, 1124, 1125, 1133,
+        1152, 1156, 1164, 1165, 1172, 1176, 1211, 1255, 1258, 1275, 1276, 1326,
+        1329, 1332, 1333, 1334, 1335, 1339, 1342, 1362, 1364, 1441, 1442, 1447,
+        1448, 1453, 1459, 1500, 1501, 1504, 1505, 1508, 1509, 1528, 1529, 1535,
+        1540, 1542, 1546, 1547, 1605, 1615, 1646, 1648, 1673, 1674, 1691, 1692,
+        1703, 1705, 1718, 1721, 1732
       ],
       "review": "mapped-abstraction"
     },
@@ -5799,8 +5812,9 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "71c0327b74c496c9d3b4285da8bf3b2902264d4e20a977578e1f1a0bbac9eaae",
+      "sha256": "144fd4bce5668fae8c233281ba068d97c69225b21c3062165c4523a2bb075182",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -5816,21 +5830,21 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        10, 144, 467, 470, 471, 472, 473, 474, 475, 476, 478, 481, 485, 490,
-        506, 517, 525, 526, 543, 559, 563, 581, 589, 597, 604, 607, 627, 642,
-        643, 975, 986, 987, 997, 1008, 1011, 1016, 1019, 1028, 1031, 1032, 1034,
-        1035, 1040, 1068, 1072, 1075, 1085, 1086, 1145, 1147, 1151, 1156, 1165,
-        1175, 1180, 1234, 1247, 1255, 1258, 1265, 1338, 1363, 1371, 1372, 1374,
-        1379, 1383, 1392, 1407, 1414, 1508, 1509, 1510, 1512, 1518, 1528, 1535,
-        1551, 1564, 1596, 1606, 1613, 1618, 1621, 1632, 1654, 1655, 1657, 1658,
-        1748, 1751, 1778, 2145, 2147, 2184, 2219, 2268, 2271, 2277, 2278, 2280,
-        2290, 2292, 2296, 2307, 2321, 2333, 2350, 2360, 2364, 2365, 2368, 2371,
-        2372, 2373, 2374, 2375, 2376, 2377, 2378, 2379, 2380, 2383, 2384, 2385,
-        2386, 2388, 2394, 2468, 2478, 2492, 2523, 2528, 2851, 2875, 2880, 2909,
-        2934, 2941, 2954, 2975, 2979, 2993, 3001, 3011, 3024, 3029, 3034, 3035,
-        3038, 3058, 3059, 3063, 3068, 3190, 3222, 3230, 3231, 3239, 3241, 3321,
-        3329, 3330, 3341, 3379, 3384, 3390, 3396, 3410, 3423, 3424, 3437, 3462,
-        3463, 3464
+        10, 145, 468, 471, 472, 473, 474, 475, 476, 477, 479, 482, 486, 491,
+        507, 518, 526, 527, 544, 560, 564, 582, 590, 598, 605, 608, 628, 643,
+        644, 976, 987, 988, 998, 1009, 1012, 1017, 1020, 1029, 1032, 1033, 1035,
+        1036, 1041, 1069, 1073, 1076, 1086, 1087, 1146, 1148, 1152, 1157, 1166,
+        1176, 1181, 1235, 1248, 1256, 1259, 1266, 1339, 1364, 1372, 1373, 1375,
+        1380, 1384, 1393, 1408, 1415, 1509, 1510, 1511, 1513, 1519, 1529, 1536,
+        1552, 1565, 1597, 1607, 1614, 1619, 1622, 1633, 1655, 1656, 1658, 1659,
+        1749, 1752, 1779, 2146, 2148, 2210, 2246, 2295, 2298, 2304, 2305, 2307,
+        2317, 2319, 2323, 2334, 2348, 2360, 2377, 2387, 2391, 2392, 2395, 2398,
+        2399, 2400, 2401, 2402, 2403, 2404, 2405, 2406, 2407, 2410, 2411, 2412,
+        2413, 2415, 2421, 2496, 2506, 2520, 2551, 2556, 2893, 2917, 2922, 2951,
+        2976, 2983, 2996, 3017, 3021, 3035, 3043, 3053, 3066, 3071, 3076, 3077,
+        3080, 3100, 3101, 3105, 3110, 3240, 3272, 3280, 3281, 3289, 3291, 3371,
+        3379, 3380, 3391, 3429, 3434, 3440, 3446, 3460, 3473, 3474, 3487, 3512,
+        3513, 3514
       ],
       "review": "mapped-abstraction"
     },
@@ -5885,14 +5899,15 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "6e323cd70105be9fc252ac12dd2178827d3acb1f198f0b0bab10833f00ba8a4f",
+      "sha256": "fda11cff7680ee68c308ff1af96ea3050f95f1b100af9821eaddaccfa5a8f5e1",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        222, 307, 318, 375, 404, 405, 407, 408, 441, 443, 454, 603, 604, 606,
-        607, 614, 663, 665, 764
+        223, 308, 319, 376, 405, 406, 408, 409, 442, 444, 455, 604, 605, 607,
+        608, 615, 648, 651, 674, 676, 775
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6454,6 +6469,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/intake-cap.mjs",
+      "sha256": "a6307f5b9212da00f73727d48b37bd517cf5b057b18c27016afbf14235115be2",
+      "models": ["formal/models/api/api_intake_cap.qnt"],
+      "candidateLines": [62],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/intake-drafts.ts",
       "sha256": "400ae102e4241308d24b2c13beda3ac61f9c132fbfd65d8c9a9ca1384b8c43f5",
       "models": [
@@ -6536,8 +6558,11 @@
     },
     {
       "path": "src/lib/merge-activity.ts",
-      "sha256": "d0c1bf1ce8577206cbf961bcbd726f5030aba0d1ffb447b912c386926d6bba0c",
-      "models": ["formal/models/api/api_merge_activity.qnt"],
+      "sha256": "3a53c93f2fbccbf4662eb95ccfe6d9565f9775c7f0f01bd24a541918aa48179d",
+      "models": [
+        "formal/models/api/api_intake_cap.qnt",
+        "formal/models/api/api_merge_activity.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6943,16 +6968,16 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "da713e508d4acf46b813efc32c8e8b6991d3eac4671c08fb6960d52122307113",
+      "sha256": "cf4f6c90a8961cac3610a2f127a9d202e1758566cad74687a6904f43e2086a35",
       "models": [
         "formal/models/api/project_repository_append.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
       "candidateLines": [
-        127, 332, 343, 348, 352, 353, 412, 418, 424, 427, 431, 435, 536, 539,
-        546, 549, 567, 593, 694, 695, 697, 702, 712, 1292, 1293, 1296, 1304,
-        1307, 1317, 1318, 1320, 1322, 1435, 1436, 1437, 1441, 1444, 1446, 1456,
-        1457, 1459, 1569
+        128, 333, 344, 349, 353, 354, 413, 419, 425, 428, 432, 436, 537, 540,
+        547, 550, 568, 594, 695, 696, 698, 703, 713, 1297, 1298, 1301, 1309,
+        1312, 1322, 1323, 1325, 1327, 1440, 1441, 1442, 1446, 1449, 1451, 1461,
+        1462, 1464, 1574
       ],
       "review": "mapped-abstraction"
     },
@@ -8720,6 +8745,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/intake-cap.ts",
+      "sha256": "125560c570228fd5977d9b101354f4908953abb8a5e42c1b1060e68fa1d119cb",
+      "models": ["formal/models/api/api_intake_cap.qnt"],
+      "candidateLines": [31, 52],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/maintainer-holds.ts",
       "sha256": "526b12a26b034913407f3409fcbef0171bd21261116e862dc851a75f008665a3",
       "models": ["formal/models/slopbot/bot_moderation.qnt"],
@@ -8861,8 +8893,9 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "0e7d95389c45072666afb81edb7ae7caada1083b9aae94e24a9b095e7b8f0f0a",
+      "sha256": "d3fda2a200dce3e516ae11dbc318e16bde1f471c2390d4494f63a658726533f8",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -8874,13 +8907,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 155, 269, 284, 293, 303, 306, 498, 652, 799, 828, 838, 973, 978, 983,
-        985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
-        1090, 1141, 1163, 1164, 1172, 1177, 1278, 1280, 1300, 1319, 1396, 1401,
-        1485, 1600, 1607, 1608, 1643, 1660, 1663, 1664, 1826, 1831, 1893, 1906,
-        1911, 1918, 1919, 1923, 1924, 1932, 1948, 2005, 2152, 2212, 2218, 2229,
-        2255, 2285, 2310, 2318, 2341, 2346, 2422, 2423, 2473, 2508, 2559, 2704,
-        2961, 3036, 3202, 3213, 3221, 3319, 3320, 3360, 3410, 3424, 3440
+        3, 156, 270, 285, 294, 304, 307, 499, 653, 800, 829, 839, 974, 979, 984,
+        986, 989, 991, 992, 1003, 1006, 1008, 1065, 1066, 1068, 1069, 1085,
+        1091, 1142, 1164, 1165, 1173, 1178, 1279, 1281, 1301, 1320, 1398, 1403,
+        1512, 1627, 1634, 1635, 1670, 1687, 1690, 1691, 1853, 1858, 1920, 1933,
+        1938, 1945, 1946, 1950, 1951, 1959, 1975, 2032, 2179, 2239, 2245, 2256,
+        2282, 2312, 2337, 2345, 2368, 2373, 2449, 2450, 2500, 2535, 2586, 2731,
+        2988, 3063, 3229, 3240, 3248, 3346, 3347, 3387, 3437, 3451, 3467
       ],
       "review": "mapped-abstraction"
     },
@@ -9994,6 +10027,41 @@
         "completedSourceHiddenTest",
         "gapSurvivesExhaustionTest",
         "laterGapRemainsTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_intake_cap.qnt",
+      "sha256": "5415d61afba6ecd27d63384e9071fe4a64452874a718a35d5807203431f644fa",
+      "sources": [
+        "backend/projects/merge-activity.ts",
+        "backend/projects/skill-publication.ts",
+        "functions/[[path]].ts",
+        "migrations/0134_merge_activity_open_outside.sql",
+        "src/App.tsx",
+        "src/ProjectProposalPage.tsx",
+        "src/PublicPages.tsx",
+        "src/lib/intake-cap.mjs",
+        "src/lib/merge-activity.ts",
+        "workers/slopbot/intake-cap.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "belowTheNumberIsListedTest",
+        "clearingTheNumberListsAgainTest",
+        "comesBackByItselfTest",
+        "failedBrowserReadListsAsBeforeTest",
+        "failedReadKeepsTheLastCountTest",
+        "failedServerReadListsAsBeforeTest",
+        "maintainerPullRequestIsReviewedTest",
+        "mergedWorkScoresWhilePausedTest",
+        "neverReadPausesNothingTest",
+        "newOutsidePullRequestIsSkippedTest",
+        "offByDefaultTest",
+        "pausedProjectKeepsItsListingTest",
+        "pausesAtTheNumberTest",
+        "reviewedPullRequestKeepsItsReviewsTest",
+        "skippedPullRequestIsReviewedBelowTheNumberTest",
+        "staleCountPausesNothingTest"
       ]
     },
     {
