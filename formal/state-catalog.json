@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "73cb6fd354856ba46fc43c5f9c0ad9fef32f0bccf36235c22f80c0d643b52959",
+  "inventorySha256": "af1b1e68d1681c7956a79aaab79bb0b473c14618a37c68fec0174e95cfdb4091",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2577,6 +2577,35 @@
         "published Points validation",
         "reviewed packet"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/run-reviewed-historical-points.ts",
+      "line": 572,
+      "name": "PublicationPhase",
+      "kind": "string-union",
+      "values": [
+        "accepted squash verification",
+        "apply authority recheck",
+        "enforcement checkpoint read",
+        "financial protection verification",
+        "historical Points reconstruction",
+        "historical census verification",
+        "import preparation",
+        "main source verification",
+        "owner authority verification",
+        "private packet read",
+        "project and repository verification",
+        "protected import and readback",
+        "public Points read",
+        "published checkpoint verification",
+        "recipient and account restriction verification",
+        "reviewed packet validation",
+        "trusted invocation",
+        "value record verification"
+      ],
+      "models": ["formal/models/points/source_import.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
