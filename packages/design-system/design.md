@@ -9,7 +9,8 @@ not force.
   `muted` and `secondary` are quiet fills, `accent` the hover and selection fill.
 - **Text.** `foreground` by default, `muted-foreground` for what matters less. Every `x-foreground` is the
   text color on `x`, and each pair meets WCAG AA in both themes.
-- **Meaning.** `primary` is the one accent: the main action, links and the focus `ring`. `ok`, `warn`,
+- **Meaning.** `primary` is the one accent: the main action, links and the focus `ring`. The main action
+  turns `primary-hover` under the pointer and `primary-pressed` while pressed. `ok`, `warn`,
   `destructive` and `info` are states, never decoration, and always travel with an icon or a word.
 - **Boundaries.** `input` outlines a field and `ring` shows focus; both meet 3:1 against the page and a card
   (WCAG 1.4.11). `border` divides content and is decorative.
@@ -51,13 +52,12 @@ in oklch: `bg` #0f0e0c is `background` oklch(0.164 0.004 84.6), `surface` #1a181
 `success` #3ddc84 is `ok` oklch(0.793 0.18 154), `warning` #ffb020 is `warn` oklch(0.813 0.165 75) and
 `danger` #ff6b6b is `destructive` oklch(0.712 0.181 22.8). Its `radius.small` 6px, `medium` 8px, `large`
 12px and `pill` are `rounded-md`, `-lg`, `-xl` and `rounded-full`; `size` is the control heights above, and
-`motion.fast` and `ease` are `fast` and `standard`. `faint` #77716a (oklch(0.552 0.013 71.8)), `accentHover`
-#ff7a42 (oklch(0.726 0.177 42)), `accentPressed` #d9480f (oklch(0.6 0.19 37.9)), `lineStrong` and the
-translucent `line` and `inputBorder` have no token: the token schema of `vibestack/design` holds a fixed set
-of colors and one radius. This is an open gap, not a decision: development's button hover (`accentHover`),
-pressed state and raised, faint disabled look are not ported, and buttons still darken the accent on hover
-and fade to half opacity while inactive, until that schema takes more colors and `size` and `radius`
-groups. The type, weight, leading, tracking, layer and focus values above came from development's
+`motion.fast` and `ease` are `fast` and `standard`. `accentHover` #ff7a42 is `primary-hover` oklch(0.726 0.177
+42). `accentPressed` #d9480f is `primary-pressed` at oklch(0.605 0.19 37.9), a step lighter than its oklch(0.6
+0.19 37.9), because #0f0e0c on #d9480f is 4.49:1, under AA. The translucent `line`, `lineStrong` and
+`inputBorder` are `border-foreground/10`, `/22` and `/18`, not tokens. `faint` #77716a is not ported: it is
+3.9:1 on the page, so it cannot carry text, and inactive controls fade to half opacity instead of
+development's raised, faint look. The type, weight, leading, tracking, layer and focus values above came from development's
 stylesheets, with near-duplicates merged: line heights 0.86 to 0.98 are `display`, 1.1 and 1.15 `tight`,
 1.3 and 1.35 `snug`, 1.55 to 1.65 `body`, 1.4 and 1.45 `text-ui`'s; letter spacing -0.03em is `tight`'s
 -0.02em, -0.06em `display`'s -0.055em, and 0.12em and 0.13em `label`'s 0.08em. Its 45 fluid `clamp()`
@@ -90,6 +90,8 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `popover-foreground` | oklch(0.164 0.004 84.6) | oklch(0.953 0.013 86.8) |
 | `primary` | oklch(0.528 0.17 37.4) | oklch(0.682 0.212 38.4) |
 | `primary-foreground` | oklch(1 0 0) | oklch(0.164 0.004 84.6) |
+| `primary-hover` | oklch(0.48 0.16 37.4) | oklch(0.726 0.177 42) |
+| `primary-pressed` | oklch(0.44 0.15 37.4) | oklch(0.605 0.19 37.9) |
 | `secondary` | oklch(0.917 0.016 86.4) | oklch(0.249 0.01 80.6) |
 | `secondary-foreground` | oklch(0.164 0.004 84.6) | oklch(0.953 0.013 86.8) |
 | `muted` | oklch(0.917 0.016 86.4) | oklch(0.249 0.01 80.6) |
