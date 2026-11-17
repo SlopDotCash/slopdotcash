@@ -1733,7 +1733,7 @@ function earlierAcceptanceFixture() {
   return f;
 }
 
-function mixedSubmittedAndSquashFixture() {
+function mixedSubmittedAndSquashFixture(perPathNative = false) {
   const f = earlierAcceptanceFixture();
   const retirement = f.retirement;
   const proof = retirement.earlierAcceptanceProof;
@@ -1746,7 +1746,30 @@ function mixedSubmittedAndSquashFixture() {
       .digest("hex");
   const rawSquash = `tree ${"f".repeat(40)}\nparent ${proof.sourceBaseSha}\nauthor Human <human@example.test> 2 +0000\ncommitter Human <human@example.test> 2 +0000\n\nsquash work\n`;
   const squashSha = oid(rawSquash);
-  const nativeHead = retirement.source.headSha;
+  let nativeHead = retirement.source.headSha;
+  let submittedHeadCommit = proof.objects[0].raw;
+  if (perPathNative) {
+    submittedHeadCommit = `tree ${"f".repeat(40)}\nparent ${nativeHead}\nauthor Human <human@example.test> 2 +0000\ncommitter Human <human@example.test> 2 +0000\n\nsubmitted follow-up\n`;
+    const submittedSha = oid(submittedHeadCommit);
+    const submittedCommit = {
+      ...prior.commits[0],
+      sha: submittedSha,
+      parentShas: [nativeHead],
+      files: [{ path: "submitted.ts", additions: 1, deletions: 0 }],
+    };
+    prior.headSha = submittedSha;
+    prior.commits.push(submittedCommit);
+    prior.commitCount = prior.commits.length;
+    retirement.source.commits.push(structuredClone(submittedCommit));
+    proof.contextSources[0].headSha = submittedSha;
+    proof.objects.push({ sha: submittedSha, raw: submittedHeadCommit });
+    const audited = f.packet.sourceAudit.sources.find(
+      (source) => source.id === prior.sourceId,
+    );
+    if (!audited) throw Error("fixture prior audit");
+    audited.headSha = submittedSha;
+    nativeHead = submittedSha;
+  }
   const rawHead = `tree ${"f".repeat(40)}\nparent ${nativeHead}\nparent ${squashSha}\nauthor Human <human@example.test> 3 +0000\ncommitter Human <human@example.test> 3 +0000\n\npromotion head\n`;
   const headSha = oid(rawHead);
   const rawMerge = `tree ${"f".repeat(40)}\nparent ${proof.sourceBaseSha}\nparent ${headSha}\nauthor Human <human@example.test> 4 +0000\ncommitter Human <human@example.test> 4 +0000\n\naccepted promotion\n`;
@@ -1768,7 +1791,7 @@ function mixedSubmittedAndSquashFixture() {
       headSha: prior.headSha,
       occurredAt: prior.occurredAt ?? "",
       author: prior.author,
-      headCommit: proof.objects[0].raw,
+      headCommit: submittedHeadCommit,
       acceptedCommit: rawSquash,
       commit: { ...squashCommit, firstAcceptedSourceId: prior.sourceId },
     },
@@ -1795,7 +1818,7 @@ function mixedSubmittedAndSquashFixture() {
       paths: [],
     },
   });
-  retirement.source.commitCount = 3;
+  retirement.source.commitCount = retirement.source.commits.length;
   f.packet.sourceAudit.sources[0].headSha = headSha;
   proof.contextSources[0].mergeSha = squashSha;
   proof.objects.push(
@@ -1804,6 +1827,15 @@ function mixedSubmittedAndSquashFixture() {
   );
   retirement.coverage = [
     { commitSha: squashSha, path: "squashed.ts", sourceId: prior.sourceId },
+    ...(perPathNative
+      ? [
+          {
+            commitSha: nativeHead,
+            path: "submitted.ts",
+            sourceId: prior.sourceId,
+          },
+        ]
+      : []),
   ];
   retirement.acceptedPromotion = {
     headCommit: rawHead,
@@ -1852,6 +1884,24 @@ test("one prior PR can cover its exact submitted commit and different squash out
   expect(
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toEqual(f.expected);
+});
+
+test("mixed source path coverage keeps submitted and accepted squash roles separate", () => {
+  const f = mixedSubmittedAndSquashFixture(true);
+  f.bind();
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+  const submitted = f.retirement.source.commits.find((commit) =>
+    commit.files?.some((file) => file.path === "submitted.ts"),
+  );
+  if (!submitted?.files) throw Error("fixture submitted path");
+  submitted.files[0].additions = 2;
+  submitted.additions = 2;
+  f.bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Earlier source does not cover the exact duplicate claim");
 });
 
 for (const change of [
