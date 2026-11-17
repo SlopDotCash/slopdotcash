@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "57ca510f185846f28ea4e83d962ffd933902330dfba31035f3910cb58d02e399",
+  "inventorySha256": "aba6527b13c9dd580b165ad7c6bf6a35120d0e20e100c2b8362af0ebdf99a234",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -111,8 +111,44 @@
       "review": "candidate-only"
     },
     {
+      "path": "backend/projects/cloudflare-persistence.ts",
+      "line": 447,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["expired", "refused"],
+      "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_project_creation_completion.qnt",
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
+        "formal/models/referrals/referrer_attribution.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/projects/contracts.ts",
+      "line": 84,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["expired", "refused"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "backend/projects/handler.ts",
-      "line": 2463,
+      "line": 2631,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -126,6 +162,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
@@ -147,7 +184,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2667,
+      "line": 2835,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -161,6 +198,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
@@ -1920,6 +1958,16 @@
       "values": ["not-ready", "off", "ready"],
       "models": ["formal/models/slopbot/bot_ready_label.qnt"],
       "lexicallyUnmentionedValues": ["not-ready", "off", "ready"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0132_saved_vault_creations.sql",
+      "line": 16,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["expired", "refused", "registered", "waiting"],
+      "models": ["formal/models/api/api_saved_vault_creation.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

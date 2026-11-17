@@ -644,7 +644,7 @@
     },
     {
       "path": "backend/projects/cloudflare-persistence.ts",
-      "sha256": "3f465e0271811adc5fa976f16b5a6eb243c63a2f654f1b0ce74e14ae3621ea00",
+      "sha256": "03ce0e8ff0f3550a1cd964071434a55fee3ec563862dd1490c40a00502a81400",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -652,27 +652,30 @@
         "formal/models/api/api_project_removal.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
         "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
-        26, 32, 33, 43, 66, 80, 82, 99, 129, 216, 250, 268, 410, 427, 443, 462,
-        465, 472, 475, 490, 491, 508, 509, 520, 521, 523, 547, 552, 553, 556,
-        584, 600, 621, 622, 627, 641, 657, 665, 814, 829, 839, 847, 867, 868,
-        873
+        30, 36, 37, 47, 70, 84, 86, 103, 133, 220, 254, 272, 346, 349, 351, 355,
+        356, 357, 363, 389, 426, 428, 438, 439, 447, 453, 454, 455, 457, 469,
+        470, 472, 556, 573, 589, 608, 611, 618, 621, 636, 637, 654, 655, 666,
+        667, 669, 693, 698, 699, 702, 730, 746, 767, 768, 773, 787, 803, 811,
+        960, 975, 985, 993, 1013, 1014, 1019
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/projects/contracts.ts",
-      "sha256": "99a7439212d73c0a29503f1a3464fe10432934202e55eeb6d75419bf3d0f25e8",
+      "sha256": "a0b9f0a396aed27e1105304b76d335e5a96afd424d7e3ac6a453fc06b71b92cb",
       "models": [
         "formal/models/api/api_project_registry.qnt",
-        "formal/models/api/api_project_removal.qnt"
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt"
       ],
-      "candidateLines": [19, 20, 57, 64, 78],
+      "candidateLines": [19, 20, 84, 109, 116, 130],
       "review": "mapped-abstraction"
     },
     {
@@ -717,7 +720,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "d7b50e2db234ce8a2d6c3814ccef1b534c7ee79e30bc051ecb255fde73c8bf79",
+      "sha256": "3fe9fb48a21374a6d1e8a2ffcaf406502df4bd089f3b97affa05854a19f82779",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -728,6 +731,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
@@ -745,16 +749,16 @@
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "candidateLines": [
-        167, 172, 182, 186, 244, 269, 274, 301, 302, 304, 306, 355, 439, 446,
-        452, 456, 457, 465, 531, 535, 866, 903, 919, 1015, 1029, 1034, 1041,
-        1042, 1045, 1048, 1066, 1068, 1070, 1081, 1099, 1106, 1117, 1149, 1150,
-        1166, 1172, 1181, 1183, 1188, 1189, 1190, 1191, 1203, 1204, 1205, 1208,
-        1213, 1252, 1311, 1361, 1395, 1413, 1481, 1563, 1574, 1577, 1578, 1588,
-        1592, 1612, 1654, 1660, 1664, 1682, 1688, 1724, 1732, 1735, 1736, 1786,
-        1787, 1788, 1808, 1853, 1854, 1862, 1882, 1884, 1888, 1899, 1909, 1924,
-        1930, 1940, 1977, 1996, 2000, 2051, 2196, 2200, 2227, 2248, 2249, 2263,
-        2266, 2271, 2272, 2318, 2332, 2350, 2367, 2399, 2408, 2552, 2578, 2729,
-        2749, 2795, 2835, 2846, 2847, 2960, 2968, 2986, 3183
+        168, 173, 183, 187, 245, 270, 275, 302, 303, 305, 307, 356, 440, 447,
+        453, 457, 458, 466, 532, 536, 867, 904, 920, 1016, 1030, 1035, 1042,
+        1043, 1046, 1049, 1067, 1069, 1071, 1082, 1100, 1107, 1118, 1150, 1151,
+        1167, 1173, 1182, 1184, 1189, 1190, 1191, 1192, 1204, 1205, 1206, 1209,
+        1214, 1253, 1312, 1362, 1398, 1416, 1490, 1572, 1583, 1610, 1611, 1624,
+        1634, 1668, 1726, 1727, 1780, 1822, 1828, 1832, 1850, 1856, 1892, 1900,
+        1903, 1904, 1954, 1955, 1956, 1976, 2021, 2022, 2030, 2050, 2052, 2056,
+        2067, 2077, 2092, 2098, 2108, 2145, 2164, 2168, 2219, 2364, 2368, 2395,
+        2416, 2417, 2431, 2434, 2439, 2440, 2486, 2500, 2518, 2535, 2567, 2576,
+        2720, 2746, 2897, 2917, 2963, 3003, 3014, 3015, 3128, 3136, 3154, 3353
       ],
       "review": "mapped-abstraction"
     },
@@ -3503,6 +3507,13 @@
         "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [3, 7, 8, 39, 40, 50],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0132_saved_vault_creations.sql",
+      "sha256": "095f0ea6651de1dd38da6fe3d8b8ee7bb35746b997d8cbecbfecf2a907bb2aa7",
+      "models": ["formal/models/api/api_saved_vault_creation.qnt"],
+      "candidateLines": [2, 16, 25],
       "review": "mapped-abstraction"
     },
     {
@@ -7354,7 +7365,7 @@
     },
     {
       "path": "src/lib/vault-auto-register.ts",
-      "sha256": "8b2c62e859525820974d1c528fbd623a2d86e636ef6191e5a28f33c5c2b21111",
+      "sha256": "7da084386a6a73ae532d37bc078c52475510b4169c2e0db80d2302065964b488",
       "models": ["formal/models/ui/ui_vault_auto_register.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -10563,6 +10574,24 @@
         "brokenPaymentAllowsSignoutTest",
         "brokenPaymentCannotPayTest",
         "changedActorCannotReadTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_saved_vault_creation.qnt",
+      "sha256": "a14a912ce66bc99f1e3bb241a376001304307543a13d4c35b2e630ce6a396ee1",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/contracts.ts",
+        "backend/projects/handler.ts",
+        "migrations/0132_saved_vault_creations.sql"
+      ],
+      "scenarios": [
+        "expiredRequestWaitsAgainTest",
+        "expiryEndsWithoutRegisteringTest",
+        "failedCreationEndsTest",
+        "lostAccessWaitsTest",
+        "ownerClosesSavedRequestTest",
+        "serverFinishesTest"
       ]
     },
     {
