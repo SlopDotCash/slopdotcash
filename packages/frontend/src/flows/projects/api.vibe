@@ -1,0 +1,80 @@
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { cancelApplication, checkSetup, createProject as createRoute, listSetup, myApplications, publishApplication, removeProject as removeRoute, reviseProject } from "@repo/backend/client"
+import { call } from "../../platform/api.vibe"
+import { Session } from "../../session/session.vibe"
+
+export const projectReplyLimitBytes = 2_097_152
+
+export const editorAccountChanged = "Your account changed. Review this project with your current account."
+
+export error EditorAccountChanged { message: string }
+
+export interface NewProject {
+  readonly manifest: unknown
+  readonly referrer: string | null
+  readonly monthlyAmount: string | null
+  readonly expectedActor: string
+}
+
+export interface ProjectRevision {
+  readonly projectId: string
+  readonly manifest: unknown
+  readonly expectedRevision: number
+  readonly note: string
+  readonly monthlyAmount: string | null
+  readonly expectedActor: string
+}
+
+function options(expectedActor: string) {
+  return { limitBytes: projectReplyLimitBytes, expectedActor }
+}
+
+export effect function requireEditorActor(actorGithubId: string) {
+  const current = try (try Session).current()
+  if (current?.githubId !== actorGithubId) throw new EditorAccountChanged({ message: editorAccountChanged })
+  return current
+}
+
+export effect function createProject(project: NewProject) {
+  const body = {
+    manifest: project.manifest,
+    ...(project.referrer === null ? {} : { referrer: project.referrer }),
+    ...(project.monthlyAmount === null ? {} : { monthlyAmount: project.monthlyAmount }),
+  }
+  return try call(createRoute, { body }, options(project.expectedActor))
+}
+
+export effect function publishRevision(revision: ProjectRevision) {
+  const reason = revision.note.trim()
+  const body = {
+    manifest: revision.manifest,
+    expectedRevision: revision.expectedRevision,
+    ...(reason === "" ? {} : { reason }),
+    ...(revision.monthlyAmount === null ? {} : { monthlyAmount: revision.monthlyAmount }),
+  }
+  return try call(reviseProject, { body, params: { id: revision.projectId } }, options(revision.expectedActor))
+}
+
+export effect function removeProject(projectId: string, expectedRevision: number, expectedActor: string) {
+  return try call(removeRoute, { body: { expectedRevision }, params: { id: projectId } }, options(expectedActor))
+}
+
+export effect function setupList(expectedActor: string) {
+  return try call(listSetup, {}, options(expectedActor))
+}
+
+export effect function checkProjectSetup(projectId: string, requestScan: boolean, expectedActor: string) {
+  return (try call(checkSetup, { body: requestScan ? { requestScan: true } : {}, params: { id: projectId } }, options(expectedActor))).setup
+}
+
+export effect function applicationsOf(expectedActor: string) {
+  return (try call(myApplications, {}, options(expectedActor))).applications
+}
+
+export effect function publishStoredApplication(applicationId: string, expectedActor: string) {
+  return try call(publishApplication, { body: {}, params: { id: applicationId } }, options(expectedActor))
+}
+
+export effect function cancelProjectApplication(applicationId: string, expectedActor: string) {
+  return (try call(cancelApplication, { body: {}, params: { id: applicationId } }, options(expectedActor))).application
+}

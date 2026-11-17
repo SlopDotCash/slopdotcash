@@ -1,0 +1,54 @@
+// spec/security/bounty.md, "One root cause holds at most one proposal or award obligation"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"
+import { D1, RowMismatch, first, sql } from "@repo/platform/d1"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { frozenAsset, isFullAwardSplit, networkOf } from "../program/manifest.ts"
+
+schema Approved {
+  id: string
+  project_id: string
+  policy_revision: number | null
+  terms: string | null
+  root_cause_key: string | null
+  gross: string | null
+  direct: number
+  approved_at: string | null
+  approved_revision: number | null
+}
+
+const approvals = sql`('award', 'decide', 'decide-related-party', 'approve-award', 'reserve-award')`
+
+export effect function approvedAward(caseId: string) {
+  const found = try first(Approved, sql`SELECT c.id, c.project_id, c.policy_revision, c.terms, c.root_cause_key,
+    COALESCE(d.gross_base, r.gross_minor, c.award_gross_base, c.award_gross_minor) AS gross,
+    d.case_id IS NOT NULL AS direct,
+    COALESCE(d.approved_at, (SELECT e.at FROM security_case_events e WHERE e.case_id = c.id AND e.kind IN ${approvals} ORDER BY e.case_revision DESC LIMIT 1)) AS approved_at,
+    (SELECT e.case_revision FROM security_case_events e WHERE e.case_id = c.id AND e.kind IN ${approvals} ORDER BY e.case_revision DESC LIMIT 1) AS approved_revision
+    FROM security_cases c LEFT JOIN security_direct_awards d ON d.case_id = c.id LEFT JOIN security_award_reservations r ON r.case_id = c.id
+    WHERE c.id = ${caseId} AND c.award_state = 'approved'`)
+  if (found === undefined || found.terms === null || found.gross === null || found.policy_revision === null || found.approved_at === null || found.approved_revision === null) return undefined
+  const text = found.terms
+  const terms = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: "approved case terms", issue: "not JSON" }) })
+  const asset = frozenAsset(terms)
+  if (asset === undefined) return undefined
+  const split = typeof terms === "object" && terms !== null ? Object.getOwnPropertyDescriptor(terms, "split")?.value : undefined
+  return {
+    caseId: found.id,
+    projectId: found.project_id,
+    caseRevision: found.approved_revision,
+    termsRevision: found.policy_revision,
+    direct: found.direct === 1,
+    split: isFullAwardSplit(split) ? "FullAward" : "StandardSplit",
+    grossBaseUnits: found.gross,
+    asset: asset.address,
+    rootCauseKey: found.root_cause_key ?? "",
+    approvedAt: found.approved_at,
+    network: networkOf(asset.chain),
+  } satisfies ApprovedAward
+}
+
+export const approvedAwardsLive = Layer.effect(ApprovedAwards, effect {
+  const db = try D1
+  return {
+    forCase: (caseId) => provideService(approvedAward(caseId), D1, db),
+  } satisfies ApprovedAwards.Shape
+})

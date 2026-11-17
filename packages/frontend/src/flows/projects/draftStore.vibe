@@ -1,0 +1,224 @@
+// spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { randomId } from "@repo/platform/crypto"
+import { type Pointer, type SetupStore, initial, newestRevision, openingValue, sourceFor } from "../../../gen/frontend__projectDrafts.effect.vibe"
+import { Locks } from "../../platform/locks.vibe"
+import { LocalStore, SessionStore, storageKeys } from "../../platform/storage.vibe"
+import { parsedJson, recordOf } from "../../session/localSignin.vibe"
+import { emptyProposal, proposalOf } from "./proposal.ts"
+
+export const proposalDraftKey = storageKeys.projectProposal.key
+
+const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const revisionText = /^[1-9][0-9]*$/u
+
+export error DraftUnreadable { key: string }
+
+export interface DraftHandle {
+  readonly stored: boolean
+  latest(): (string | null)!!
+  write(value: string | null): boolean!!
+}
+
+export interface SaveView {
+  readonly payload: string | null
+  readonly saving: boolean
+  readonly failed: boolean
+}
+
+export interface DraftSaver {
+  readonly changes: Stream.Stream<SaveView>
+  view(): SaveView!!
+  save(payload: string | null): SaveView!!
+}
+
+interface SlotRecord {
+  readonly key: string
+  readonly revision: number
+  readonly value: string
+}
+
+interface Names {
+  readonly pointer: string
+  readonly imported: string
+  readonly slots: string
+  readonly serialize: string
+}
+
+export function updateDraftKey(projectId: string): string {
+  return `${storageKeys.projectUpdate.key}${projectId}`
+}
+
+export function referrerOf(search: string, saved: unknown): string | null {
+  const fromLink = new URLSearchParams(search).get("ref")?.trim()
+  if (fromLink !== undefined && githubLogin.test(fromLink)) return fromLink
+  return typeof saved === "string" && githubLogin.test(saved) ? saved : null
+}
+
+function namesOf(key: string): Names {
+  const prefix = `${storageKeys.projectDraft.key}${encodeURIComponent(key)}:`
+  return { pointer: `${prefix}tab`, imported: `${prefix}imported`, slots: `${prefix}slot:`, serialize: `${prefix}write` }
+}
+
+function modelOf(found: ReadonlyArray<SlotRecord>): SetupStore {
+  return { ...initial, slots: found.map((record, index) => ({ slot: index + 1, revision: record.revision, value: index + 1, holder: 0 })), nextSlot: found.length + 1 }
+}
+
+function pointerOf(selected: string | undefined, found: ReadonlyArray<SlotRecord>): Pointer {
+  if (selected === undefined) return { tag: "NoPointer" }
+  if (selected === "empty") return { tag: "EmptyPointer" }
+  return { tag: "SlotPointer", slot: found.findIndex((record) => record.key === selected) + 1 }
+}
+
+function valueAt(found: ReadonlyArray<SlotRecord>, legacy: string | null, index: number): string | null {
+  if (index === 0) return null
+  return found[index - 1]?.value ?? legacy
+}
+
+effect function recordAt(values: KeyValueStore.KeyValueStore, key: string) {
+  const raw = try values.get(key)
+  if (raw === undefined) return undefined
+  const parsed = recordOf(try parsedJson(raw))
+  const revision = parsed?.revision
+  const value = parsed?.value
+  if (typeof revision !== "string" || !revisionText.test(revision) || !Number.isSafeInteger(Number(revision)) || typeof value !== "string") throw new DraftUnreadable({ key })
+  return { key, revision: Number(revision), value } satisfies SlotRecord
+}
+
+effect function records(values: KeyValueStore.KeyValueStore, names: Names) {
+  const keys = (try values.keys).filter((key) => key.startsWith(names.slots)).sort((left, right) => left.localeCompare(right))
+  const found: SlotRecord[] = []
+  for (const key of keys) {
+    const record = try recordAt(values, key)
+    if (record !== undefined) found.push(record)
+  }
+  return found
+}
+
+effect function memoryOnly(start: string | null) {
+  const latest = try Ref.make(start)
+  return {
+    stored: false,
+    latest: () => Ref.get(latest),
+    write: effect (value: string | null) => {
+      try Ref.set(latest, value)
+      return false
+    },
+  } satisfies DraftHandle
+}
+
+effect function legacyText(values: KeyValueStore.KeyValueStore, key: string) {
+  return values.get(key) catch () => undefined
+}
+
+export effect function legacyProposalDraft() {
+  const values = (try LocalStore).values
+  const saved = try legacyText(values, storageKeys.projectProposal.key)
+  const proposal = saved === undefined || saved === "" ? null : proposalOf(try parsedJson(saved))
+  const referrer = try legacyText(values, storageKeys.projectReferrer.key)
+  if (proposal === null && (referrer === undefined || referrer === "")) return null
+  const step = try legacyText(values, storageKeys.projectProposalStepV2.key)
+  const oldStep = try legacyText(values, storageKeys.projectProposalStep.key)
+  return JSON.stringify({
+    proposal: proposal ?? emptyProposal,
+    referrer: referrer ?? null,
+    step: step !== undefined ? Number(step) : Math.max(0, Number(oldStep ?? 1) - 1),
+  })
+}
+
+export effect function legacyUpdateDraft(projectId: string) {
+  return (try legacyText((try LocalStore).values, updateDraftKey(projectId))) ?? null
+}
+
+export service ProjectDrafts {
+  open(key: string, legacy: (string | null)!!): DraftHandle!!
+}
+
+export const projectDrafts = Layer.effect(ProjectDrafts, effect {
+  const locks = try Locks
+  const local = try LocalStore
+  const session = try SessionStore
+  const crypto = try Experimental.Crypto.Crypto
+  const opened = new Map<string, DraftHandle>()
+  const opening = try Semaphore.make(1)
+
+  effect function slotHandle(names: Names, slot: string, start: string | null) {
+    const latest = try Ref.make(start)
+    effect function written(value: string | null) {
+      if (value === null) try local.values.remove(slot)
+      else try local.values.set(slot, JSON.stringify({ revision: String(newestRevision(modelOf(try records(local.values, names))) + 1), value }))
+      try local.values.set(names.imported, "1")
+      try session.values.set(names.pointer, value === null ? "empty" : slot)
+      return true
+    }
+    return {
+      stored: true,
+      latest: () => Ref.get(latest),
+      write: effect (value: string | null) => {
+        try Ref.set(latest, value)
+        return locks.exclusive(names.serialize, written(value)) catch () => false
+      },
+    } satisfies DraftHandle
+  }
+
+  effect function select(names: Names, legacy: string | null, chosen: Ref.Ref<string | null>) {
+    const found = try records(local.values, names)
+    const pointer = pointerOf(try session.values.get(names.pointer), found)
+    const imported = (try local.values.get(names.imported)) === "1"
+    const model = modelOf(found)
+    const source = sourceFor(model, pointer)
+    const start = valueAt(found, legacy, openingValue(source, pointer, imported, legacy === null ? 0 : found.length + 1))
+    try Ref.set(chosen, start)
+    const resumed = source.slot > 0 ? found[source.slot - 1]?.key : undefined
+    if (resumed !== undefined && (try locks.claim(resumed))) {
+      try session.values.set(names.pointer, resumed)
+      return try slotHandle(names, resumed, start)
+    }
+    const fresh = `${names.slots}${try provideService(randomId(), Experimental.Crypto.Crypto, crypto)}`
+    if (!(try locks.claim(fresh))) return try memoryOnly(start)
+    if (start !== null) {
+      try local.values.set(fresh, JSON.stringify({ revision: String(newestRevision(model) + 1), value: start }))
+      try local.values.set(names.imported, "1")
+    }
+    try session.values.set(names.pointer, fresh)
+    return try slotHandle(names, fresh, start)
+  }
+
+  effect function openStore(key: string, legacyRead: (string | null)!!) {
+    const legacy = try legacyRead
+    if (!local.durable || !session.durable) return try memoryOnly(legacy)
+    const names = namesOf(key)
+    const chosen = try Ref.make(legacy)
+    const handle = locks.exclusive(names.serialize, select(names, legacy, chosen)) catch () => undefined
+    return handle ?? (try memoryOnly(try Ref.get(chosen)))
+  }
+
+  return {
+    open: (key: string, legacy: (string | null)!!) => Semaphore.withPermit(opening, effect {
+      const found = opened.get(key)
+      if (found !== undefined) return found
+      const handle = try openStore(key, legacy)
+      opened.set(key, handle)
+      return handle
+    }),
+  }
+})
+
+export effect function draftSaver(handle: DraftHandle) {
+  const shown = try SubscriptionRef.make<SaveView>({ payload: try handle.latest(), saving: false, failed: false })
+  let generation = 0
+  return {
+    changes: SubscriptionRef.changes(shown),
+    view: () => SubscriptionRef.get(shown),
+    save: effect (payload: string | null) => {
+      generation += 1
+      const mine = generation
+      try SubscriptionRef.set(shown, { payload, saving: true, failed: false })
+      const saved = try handle.write(payload)
+      return try SubscriptionRef.modify(shown, (current) => {
+        const next = mine === generation ? { payload, saving: false, failed: !saved } : current
+        return [next, next] as const
+      })
+    },
+  } satisfies DraftSaver
+}

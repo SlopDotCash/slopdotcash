@@ -1,0 +1,63 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"
+import type { Environment } from "../../../gen/operations__release.effect.vibe"
+import { pagesOf, readReviewed, siteOrigins } from "../publish/config.vibe"
+import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { EvidenceRefused } from "./bundle.vibe"
+
+schema Metadata {
+  readonly branch?: string
+  readonly commit_hash?: string
+  readonly commit_dirty?: boolean
+}
+
+schema Trigger { readonly metadata?: Metadata }
+
+schema Stage {
+  readonly name?: string
+  readonly status?: string
+}
+
+schema PagesDeployment {
+  readonly id: string
+  readonly url: string
+  readonly created_on: string
+  readonly environment?: string
+  readonly project_name?: string
+  readonly is_skipped?: boolean
+  readonly latest_stage?: Stage
+  readonly deployment_trigger?: Trigger
+}
+
+export interface Deployment {
+  readonly id: string
+  readonly url: string
+  readonly origin: string
+  readonly createdOn: string
+  readonly canonical: string
+}
+
+const branches: { readonly [E in Environment]: string } = { Production: "main", Staging: "development" }
+const deploymentIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u
+
+function refused(message: string) {
+  return new EvidenceRefused({ message })
+}
+
+export effect function pagesDeployment(root: string, environment: Environment, deploymentId: string, sourceSha: string) {
+  if (!deploymentIdPattern.test(deploymentId)) throw refused("the Pages deployment id is not a Cloudflare deployment UUID")
+  const site = pagesOf(try readReviewed(root), environment)
+  if (typeof site === "string") throw refused(site)
+  const cloudflare = try Cloudflare
+  const answer = try cloudflare.read("pages deployment", `/pages/projects/${site.file.name}/deployments/${deploymentId}`)
+  const deployment = Schema.decodeUnknownEffect(PagesDeployment)(answer) catch effect () => {
+    throw refused("the Pages deployment record has an unexpected shape")
+  }
+  const metadata = deployment.deployment_trigger?.metadata
+  const exact = deployment.id === deploymentId && deployment.environment === "production" && deployment.project_name === site.file.name
+    && deployment.is_skipped === false && deployment.latest_stage?.name === "deploy" && deployment.latest_stage.status === "success"
+    && metadata?.branch === branches[environment] && metadata.commit_dirty === false && metadata.commit_hash === sourceSha
+  if (!exact) throw refused(`Pages deployment ${deploymentId} is not a successful, clean ${branches[environment]} deployment of ${sourceSha}`)
+  const url = Effect.try(() => new URL(deployment.url)) catch () => undefined
+  if (url === undefined || url.protocol !== "https:" || url.username !== "" || url.password !== "") throw refused(`Pages deployment ${deploymentId} has no HTTPS URL`)
+  return { id: deployment.id, url: url.href, origin: url.origin, createdOn: deployment.created_on, canonical: siteOrigins[environment] } satisfies Deployment
+}

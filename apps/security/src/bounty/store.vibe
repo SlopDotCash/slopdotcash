@@ -1,0 +1,167 @@
+// spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/security/bounty.md, "The earliest human-confirmed eligible report of a root cause qualifies first"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/bounty.md, "One root cause holds at most one proposal or award obligation"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"
+import { millisOf } from "@repo/platform/clock"
+import { D1, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { Restrictions } from "@repo/ports/backend"
+import type { Network, ReadFailure } from "@repo/ports/backend"
+import { VaultTotals } from "@repo/ports/settlement"
+import type { Bounty, FundsSnapshot, Hold, RouteObservation } from "../../gen/security__bounty.ts"
+import { clearanceFor, confirmedEligible, fundsFresh, initial as noBounty, noFunds } from "../../gen/security__bounty.effect.vibe"
+import type { PrivateCase, ProjectClearance } from "../../gen/security__cases.ts"
+import { NotAState } from "../../gen/security__cases.effect.vibe"
+import { addAmounts, zero } from "../../gen/settlement__money.effect.vibe"
+import { type AwardCommitment, type AwardRequest, AwardClearances } from "../cases/clearance.vibe"
+import { type CaseRecord, caseRecord } from "../cases/rows.vibe"
+import { type Refusal, refused } from "../cases/store.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { type AssetIdentity, frozenAsset, networkOf, sameAddress } from "../program/manifest.ts"
+import { limbsOf } from "../terms/asset.ts"
+
+export interface DirectRoute {
+  readonly qualified: boolean
+  readonly observedAt: string
+}
+
+export service DirectRoutes {
+  route(asset: { readonly network: Network; readonly address: string }): (DirectRoute | undefined)!ReadFailure
+}
+
+schema Found { found: number }
+schema Candidate { id: string }
+schema Outstanding { gross_minor: string; terms: string | null }
+schema Pin { revision: number; manifest_sha256: string; enforcements: number; reservations: number }
+
+interface Funds {
+  readonly snapshot: FundsSnapshot
+  readonly reserved: ReadonlyArray<number>
+}
+
+const vaultChanged: Refusal = { status: 409, error: "insufficient_funds", message: "The award can no longer be reserved. Check the available funds and the recipient’s participation status." }
+const directChanged: Refusal = { status: 409, error: "award_changed", message: "The award can no longer be approved. Reload the case." }
+
+export function heldElsewhere(projectId: string, caseId: string, rootCauseKey: string): Statement {
+  return sql`SELECT 1 AS found FROM security_award_reservations WHERE project_id = ${projectId} AND root_cause_key = ${rootCauseKey} AND case_id <> ${caseId}
+    UNION ALL SELECT 1 FROM security_direct_awards WHERE project_id = ${projectId} AND root_cause_key = ${rootCauseKey} AND case_id <> ${caseId}
+    UNION ALL SELECT 1 FROM security_cases o WHERE o.project_id = ${projectId} AND o.id <> ${caseId} AND o.root_cause_key = ${rootCauseKey} AND (o.award_state IN ('approved', 'reserved') OR (o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND (o.related_party_review = 'pending' OR COALESCE(o.award_gross_base, o.award_gross_minor) IS NOT NULL)))`
+}
+
+function earlierQualifying(projectId: string, caseId: string, rootCauseKey: string, receivedAt: string): Statement {
+  return sql`SELECT 1 FROM security_cases earlier WHERE earlier.project_id = ${projectId} AND earlier.id <> ${caseId} AND earlier.root_cause_key = ${rootCauseKey} AND (earlier.receipt_state = 'confirmed' OR (earlier.receipt_state = 'disputed' AND earlier.appeal_state = 'open' AND earlier.appeal_from_state = 'confirmed')) AND (json_extract(earlier.terms, '$.eligibility') = 'in-scope-security' OR (earlier.severity = 'critical' AND earlier.loss_finding IN ('verified-potential', 'verified-actual'))) AND (earlier.received_at < ${receivedAt} OR (earlier.received_at = ${receivedAt} AND earlier.id < ${caseId})) AND json_extract((SELECT e.detail FROM security_case_events e WHERE e.case_id = earlier.id AND e.kind = 'decide' ORDER BY e.case_revision DESC LIMIT 1), '$.inScope') = 1`
+}
+
+effect function recordOf(caseId: string) {
+  return caseRecord(caseId) catch effect (error) => {
+    if (error instanceof NotAState) throw new RowMismatch({ text: "security case", issue: "not a case state" })
+    throw error
+  }
+}
+
+effect function competitorOf(record: CaseRecord, rootCauseKey: string) {
+  const { row } = record
+  const receivedAt = row.received_at ?? ""
+  const candidates = try rows(Candidate, sql`SELECT earlier.id FROM security_cases earlier WHERE earlier.project_id = ${row.project_id} AND earlier.id <> ${row.id} AND earlier.root_cause_key = ${rootCauseKey} AND earlier.submission_state = 'verified' AND (earlier.receipt_state = 'confirmed' OR (earlier.appeal_state = 'open' AND earlier.appeal_from_state = 'confirmed')) AND (earlier.received_at < ${receivedAt} OR (earlier.received_at = ${receivedAt} AND earlier.id < ${row.id})) ORDER BY earlier.received_at, earlier.id LIMIT 20`)
+  for (const candidate of candidates) {
+    const other = try recordOf(candidate.id)
+    if (other !== undefined && confirmedEligible(other.model)) return other
+  }
+  return undefined
+}
+
+effect function outstanding(projectId: string, identity: AssetIdentity, observedAt: string) {
+  const held = try rows(Outstanding, sql`SELECT r.gross_minor, c.terms FROM security_award_reservations r JOIN security_cases c ON c.id = r.case_id WHERE r.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ${observedAt})`)
+  let total: ReadonlyArray<number> = zero
+  for (const entry of held) {
+    const terms = entry.terms === null ? undefined : try Effect.try({ try: () => JSON.parse(entry.terms ?? "null") as unknown, catch: () => new RowMismatch({ text: "reserved case terms", issue: "not JSON" }) })
+    const asset = frozenAsset(terms)
+    if (asset !== undefined && asset.chain === identity.chain && asset.decimals === identity.decimals && sameAddress(identity.chain, asset.address, identity.address)) total = addAmounts([...total], limbsOf(entry.gross_minor))
+  }
+  return total
+}
+
+effect function fundsOf(projectId: string, identity: AssetIdentity | undefined, asset: string) {
+  const view = try (try VaultTotals).of({ projectId, purpose: "PrivateBounty" })
+  if (view === undefined || view.freeBaseUnits === undefined) return { snapshot: noFunds, reserved: zero } satisfies Funds
+  const compatible = identity !== undefined && networkOf(identity.chain) === view.network && sameAddress(identity.chain, identity.address, view.asset)
+  const snapshot: FundsSnapshot = { finalized: !view.stale, observedAt: millisOf(view.observedAt), asset: compatible ? asset : `vault:${view.asset}`, free: limbsOf(view.freeBaseUnits) }
+  const reserved = compatible && identity !== undefined ? try outstanding(projectId, identity, view.observedAt) : zero
+  return { snapshot, reserved } satisfies Funds
+}
+
+effect function routeOf(identity: AssetIdentity | undefined, asset: string) {
+  const none: RouteObservation = { asset: "", qualified: false, observedAt: 0 }
+  if (identity === undefined) return none
+  const route = try (try DirectRoutes).route({ network: networkOf(identity.chain), address: identity.address })
+  return route === undefined ? none : { asset, qualified: route.qualified, observedAt: millisOf(route.observedAt) } satisfies RouteObservation
+}
+
+function projected(self: PrivateCase, selfId: string, competitor: CaseRecord | undefined, held: boolean, funds: Funds, route: RouteObservation, clockMs: number) {
+  const otherFirst = competitor !== undefined && competitor.row.id < selfId
+  const index = otherFirst ? 2 : 1
+  const other = index === 1 ? 2 : 1
+  const rival = competitor?.model ?? noBounty.first
+  const holds: Hold[] = held ? [{ caseId: other, rootCause: self.rootCause, kind: "DirectHold", fundsObservedAt: 0, settledReceipt: 0 }] : []
+  const bounty: Bounty = { ...noBounty, first: index === 1 ? self : rival, second: index === 1 ? rival : self, holds, funds: funds.snapshot, reserved: [...funds.reserved], route, clockMs }
+  return { bounty, index }
+}
+
+effect function pinOf(projectId: string) {
+  const pin = try first(Pin, sql`SELECT p.revision, p.manifest_sha256, (SELECT COUNT(*) FROM project_enforcements) AS enforcements, (SELECT COUNT(*) FROM security_award_reservations WHERE project_id = ${projectId}) AS reservations FROM projects p WHERE p.id = ${projectId}`)
+  if (pin === undefined) throw refused(actionRows.programRestricted)
+  return pin
+}
+
+effect function unclearedRefusal(clearance: ProjectClearance, bounty: Bounty, asset: string, full: boolean) {
+  if (!clearance.firstQualifying) throw refused(actionRows.earlierQualifyingReport)
+  if (!clearance.rootCauseFree) throw refused(actionRows.rootCauseReserved)
+  if (full || clearance.rail !== "NoRail") return
+  if (bounty.funds.asset === asset && asset !== "") throw refused(fundsFresh(bounty, asset) ? actionRows.insufficientFunds : actionRows.fundsUnavailable)
+  throw refused(actionRows.fundsUnavailable)
+}
+
+export effect function commitment(request: AwardRequest) {
+  const record = try recordOf(request.caseId)
+  if (record === undefined) throw refused(actionRows.notFoundCaseNotFound)
+  if (request.rootCauseKey === "") throw refused(actionRows.invalidRequestRecordTheRootCause)
+  const { projectId, caseId, rootCauseKey } = request
+  const self: PrivateCase = { ...record.model, revision: request.modelRevision, rootCause: 1 }
+  const asset = self.terms.asset
+  const identity = frozenAsset(request.terms)
+  const full = self.terms.split === "FullAward"
+  const competitor = try competitorOf(record, rootCauseKey)
+  const held = (try first(Found, sql`${heldElsewhere(projectId, caseId, rootCauseKey)} LIMIT 1`)) !== undefined
+  const funds = full ? { snapshot: noFunds, reserved: zero } satisfies Funds : try fundsOf(projectId, identity, asset)
+  const route = full ? { asset: "", qualified: false, observedAt: 0 } satisfies RouteObservation : try routeOf(identity, asset)
+  const { bounty, index } = projected(self, caseId, competitor, held, funds, route, try Clock.currentTimeMillis)
+  const clearance = clearanceFor(bounty, index, limbsOf(request.grossMinor))
+  try unclearedRefusal(clearance, bounty, asset, full)
+  const pin = try pinOf(projectId)
+  const restrictions = try Restrictions
+  const reporterFree = try restrictions.unbanned(request.reporterGithubId)
+  const actorFree = try restrictions.unbanned(request.actorGithubId)
+  const receivedAt = record.row.received_at ?? ""
+  const shared = sql`EXISTS (SELECT 1 FROM projects WHERE id = ${projectId} AND revision = ${pin.revision} AND manifest_sha256 = ${pin.manifest_sha256}) AND (SELECT COUNT(*) FROM project_enforcements) = ${pin.enforcements} AND NOT EXISTS (${heldElsewhere(projectId, caseId, rootCauseKey)}) AND NOT EXISTS (${earlierQualifying(projectId, caseId, rootCauseKey, receivedAt)}) AND ${reporterFree} AND ${actorFree}`
+  if (request.proposal || full) return { clearance, before: [], require: shared, unmet: directChanged } satisfies AwardCommitment
+  const guards = sql`(SELECT revision FROM security_cases WHERE id = ${caseId}) = ${request.caseRevision} AND ${shared}`
+  if (clearance.rail === "DirectRail") {
+    return {
+      clearance,
+      before: [sql`INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) SELECT ${caseId}, ${projectId}, ${rootCauseKey}, ${JSON.stringify(request.terms)}, ${request.grossMinor}, ${request.at} WHERE ${guards}`],
+      require: sql`EXISTS (SELECT 1 FROM security_direct_awards WHERE case_id = security_cases.id)`,
+      unmet: directChanged,
+    } satisfies AwardCommitment
+  }
+  const currency = request.terms.currency
+  if (request.policyRevision === null || typeof currency !== "string") throw refused(actionRows.actionNotAllowedTheCaseHasNo)
+  return {
+    clearance,
+    before: [sql`INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ${caseId}, ${projectId}, ${rootCauseKey}, ${request.policyRevision}, ${request.grossMinor}, ${currency}, ${request.at} WHERE ${guards} AND (SELECT COUNT(*) FROM security_award_reservations WHERE project_id = ${projectId}) = ${pin.reservations}`],
+    require: sql`EXISTS (SELECT 1 FROM security_award_reservations WHERE case_id = security_cases.id)`,
+    unmet: vaultChanged,
+  } satisfies AwardCommitment
+}
+
+export const awardClearancesLive = Layer.effect(AwardClearances, effect {
+  const services = try Effect.context<D1 | VaultTotals | DirectRoutes | Restrictions>()
+  return {
+    commitment: (request) => Effect.provide(commitment(request), services),
+  } satisfies AwardClearances.Shape
+})

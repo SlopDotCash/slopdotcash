@@ -1,0 +1,64 @@
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+import { formatBaseUnits } from "../program/amounts.ts"
+import { SECURITY_FULL_AWARD_SPLIT, SECURITY_SPLIT, isFullAwardSplit } from "../program/manifest.ts"
+import { type SplitOutcome, awardSplit } from "../terms/asset.ts"
+
+export interface SplitPolicy {
+  readonly researcherBasisPoints: number
+  readonly slopBasisPoints: number
+}
+
+export interface BountyAmount {
+  readonly currency: string
+  readonly decimals: number
+  readonly asset?: { readonly kind?: string; readonly symbol: string }
+}
+
+export interface SharePreview {
+  readonly gross: string
+  readonly researcher: string
+  readonly slop: string
+}
+
+const canonicalUnits = /^(?:0|[1-9][0-9]*)$/u
+const mainSymbols = new Set(["USD", "USDC", "USDG", "ETH", "SOL"])
+
+export { SECURITY_FULL_AWARD_SPLIT, SECURITY_SPLIT, isFullAwardSplit }
+
+export function initialSecuritySplit(existing?: { readonly split?: SplitPolicy }): SplitPolicy {
+  return existing?.split ?? SECURITY_SPLIT
+}
+
+export function carriedSecurityTerms<T extends { readonly fundingPolicy?: unknown }>(existing?: T): Omit<T, "fundingPolicy"> | Record<string, never> {
+  if (existing === undefined) return {}
+  const { fundingPolicy: _dropped, ...previous } = existing
+  return previous
+}
+
+export function bountyShares(grossMinor: string, split: SplitPolicy = SECURITY_SPLIT): SplitOutcome {
+  return canonicalUnits.test(grossMinor) && grossMinor !== "0" ? awardSplit(grossMinor, isFullAwardSplit(split)) : { kind: "indivisible", message: "gross amount must be positive integer minor units" }
+}
+
+export { formatBaseUnits }
+
+export function formatAssetSymbol(symbol: string, kind?: string) {
+  const plain = symbol.replace(/^\$+/u, "")
+  return kind === "native" || kind === "stablecoin" || mainSymbols.has(plain.toUpperCase()) ? plain : `$${plain}`
+}
+
+export function formatSecurityAmount(minorUnits: string, amount: BountyAmount) {
+  const number = formatBaseUnits(minorUnits, amount.decimals)
+  if (number === undefined) return undefined
+  return amount.currency === "USD" && amount.asset === undefined ? `$${number}` : `${number} ${formatAssetSymbol(amount.asset?.symbol ?? amount.currency, amount.asset?.kind)}`
+}
+
+export function bountySharePreview(amount: BountyAmount, grossMinor: string, rawAmount: string, split: SplitPolicy = SECURITY_SPLIT): SharePreview | undefined {
+  const full = isFullAwardSplit(split)
+  if (grossMinor === "0") return { gross: `${rawAmount} ${formatAssetSymbol(amount.currency, amount.asset?.kind)}`, researcher: full ? "100%" : "75%", slop: full ? "0%" : "25%" }
+  const shares = bountyShares(grossMinor, split)
+  if (shares.kind === "indivisible") return undefined
+  const gross = formatSecurityAmount(shares.shares.grossMinor, amount)
+  const researcher = formatSecurityAmount(shares.shares.researcherMinor, amount)
+  const slop = formatSecurityAmount(shares.shares.slopMinor, amount)
+  return gross === undefined || researcher === undefined || slop === undefined ? undefined : { gross, researcher, slop }
+}

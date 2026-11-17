@@ -1,0 +1,222 @@
+// spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Exchange, exchanged, githubJson, manualRedirects, parsed } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { canonicalJson } from "../admission/binding.ts"
+import type { ReportInput } from "../intake/report.vibe"
+import type { IntakeAppConfig, ReporterGrant } from "./grant.vibe"
+
+export type FailureCode = "pvr-disabled" | "app-not-installed" | "forbidden" | "invalid" | "author-mismatch" | "not-found" | "grant-expired" | "already-recorded" | "not-private-report" | "unverifiable"
+
+export interface AdvisoryFacts {
+  readonly ghsa: string
+  readonly repository: string
+  readonly authorId: string | null
+  readonly privateReport: boolean
+  readonly state: string
+  readonly createdAt: string
+  readonly markerFound: boolean
+  readonly evidenceDigest: string
+}
+
+export type PostOutcome =
+  | { readonly kind: "created"; readonly facts: AdvisoryFacts }
+  | { readonly kind: "rejected"; readonly code: FailureCode }
+  | { readonly kind: "rate-limited"; readonly retryAfterSeconds: number | null }
+  | { readonly kind: "uncertain" }
+
+export type AdvisoryLookup = { readonly kind: "found"; readonly facts: AdvisoryFacts } | { readonly kind: "not-found" } | { readonly kind: "error" }
+
+export type MarkerListing = { readonly kind: "complete"; readonly matches: ReadonlyArray<AdvisoryFacts> } | { readonly kind: "error" }
+
+export const ghsaPattern = /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/u
+const ghsaAlphabet = "23456789cfghjmpqrvwx"
+const userAgent = "slop.cash-private-intake"
+const timeoutMs = 10_000
+const maxAdvisoryBytes = 1024 * 1024
+const maxListBytes = 8 * 1024 * 1024
+const maxListPages = 10
+const repositoryContinuation = /^\/repositories\/[1-9]\d{0,19}\/security-advisories$/u
+
+export function ghsaRank(ghsa: string) {
+  if (!ghsaPattern.test(ghsa)) return 0
+  let rank = 0
+  for (const character of ghsa.slice(5).replaceAll("-", "")) rank = rank * ghsaAlphabet.length + ghsaAlphabet.indexOf(character)
+  return rank + 1
+}
+
+export function ghsaOfRank(rank: number) {
+  let rest = rank - 1
+  const digits: string[] = []
+  for (let index = 0; index < 12; index++) {
+    digits.unshift(ghsaAlphabet[rest % ghsaAlphabet.length] ?? "2")
+    rest = Math.floor(rest / ghsaAlphabet.length)
+  }
+  const text = digits.join("")
+  return `GHSA-${text.slice(0, 4)}-${text.slice(4, 8)}-${text.slice(8)}`
+}
+
+export function markerLine(marker: string) {
+  return `Report reference: ${marker}`
+}
+
+export function sameRepository(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+function repositoryPath(repository: string) {
+  const [owner, name] = repository.split("/")
+  return `${encodeURIComponent(owner ?? "")}/${encodeURIComponent(name ?? "")}`
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function githubId(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? String(value) : null
+}
+
+function repositoryOf(htmlUrl: unknown, ghsa: string) {
+  const url = typeof htmlUrl === "string" ? URL.parse(htmlUrl) : null
+  if (url === null || url.protocol !== "https:") return undefined
+  const parts = url.pathname.split("/").filter((part) => part !== "")
+  if (parts.length !== 5 || parts[2] !== "security" || parts[3] !== "advisories" || parts[4] !== ghsa) return undefined
+  return `${parts[0]}/${parts[1]}`
+}
+
+export effect function advisoryFacts(value: unknown, marker: string | undefined) {
+  const advisory = record(value)
+  const ghsa = advisory?.ghsa_id
+  if (advisory === undefined || typeof ghsa !== "string" || !ghsaPattern.test(ghsa)) return undefined
+  const repository = repositoryOf(advisory.html_url, ghsa)
+  const created = typeof advisory.created_at === "string" ? Date.parse(advisory.created_at) : Number.NaN
+  if (repository === undefined || !Number.isFinite(created)) return undefined
+  const summary = typeof advisory.summary === "string" ? advisory.summary : ""
+  const description = typeof advisory.description === "string" ? advisory.description : ""
+  const severity = typeof advisory.severity === "string" ? advisory.severity : null
+  const vector = record(advisory.cvss)?.vector_string
+  const cweIds = Array.isArray(advisory.cwe_ids) ? advisory.cwe_ids.filter((id): id is string => typeof id === "string") : []
+  const evidence = canonicalJson({ summary, description, severity, cvss: typeof vector === "string" ? vector : null, cwe_ids: cweIds, vulnerabilities: advisory.vulnerabilities ?? null })
+  return {
+    ghsa,
+    repository,
+    authorId: githubId(record(advisory.author)?.id),
+    privateReport: record(advisory.submission) !== undefined,
+    state: typeof advisory.state === "string" ? advisory.state : "unknown",
+    createdAt: new Date(created).toISOString(),
+    markerFound: marker !== undefined && description.split(/\r?\n/u).some((line) => line.trim() === marker),
+    evidenceDigest: try sha256Hex(evidence),
+  } satisfies AdvisoryFacts
+}
+
+effect function exchangeOf(app: IntakeAppConfig) {
+  return { client: manualRedirects(try HttpClient.HttpClient), authority: app.apiOrigin, userAgent, timeoutMs } satisfies Exchange
+}
+
+function reportBody(report: ReportInput, marker: string) {
+  return {
+    summary: report.summary,
+    description: `${report.description}\n\n${marker}`,
+    ...report.severity === undefined ? {} : { severity: report.severity },
+    ...report.cvssVectorString === undefined ? {} : { cvss_vector_string: report.cvssVectorString },
+    ...report.cweIds === undefined ? {} : { cwe_ids: report.cweIds },
+    ...report.vulnerabilities === undefined ? {} : {
+      vulnerabilities: report.vulnerabilities.map((entry) => ({
+        package: entry.package,
+        ...entry.vulnerableVersionRange === undefined || entry.vulnerableVersionRange === "" ? {} : { vulnerable_version_range: entry.vulnerableVersionRange },
+        ...entry.patchedVersions === undefined || entry.patchedVersions === "" ? {} : { patched_versions: entry.patchedVersions },
+      })),
+    },
+    start_private_fork: false,
+  }
+}
+
+export effect function installed(repository: string) {
+  const [owner = "", name = ""] = repository.split("/")
+  const app = try GitHubApp
+  const found = app.installationFor(owner, name) catch effect (error) => {
+    return error._tag === "NotFound" ? "no" as const : "unknown" as const
+  }
+  return found === "no" || found === "unknown" ? found : "yes" as const
+}
+
+effect function refusedPost(error: { readonly _tag: string; readonly status?: number; readonly message?: string; readonly retryAfterSeconds?: number }, repository: string) {
+  if (error._tag === "RateLimited") return { kind: "rate-limited", retryAfterSeconds: error.retryAfterSeconds ?? null } satisfies PostOutcome as PostOutcome
+  if (error._tag === "NotFound") return { kind: "rejected", code: (try installed(repository)) === "no" ? "app-not-installed" : "pvr-disabled" } satisfies PostOutcome as PostOutcome
+  if (error._tag !== "GitHubRefused") return { kind: "uncertain" } satisfies PostOutcome as PostOutcome
+  if (error.status === 403 && /rate limit/iu.test(error.message ?? "")) return { kind: "rate-limited", retryAfterSeconds: null } satisfies PostOutcome as PostOutcome
+  if (error.status === 401) return { kind: "rejected", code: "grant-expired" } satisfies PostOutcome as PostOutcome
+  if (error.status === 403) return { kind: "rejected", code: "forbidden" } satisfies PostOutcome as PostOutcome
+  if (error.status === 422) return { kind: "rejected", code: "invalid" } satisfies PostOutcome as PostOutcome
+  return { kind: "uncertain" } satisfies PostOutcome as PostOutcome
+}
+
+export effect function createReport(app: IntakeAppConfig, grant: ReporterGrant, repository: string, report: ReportInput, marker: string) {
+  const exchange = try exchangeOf(app)
+  const url = `${app.apiOrigin}/repos/${repositoryPath(repository)}/security-advisories/reports`
+  const answer = exchanged(exchange, { method: "POST", url, accept: githubJson, bearer: grant.token, json: reportBody(report, marker) }, maxAdvisoryBytes) catch effect (error) => {
+    return try refusedPost(error, repository)
+  }
+  if ("kind" in answer) return answer
+  if (answer.status !== 201) return { kind: "uncertain" } satisfies PostOutcome
+  const value = parsed(answer.bytes, url) catch () => undefined
+  const facts = try advisoryFacts(value, marker)
+  if (facts === undefined || !sameRepository(facts.repository, repository) || facts.authorId !== grant.githubId) return { kind: "uncertain" } satisfies PostOutcome
+  return { kind: "created", facts } satisfies PostOutcome
+}
+
+export effect function getAdvisory(app: IntakeAppConfig, grant: ReporterGrant, repository: string, ghsa: string, marker: string | undefined) {
+  if (!ghsaPattern.test(ghsa)) return { kind: "not-found" } satisfies AdvisoryLookup
+  const exchange = try exchangeOf(app)
+  const url = `${app.apiOrigin}/repos/${repositoryPath(repository)}/security-advisories/${ghsa}`
+  const answer = exchanged(exchange, { method: "GET", url, accept: githubJson, bearer: grant.token, followRenamed: false }, maxAdvisoryBytes) catch effect (error) => {
+    return error._tag === "NotFound" ? { kind: "not-found" } satisfies AdvisoryLookup : { kind: "error" } satisfies AdvisoryLookup
+  }
+  if ("kind" in answer) return answer
+  if (answer.status !== 200) return { kind: "error" } satisfies AdvisoryLookup
+  const value = parsed(answer.bytes, url) catch () => undefined
+  const facts = try advisoryFacts(value, marker)
+  if (facts === undefined || facts.ghsa !== ghsa) return { kind: "error" } satisfies AdvisoryLookup
+  return { kind: "found", facts } satisfies AdvisoryLookup
+}
+
+function nextPage(link: string | undefined, first: URL) {
+  const part = link?.split(",").find((entry) => /;\s*rel="next"(?:\s*;|\s*$)/u.test(entry))
+  if (part === undefined) return null
+  const target = /^\s*<([^<>]+)>/u.exec(part)?.[1]
+  const url = target === undefined ? null : URL.parse(target)
+  if (url === null || url.origin !== first.origin) return "refused" as const
+  if (url.pathname === first.pathname || repositoryContinuation.test(url.pathname)) return url
+  return "refused" as const
+}
+
+export effect function findByMarker(app: IntakeAppConfig, grant: ReporterGrant, repository: string, marker: string, sinceMs: number) {
+  const exchange = try exchangeOf(app)
+  const first = new URL(`${app.apiOrigin}/repos/${repositoryPath(repository)}/security-advisories`)
+  first.searchParams.set("sort", "created")
+  first.searchParams.set("direction", "desc")
+  first.searchParams.set("per_page", "100")
+  const matches: AdvisoryFacts[] = []
+  let next: URL | null = first
+  for (let page = 0; next !== null; page++) {
+    if (page >= maxListPages) return { kind: "error" } satisfies MarkerListing
+    const url = next.href
+    const answer = exchanged(exchange, { method: "GET", url, accept: githubJson, bearer: grant.token, followRenamed: false }, maxListBytes) catch () => undefined
+    if (answer === undefined || answer.status !== 200) return { kind: "error" } satisfies MarkerListing
+    const items = parsed(answer.bytes, url) catch () => undefined
+    if (!Array.isArray(items)) return { kind: "error" } satisfies MarkerListing
+    let reachedSince = false
+    for (const item of items) {
+      const facts = try advisoryFacts(item, marker)
+      if (facts === undefined) return { kind: "error" } satisfies MarkerListing
+      if (Date.parse(facts.createdAt) < sinceMs) reachedSince = true
+      else if (facts.markerFound && facts.authorId === grant.githubId && sameRepository(facts.repository, repository)) matches.push(facts)
+    }
+    if (reachedSince) break
+    const continued = nextPage(answer.headers.link, first)
+    if (continued === "refused") return { kind: "error" } satisfies MarkerListing
+    next = continued
+  }
+  return { kind: "complete", matches } satisfies MarkerListing
+}

@@ -1,0 +1,144 @@
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Administrators approve a split exception for one exact future revision"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import type { Actor } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { Authority, Registry } from "@repo/ports/backend"
+import { VaultTotals } from "@repo/ports/settlement"
+import type { FundingSnapshot, Program, VerifiedOwner } from "../../gen/security__program.ts"
+import { approveFullSplit, canPublish, initial, observeFunding, publish } from "../../gen/security__program.effect.vibe"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { limbsOf } from "../terms/asset.ts"
+import { type Json, type OwnerRefusal, canonical, frozenAsset, fundingEvidence, isFullAwardSplit, modelAsset, networkOf, offerOf, ownerProgramRefusal, platformProject, programStatus, sameAddress, securityBountyProblem } from "./manifest.ts"
+
+schema RevisionRow { revision: number; manifest: string; actor_github_id: string | null; created_at: string }
+
+export interface ProgramHistory {
+  readonly program: Program
+  readonly terms: unknown
+  readonly manifest: unknown
+}
+
+export interface ProgramFunds {
+  readonly snapshot: FundingSnapshot
+  readonly observedAt: string | undefined
+}
+
+export type PublicationRefusal =
+  | { readonly kind: "NotOwner" }
+  | { readonly kind: "ProjectMissing" }
+  | { readonly kind: "Owner"; readonly reason: OwnerRefusal }
+  | { readonly kind: "InvalidTerms"; readonly problem: string }
+  | { readonly kind: "OfferRefused" }
+
+export type Publication =
+  | { readonly kind: "Published"; readonly securityBounty: Json; readonly programRevision: number }
+  | { readonly kind: "Refused"; readonly refusal: PublicationRefusal }
+
+export interface PublicationInput {
+  readonly projectId: string
+  readonly actor: Actor
+  readonly next: Json | undefined
+  readonly status: string | undefined
+  readonly reward: unknown
+  readonly canManageContacts: boolean
+}
+
+function member(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
+}
+
+effect function parsedManifest(text: string) {
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: "project revision manifest", issue: "not JSON" }) })
+}
+
+export effect function programOf(projectId: string) {
+  const revisions = try rows(RevisionRow, sql`SELECT revision, manifest, actor_github_id, created_at FROM project_revisions WHERE project_id = ${projectId} ORDER BY revision`)
+  const roles = try Roles
+  let program: Program = { ...initial, project: projectId }
+  let terms: unknown = undefined
+  let manifest: unknown = undefined
+  for (const row of revisions) {
+    manifest = try parsedManifest(row.manifest)
+    const bounty = member(manifest, "securityBounty")
+    const changed = bounty !== undefined && canonical(bounty) !== canonical(terms)
+    terms = bounty
+    program = { ...program, projectRevision: row.revision }
+    if (!changed || programStatus(bounty) === "Unpublished") continue
+    const next = program.revision + 1
+    const approved = projectId === platformProject && isFullAwardSplit(member(bounty, "split")) && row.actor_github_id !== null && (try roles.has(row.actor_github_id, "administrator"))
+    const splitApprovals = approved && !program.splitApprovals.includes(next) ? [...program.splitApprovals, next] : program.splitApprovals
+    program = { ...program, splitApprovals, offer: offerOf(bounty), revision: next, publishedAt: millisOf(row.created_at), revisions: [...program.revisions, next] }
+  }
+  return { program, terms, manifest } satisfies ProgramHistory
+}
+
+export effect function programFunds(projectId: string, terms: unknown) {
+  const view = try (try VaultTotals).of({ projectId, purpose: "PrivateBounty" })
+  const amount = member(terms, "amount")
+  const asset = frozenAsset(amount)
+  if (view === undefined || view.freeBaseUnits === undefined) return { snapshot: { finalized: false, observedAt: 0, asset: "", free: zero }, observedAt: undefined } satisfies ProgramFunds
+  const compatible = asset !== undefined && networkOf(asset.chain) === view.network && sameAddress(asset.chain, asset.address, view.asset)
+  return {
+    snapshot: { finalized: !view.stale, observedAt: millisOf(view.observedAt), asset: compatible ? modelAsset(amount) : `vault:${view.asset}`, free: limbsOf(view.freeBaseUnits) },
+    observedAt: view.observedAt,
+  } satisfies ProgramFunds
+}
+
+effect function verifiedOwner(projectId: string, actor: Actor) {
+  const project = try (try Registry).project(projectId)
+  if (project === undefined) return undefined
+  const repository = project.repositories[0]
+  if (repository === undefined) return { project, owner: undefined }
+  const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId: repository.id })
+  const granted = read.installation === "Installed" && (actor.githubId === project.stewardGithubId || read.permission === "PermissionVerified")
+  const owner: VerifiedOwner | undefined = granted ? { actor: githubNumber(actor.githubId), project: projectId, projectRevision: project.revision } : undefined
+  return { project, owner }
+}
+
+function refusedWith(refusal: PublicationRefusal): Publication {
+  return { kind: "Refused", refusal }
+}
+
+export effect function publication(input: PublicationInput) {
+  const { projectId, actor } = input
+  const history = try programOf(projectId)
+  const authority = try verifiedOwner(projectId, actor)
+  if (authority === undefined) return refusedWith({ kind: "ProjectMissing" })
+  if (authority.owner === undefined) return refusedWith({ kind: "NotOwner" })
+  const previous = history.terms
+  const administrator = try (try Roles).has(actor.githubId, "administrator")
+  if (input.next === undefined) {
+    const reason = ownerProgramRefusal({ previous, next: undefined, actorGithubId: actor.githubId, canManageContacts: input.canManageContacts, splitApprover: administrator, fundsAvailable: false })
+    return reason === undefined ? { kind: "Published", securityBounty: null, programRevision: history.program.revision } satisfies Publication : refusedWith({ kind: "Owner", reason })
+  }
+  const nowMs = try Clock.currentTimeMillis
+  const funds = try programFunds(projectId, input.next)
+  const observed = { ...history.program, offer: offerOf(input.next) }
+  const funded = observeFunding(observed, funds.snapshot, nowMs).funding === "VerifiedAvailable" && funds.observedAt !== undefined
+  const reason = ownerProgramRefusal({ previous, next: input.next, actorGithubId: actor.githubId, canManageContacts: input.canManageContacts, splitApprover: administrator, fundsAvailable: funded })
+  if (reason !== undefined) return refusedWith({ kind: "Owner", reason })
+  const deployments = member(member(previous, "settlement"), "deployments")
+  const boundVault = Array.isArray(deployments) && deployments.length > 0
+  const priorFunding = member(previous, "funding") as Json | undefined
+  const funding: Json = funded && funds.observedAt !== undefined ? fundingEvidence(projectId, funds.observedAt) : boundVault && priorFunding !== undefined ? priorFunding : { state: "pledged" }
+  const status = input.status ?? member(input.next, "status")
+  const stamped = { ...(input.next as { readonly [key: string]: Json }), status: typeof status === "string" ? status : null, funding } satisfies { readonly [key: string]: Json }
+  const manifest = history.manifest
+  const repositories = member(manifest, "repositories")
+  const problem = securityBountyProblem(stamped, {
+    repositories: Array.isArray(repositories) ? repositories.flatMap((entry) => typeof member(entry, "id") === "string" ? [{ id: member(entry, "id") as string }] : []) : [],
+    reward: input.reward,
+    trustedSettlement: member(previous, "settlement"),
+  })
+  if (problem !== undefined) return refusedWith({ kind: "InvalidTerms", problem })
+  const offer = offerOf(stamped)
+  if (offer.status === "Unpublished") return { kind: "Published", securityBounty: stamped, programRevision: history.program.revision } satisfies Publication
+  const base = observeFunding({ ...history.program, offer }, funds.snapshot, nowMs)
+  const approving = offer.split === "FullAward" && administrator && projectId === platformProject && !base.splitApprovals.includes(base.revision + 1)
+  const current = approving ? approveFullSplit(base, githubNumber(actor.githubId)) : base
+  const by = githubNumber(actor.githubId)
+  if (!canPublish({ ...current, offer: history.program.offer }, by, authority.owner, offer, nowMs)) return refusedWith({ kind: "OfferRefused" })
+  return { kind: "Published", securityBounty: stamped, programRevision: publish(current, by, authority.owner, offer, nowMs).revision } satisfies Publication
+}

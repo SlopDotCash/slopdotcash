@@ -1,0 +1,129 @@
+// spec/security/remediation.md, "Remediation acts under the case's current roles"; spec/security/remediation.md, "The exact patch is reviewed independently before it resolves, and mitigation is verified separately"; spec/security/remediation.md, "Only separately approved exact redacted content is disclosed, with embargo history"
+import { ConstraintViolation, D1, type Statement, sql } from "@repo/platform/d1"
+import type { Json } from "@repo/ports/backend"
+import type { Disclosure, Event, Recognition, Remediation, Stage } from "../../gen/security__remediation.ts"
+import { NotAState, Rejected, apply, decodeState, initial } from "../../gen/security__remediation.effect.vibe"
+import { type EventRow, detailOf } from "../cases/rows.vibe"
+import { type Observed, type Refusal, accessLog, caseNotices, notAllowed, refused } from "../cases/store.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { type CaseRole, caseEvent } from "../receipt/statements.vibe"
+
+export const stageText = { NotStarted: "not-started", Investigating: "investigating", Fixing: "fixing", Retest: "retest", Resolved: "resolved", MitigationVerified: "mitigation-verified", Reopened: "reopened" } as const satisfies Readonly<Record<Stage, string>>
+export const disclosureText = { Embargoed: "embargoed", RedactionApproved: "redaction-approved", Disclosed: "disclosed" } as const satisfies Readonly<Record<Disclosure, string>>
+export const recognitionText = { PrivateRecognition: "private", OptIn: "opt-in" } as const satisfies Readonly<Record<Recognition, string>>
+
+export interface Journal {
+  readonly state: Remediation
+  readonly digests: ReadonlyMap<string, number>
+  readonly approvalRevision: number | null
+}
+
+export interface Recorded {
+  readonly kind: "remediation" | "disclosure" | "recognition"
+  readonly role: CaseRole
+  readonly reason: string | null
+  readonly evidenceReference: string | null
+  readonly detail: { readonly [key: string]: Json }
+  readonly column: Statement
+  readonly event: Event
+}
+
+export function lookup<K extends string>(table: Readonly<Record<K, string>>, text: unknown): K | undefined {
+  return (Object.keys(table) as K[]).find((key) => table[key] === text)
+}
+
+function digestNumber(digests: Map<string, number>, value: unknown) {
+  if (typeof value !== "string" || value === "") return 0
+  const known = digests.get(value)
+  if (known !== undefined) return known
+  const next = digests.size + 1
+  digests.set(value, next)
+  return next
+}
+
+function folded(r: Remediation, event: EventRow, digests: Map<string, number>): Remediation {
+  const detail = detailOf(event)
+  const by = githubNumber(event.actor_github_id)
+  if (event.kind === "recognition") {
+    const choice = lookup(recognitionText, detail.recognition)
+    return choice === undefined ? r : { ...r, recognition: choice, revision: r.revision + 1 }
+  }
+  if (event.kind === "disclosure") {
+    const target = lookup(disclosureText, detail.disclosureState)
+    if (target === undefined) return r
+    const digest = digestNumber(digests, detail.redactedContentDigest)
+    const embargoed = typeof detail.embargoChange === "string" && detail.embargoChange !== ""
+    return {
+      ...r,
+      disclosure: target,
+      approvedDigest: target === "Embargoed" ? 0 : target === "RedactionApproved" ? digest : r.approvedDigest,
+      publishedDigest: target === "Disclosed" ? digest : 0,
+      embargoHistory: embargoed ? [...r.embargoHistory, r.embargoHistory.length + 1] : r.embargoHistory,
+      revision: r.revision + 1,
+    }
+  }
+  if (event.kind !== "remediation") return r
+  const stage = lookup(stageText, detail.remediationState)
+  if (stage === undefined) return r
+  const digest = digestNumber(digests, detail.patchDigest)
+  const revision = r.revision + 1
+  switch (stage) {
+    case "Retest": return { ...r, stage, patchDigest: digest, patchAuthor: by, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0, revision }
+    case "Resolved": return { ...r, stage, verifiedPatch: digest, patchReviewer: by, verifiedPatches: r.verifiedPatches.includes(digest) ? r.verifiedPatches : [...r.verifiedPatches, digest], revision }
+    case "MitigationVerified": return { ...r, stage, mitigatedDigest: digest, revision }
+    case "Reopened": return { ...r, stage, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0, revision }
+    default: return { ...r, stage, revision }
+  }
+}
+
+export effect function journalOf(observed: Observed) {
+  const digests = new Map<string, number>()
+  let state: Remediation = { ...initial, privateCase: observed.model }
+  for (const event of observed.record.events) state = folded(state, event, digests)
+  const approval = observed.record.events.filter((event) => event.kind === "disclosure").at(-1)
+  const decoded = decodeState(state) catch effect (error) => {
+    if (error instanceof NotAState) return undefined
+    throw error
+  }
+  if (decoded === undefined) return undefined
+  return { state: decoded, digests, approvalRevision: approval?.case_revision ?? null } satisfies Journal
+}
+
+export function digestFor(journal: Journal, hex: string) {
+  return journal.digests.get(hex) ?? journal.digests.size + 1
+}
+
+export effect function stepped(journal: Journal, event: Event, by: number, row: Refusal | undefined, action: string) {
+  return apply(journal.state, event, by) catch effect (error) => {
+    if (error instanceof Rejected) throw row === undefined ? notAllowed(action) : refused(row)
+    throw error
+  }
+}
+
+export interface Commit {
+  readonly observed: Observed
+  readonly actorGithubId: string
+  readonly idempotencyKey: string
+  readonly at: string
+  readonly recorded: Recorded
+}
+
+export effect function recordedChange(input: Commit) {
+  const { observed, recorded, at } = input
+  const { row } = observed.record
+  const revision = row.revision + 1
+  const notices = try caseNotices({ caseId: row.id, revision, kind: recorded.kind, idempotencyKey: input.idempotencyKey, actorGithubId: input.actorGithubId, reporterGithubId: row.reporter_github_id, detail: recorded.detail, program: observed.program, relatedReview: false, at })
+  const statements = [
+    sql`UPDATE security_cases SET ${recorded.column}, revision = revision + 1, updated_at = ${at} WHERE id = ${row.id} AND revision = ${row.revision}`,
+    caseEvent({ caseId: row.id, revision, kind: recorded.kind, actorGithubId: input.actorGithubId, role: recorded.role, idempotencyKey: input.idempotencyKey, reason: recorded.reason, evidenceReference: recorded.evidenceReference, detail: recorded.detail, at, guard: true }),
+    accessLog(row.id, input.actorGithubId, observed.roles, "write", at),
+    ...notices,
+  ]
+  const results = (try D1).batch(statements) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) throw refused(actionRows.staleRevision)
+    throw error
+  }
+  if (results[0]?.changes !== 1) throw refused(actionRows.staleRevision)
+  return revision
+}

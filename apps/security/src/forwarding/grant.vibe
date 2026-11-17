@@ -1,0 +1,142 @@
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"
+import { aesGcmOpen, aesGcmSeal, sha256Hex, timingSafeEqual, utf8, randomToken } from "@repo/platform/crypto"
+import { githubApi } from "@repo/platform/github"
+import { authorizeUrl, currentUser, exchangeCode, githubWeb, pkce } from "@repo/platform/github/oauth"
+
+export interface IntakeAppConfig {
+  readonly grantKey: Redacted.Redacted<string>
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted<string>
+  readonly webOrigin: string
+  readonly apiOrigin: string
+}
+
+export service IntakeApp {
+  readonly app: IntakeAppConfig | undefined
+}
+
+export interface IntakeAppEnv {
+  readonly SLOP_PRIVATE_INTAKE_MODE?: string
+  readonly GITHUB_INTAKE_APP_CLIENT_ID?: string
+  readonly GITHUB_INTAKE_APP_CLIENT_SECRET?: string
+  readonly SLOP_INTAKE_GRANT_KEY?: string
+}
+
+export interface ReporterGrant {
+  readonly token: Redacted.Redacted<string>
+  readonly githubId: string
+  readonly expiresAtSeconds: number
+}
+
+export type GrantFailure = "grant_flow_missing" | "grant_state_mismatch" | "grant_exchange_failed" | "grant_identity_mismatch"
+
+export type Completed =
+  | { readonly ok: true; readonly submissionId: string; readonly cookies: ReadonlyArray<string> }
+  | { readonly ok: false; readonly submissionId: string | null; readonly code: GrantFailure; readonly cookies: ReadonlyArray<string> }
+
+const grantCookie = "__Secure-slop_intake_grant"
+const flowCookie = "__Secure-slop_intake_flow"
+const cookiePath = "/api/v1/security-submissions"
+const grantSeconds = 2 * 60 * 60
+const flowSeconds = 10 * 60
+const sessionCookie = "__Host-slop_points"
+const sessionToken = /^[A-Za-z0-9_-]{40,128}$/u
+const grantKeyShape = /^[A-Za-z0-9_-]{43}$/u
+const codeShape = /^[A-Za-z0-9_-]{1,256}$/u
+const flowAad = "slop-intake-flow:v1"
+
+schema Flow { v: number; s: string; g: string; h: string; n: string; p: string; e: number }
+schema Sealed { v: number; g: string; l: string; t: string; e: number }
+
+export function intakeApp(env: IntakeAppEnv) {
+  const clientId = env.GITHUB_INTAKE_APP_CLIENT_ID ?? ""
+  const clientSecret = env.GITHUB_INTAKE_APP_CLIENT_SECRET ?? ""
+  const grantKey = env.SLOP_INTAKE_GRANT_KEY ?? ""
+  const configured = env.SLOP_PRIVATE_INTAKE_MODE === "on" && clientId !== "" && clientSecret !== "" && grantKeyShape.test(grantKey)
+  return Layer.succeed(IntakeApp, {
+    app: configured ? { grantKey: Redacted.make(grantKey), clientId, clientSecret: Redacted.make(clientSecret), webOrigin: githubWeb, apiOrigin: githubApi } : undefined,
+  })
+}
+
+function cookie(name: string, value: string, seconds: number, sameSite: "Strict" | "Lax") {
+  return `${name}=${value}; Path=${cookiePath}; Max-Age=${seconds}; Secure; HttpOnly; SameSite=${sameSite}`
+}
+
+export function clearGrantCookie() {
+  return cookie(grantCookie, "", 0, "Strict")
+}
+
+export function callbackUrl(requestUrl: string) {
+  return `${new URL(requestUrl).origin}${cookiePath}/authorize/callback`
+}
+
+effect function sessionBinding() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const token = request.cookies[sessionCookie]
+  if (token === undefined || !sessionToken.test(token)) return undefined
+  return try sha256Hex(`slop-intake-session:v1:${token}`)
+}
+
+effect function sealed(app: IntakeAppConfig, aad: string, value: unknown) {
+  return try aesGcmSeal(app.grantKey, utf8(JSON.stringify(value)), aad)
+}
+
+effect function opened<S extends Schema.ConstraintDecoder<unknown>>(app: IntakeAppConfig, aad: string, text: string | undefined, shape: S) {
+  if (text === undefined || text === "") return undefined
+  const plain = aesGcmOpen(app.grantKey, text, aad) catch () => undefined
+  if (plain === undefined) return undefined
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plain)) as unknown) catch () => undefined
+  return Schema.decodeUnknownEffect(shape)(value) catch () => undefined
+}
+
+export effect function beginAuthorization(app: IntakeAppConfig, input: { readonly submissionId: string; readonly githubId: string; readonly githubLogin: string }) {
+  const session = try sessionBinding()
+  if (session === undefined) return undefined
+  const request = try HttpServerRequest.HttpServerRequest
+  const { verifier, challenge } = try pkce()
+  const state = try randomToken(24)
+  const expires = Math.floor((try Clock.currentTimeMillis) / 1000) + flowSeconds
+  const flow = try sealed(app, flowAad, { v: 1, s: input.submissionId, g: input.githubId, h: session, n: state, p: verifier, e: expires })
+  return {
+    authorizeUrl: authorizeUrl({ clientId: app.clientId, redirectUri: callbackUrl(request.originalUrl), state, challenge, login: input.githubLogin, allowSignup: false, authority: app.webOrigin }),
+    cookie: cookie(flowCookie, flow, flowSeconds, "Lax"),
+  }
+}
+
+function refused(submissionId: string | null, code: GrantFailure): Completed {
+  return { ok: false, submissionId, code, cookies: [] }
+}
+
+function sameText(left: string, right: string) {
+  return timingSafeEqual(utf8(left), utf8(right))
+}
+
+export effect function completeAuthorization(app: IntakeAppConfig, sessionGithubId: string | undefined) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
+  const flow = try opened(app, flowAad, request.cookies[flowCookie], Flow)
+  if (flow === undefined || flow.v !== 1 || flow.e <= nowSeconds) return refused(null, "grant_flow_missing")
+  const query = new URL(request.originalUrl).searchParams
+  const code = query.get("code") ?? ""
+  if (!sameText(query.get("state") ?? "", flow.n) || !codeShape.test(code)) return refused(flow.s, "grant_state_mismatch")
+  const token = exchangeCode({ clientId: app.clientId, clientSecret: app.clientSecret, code, verifier: flow.p, redirectUri: callbackUrl(request.originalUrl), authority: app.webOrigin, userAgent: "slop.cash-private-intake" }) catch () => undefined
+  if (token === undefined) return refused(flow.s, "grant_exchange_failed")
+  const user = currentUser(token, { authority: app.apiOrigin, userAgent: "slop.cash-private-intake" }) catch () => undefined
+  if (user === undefined) return refused(flow.s, "grant_exchange_failed")
+  if (user.id !== flow.g || (sessionGithubId !== undefined && sessionGithubId !== flow.g)) return refused(flow.s, "grant_identity_mismatch")
+  const grant = try sealed(app, `slop-intake-grant:v1:${flow.s}:${flow.h}`, { v: 1, g: flow.g, l: user.login, t: Redacted.value(token), e: nowSeconds + grantSeconds })
+  return { ok: true, submissionId: flow.s, cookies: [cookie(grantCookie, grant, grantSeconds, "Strict")] } satisfies Completed
+}
+
+export effect function readGrant(app: IntakeAppConfig, submissionId: string, reporterGithubId: string) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const session = try sessionBinding()
+  if (session === undefined) return undefined
+  const value = try opened(app, `slop-intake-grant:v1:${submissionId}:${session}`, request.cookies[grantCookie], Sealed)
+  if (value === undefined || value.v !== 1 || value.g !== reporterGithubId) return undefined
+  return { token: Redacted.make(value.t), githubId: reporterGithubId, expiresAtSeconds: value.e } satisfies ReporterGrant
+}
+
+export effect function hasSession() {
+  return (try sessionBinding()) !== undefined
+}

@@ -1,0 +1,116 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
+
+const SourceSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/u))
+
+const Digest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))
+
+const ByteCount = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
+
+const Text = Schema.String.check(Schema.isBetweenLength(1, 1_000), Schema.isPattern(/^\S(?:[^\u0000-\u001f\u007f]*\S)?$/u))
+
+const ExactInstant = Schema.String.check(
+  Schema.makeFilter((text: string) => Number.isFinite(Date.parse(text)) && new Date(text).toISOString() === text, { expected: "an exact ISO instant" }),
+)
+
+const HttpsUrl = Schema.String.check(Schema.isBetweenLength(9, 2_048), Schema.isPattern(/^https:\/\/[a-z0-9.-]+(?:\/\S*)?$/u))
+
+const GitHubLogin = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u))
+
+const commonPlaceholders: ReadonlyArray<string> = ["na", "none", "null", "other", "placeholder", "tbd", "todo", "unknown", "unspecified"]
+
+function normalized(value: string) {
+  return value.toLowerCase().replaceAll(/[^a-z0-9]/gu, "")
+}
+
+function exactIdentity(maximumLength: number, placeholders: ReadonlyArray<string>) {
+  return Schema.String.check(
+    Schema.isBetweenLength(1, maximumLength),
+    Schema.isPattern(/^[@~]?[A-Za-z0-9](?:[A-Za-z0-9._:@/+~-]{0,126}[A-Za-z0-9])?$/u),
+    Schema.makeFilter((value: string) => !commonPlaceholders.includes(normalized(value)) && !placeholders.includes(normalized(value)), { expected: "an exact identifier, not a placeholder" }),
+  )
+}
+
+export const AgentWorkflow = Schema.Literals(["slop-skill", "contributor-skill"])
+
+export const AgentClientResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("pass") }),
+  Schema.Struct({ outcome: Schema.Literal("fail"), reason: Text }),
+])
+
+export const AgentClientRecord = Schema.Struct({
+  workflow: AgentWorkflow,
+  client: exactIdentity(64, ["agent", "app", "cli", "client"]),
+  clientVersion: exactIdentity(128, ["current", "latest", "version"]),
+  provider: exactIdentity(64, ["ai", "model", "provider"]),
+  model: exactIdentity(128, ["ai", "claude", "gemini", "gpt", "grok", "llama", "llm", "model", "unavailable"]),
+  sourceSha: SourceSha,
+  result: AgentClientResult,
+  evidence: Text,
+})
+
+export const AgentClientRecords = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  recordedBy: GitHubLogin,
+  records: Schema.Array(AgentClientRecord).check(Schema.isBetweenLength(0, 256)),
+})
+
+export const EvidenceArtifact = Schema.Struct({
+  name: Schema.Literals(["deploy.log", "site-verification.json"]),
+  bytes: ByteCount,
+  sha256: Digest,
+})
+
+export const EvidenceManifest = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  capturedAt: ExactInstant,
+  environment: Schema.Literal("production"),
+  sourceSha: SourceSha,
+  artifacts: Schema.Array(EvidenceArtifact).check(Schema.isBetweenLength(2, 2)),
+})
+
+export const ServedArtifact = Schema.Struct({
+  origin: HttpsUrl,
+  path: Text,
+  status: Schema.Literal(200),
+  bytes: ByteCount,
+  sha256: Digest,
+  contentType: Text,
+  cacheControl: Schema.NullOr(Text),
+})
+
+export const SkillArtifact = Schema.Struct({ path: Text, bytes: ByteCount, sha256: Digest })
+
+export const ProductionNetwork = Schema.Struct({
+  dns: Schema.Struct({
+    hostname: Schema.Literal("slop.cash"),
+    addresses: Schema.Array(Schema.Struct({ address: Text, family: Schema.Literals([4, 6]) })).check(Schema.isBetweenLength(1, 64)),
+  }),
+  tls: Schema.Struct({
+    authorized: Schema.Literal(true),
+    protocol: Schema.Literals(["TLSv1.2", "TLSv1.3"]),
+    cipher: Text,
+    issuer: Schema.optionalKey(Text),
+    subject: Schema.optionalKey(Text),
+    subjectAltName: Schema.optionalKey(Text),
+    validFrom: Text,
+    validTo: Text,
+  }),
+  redirect: Schema.Struct({ status: Schema.Literals([301, 302, 307, 308]), location: HttpsUrl }),
+  https: Schema.Struct({ status: Schema.Literal(200), url: HttpsUrl }),
+  securityHeaders: Schema.Record(Schema.String, Text),
+  asset: Schema.Struct({ url: HttpsUrl, status: Schema.Literal(200), cacheControl: Text }),
+})
+
+export const SiteVerification = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  capturedAt: ExactInstant,
+  environment: Schema.Literal("production"),
+  origin: Schema.Literal("https://slop.cash"),
+  sourceSha: SourceSha,
+  deployment: Schema.Struct({ id: Text, url: HttpsUrl, createdOn: Text }),
+  buildManifest: Schema.Struct({ revision: SourceSha, revisionStatus: Schema.Literal("committed"), generatedAt: Text }),
+  deployLog: Schema.Struct({ bytes: ByteCount, sha256: Digest }),
+  remoteArtifacts: Schema.Array(ServedArtifact).check(Schema.isBetweenLength(1, 64)),
+  skill: Schema.Array(SkillArtifact).check(Schema.isBetweenLength(1, 16)),
+  network: ProductionNetwork,
+})

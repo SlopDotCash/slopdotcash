@@ -1,0 +1,157 @@
+// spec/security/remediation.md, "Remediation acts under the case's current roles"; spec/security/remediation.md, "The exact patch is reviewed independently before it resolves, and mitigation is verified separately"; spec/security/remediation.md, "Only separately approved exact redacted content is disclosed, with embargo history"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { sql } from "@repo/platform/d1"
+import type { Disclosure, Event, Recognition, Stage } from "../../gen/security__remediation.ts"
+import { remediator } from "../../gen/security__remediation.effect.vibe"
+import { technicalNow } from "../../gen/security__cases.effect.vibe"
+import { type Body, exactKeys } from "../cases/actions.vibe"
+import { type CaseActionInput, CaseActionHandlers, opened } from "../cases/routes.vibe"
+import { type Observed, type Refusal, notAllowed, refused } from "../cases/store.vibe"
+import type { ExtraActions } from "../cases/view.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { type Journal, type Recorded, digestFor, disclosureText, journalOf, lookup, recognitionText, recordedChange, stageText, stepped } from "./store.vibe"
+
+const common = ["action", "expectedRevision", "idempotencyKey"]
+const sha256 = /^[0-9a-f]{64}$/u
+const digestStages: ReadonlyArray<Stage> = ["Retest", "Resolved", "MitigationVerified"]
+const evidenceStages: ReadonlyArray<Stage> = ["Resolved", "MitigationVerified"]
+export const remediationKinds: ReadonlyArray<string> = ["remediation", "disclosure", "recognition"]
+
+effect function trimmed(body: Body, key: string, min: number, max: number, invalid: Refusal, length: Refusal) {
+  const value = body[key]
+  if (typeof value !== "string") throw refused(invalid)
+  const text = value.trim()
+  if (text.length < min || text.length > max) throw refused(length)
+  return text
+}
+
+effect function optional(body: Body, key: string, max: number, invalid: Refusal, length: Refusal) {
+  const value = body[key]
+  if (value === undefined || value === null || value === "") return null
+  return try trimmed(body, key, 1, max, invalid, length)
+}
+
+effect function chosen<K extends string>(table: Readonly<Record<K, string>>, value: unknown, invalid: Refusal) {
+  const found = lookup(table, value)
+  if (found === undefined) throw refused(invalid)
+  return found
+}
+
+export function remediationAllowed(observed: Observed, journal: Journal | undefined, viewer: number): ReadonlyArray<string> {
+  if (journal === undefined || observed.model.submission !== "Verified") return []
+  return [
+    ...observed.roles.has("reporter") ? ["recognition"] : [],
+    ...remediator(journal.state, viewer, observed.epoch) ? ["remediation"] : [],
+    ...observed.roles.has("security-maintainer") && technicalNow(observed.model, viewer, observed.epoch) && journal.state.disclosure !== "Disclosed" ? ["disclosure"] : [],
+  ]
+}
+
+effect function remediationPlan(input: CaseActionInput, journal: Journal) {
+  const { observed, actor, body } = input
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "remediationState"], ["reason", "evidenceReference", "patchDigest"])
+  if (!remediationAllowed(observed, journal, by).includes("remediation")) throw notAllowed("remediation")
+  const stage = try chosen(stageText, body.remediationState, actionRows.invalidRequestInvalidRemediationState)
+  if (stage === "NotStarted") throw refused(actionRows.invalidRequestInvalidRemediationState)
+  const evidenceReference = try optional(body, "evidenceReference", 500, actionRows.invalidRequestInvalidEvidenceReference, actionRows.invalidRequestEvidenceReferenceMustBe1)
+  if (evidenceStages.includes(stage) && evidenceReference === null) throw refused(actionRows.evidenceRequired)
+  const patch = body.patchDigest
+  const needsDigest = digestStages.includes(stage)
+  if (needsDigest && (typeof patch !== "string" || !sha256.test(patch))) throw refused(actionRows.evidenceRequired)
+  if (!needsDigest && patch !== undefined) throw refused(actionRows.invalidRequestRequestBodyHasUnexpected)
+  const reason = try optional(body, "reason", 2000, actionRows.invalidRequestInvalidReason, actionRows.invalidRequestReasonMustBe1)
+  const digest = typeof patch === "string" && needsDigest ? digestFor(journal, patch) : 0
+  const checkedEpoch = observed.epoch
+  const event: Event = stage === "Retest" ? { type: "recordPatch", checkedEpoch, digest }
+    : stage === "Resolved" ? { type: "resolveRemediation", checkedEpoch, testedDigest: digest }
+    : stage === "MitigationVerified" ? { type: "verifyMitigation", checkedEpoch, deployedDigest: digest }
+    : stage === "Reopened" ? { type: "reopenRemediation", checkedEpoch }
+    : { type: "progressRemediation", checkedEpoch, stage }
+  const row = stage === "MitigationVerified" && journal.state.stage !== "Resolved" ? actionRows.actionNotAllowedVerifyDeployedMitigationOnly : undefined
+  try stepped(journal, event, by, row, "remediation")
+  const text = stageText[stage]
+  return {
+    kind: "remediation",
+    role: observed.roles.has("security-maintainer") ? "security-maintainer" : "triager",
+    reason,
+    evidenceReference,
+    detail: { remediationState: text, ...typeof patch === "string" && needsDigest ? { patchDigest: patch } : {} },
+    column: sql`remediation_state = ${text}`,
+    event,
+  } satisfies Recorded
+}
+
+effect function disclosurePlan(input: CaseActionInput, journal: Journal) {
+  const { observed, actor, body } = input
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "disclosureState", "reason", "evidenceReference"], ["redactedContentDigest", "embargoChange"])
+  if (!observed.roles.has("security-maintainer")) throw refused(actionRows.forbiddenSecurityMaintainersDecide)
+  if (!remediationAllowed(observed, journal, by).includes("disclosure")) throw notAllowed("disclosure")
+  const target: Disclosure = try chosen(disclosureText, body.disclosureState, actionRows.invalidRequestInvalidDisclosureState)
+  const supplied = body.redactedContentDigest
+  if (supplied !== undefined && (typeof supplied !== "string" || !sha256.test(supplied))) throw refused(actionRows.invalidRequestInvalidRedactedContentDigest)
+  const digestText = typeof supplied === "string" ? supplied : null
+  if (target !== "Embargoed" && digestText === null) throw refused(actionRows.evidenceRequiredBindTheExactApproved)
+  if (target === "Embargoed" && digestText !== null) throw refused(actionRows.invalidRequestInvalidRedactedContentDigest)
+  const embargoSupplied = body.embargoChange !== undefined && body.embargoChange !== null && body.embargoChange !== ""
+  const event: Event = {
+    type: "decideDisclosure",
+    checkedEpoch: observed.epoch,
+    target,
+    digest: digestText === null ? 0 : digestFor(journal, digestText),
+    embargoChange: embargoSupplied ? journal.state.embargoHistory.length + 1 : 0,
+  }
+  try stepped(journal, event, by, target === "Disclosed" ? actionRows.disclosureApprovalRequired : undefined, "disclosure")
+  const reason = try trimmed(body, "reason", 8, 2000, actionRows.invalidRequestInvalidReason, actionRows.invalidRequestReasonMustBe8)
+  const evidenceReference = try trimmed(body, "evidenceReference", 3, 500, actionRows.invalidRequestInvalidEvidenceReference, actionRows.invalidRequestEvidenceReferenceMustBe3)
+  const embargoChange = try optional(body, "embargoChange", 2000, actionRows.invalidRequestInvalidEmbargoChange, actionRows.invalidRequestEmbargoChangeMustBe1)
+  const text = disclosureText[target]
+  return {
+    kind: "disclosure",
+    role: "security-maintainer",
+    reason,
+    evidenceReference,
+    detail: { disclosureState: text, redactedContentDigest: digestText, approvalRevision: target === "Disclosed" ? journal.approvalRevision : null, embargoChange },
+    column: sql`disclosure_state = ${text}`,
+    event,
+  } satisfies Recorded
+}
+
+effect function recognitionPlan(input: CaseActionInput, journal: Journal) {
+  const { observed, actor, body } = input
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "recognition"])
+  if (!remediationAllowed(observed, journal, by).includes("recognition")) throw notAllowed("recognition")
+  const choice: Recognition = try chosen(recognitionText, body.recognition, actionRows.invalidRequestInvalidRecognition)
+  const event: Event = { type: "setRecognition", choice }
+  try stepped(journal, event, by, undefined, "recognition")
+  const text = recognitionText[choice]
+  return { kind: "recognition", role: "reporter", reason: null, evidenceReference: null, detail: { recognition: text }, column: sql`recognition = ${text}`, event } satisfies Recorded
+}
+
+export effect function remediationAct(action: string, input: CaseActionInput) {
+  if (!remediationKinds.includes(action)) return undefined
+  const journal = try journalOf(input.observed)
+  if (journal === undefined) throw notAllowed(action)
+  const recorded = action === "remediation" ? try remediationPlan(input, journal)
+    : action === "disclosure" ? try disclosurePlan(input, journal)
+    : try recognitionPlan(input, journal)
+  try recordedChange({ observed: input.observed, actorGithubId: input.actor.githubId, idempotencyKey: input.idempotencyKey, at: input.at, recorded })
+  return try opened(input.actor, input.observed.record.row.id)
+}
+
+export effect function remediationContribution(observed: Observed, viewerGithubId: string) {
+  const journal = try journalOf(observed)
+  return { allowed: remediationAllowed(observed, journal, githubNumber(viewerGithubId)), view: {} } satisfies ExtraActions
+}
+
+type Needs = Effect.Services<ReturnType<typeof remediationAct>>
+
+export const remediationHandlersLive = Layer.effect(CaseActionHandlers, effect {
+  const services = try Effect.context<Needs>()
+  const handlers: CaseActionHandlers.Shape = {
+    contribution: (observed, viewerGithubId) => remediationContribution(observed, viewerGithubId),
+    act: (action, input) => Effect.provide(Effect.provideService(remediationAct(action, input), CaseActionHandlers, handlers), services),
+  }
+  return handlers
+})

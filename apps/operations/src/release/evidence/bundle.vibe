@@ -1,0 +1,156 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { byteOrder, canonicalJson } from "../manifest/inventory.vibe"
+import { EvidenceManifest, SiteVerification } from "./records.schema.vibe"
+
+export error EvidenceRefused { message: string }
+
+export type Verification = typeof SiteVerification.Type
+
+export const manifestName = "manifest.json"
+export const verificationName = "site-verification.json"
+export const deployLogName = "deploy.log"
+
+export const artifactBytesLimits: { readonly [name: string]: number } = {
+  [deployLogName]: 16 * 1024 * 1024,
+  [manifestName]: 1024 * 1024,
+  [verificationName]: 4 * 1024 * 1024,
+}
+
+const bundleNames = [deployLogName, manifestName, verificationName].sort(byteOrder)
+const artifactNames = [deployLogName, verificationName].sort(byteOrder)
+const bundleBytesLimit = 21 * 1024 * 1024
+
+export interface Expected {
+  readonly sourceSha: string
+}
+
+function refused(message: string) {
+  return new EvidenceRefused({ message })
+}
+
+effect function decodedJson<S extends Schema.Top>(schema: S, bytes: Uint8Array, label: string) {
+  const text = new TextDecoder().decode(bytes)
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused(`${label} is not JSON`) })
+  const decoded = Schema.decodeUnknownEffect(schema)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw refused(`${label} does not match its schema`)
+  }
+  if (canonicalJson(decoded) !== text) throw refused(`${label} is not canonical JSON`)
+  return decoded
+}
+
+effect function regularFile(root: string, name: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = files.join(root, name)
+  const link = fs.readLink(path) catch () => undefined
+  const info = fs.stat(path) catch () => undefined
+  const size = Number(info?.size ?? 0)
+  if (link !== undefined || info?.type !== "File" || size === 0) throw refused(`evidence artifact ${name} must be a non-empty regular file`)
+  if (size > (artifactBytesLimits[name] ?? 0)) throw refused(`evidence artifact ${name} exceeds its size bound`)
+  const bytes = fs.readFile(path) catch effect () => {
+    throw refused(`evidence artifact ${name} is unreadable`)
+  }
+  if (bytes.length !== size) throw refused(`evidence artifact ${name} changed while it was read`)
+  return bytes
+}
+
+export effect function validateEvidence(root: string, expected: Expected) {
+  const fs = try FileSystem.FileSystem
+  const link = fs.readLink(root) catch () => undefined
+  const info = fs.stat(root) catch () => undefined
+  if (link !== undefined || info?.type !== "Directory") throw refused("the evidence bundle root must be a real directory")
+  const names = fs.readDirectory(root) catch effect () => {
+    throw refused("the evidence bundle is unreadable")
+  }
+  const sorted = [...names].sort(byteOrder)
+  if (sorted.join("\n") !== bundleNames.join("\n")) throw refused(`the evidence bundle must contain exactly: ${bundleNames.join(", ")}`)
+  const contents = new Map<string, Uint8Array>()
+  let total = 0
+  for (const name of bundleNames) {
+    const bytes = try regularFile(root, name)
+    total += bytes.length
+    if (total > bundleBytesLimit) throw refused("the evidence bundle exceeds its aggregate size bound")
+    contents.set(name, bytes)
+  }
+  const manifest = try decodedJson(EvidenceManifest, contents.get(manifestName) ?? new Uint8Array(), "the evidence manifest")
+  if (manifest.sourceSha !== expected.sourceSha) throw refused("the evidence manifest does not describe the tested source")
+  const bound = manifest.artifacts.map((artifact) => artifact.name).sort(byteOrder)
+  if (bound.join("\n") !== artifactNames.join("\n")) throw refused("the evidence manifest must bind every artifact exactly once")
+  for (const artifact of manifest.artifacts) {
+    const bytes = contents.get(artifact.name) ?? new Uint8Array()
+    if (bytes.length !== artifact.bytes || (try sha256Hex(bytes)) !== artifact.sha256) throw refused(`evidence artifact ${artifact.name} does not match its digest`)
+  }
+  const verification = try decodedJson(SiteVerification, contents.get(verificationName) ?? new Uint8Array(), "the site verification")
+  const log = manifest.artifacts.find((artifact) => artifact.name === deployLogName)
+  if (verification.capturedAt !== manifest.capturedAt || verification.sourceSha !== manifest.sourceSha || verification.buildManifest.revision !== manifest.sourceSha) {
+    throw refused("the evidence artifacts do not describe one capture of the tested source")
+  }
+  if (log === undefined || verification.deployLog.sha256 !== log.sha256 || verification.deployLog.bytes !== log.bytes) throw refused("the site verification does not bind the retained deploy log")
+  return { capturedAt: manifest.capturedAt, artifacts: manifest.artifacts.length }
+}
+
+effect function written(path: string, bytes: Uint8Array) {
+  const fs = try FileSystem.FileSystem
+  fs.writeFile(path, bytes, { mode: 0o644, flag: "wx" }) catch effect () => {
+    throw refused("an evidence artifact could not be staged")
+  }
+}
+
+effect function staged(staging: string, verification: Verification, log: Uint8Array) {
+  const files = try Path.Path
+  const encoder = new TextEncoder()
+  const verificationBytes = encoder.encode(canonicalJson(verification))
+  const artifacts = [
+    { name: deployLogName, bytes: log.length, sha256: try sha256Hex(log) },
+    { name: verificationName, bytes: verificationBytes.length, sha256: try sha256Hex(verificationBytes) },
+  ].sort((left, right) => byteOrder(left.name, right.name))
+  const manifest = { schemaVersion: 1, capturedAt: verification.capturedAt, environment: verification.environment, sourceSha: verification.sourceSha, artifacts } satisfies typeof EvidenceManifest.Type
+  try written(files.join(staging, deployLogName), log)
+  try written(files.join(staging, verificationName), verificationBytes)
+  try written(files.join(staging, manifestName), encoder.encode(canonicalJson(manifest)))
+  return try validateEvidence(staging, { sourceSha: verification.sourceSha })
+}
+
+effect function published(staging: string, out: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const backup = files.join(files.dirname(out), `.${files.basename(out)}-backup-${try randomId()}`)
+  const previous = try fs.exists(out)
+  if (previous) {
+    fs.rename(out, backup) catch effect () => {
+      throw refused(`the previous evidence bundle at ${out} could not be set aside`)
+    }
+  }
+  const moved = fs.rename(staging, out) catch () => "failed" as const
+  if (moved === "failed") {
+    if (!previous) throw refused(`the evidence bundle could not be published at ${out}; it remains at ${staging}`)
+    const occupied = fs.exists(out) catch () => true
+    const restored = occupied ? "failed" as const : fs.rename(backup, out) catch () => "failed" as const
+    if (restored === "failed") throw refused(`evidence publication failed and the previous bundle could not be restored; preserve ${staging} and ${backup}`)
+    throw refused(`the evidence bundle could not be published at ${out}; the previous bundle was restored`)
+  }
+  if (previous) {
+    fs.remove(backup, { recursive: true }) catch effect () => {
+      throw refused(`the evidence bundle was published at ${out}, but the previous bundle remains at ${backup}`)
+    }
+  }
+}
+
+export effect function sealEvidence(out: string, verification: Verification, log: Uint8Array) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const parent = files.dirname(out)
+  fs.makeDirectory(parent, { recursive: true }) catch effect () => {
+    throw refused(`the evidence directory ${parent} could not be created`)
+  }
+  const staging = fs.makeTempDirectory({ directory: parent, prefix: `.${files.basename(out)}-staging-` }) catch effect () => {
+    throw refused("the evidence staging directory could not be created")
+  }
+  const sealed = staged(staging, verification, log) catch effect (error) => {
+    try Effect.ignore(fs.remove(staging, { recursive: true }))
+    throw error
+  }
+  try published(staging, out)
+  return sealed
+}

@@ -1,0 +1,434 @@
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"
+import { isoAt } from "@repo/platform/clock"
+import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
+import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
+import { Authority, Registry, Restrictions } from "@repo/ports/backend"
+import type { AdvisoryRead, Copy, Listing, Request, SendClaim, SendGate } from "../../gen/security__forwarding.ts"
+import { canClaimSend, canReadReceipt, canReconcile, readReceipt, reconcile, recordCreated } from "../../gen/security__forwarding.effect.vibe"
+import { qualified } from "../../gen/security__screening.effect.vibe"
+import { jsonDocument } from "../admission/binding.ts"
+import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding } from "../client/forwarding.vibe"
+import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows } from "../client/refusals.vibe"
+import { readiness } from "../intake/availability.vibe"
+import { parseReport } from "../intake/report.vibe"
+import { type StoredIntake, type SubmissionRow, decorated, reportVersions, screeningOf, storedIntake, submission } from "../intake/rows.vibe"
+import { githubNumber, reportBytes } from "../privacy/reads.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { type AdvisoryFacts, type MarkerListing, type PostOutcome, createReport, findByMarker, getAdvisory, ghsaRank, markerLine, sameRepository } from "./advisories.vibe"
+import { IntakeApp, type IntakeAppConfig, type ReporterGrant, beginAuthorization, clearGrantCookie, completeAuthorization, readGrant } from "./grant.vibe"
+import { type Loaded, type Transition, type Volatile, boundTransition, claimTransition, copyOf, failedTransition, linkedTransition, loaded, noVolatile, phaseOf, reloaded, settled, stayTransition, stepped, written } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+}
+
+interface Outcome {
+  readonly status: number
+  readonly row: SubmissionRow
+  readonly extra?: Readonly<Record<string, unknown>>
+}
+
+interface Current {
+  readonly forwarding: Loaded | undefined
+  readonly row: SubmissionRow
+}
+
+schema Candidate { github_id: string }
+schema Found { id: string }
+
+const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const submissionId = /^ss_[A-Za-z0-9_-]{8,72}$/u
+const reconcileWindowMs = 10 * 60 * 1000
+const notFound = callbackRows.notFoundSubmissionNotFound
+const stale = sendRows.staleRevisionTheSubmissionChangedSince
+
+function refused(row: Row) {
+  return refuse(row.status, row.error, row.message)
+}
+
+function exactKeys(body: Readonly<Record<string, unknown>>, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
+  const allowed = new Set([...required, ...optional])
+  return required.every((key) => Object.hasOwn(body, key)) && Object.keys(body).every((key) => allowed.has(key))
+}
+
+effect function configured() {
+  const { app } = try IntakeApp
+  if (app === undefined) throw refused(notFound)
+  return app
+}
+
+effect function requestObject(malformed: Row, required: ReadonlyArray<string>, optional: ReadonlyArray<string>, unexpected: Row) {
+  const value = jsonBody(256) catch effect () => { throw refused(malformed) }
+  const body = value as Readonly<Record<string, unknown>>
+  if (!exactKeys(body, required, optional)) throw refused(unexpected)
+  return body
+}
+
+effect function expectedRevision(body: Readonly<Record<string, unknown>>) {
+  const value = body.expectedRevision
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw refused(sendRows.invalidRequestInvalidExpectedRevision)
+  return value
+}
+
+effect function owned(actor: Actor, id: string) {
+  const row = try submission(id)
+  if (row === undefined || row.reporter_github_id !== actor.githubId) throw refused(notFound)
+  return row
+}
+
+effect function current(row: SubmissionRow, ledger: Ref.Ref<Volatile>) {
+  const found = try loaded(row.id, ledger)
+  if (found === undefined) return { forwarding: undefined, row }
+  const moved = try settled(found, ledger)
+  if (moved !== undefined) return { forwarding: moved, row: moved.row }
+  const again = try submission(row.id)
+  if (again === undefined) throw refused(notFound)
+  return { forwarding: try loaded(row.id, ledger), row: again }
+}
+
+effect function answer(outcome: Outcome, cookie?: string) {
+  const done = outcome.row.state === "receipt-verified" || outcome.row.state === "abandoned"
+  const setCookie = cookie ?? (done ? clearGrantCookie() : undefined)
+  const body = { ...outcome.extra ?? {}, submission: try decorated(outcome.row) }
+  return json(body, outcome.status, setCookie === undefined ? privateHeaders : { ...privateHeaders, "set-cookie": setCookie })
+}
+
+effect function grantFor(app: IntakeAppConfig, row: SubmissionRow, nowSeconds: number) {
+  const grant = try readGrant(app, row.id, row.reporter_github_id)
+  if (grant === undefined || grant.expiresAtSeconds <= nowSeconds) throw refused(sendRows.grantRequired)
+  return grant
+}
+
+function requestOf(row: SubmissionRow, grant: ReporterGrant, nowSeconds: number): Request {
+  return {
+    id: row.revision + 1,
+    revision: row.revision,
+    actor: 1,
+    session: 1,
+    checkedAtSeconds: nowSeconds,
+    grant: { version: 1, credential: "ReporterUser", authenticated: true, sealed: true, submission: 1, reporter: 1, session: 1, expiresAtSeconds: grant.expiresAtSeconds },
+  }
+}
+
+function failureClosed(forwarding: Loaded | undefined, row: SubmissionRow) {
+  return row.state === "failed" && forwarding?.state.failure !== "Retryable"
+}
+
+function qualifiedAt(id: string, stored: StoredIntake) {
+  return sql`EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=${id} AND revision=${stored.revision} AND (review_decision='forward' OR (review_decision IS NULL AND screening_state='legitimate')))`
+}
+
+effect function contacts(projectId: string) {
+  const program = (try ReportingPrograms).current(projectId) catch () => undefined
+  if (program === undefined) return false
+  if (program.approvers !== undefined) return program.approvers.technical.length > 0
+  const project = (try Registry).project(projectId) catch () => undefined
+  const repository = project?.repositories[0]
+  if (project === undefined || repository === undefined) return false
+  const recorded = try rows(Candidate, sql`SELECT actor_github_id AS github_id FROM project_revisions WHERE project_id=${projectId} AND actor_github_id IS NOT NULL UNION SELECT a.applicant_github_id AS github_id FROM projects p JOIN project_applications a ON a.id=p.source_application_id WHERE p.id=${projectId}`)
+  const candidates = new Set([...recorded.map((candidate) => candidate.github_id), project.stewardGithubId])
+  const authority = try Authority
+  for (const githubId of candidates) {
+    const read = try authority.repository({ actorGithubId: githubId, repositoryId: repository.id })
+    if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return false
+    if (read.installation === "Installed" && (githubId === project.stewardGithubId || read.permission === "PermissionVerified")) return true
+  }
+  return false
+}
+
+effect function competing(row: SubmissionRow, ghsa: string) {
+  const found = try first(Found, sql`SELECT id FROM security_cases WHERE project_id=${row.project_id} AND advisory_ghsa=${ghsa} AND submission_state='verified' AND id<>${row.case_id ?? ""} LIMIT 1`)
+  return found !== undefined
+}
+
+function factsCopy(row: SubmissionRow, facts: AdvisoryFacts): Copy {
+  return {
+    ...copyOf(facts),
+    repository: sameRepository(facts.repository, row.repository) ? 1 : 2,
+    author: facts.authorId === null ? 0 : facts.authorId === row.reporter_github_id ? 1 : 2,
+    marker: facts.markerFound ? 1 : 2,
+  }
+}
+
+function githubStateOf(state: string) {
+  if (state === "triage") return "Triage" as const
+  if (state === "draft") return "AdvisoryDraft" as const
+  if (state === "published") return "Published" as const
+  return "OtherAdvisoryState" as const
+}
+
+effect function alreadyRecorded(forwarding: Loaded, ledger: Ref.Ref<Volatile>) {
+  const now = try reloaded(forwarding, ledger)
+  if (now.row.state === "receipt-verified") return { status: 200, row: now.row } satisfies Outcome
+  if (now.row.revision !== forwarding.row.revision || now.row.state !== forwarding.row.state) throw refused(stale)
+  return undefined
+}
+
+effect function verified(app: IntakeAppConfig, forwarding: Loaded, grant: ReporterGrant, nowSeconds: number, ledger: Ref.Ref<Volatile>) {
+  const row = forwarding.row
+  const ghsa = row.advisory_ghsa ?? ""
+  const request = requestOf(row, grant, nowSeconds)
+  const fetched = try getAdvisory(app, grant, row.repository, ghsa, markerLine(row.marker))
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoAt(nowMs)
+  const program = (try ReportingPrograms).current(row.project_id) catch () => undefined
+  const facts = fetched.kind === "found" ? fetched.facts : undefined
+  const read: AdvisoryRead = {
+    status: fetched.kind === "found" ? "Found" : fetched.kind === "not-found" ? "NotFound" : "ReadError",
+    facts: facts === undefined ? { ...forwarding.state.canonical, author: 1 } : factsCopy(row, facts),
+    currentRepository: program !== undefined && sameRepository(program.repository, row.repository) ? 1 : 2,
+    checkedAtMs: nowMs,
+    currentContacts: facts === undefined ? false : try contacts(row.project_id),
+    competingCase: facts === undefined ? false : try competing(row, facts.ghsa),
+    writeCommitted: false,
+    privateReport: facts?.privateReport ?? false,
+    githubState: githubStateOf(facts?.state ?? ""),
+  }
+  if (!canReadReceipt(forwarding.state, request, read)) throw refused(stale)
+  const linkable = read.status === "Found" && facts !== undefined && row.case_id !== null && read.currentContacts && !read.competingCase
+  if (linkable && facts !== undefined && row.case_id !== null) {
+    const committed = try written(row, linkedTransition(row.case_id, facts, row.project_id, row.reporter_github_id, at))
+    if (committed) {
+      try stepped(forwarding, { type: "readReceipt", request, advisoryRead: { ...read, writeCommitted: true } }, ledger)
+      return { status: 200, row: (try reloaded(forwarding, ledger)).row }
+    }
+    if (!(try competing(row, facts.ghsa))) {
+      const settledNow = try alreadyRecorded(forwarding, ledger)
+      if (settledNow !== undefined) return settledNow
+      throw refused(stale)
+    }
+    const decided = try alreadyRecorded(forwarding, ledger)
+    if (decided !== undefined) return decided
+    return try recorded(forwarding, request, { ...read, competingCase: true }, ledger, at)
+  }
+  return try recorded(forwarding, request, read, ledger, at)
+}
+
+effect function recorded(forwarding: Loaded, request: Request, read: AdvisoryRead, ledger: Ref.Ref<Volatile>, at: string) {
+  const row = forwarding.row
+  const next = readReceipt(forwarding.state, request, read)
+  const transition: Transition = read.status !== "Found" ? stayTransition(row, "verify-inconclusive", null, at)
+    : next.phase === "Failed" && next.failure === "Terminal" ? failedTransition("author-mismatch", "verify-failed", at)
+    : next.phase === "Failed" && next.failure === "ReceiptMismatch" ? failedTransition("invalid", "verify-failed", at)
+    : next.phase === "Failed" && next.failure === "AlreadyRecorded" ? failedTransition("already-recorded", "verify-failed", at)
+    : stayTransition(row, "contacts-unavailable", null, at)
+  stepped(forwarding, { type: "readReceipt", request, advisoryRead: read }, ledger, transition) catch effect (error) => {
+    if (error._tag === "Stale") throw refused(stale)
+    throw error
+  }
+  if (next.failure === "AlreadyRecorded") throw refused(reconcileRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  return { status: next.phase === "Failed" ? 200 : 202, row: (try reloaded(forwarding, ledger)).row }
+}
+
+effect function storedReport(row: SubmissionRow, stored: StoredIntake) {
+  const bytes = try reportBytes(row.id, stored.report_version)
+  const parsed = parseReport(jsonDocument(bytes))
+  if (parsed.kind !== "report") return try die(new Error("A retained report no longer parses"))
+  return parsed.report
+}
+
+function factsByRank(all: ReadonlyArray<AdvisoryFacts>, rank: number) {
+  return all.find((facts) => ghsaRank(facts.ghsa) === rank)
+}
+
+effect function created(app: IntakeAppConfig, forwarding: Loaded, claim: SendClaim, accepted: AdvisoryFacts, grant: ReporterGrant, ledger: Ref.Ref<Volatile>, at: string) {
+  const f = forwarding.state
+  const sinceMs = f.firstAtMs - reconcileWindowMs
+  const listed: MarkerListing = f.attempt > 1 ? try findByMarker(app, grant, forwarding.row.repository, markerLine(forwarding.row.marker), sinceMs) : { kind: "complete", matches: [] }
+  const matches = listed.kind === "complete" ? listed.matches : []
+  const acceptedCopy = factsCopy(forwarding.row, accepted)
+  const listing: Listing = { complete: listed.kind === "complete", submission: 1, repository: 1, marker: 1, sinceMs, copies: matches.map((facts) => factsCopy(forwarding.row, facts)) }
+  const preview = recordCreated(f, claim, acceptedCopy, listing)
+  const all = [accepted, ...matches]
+  const chosen = factsByRank(all, preview.canonical.ghsa) ?? accepted
+  const duplicates = preview.duplicateGhsas.flatMap((rank) => factsByRank(all, rank)?.ghsa ?? [])
+  return stepped(forwarding, { type: "recordCreated", claim, accepted: acceptedCopy, listing }, ledger, boundTransition(chosen, duplicates, "created", null, at)) catch effect (error) => {
+    if (error instanceof ConstraintViolation) return undefined
+    throw error
+  }
+}
+
+function toUncertain(at: string): Transition {
+  return { state: "uncertain", kind: "uncertain", actorGithubId: null, at }
+}
+
+effect function posted(app: IntakeAppConfig, sending: Loaded, claim: SendClaim, grant: ReporterGrant, nowSeconds: number, ledger: Ref.Ref<Volatile>, result: PostOutcome) {
+  const at = try isoAt(try Clock.currentTimeMillis)
+  const latest = try reloaded(sending, ledger)
+  const owns = latest.state.phase === "Submitting" && latest.state.revision === claim.revision
+  if (!owns) {
+    if (result.kind === "created" && latest.state.phase === "Submitting") {
+      stepped(latest, { type: "holdLateCopy", claim, seenRevision: latest.state.revision, accepted: factsCopy(latest.row, result.facts) }, ledger, toUncertain(at)) catch effect (error) => {
+        if (error._tag !== "Stale" && error._tag !== "Rejected") throw error
+      }
+    }
+    return { status: 202, row: (try reloaded(latest, ledger)).row }
+  }
+  if (result.kind === "rejected") {
+    try stepped(latest, { type: "recordPostResult", claim, result: "DefiniteRetryable" }, ledger, failedTransition(result.code, "rejected", at))
+    return { status: 200, row: (try reloaded(latest, ledger)).row }
+  }
+  if (result.kind === "rate-limited") {
+    try stepped(latest, { type: "recordPostResult", claim, result: "ThrottledNoCopy" }, ledger, { state: "draft", kind: "rate-limited", detail: { retryAfterSeconds: result.retryAfterSeconds }, actorGithubId: null, at })
+    return { status: 200, row: (try reloaded(latest, ledger)).row, extra: { rateLimited: { retryAfterSeconds: result.retryAfterSeconds } } }
+  }
+  if (result.kind === "uncertain") {
+    try stepped(latest, { type: "recordPostResult", claim, result: "CopyUnknown" }, ledger, toUncertain(at))
+    return { status: 202, row: (try reloaded(latest, ledger)).row }
+  }
+  const bound = try created(app, latest, claim, result.facts, grant, ledger, at)
+  if (bound === undefined) {
+    try stepped(latest, { type: "recordPostResult", claim, result: "CopyUnknown" }, ledger, toUncertain(at))
+    return { status: 202, row: (try reloaded(latest, ledger)).row }
+  }
+  return try verified(app, try reloaded(latest, ledger), grant, nowSeconds, ledger)
+}
+
+effect function lostClaim(actorGithubId: string) {
+  const standing = try (try Restrictions).account(actorGithubId)
+  return refused(standing.banned ? sendRows.participationBannedThisAccountCannotStart : stale)
+}
+
+effect function sendSubmission(actor: Actor, id: string) {
+  const app = try configured()
+  if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(sendRows.participationBannedThisAccountCannotStart)
+  const ownedRow = try owned(actor, id)
+  const body = try requestObject(sendRows.invalidRequestRequestBodyMustBe, ["expectedRevision"], ["report"], sendRows.invalidRequestRequestBodyHasUnexpected)
+  const expected = try expectedRevision(body)
+  const ledger = try Ref.make(noVolatile)
+  if (expected < ownedRow.revision) {
+    const sent = try first(Found, sql`SELECT submission_id AS id FROM security_submission_events WHERE submission_id=${ownedRow.id} AND revision=${expected + 1} AND kind='send'`)
+    const replay = try current(ownedRow, ledger)
+    if (sent === undefined) throw refused(stale)
+    return try answer({ status: 200, row: replay.row, extra: { replayed: true } })
+  }
+  if (expected !== ownedRow.revision) throw refused(stale)
+  const { forwarding, row } = try current(ownedRow, ledger)
+  if (row.origin !== "slop") throw refused(sendRows.actionNotAllowedVerifyADirectReport)
+  if (row.state === "uncertain") throw refused(sendRows.reconcileRequired)
+  if (row.state === "submitting") throw refused(sendRows.submissionInProgress)
+  if (row.state === "abandoned") throw refused(sendRows.submissionAbandoned)
+  if (row.state === "submitted" || row.state === "receipt-verified" || row.advisory_ghsa !== null) throw refused(sendRows.alreadySubmitted)
+  if (failureClosed(forwarding, row)) throw refused(sendRows.submissionClosedThisSubmissionCannotBe)
+  const stored = try storedIntake(row.id)
+  if (stored === undefined || forwarding === undefined) throw refused(sendRows.screeningRequiredThisDraftNeedsMore)
+  const digests = (try reportVersions(row.id)).map((version) => version.content_sha256)
+  const screening = screeningOf(stored, githubNumber(row.reporter_github_id), digests)
+  if (!qualified(screening)) throw refused(sendRows.screeningRequired)
+  if (body.report !== undefined) throw refused(sendRows.invalidRequestForwardTheSavedReport)
+  const program = try (try ReportingPrograms).current(row.project_id)
+  if (program === undefined) throw refused(sendRows.projectNotFound)
+  if (!sameRepository(program.repository, row.repository)) throw refused(sendRows.intakeChanged)
+  const nowMs = try Clock.currentTimeMillis
+  const nowSeconds = Math.floor(nowMs / 1000)
+  const grant = try grantFor(app, row, nowSeconds)
+  const observed = readiness(row.project_id) catch () => undefined
+  const reportingReady = observed !== undefined && observed.state === "ready" && !observed.stale
+  if (!reportingReady) throw refused(sendRows.intakeUnavailablePrivateReportingCouldNot)
+  const report = try storedReport(row, stored)
+  const request = requestOf(row, grant, nowSeconds)
+  const gate: SendGate = { seenScreeningRevision: stored.revision, reportVersion: stored.report_version, digest: digests[stored.report_version - 1] ?? "", screening, bytesVerified: true, intakeCurrent: true, reportingReady, allowedToParticipate: true, wonClaim: true }
+  if (!canClaimSend(forwarding.state, request, gate, nowMs)) throw refused(stale)
+  const at = try isoAt(nowMs)
+  const unbanned = try (try ReportingPrograms).unbanned(actor.githubId)
+  const won = written(row, claimTransition(actor.githubId, row.attempt + 1, stored.report_version, at, sql`(${unbanned}) AND ${qualifiedAt(row.id, stored)}`)) catch effect (error) => {
+    if (error instanceof ConstraintViolation) throw refused(sendRows.submissionInFlightAnotherSubmissionForThis)
+    throw error
+  }
+  const claimedState = stepped(forwarding, { type: "claimSend", request, gate: { ...gate, wonClaim: won }, startedAtMs: nowMs }, ledger) catch effect (error) => {
+    if (error._tag === "Rejected") throw try lostClaim(actor.githubId)
+    throw error
+  }
+  const readback = try submission(row.id)
+  if (readback === undefined) throw refused(stale)
+  const claiming: Loaded = { ...forwarding, row: readback, state: claimedState }
+  const readyState = stepped(claiming, { type: "recordClaimRead", readback: { requestId: request.id, changedOne: won, rowPresent: true, observedRevision: readback.revision, observedPhase: phaseOf(readback.state) } }, ledger) catch effect (error) => {
+    if (error._tag === "Rejected") throw refused(stale)
+    throw error
+  }
+  const claim = readyState.activeClaim
+  const postingState = try stepped({ ...claiming, state: readyState }, { type: "startPost", claim }, ledger)
+  const result = try createReport(app, grant, row.repository, report, markerLine(row.marker))
+  return try answer(try posted(app, { ...claiming, state: postingState }, claim, grant, nowSeconds, ledger, result))
+}
+
+effect function reconcileSubmission(actor: Actor, id: string) {
+  const app = try configured()
+  const ownedRow = try owned(actor, id)
+  const body = try requestObject(reconcileRows.invalidRequestRequestBodyMustBe, ["expectedRevision"], [], reconcileRows.invalidRequestRequestBodyHasUnexpected)
+  if ((try expectedRevision(body)) !== ownedRow.revision) throw refused(stale)
+  const ledger = try Ref.make(noVolatile)
+  const { forwarding, row } = try current(ownedRow, ledger)
+  if (row.state === "submitting") throw refused(reconcileRows.submissionInProgress)
+  const mismatch = forwarding !== undefined && forwarding.state.phase === "Failed" && forwarding.state.failure === "ReceiptMismatch"
+  if (forwarding === undefined || row.case_id === null || (row.state !== "uncertain" && row.state !== "submitted" && !mismatch)) throw refused(reconcileRows.nothingToReconcile)
+  const nowMs = try Clock.currentTimeMillis
+  const nowSeconds = Math.floor(nowMs / 1000)
+  const grant = try grantFor(app, row, nowSeconds)
+  if (row.state !== "uncertain") return try answer(try verified(app, forwarding, grant, nowSeconds, ledger))
+  const request = requestOf(row, grant, nowSeconds)
+  const sinceMs = forwarding.state.firstAtMs - reconcileWindowMs
+  const listed = try findByMarker(app, grant, row.repository, markerLine(row.marker), sinceMs)
+  const matches = listed.kind === "complete" ? listed.matches : []
+  const listing: Listing = { complete: listed.kind === "complete", submission: 1, repository: 1, marker: 1, sinceMs, copies: matches.map((facts) => factsCopy(row, facts)) }
+  if (!canReconcile(forwarding.state, request, listing, nowMs)) throw refused(stale)
+  const next = reconcile(forwarding.state, request, listing, nowMs)
+  const at = try isoAt(nowMs)
+  const chosen = factsByRank(matches, next.canonical.ghsa)
+  if (next.phase === "Submitted" && chosen === undefined) return try die(new Error("The chosen copy is not in the listing"))
+  const transition: Transition = next.phase === "Submitted" && chosen !== undefined ? boundTransition(chosen, next.duplicateGhsas.flatMap((rank) => factsByRank(matches, rank)?.ghsa ?? []), "reconcile-matched", actor.githubId, at)
+    : next.phase === "Draft" ? { state: "draft", kind: "reconcile-empty", actorGithubId: actor.githubId, at }
+    : stayTransition(row, listed.kind === "complete" ? "reconcile-too-early" : "reconcile-inconclusive", actor.githubId, at)
+  stepped(forwarding, { type: "reconcile", request, listing, nowMs }, ledger, transition) catch effect (error) => {
+    if (error._tag === "Stale") throw refused(stale)
+    throw error
+  }
+  const after = try reloaded(forwarding, ledger)
+  if (next.phase === "Submitted") return try answer(try verified(app, after, grant, nowSeconds, ledger))
+  return try answer({ status: next.phase === "Draft" ? 200 : 202, row: after.row })
+}
+
+effect function authorizeSubmission(actor: Actor, id: string) {
+  const app = try configured()
+  const ownedRow = try owned(actor, id)
+  try requestObject(authorizeRows.invalidRequestRequestBodyMustBe, [], [], authorizeRows.invalidRequestRequestBodyHasUnexpected)
+  const ledger = try Ref.make(noVolatile)
+  const { row } = try current(ownedRow, ledger)
+  if (row.state === "receipt-verified" || row.state === "abandoned") throw refused(authorizeRows.submissionClosed)
+  if (row.state !== "submitting" && row.state !== "uncertain" && row.state !== "submitted") {
+    const stored = try storedIntake(row.id)
+    if (stored !== undefined && !qualified(screeningOf(stored, githubNumber(row.reporter_github_id), []))) throw refused(authorizeRows.screeningRequired)
+  }
+  const flow = try beginAuthorization(app, { submissionId: row.id, githubId: actor.githubId, githubLogin: actor.login })
+  if (flow === undefined) throw refused(authorizeRows.unauthorized)
+  return try answer({ status: 200, row, extra: { authorizeUrl: flow.authorizeUrl } }, flow.cookie)
+}
+
+effect function authorizationCallback() {
+  const app = try configured()
+  const session = (try Caller).current() catch () => undefined
+  const result = try completeAuthorization(app, session?.githubId)
+  const target = new URLSearchParams()
+  if (result.submissionId !== null && submissionId.test(result.submissionId)) target.set("submission", result.submissionId)
+  if (!result.ok) target.set("intake", result.code)
+  const cookie = result.cookies[0]
+  return HttpServerResponse.empty({
+    status: 303,
+    headers: {
+      location: `/security?${target.toString()}`,
+      "cache-control": "private, no-store",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex",
+      ...cookie === undefined ? {} : { "set-cookie": cookie },
+    },
+  })
+}
+
+export const forwardingRoutes = Layer.mergeAll(
+  handleRaw(authorizeForwarding, (input) => authorizeSubmission(input.actor, input.params.id ?? "")),
+  handleRaw(forwardingCallback, () => authorizationCallback()),
+  handleRaw(sendForwarding, (input) => sendSubmission(input.actor, input.params.id ?? "")),
+  handleRaw(reconcileForwarding, (input) => reconcileSubmission(input.actor, input.params.id ?? "")),
+)

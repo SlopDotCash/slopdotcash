@@ -1,0 +1,110 @@
+// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
+import { gitBytes, systemGit } from "@repo/platform/git"
+
+export error RecoveryRefused { message: string }
+
+export type Mode = "plan" | "execute"
+
+export interface Names {
+  readonly worker: string
+  readonly databases: readonly [source: string, restored: string]
+  readonly buckets: readonly [source: string, backup: string, restored: string]
+  readonly queues: readonly [work: string, failed: string]
+}
+
+export const protectedRepository = "SlopDotCash/slopdotcash"
+export const protectedWorkflow = `${protectedRepository}/.github/workflows/vetting-recovery-qualification.yml@refs/heads/development`
+export const stagingEnvironment = "slop-staging"
+
+export const databaseBindings = ["EVIDENCE_DATABASE", "RESTORED_DB"] as const
+export const bucketBindings = ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS", "RESTORED"] as const
+export const queueBinding = "EVIDENCE_BACKUP_QUEUE"
+
+export const qualificationMigrations = [
+  "0002_slop_identity.sql",
+  "0008_points.sql",
+  "0034_vetting_private_evidence.sql",
+  "0035_vetting_evidence_chunks.sql",
+  "0036_vetting_evidence_assembly.sql",
+  "0066_vetting_case_retention.sql",
+  "0067_vetting_audit_retention.sql",
+  "0068_vetting_storage_cycles.sql",
+  "0107_vetting_content_addressed_evidence.sql",
+  "0119_vetting_storage_generations.sql",
+] as const
+
+export const qualificationSchema = `CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY, state TEXT, completed_at TEXT, result TEXT);
+CREATE TABLE qualification_results(phase TEXT PRIMARY KEY, result TEXT NOT NULL CHECK(json_valid(result)));
+CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL);
+`
+
+const runPattern = /^slop-vet-q-[0-9]{1,20}-[0-9]{1,5}$/u
+const revision = /^[a-f0-9]{40}$/u
+
+export function namesOf(run: string): Names {
+  return {
+    worker: run,
+    databases: [`${run}-source`, `${run}-restored`],
+    buckets: [`${run}-source`, `${run}-backup`, `${run}-restored`],
+    queues: [`${run}-work`, `${run}-failed`],
+  }
+}
+
+export function runtimeVars(run: string): Readonly<Record<string, string>> {
+  return { QUALIFICATION_RUN: run, EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: "off" }
+}
+
+export function modeOf(args: ReadonlyArray<string>): Mode | undefined {
+  if (args.length === 0) return "plan"
+  const [flag, mode, ...rest] = args
+  if (flag !== "--mode" || rest.length > 0) return undefined
+  return mode === "plan" || mode === "execute" ? mode : undefined
+}
+
+effect function variable(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function runIdentity() {
+  const id = (try variable("GITHUB_RUN_ID")) || "0"
+  const attempt = (try variable("GITHUB_RUN_ATTEMPT")) || "0"
+  const run = `slop-vet-q-${id}-${attempt}`
+  if (!runPattern.test(run)) throw new RecoveryRefused({ message: "Invalid qualification run identity" })
+  return run
+}
+
+export effect function sourceRevision(root: string) {
+  const bytes = try Effect.provide(gitBytes({ args: ["-C", root, "rev-parse", "HEAD"], limit: 1024, seconds: 30 }, "The source revision is unreadable"), systemGit)
+  const sha = new TextDecoder().decode(bytes).trim()
+  if (!revision.test(sha)) throw new RecoveryRefused({ message: "The source revision is not a full commit SHA" })
+  return sha
+}
+
+export function planOf(source: string, names: Names) {
+  return {
+    mode: "plan",
+    source,
+    environment: stagingEnvironment,
+    names,
+    resources: { d1: names.databases.length, r2: names.buckets.length, queues: names.queues.length, worker: 1 },
+    fixture: "evidence-recovery",
+    publicRoutes: false,
+    scans: false,
+    cleanup: "only exact resources created by this workflow run",
+  }
+}
+
+export effect function protectedRun(source: string, run: string) {
+  if ((try variable("SLOP_ENVIRONMENT")) !== "staging") {
+    throw new RecoveryRefused({ message: `Recovery qualification executes only in ${stagingEnvironment}; it never touches a production resource` })
+  }
+  const exact = (try variable("GITHUB_ACTIONS")) === "true"
+    && (try variable("GITHUB_EVENT_NAME")) === "workflow_dispatch"
+    && (try variable("GITHUB_REF")) === "refs/heads/development"
+    && (try variable("GITHUB_REPOSITORY")) === protectedRepository
+    && (try variable("GITHUB_WORKFLOW_REF")) === protectedWorkflow
+    && (try variable("GITHUB_SHA")) === source
+    && (try variable("VETTING_QUALIFICATION_MODE")) === "execute"
+    && !run.endsWith("-0")
+  if (!exact) throw new RecoveryRefused({ message: "Exact protected development qualification is required" })
+}

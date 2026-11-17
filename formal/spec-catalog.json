@@ -9964,7 +9964,7 @@
     },
     {
       "path": "spec/security/cases.md",
-      "sha256": "545237cb104d1a94f04bf053d9df813bdce82d9213b7ca3c9b87f22a941e8686",
+      "sha256": "d8a1343937dad1a9dcb97a91844f81171e960c2364774076b8fe4d4a148d442f",
       "module": "security__cases",
       "stories": [
         {
@@ -9973,11 +9973,11 @@
         },
         {
           "heading": "Story: Obtain a human decision without automatic rejection",
-          "line": 146
+          "line": 158
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator",
-          "line": 272
+          "line": 284
         }
       ],
       "rules": [
@@ -10025,7 +10025,7 @@
         },
         {
           "heading": "Story: Receive a permanent private case under frozen terms / Authority snapshots advance and triager membership is audited at the next revision",
-          "line": 112,
+          "line": 114,
           "definitions": [
             "canObserveAuthority",
             "observeAuthority",
@@ -10039,13 +10039,15 @@
             "mayReadAward",
             "alwaysTriagersExcludeReporter",
             "alwaysMembershipAudited",
+            "alwaysTriagersAssignedUnderCurrentSnapshot",
             "stepMembershipHistoryRetained",
-            "sometimesTriagerRevoked"
+            "sometimesTriagerRevoked",
+            "sometimesTriagerReassignedAfterSnapshot"
           ]
         },
         {
           "heading": "Story: Obtain a human decision without automatic rejection / Current technical approvers and triagers request information on the current report version",
-          "line": 148,
+          "line": 160,
           "definitions": [
             "receiptOpen",
             "committed",
@@ -10058,7 +10060,7 @@
         },
         {
           "heading": "Story: Obtain a human decision without automatic rejection / A technical decision records the finding, duplicate identity and relatedness",
-          "line": 169,
+          "line": 181,
           "definitions": [
             "Decision",
             "reporterRelated",
@@ -10073,7 +10075,7 @@
         },
         {
           "heading": "Story: Obtain a human decision without automatic rejection / An award commits only under paid terms, eligibility and project clearance",
-          "line": 195,
+          "line": 207,
           "definitions": [
             "Rail",
             "ProjectClearance",
@@ -10107,7 +10109,7 @@
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator / Slopbot drafts advice for each appeal and always escalates a private case",
-          "line": 274,
+          "line": 286,
           "definitions": [
             "TriageOutcome",
             "appealable",
@@ -10120,6 +10122,7 @@
             "canRetryTriage",
             "retryTriage",
             "alwaysTriageEscalates",
+            "alwaysTriageUsesReceiptExclusions",
             "alwaysTriageBoundToAppeal",
             "stepTriageIsAdvice",
             "sometimesTriageEscalated",
@@ -10128,7 +10131,7 @@
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator / An independent moderator upholds or returns the appeal",
-          "line": 321,
+          "line": 343,
           "definitions": [
             "canDecideAppeal",
             "decideAppeal",
@@ -10141,7 +10144,7 @@
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator / Simulation samples cover roles, revocation, bans and every decision shape",
-          "line": 345,
+          "line": 367,
           "definitions": [
             "staff",
             "snapshotValues",
@@ -10184,11 +10187,15 @@
         },
         {
           "target": "./bounty.md",
-          "line": 200
+          "line": 212
         },
         {
           "target": "../settlement/directBounty.md",
-          "line": 207
+          "line": 219
+        },
+        {
+          "target": "./terms.md",
+          "line": 295
         }
       ]
     },
@@ -10287,7 +10294,7 @@
     },
     {
       "path": "spec/security/screening.md",
-      "sha256": "87dd4204c1e6c94c468ac08c0a29627818d41a1acd9793ffd0b0a88959095aba",
+      "sha256": "4bd05214f6f9b783e845cbcbcbde3d8ea716e61e270c3a4f2be99528f025f83c",
       "module": "security__screening",
       "stories": [
         {
@@ -10317,7 +10324,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / The fixed private route treats missing and partial provider evidence as unavailable",
-          "line": 47,
+          "line": 48,
           "definitions": [
             "ProviderRoute",
             "Observation",
@@ -10328,17 +10335,22 @@
             "privateReasonMayUseProposal",
             "acceptsObservation",
             "canFinish",
+            "matchedLineOf",
             "finish",
+            "withMatchedLine",
+            "lawExclusionLineIsAdvice",
+            "alwaysMatchedLineInContext",
             "lawDuplicateNeverCalls",
             "lawOnlySurplusReceivesLoadedVersion",
             "sometimesLegitimate",
             "sometimesNeedsInformation",
-            "sometimesUnavailable"
+            "sometimesUnavailable",
+            "sometimesExclusionNamed"
           ]
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / A late result cannot replace human review or a newly saved version",
-          "line": 102,
+          "line": 122,
           "definitions": [
             "RevisionEvidence",
             "canReviewReport",
@@ -10353,7 +10365,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Routing writes only private references for the current qualified version",
-          "line": 138,
+          "line": 158,
           "definitions": [
             "Routing",
             "canRoute",
@@ -10366,13 +10378,15 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Samples exercise missing, stale, duplicate and current screening evidence",
-          "line": 164,
+          "line": 184,
           "definitions": [
             "seenRevisionValues",
             "nowMsValues",
             "digestValues",
             "tokenValues",
+            "sampleExclusions",
             "inputValues",
+            "lineValues",
             "observationValues",
             "evidenceValues",
             "routingValues",
@@ -10385,17 +10399,23 @@
           ]
         }
       ],
-      "imports": [],
+      "imports": [
+        "security__terms"
+      ],
       "references": [
         {
+          "target": "./terms.md",
+          "line": 64
+        },
+        {
           "target": "./journey.md",
-          "line": 105
+          "line": 125
         }
       ]
     },
     {
       "path": "spec/security/forwarding.md",
-      "sha256": "c0225705e7a84e74428f1513d53b48933114824c758058e2ddd05d76bc405e9a",
+      "sha256": "d6ac136a1c8d806c41671414aa33648361085a23de976f88c212b90afda66212",
       "module": "security__forwarding",
       "stories": [
         {
@@ -10484,13 +10504,14 @@
             "lawUnknownListingCannotReopen",
             "lawEarlyEmptyCannotReopen",
             "stepCanonicalFixed",
+            "alwaysCanonicalIsEarliestBindingCopy",
             "sometimesSubmitted",
             "sometimesDuplicates"
           ]
         },
         {
           "heading": "Story: Reconcile the exact privately submitted copy and verify its receipt / A separate exact advisory read links one verified receipt to the saved case",
-          "line": 209,
+          "line": 217,
           "definitions": [
             "ReadStatus",
             "GitHubState",
@@ -10518,7 +10539,7 @@
         },
         {
           "heading": "Story: Reconcile the exact privately submitted copy and verify its receipt / Simulation samples expose retry, stale ownership and exact receipt paths",
-          "line": 278,
+          "line": 286,
           "definitions": [
             "capturedGrant",
             "revisionsToTry",
@@ -10876,7 +10897,7 @@
     },
     {
       "path": "spec/security/terms.md",
-      "sha256": "a3ad55990ca54aad26267cf530fd19f9afcbd27fff19283c64c8fb25ca325610",
+      "sha256": "1c563238a5f6ebeb281a9f2387e2c4b5201c8d08d9e4654215cfd26f681ab3d5",
       "module": "security__terms",
       "stories": [
         {
@@ -10899,8 +10920,22 @@
           ]
         },
         {
+          "heading": "Story: Decide an award under the terms that accompanied the report / Exclusions are frozen with the terms and stay advice",
+          "line": 38,
+          "definitions": [
+            "ExclusionContext",
+            "slopDefaultExclusionCount",
+            "noExclusions",
+            "exclusionLinesValid",
+            "receiptExclusions",
+            "validExclusions",
+            "namesExclusionLine",
+            "lawReceiptExclusionsValid"
+          ]
+        },
+        {
           "heading": "Story: Decide an award under the terms that accompanied the report / A finding qualifies only under its frozen eligibility class",
-          "line": 37,
+          "line": 60,
           "definitions": [
             "Severity",
             "LossFinding",
@@ -10911,7 +10946,7 @@
         },
         {
           "heading": "Story: Decide an award under the terms that accompanied the report / A fixed offer permits its receipt-time gross amount or no award",
-          "line": 57,
+          "line": 80,
           "definitions": [
             "fixedOffer",
             "amountAllowed",
@@ -10922,7 +10957,7 @@
         },
         {
           "heading": "Story: Decide an award under the terms that accompanied the report / Simulation samples include absent, early and current paid terms",
-          "line": 74,
+          "line": 97,
           "definitions": [
             "standardTerms",
             "fullTerms",
@@ -11020,7 +11055,7 @@
     },
     {
       "path": "spec/settlement/vault.md",
-      "sha256": "d63471cbded2de4e0f95407b2cc1515e93bc7d5698650ce13e7e045fa36b18d2",
+      "sha256": "a572f588e1f8400526a29d2267af435b3960f2561558e68c036a18f400280061",
       "module": "settlement__vault",
       "stories": [
         {
@@ -11121,7 +11156,7 @@
     },
     {
       "path": "spec/settlement/paymentDispatch.md",
-      "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005",
+      "sha256": "1e41504ff1c43e10ddb3dc4196fe17a86f2071c27f449f92ca391cc1d6f1e882",
       "module": "settlement__paymentDispatch",
       "stories": [
         {
@@ -11303,7 +11338,7 @@
     },
     {
       "path": "spec/settlement/payment.md",
-      "sha256": "326ba85f574383016c66cbb4c824646f421dff10e39670080b65cdcc16484b41",
+      "sha256": "fa333789164163475dd1f262c43fd438250fa241472856efdee5b8af61a658f0",
       "module": "settlement__payment",
       "stories": [
         {
@@ -11312,7 +11347,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards",
-          "line": 185
+          "line": 186
         }
       ],
       "rules": [
@@ -11328,6 +11363,7 @@
             "Payment",
             "initial",
             "grossValues",
+            "targetValues",
             "canConfigure",
             "configure",
             "RailRelease",
@@ -11342,7 +11378,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / A destination requires the current account and wallet consent",
-          "line": 55,
+          "line": 56,
           "definitions": [
             "canBind",
             "bind"
@@ -11350,7 +11386,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / The released direct full-award rail journals before submission and retain every uncertain attempt",
-          "line": 64,
+          "line": 65,
           "definitions": [
             "canJournal",
             "journal",
@@ -11372,7 +11408,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / Direct reconciliation requires a retained exact attempt",
-          "line": 96,
+          "line": 97,
           "definitions": [
             "canReconcile",
             "reconcile"
@@ -11380,7 +11416,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / A reserved vault accepts an exact canonical scanner event",
-          "line": 112,
+          "line": 113,
           "definitions": [
             "directRail",
             "canReserveVault",
@@ -11406,14 +11442,14 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / A Solana pay pre-check may read confirmed chain time only to avoid an early send, never as evidence",
-          "line": 165,
+          "line": 166,
           "definitions": [
             "solanaPayMayAttempt"
           ]
         },
         {
           "heading": "Story: Preserve policy-specific private awards / Private fee schedules are exact and purpose-bound",
-          "line": 187,
+          "line": 188,
           "definitions": [
             "validSplit",
             "railMatchesPurpose",
@@ -11423,7 +11459,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 210,
+          "line": 211,
           "definitions": [
             "receiptSample",
             "rValues",
@@ -11449,7 +11485,7 @@
     },
     {
       "path": "spec/settlement/composition.md",
-      "sha256": "58a5ffaf95c1a2428428f8b8df03924125cc5352f6f7d36a53f456849fa28127",
+      "sha256": "5d1b4d1035ca779fca97fe41a9417610a980d283d3077ab12743d7f6b959dcb5",
       "module": "settlement__composition",
       "stories": [
         {
@@ -11458,7 +11494,7 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners",
-          "line": 94
+          "line": 95
         }
       ],
       "rules": [
@@ -11482,7 +11518,7 @@
         },
         {
           "heading": "Story: Reserve funds for the immutable contributor / Current and historical consent belong to the shared outbox",
-          "line": 64,
+          "line": 65,
           "definitions": [
             "DeliveryUpdate",
             "canUpdateDelivery",
@@ -11492,7 +11528,7 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners / An exact finalized event records one receipt and consumes the matching reserve",
-          "line": 96,
+          "line": 97,
           "definitions": [
             "canReconcile",
             "reconcile",
@@ -11508,10 +11544,11 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners / Simulation samples exercise independent actor and wallet identities",
-          "line": 148,
+          "line": 149,
           "definitions": [
             "amountValues",
             "grossValues",
+            "targetValues",
             "assetValues",
             "receiptValues",
             "updateValues",
@@ -11540,7 +11577,7 @@
         },
         {
           "target": "./paymentDispatch.md",
-          "line": 68
+          "line": 69
         }
       ]
     },
@@ -11632,7 +11669,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "072327c9ac0f744745d9ee01f9729cfb742c002a846d205b1777f9ec3b211a26",
+      "sha256": "7477a03eea1d306c97ba9a78d122863d606c5005f0cef914df985f75cb58abe6",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -11747,72 +11784,76 @@
           "line": 31
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./privateAward.md",
           "line": 32
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 33
         },
         {
-          "target": "./attesterActivation.md",
+          "target": "./signer.md",
           "line": 34
         },
         {
-          "target": "./feeReplacement.md",
+          "target": "./attesterActivation.md",
           "line": 35
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./feeReplacement.md",
           "line": 36
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 37
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./keeperScan.md",
           "line": 38
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 39
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 40
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 41
         },
         {
-          "target": "./referralAccrual.md",
+          "target": "./referrals.md",
           "line": 42
         },
         {
-          "target": "./referralHolds.md",
+          "target": "./referralAccrual.md",
           "line": 43
         },
         {
-          "target": "./referralFiles.md",
+          "target": "./referralHolds.md",
           "line": 44
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralFiles.md",
           "line": 45
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 46
         },
         {
-          "target": "./referralWatch.md",
+          "target": "./referralDistributor.md",
           "line": 47
         },
         {
-          "target": "../fees/",
+          "target": "./referralWatch.md",
           "line": 48
+        },
+        {
+          "target": "../fees/",
+          "line": 49
         }
       ]
     },
@@ -18173,7 +18214,7 @@
     },
     {
       "path": "spec/designSystem/index.md",
-      "sha256": "70d1a4e9db26ab23596445f11ecb05d2872a859709af049b8a0bb0272ba9e907",
+      "sha256": "348f4d7d782515491a7e9330a4467d352cad2db943fe0ab0e33e79021965c86c",
       "module": "designSystem",
       "stories": [
         {
@@ -18182,7 +18223,7 @@
         },
         {
           "heading": "Story: Mean the same thing everywhere",
-          "line": 68
+          "line": 73
         }
       ],
       "rules": [
@@ -18198,7 +18239,7 @@
         },
         {
           "heading": "Story: Name every color by what it does / Text meets 4.5:1 and boundaries 3:1 on the surfaces they sit on",
-          "line": 31,
+          "line": 32,
           "definitions": [
             "Pair",
             "pair",
@@ -18206,13 +18247,14 @@
             "requiredContrast",
             "required",
             "lawForegroundsAreReadable",
+            "lawPrimaryStatesAreReadable",
             "lawBoundariesAreVisible",
             "lawNoBorderRequirement"
           ]
         },
         {
           "heading": "Story: Mean the same thing everywhere / Each tone is a role that is readable as text",
-          "line": 70,
+          "line": 75,
           "definitions": [
             "Tone",
             "toneRole",
@@ -21963,7 +22005,7 @@
     },
     {
       "path": "spec/security/assessment.md",
-      "sha256": "c480e7e4331618a8c32e862168762e245771ed58312f781d6ff6c7953c4200b6",
+      "sha256": "5b38e63a8340c11ec62f223e639fac4e483480641c8844d394dc47642ac07bbb",
       "module": "security__assessment",
       "stories": [
         {
@@ -21998,7 +22040,7 @@
         },
         {
           "heading": "Story: Assess the current qualified report version once at a time / A new report version and screening qualification come from the screening record",
-          "line": 57,
+          "line": 62,
           "definitions": [
             "canObserveVersion",
             "observeVersion",
@@ -22017,7 +22059,7 @@
         },
         {
           "heading": "Story: Assess the current qualified report version once at a time / Simulation samples",
-          "line": 81,
+          "line": 87,
           "definitions": [
             "nowMsValues",
             "byValues",
@@ -22026,6 +22068,7 @@
             "attemptValues",
             "elapsedMsValues",
             "versionValues",
+            "exclusionsValues",
             "weight_startOwnerRun",
             "weight_finish",
             "weight_observeQualified",
@@ -22034,6 +22077,7 @@
         }
       ],
       "imports": [
+        "security__terms",
         "security__cases"
       ],
       "references": [
@@ -22042,14 +22086,18 @@
           "line": 10
         },
         {
+          "target": "./terms.md",
+          "line": 23
+        },
+        {
           "target": "./screening.md",
-          "line": 59
+          "line": 64
         }
       ]
     },
     {
       "path": "spec/security/bounty.md",
-      "sha256": "5377dfc57c112753aec80522706a010e9ca39c602e6a0789194e3fb8eafc1f78",
+      "sha256": "44cc1d8d2563bd3c72cc497392ab4fdfe2f53dd601194bb7b244d999ae2f15a8",
       "module": "security__bounty",
       "stories": [
         {
@@ -22110,8 +22158,22 @@
           ]
         },
         {
-          "heading": "Story: Award each underlying finding once, to its first qualifying report / Awards, related-party reviews and appeals go through the case with project clearance",
+          "heading": "Story: Award each underlying finding once, to its first qualifying report / A finalized vault payout settles its hold and keeps the record",
           "line": 108,
+          "definitions": [
+            "VaultPayout",
+            "openVaultHold",
+            "canSettleVaultHold",
+            "settleVaultHold",
+            "openVaultGross",
+            "alwaysReservedIsOpenVaultHolds",
+            "stepVaultHoldsKept",
+            "sometimesVaultHoldSettled"
+          ]
+        },
+        {
+          "heading": "Story: Award each underlying finding once, to its first qualifying report / Awards, related-party reviews and appeals go through the case with project clearance",
+          "line": 134,
           "definitions": [
             "canDecide",
             "decide",
@@ -22129,7 +22191,7 @@
         },
         {
           "heading": "Story: Award each underlying finding once, to its first qualifying report / One root cause holds at most one proposal or award obligation",
-          "line": 136,
+          "line": 162,
           "definitions": [
             "holdMatches",
             "alwaysHoldsMatchCases",
@@ -22146,7 +22208,7 @@
         },
         {
           "heading": "Story: Award each underlying finding once, to its first qualifying report / Simulation samples cover both orders of receipt, stale funds and both routes",
-          "line": 169,
+          "line": 196,
           "definitions": [
             "idValues",
             "receiptTerms",
@@ -22161,6 +22223,7 @@
             "routeValues",
             "byValues",
             "checkedEpochValues",
+            "receiptValues",
             "weight_decide",
             "weight_decideAward",
             "weight_receive"
@@ -22181,18 +22244,18 @@
     },
     {
       "path": "spec/security/continuity.md",
-      "sha256": "46559aa2cf057ceeeae78ef02a5838b5968f7792620d9f3f1dbee94fc4428a55",
+      "sha256": "92e38840f582d7db527f4f7fc62402c280eb1ef436828c8df89c0513849b5827",
       "module": "security__continuity",
       "stories": [
         {
           "heading": "Story: Keep every private case and obligation through account and role changes",
-          "line": 14
+          "line": 21
         }
       ],
       "rules": [
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / Account closure withdraws email consent and keeps the case and its obligations",
-          "line": 16,
+          "line": 23,
           "definitions": [
             "Continuity",
             "startingContinuity",
@@ -22200,6 +22263,7 @@
             "reporterMember",
             "withAward",
             "withAccounts",
+            "reporterClosure",
             "reporterClosed",
             "canCloseReporter",
             "closeReporter",
@@ -22214,19 +22278,25 @@
         },
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / A transfer or role loss replaces the roles and keeps every commitment",
-          "line": 72,
+          "line": 81,
           "definitions": [
             "realActors",
             "canReplaceRoles",
             "replaceRoles",
             "alwaysReservedAwardCanNotifyPaid",
             "stepRolesKeepCommitments",
+            "canAssignTriager",
+            "assignTriager",
+            "reviewersOf",
+            "readsUnderCurrentRole",
+            "stepReplacedReviewerReadsOnlyUnderCurrentRole",
+            "sometimesTriagerRevokedByRoleChange",
             "sometimesPaidAfterRoleSetChanged"
           ]
         },
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / The award settles through the same composed steps",
-          "line": 104,
+          "line": 129,
           "definitions": [
             "canDeposit",
             "deposit",
@@ -22249,7 +22319,7 @@
         },
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / Simulation samples",
-          "line": 136,
+          "line": 161,
           "definitions": [
             "sampleAccount",
             "consentedEmail",
@@ -22264,6 +22334,7 @@
             "snapshotValues",
             "decisionValues",
             "byValues",
+            "actorValues",
             "checkedEpochValues",
             "amountValues",
             "grossValues",
@@ -22308,12 +22379,20 @@
         {
           "target": "../settlement/paymentDispatch.md",
           "line": 11
+        },
+        {
+          "target": "../settlement/privateAward.md",
+          "line": 19
+        },
+        {
+          "target": "./cases.md",
+          "line": 94
         }
       ]
     },
     {
       "path": "spec/security/journey.md",
-      "sha256": "cf8e9a389d0c40d125d0224b976f83a77424ce1672640066c01e380ba0713067",
+      "sha256": "d12d98c31d1ce997d105d1da13921bf1236f046c1efd6100c5076385e6ba6070",
       "module": "security__journey",
       "stories": [
         {
@@ -22366,7 +22445,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / A reporter revision needs the forwarding draft, the open case and admission, and advances every version together",
-          "line": 93,
+          "line": 94,
           "definitions": [
             "revisionEvidence",
             "canReplace",
@@ -22382,7 +22461,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / The maintainer assessment starts only for a qualified current version",
-          "line": 132,
+          "line": 133,
           "definitions": [
             "canObserveQualified",
             "observeQualified",
@@ -22391,12 +22470,13 @@
             "canFinishAssessment",
             "finishAssessment",
             "alwaysQualifiedVersionNotAhead",
+            "alwaysAdviceUsesReceiptExclusions",
             "sometimesAssessmentShown"
           ]
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / Forwarding sends only the current qualified version with the reporter's grant",
-          "line": 147,
+          "line": 159,
           "definitions": [
             "sendGate",
             "canObserveReadiness",
@@ -22418,7 +22498,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / Simulation samples",
-          "line": 179,
+          "line": 191,
           "definitions": [
             "keyValues",
             "digestValues",
@@ -22437,6 +22517,7 @@
             "offerValues",
             "seenRevisionValues",
             "startedAtMsValues",
+            "inputValues",
             "weight_commitReceipt",
             "weight_begin",
             "weight_verifyObject",
@@ -22489,7 +22570,7 @@
     },
     {
       "path": "spec/security/program.md",
-      "sha256": "6c217f5d63a925616bfbef2410bc52b0c72401105b1133b622cf7c78838c5248",
+      "sha256": "31f177380a7e1f4c05e07c6be0e79e246dc231805c1af571f70eefe515c84f7d",
       "module": "security__program",
       "stories": [
         {
@@ -22521,7 +22602,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Administrators approve a split exception for one exact future revision",
-          "line": 56,
+          "line": 59,
           "definitions": [
             "administrators",
             "canApproveFullSplit",
@@ -22530,7 +22611,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Funding state comes only from a fresh finalized bounty-vault snapshot",
-          "line": 69,
+          "line": 72,
           "definitions": [
             "FundingSnapshot",
             "canObserveFunding",
@@ -22541,7 +22622,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Receipt terms come only from the open published revision",
-          "line": 88,
+          "line": 91,
           "definitions": [
             "receiptTerms",
             "alwaysFullAwardPlatformOnly",
@@ -22558,7 +22639,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Simulation samples cover both projects, both splits and stale funds",
-          "line": 118,
+          "line": 122,
           "definitions": [
             "ownerValues",
             "byValues",
@@ -22580,6 +22661,10 @@
         {
           "target": "./terms.md",
           "line": 8
+        },
+        {
+          "target": "./terms.md",
+          "line": 21
         }
       ]
     },
@@ -22682,7 +22767,7 @@
     },
     {
       "path": "spec/security/reportNotices.md",
-      "sha256": "22207cb0416b064430019e8d84247f686d45743a8f692c00472d268793bb0663",
+      "sha256": "45e8cd7d669515e1ca0113aa6e17c09439503bc9c7ab6c73718b43a10b0dcb63",
       "module": "security__reportNotices",
       "stories": [
         {
@@ -22691,15 +22776,15 @@
         },
         {
           "heading": "Story: Keep the report text private",
-          "line": 132
+          "line": 130
         },
         {
           "heading": "Story: Exclusions inform advice without deciding",
-          "line": 173
+          "line": 171
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt",
-          "line": 222
+          "line": 216
         }
       ],
       "rules": [
@@ -22732,7 +22817,7 @@
         },
         {
           "heading": "Story: Receive the report with its Inbox receipt and route it to the owners / Routing saves one private case notice per eligible technical recipient",
-          "line": 81,
+          "line": 79,
           "definitions": [
             "routeKey",
             "ownerRecipients",
@@ -22747,7 +22832,7 @@
         },
         {
           "heading": "Story: Receive the report with its Inbox receipt and route it to the owners / An intake outage keeps every received case and its receipt notice",
-          "line": 110,
+          "line": 108,
           "definitions": [
             "canObserveAvailability",
             "observeAvailability",
@@ -22758,7 +22843,7 @@
         },
         {
           "heading": "Story: Keep the report text private / Report bodies stay out of every record and never reach a public issue",
-          "line": 134,
+          "line": 132,
           "definitions": [
             "digestOf",
             "lawDigestNamesStoredBytes",
@@ -22776,12 +22861,8 @@
         },
         {
           "heading": "Story: Exclusions inform advice without deciding / The receipt-time exclusion context reaches screening, assessment and appeal triage",
-          "line": 175,
+          "line": 173,
           "definitions": [
-            "ExclusionContext",
-            "noContext",
-            "slopDefaultsId",
-            "exclusionContext",
             "canClaimScreening",
             "claimScreening",
             "canFinishScreening",
@@ -22798,6 +22879,8 @@
             "appeal",
             "canStartTriage",
             "startTriage",
+            "canFinishTriage",
+            "finishTriage",
             "alwaysAdviceUsesReceiptExclusions",
             "sometimesTriageWithContext",
             "sometimesAssessedWithContext"
@@ -22805,7 +22888,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Created and reconciled copies bind the earliest canonical GHSA",
-          "line": 224,
+          "line": 218,
           "definitions": [
             "canClaimSend",
             "claimSend",
@@ -22833,7 +22916,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A verified GitHub receipt links only the retained case",
-          "line": 282,
+          "line": 265,
           "definitions": [
             "canReadReceipt",
             "readReceipt",
@@ -22851,7 +22934,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A legacy direct report is received only from a checked GitHub receipt",
-          "line": 316,
+          "line": 299,
           "definitions": [
             "directTerms",
             "canReceiveDirect",
@@ -22863,11 +22946,10 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Simulation samples",
-          "line": 352,
+          "line": 335,
           "definitions": [
             "bodyValues",
             "digestOfValues",
-            "contextValues",
             "availabilityValues",
             "directValues",
             "byValues",
@@ -22881,8 +22963,10 @@
             "githubFirstReceipt",
             "advisoryReadValues",
             "tokenValues",
+            "offerExclusions",
             "inputValues",
             "observationValues",
+            "resultValues",
             "decisionValues",
             "attemptValues",
             "completeValues",
@@ -22902,7 +22986,8 @@
             "weight_markInterrupted",
             "weight_reconcileCopies",
             "weight_readReceipt",
-            "weight_expireVerification"
+            "weight_expireVerification",
+            "weight_finishTriage"
           ]
         }
       ],
@@ -22927,6 +23012,30 @@
         {
           "target": "./cases.md",
           "line": 8
+        },
+        {
+          "target": "./screening.md",
+          "line": 175
+        },
+        {
+          "target": "./assessment.md",
+          "line": 175
+        },
+        {
+          "target": "./cases.md",
+          "line": 176
+        },
+        {
+          "target": "./journey.md",
+          "line": 177
+        },
+        {
+          "target": "./terms.md",
+          "line": 178
+        },
+        {
+          "target": "./forwarding.md",
+          "line": 221
         }
       ]
     },
@@ -25033,26 +25142,26 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "5410cb89031e55076867abfb09ce96afe07bf43adb6efa20738c55a84e1c7866",
+      "sha256": "595284d578644586876c99663ccc7290717cb2256335afbb260bee847f09149e",
       "module": "settlement__privateAward",
       "stories": [
         {
           "heading": "Story: Commit a private award with its funds",
-          "line": 14
+          "line": 16
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority",
-          "line": 146
+          "line": 160
         },
         {
           "heading": "Story: Show exact amounts and notify every party",
-          "line": 233
+          "line": 247
         }
       ],
       "rules": [
         {
           "heading": "Story: Commit a private award with its funds / A vault-backed award reserves its bounty vault in the same step",
-          "line": 16,
+          "line": 18,
           "definitions": [
             "AmountsShown",
             "PrivateAward",
@@ -25081,6 +25190,7 @@
             "observeAuthority",
             "canDecide",
             "decide",
+            "awardTarget",
             "vaultObligation",
             "vaultCommitmentReady",
             "caseRecipients",
@@ -25093,7 +25203,8 @@
             "reviewRelated",
             "alwaysVaultAwardReserved",
             "alwaysHoldsKeepCaseRules",
-            "alwaysBountyCountsVaultReserve",
+            "alwaysVaultTargetMatchesAward",
+            "alwaysBountyReserveIsVaultReserve",
             "alwaysBountyCoverIsVaultFree",
             "stepVaultReservationNeedsCommitment",
             "sometimesVaultAwardPaid",
@@ -25101,18 +25212,19 @@
           ]
         },
         {
-          "heading": "Story: Commit a private award with its funds / A finalized vault payout records the obligation paid and notifies the case",
-          "line": 132,
+          "heading": "Story: Commit a private award with its funds / A finalized vault payout records the obligation paid, settles its hold and notifies the case",
+          "line": 140,
           "definitions": [
             "canUpdateDelivery",
             "updateDelivery",
+            "vaultPayout",
             "canReconcile",
             "reconcile"
           ]
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Direct payment actions require a current financial approver",
-          "line": 148,
+          "line": 162,
           "definitions": [
             "financialNow",
             "directCaseOf",
@@ -25134,7 +25246,7 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Each recorded direct leg and the paid award notify the case",
-          "line": 208,
+          "line": 222,
           "definitions": [
             "withDirectLegs",
             "legKeysValid",
@@ -25146,7 +25258,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Exact amounts are shown before authorization",
-          "line": 235,
+          "line": 249,
           "definitions": [
             "amountsFor",
             "amountsShownFor",
@@ -25160,7 +25272,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Award and payment progress notify the reporter, current maintainers and financial approvers",
-          "line": 274,
+          "line": 288,
           "definitions": [
             "AwardNotice",
             "noticeCode",
@@ -25176,7 +25288,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Simulation samples",
-          "line": 305,
+          "line": 319,
           "definitions": [
             "awardTerms",
             "idValues",
@@ -25198,6 +25310,7 @@
             "nowMsValues",
             "routeValues",
             "approveValues",
+            "awardReceipt",
             "evidenceValues",
             "updateValues",
             "journalTerms",
@@ -28317,7 +28430,7 @@
     },
     {
       "path": "spec/ui/controls.md",
-      "sha256": "69bdbf0dad7cc360ce4d1b557b127d637a73502c9cbaec14dd23bb5c1c7b7404",
+      "sha256": "e896dc73122ee8771199ddd9dc1b93535b61b96a69011c236fb3fc1bf5279784",
       "module": "ui__controls",
       "stories": [
         {
@@ -28327,6 +28440,10 @@
         {
           "heading": "Story: Correct a field where it is",
           "line": 23
+        },
+        {
+          "heading": "Story: Sort a table by a column",
+          "line": 39
         }
       ],
       "rules": [
@@ -28353,6 +28470,19 @@
             "lawInvalidFieldNamesItsError",
             "lawValidFieldShowsNoError",
             "fValues"
+          ]
+        },
+        {
+          "heading": "Story: Sort a table by a column / A sortable column says its order and asks to sort when activated",
+          "line": 41,
+          "definitions": [
+            "Order",
+            "Column",
+            "announcesOrder",
+            "asksToSort",
+            "lawSortableColumnSaysItsOrder",
+            "lawPlainColumnIsSilent",
+            "columnValues"
           ]
         }
       ],

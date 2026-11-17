@@ -1,0 +1,235 @@
+// spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { utf8 } from "@repo/platform/crypto"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import type { Copy, Event, Failure, Forwarding, ForwardingPhase, SendClaim } from "../../gen/security__forwarding.ts"
+import { apply, canExpireVerification, canMarkInterrupted, decodeState, mayAbandon, noClaim, noCopy } from "../../gen/security__forwarding.effect.vibe"
+import { jsonDocument } from "../admission/binding.ts"
+import { type SubmissionRow, reportVersions, submission } from "../intake/rows.vibe"
+import { type AdvisoryFacts, type FailureCode, ghsaRank } from "./advisories.vibe"
+
+export schema HistoryRow { revision: number; kind: string; detail: string | null; at: string }
+
+export interface Volatile {
+  readonly readyClaims: ReadonlyArray<SendClaim>
+  readonly postedRevisions: ReadonlyArray<number>
+  readonly receiptReplyLost: boolean
+}
+
+export const noVolatile: Volatile = { readyClaims: [], postedRevisions: [], receiptReplyLost: false }
+
+export interface Loaded {
+  readonly row: SubmissionRow
+  readonly state: Forwarding
+  readonly history: ReadonlyArray<HistoryRow>
+}
+
+export interface Transition {
+  readonly state: SubmissionRow["state"]
+  readonly set?: {
+    readonly attempt?: number
+    readonly attempt_started_at?: string
+    readonly advisory_ghsa?: string
+    readonly github_created_at?: string
+    readonly evidence_digest?: string
+    readonly failure_code?: FailureCode
+    readonly case_id?: string
+  }
+  readonly kind: string
+  readonly detail?: Readonly<Record<string, unknown>>
+  readonly actorGithubId: string | null
+  readonly at: string
+  readonly guard?: Statement
+}
+
+export error Stale { submissionId: string }
+
+export const idleMs = 24 * 60 * 60 * 1000
+
+const phases: Readonly<Record<string, ForwardingPhase>> = {
+  draft: "Draft",
+  submitting: "Submitting",
+  uncertain: "Uncertain",
+  submitted: "Submitted",
+  "receipt-verified": "ReceiptVerified",
+  failed: "Failed",
+}
+
+const failures: Readonly<Record<string, Failure>> = {
+  unverifiable: "Unverifiable",
+  "already-recorded": "AlreadyRecorded",
+  "author-mismatch": "Terminal",
+  "not-private-report": "Terminal",
+}
+
+export function phaseOf(state: string): ForwardingPhase {
+  return phases[state] ?? "Draft"
+}
+
+function failureOf(row: SubmissionRow): Failure {
+  if (row.state !== "failed") return "None"
+  if (row.failure_code === "invalid" && row.advisory_ghsa !== null) return "ReceiptMismatch"
+  return failures[row.failure_code ?? ""] ?? "Retryable"
+}
+
+function detailOf(entry: HistoryRow | undefined): Readonly<Record<string, unknown>> {
+  if (entry === undefined || entry.detail === null) return {}
+  const value = jsonDocument(utf8(entry.detail))
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
+}
+
+function claimOf(row: SubmissionRow, sent: HistoryRow | undefined, digests: ReadonlyArray<string>): SendClaim {
+  if (sent === undefined) return noClaim
+  const version = detailOf(sent).reportVersion
+  const reportVersion = typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : 0
+  return {
+    revision: sent.revision,
+    requestId: sent.revision,
+    attempt: row.attempt,
+    atMs: millisOf(row.attempt_started_at ?? sent.at),
+    reportVersion,
+    digest: digests[reportVersion - 1] ?? "",
+  }
+}
+
+export function copyOf(facts: Pick<AdvisoryFacts, "ghsa" | "createdAt" | "evidenceDigest">): Copy {
+  return { ghsa: ghsaRank(facts.ghsa), repository: 1, author: 1, marker: 1, createdAtMs: millisOf(facts.createdAt), digest: facts.evidenceDigest }
+}
+
+function canonicalOf(row: SubmissionRow): Copy {
+  if (row.advisory_ghsa === null || row.github_created_at === null) return noCopy
+  return copyOf({ ghsa: row.advisory_ghsa, createdAt: row.github_created_at, evidenceDigest: row.evidence_digest ?? "" })
+}
+
+function duplicatesOf(history: ReadonlyArray<HistoryRow>) {
+  const listed = detailOf(history.findLast((entry) => entry.kind === "duplicate-advisories")).ghsas
+  return Array.isArray(listed) ? listed.flatMap((ghsa) => typeof ghsa === "string" && ghsaRank(ghsa) > 0 ? [ghsaRank(ghsa)] : []) : []
+}
+
+export function forwardingOf(row: SubmissionRow, history: ReadonlyArray<HistoryRow>, digests: ReadonlyArray<string>, volatile: Volatile): unknown {
+  const phase = phases[row.state]
+  if (phase === undefined || row.origin !== "slop") return undefined
+  const sends = history.filter((entry) => entry.kind === "send")
+  const last = history.at(-1)
+  return {
+    phase,
+    failure: failureOf(row),
+    submission: 1,
+    reporter: 1,
+    repository: 1,
+    marker: 1,
+    caseId: 1,
+    revision: row.revision,
+    attempt: row.attempt,
+    firstAtMs: sends[0] === undefined ? 0 : millisOf(sends[0].at),
+    activeClaim: claimOf(row, sends.at(-1), digests),
+    readyClaims: [...volatile.readyClaims],
+    postedRevisions: [...volatile.postedRevisions],
+    canonical: canonicalOf(row),
+    duplicateGhsas: duplicatesOf(history),
+    contactsPending: phase !== "ReceiptVerified" && history.some((entry) => entry.kind === "contacts-unavailable"),
+    receiptDigest: phase === "ReceiptVerified" ? row.evidence_digest ?? "" : "",
+    receiptReplyLost: volatile.receiptReplyLost,
+    retryWithoutCopy: phase === "Draft" && (last?.kind === "rate-limited" || last?.kind === "reconcile-empty"),
+  }
+}
+
+export effect function historyOf(id: string) {
+  return try rows(HistoryRow, sql`SELECT revision, kind, detail, at FROM security_submission_events WHERE submission_id=${id} ORDER BY revision`)
+}
+
+export effect function loaded(id: string, ledger: Ref.Ref<Volatile>) {
+  const row = try submission(id)
+  if (row === undefined) return undefined
+  const history = try historyOf(id)
+  const digests = (try reportVersions(id)).map((version) => version.content_sha256)
+  const projected = forwardingOf(row, history, digests, try Ref.get(ledger))
+  if (projected === undefined) return undefined
+  const state = try orDie(decodeState(projected))
+  return { row, state, history } satisfies Loaded
+}
+
+export effect function reloaded(current: Loaded, ledger: Ref.Ref<Volatile>) {
+  const found = try loaded(current.row.id, ledger)
+  if (found === undefined) throw new Stale({ submissionId: current.row.id })
+  return found
+}
+
+export function transitionStatements(row: SubmissionRow, next: Transition): ReadonlyArray<Statement> {
+  const set = next.set ?? {}
+  const failure = next.state === "failed" ? set.failure_code ?? row.failure_code : null
+  const guard = next.guard === undefined ? sql`` : sql` AND (${next.guard})`
+  const detail = next.detail === undefined ? null : JSON.stringify(next.detail)
+  return [
+    sql`UPDATE security_submissions SET state=${next.state}, attempt=${set.attempt ?? row.attempt}, attempt_started_at=${set.attempt_started_at ?? row.attempt_started_at}, advisory_ghsa=${set.advisory_ghsa ?? row.advisory_ghsa}, github_created_at=${set.github_created_at ?? row.github_created_at}, evidence_digest=${set.evidence_digest ?? row.evidence_digest}, failure_code=${failure}, case_id=${set.case_id ?? row.case_id}, revision=revision+1, updated_at=${next.at} WHERE id=${row.id} AND revision=${row.revision} AND state=${row.state}${guard}`,
+    sql`INSERT INTO security_submission_events (submission_id, revision, kind, detail, actor_github_id, at) SELECT ${row.id}, ${row.revision + 1}, ${next.kind}, ${detail}, ${next.actorGithubId}, ${next.at} WHERE (SELECT revision FROM security_submissions WHERE id=${row.id})=${row.revision + 1} AND (SELECT state FROM security_submissions WHERE id=${row.id})=${next.state}`,
+  ]
+}
+
+export effect function written(row: SubmissionRow, next: Transition) {
+  const [moved] = try (try D1).batch(transitionStatements(row, next))
+  return moved?.changes === 1
+}
+
+export effect function stepped(current: Loaded, event: Event, ledger: Ref.Ref<Volatile>, transition?: Transition) {
+  const next = try apply(current.state, event)
+  if (transition !== undefined && !(try written(current.row, transition))) throw new Stale({ submissionId: current.row.id })
+  try Ref.set(ledger, { readyClaims: next.readyClaims, postedRevisions: next.postedRevisions, receiptReplyLost: next.receiptReplyLost })
+  return next
+}
+
+export function claimTransition(actorGithubId: string, attempt: number, reportVersion: number, at: string, guard: Statement): Transition {
+  return { state: "submitting", set: { attempt, attempt_started_at: at }, kind: "send", detail: { attempt, reportVersion }, actorGithubId, at, guard }
+}
+
+export function linkedTransition(caseId: string, facts: AdvisoryFacts, projectId: string, reporterGithubId: string, at: string): Transition {
+  return {
+    state: "receipt-verified",
+    set: { case_id: caseId, advisory_ghsa: facts.ghsa, github_created_at: facts.createdAt, evidence_digest: facts.evidenceDigest },
+    kind: "github-linked",
+    detail: { caseId, advisory: facts.ghsa },
+    actorGithubId: reporterGithubId,
+    at,
+    guard: sql`NOT EXISTS (SELECT 1 FROM security_cases WHERE project_id=${projectId} AND advisory_ghsa=${facts.ghsa} AND submission_state='verified' AND id<>${caseId})`,
+  }
+}
+
+export function boundTransition(chosen: AdvisoryFacts, duplicates: ReadonlyArray<string>, single: string, actorGithubId: string | null, at: string): Transition {
+  return {
+    state: "submitted",
+    set: { advisory_ghsa: chosen.ghsa, github_created_at: chosen.createdAt, evidence_digest: chosen.evidenceDigest },
+    kind: duplicates.length > 0 ? "duplicate-advisories" : single,
+    detail: duplicates.length > 0 ? { advisory: chosen.ghsa, ghsas: [...duplicates] } : { advisory: chosen.ghsa },
+    actorGithubId,
+    at,
+  }
+}
+
+export function failedTransition(code: FailureCode, kind: string, at: string): Transition {
+  return { state: "failed", set: { failure_code: code }, kind, detail: { code }, actorGithubId: null, at }
+}
+
+export function stayTransition(row: SubmissionRow, kind: string, actorGithubId: string | null, at: string): Transition {
+  return { state: row.state, kind, actorGithubId, at }
+}
+
+effect function moved(current: Loaded, ledger: Ref.Ref<Volatile>, event: Event, transition: Transition) {
+  stepped(current, event, ledger, transition) catch effect (error) => {
+    if (error._tag !== "Stale") throw error
+  }
+  return try reloaded(current, ledger)
+}
+
+export effect function settled(current: Loaded, ledger: Ref.Ref<Volatile>) {
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoAt(nowMs)
+  const f = current.state
+  if (canMarkInterrupted(f, nowMs)) return try moved(current, ledger, { type: "markInterrupted", nowMs }, { state: "uncertain", kind: "interrupted", actorGithubId: null, at })
+  if (canExpireVerification(f, nowMs)) return try moved(current, ledger, { type: "expireVerification", nowMs }, failedTransition("unverifiable", "verify-expired", at))
+  const idle = nowMs - millisOf(current.row.updated_at)
+  if ((f.phase === "Draft" || f.phase === "Failed") && mayAbandon(f, idle, current.row.case_id !== null)) {
+    try written(current.row, { state: "abandoned", kind: "abandoned", actorGithubId: null, at })
+    return undefined
+  }
+  return current
+}

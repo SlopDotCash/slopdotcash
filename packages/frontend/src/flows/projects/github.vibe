@@ -1,0 +1,63 @@
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"
+import { ownedRepositories as ownedRoute, repositoryFacts } from "@repo/backend/client"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { validRepositoryPath } from "./proposal.ts"
+
+export const githubLookupLimitBytes = 2_097_152
+
+export const lookupMessages = {
+  failed: "GitHub lookup failed.",
+  signIn: "Sign in with GitHub to look up repositories.",
+  path: "Enter the repository as owner/name first.",
+  branches: "The repository branch list is unavailable. Try again.",
+  commits: "The repository branch commits are unavailable. Try again.",
+} as const
+
+export error LookupFailed { message: string }
+
+export schema LookupOwner { login: string; actorId: string; nodeId: string; kind: "individual" | "organization" }
+
+export schema VerifiedLicense { state: "verified"; spdx: string; commitSha: string; fileSha256: string }
+
+export schema UnknownLicense { state: "unknown"; reason: string }
+
+export const RepositoryLookup = Schema.Struct({
+  repository: Schema.String,
+  description: Schema.NullOr(Schema.String),
+  numericId: Schema.String,
+  nodeId: Schema.String,
+  defaultBranch: Schema.String,
+  branches: Schema.Array(Schema.String),
+  branchCommits: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  fork: Schema.optionalKey(Schema.Boolean),
+  archived: Schema.optionalKey(Schema.Boolean),
+  owner: LookupOwner,
+  license: Schema.Union([VerifiedLicense, UnknownLicense]),
+})
+
+export type RepositoryLookup = typeof RepositoryLookup.Type
+
+const commitPattern = /^[0-9a-f]{40}$/u
+const unexplained = /^The request failed with HTTP [0-9]+\.$/u
+
+function failed(failure: CallFailure): LookupFailed {
+  if (failure._tag === "Refused" && failure.status === 401) return new LookupFailed({ message: lookupMessages.signIn })
+  if (failure._tag === "Refused" && !unexplained.test(failure.message)) return new LookupFailed({ message: failure.message })
+  return new LookupFailed({ message: lookupMessages.failed })
+}
+
+export effect function ownedRepositories() {
+  const answer = call(ownedRoute, {}, { limitBytes: githubLookupLimitBytes }) catch effect (failure) => { throw failed(failure) }
+  return answer.repositories
+}
+
+export effect function lookupRepository(repository: string) {
+  if (!validRepositoryPath(repository)) throw new LookupFailed({ message: lookupMessages.path })
+  const [owner = "", name = ""] = repository.split("/")
+  const answer = call(repositoryFacts, { params: { owner, name } }, { limitBytes: githubLookupLimitBytes }) catch effect (failure) => { throw failed(failure) }
+  const facts = Schema.decodeUnknownEffect(RepositoryLookup)(answer.repository) catch effect () => { throw new LookupFailed({ message: lookupMessages.failed }) }
+  if (!facts.branches.includes(facts.defaultBranch)) throw new LookupFailed({ message: lookupMessages.branches })
+  const commits = Object.entries(facts.branchCommits ?? {})
+  if (commits.some(([branch, commit]) => !facts.branches.includes(branch) || !commitPattern.test(commit))) throw new LookupFailed({ message: lookupMessages.commits })
+  return facts
+}

@@ -1,0 +1,71 @@
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
+import { D1, type Statement, sql } from "@repo/platform/d1"
+import { encoded } from "../../backup/codec.vibe"
+
+interface SnapshotTable {
+  readonly name: string
+  readonly read: Statement
+  readonly restore: (rows: string) => Statement
+}
+
+export const SnapshotRows = Schema.Record(Schema.String, Schema.Array(Schema.Record(Schema.String, Schema.Unknown)))
+
+export const snapshotTables: ReadonlyArray<SnapshotTable> = [
+  {
+    name: "vetting_assessments",
+    read: sql`SELECT * FROM vetting_assessments ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_assessments(id, state, completed_at, result)
+      SELECT value ->> 'id', value ->> 'state', value ->> 'completed_at', value ->> 'result' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_runs",
+    read: sql`SELECT * FROM vetting_evidence_runs ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_runs(assessment_id, run_id, trace_sha256, manifest_sha256, manifest, policy, created_at, expires_at, assembly_sha256)
+      SELECT value ->> 'assessment_id', value ->> 'run_id', value ->> 'trace_sha256', value ->> 'manifest_sha256', value ->> 'manifest', value ->> 'policy', value ->> 'created_at', value ->> 'expires_at', value ->> 'assembly_sha256' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_objects",
+    read: sql`SELECT * FROM vetting_evidence_objects ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_objects(assessment_id, run_id, sha256, size_bytes, kind, label, content_type, object_key, chunks, storage, storage_generation)
+      SELECT value ->> 'assessment_id', value ->> 'run_id', value ->> 'sha256', value ->> 'size_bytes', value ->> 'kind', value ->> 'label', value ->> 'content_type', value ->> 'object_key', value ->> 'chunks', value ->> 'storage', value ->> 'storage_generation' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_completions",
+    read: sql`SELECT * FROM vetting_evidence_completions ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_completions(assessment_id, run_id, sha256, completed_at)
+      SELECT value ->> 'assessment_id', value ->> 'run_id', value ->> 'sha256', value ->> 'completed_at' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_case_closures",
+    read: sql`SELECT * FROM vetting_evidence_case_closures ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_case_closures(assessment_id, closed_at, closed_by, reason)
+      SELECT value ->> 'assessment_id', value ->> 'closed_at', value ->> 'closed_by', value ->> 'reason' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_grants",
+    read: sql`SELECT * FROM vetting_evidence_grants ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_grants(token_hash, assessment_id, run_id, sha256, operator_github_id, reason, expires_at, consumed_at)
+      SELECT value ->> 'token_hash', value ->> 'assessment_id', value ->> 'run_id', value ->> 'sha256', value ->> 'operator_github_id', value ->> 'reason', value ->> 'expires_at', value ->> 'consumed_at' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_audit",
+    read: sql`SELECT * FROM vetting_evidence_audit ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_audit(id, actor, action, assessment_id, run_id, sha256, reason, created_at)
+      SELECT value ->> 'id', value ->> 'actor', value ->> 'action', value ->> 'assessment_id', value ->> 'run_id', value ->> 'sha256', value ->> 'reason', value ->> 'created_at' FROM json_each(${rows})`,
+  },
+]
+
+export effect function snapshotRows() {
+  const db = try D1
+  const tables: Record<string, ReadonlyArray<Record<string, unknown>>> = {}
+  for (const table of snapshotTables) tables[table.name] = try db.all(table.read)
+  return try encoded(tables)
+}
+
+export effect function restoreRows(tables: typeof SnapshotRows.Type) {
+  const db = try D1
+  for (const table of snapshotTables) {
+    const rows = Object.hasOwn(tables, table.name) ? tables[table.name] : []
+    try db.run(table.restore(new TextDecoder().decode(try encoded(rows))))
+  }
+}

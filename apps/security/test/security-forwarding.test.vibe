@@ -1,0 +1,283 @@
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"
+import { assert, layer } from "@effect/vitest"
+import type { Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { CallerLive } from "@repo/backend/caller"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ReportingReadiness } from "@repo/ports/slopbot"
+import { Request as WorkerRequest } from "miniflare"
+import { IntakeApp } from "../src/forwarding/grant.vibe"
+import { forwardingRoutes } from "../src/forwarding/routes.vibe"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { type World, digest, origin, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request) => Promise<globalThis.Response>
+
+interface Answer {
+  readonly status: number
+  readonly body: Readonly<Record<string, unknown>>
+  readonly cookie: string | null
+  readonly location: string | null
+}
+
+interface Shown {
+  readonly id: string
+  readonly state: string
+  readonly revision: number
+  readonly retryAllowed: boolean
+  readonly caseId: string | null
+  readonly advisory: { readonly ghsa: string } | null
+}
+
+service Forwarding {
+  readonly world: World
+  readonly fake: GitHubFake
+  readonly clock: SettableClock
+  readonly handler: WebHandler
+}
+
+const project = "intake-fixture"
+const login = `member-${reporter}`
+const reports = "POST /repos/slop-test/intake/security-advisories/reports"
+const grantKey = `${"H".repeat(42)}A`
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+function ports(clock: SettableClock) {
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(projectId === project ? fixture : undefined),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixture]),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: () => succeed({ banned: false }),
+      project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: () => succeed(sql`1`),
+    } satisfies Restrictions.Shape),
+    Layer.succeed(ReportingReadiness, {
+      current: () => sync(() => {
+        const verifiedAt = new Date(clock.now()).toISOString()
+        return {
+          target: { revision: 1, repositoryKey: "slop-test/intake", repositoryId: "1001", repositoryNodeId: "R_intake" },
+          observation: { repositoryId: "1001", repositoryNodeId: "R_intake", enabled: true, verifiedAt, attemptedAt: verifiedAt, failure: "NoFailure" as const },
+        }
+      }),
+    } satisfies ReportingReadiness.Shape),
+  )
+}
+
+function shellOf(world: World, fake: GitHubFake, clock: SettableClock) {
+  const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
+  const github = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority }), Layer.mergeAll(outboundVia(viaFake), webCrypto, clock.layer))
+  const base = Layer.mergeAll(
+    d1(world.db),
+    webCrypto,
+    clock.layer,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: "801", PROJECT_MODERATOR_GITHUB_IDS: "801" }),
+    intakeSettings({ mode: "on", automatic: true }),
+    outboundVia(viaFake),
+    Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: fake.app.clientId, clientSecret: Redacted.make(fake.app.clientSecret), webOrigin: fake.webAuthority, apiOrigin: fake.authority } }),
+    ports(clock),
+  )
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github), base)
+}
+
+const Started = Layer.effect(Forwarding, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const clock = settableClock(Date.now())
+  const fake = try orDie(Effect.try(() => githubFake({ now: () => clock.now() }))
+  try orDie(Effect.try(() => {
+    fake.world.addOrg({ id: 5000, login: "slop-test" })
+    fake.world.addUser({ id: Number(reporter), login })
+    fake.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    fake.world.setPrivateReporting("slop-test/intake", true)
+  })
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(forwardingRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>, shellOf(world, fake, clock)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return { world, fake, clock, handler: web.handler as unknown as WebHandler }
+})
+
+const sessions = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string): Promise<string> {
+  const known = sessions.get(githubId)
+  if (known !== undefined) return known
+  const token = `f${githubId.padStart(20, "0")}${String(sessions.size + 1).padStart(8, "0")}${"q".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 86_400_000).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  sessions.set(githubId, cookie)
+  return cookie
+}
+
+function cookieValue(setCookie: string | null) {
+  return setCookie === null ? undefined : setCookie.split(";")[0]
+}
+
+async function called(forwarding: Forwarding.Shape, path: string, as: string, jar: ReadonlyArray<string>, body?: unknown): Promise<Answer> {
+  const session = await sessionCookie(forwarding.world, as)
+  const headers: Record<string, string> = { cookie: [session, ...jar].join("; "), "x-slop-expected-github-id": as }
+  if (body !== undefined) {
+    headers["content-type"] = "application/json"
+    headers.origin = origin
+  }
+  const sent = new WorkerRequest(`${origin}${path}`, { method: body === undefined ? "GET" : "POST", headers, redirect: "manual", ...body === undefined ? {} : { body: JSON.stringify(body) } })
+  const response = await forwarding.handler(sent as unknown as globalThis.Request)
+  const type = response.headers.get("content-type") ?? ""
+  return {
+    status: response.status,
+    body: type.startsWith("application/json") ? await response.json() as Readonly<Record<string, unknown>> : {},
+    cookie: response.headers.get("set-cookie"),
+    location: response.headers.get("location"),
+  }
+}
+
+effect function call(forwarding: Forwarding.Shape, path: string, jar: ReadonlyArray<string>, body?: unknown) {
+  return try promise(() => called(forwarding, path, reporter, jar, body))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function shown(answer: Answer): Shown {
+  return answer.body.submission as Shown
+}
+
+function brief(answer: Answer) {
+  const submission = shown(answer)
+  return [answer.status, submission.state, submission.revision]
+}
+
+function refusal(answer: Answer) {
+  return [answer.status, answer.body.error]
+}
+
+effect function submitted(forwarding: Forwarding.Shape, key: string, summary: string) {
+  const report = { summary, description: "A path traversal in the export endpoint reads files outside the workspace.", severity: "high" }
+  const answer = try promise(() => request(forwarding.world, "/api/v1/security-submissions", { as: reporter, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  const id = ((answer.body as { readonly submission: { readonly id: string } }).submission).id
+  try promise(() => forwarding.world.db.prepare("UPDATE security_submission_intake SET screening_state='legitimate', revision=revision+1 WHERE submission_id=?").bind(id).run())
+  return id
+}
+
+effect function consented(forwarding: Forwarding.Shape, id: string) {
+  const authorized = try call(forwarding, `/api/v1/security-submissions/${id}/authorize`, [], {})
+  const flow = cookieValue(authorized.cookie)
+  const authorizeUrl = authorized.body.authorizeUrl
+  if (authorized.status !== 200 || flow === undefined || typeof authorizeUrl !== "string") return try die(new Error(`authorization refused: ${authorized.status}`))
+  const redirected = try promise(() => Promise.resolve(forwarding.fake.handler(new WorkerRequest(authorizeUrl, { redirect: "manual" }) as unknown as Parameters<Handler>[0])))
+  const back = URL.parse(redirected.headers.get("location") ?? "")
+  if (back === null) return try die(new Error("GitHub did not redirect back"))
+  const callback = try call(forwarding, `${back.pathname}${back.search}`, [flow])
+  const grant = cookieValue(callback.cookie)
+  try same([callback.status, callback.location], [303, `/security?submission=${id}`])
+  if (grant === undefined) return try die(new Error("no grant cookie"))
+  return grant
+}
+
+effect function markerOf(forwarding: Forwarding.Shape, id: string) {
+  const found = try promise(() => rows(forwarding.world, "SELECT marker FROM security_submissions WHERE id=?", id))
+  return String(found[0]?.marker ?? "")
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Forward the approved saved report and verify its GitHub receipt (spec/security/forwarding.md, "Story: Forward the approved saved report using the researcher\'s consent"; spec/security/forwarding.md, "Story: Reconcile the exact privately submitted copy and verify its receipt"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter\'s grant")', () => effect {
+    const forwarding = try Forwarding
+    const id = try submitted(forwarding, "forward-journey-0001", "Export endpoint path traversal")
+    const send = `/api/v1/security-submissions/${id}/send`
+    const withoutGrant = try call(forwarding, send, [], { expectedRevision: 1 })
+    const stranger = try promise(() => called(forwarding, send, "49999", [], { expectedRevision: 1 }))
+    const grant = try consented(forwarding, id)
+    const replacement = try call(forwarding, send, [grant], { expectedRevision: 1, report: { summary: "Other text", description: "Replacement text is never forwarded." } })
+    try orDie(Effect.try(() => forwarding.fake.failNext(reports, { rateLimit: { secondary: true, retryAfterSeconds: 60 } }))
+    const throttled = try call(forwarding, send, [grant], { expectedRevision: 1 })
+    const afterThrottle = try orDie(Effect.try(() => forwarding.fake.world.repo("slop-test/intake").advisories.length)
+    const stale = try call(forwarding, send, [grant], { expectedRevision: 2 })
+    try orDie(Effect.try(() => forwarding.fake.failNext(reports, { disconnect: true, applied: true }))
+    const lost = try call(forwarding, send, [grant], { expectedRevision: 3 })
+    const resend = try call(forwarding, send, [grant], { expectedRevision: 5 })
+    const landed = try orDie(Effect.try(() => forwarding.fake.world.repo("slop-test/intake").advisories[0])
+    const marker = try markerOf(forwarding, id)
+    const duplicate = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: login, summary: "Export endpoint path traversal", description: `A second copy.\n\nReport reference: ${marker}`, createdAt: new Date(forwarding.clock.now() + 60_000).toISOString() }))
+    const reconciled = try call(forwarding, `/api/v1/security-submissions/${id}/reconcile`, [grant], { expectedRevision: 5 })
+    const kinds = try promise(() => rows(forwarding.world, "SELECT revision, kind FROM security_submission_events WHERE submission_id=? ORDER BY revision", id))
+    const linked = try promise(() => rows(forwarding.world, "SELECT s.case_id = i.case_id AS same_case, s.evidence_digest <> c.receipt_evidence_digest AS distinct_digest, c.received_at_source AS source, c.advisory_ghsa AS case_advisory FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.id=?", id))
+    const credentials = forwarding.fake.requests.filter((sent) => sent.method === "POST" && sent.url.includes("/security-advisories/reports")).map((sent) => sent.credential)
+    try same({
+      refused: [refusal(withoutGrant), refusal(stranger), refusal(replacement), refusal(stale), refusal(resend)],
+      throttled: [...brief(throttled), shown(throttled).retryAllowed, throttled.body.rateLimited, afterThrottle],
+      lost: brief(lost),
+      reconciled: [...brief(reconciled), shown(reconciled).advisory?.ghsa, reconciled.cookie?.includes("Max-Age=0") === true],
+      kinds: kinds.map((entry) => entry.kind),
+      linked,
+      credentials,
+    }, {
+      refused: [[409, "grant_required"], [404, "not_found"], [400, "invalid_request"], [409, "stale_revision"], [409, "reconcile_required"]],
+      throttled: [200, "draft", 3, true, { retryAfterSeconds: 60 }, 0],
+      lost: [202, "uncertain", 5],
+      reconciled: [200, "receipt-verified", 7, landed?.ghsaId, true],
+      kinds: ["create", "send", "rate-limited", "send", "uncertain", "duplicate-advisories", "github-linked"],
+      linked: [{ same_case: 1, distinct_digest: 1, source: "slop-received", case_advisory: null }],
+      credentials: [`user:${login}`, "unknown"],
+    })
+    try same(duplicate.ghsaId === landed?.ghsaId, false)
+  })
+
+  it.effect('An empty listing keeps a lost send uncertain until the quiet window (spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant")', () => effect {
+    const forwarding = try Forwarding
+    const id = try submitted(forwarding, "forward-journey-0002", "Export endpoint quiet window")
+    const send = `/api/v1/security-submissions/${id}/send`
+    const reconcile = `/api/v1/security-submissions/${id}/reconcile`
+    const other = try submitted(forwarding, "forward-journey-0003", "Export endpoint other grant")
+    const otherGrant = try consented(forwarding, other)
+    const borrowed = try call(forwarding, send, [otherGrant], { expectedRevision: 1 })
+    const grant = try consented(forwarding, id)
+    try orDie(Effect.try(() => forwarding.fake.failNext(reports, { disconnect: true }))
+    const lost = try call(forwarding, send, [grant], { expectedRevision: 1 })
+    const early = try call(forwarding, reconcile, [grant], { expectedRevision: 3 })
+    forwarding.clock.advance(5 * 60_000)
+    const reopened = try call(forwarding, reconcile, [grant], { expectedRevision: 4 })
+    try same({
+      borrowed: refusal(borrowed),
+      lost: brief(lost),
+      early: brief(early),
+      reopened: [...brief(reopened), shown(reopened).retryAllowed],
+    }, {
+      borrowed: [409, "grant_required"],
+      lost: [202, "uncertain", 3],
+      early: [202, "uncertain", 4],
+      reopened: [200, "draft", 5, true],
+    })
+  })
+})

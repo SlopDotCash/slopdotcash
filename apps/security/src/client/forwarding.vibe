@@ -1,0 +1,19 @@
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { SubmissionView } from "./intake.vibe"
+
+export schema RateLimitedSend { retryAfterSeconds: number | null }
+
+export schema Forwarded {
+  replayed?: boolean
+  rateLimited?: RateLimitedSend
+  authorizeUrl?: string
+  submission: SubmissionView
+}
+
+export const authorizeForwarding = route({ method: "POST", path: "/api/v1/security-submissions/:id/authorize", access: "sessionWrite", limitKib: 256, request: undefined, answer: Forwarded, rejected: "submission_closed", cache: "private" })
+export const forwardingCallback = route({ method: "GET", path: "/api/v1/security-submissions/authorize/callback", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private" })
+export const sendForwarding = route({ method: "POST", path: "/api/v1/security-submissions/:id/send", access: "sessionWrite", limitKib: 256, request: undefined, answer: Forwarded, rejected: "stale_revision", cache: "private" })
+export const reconcileForwarding = route({ method: "POST", path: "/api/v1/security-submissions/:id/reconcile", access: "sessionWrite", limitKib: 256, request: undefined, answer: Forwarded, rejected: "nothing_to_reconcile", cache: "private" })
+
+export const forwardingApi: ReadonlyArray<AnyRoute> = [authorizeForwarding, forwardingCallback, sendForwarding, reconcileForwarding]
