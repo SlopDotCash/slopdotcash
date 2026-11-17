@@ -2,7 +2,7 @@
  * A saved vault creation is registered by checks from the owner's page (PRD
  * section 6). The checks go on in a background tab, within their own limit,
  * so an owner who switches tabs still gets the vault recorded; and a deposit
- * into a vault that is not recorded yet does not tell the owner to leave.
+ * into a vault that is not recorded yet says the vault is recorded first.
  * Model: formal/models/ui/ui_vault_auto_register.qnt.
  */
 import { expect, test } from "bun:test";
@@ -42,10 +42,8 @@ test("a deposit into a recorded vault may be left alone", () => {
   );
 });
 
-test("a deposit into a vault that is not recorded yet keeps the owner here", () => {
-  const notice = receivedNotice("deposit", "Robinhood Chain", "0xabc", true);
-  expect(notice).not.toContain("you can leave this page");
-  expect(notice).toBe(
-    "Deposit received in a Robinhood Chain block. Keep this page open: the vault is recorded here once Robinhood Chain finalizes its creation, usually within 20 minutes, and the deposit counts after that. 0xabc",
+test("a deposit into a vault that is not recorded yet says what happens first", () => {
+  expect(receivedNotice("deposit", "Robinhood Chain", "0xabc", true)).toBe(
+    "Deposit received in a Robinhood Chain block. The vault is recorded once Robinhood Chain finalizes its creation, usually within 20 minutes, and the deposit counts after that; you can leave this page. 0xabc",
   );
 });

@@ -22,7 +22,8 @@ export function autoRegisterTurn(
 
 /**
  * Notice for a deposit or withdrawal in a block that is not final yet. A vault
- * that is not recorded yet is registered by this page, so its owner stays.
+ * that is not recorded yet is recorded after its creation is final, by this
+ * page or by the server's saved request, so the notice names both steps.
  */
 export function receivedNotice(
   operation: "deposit" | "withdraw",
@@ -32,6 +33,6 @@ export function receivedNotice(
 ): string {
   const arrived = `${operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block.`;
   return provisional
-    ? `${arrived} Keep this page open: the vault is recorded here once ${network} finalizes its creation, usually within 20 minutes, and the deposit counts after that. ${hash}`
+    ? `${arrived} The vault is recorded once ${network} finalizes its creation, usually within 20 minutes, and the deposit counts after that; you can leave this page. ${hash}`
     : `${arrived} It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
 }

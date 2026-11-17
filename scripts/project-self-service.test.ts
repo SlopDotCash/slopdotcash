@@ -7,13 +7,16 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fail } from "../backend/http";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import type { RepositoryControl } from "../backend/projects/contracts";
 import {
+  finishSavedVaultCreations,
   handleProjectApi,
   type ProjectApiDependencies,
   refreshProjectSetup,
+  savedVaultCreationSweep,
 } from "../backend/projects/handler";
 import type { ScanRequest } from "../backend/projects/setup";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
@@ -4586,4 +4589,197 @@ test("an appended name another project takes during the write is a registry conf
   expect(response.status).toBe(409);
   expect(response.body.error).toBe("registry_conflict");
   expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+// A vault creation that is not final when its owner leaves the page is saved
+// and finished by the server as the same owner (PRD section 6).
+async function savedCreationFixture() {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const chain = {
+    answer: "absent" as "absent" | "included" | "finalized" | "failed",
+  };
+  const asked: string[] = [];
+  t.deps.vaultSetup = {
+    observe: async () => {},
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async (_project, actor) => {
+      asked.push(actor.githubId);
+      if (chain.answer === "failed")
+        fail(409, "vault_creation_failed", "The vault creation failed.");
+      return chain.answer === "absent"
+        ? null
+        : { deployment: TEST_VAULT, evidence: chain.answer };
+    },
+  };
+  const register = () =>
+    t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    });
+  const later = (minutes: number) => {
+    t.state.now = new Date(
+      Date.parse(t.state.now) + minutes * 60_000,
+    ).toISOString();
+  };
+  const finish = () =>
+    finishSavedVaultCreations(
+      new Request("https://slop.cash/api/v1/projects"),
+      t.deps,
+    );
+  const vaults = async () =>
+    (await t.persistence.getProject("vault-target"))?.manifest.escrow
+      ?.deployments ?? [];
+  return { t, chain, asked, register, later, finish, vaults };
+}
+
+test.each(["absent", "included"] as const)(
+  "the server finishes a creation that was %s when the owner left",
+  async (seen) => {
+    const f = await savedCreationFixture();
+    f.chain.answer = seen;
+    const first = await f.register();
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe("pending");
+    // Nothing is due yet, so nothing is asked again.
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toEqual([OWNER]);
+    // Still not final at the first check: the creation keeps waiting.
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+    expect(await f.vaults()).toEqual([]);
+    f.chain.answer = "finalized";
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
+    // The same owner is named, and the vault is on the project record.
+    expect(f.asked).toEqual([OWNER, OWNER, OWNER]);
+    expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+    expect((await f.t.persistence.getProject("vault-target"))?.revision).toBe(
+      3,
+    );
+    // A finished creation is never asked about again.
+    f.later(60);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toHaveLength(3);
+  },
+);
+
+test("the server does not finish a creation for an owner who lost access", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a failed creation is not asked about again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "failed";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  f.chain.answer = "finalized";
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("the owner's own registration closes the saved creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  expect((await f.register()).body.status).toBe("registered");
+  const asks = f.asked.length;
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(f.asked).toHaveLength(asks);
+});
+
+test("a saved creation is given up after two days", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  expect(f.asked).toEqual([OWNER]);
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a later request to the project API finishes a due creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  const background: Promise<unknown>[] = [];
+  f.t.deps.waitUntil = (work) => void background.push(work);
+  savedVaultCreationSweep.nextAt = 0;
+  expect((await f.t.call("GET", "project-setup", OWNER)).status).toBe(200);
+  await Promise.all(background);
+  expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+});
+
+test("at most three creations wait for one project", async () => {
+  const f = await savedCreationFixture();
+  const ask = (transactionId: string) =>
+    f.t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId,
+    });
+  for (const digit of ["1", "2", "3", "4"])
+    expect((await ask(`0x${digit.repeat(64)}`)).body.status).toBe("pending");
+  f.later(3);
+  // Only three were kept, so only three are asked about again.
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 3, ended: 0 });
+});
+
+test("an expired creation waits again when its owner asks again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
 });
