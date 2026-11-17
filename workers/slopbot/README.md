@@ -229,6 +229,24 @@ It retains no message, body, stack, path or source identity and rethrows the
 original failure. The protected intake diagnostic reprojects only that exact
 structured shape; an observation is not a publication receipt.
 
+For an earlier failure, the trusted-main `value-intake-diagnostic.yml` workflow
+accepts paired `history_from` and `history_to` UTC bounds. They must cover at
+most 15 minutes within the last 24 hours. The existing short live-tail path is
+unchanged when both are absent. Retained inspection uses one dry Cloudflare
+query for this Worker, at most 200 events and 1 MiB, with no automatic retry or
+pagination. It checks the current deployment before and after reading. Only
+the existing seven-field failures and their event times are retained; raw
+messages, bodies, stacks, request IDs and query-run IDs are discarded. Missing,
+unprojectable, truncated or unavailable evidence does not establish a cause or
+prove that an import succeeded. Deployment stability now does not establish
+the version that produced an earlier observation.
+
+The Cloudflare query API requires the `Workers Observability Write` permission
+even for its dry read. Use only the existing protected credential. A refusal
+is reported with fixed stage and scalar status/code; this workflow does not
+grant permissions or create credentials. Keep observations and any subsequent
+publication attempt separate, and reconcile public history before a retry.
+
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and
 implemented in `quality.ts`. Keep
