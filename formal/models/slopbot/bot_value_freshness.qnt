@@ -3,6 +3,7 @@
 // @source workers/slopbot/value-work-unit-publication.ts
 // @source workers/slopbot/value-merge-profile.ts
 // @source workers/slopbot/registry.ts
+// @evidence workers/slopbot/registry-query-budget.test.ts
 // Full source digest differs from head SHA. Final source comparison is a
 // point-in-time observation, not an atomic lock on external GitHub content.
 module bot_value_freshness {

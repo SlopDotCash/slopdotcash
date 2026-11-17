@@ -10,6 +10,25 @@ Deep value, quality and recovery detail lives in the modules named below and in
 [`QUALITY.md`](QUALITY.md). Do not treat older narrative in git history as
 current behavior.
 
+The production config declares `limits.cpu_ms = 300000`, a CPU ceiling per
+invocation on Workers Paid with Standard usage. Cloudflare enforces it on its
+network. It applies to HTTP and queue work, including historical validation;
+the cron that runs every five minutes retains its platform 30-second CPU cap.
+Network waits and wall-time caps are separate. After a protected release,
+verify the 100% active version, `cpu_ms = 300000`, Standard usage and a supported
+plan before retrying an import. This budget does not guarantee completion.
+
+The protected main `fee-worker-bindings.yml` workflow accepts an optional exact
+`slopbot_source` SHA for a separate read-only metadata job. Its
+selection skips the fee job and its publication concurrency group. Combining
+it with any fee probe, rotation or prior-proof input is refused in a
+credential-free step before the metadata read. With `slopbot_source` empty,
+the existing fee workflow keeps its original input behavior. The
+`slopbot-runtime.json` artifact retains only the matching source, active version,
+CPU limit, usage model and deployment stability. Missing, denied, malformed or
+changing metadata stays unavailable. The receipt does not verify Paid plan
+entitlement, execution success or the cause of an earlier import failure.
+
 ## Flow
 
 1. **Webhook.** `POST /github/webhook` verifies `X-Hub-Signature-256`, records
@@ -222,6 +241,35 @@ Value scoring is a separate pipeline from advisory/close review. Entry points:
 | Historical / import intake | `value-import.ts`, `value-import-service.ts` |
 
 The authenticated Pages assessment import accepts `Accept: application/x-ndjson` for long-running publication. It sends pending heartbeat frames, then one `{status, body}` terminal frame containing the ordinary HTTP result. A pending frame or interrupted stream does not prove publication. Reconcile the exact record through public assessment history before retrying. Requests without this Accept type keep the ordinary JSON response.
+
+The private publisher records a failed import's fixed stage, zero-based source
+index/count, allowlisted error name/HTTP status and bounded message SHA-256.
+It retains no message, body, stack, path or source identity and rethrows the
+original failure. The protected intake diagnostic reprojects only that exact
+structured shape; an observation is not a publication receipt.
+
+For an earlier failure, the trusted-main `value-intake-diagnostic.yml` workflow
+accepts paired `history_from` and `history_to` UTC bounds. They must cover at
+most 15 minutes within the last 24 hours. The existing short live-tail path is
+unchanged when both are absent. Retained inspection uses one dry Cloudflare
+query for this Worker, at most 200 events and 1 MiB, with no automatic retry or
+pagination. It checks the current deployment before and after reading. Only
+the existing seven-field failures and their event times are retained; raw
+messages, bodies, stacks, request IDs and query-run IDs are discarded. Missing,
+unprojectable, truncated or unavailable evidence does not establish a cause or
+prove that an import succeeded. Deployment stability now does not establish
+the version that produced an earlier observation.
+The provider's `$workers.truncated` flag and both reported ABR levels are also
+checked: a truncated/invalid event or sampled/invalid query cannot report a
+complete read. Absent ABR metadata follows the provider's documented default
+of 1. A bounded read still does not establish unsampled source coverage or the
+absence of failures.
+
+The Cloudflare query API requires the `Workers Observability Write` permission
+even for its dry read. Use only the existing protected credential. A refusal
+is reported with fixed stage and scalar status/code; this workflow does not
+grant permissions or create credentials. Keep observations and any subsequent
+publication attempt separate, and reconcile public history before a retry.
 
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and

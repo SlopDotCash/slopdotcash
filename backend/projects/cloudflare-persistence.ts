@@ -19,7 +19,11 @@ import {
   notifyProjectRevision,
   notifyReinstatementReviewers,
 } from "../notifications/events";
-import type { NewProjectInput, ProjectPersistence } from "./contracts";
+import type {
+  NewProjectInput,
+  ProjectPersistence,
+  SavedVaultCreation,
+} from "./contracts";
 
 /**
  * Every input of admission clearance that the registry stores and can change:
@@ -327,6 +331,148 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
     return row === null
       ? null
       : { manifestText: row.manifest, manifestSha256: row.manifest_sha256 };
+  }
+
+  async saveVaultCreation(saved: {
+    id: string;
+    projectId: string;
+    network: string;
+    transactionId: string;
+    requestJson: string;
+    actor: GithubActor;
+    now: string;
+    nextAttemptAt: string;
+  }): Promise<void> {
+    // One statement: the per-project limit and the insert cannot interleave.
+    await this.db
+      .prepare(
+        `INSERT INTO saved_vault_creations
+           (id, project_id, network, transaction_id, request_json,
+            actor_github_id, actor_github_login, state, attempts,
+            next_attempt_at, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, 'waiting', 0, ?, ?
+          WHERE (SELECT COUNT(*) FROM saved_vault_creations
+                  WHERE project_id = ? AND state = 'waiting') < 3
+         ON CONFLICT (project_id, network, transaction_id) DO UPDATE SET
+           state = 'waiting', attempts = 0, last_code = NULL,
+           finished_at = NULL, request_json = excluded.request_json,
+           actor_github_id = excluded.actor_github_id,
+           actor_github_login = excluded.actor_github_login,
+           next_attempt_at = excluded.next_attempt_at,
+           created_at = excluded.created_at
+          WHERE saved_vault_creations.state = 'expired'`,
+      )
+      .bind(
+        saved.id,
+        saved.projectId,
+        saved.network,
+        saved.transactionId,
+        saved.requestJson,
+        saved.actor.githubId,
+        saved.actor.githubLogin,
+        saved.nextAttemptAt,
+        saved.now,
+        saved.projectId,
+      )
+      .run();
+  }
+
+  async dueVaultCreations(
+    now: string,
+    limit: number,
+  ): Promise<SavedVaultCreation[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT id, project_id, network, transaction_id, request_json,
+                actor_github_id, actor_github_login, attempts, created_at
+           FROM saved_vault_creations
+          WHERE state = 'waiting' AND next_attempt_at <= ?
+          ORDER BY next_attempt_at, id LIMIT ?`,
+      )
+      .bind(now, limit)
+      .all<{
+        id: string;
+        project_id: string;
+        network: string;
+        transaction_id: string;
+        request_json: string;
+        actor_github_id: string;
+        actor_github_login: string;
+        attempts: number;
+        created_at: string;
+      }>();
+    return (result.results ?? []).map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      network: row.network,
+      transactionId: row.transaction_id,
+      requestJson: row.request_json,
+      actor: {
+        githubId: row.actor_github_id,
+        githubLogin: row.actor_github_login,
+      },
+      attempts: row.attempts,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async claimVaultCreation(
+    id: string,
+    attempts: number,
+    nextAttemptAt: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE saved_vault_creations
+            SET attempts = attempts + 1, next_attempt_at = ?
+          WHERE id = ? AND state = 'waiting' AND attempts = ?`,
+      )
+      .bind(nextAttemptAt, id, attempts)
+      .run();
+    return (result.meta?.changes ?? 0) === 1;
+  }
+
+  async noteVaultCreation(id: string, code: string): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE saved_vault_creations SET last_code = ?
+          WHERE id = ? AND state = 'waiting'`,
+      )
+      .bind(code, id)
+      .run();
+  }
+
+  async endVaultCreation(
+    id: string,
+    state: "refused" | "expired",
+    code: string,
+    now: string,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE saved_vault_creations
+            SET state = ?, last_code = ?, finished_at = ?
+          WHERE id = ? AND state = 'waiting'`,
+      )
+      .bind(state, code, now, id)
+      .run();
+  }
+
+  async closeRegisteredVaultCreation(
+    projectId: string,
+    network: string,
+    transactionId: string,
+    now: string,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE saved_vault_creations
+            SET state = 'registered', finished_at = ?
+          WHERE project_id = ? AND network = ? AND transaction_id = ?
+            AND state = 'waiting'`,
+      )
+      .bind(now, projectId, network, transactionId)
+      .run();
   }
 
   async getApplication(id: string): Promise<ProjectApplication | null> {

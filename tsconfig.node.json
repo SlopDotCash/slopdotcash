@@ -43,6 +43,7 @@
     "src/lib/security-program-draft.ts",
     "src/lib/vault-setup.ts",
     "src/lib/vault-setup-attempt.ts",
+    "src/lib/vault-auto-register.ts",
     "src/lib/pending-attempt.ts",
     "src/lib/byte-encoding.ts",
     "src/lib/solana-wire.ts",
