@@ -209,3 +209,7 @@ export const registryLayer = Layer.effect(Registry, effect {
     }),
   }
 })
+
+export effect function loadRegistry() {
+  return try (try Registry).load()
+}

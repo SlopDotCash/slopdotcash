@@ -6,7 +6,7 @@ import { draftMachine } from "../../../flows/security/composeDraft.vibe"
 import { type ReviewDecision, authorizeSubmission, readinessOf, reconcileSubmission, retrySubmissionScreening, reviewSubmission, reviseSubmission, sendSubmission } from "../../../flows/security/intake.vibe"
 import { reportHeadings } from "../../../flows/security/details.vibe"
 import { type ReportDraft, emptyReport } from "../../../flows/security/private.vibe"
-import { keepsReportText, loadReportText, pruneReportTexts, releaseReportText, reportTextErasure, saveReportText } from "../../../flows/security/reportText.vibe"
+import { keepsReportText, loadReportText, pruneReportTexts, releaseReportText, saveReportText } from "../../../flows/security/reportText.vibe"
 import { untilTime } from "../../../platform/clock.vibe"
 import { Registry, findProject, registryLayer } from "../../../reads/registry.vibe"
 import { reportCompose } from "./compose.vibe"
@@ -64,7 +64,7 @@ export const readinessLayer = Layer.effect(ProgramReadiness, effect {
   }
 })
 
-export const programSections = Layer.provideMerge(reportCompose, Layer.mergeAll(registryLayer, readinessLayer, draftMachine, reportTextErasure))
+export const programSections = Layer.provideMerge(reportCompose, Layer.mergeAll(registryLayer, readinessLayer, draftMachine))
 
 export type ProgramRuntime = ReturnType<typeof makeProgramRuntime>
 

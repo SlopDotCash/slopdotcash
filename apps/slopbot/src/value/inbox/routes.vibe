@@ -1,6 +1,11 @@
 // spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/slopbot/assessmentInbox.md, "Denial clears the item and uncertain authority is retryable"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"
+import type { D1 } from "@repo/platform/d1"
 import { type Actor, Refused, handle } from "@repo/platform/http"
+import type { Roles } from "@repo/platform/roles"
+import type { Registry, RegistryManifests } from "@repo/ports/backend"
+import { AssessmentQueue } from "@repo/ports/slopbot"
 import { assessmentRefusals, incompleteAssessments, otherAssessmentMethods } from "../../client/inbox.vibe"
+import type { RepositoryAccessReader } from "./access.vibe"
 import { assessmentPage } from "./store.vibe"
 
 effect function directPage(actor: Actor, query: URLSearchParams) {
@@ -18,3 +23,10 @@ export const assessmentRoutes = Layer.mergeAll(
   handle(incompleteAssessments, (input) => directPage(input.actor, input.query)),
   ...otherAssessmentMethods.map((descriptor) => handle(descriptor, () => effect { throw new Refused(assessmentRefusals.methodNotAllowed) })),
 )
+
+export const AssessmentQueueLive = Layer.effect(AssessmentQueue, effect {
+  const services = try Effect.context<D1 | Roles | Registry | RegistryManifests | RepositoryAccessReader>()
+  return {
+    bundled: (actor, query) => Effect.provide(bundledAssessments(actor, query), services),
+  } satisfies AssessmentQueue.Shape
+})

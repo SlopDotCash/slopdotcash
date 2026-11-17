@@ -5,8 +5,8 @@ import { Address, type AddressProps } from "./Address.tsx";
 import { Button } from "./Button.tsx";
 import { EmptyState } from "./EmptyState.tsx";
 
-/** A wallet the browser offers, as its discovery names it. */
-export type WalletOption = { id: string; name: string };
+/** A wallet the browser offers, as its discovery names it, with the image URL it announced once the owner has accepted it. */
+export type WalletOption = { id: string; name: string; icon?: string };
 
 const missing = { evm: "No wallet found. Install one, then reload.", solana: "No Solana wallet found. Install one, then reload." };
 
@@ -40,6 +40,7 @@ export function WalletChooser({ legend, wallets, onConnect, address, family = "e
       <div className="flex flex-wrap gap-2">
         {wallets.map((wallet) => (
           <Button key={wallet.id} variant="secondary" disabled={disabled} onClick={() => onConnect(wallet)}>
+            {wallet.icon ? <img src={wallet.icon} alt="" width={32} height={32} className="size-8 shrink-0" /> : <Wallet aria-hidden className="size-6" />}
             Connect {wallet.name}
           </Button>
         ))}

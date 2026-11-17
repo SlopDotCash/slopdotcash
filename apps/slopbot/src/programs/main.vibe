@@ -1,0 +1,10 @@
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { qualifyValueModelsCommand } from "./qualify.vibe"
+
+program({
+  services: Layer.mergeAll(outbound, webCrypto),
+  commands: { "qualify-value-models": qualifyValueModelsCommand },
+}).runMain()

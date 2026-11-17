@@ -4,9 +4,9 @@ import { randomId } from "@repo/platform/crypto"
 import { D1, sql } from "@repo/platform/d1"
 import type { Admission } from "../../gen/slopbot__closeCapacity.effect.vibe"
 import { type Candidate, type LeaseView, type RefusalReason, canAddModeratorLabel, canBlockClose, canConfirmCloseComment, canLabelBlocked, canNotifyModerator, disputed, mayReserve } from "../../gen/slopbot__closeAttempt.effect.vibe"
-import { type GateObservation, noParticipation } from "../../gen/slopbot__closure.effect.vibe"
+import type { GateObservation } from "../../gen/slopbot__closure.effect.vibe"
 import { CloseAttemptMissing, confirmSlot, rejectSlot, reserveSlot } from "../closeCapacity/store.vibe"
-import { type CloseRequest, closeComment, closeStillAllowed } from "../closure/decide.vibe"
+import { type CloseRequest, closeComment, closeRecheck } from "../closure/decide.vibe"
 import { type Account, type ReviewContext, type ReviewTarget, reviewRowOf } from "../context/load.vibe"
 import type { ReviewJob } from "../jobs/job.vibe"
 import { ReviewBusy } from "../jobs/retry.vibe"
@@ -17,7 +17,7 @@ import { type CommentTarget, type Reviewed, type VerifiedDefect, commentBody, up
 import { addLabels, categoryLabel } from "../publish/labels.vibe"
 import { requireScope } from "../publish/scope.vibe"
 import type { CallRecord } from "../route/route.vibe"
-import { type ReviewSettings, type Session, commentTargetOf, completeReview, failReview, reviewDetails, sameEvidence, scopeOf, settleFailure } from "../review/run.vibe"
+import { type ReviewSettings, type Session, commentTargetOf, completeReview, failReview, reviewDetails, scopeOf, settleFailure } from "../review/run.vibe"
 import type { Verdict } from "../review/verdict.vibe"
 import { type ItemTarget, githubClosedAt, requestClose } from "./github.vibe"
 import { activeScamPenalty, moderatorLabel, moderatorRecipients, noticeScamReview } from "./moderators.vibe"
@@ -89,11 +89,10 @@ effect function leaseOf(claim: ReviewClaim) {
 
 effect function recheckGate(request: CloseRequest, record: AttemptRecord) {
   const decided = request.closure.gate
-  const allowed = try closeStillAllowed(request)
+  const fresh = try closeRecheck(request)
   const seq = try nextRecheck(record)
-  if (allowed) return { ...decided, seq } satisfies GateObservation
-  const usable = try sameEvidence(request.session)
-  return { ...decided, seq, source: { ...decided.source, source: usable ? "SourceCurrent" : "SourceSuperseded" }, participation: noParticipation } satisfies GateObservation
+  if (fresh !== undefined) return { ...fresh, seq } satisfies GateObservation
+  return { ...decided, seq, source: { ...decided.source, source: "SourceSuperseded" } } satisfies GateObservation
 }
 
 effect function finished(closing: Closing, detail: FinishDetail) {

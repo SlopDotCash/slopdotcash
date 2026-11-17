@@ -1,5 +1,6 @@
 // spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
 import { type AllocationChange, type MonthlyOwnerView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyView } from "@repo/settlement/client"
+import { cutoffAt, parsePeriod } from "@repo/settlement/kernels/calendar"
 import { type ChainResult, type Event, type Flow, Machine, type MonthView, type Notice, type OwnerMonthly, type SaveResult, type Target, adapter, canCheck, canConfirmUnsent, canEditDraft, canEnterCandidate, canFinalize, canFinalizeReply, canFundsReply, canObserveApproval, canObserveClock, canObserveMonth, canOpenFunds, canRecheckAuthority, canReview, canSave, canSaveReply, canSend, canSignIn, canSignOut, canWalletReply, clock, flowOf, initial, machineOver, server, withFlow } from "../../../gen/frontend__ownerMonthly.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { type CallFailure, call } from "../../platform/api.vibe"
@@ -74,8 +75,14 @@ function seconds(iso: string | null): number {
   return Number.isFinite(millis) ? Math.floor(millis / 1000) : 0
 }
 
+function cutoffOf(view: MonthlyOwnerView): number {
+  if (view.cutoffAt !== null) return seconds(view.cutoffAt)
+  const period = parsePeriod(view.period)
+  return period === undefined ? 0 : cutoffAt(period)
+}
+
 export function monthOf(view: MonthlyOwnerView): MonthView {
-  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: seconds(view.cutoffAt), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null }
+  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: cutoffOf(view), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null }
 }
 
 export function saveResultOf(failure: CallFailure): SaveResult {
@@ -169,7 +176,7 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
     try tick()
     const now = try machine.get()
     if (canSaveReply(now, saving.lifetime, saving.saving, result, server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result }, server)
-    else if (result !== "SaveAccepted" && canSaveReply(now, saving.lifetime, saving.saving, "SaveFailed", server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result: "SaveFailed" }, server)
+    else if (canSaveReply(now, saving.lifetime, saving.saving, "SaveFailed", server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result: "SaveFailed" }, server)
     if (!("failure" in answer)) {
       const read = try observed(saving.lifetime, answer)
       return { view: read.view, state: read.state, message: noticeMessages[saving.savingCut ? "CutSaved" : "AllocationSaved"] }

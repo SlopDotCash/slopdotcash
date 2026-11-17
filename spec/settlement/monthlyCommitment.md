@@ -34,6 +34,7 @@ signature itself is an external effect of the attester shell.
 
 ```quint
 import money as M from "./money"
+import monthPledges as P from "./monthPledges"
 type ChainFamily = EvmV2 | SolanaV3
 type Leaf = { source: str, actor: int, gross: M::Amount }
 type FundedMonth = { project: str, period: int, snapshotDigest: str, wholeGross: M::Amount, leaves: List[Leaf], cap: M::Amount }
@@ -128,14 +129,16 @@ is not retired, the attester signs it with automatic payment off and while
 the project is inactive or restricted (operator decision, 15 November 2026;
 development `backend/payments/monthly-attestation.ts`). A missing project has
 no pledge and still refuses as restricted. The contract still checks the
-pledge and the cap.
+pledge and the cap. Only the identity authority of the current view records
+the facts it read, so no other sender can assert a pledge, a setting or a
+project status.
 A refusal is not terminal: a later observation may allow signing inside the
 window.
 
 ```quint
-pure def canObserveFacts(c: Commitment, facts: SigningFacts): bool =
-  c.phase == Authorized and facts.height == c.view.height and facts.height > 0
-pure def observeFacts(c: Commitment, facts: SigningFacts): Commitment = { ...c, facts: facts }
+pure def canObserveFacts(c: Commitment, facts: SigningFacts, by: str): bool =
+  c.phase == Authorized and facts.height == c.view.height and facts.height > 0 and by == c.view.authority
+pure def observeFacts(c: Commitment, facts: SigningFacts, by: str): Commitment = { ...c, facts: facts }
 pure def signingRefusal(c: Commitment): RefusalReason =
   if (c.clock < c.opensAt or c.view.time < c.opensAt) WindowNotOpen
   else if (c.clock >= c.closesAt) WindowClosed
@@ -146,7 +149,7 @@ pure def signingRefusal(c: Commitment): RefusalReason =
   else if (c.facts.snapshotDigest != c.month.snapshotDigest) SnapshotChanged
   else if (M::compareAmounts(c.month.wholeGross, c.view.cap) > 0) ChainCapExceeded
   else NoRefusal
-pure def pledgeWaives(facts: SigningFacts): bool = facts.pledged and not(facts.retired)
+pure def pledgeWaives(facts: SigningFacts): bool = P::pledgeConsents(facts.pledged, facts.retired)
 pure def canRefuseSigning(c: Commitment): bool =
   c.phase == Authorized and c.view.admittedRoot == "" and stale(c) and signingRefusal(c) != NoRefusal and c.held != signingRefusal(c)
     and (c.family == EvmV2 or c.attempts.length() == 0)

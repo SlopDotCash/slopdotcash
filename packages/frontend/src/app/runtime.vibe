@@ -1,6 +1,7 @@
-// spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+// spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
 import type { Route } from "../../gen/app.ts"
 import { pageOf } from "../../gen/frontend__routes.effect.vibe"
+import { reportTextErasure } from "../flows/security/reportText.vibe"
 import { Deployment } from "../platform/config.vibe"
 import { browserServices } from "../platform/layer.vibe"
 import { BrowserSession, sessionServices, sessionWatch } from "../session/browserSession.vibe"
@@ -16,7 +17,7 @@ effect function opened(route: Route) {
 }
 
 export function pageServices(route: Route) {
-  const opening = Layer.provideMerge(Layer.effectDiscard(opened(route)), Layer.provideMerge(sessionServices, browserServices))
+  const opening = Layer.provideMerge(Layer.mergeAll(Layer.effectDiscard(opened(route)), reportTextErasure), Layer.provideMerge(sessionServices, browserServices))
   return Layer.provideMerge(sessionWatch, opening)
 }
 

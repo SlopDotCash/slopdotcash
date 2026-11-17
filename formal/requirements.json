@@ -2721,7 +2721,7 @@
           ]
         },
         {
-          "spec": "spec/operations/intakeHistory.md",
+          "spec": "spec/slopbot/intakeHistory.md",
           "rules": [
             "Story: Report a bounded, unsampled and stable projection of retained intake failures"
           ]
@@ -2946,7 +2946,7 @@
           ]
         },
         {
-          "spec": "spec/operations/retainedFreshness.md",
+          "spec": "spec/points/retainedFreshness.md",
           "rules": [
             "Story: A retained release never moves production back to older data"
           ]

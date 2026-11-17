@@ -52,12 +52,12 @@ type CallRecord = { kind: CallKind, provider: Provider, outcome: CallOutcome, se
 type SourceBinding = { requested: str, fetched: str, isolation: Isolation }
 type Review = { status: ReviewStatus, bound: bool, scope: RS::Scope, kind: CallKind, provider: Provider,
   calls: List[CallRecord], attempts: int, unreviewed: int, rechecked: bool, triage: Verdict, second: Verdict,
-  confirmed: bool, uncertain: bool, now: int, retryAt: int, capAdmitted: bool }
+  confirmed: bool, uncertain: bool, now: int, retryAt: int, capAdmitted: bool, blocks: int }
 pure val closeConfidence = 90
 pure val noVerdict: Verdict = { category: NoFinding, confidence: 0, limitations: 0, grounded: false }
 pure val initial: Review = { status: Queued, bound: false, scope: RS::Unregistered, kind: Triage, provider: SurplusSonnet,
   calls: List(), attempts: 0, unreviewed: 0, rechecked: false, triage: noVerdict, second: noVerdict,
-  confirmed: false, uncertain: false, now: 1, retryAt: 0, capAdmitted: false }
+  confirmed: false, uncertain: false, now: 1, retryAt: 0, capAdmitted: false, blocks: 0 }
 pure def routeScope(route: R::Route): RS::Scope = if (route == R::SecurityReviewOnly) RS::SecurityOnly else RS::Contributor
 pure def canBindSource(r: Review, route: R::Route, source: SourceBinding): bool = r.status == Queued and not(r.bound)
 pure def bindSource(r: Review, route: R::Route, source: SourceBinding): Review =
@@ -82,7 +82,8 @@ review's state: binding, a restart and a refusal clear it, and a review
 starts, and so calls a model, only once admitted in this run, as
 development's own model requires (`reviews > 0 implies admittedItem`). An
 item already admitted that month is always admitted again and starts
-normally. A new item that meets a full month finishes skipped with the
+normally, and a review admitted in this run is never refused in it. A new
+item that meets a full month finishes skipped with the
 reason `monthly-review-cap`, with no call. Development refuses a restarted
 review the same way, even one whose earlier attempt already made calls
 (`runReview` in `review.ts`, line 1440, admits before every run), when the restart lands
@@ -97,12 +98,14 @@ pure def canAdmitMonthly(r: Review, alreadyAdmitted: bool, usedThisMonth: int): 
   r.status == Queued and r.bound and usedThisMonth >= 0 and C::admitsReview(alreadyAdmitted, usedThisMonth)
 pure def admitMonthly(r: Review, alreadyAdmitted: bool, usedThisMonth: int): Review = { ...r, capAdmitted: true }
 pure def canRefuseMonthlyCap(r: Review, alreadyAdmitted: bool, usedThisMonth: int): bool =
-  r.status == Queued and r.bound and r.calls.length() == 0 and usedThisMonth >= 0
+  r.status == Queued and r.bound and not(r.capAdmitted) and r.calls.length() == 0 and usedThisMonth >= 0
     and not(C::admitsReview(alreadyAdmitted, usedThisMonth))
 pure def refuseMonthlyCap(r: Review, alreadyAdmitted: bool, usedThisMonth: int): Review =
   { ...r, status: Skipped, bound: false, capAdmitted: false }
 pure def lawAdmittedItemIsNeverRefused(r: Review, usedThisMonth: int): bool =
   not(canRefuseMonthlyCap(r, true, usedThisMonth))
+pure def stepAdmittedReviewIsNeverRefused(before: Review, via: str, after: Review): bool =
+  via == "refuseMonthlyCap" implies not(before.capAdmitted)
 pure def alwaysCallsNeedAdmission(r: Review): bool =
   (r.status == InFlight or r.status == Answered or r.status == Limited or r.status == Complete
     or r.status == BudgetBlocked or r.status == RetryableFailure) implies r.capAdmitted
@@ -157,10 +160,11 @@ pure def expectedModel(provider: Provider): str =
   else if (provider == OrbioSonnet) "anthropic/claude-sonnet-5.5" else "claude-sonnet-5.5"
 pure def nextProvider(p: Provider): Provider = if (p == SurplusSonnet) SurplusTerra else OrbioSonnet
 pure def routeEnd(retryAt: int): ReviewStatus = if (retryAt > 0) BudgetBlocked else RetryableFailure
+pure def blocksAfter(r: Review): int = r.blocks + (if (routeEnd(r.retryAt) == BudgetBlocked) 1 else 0)
 pure def validVerdict(v: Verdict): bool = v.confidence >= 0 and v.confidence <= 100 and v.limitations >= 0
 pure def canSkipMissingCredential(r: Review): bool = r.status == InFlight and r.rechecked
 pure def skipMissingCredential(r: Review): Review =
-  if (r.provider == OrbioSonnet) { ...r, status: routeEnd(r.retryAt), rechecked: false }
+  if (r.provider == OrbioSonnet) { ...r, status: routeEnd(r.retryAt), blocks: blocksAfter(r), rechecked: false }
   else { ...r, provider: OrbioSonnet, rechecked: false }
 pure def canRecordCall(r: Review, call: CallRecord, resetAt: int): bool =
   r.status == InFlight and r.rechecked and call.kind == r.kind and call.provider == r.provider
@@ -175,7 +179,7 @@ pure def recordCall(r: Review, call: CallRecord, resetAt: int): Review =
     (if (call.kind == Triage) { ...after, status: Answered, triage: call.verdict, retryAt: 0 }
      else { ...after, status: Answered, second: call.verdict, retryAt: 0 })
   else if (denied) { ...after, provider: OrbioSonnet, retryAt: if (resetAt > r.now) resetAt else r.retryAt }
-  else if (r.provider == OrbioSonnet) { ...after, status: routeEnd(r.retryAt) }
+  else if (r.provider == OrbioSonnet) { ...after, status: routeEnd(r.retryAt), blocks: blocksAfter(r) }
   else { ...after, provider: nextProvider(r.provider) }
 pure def stepEveryCallFollowsARecheck(before: Review, after: Review): bool =
   after.calls.length() > before.calls.length() implies before.rechecked
@@ -262,7 +266,9 @@ only decides whether a delivery may restart the review. While a budget
 block's reset time has not come, every delivery is refused without a
 claim. After the reset any delivery may restart it, and the block's resume
 is the delivery that does so when GitHub sends nothing. A restart begins
-again at Surplus Sonnet and keeps every earlier call row. Limited and complete
+again at Surplus Sonnet and keeps every earlier call row. The review counts
+the budget blocks it has met, so a review completed after a blocked
+attempt is told apart from one Orbio served after a denial. Limited and complete
 reviews are final for their revision and policy. A dead-lettered job has no
 recovery route yet: the review stays a visible retryable failure until
 GitHub's next event.
@@ -283,7 +289,7 @@ pure def sometimesBackup(r: Review): bool = r.provider == SurplusSonnet and r.st
 pure def sometimesProviderFailure(r: Review): bool = r.status == RetryableFailure and r.calls.length() > 0
 pure def sometimesRegistryStopped(r: Review): bool = r.status == RetryableFailure and r.calls.length() == 0
 pure def sometimesBudgetBlocked(r: Review): bool = r.status == BudgetBlocked
-pure def sometimesRetriedAfterBlock(r: Review): bool = r.status == Complete and r.calls.some(c => c.outcome == CallBudgetDenied)
+pure def sometimesRetriedAfterBlock(r: Review): bool = r.status == Complete and r.blocks > 0
 ```
 
 ### Simulation samples exercise each call outcome, verdict and coverage

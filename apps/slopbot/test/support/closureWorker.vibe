@@ -6,14 +6,14 @@ import { D1, d1, decoded, sql } from "@repo/platform/d1"
 import { GitHub, github } from "@repo/platform/github"
 import { answered, body, json, outbound } from "@repo/platform/http"
 import { worker } from "@repo/platform/worker"
-import { contributor } from "@repo/contributor/live"
-import { ProjectStatus, type ProjectView, type ReadFailure, Registry, Restrictions, Retirement } from "@repo/ports/backend"
-import { RunEvidence } from "@repo/ports/contributor"
+import { RunEvidenceLive } from "@repo/contributor/live"
+import { Members, ProjectStatus, type ProjectView, type ReadFailure, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import type { RunEvidence } from "@repo/ports/contributor"
 import { Enforcement, Restriction } from "@repo/ports/security"
 import { ClosureActivation, type ReviewedRecords, activationFrom, activationView, releaseOf, reviewedRecords } from "../../src/activation/config.vibe"
 import { qualityEvidence, qualityHook, qualitySubject } from "../../src/activation/quality.vibe"
 import { type ClosureDecision, closeStillAllowed, decideFinding } from "../../src/closure/decide.vibe"
-import { Memberships, closureEligibility } from "../../src/closure/participation.vibe"
+import { closureEligibility } from "../../src/closure/participation.vibe"
 import { type ReviewTarget, loadContext } from "../../src/context/load.vibe"
 import { ReviewJob } from "../../src/jobs/job.vibe"
 import { type ReviewHooks, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
@@ -105,7 +105,7 @@ function registryOver(text: string) {
   })
 }
 
-const members = Layer.effect(Memberships, effect {
+const members = Layer.effect(Members, effect {
   const db = try D1
   return {
     status: (githubId) => effect {
@@ -156,7 +156,7 @@ effect function decided() {
   return try answered(effect {
     const job = try body(ReviewJob, 4)
     const { current } = try Settings
-    const hooks: ReviewHooks<ReadFailure, GitHub | Memberships | RunEvidence | ClosureActivation | Experimental.Crypto.Crypto> = { eligibility: closureEligibility, quality: qualityHook(job.qualityCommentId), closedItem: () => Effect.void, onSkip: () => Effect.void }
+    const hooks: ReviewHooks<ReadFailure, GitHub | Members | RunEvidence | ClosureActivation | Experimental.Crypto.Crypto> = { eligibility: closureEligibility, quality: qualityHook(job.qualityCommentId), closedItem: () => Effect.void, onSkip: () => Effect.void }
     const outcome = effect {
       const reviewed = try reviewItem(job, current, hooks)
       if (reviewed.kind === "settled") return { kind: "settled", result: reviewed.result }
@@ -195,7 +195,7 @@ function services(env: Env) {
     base,
     Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-closure-test" }), outbound),
     Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
-    Layer.provide(Layer.mergeAll(members, participants, contributor.provides as Layer.Layer<RunEvidence, never, D1 | Registry>), base),
+    Layer.provide(Layer.mergeAll(members, participants, RunEvidenceLive), base),
     activationOver(env),
     Layer.succeed(ReleaseVars, { SLOPBOT_CLOSURE_ENABLED: env.SLOPBOT_CLOSURE_ENABLED, SLOPBOT_RELEASE: env.SLOPBOT_RELEASE }),
     Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: env.TEST_VERIFIER_KEY } }),

@@ -12,7 +12,7 @@ import { transientHttpStatus } from verified
 
 export const deadlineMs = 15_000
 
-export error Refused { status: number; error: string; message: string }
+export error Refused { status: number; error: string; message: string; fields: Readonly<Record<string, unknown>> }
 export error NetworkError { timedOut: boolean; message: string }
 export error InvalidResponse { status: number; message: string }
 export error ActorChanged { expected: string; message: string }
@@ -38,7 +38,7 @@ function failure(error: RequestFailed | DeadlineExceeded, mismatch: { readonly s
   if (error.status === 0) return new NetworkError({ timedOut: false, message: "The network request failed. Try again." })
   if (error.error === "invalid_response") return new InvalidResponse({ status: error.status, message: error.message })
   if (error.status === mismatch.status && error.error === mismatch.code) return new ActorChanged({ expected: expected ?? "", message: error.message })
-  return new Refused({ status: error.status, error: error.error, message: error.message })
+  return new Refused({ status: error.status, error: error.error, message: error.message, fields: error.fields })
 }
 
 export effect function call<B, A, X extends Access>(route: Route<B, A, X>, input: CallInput<B>, options: CallOptions) {

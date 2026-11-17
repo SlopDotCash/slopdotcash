@@ -1,7 +1,7 @@
 # Retained production data freshness
 
 An explicit manual production release may retain its own published snapshot
-instead of collecting (`use_published_data`, [release run](./release.md),
+instead of collecting (`use_published_data`, [release run](../operations/release.md),
 "Normal releases need verified registry and GitHub collections for this
 environment"). Development at df21e37b7 also refuses a retained snapshot
 that is older than what production serves now, and lets such a run prepare
@@ -26,14 +26,16 @@ the Robinhood or fee Solana RPC endpoint. That it runs inside the lock and
 before the writes is a composition obligation of the release run.
 
 ```quint
+import release as R from "../operations/release"
+import rpcRotationRun as RR from "../operations/rpcRotationRun"
 type GenerationTime = { valid: bool, millis: int }
 type SnapshotTimes = { leaderboard: GenerationTime, profiles: GenerationTime }
 pure def notOlder(kept: GenerationTime, served: GenerationTime): bool =
   kept.valid and served.valid and kept.millis >= served.millis
 pure def retainedCurrent(retained: SnapshotTimes, published: SnapshotTimes): bool =
   notOlder(retained.leaderboard, published.leaderboard) and notOlder(retained.profiles, published.profiles)
-pure def freshnessChecked(usePublishedData: bool, superseded: bool, rotatesRpc: bool): bool =
-  usePublishedData and not(superseded) and not(rotatesRpc)
+pure def freshnessChecked(r: R::Release, mode: RR::RunMode): bool =
+  r.dataKind == R::RetainedSnapshot and r.phase != R::Superseded and mode == RR::NormalRun
 pure def lawOlderRetainedRefused(retained: SnapshotTimes, published: SnapshotTimes): bool =
   (retained.leaderboard.millis < published.leaderboard.millis or retained.profiles.millis < published.profiles.millis)
     implies not(retainedCurrent(retained, published))
@@ -60,12 +62,11 @@ prepare beside a live collection of the same ref; the publication lock is
 unchanged.
 
 ```quint
-type PreparationEvent = PreparePush | PrepareDispatch | PreparePullRequest
-pure def retainedPreparationGroup(eventKind: PreparationEvent, branch: str, usePublishedData: bool): bool =
-  eventKind == PrepareDispatch and branch == "main" and usePublishedData
-pure def cancelsRunningPreparation(eventKind: PreparationEvent): bool = eventKind == PreparePullRequest
-pure def lawOnlyManualMainRetainedSeparates(eventKind: PreparationEvent, branch: str, usePublishedData: bool): bool =
+pure def retainedPreparationGroup(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
+  eventKind == R::WorkflowDispatch and branch == "main" and usePublishedData
+pure def cancelsRunningPreparation(eventKind: R::RefKind): bool = eventKind == R::PullRequestRef
+pure def lawOnlyManualMainRetainedSeparates(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
   retainedPreparationGroup(eventKind, branch, usePublishedData) implies
-    (eventKind == PrepareDispatch and not(cancelsRunningPreparation(eventKind)))
+    (eventKind == R::WorkflowDispatch and not(cancelsRunningPreparation(eventKind)))
 pure val branchValues = Set("main", "development")
 ```

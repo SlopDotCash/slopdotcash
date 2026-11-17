@@ -1,7 +1,8 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
 import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
 import { cutoffAt, FIRST_PERIOD, type Period, periodContaining, periodStartSeconds, shiftPeriod } from "@repo/settlement/kernels/calendar";
-import { owedNow, type PoolDisplay, type PoolFacts, type PoolRead, poolDisplay, withdrawalAllowedOnSlopPages } from "../../gen/frontend__projections.ts";
+import { owedNow, type PoolDisplay, type PoolFacts, type PoolRead, poolDisplay } from "../../gen/frontend__projections.ts";
+import { type VaultLocks, withdrawalAllowed } from "../../gen/frontend__vaultLocks.ts";
 import type { AssetKind } from "./assetText.ts";
 
 export interface FundingMonthStart {
@@ -84,6 +85,8 @@ export function poolFunding({ pool, read, vaults, networkPays, nowMs }: {
     monthStartRead: firstReads.length > 0,
     freeAtStart: toAmount(sum(firstReads.map(({ first }) => first.freeBalance))),
     withdrawnSince: firstReads.some(({ first, withdrawnNow }) => withdrawnNow !== undefined && withdrawnNow > first.totalGrossWithdrawn),
+    pledgeSupport: false,
+    pledged: toAmount(0n),
   };
   return { period, facts, display: poolDisplay(facts) };
 }
@@ -99,7 +102,9 @@ export function zeroedPoolCap({ monthlyPool, monthlyCapMinor, hasCycleCaps, asse
   return { monthlyCapMinor: 0n, monthlyCapDisplay: assetKind !== undefined && assetKind !== "stablecoin" ? "0 TOKEN" : "$0" };
 }
 
+export const unreadLocks: VaultLocks = { cachedSupport: false, walletRead: false, freeKnown: false, free: toAmount(0n), locked: toAmount(0n) };
+
 /** @throws {RangeError} */
-export function withdrawalKeepsFunding({ funding, gross }: { funding: PoolFunding; gross: bigint }): boolean {
-  return withdrawalAllowedOnSlopPages(funding.facts, toAmount(gross));
+export function withdrawalKeepsFunding({ funding, locks, gross }: { funding: PoolFunding; locks: VaultLocks; gross: bigint }): boolean {
+  return withdrawalAllowed(funding.facts, locks, toAmount(gross));
 }

@@ -1,7 +1,7 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
 import { type Period, periodContaining } from "@repo/settlement/kernels/calendar";
 import type { PoolDisplay } from "../../gen/frontend__projections.ts";
-import { type FundingMonthStart, type FundingVault, type PoolCap, type PoolFunding, poolFunding, promisedOwed, withdrawalKeepsFunding, zeroedPoolCap } from "./poolFunding.ts";
+import { type FundingMonthStart, type FundingVault, type PoolCap, type PoolFunding, poolFunding, promisedOwed, unreadLocks, withdrawalKeepsFunding, zeroedPoolCap } from "./poolFunding.ts";
 import { vectors } from "./vectors.ts";
 
 const VAULT = "0x4F891b8c3d3fab9150fcdc94176b96863cd02899";
@@ -93,4 +93,4 @@ export const withdrawalsKeepWhatAPromisedMonthOwes = vectors<readonly [PoolFundi
   [[promised, 400_000_000n], false],
   [[pointsOnly, 200_000_000n], true],
   [[withdrawn, 1n], true],
-], ([funding, gross]) => withdrawalKeepsFunding({ funding, gross }));
+], ([funding, gross]) => withdrawalKeepsFunding({ funding, locks: unreadLocks, gross }));

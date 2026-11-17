@@ -1,6 +1,7 @@
 // spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
 import { toAmount } from "@repo/settlement/kernels/amounts"
 import type { PoolFacts } from "../../../gen/frontend__projections.ts"
+import { type VaultLocks, lockedFundsText } from "../../../gen/frontend__vaultLocks.ts"
 import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canSend, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, server, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
@@ -46,6 +47,7 @@ const noticeMessages: Readonly<Record<Notice, string>> = {
   Registered: vaultMessages.registered,
   Counted: vaultMessages.counted,
   TransferFailed: vaultMessages.failed,
+  LockedFundsRefused: lockedFundsText,
 }
 
 export function vaultNotice(notice: Notice): string {
@@ -69,7 +71,7 @@ export function startFor(registered: boolean): OwnerVault {
 export interface OwnerVaultPage {
   readonly machine: Machine.Shape
   follow(account: number): OwnerVault!!
-  review(target: Target, withdrawal: bigint, pool: PoolFacts): OwnerVault!VaultRefused
+  review(target: Target, withdrawal: bigint, pool: PoolFacts, locks: VaultLocks): OwnerVault!VaultRefused
   saved(target: Target): Saved!!
   submit<E extends { readonly _tag: string }, R>(target: Target, prompt: (beforePrompt: (plan: OwnerPlan) => void!VaultRefused) => string!E!R): string!(E | VaultRefused | VaultUncertain | WalletDeclined)!R
   confirmUnsent(target: Target): OwnerVault!VaultRefused
@@ -182,10 +184,10 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
       else if (account > 0 && canSignIn(state, account, account)) try sent({ type: "signIn", account }, account)
       return try machine.get()
     },
-    review: effect (target: Target, withdrawal: bigint, pool: PoolFacts) => {
+    review: effect (target: Target, withdrawal: bigint, pool: PoolFacts, locks: VaultLocks) => {
       const amount = try orDie(Effect.try(() => toAmount(withdrawal)))
-      const next = try asOwner((state, owner) => canReview(state, target, amount, pool, owner), { type: "review", target, withdrawal: amount, pool })
-      if (next.notice === "WithdrawalRefused") try refuse("WithdrawalRefused")
+      const next = try asOwner((state, owner) => canReview(state, target, amount, pool, owner), { type: "review", target, withdrawal: amount, pool, locks })
+      if (next.notice === "WithdrawalRefused" || next.notice === "LockedFundsRefused") try refuse(next.notice)
       return next
     },
     saved: effect (target: Target) => {

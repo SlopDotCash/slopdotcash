@@ -10,8 +10,10 @@ One pass fetches `development`, requires the candidate to be an ancestor of
 or equal to its tip, and reads staging's deployment history. A history
 record that is not an ancestor of or equal to the candidate, and that a
 release created, refuses at once; a record made by the vetting controller or
-a qualification workflow is not a release and is skipped. Revisions are
-numbered so that a later number is a newer, non-ancestor revision.
+a qualification workflow is not a release and is skipped. Each record read
+carries its revision, whether `git merge-base --is-ancestor` found it an
+ancestor of or equal to the candidate, and whether a non-release workflow
+created it; the candidate is an ancestor of or equal to itself.
 
 A GitHub refusal that is a usable quota signal (HTTP 403 or 429 with
 `x-ratelimit-remaining: 0` and a numeric reset in the future, plus one second,
@@ -53,11 +55,11 @@ pure def begin(o: StagingOrder, candidate: int, jobDeadline: int): StagingOrder 
 pure def canInspect(o: StagingOrder, ancestor: bool): bool = o.phase == Inspecting and withinDeadline(o)
 pure def inspect(o: StagingOrder, ancestor: bool): StagingOrder =
   if (ancestor) { ...o, phase: ReadingHistory, ancestor: true } else { ...o, phase: OrderRefused }
-pure def canReadHistory(o: StagingOrder, revision: int, nonRelease: bool): bool =
-  o.phase == ReadingHistory and withinDeadline(o) and revision > 0
-pure def readHistory(o: StagingOrder, revision: int, nonRelease: bool): StagingOrder =
-  if (revision > o.candidate and not(nonRelease)) { ...o, phase: OrderRefused }
-  else if (revision > o.candidate) { ...o, skipped: o.skipped + 1 }
+pure def canReadHistory(o: StagingOrder, revision: int, ancestorOrEqual: bool, nonRelease: bool): bool =
+  o.phase == ReadingHistory and withinDeadline(o) and revision > 0 and (revision == o.candidate implies ancestorOrEqual)
+pure def readHistory(o: StagingOrder, revision: int, ancestorOrEqual: bool, nonRelease: bool): StagingOrder =
+  if (not(ancestorOrEqual) and not(nonRelease)) { ...o, phase: OrderRefused }
+  else if (not(ancestorOrEqual)) { ...o, skipped: o.skipped + 1 }
   else { ...o, history: if (o.history.includes(revision)) o.history else o.history.append(revision),
     present: o.present or revision == o.candidate }
 pure def canFailRead(o: StagingOrder, status: int, validDelay: bool, delay: int): bool =
@@ -85,7 +87,7 @@ pure def alwaysFreshPassAfterRetry(o: StagingOrder): bool =
     not(o.ancestor) and not(o.present) and o.history == List() and o.skipped == 0)
     and (o.phase == ReadingHistory implies o.ancestor)
     and (o.present implies o.history.includes(o.candidate))
-    and o.history.every(h => h > 0 and h <= o.candidate) and o.skipped >= 0
+    and o.history.every(h => h > 0) and o.skipped >= 0
 pure def alwaysAllowedFromCompleteRead(o: StagingOrder): bool =
   o.phase == OrderAllowed implies o.ancestor and o.present and o.history.includes(o.candidate) and withinDeadline(o)
 pure def stepRetryNeverRepeats(before: StagingOrder, after: StagingOrder): bool =

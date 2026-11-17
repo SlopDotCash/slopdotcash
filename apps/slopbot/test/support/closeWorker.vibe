@@ -8,10 +8,9 @@ import { answered, body, json, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { settableClock } from "@repo/platform/testing/clock"
 import { worker } from "@repo/platform/worker"
-import { contributor } from "@repo/contributor/live"
+import { RunEvidenceLive } from "@repo/contributor/live"
 import { noticePorts } from "@repo/operations/live"
-import { ProjectStatus, type ProjectView, Registry, Restrictions, Retirement } from "@repo/ports/backend"
-import { RunEvidence } from "@repo/ports/contributor"
+import { Members, ProjectStatus, type ProjectView, Registry, Restrictions, Retirement } from "@repo/ports/backend"
 import { Enforcement, Restriction } from "@repo/ports/security"
 import { ClosureActivation, type ReviewedRecords, activationFrom, releaseOf } from "../../src/activation/config.vibe"
 import { qualityHook } from "../../src/activation/quality.vibe"
@@ -19,7 +18,7 @@ import { closeCandidate, closedItemNotices, reconcileClose } from "../../src/clo
 import { reversePenalty } from "../../src/closeAttempt/penalty.vibe"
 import { type ReopenSubject, reconcileConfirmedReopen, reopenedHook } from "../../src/closeAttempt/reopen.vibe"
 import { decideFinding } from "../../src/closure/decide.vibe"
-import { Memberships, closureEligibility } from "../../src/closure/participation.vibe"
+import { closureEligibility } from "../../src/closure/participation.vibe"
 import { dispatchMaintainerHolds, recordHold } from "../../src/holds/record.vibe"
 import { applyMaintainerHold } from "../../src/holds/timeline.vibe"
 import { JobQueue, MaintainerHoldJob, ReviewJob } from "../../src/jobs/job.vibe"
@@ -123,7 +122,7 @@ function membership(githubId: string) {
   return sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`
 }
 
-const members = Layer.effect(Memberships, effect {
+const members = Layer.effect(Members, effect {
   const db = try D1
   return {
     status: (githubId) => effect {
@@ -237,7 +236,7 @@ function services(env: Env) {
     base,
     Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-close-test" }), outbound),
     Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
-    Layer.provide(Layer.mergeAll(members, participants, recordedJobs, contributor.provides as Layer.Layer<RunEvidence, never, D1 | Registry>), base),
+    Layer.provide(Layer.mergeAll(members, participants, recordedJobs, RunEvidenceLive), base),
     rolesFrom(env),
     noticePorts,
     activationOver(env),

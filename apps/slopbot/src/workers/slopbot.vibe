@@ -1,0 +1,83 @@
+// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"
+import type { Fetcher, Queue } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { entrypoint } from "@repo/platform/entrypoints"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { byCron, worker } from "@repo/platform/worker"
+import { MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import { RunEvidenceLive } from "@repo/contributor/live"
+import { noticePorts } from "@repo/operations/live"
+import { contributorAudience } from "@repo/points/live"
+import { EnforcementLive, EnforcementRowsLive } from "@repo/security/live"
+import { repositoryAccessRoutes } from "../access/route.vibe"
+import { type ActivationVars, ClosureActivation, closureActivation } from "../activation/config.vibe"
+import { dispatchDueAppeals } from "../appeals/due.vibe"
+import { budgetJobs } from "../budget/store.vibe"
+import { pointsDisputeRoutes } from "../disputes/internalRoute.vibe"
+import { processPendingPointsDisputes } from "../disputes/pointsTriage.vibe"
+import { feedRoutes } from "../feeds/routes.vibe"
+import { dispatchMaintainerHolds } from "../holds/record.vibe"
+import { ingressRoutes } from "../ingress/routes.vibe"
+import { type WebhookVars, WebhookSettings, webhookSettings } from "../ingress/webhook.vibe"
+import { type Job, jobQueue } from "../jobs/job.vibe"
+import { settle } from "../jobs/retry.vibe"
+import { refreshReportingReadiness } from "../readiness/reporting.vibe"
+import { type ProviderKeys, routeProviders } from "../route/route.vibe"
+import { ParticipationLive } from "../routing/facts.vibe"
+import { spendJobs } from "../spend/jobs.vibe"
+import { spendNotify } from "../spend/notify.vibe"
+import { consumePendingValueRequests } from "../value/inference/consumer.vibe"
+import { publicationChecks } from "../value/inference/publish.vibe"
+import { type ValueSettingsVars, inferenceConfig } from "../value/inference/settings.vibe"
+import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
+import { retention } from "../value/retained/repair.vibe"
+import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
+import { mergeVerifierVia } from "../value/workUnits/merge.vibe"
+import type { MergeVerifierBinding } from "../value/workUnits/verifierBinding.ts"
+import { type AppVars, appServices } from "./base.vibe"
+import { JobSettings, dispatchJob } from "./jobs.vibe"
+
+export interface Env extends AppVars, WebhookVars, ActivationVars, ValueSettingsVars, ProviderKeys, RoleVars {
+  readonly SLOPBOT_QUEUE: Queue<Job>
+  readonly SLOP_NOTIFY: Fetcher
+  readonly VALUE_MERGE_VERIFIER: MergeVerifierBinding
+}
+
+const slopbotCron = "*/5 * * * *"
+
+const jobSettings = Layer.effect(JobSettings, effect {
+  const { appUserId } = try WebhookSettings
+  const { trust } = try ClosureActivation
+  return { review: { appUserId, verifierKey: trust.verifierKey }, appeal: { appUserId, trust } }
+})
+
+function services(env: Env) {
+  const base = Layer.mergeAll(appServices(env), rolesFrom(env), webhookSettings(env), closureActivation(env), inferenceConfig(env), jobQueue(env.SLOPBOT_QUEUE))
+  const providers = Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto))
+  const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
+  const enforcement = Layer.provideMerge(EnforcementRowsLive, notices)
+  const backend = Layer.provideMerge(Layer.mergeAll(MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, EnforcementLive), enforcement)
+  const ports = Layer.provideMerge(Layer.mergeAll(ParticipationLive, RunEvidenceLive, retention, acceptanceWith(collectRetainedMergeReferences), mergeVerifierVia(env.VALUE_MERGE_VERIFIER), spendNotify(env.SLOP_NOTIFY), jobSettings), backend)
+  return Layer.mergeAll(Layer.provideMerge(publicationChecks, ports), providers)
+}
+
+const scheduled = byCron<Layer.Success<ReturnType<typeof services>>>({
+  [slopbotCron]: [
+    ...budgetJobs,
+    { name: "slopbot maintainer holds", run: () => Effect.asVoid(dispatchMaintainerHolds()) },
+    { name: "slopbot due appeals", run: () => Effect.asVoid(dispatchDueAppeals()) },
+    { name: "slopbot points disputes", run: () => Effect.asVoid(processPendingPointsDisputes()) },
+    { name: "slopbot value requests", run: () => Effect.asVoid(consumePendingValueRequests()) },
+    ...spendJobs,
+  ],
+})
+
+export const ReportingReadinessRefresher = entrypoint(services, { refreshReportingReadiness })
+
+export default worker({
+  services,
+  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes),
+  scheduled,
+  queue: (message) => settle(message, dispatchJob),
+})

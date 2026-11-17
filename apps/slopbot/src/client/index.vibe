@@ -1,3 +1,9 @@
 import type { AnyRoute } from "@repo/platform/route"
+import { importApi } from "./import.vibe"
+import { assessmentApi } from "./inbox.vibe"
+import { summaryApi } from "./feeds.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = []
+export * from "./inbox.vibe"
+export { type Category, currentTableVersion, debitFor, moderatorReview, permittedAction } from "../../gen/slopbot__categories.ts"
+
+export const api: ReadonlyArray<AnyRoute> = [...assessmentApi, ...summaryApi, ...importApi]

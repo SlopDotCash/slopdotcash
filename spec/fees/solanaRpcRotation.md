@@ -96,7 +96,8 @@ and the latest upload. The lease is taken only while the fee journal is
 quiet; an active lease or an unresolved send refuses the rotation. Before
 the upload the lease is renewed and main and the pinned version are checked
 again; any change refuses before anything is uploaded. An upload that
-yields no candidate version refuses too, and the lease is released.
+yields no candidate version, or returns the pinned version itself, refuses
+too, and the lease is released.
 
 ```quint
 type BoundaryCheck = { passed: bool, mainUnchanged: bool, baseActive: bool, leaseRenewed: bool }
@@ -108,9 +109,8 @@ pure def canLeaseOutcome(r: Rotation, acquired: bool): bool = r.phase == Acquiri
 pure def leaseOutcome(r: Rotation, acquired: bool): Rotation =
   if (acquired) enter(Leased, { ...r, leaseHeld: true }) else stop(Refused, r)
 pure def canUpload(r: Rotation, uploaded: WorkerVersion, check: BoundaryCheck): bool = r.phase == Leased
-  and uploaded.version != r.base.version
 pure def upload(r: Rotation, uploaded: WorkerVersion, check: BoundaryCheck): Rotation =
-  if (boundaryHolds(check) and uploaded.version > 0) enter(Uploaded, { ...r, candidate: uploaded }) else stop(Refused, r)
+  if (boundaryHolds(check) and uploaded.version > 0 and uploaded.version != r.base.version) enter(Uploaded, { ...r, candidate: uploaded }) else stop(Refused, r)
 pure def sometimesRefusedHoldingLease(r: Rotation): bool = r.phase == Refused and r.leaseHeld
 pure def sometimesRefusedBeforeLease(r: Rotation): bool = r.phase == Refused and not(r.leaseHeld) and not(r.leaseReleased)
 ```
@@ -210,7 +210,7 @@ pure val checkValues = Set({ passed: true, mainUnchanged: true, baseActive: true
   { passed: true, mainUnchanged: false, baseActive: true, leaseRenewed: true },
   { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: false })
 pure val uploadedValues = Set({ ...baseSample, version: 11, number: 5, source: 8, rpc: pairSample }, noVersion,
-  { ...baseSample, version: 11, number: 5, source: 8, settings: 4, rpc: pairSample })
+  { ...baseSample, version: 11, number: 5, source: 8, settings: 4, rpc: pairSample }, { ...baseSample, rpc: pairSample })
 pure val acquiredValues = Set(true, false)
 pure val resultValues = Set(Confirmed, Ambiguous)
 ```

@@ -81,6 +81,9 @@ pure def canReview(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P
 ### A withdrawal that would break the month's promise is refused on Slop's pages
 
 `withdrawal` is the gross amount of a withdrawal review, zero for a deposit.
+Both refusals below apply only to a withdrawal, as on development
+(`src/VaultActions.tsx:264–287`): a deposit review is never refused by them,
+even when the lock read shows free funds below the locked total.
 While the month is Funded, the review refuses an amount that would leave the
 vault below what contributors were shown
 ([projections](./projections.md), `withdrawalAllowedOnSlopPages`). A vault
@@ -92,8 +95,9 @@ pledges ([month locks](./vaultLocks.md), `withdrawalAllowed`).
 
 ```quint
 pure def review(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P::PoolFacts, locks: VL::VaultLocks, by: int): OwnerVault =
-  if (target == Transfer and VL::lockRefusesWithdrawal(locks, withdrawal)) { ...v, notice: LockedFundsRefused }
-  else if (target == Transfer and not(VL::withdrawalAllowed(pool, locks, withdrawal))) { ...v, notice: WithdrawalRefused }
+  val withdrawing = target == Transfer and M::positiveAmount(withdrawal)
+  if (withdrawing and VL::lockRefusesWithdrawal(locks, withdrawal)) { ...v, notice: LockedFundsRefused }
+  else if (withdrawing and not(VL::withdrawalAllowed(pool, locks, withdrawal))) { ...v, notice: WithdrawalRefused }
   else withFlow(target, { ...flowOf(v, target), phase: Reviewed, inflight: NoCheck, autoAsks: 0, refusals: 0, stopped: false,
     hiddenAsks: 0 }, { ...v, notice: Quiet })
 pure def canSend(v: OwnerVault, target: Target, identity: str, stored: bool, by: int): bool =

@@ -314,7 +314,11 @@ actions `synchronize`, `edited`, `reopened`, `converted_to_draft` and
 `ready_for_review` of `pull_request` or `submitted`, `edited` and
 `dismissed` of `pull_request_review`, and only while the label is on or
 the row is `ready`. Closing is not one of them, so a closed pull request
-keeps its last label. A finished review of a pull request queues a check
+keeps its last label. The webhook reads the row and sends the check before
+the delivery's review job, whatever the repository's registration; a
+failure to read or send releases the delivery and answers GitHub with an
+error, so its redelivery repeats both (`fetch` in
+`workers/slopbot/index.ts`, lines 487 to 508 and 558 to 561). A finished review of a pull request queues a check
 under the same condition; a failure to queue it never replays the review.
 A push moves the head and leaves the label until the check it queues
 removes it.
@@ -390,6 +394,7 @@ pure def lawReadyIsRecheckedHourly(d: ReadyDecision, now: int, firstSeen: int): 
 pure val dValues = Set({ ready: true, pending: false, reason: AllConditionsHold },
   { ready: false, pending: true, reason: StillReviewing }, { ready: false, pending: false, reason: HasFinding })
 pure val firstSeenValues = Set(1, 600)
+pure val nowValues = Set(1, 601, 1209601, 1210201)
 pure def sometimesReady(p: ReadyPull): bool =
   p.row == ReadyRow and p.labelled and p.pr == PullOpen and p.line == LabelledLine
 pure def sometimesPendingRecheck(p: ReadyPull): bool = p.row == NotReadyRow and p.nextCheckAt > p.now

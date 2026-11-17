@@ -1,7 +1,7 @@
 // spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/routing.md, "Live claims, recent completions and unresolved closes occupy the author's three slots"
 import { first, sql } from "@repo/platform/d1"
 import { GitHub } from "@repo/platform/github"
-import type { ReadFailure } from "@repo/ports/backend"
+import { Members, type ReadFailure } from "@repo/ports/backend"
 import type { Exemption, MergeHistory } from "../../gen/slopbot__routing.effect.vibe"
 import { type Account, absentOn404 } from "../context/load.vibe"
 import { InstallationRow, installationOf } from "../installation/store.vibe"
@@ -11,6 +11,13 @@ export const marker = "Made via @slopdotcash"
 export service Participation {
   member(githubId: string): boolean!ReadFailure
 }
+
+export const ParticipationLive = Layer.effect(Participation, effect {
+  const members = try Members
+  return {
+    member: (githubId) => Effect.map(members.status(githubId), (status) => status !== "MemberAbsent"),
+  } satisfies Participation.Shape
+})
 
 export interface Author {
   readonly id: number

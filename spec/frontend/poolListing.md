@@ -76,22 +76,29 @@ pure def lawListedProjectHasNoNotice(listing: ListingFacts): bool = listedThisMo
 
 A project whose card would advertise a security bounty
 (`V::cardNamesBounty`) is listed in the Security bounties section instead.
-Featured and Community placement only breaks ties in the order.
+Featured and Community placement only breaks ties in the order. Whether the
+project is active and whether its security program is open are read once,
+from its card policy (`active`, and `bountyOpen`, development
+`securityBounty?.status === "open"`); the entry adds only its placement and
+its pool.
 
 ```quint
-type HomeEntry = { policy: V::CardPolicy, placed: bool, listing: ListingFacts }
+type HomeEntry = { policy: V::CardPolicy, placed: bool, pool: P::PoolFacts }
 pure def onHomeGrid(entry: HomeEntry): bool = entry.placed and V::listedForDiscovery(entry.policy)
-  and not(V::cardNamesBounty(entry.policy)) and listedThisMonth(entry.listing)
+  and not(V::cardNamesBounty(entry.policy))
+  and listedThisMonth({ active: entry.policy.active, securityOpen: entry.policy.bountyOpen, pool: entry.pool })
 pure def lawBountyCardsLeaveTheGrid(entry: HomeEntry): bool =
   V::cardNamesBounty(entry.policy) implies not(onHomeGrid(entry))
 pure def lawUnplacedProjectsLeaveTheGrid(entry: HomeEntry): bool = not(entry.placed) implies not(onHomeGrid(entry))
 pure val entryValues = Set(
   { policy: { reward: V::MonthlyPoolReward, monthlyCapPositive: true, bounty: V::NoBounty, bountyOpen: false, active: true },
-    placed: true, listing: { active: true, securityOpen: false, pool: P::fundedPool } },
+    placed: true, pool: P::fundedPool },
+  { policy: { reward: V::MonthlyPoolReward, monthlyCapPositive: true, bounty: V::NoBounty, bountyOpen: false, active: true },
+    placed: true, pool: { ...P::fundedPool, freeAtStart: List(15) } },
   { policy: { reward: V::MonthlyPoolReward, monthlyCapPositive: false, bounty: V::SeparateBounty, bountyOpen: true, active: true },
-    placed: true, listing: { active: true, securityOpen: true, pool: P::fundedPool } },
+    placed: true, pool: P::fundedPool },
   { policy: { reward: V::ExternalPrizeShare, monthlyCapPositive: false, bounty: V::NoBounty, bountyOpen: false, active: true },
-    placed: false, listing: { active: true, securityOpen: false, pool: { ...P::fundedPool, monthlyPool: false } } })
+    placed: false, pool: { ...P::fundedPool, monthlyPool: false } })
 ```
 
 ### The home grid orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order

@@ -289,11 +289,11 @@ exception reaches only the project's current
 [payout audience](./payoutAudience.md): its steward when the steward is a
 GitHub user account, the account that listed the project when the steward is
 a GitHub Organization, and that Organization steward when no lister is
-recorded; the `steward` fact holds exactly when the recipient is
-`inPayoutAudience` of the current project. A project ban made by
-the vetting service reaches a current owner, a current affected contributor
-or current staff (an administrator or moderator), whichever writer won the
-shared notice key. Every other project-owner notice (ready, revision, scan
+recorded; the `steward` fact holds exactly when
+`payoutExceptionAudience` of the current project and the recipient holds. A
+project ban made by the vetting service reaches a current owner, a current
+affected contributor or current staff (an administrator or moderator),
+whichever writer won the shared notice key. Every other project-owner notice (ready, revision, scan
 failed, installation lost, quarantined, banned, reinstatement requested,
 reinstated, reinstatement denied) reaches a current owner, or current staff
 when its action path is the administration page. A reinstatement review
@@ -308,6 +308,7 @@ suppressed. Other activity kinds need no role beyond being the recipient.
 Private case notices and report receipts keep the case authority reader.
 
 ```quint
+import payoutAudience as PA from "./payoutAudience"
 type AppealSource = NoAppeal | EscalatedAppeal | DisputeOpened | DisputeResolved
 type NoticeAudience = { steward: bool, owner: bool, affectedContributor: bool, administrator: bool, moderator: bool,
   vettingBan: bool, staffPath: bool, appeal: AppealSource, appellant: bool, escalated: bool, resolved: bool,
@@ -331,6 +332,7 @@ pure def audienceHolds(kind: Kind, audience: NoticeAudience): bool =
   else if (kind == SlopbotScamReview) audience.moderator and audience.scamPenaltyStands and not(audience.author)
   else if (kind == SlopbotAppealReview) appealAudience(audience)
   else true
+pure def payoutExceptionAudience(payout: PA::PayoutProject, recipient: int): bool = PA::inPayoutAudience(payout, recipient)
 pure def activityAccess(kind: Kind, audience: NoticeAudience): AccessCheck =
   if (audienceHolds(kind, audience)) Allowed({ acknowledgeHours: 0 }) else Denied
 pure def lawFormerOwnerLosesOwnerNotices(noticeKind: Kind, audience: NoticeAudience): bool =

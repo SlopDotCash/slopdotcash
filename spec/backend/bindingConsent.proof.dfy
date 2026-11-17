@@ -281,6 +281,6 @@ lemma lawAdmittedAttemptIsPreparable_ensures(b: Binding, by_: string, obligation
     AdmittedPaymentIsTheAppendedRecord(b, by_, obligation);
     assert after.solanaWallet == b.solanaWallet;
     assert solanaClaim(after) == solanaClaim(b);
-    assert solanaReady(after, by_, obligation);
+    assert solanaReady(after, b.solanaWallet.actor, obligation);
   }
 }

@@ -30,39 +30,46 @@ and adds no row, so parallel reviews never push a repository past the cap.
 A new item that meets a full month is refused: the review finishes
 skipped with the reason `monthly-review-cap`, with no model call, label,
 comment or close, and a later month starts fresh. Value assessment, value
-disputes and Points disputes never read or write these rows.
+disputes and Points disputes never read or write these rows. The
+admission is stated for any cap, and the cap applied is 2,000.
 
 ```quint
 import routing as R from "./routing"
 type MonthItem = { repository: int, month: str, kind: R::ItemKind, number: int }
 pure val freeReviewsPerRepositoryPerMonth = 2000
 pure val monthlyReviewCapReason = "monthly-review-cap"
+pure def admitsReviewUnder(cap: int, alreadyAdmitted: bool, usedThisMonth: int): bool =
+  alreadyAdmitted or usedThisMonth < cap
 pure def admitsReview(alreadyAdmitted: bool, usedThisMonth: int): bool =
-  alreadyAdmitted or usedThisMonth < freeReviewsPerRepositoryPerMonth
+  admitsReviewUnder(freeReviewsPerRepositoryPerMonth, alreadyAdmitted, usedThisMonth)
 pure def sameMonth(row: MonthItem, entry: MonthItem): bool =
   row.repository == entry.repository and row.month == entry.month
 pure def monthUsed(rows: List[MonthItem], entry: MonthItem): int = rows.select(row => sameMonth(row, entry)).length()
+pure def admitsItemUnder(cap: int, rows: List[MonthItem], entry: MonthItem): bool =
+  admitsReviewUnder(cap, rows.includes(entry), monthUsed(rows, entry))
+pure def admitItemUnder(cap: int, rows: List[MonthItem], entry: MonthItem): List[MonthItem] =
+  if (not(rows.includes(entry)) and admitsItemUnder(cap, rows, entry)) rows.append(entry) else rows
 pure def admitsItem(rows: List[MonthItem], entry: MonthItem): bool =
-  admitsReview(rows.includes(entry), monthUsed(rows, entry))
+  admitsItemUnder(freeReviewsPerRepositoryPerMonth, rows, entry)
 pure def admitItem(rows: List[MonthItem], entry: MonthItem): List[MonthItem] =
-  if (not(rows.includes(entry)) and admitsItem(rows, entry)) rows.append(entry) else rows
+  admitItemUnder(freeReviewsPerRepositoryPerMonth, rows, entry)
 pure def lawAdmittedItemIsAlwaysReadmitted(rows: List[MonthItem], entry: MonthItem): bool =
   rows.includes(entry) implies (admitsItem(rows, entry) and admitItem(rows, entry) == rows)
-pure def lawFullMonthRefusesANewItem(rows: List[MonthItem], entry: MonthItem): bool =
-  (not(rows.includes(entry)) and monthUsed(rows, entry) >= freeReviewsPerRepositoryPerMonth)
-    implies (not(admitsItem(rows, entry)) and admitItem(rows, entry) == rows)
-pure def lawAdmissionNeverPassesTheCap(rows: List[MonthItem], entry: MonthItem): bool =
-  monthUsed(rows, entry) <= freeReviewsPerRepositoryPerMonth
-    implies monthUsed(admitItem(rows, entry), entry) <= freeReviewsPerRepositoryPerMonth
+pure def lawFullMonthRefusesANewItem(cap: int, rows: List[MonthItem], entry: MonthItem): bool =
+  (not(rows.includes(entry)) and monthUsed(rows, entry) >= cap)
+    implies (not(admitsItemUnder(cap, rows, entry)) and admitItemUnder(cap, rows, entry) == rows)
+pure def lawAdmissionNeverPassesTheCap(cap: int, rows: List[MonthItem], entry: MonthItem): bool =
+  monthUsed(rows, entry) <= cap implies monthUsed(admitItemUnder(cap, rows, entry), entry) <= cap
 pure def lawOtherRepositoriesAndMonthsAreUnaffected(rows: List[MonthItem], entry: MonthItem, other: MonthItem): bool =
   not(sameMonth(other, entry)) implies monthUsed(admitItem(rows, entry), other) == monthUsed(rows, other)
-pure def lawRefusalNeedsAFullMonth(alreadyAdmitted: bool, usedThisMonth: int): bool =
-  not(admitsReview(alreadyAdmitted, usedThisMonth))
-    implies (not(alreadyAdmitted) and usedThisMonth >= freeReviewsPerRepositoryPerMonth)
+pure def lawRefusalNeedsAFullMonth(cap: int, alreadyAdmitted: bool, usedThisMonth: int): bool =
+  not(admitsReviewUnder(cap, alreadyAdmitted, usedThisMonth))
+    implies (not(alreadyAdmitted) and usedThisMonth >= cap)
 pure val firstItem: MonthItem = { repository: 1, month: "2026-11", kind: R::PullItem, number: 1 }
 pure val entryValues = Set(firstItem, { ...firstItem, number: 2 }, { ...firstItem, kind: R::IssueItem })
 pure val otherValues = Set({ ...firstItem, number: 3 }, { ...firstItem, month: "2026-12" }, { ...firstItem, repository: 2 })
 pure val rowsValues = Set(List(), List(firstItem), List(firstItem, { ...firstItem, month: "2026-12" }),
   List({ ...firstItem, number: 2 }, { ...firstItem, repository: 2 }))
-pure val usedThisMonthValues = Set(0, 1999, 2000, 2001)
+pure val usedThisMonthValues = Set(0, 1, 2, 1999, 2000, 2001)
+pure val capValues = Set(1, 2, 2000)
 ```

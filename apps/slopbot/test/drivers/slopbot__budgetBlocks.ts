@@ -127,7 +127,7 @@ function dispatched(key: string, event: Event) {
       return finish(key, event.token, event.status);
     case "recordBlock":
       at(key);
-      return outcome(recordBudgetBlock({ reviewKey: reviewKeyOf(key), token: tokenText(key, event.token) }, jobOf(key), { source: event.d.source, resetAt: millis(event.d.resetAt) }), runtime);
+      return outcome(recordBudgetBlock({ reviewKey: reviewKeyOf(key), token: tokenText(key, event.token) }, jobOf(key), { ...event.d, resetAt: millis(event.d.resetAt) }), runtime);
     case "sendResume":
       at(key);
       return outcome(sendBudgetResume(reviewKeyOf(key)), runtime);

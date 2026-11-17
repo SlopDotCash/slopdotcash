@@ -12,7 +12,14 @@ import { loginHrefFor, useSession } from "../../../app/useSession.ts";
 import { lookupRepository } from "../../../flows/projects/github.vibe";
 import { normalizeRepositoryInput } from "../../../flows/projects/proposal.ts";
 import { maintainerCheck } from "../../../session/maintainer.vibe";
-import { EscrowFunding, fundingProjectOf } from "../../funding/vault/index.ts";
+import { networkPays } from "../../../kernels/payingNetworks.ts";
+import { EscrowFunding, type FundingProject, fundingProjectOf } from "../../funding/vault/index.ts";
+import { useShownRead } from "../../projects/hooks.ts";
+import { projectOf } from "../../projects/project.schema.ts";
+import type { PoolFundingIndex } from "../../../reads/funding.vibe";
+import { projectReads, projectRuntime, type ShownRead } from "../../projects/reads.vibe";
+import { projectFunding } from "../../projects/summary.ts";
+import { useOnce } from "../../security/program/hooks.ts";
 import { focusField } from "../fields/ProjectFields.tsx";
 import { failureMessage, useRun } from "../proposal/run.ts";
 import { SetupStatusPanel } from "../status/SetupStatusPanel.tsx";
@@ -289,9 +296,21 @@ function Vault({ runtime, manifest }: { runtime: PageRuntime; manifest: unknown 
   if (managed === undefined || project === undefined || isBountyOnly(managed) || !managed.escrow || managed.reward.kind === "external-prize-share") return null;
   return (
     <div id="project-vault">
-      <EscrowFunding runtime={runtime} project={project} />
+      <PooledEscrow runtime={runtime} project={project} manifest={manifest} />
     </div>
   );
+}
+
+function PooledEscrow({ runtime, project, manifest }: { runtime: PageRuntime; project: FundingProject; manifest: unknown }) {
+  const reads = useOnce(projectRuntime(runtime), "reads", () => projectReads());
+  return reads.status === "done" ? <CurrentPool runtime={runtime} project={project} manifest={manifest} pool={reads.value.pool} /> : <EscrowFunding runtime={runtime} project={project} />;
+}
+
+function CurrentPool({ runtime, project, manifest, pool }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; pool: ShownRead<PoolFundingIndex> }) {
+  const read = useShownRead(pool, "all");
+  const shown = projectOf(manifest);
+  const facts = shown !== undefined && read.status === "Current" ? projectFunding({ project: shown, read: { status: read.status, vaults: read.value?.get(shown.id) }, networkPays, nowMs: Date.now() }).facts : undefined;
+  return <EscrowFunding runtime={runtime} project={project} pool={facts} />;
 }
 
 function ProjectEditor(props: EditorProps) {

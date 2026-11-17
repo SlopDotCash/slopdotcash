@@ -52,3 +52,5 @@ export * from "./components/Textarea.tsx";
 export * from "./components/TokenAmount.tsx";
 export * from "./components/TransactionStatus.tsx";
 export * from "./components/WalletChooser.tsx";
+export { describedBy } from "../gen/ui__controls.ts";
+export { awardPresentation, paymentPresentation } from "../gen/ui__status.ts";

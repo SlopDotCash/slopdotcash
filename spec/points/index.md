@@ -28,3 +28,4 @@ trace evidence remain separate and never change a payment share.
 - [Exact-prefix publication](./publication.md)
 - [Published model attribution assessment](./modelAttribution.md)
 - [Contributor profile census](./profiles.md)
+- [Retained production data freshness](./retainedFreshness.md)

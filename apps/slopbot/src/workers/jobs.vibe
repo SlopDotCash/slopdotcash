@@ -1,0 +1,76 @@
+// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+import { GitHubApp } from "@repo/platform/github/app"
+import { qualityHook } from "../activation/quality.vibe"
+import { applyAppealCommand } from "../appeals/commands.vibe"
+import { escalateDueAppeal } from "../appeals/due.vibe"
+import { type AppealSettings } from "../appeals/session.vibe"
+import { recordHumanSignal } from "../appeals/signals.vibe"
+import { closeCandidate, closedItemNotices, reconcileClose } from "../closeAttempt/close.vibe"
+import { reopenedHook } from "../closeAttempt/reopen.vibe"
+import { changedBeforeAction, changedBeforeLabel, decideFinding } from "../closure/decide.vibe"
+import { closureEligibility } from "../closure/participation.vibe"
+import { valueDisputeHooks } from "../disputes/valueHooks.vibe"
+import { recordHold } from "../holds/record.vibe"
+import { applyMaintainerHold } from "../holds/timeline.vibe"
+import type { Job, ReviewJob } from "../jobs/job.vibe"
+import type { Handled } from "../jobs/retry.vibe"
+import { type ReviewHooks, type ReviewSettings, reviewItem } from "../review/run.vibe"
+
+export service JobSettings {
+  readonly review: ReviewSettings
+  readonly appeal: AppealSettings
+}
+
+type ErrorOf<T> = T extends Effect.Effect<infer _A, infer E, infer _R> ? E : never
+type ServicesOf<T> = T extends Effect.Effect<infer _A, infer _E, infer R> ? R : never
+type Hooked = ReturnType<typeof closureEligibility> | ReturnType<ReturnType<typeof qualityHook>> | ReturnType<typeof closedItemNotices> | ReturnType<typeof reopenedHook>
+
+const sourceChanged: ReadonlySet<string> = new Set([changedBeforeAction, changedBeforeLabel])
+
+effect function reviewed(job: ReviewJob, settings: ReviewSettings) {
+  const hooks: ReviewHooks<ErrorOf<Hooked>, ServicesOf<Hooked>> = {
+    eligibility: closureEligibility,
+    quality: qualityHook(job.qualityCommentId),
+    closedItem: closedItemNotices,
+    onSkip: (session) => Effect.asVoid(reopenedHook(session)),
+  }
+  const outcome = try reviewItem(job, settings, hooks)
+  if (outcome.kind === "settled") return outcome.result
+  if (outcome.kind === "closeReconciliation") return try reconcileClose(outcome, settings)
+  const decided = try decideFinding(outcome.finding, { reopened: reopenedHook })
+  if (decided.kind === "settled") return decided.result
+  if (decided.kind === "hold") return try recordHold(decided.hold)
+  return try closeCandidate(decided.request)
+}
+
+effect function handled(job: Job) {
+  const { review, appeal } = try JobSettings
+  const hooks = valueDisputeHooks(appeal)
+  switch (job.kind) {
+    case "review":
+      return try reviewed(job, review)
+    case "maintainer_hold":
+      return try applyMaintainerHold(job, review)
+    case "appeal_command":
+      return try applyAppealCommand(job, appeal, hooks)
+    case "appeal_due":
+      return try escalateDueAppeal(job, appeal, hooks)
+    case "appeal":
+    case "human_reopen":
+      return try recordHumanSignal(job, appeal, hooks)
+  }
+}
+
+effect function installed(job: Job) {
+  const app = try GitHubApp
+  provide app.asInstallation(String(job.installationId)) {
+    return try handled(job)
+  }
+}
+
+export effect function dispatchJob(job: Job) {
+  const outcome = try installed(job)
+  try Effect.logInfo("slopbot job outcome", { delivery: job.deliveryId, kind: job.kind, outcome })
+  const result: Handled = sourceChanged.has(outcome) ? "SourceChanged" : "Done"
+  return result
+}

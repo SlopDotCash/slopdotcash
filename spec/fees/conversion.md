@@ -75,6 +75,7 @@ pure def wallet(f: Fee): int = R::walletOf(f.runtime, f.network)
 pure def leaseHeld(f: Fee, runId: int): bool = runId > 0 and f.lease.holder == runId and f.clock <= f.lease.expiresAt
 pure def canChooseInstance(f: Fee, network: R::Network, by: R::Sender): bool =
   by == R::Worker and f.rows.length() == 0 and f.receipts.length() == 0 and f.holdings.length() == 0 and f.nextRun == 1
+    and f.rotation.holder == 0
 pure def chooseInstance(f: Fee, network: R::Network, by: R::Sender): Fee = { ...f, network: network }
 pure def canAdvanceClock(f: Fee, elapsed: int, by: R::Sender): bool = by == R::Worker and elapsed > 0
 pure def advanceClock(f: Fee, elapsed: int, by: R::Sender): Fee = { ...f, clock: f.clock + elapsed }
@@ -109,7 +110,9 @@ lease and a journal still quiet. The rotation releases only its own lease;
 one whose activation is uncertain leaves it to expire
 (`rotate-fee-solana-rpc.ts`, `acquireRotationLeaseSql`,
 `renewRotationLeaseSql`). While it holds the lease no run can take it, so
-no run reserves, signs, replaces or claims.
+no run reserves, signs, replaces or claims. A journal whose rotation lease
+is recorded keeps its network, so the lease never outlives the Solana
+instance it was taken on.
 
 ```quint
 pure def rotationHolds(f: Fee): bool = f.rotation.holder > 0 and f.clock <= f.rotation.expiresAt
@@ -131,6 +134,7 @@ pure def canReleaseRotationLease(f: Fee, rotationId: int, by: R::Sender): bool =
   by == R::ReleaseWorkflow and rotationId > 0 and f.rotation.holder == rotationId
 pure def releaseRotationLease(f: Fee, rotationId: int, by: R::Sender): Fee = { ...f, rotation: { holder: 0, expiresAt: 0 } }
 pure def alwaysRotationExcludesRuns(f: Fee): bool = rotationHolds(f) implies not(runHolds(f))
+pure def alwaysRotationOnlyOnSolana(f: Fee): bool = f.rotation.holder > 0 implies f.network == R::Solana
 pure def stepRotationBlocksRuns(before: Fee, via: str, after: Fee): bool = rotationHolds(before) implies
   not(via == "acquireLease" or via == "reserveGas" or via == "sign" or via == "replace" or via == "claim")
 pure def stepRotationOnlyWhenQuiet(before: Fee, via: str, after: Fee): bool =

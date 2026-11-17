@@ -1,7 +1,7 @@
 // spec/slopbot/maintainerHold.md, "The first durable maintainer notice starts the window once"; spec/slopbot/maintainerHold.md, "The scheduled dispatcher queues each due hold and requeues a lost message after a day"; spec/slopbot/jobQueue.md, "A due maintainer hold or appeal is sent when due and again after a day without resolution"
 import { first, sql } from "@repo/platform/d1"
 import { canDispatchHold, canNotifyMaintainer } from "../../gen/slopbot__maintainerHold.effect.vibe"
-import type { HoldRequest } from "../closure/decide.vibe"
+import { type HoldRequest, changedBeforeAction } from "../closure/decide.vibe"
 import { dueJobs } from "../jobs/due.vibe"
 import { send } from "../jobs/job.vibe"
 import { completeReview, failReview } from "../review/run.vibe"
@@ -12,7 +12,6 @@ schema DueRow { readonly due_at: string }
 
 export error HoldNotStored { reviewKey: string }
 
-const changedBeforeAction = "review source or authorization changed before action"
 
 export effect function recordHold(request: HoldRequest) {
   const { session, closure, category, verdict } = request

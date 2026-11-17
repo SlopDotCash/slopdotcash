@@ -302,10 +302,12 @@ pure def canRequestAppeal(c: Registry, by: int): bool = E::canRequestAppeal(c.se
 pure def requestAppeal(c: Registry, by: int): Registry = { ...c, security: E::requestAppeal(c.security, by) }
 pure def canDenyAppeal(c: Registry, by: int, fence: E::Fence): bool = E::canDenyAppeal(c.security, by, fence)
 pure def denyAppeal(c: Registry, by: int, fence: E::Fence): Registry = { ...c, security: E::denyAppeal(c.security, by, fence) }
-pure def canReinstate(c: Registry, by: int, fence: E::Fence, pins: List[E::PinRead]): bool = E::canReinstate(c.security, by, fence, pins)
-pure def reinstate(c: Registry, by: int, fence: E::Fence, pins: List[E::PinRead]): Registry =
+pure def canObservePins(c: Registry, by: int, pins: List[E::PinRead]): bool = E::canObservePins(c.security, by, pins)
+pure def observePins(c: Registry, by: int, pins: List[E::PinRead]): Registry = { ...c, security: E::observePins(c.security, by, pins) }
+pure def canReinstate(c: Registry, by: int, fence: E::Fence): bool = E::canReinstate(c.security, by, fence)
+pure def reinstate(c: Registry, by: int, fence: E::Fence): Registry =
   val p = P::withCommunityRestored(true, c.project)
-  { ...c, project: p, security: sync(p, E::reinstate(c.security, by, fence, pins)) }
+  { ...c, project: p, security: sync(p, E::reinstate(c.security, by, fence)) }
 pure def canGrantExemption(c: Registry, by: int, fence: E::Fence, request: E::GrantRequest): bool =
   E::canGrantExemption(c.security, by, fence, request)
 pure def grantExemption(c: Registry, by: int, fence: E::Fence, request: E::GrantRequest): Registry =

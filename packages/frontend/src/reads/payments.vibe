@@ -110,7 +110,8 @@ export function scopeOf(key: string): PaymentScope {
 effect function refusalOf(status: number, value: unknown, expectedActor: string | undefined) {
   const body: ErrorBody = Schema.decodeUnknownEffect(ErrorBody)(value) catch () => ({ error: undefined, message: undefined })
   const message = body.message ?? `The request failed with HTTP ${status}.`
-  const failure: CallFailure = status === 403 && body.error === "actor_changed" ? new ActorChanged({ expected: expectedActor ?? "", message }) : new Refused({ status, error: body.error ?? "request_failed", message })
+  const fields = typeof value === "object" && value !== null ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "error" && key !== "message")) : {}
+  const failure: CallFailure = status === 403 && body.error === "actor_changed" ? new ActorChanged({ expected: expectedActor ?? "", message }) : new Refused({ status, error: body.error ?? "request_failed", message, fields })
   return failure
 }
 
@@ -143,7 +144,7 @@ effect function productOrigin() {
 }
 
 function originRefused(message: string) {
-  return new Refused({ status: 0, error: "origin_refused", message })
+  return new Refused({ status: 0, error: "origin_refused", message, fields: {} })
 }
 
 function count(value: number | null): number | undefined {
@@ -313,7 +314,7 @@ function shownVault(vault: ProjectVault): VaultTotals {
 function vaultFailure(failure: CallFailure): CallFailure | Unreadable {
   switch (failure._tag) {
     case "InvalidResponse": return new Unreadable({ message: paymentMessages.vaultInvalid })
-    case "Refused": return new Refused({ status: failure.status, error: failure.error, message: paymentMessages.vaultUnavailable })
+    case "Refused": return new Refused({ status: failure.status, error: failure.error, message: paymentMessages.vaultUnavailable, fields: failure.fields })
     case "NetworkError": return new NetworkError({ timedOut: failure.timedOut, message: paymentMessages.vaultUnavailable })
     case "ActorChanged": return failure
     default: {

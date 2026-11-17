@@ -17,7 +17,7 @@ export const emailMessages = {
   destinationChanged: "Your verified destination changed. Review it before turning on email.",
   unsaved: "Your preference could not be saved. Please retry.",
   unverified: "The saved preference could not be verified. Please retry.",
-  rateLimited: "Wait before requesting another verification email.",
+  rateLimited: "Too many requests",
   notRequested: "The verification email could not be requested. Retry.",
 } as const
 
@@ -73,6 +73,13 @@ function statusOf(failure: CallFailure): number {
       return _exhaustive
     }
   }
+}
+
+function retryText(failure: CallFailure): string {
+  const retryAfter = failure._tag === "Refused" ? failure.fields.retryAfter : undefined
+  if (typeof retryAfter !== "number" || !Number.isFinite(retryAfter) || retryAfter <= 0) return emailMessages.rateLimited
+  const seconds = Math.ceil(retryAfter)
+  return `Try again in ${seconds < 60 ? `${seconds} seconds` : `${Math.ceil(seconds / 60)} minutes`}.`
 }
 
 function halted(failure: CallFailure, refused: string): Halted {
@@ -276,7 +283,7 @@ export const emailLayer = Layer.effect(EmailPreferences, effect {
         return try settle(mine, { status: "signedOut" })
       }
       if (!(try checkActor(actor, mine))) return
-      if ("failure" in requested) throw halted(requested.failure, statusOf(requested.failure) === 429 ? emailMessages.rateLimited : emailMessages.notRequested)
+      if ("failure" in requested) throw halted(requested.failure, statusOf(requested.failure) === 429 ? retryText(requested.failure) : emailMessages.notRequested)
       if (!validPreference(requested)) throw new Halted({ message: emailMessages.invalid })
       requestKey = undefined
       try update((shownPanel) => ({ ...shownPanel, editing: false }))

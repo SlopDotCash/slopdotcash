@@ -1,5 +1,20 @@
 import { area } from "@repo/platform/worker"
+import { SlopbotAudienceLive } from "./audience/port.vibe"
 import { api } from "./client/index.vibe"
+import { summaryRoutes } from "./feeds/summary.vibe"
+import { importRoutes } from "./import/routes.vibe"
 import { ReportingReadinessLive } from "./readiness/port.vibe"
+import { AssessmentQueueLive, assessmentRoutes } from "./value/inbox/routes.vibe"
 
-export const slopbot = area({ name: "slopbot", api, routes: Layer.empty, provides: ReportingReadinessLive })
+export { SlopbotAudienceLive } from "./audience/port.vibe"
+export { historicalValueImport, type HistoricalValueBinding } from "./import/routes.vibe"
+export { ReportingReadinessLive } from "./readiness/port.vibe"
+export { repositoryAccessReader } from "./value/inbox/access.vibe"
+export { AssessmentQueueLive, bundledAssessments } from "./value/inbox/routes.vibe"
+
+export const slopbot = area({
+  name: "slopbot",
+  api,
+  routes: Layer.mergeAll(assessmentRoutes, summaryRoutes, importRoutes),
+  provides: Layer.mergeAll(ReportingReadinessLive, SlopbotAudienceLive, AssessmentQueueLive),
+})

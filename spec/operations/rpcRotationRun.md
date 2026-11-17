@@ -9,10 +9,10 @@ This file is the release run's side of such a run, from development's model
 (`requestRpcRotation`, `prepare`, `qualifyRpcRotation`, `uploadRpcRotation`,
 `promoteRpcRotation`, the `rpcRotation` invariants and the `rpcRotation…`
 tests). A rotation run also skips the retained-data freshness check
-([retained production data](./retainedFreshness.md), `rotatesRpc`). The
-shell reads the rotation's end from the rotation machine: its `Verified`
-phase is `RotationConfirmed`, `Uncertain` is `RotationUncertain` and
-`Refused` is `RotationFailed`.
+([retained production data](../points/retainedFreshness.md), `freshnessChecked`).
+The run's verdict reads the fee rotation machine's own phase: its
+`Verified` phase is a confirmed rotation and `Uncertain` an uncertain
+activation.
 
 ## Story: A rotation run changes one endpoint and never counts as a release
 
@@ -23,11 +23,12 @@ prepares only when it is a manual dispatch on `main`. A normal run keeps the
 [release run](./release.md)'s own admission.
 
 ```quint
+import release as R from "./release"
 type RunMode = NormalRun | RpcRotationRun
-pure def canPrepareRun(mode: RunMode, main: bool, manual: bool): bool =
-  mode == RpcRotationRun implies (main and manual)
-pure def lawRotationNeedsManualMain(main: bool, manual: bool): bool =
-  canPrepareRun(RpcRotationRun, main, manual) implies (main and manual)
+pure def rotationAdmitted(mode: RunMode, ref: R::RunRef): bool =
+  mode == RpcRotationRun implies (ref.branch == "main" and ref.kind == R::WorkflowDispatch)
+pure def lawRotationNeedsManualMain(ref: R::RunRef): bool =
+  rotationAdmitted(RpcRotationRun, ref) implies (ref.branch == "main" and ref.kind == R::WorkflowDispatch)
 ```
 
 ### A rotation run writes only its own candidate version, and a normal run never writes one
@@ -56,19 +57,19 @@ uncertain activation is a partial failure, never a confirmed rotation and
 never a verified release.
 
 ```quint
-type RotationOutcome = RotationConfirmed | RotationUncertain | RotationFailed
+import solanaRpcRotation as SR from "../fees/solanaRpcRotation"
 type RunVerdict = RunVerified | RunRpcConfirmed | RunFailed | RunPartialFailure
 pure def releaseVerified(mode: RunMode, publishedAndVerified: bool): bool =
   mode == NormalRun and publishedAndVerified
-pure def rotationVerdict(result: RotationOutcome, uploaded: bool): RunVerdict =
-  if (result == RotationConfirmed and uploaded) RunRpcConfirmed
+pure def rotationVerdict(rotation: SR::RotationPhase, uploaded: bool): RunVerdict =
+  if (rotation == SR::Verified and uploaded) RunRpcConfirmed
   else if (uploaded) RunPartialFailure
   else RunFailed
 pure def lawRotationNeverVerifiedRelease(publishedAndVerified: bool): bool =
   not(releaseVerified(RpcRotationRun, publishedAndVerified))
 pure def lawUncertainNeverConfirmed(uploaded: bool): bool =
-  rotationVerdict(RotationUncertain, uploaded) != RunRpcConfirmed
-    and rotationVerdict(RotationUncertain, uploaded) != RunVerified
-pure def lawConfirmedNeedsCandidate(result: RotationOutcome, uploaded: bool): bool =
-  rotationVerdict(result, uploaded) == RunRpcConfirmed implies (result == RotationConfirmed and uploaded)
+  rotationVerdict(SR::Uncertain, uploaded) != RunRpcConfirmed
+    and rotationVerdict(SR::Uncertain, uploaded) != RunVerified
+pure def lawConfirmedNeedsCandidate(rotation: SR::RotationPhase, uploaded: bool): bool =
+  rotationVerdict(rotation, uploaded) == RunRpcConfirmed implies (rotation == SR::Verified and uploaded)
 ```

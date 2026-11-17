@@ -8,6 +8,7 @@ import { hasBountyOverview } from "../../kernels/rewardSummary.ts";
 import { pageOrigin } from "../../platform/environment.ts";
 import type { RegistryBoot } from "../../reads/registry.vibe";
 import { BountyFunding, BountyIntroduction, bountyProjectOf } from "../funding/awards/index.ts";
+import { ProjectStandings } from "../points/index.ts";
 import { reviewBudgetLabel } from "../home/listing.ts";
 import { copyText } from "../home/prompt.vibe";
 import type { NetworkPays } from "../public/funding.ts";
@@ -181,6 +182,9 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
       </section>
       {active ? <SuggestedWork section={section} project={project} boot={boot} repositoryRegistry={repositoryRegistry} /> : null}
       <History runtime={runtime} project={project} reads={reads} networkPays={networkPays} />
+      <div id="contributors">
+        <ProjectStandings runtime={runtime} projectId={project.id} />
+      </div>
     </main>
   );
 }

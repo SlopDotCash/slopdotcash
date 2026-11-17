@@ -22,8 +22,9 @@ it directly.
 
 A block needs a recognized Surplus spending denial with a reset time later
 than now, remembered by the [review](./review.md) route after the Orbio
-backstop had no key or served no valid result. An Orbio failure alone
-never blocks, and an Orbio verdict after a denial leaves no block. The
+backstop had no key or served no valid result: the denial the shell passes
+says whether Orbio served after it. An Orbio failure alone never blocks,
+and an Orbio verdict after a denial leaves no block. The
 database trigger requires the same running claim with a live lease and the
 same installation, repository and item as the stored job. Recording the
 block finishes the review as failed with the reason
@@ -37,7 +38,7 @@ due, a new review job for the key returns `blocked` without a claim.
 import installation as I from "./installation"
 type RowStatus = NoRow | Running | Completed | Failed | Skipped
 type DenialSource = OrbioFailure | SurplusSpendingDenial | SurplusOtherFailure
-type Denial = { source: DenialSource, resetAt: int }
+type Denial = { source: DenialSource, resetAt: int, orbioServed: bool }
 type Block = { id: int, token: int, retryAt: int, dispatched: bool }
 type BudgetState = { now: int, status: RowStatus, token: int, leaseUntil: int, current: Block, blockCount: int,
   sends: int, install: I::Installation }
@@ -58,13 +59,14 @@ pure def owns(s: BudgetState, token: int): bool = s.status == Running and token 
 pure def canFinish(s: BudgetState, token: int, status: RowStatus): bool =
   owns(s, token) and (status == Completed or status == Failed or status == Skipped)
 pure def finish(s: BudgetState, token: int, status: RowStatus): BudgetState = { ...s, status: status, leaseUntil: 0 }
-pure def blocksRoute(d: Denial): bool = d.source == SurplusSpendingDenial
+pure def blocksRoute(d: Denial): bool = d.source == SurplusSpendingDenial and not(d.orbioServed)
 pure def canRecordBlock(s: BudgetState, token: int, d: Denial): bool =
   owns(s, token) and blocksRoute(d) and d.resetAt > s.now and s.current.id == 0
 pure def recordBlock(s: BudgetState, token: int, d: Denial): BudgetState =
   { ...s, status: Failed, leaseUntil: 0, blockCount: s.blockCount + 1,
     current: { id: s.blockCount + 1, token: token, retryAt: d.resetAt, dispatched: false } }
 pure def lawOrbioFailureNeverBlocks(d: Denial): bool = d.source == OrbioFailure implies not(blocksRoute(d))
+pure def lawOrbioVerdictAfterADenialNeverBlocks(d: Denial): bool = d.orbioServed implies not(blocksRoute(d))
 ```
 
 ### A due block is sent once while its claim is still the failed current one
@@ -109,8 +111,9 @@ pure def sometimesResumed(s: BudgetState): bool = s.blockCount > 0 and s.sends >
 pure def sometimesSuspendedBlockWaits(s: BudgetState): bool =
   s.current.id > 0 and not(s.current.dispatched) and s.current.retryAt <= s.now and s.install.suspended
 pure def sometimesResentAfterLostRecord(s: BudgetState): bool = s.sends > 1
-pure val dValues = Set({ source: SurplusSpendingDenial, resetAt: 100 }, { source: OrbioFailure, resetAt: 100 },
-  { source: SurplusOtherFailure, resetAt: 100 })
+pure val dValues = Set({ source: SurplusSpendingDenial, resetAt: 100, orbioServed: false },
+  { source: OrbioFailure, resetAt: 100, orbioServed: false }, { source: SurplusOtherFailure, resetAt: 100, orbioServed: false },
+  { source: SurplusSpendingDenial, resetAt: 100, orbioServed: true })
 pure val eValues = Set(
   { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true },
   { delivery: 2, kind: I::Suspend, sourceTime: 2, hasAccount: true, validTime: true },

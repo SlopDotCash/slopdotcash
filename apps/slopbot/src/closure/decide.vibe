@@ -61,7 +61,8 @@ export type ClosureDecision =
 const scopes: Readonly<Record<Scope, RepositoryScope>> = { Unregistered: "Unregistered", Contributor: "Active", SecurityOnly: "SecurityOnly", ReversalOnly: "ReversalOnly" }
 const modes: Readonly<Record<ModeName, CategoryMode>> = { off: "ModeOff", label: "ModeLabel", close: "ModeClose" }
 const roles: Readonly<Record<Exemption, SourceObservation["authorRole"]>> = { Exempt: "Maintainer", NotExempt: "NonMaintainer", ExemptionUnknown: "RoleUnknown" }
-const changedBeforeAction = "review source or authorization changed before action"
+export const changedBeforeAction = "review source or authorization changed before action"
+export const changedBeforeLabel = "related original or review source changed before label"
 const reopenedRevision = "maintainer reopened this revision; finding removed"
 const disputedRevision = "a maintainer reopen or an author appeal of this revision stops further action"
 
@@ -264,7 +265,7 @@ effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateO
   if (try hooks.reopened(session)) return try finished(judged, "comment", reopenedRevision)
   if (session.related !== undefined) {
     const fresh = try loadContext(session.target, try observe(session.ref))
-    if (!(try sameReviewEvidence(session.target, fresh, session.context, session.related))) return try abandoned(session, judged.verdict, "related original or review source changed before label")
+    if (!(try sameReviewEvidence(session.target, fresh, session.context, session.related))) return try abandoned(session, judged.verdict, changedBeforeLabel)
   }
   if (try disputed(record, judged.closure.identity)) return try finished(judged, "comment", disputedRevision)
   if (!canLabelFinding(try closureState(record))) return try finished(judged, "comment", `no action (${category})`)
@@ -273,6 +274,11 @@ effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateO
   try recordAction({ reviewKey: session.reviewKey, repositoryId: session.target.repositoryId, itemNodeId: session.context.issue.node_id, action: "label", detail: category })
   if (try hooks.reopened(session)) return try finished(judged, "label", reopenedRevision)
   return try finished(judged, "label", `labeled (${category})`)
+}
+
+export effect function closeRecheck(request: CloseRequest) {
+  if (request.session.target.securityOnly) return undefined
+  return (try freshGate(request.session, request.verdict, request.confirm.verdict))?.observation
 }
 
 export effect function closeStillAllowed(request: CloseRequest) {

@@ -1,0 +1,30 @@
+// spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"
+import type { D1Database } from "@repo/platform/bindings"
+import { secret } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { Caller, Unauthenticated, outbound } from "@repo/platform/http"
+
+export interface AppVars {
+  readonly SLOPBOT_DB: D1Database
+  readonly SLOPBOT_APP_ID: string
+  readonly SLOPBOT_APP_PRIVATE_KEY?: string
+}
+
+const noSessions = Layer.succeed(Caller, {
+  current: () => effect {
+    throw new Unauthenticated()
+  },
+})
+
+function app(vars: AppVars) {
+  return Layer.unwrap(effect {
+    const privateKey = try secret("SLOPBOT_APP_PRIVATE_KEY", vars.SLOPBOT_APP_PRIVATE_KEY)
+    return Layer.provide(githubApp({ appId: vars.SLOPBOT_APP_ID, privateKey, userAgent: "slopbot" }), outbound)
+  })
+}
+
+export function appServices(vars: AppVars) {
+  return Layer.mergeAll(d1(vars.SLOPBOT_DB), webCrypto, outbound, noSessions, app(vars))
+}

@@ -1,7 +1,7 @@
 // spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
 import { pointsMe } from "@repo/backend/client"
 import type { PageRuntime } from "../app/runtime.vibe"
-import { ReferralName, referralLayer, validReferralCode } from "../flows/account/referral.vibe"
+import { ReferralName, type ReferralView, referralLayer, validReferralCode } from "../flows/account/referral.vibe"
 import { call } from "../platform/api.vibe"
 import { BrowserSession } from "../session/browserSession.vibe"
 
@@ -62,4 +62,8 @@ export effect function saveDraft(text: string) {
   const referral = try ReferralName
   try referral.edit(text)
   return try referral.save()
+}
+
+export effect function watchReferral(show: (view: ReferralView) => void!!) {
+  for try (const view of (try ReferralName).changes) try show(view)
 }

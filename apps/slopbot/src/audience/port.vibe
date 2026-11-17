@@ -1,0 +1,31 @@
+// spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+import { D1, first, sql } from "@repo/platform/d1"
+import { SlopbotAudience } from "@repo/ports/slopbot"
+
+schema EscalatedRow {
+  readonly appellant_github_id: string
+  readonly resolved: number
+}
+
+schema ScamRow {
+  readonly author_github_id: string
+  readonly reversed: number
+}
+
+effect function escalatedAppeal(appealKey: string) {
+  const row = try first(EscalatedRow, sql`SELECT appellant_github_id, resolved_at IS NOT NULL AS resolved FROM slopbot_appeals WHERE appeal_key = ${appealKey} AND escalated_at IS NOT NULL`)
+  return row === undefined ? undefined : { appellantGithubId: row.appellant_github_id, resolved: row.resolved === 1 }
+}
+
+effect function scamPenalty(itemNodeId: string) {
+  const row = try first(ScamRow, sql`SELECT author_github_id, reversed_at IS NOT NULL AS reversed FROM slopbot_penalties WHERE item_node_id = ${itemNodeId} AND category = 'scam' AND moderator_review = 1`)
+  return row === undefined ? undefined : { authorGithubId: row.author_github_id, reversed: row.reversed === 1 }
+}
+
+export const SlopbotAudienceLive = Layer.effect(SlopbotAudience, effect {
+  const db = try D1
+  return {
+    escalatedAppeal: (appealKey) => provideService(escalatedAppeal(appealKey), D1, db),
+    scamPenalty: (itemNodeId) => provideService(scamPenalty(itemNodeId), D1, db),
+  } satisfies SlopbotAudience.Shape
+})

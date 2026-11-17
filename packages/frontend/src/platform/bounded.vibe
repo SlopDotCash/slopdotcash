@@ -22,7 +22,7 @@ export effect function boundedJson(response: HttpClientResponse.HttpClientRespon
 
 effect function fetchedBytes(url: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>>) {
   const response = HttpClient.get(url, { headers }) catch effect () => { throw new NetworkError({ timedOut: false, message: "The network request failed. Try again." }) }
-  if (response.status < 200 || response.status > 299) throw new Refused({ status: response.status, error: "http_status", message: `${label} returned ${response.status}` })
+  if (response.status < 200 || response.status > 299) throw new Refused({ status: response.status, error: "http_status", message: `${label} returned ${response.status}`, fields: {} })
   return try boundedBytes(response, limitBytes, label)
 }
 

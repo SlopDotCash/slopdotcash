@@ -34,6 +34,7 @@ retain their original windows and terms.
 import allocation as A from "./allocation"
 import money as M from "./money"
 import payoutExclusions as X from "./payoutExclusions"
+import monthPledges as P from "./monthPledges"
 type Role = ProjectOwner | Steward | RepositoryAdmin | Writer | NoRole
 type AuthorityFact = { actor: int, role: Role, banned: bool, revision: int }
 type Eligibility = { revision: int, active: bool, verifiedPool: bool, paused: bool, restricted: bool, retired: bool,
@@ -264,7 +265,7 @@ pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bo
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
   { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor, frozenAt: m.now }
 pure def automaticMayFreeze(m: Monthly): bool = m.now >= cutoff(m) and m.period >= firstAutomaticPeriod and m.eligibility.networkServed
-  and ((m.automatic and not(m.eligibility.paused) and not(m.eligibility.restricted)) or (pledgeConsents(m) and cutNoticeElapsed(m)))
+  and ((m.automatic and not(m.eligibility.paused) and not(m.eligibility.restricted)) or (pledgeKeepsMonth(m) and cutNoticeElapsed(m)))
 pure def canAutoFreeze(m: Monthly): bool = m.phase == Proposed and automaticMayFreeze(m) and financialTermsSame(m.revision, m.currentRevision)
 pure def autoFreeze(m: Monthly): Monthly = { ...m, phase: Frozen, trigger: AutomaticTrigger, frozenSequence: m.sequence, frozenAt: m.now }
 pure val fair_autoFreeze = "weak"
@@ -300,8 +301,8 @@ rule changed, is the owner's decision, pending. The owner path is unchanged.
 pure def canObservePledge(m: Monthly, pledgeVault: str): bool =
   m.phase != Unopened and pledgeVault != "" and pledgeVault == m.currentRevision.vault and pledgeVault != m.pledgedVault
 pure def observePledge(m: Monthly, pledgeVault: str): Monthly = { ...m, pledgedVault: pledgeVault }
-pure def pledgeConsents(m: Monthly): bool =
-  m.pledgedVault != "" and m.pledgedVault == m.currentRevision.vault and not(m.eligibility.retired)
+pure def pledgeKeepsMonth(m: Monthly): bool =
+  P::pledgeConsents(m.pledgedVault != "" and m.pledgedVault == m.currentRevision.vault, m.eligibility.retired)
 pure def stepPledgeKept(before: Monthly, after: Monthly): bool = before.pledgedVault != "" implies after.pledgedVault != ""
 pure def sometimesPledgedMonthFrozen(m: Monthly): bool = m.trigger == AutomaticTrigger and m.pledgedVault != ""
   and m.eligibility.paused

@@ -160,7 +160,8 @@ pure def lawPausedProjectNotDiscovered(known: ArtifactFacts): bool = not(known.a
 An unfunded monthly pool is not listed this month (operator decision,
 16 November 2026). Discovery reads, on the server and beside the project
 list, the cached vault rows behind `GET /api/v1/pool-funding`. A read that
-throws or returns nothing is `FundingUnread`: it logs `project discovery pool
+throws or returns nothing gives every candidate a pool read of `PoolFailed`,
+which is `FundingUnread`: it logs `project discovery pool
 funding unavailable` and lists every cleared project as before, so a funding
 outage never empties discovery. A successful read, an empty one included,
 gives each candidate `ListedThisMonth` when `listedThisMonth` of the
@@ -173,15 +174,15 @@ direct link, and the installer's gate is unchanged.
 ```quint
 import poolListing as PL from "../frontend/poolListing"
 type MonthListing = ListedThisMonth | UnfundedThisMonth | FundingUnread
-pure def monthListingOf(fundingRead: bool, facts: PL::ListingFacts): MonthListing =
-  if (not(fundingRead)) FundingUnread else if (PL::listedThisMonth(facts)) ListedThisMonth else UnfundedThisMonth
+pure def monthListingOf(facts: PL::ListingFacts): MonthListing =
+  if (not(PL::fundingKnown(facts))) FundingUnread else if (PL::listedThisMonth(facts)) ListedThisMonth else UnfundedThisMonth
 pure def lawUnfundedProjectNotDiscovered(known: ArtifactFacts): bool =
   known.monthListing == UnfundedThisMonth implies not(discoverable(known))
 pure def lawFailedFundingReadListsAsBefore(known: ArtifactFacts): bool =
   discoverable({ ...known, monthListing: FundingUnread }) iff discoverable({ ...known, monthListing: ListedThisMonth })
 pure def lawFundingReadDecidesOnlyWhenRead(facts: PL::ListingFacts): bool =
-  monthListingOf(false, facts) == FundingUnread
-  and (monthListingOf(true, facts) == UnfundedThisMonth iff not(PL::listedThisMonth(facts)))
+  (not(PL::fundingKnown(facts)) implies monthListingOf(facts) == FundingUnread)
+  and (PL::fundingKnown(facts) implies (monthListingOf(facts) == UnfundedThisMonth iff not(PL::listedThisMonth(facts))))
 pure def lawUnfundedProjectServesByDirectLink(known: ArtifactFacts, route: RouteKind): bool =
   route != DiscoveryRoute implies
     artifactAnswer(route, { ...known, monthListing: UnfundedThisMonth })

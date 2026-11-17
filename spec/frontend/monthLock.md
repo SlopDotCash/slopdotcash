@@ -32,6 +32,12 @@ the vault owner's wallet, the free funds and the open locked total, taken as
 the chain reports them: development's own model lets the open locked total
 exceed the free funds outside an included lock
 (`ui_vault_month_lock.qnt`, `invariant`), and the card still appears.
+Every later finalized read carries the same facts again and replaces the
+card's own: after a lock, and whenever the shell re-reads the vault (a
+deposit or withdrawal through the funding form, a lock or release sent from
+another tab, a review), so the card never shows or reviews against figures
+the chain no longer reports. A re-read leaves a review, and an included lock
+or release, back on the idle card; a read without pledge support hides it.
 
 ```quint
 import vaultLocks as VL from "./vaultLocks"
@@ -55,9 +61,11 @@ pure val initial: MonthLock = { phase: LockHidden, wallet: 0, owner: 0, free: M:
   shownLocked: M::zero, kind: LockingMonths, added: M::zero, deposit: M::zero, released: M::zero,
   refusal: VL::NoLockRefusal, notice: LockQuiet, checks: 0 }
 pure def canReadVault(m: MonthLock, supported: bool, owner: int, free: M::Amount, locked: M::Amount, by: int): bool =
-  by == reader and m.phase == LockHidden and owner > 0 and M::validAmount(free) and M::validAmount(locked)
+  by == reader and (m.phase == LockHidden or m.phase == LockIdle or m.phase == LockReviewed or m.phase == LockIncluded)
+    and owner > 0 and M::validAmount(free) and M::validAmount(locked)
 pure def readVault(m: MonthLock, supported: bool, owner: int, free: M::Amount, locked: M::Amount, by: int): MonthLock =
-  if (supported) { ...m, phase: LockIdle, owner: owner, free: free, locked: locked, lapsed: M::zero, shownLocked: locked } else m
+  if (supported) { ...m, phase: LockIdle, owner: owner, free: free, locked: locked, lapsed: M::zero, shownLocked: locked }
+  else { ...m, phase: LockHidden }
 pure def canConnect(m: MonthLock, wallet: int, by: int): bool = wallet > 0 and by == wallet and wallet != m.wallet
   and (m.phase == LockHidden or m.phase == LockIdle or m.phase == LockReviewed)
 pure def connect(m: MonthLock, wallet: int, by: int): MonthLock =
@@ -134,7 +142,8 @@ failed release says "The release failed. The month is still locked." An
 unreadable check shows why and keeps checking. An included lock adds to the
 locked total and its deposit to the free funds; an included release frees its
 month. The shown locked total follows only the finalized read, and never
-exceeds the locked total.
+exceeds the locked total. The finalized read is `readVault` arriving while
+the card shows the included transaction.
 
 ```quint
 pure def canCheck(m: MonthLock, result: LockResult, by: int): bool = by == timer and m.phase == LockChecking
@@ -151,8 +160,6 @@ pure def check(m: MonthLock, result: LockResult, by: int): MonthLock =
     free: M::addAmounts(m.free, m.deposit), notice: LockedNotice }
   else { ...counted, phase: LockIncluded, locked: remaining, lapsed: lapsedLeft,
       shownLocked: if (M::compareAmounts(m.shownLocked, remaining) > 0) remaining else m.shownLocked, notice: ReleasedNotice }
-pure def canFinalizedRead(m: MonthLock, by: int): bool = by == reader and m.phase == LockIncluded
-pure def finalizedRead(m: MonthLock, by: int): MonthLock = { ...m, phase: LockIdle, shownLocked: m.locked }
 ```
 
 ### Rules

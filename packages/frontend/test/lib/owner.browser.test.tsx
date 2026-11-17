@@ -7,6 +7,7 @@ import { type Hex, encodeAbiParameters, encodeFunctionData, encodeFunctionResult
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PoolFacts } from "../../gen/frontend__projections.ts";
+import { unreadLocks } from "../../src/kernels/poolFunding.ts";
 import { WalletChoice, walletChoiceServices } from "../../src/wallets/core/discovery.vibe";
 import { connectEvm } from "../../src/wallets/core/evm.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
@@ -31,7 +32,7 @@ const batchKey = `slop:vault-action:v1:base-mainnet:${tokenVault.vault}:${tokenV
 const provisionalKey = `slop:vault-action:v1:base-mainnet:provisional:${tokenVault.vault}`;
 const actor = 4242;
 const zero = [0];
-const quietPool: PoolFacts = { read: "PoolCurrent", monthlyPool: false, period: 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false };
+const quietPool: PoolFacts = { read: "PoolCurrent", monthlyPool: false, period: 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false, pledgeSupport: false, pledged: zero };
 const hash = (byte: string) => `0x${byte.repeat(64)}`;
 const quantity = (value: bigint) => `0x${value.toString(16)}`;
 
@@ -169,7 +170,7 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const connection = yield* connected;
       const page = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* page.follow(actor);
-      yield* page.review("Transfer", 0n, quietPool);
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks);
       let savedBeforePrompt: string | null = null;
       const sent = yield* page.submit("Transfer", (beforePrompt) =>
         sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", (plan) => Effect.tap(beforePrompt(plan), () => Effect.sync(() => { savedBeforePrompt = sessionStorage.getItem(keys.transfer); }))));
@@ -195,13 +196,13 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const connection = yield* connected;
       const first = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* first.follow(actor);
-      yield* first.review("Transfer", 0n, quietPool);
+      yield* first.review("Transfer", 0n, quietPool, unreadLocks);
       const send = (page: typeof first) => Effect.match(page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt)), { onFailure: (error) => error._tag, onSuccess: () => "sent" });
       const unclear = yield* send(first);
       const reloaded = yield* ownerVaultPage(sessionSlots(), keys, true);
       const other = yield* reloaded.follow(actor + 1);
       const same = yield* reloaded.follow(actor);
-      const resend = yield* Effect.match(reloaded.review("Transfer", 0n, quietPool), { onFailure: (error) => error._tag, onSuccess: (state) => state.transfer.phase });
+      const resend = yield* Effect.match(reloaded.review("Transfer", 0n, quietPool, unreadLocks), { onFailure: (error) => error._tag, onSuccess: (state) => state.transfer.phase });
       const unsent = yield* reloaded.confirmUnsent("Transfer");
       return { unclear, otherPhase: other.transfer.phase, samePhase: same.transfer.phase, resend, afterConfirm: [unsent.transfer.phase, sessionStorage.getItem(keys.transfer)], sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
     }));

@@ -34,6 +34,7 @@ Slopbot review remains free.
 - [Points disputes triage](./pointsDisputes.md)
 - [Private reporting refresh runs and repository access](./reportingReadiness.md)
 - [Public Slopbot feeds](./publicFeeds.md)
+- [Value intake history inspection](./intakeHistory.md)
 
 The shell verifies GitHub events, repository identity, exact source, current
 roles, isolation and provider receipts. These models never establish model

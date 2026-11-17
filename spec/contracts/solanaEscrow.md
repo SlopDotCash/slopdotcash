@@ -408,18 +408,18 @@ pure def capFor(p: Program, period: int, pledgeAccount: bool): int =
   val cap = if (p.monthlyEnabled) p.monthlyCap else 0
   val x = namedPledge(p, period, pledgeAccount)
   if (x.open and x.amount > cap) x.amount else cap
-pure def closeNamed(p: Program, period: int, pledgeAccount: bool): Program =
-  if (pledgeAccount) closePledge(p, period) else p
+pure def closeNamed(period: int, p: Program, pledgeAccount: bool): Program =
+  if (pledgeAccount) closePledge(period, p) else p
 pure def canCommitMonthly(p: Program, period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
   pledgeAccount: bool): bool =
   live(p) and p.purpose == L::Ordinary and (p.monthlyEnabled or namedPledge(p, period, pledgeAccount).open)
     and L::inWindow(period, p.now) and frozenAt >= L::opensAt(period) and frozenAt <= p.now
     and total > 0 and total <= capFor(p, period, pledgeAccount)
-    and free(p) >= total and p.vaultAmount >= held(p) + total and total <= unpledged(closeNamed(p, period, pledgeAccount))
+    and free(p) >= total and p.vaultAmount >= held(p) + total and total <= unpledged(closeNamed(period, p, pledgeAccount))
     and attested and not(hasMonth(p.months, period)) and (pledgeAccount implies p.pledges.some(x => x.period == period))
 pure def commitMonthly(p: Program, period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
   pledgeAccount: bool): Program =
-  val c = closeNamed(p, period, pledgeAccount)
+  val c = closeNamed(period, p, pledgeAccount)
   { ...c, reserved: c.reserved + total, monthlyOutstanding: c.monthlyOutstanding + total,
     months: c.months.append({ ...noSolMonth, period: period, root: root, total: total, frozenAt: frozenAt,
       cap: capFor(p, period, pledgeAccount), leaves: leaves }) }
@@ -576,13 +576,13 @@ the EVM vault. The amount stays as a record and returns to the owner's
 unpledged free funds.
 
 ```quint
-pure def closePledge(p: Program, period: int): Program =
+pure def closePledge(period: int, p: Program): Program =
   val x = pledgeOf(p, period)
   if (x.open) { ...p, pledged: p.pledged - x.amount,
     pledges: p.pledges.listMap(y => if (y.period == period) { ...y, open: false } else y) } else p
 pure def canExpirePledge(p: Program, period: int): bool =
   live(p) and pledgeOf(p, period).open and (hasMonth(p.months, period) or p.now >= L::closesAt(period))
-pure def expirePledge(p: Program, period: int): Program = closePledge(p, period)
+pure def expirePledge(p: Program, period: int): Program = closePledge(period, p)
 pure val weight_expirePledge = 15
 ```
 

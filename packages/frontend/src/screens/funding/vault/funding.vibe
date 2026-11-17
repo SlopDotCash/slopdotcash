@@ -10,6 +10,7 @@ import { zero } from "../../../../gen/settlement__money.ts"
 import { type ChainResult, Machine as MonthlyMachine } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
 import { Machine as ReadMachine } from "../../../../gen/frontend__requests.effect.vibe"
 import { networkLabel } from "../../../kernels/assetText.ts"
+import { unreadLocks } from "../../../kernels/poolFunding.ts"
 import { untilTime } from "../../../platform/clock.vibe"
 import { browserServices } from "../../../platform/layer.vibe"
 import { type VaultTotals, projectVaultReads } from "../../../reads/payments.vibe"
@@ -100,7 +101,7 @@ const shared = Layer.provideMerge(walletChoiceServices, browserServices)
 const memo = Layer.makeMemoMapUnsafe()
 
 function unreadPool(monthlyPool: boolean, period: string): PoolFacts {
-  return { read: "PoolLoading", monthlyPool, period: parsePeriod(period) ?? 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false }
+  return { read: "PoolLoading", monthlyPool, period: parsePeriod(period) ?? 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false, pledgeSupport: false, pledged: zero }
 }
 
 function deskOf(project: FundingProject, deployment: FundingDeployment, period: string) {
@@ -241,12 +242,12 @@ export effect function reviewAction(connection: Connection, operation: "deposit"
   if (connection.family === "solana") {
     if (solana === undefined) throw stopped(fundingMessages.unsupported)
     const funding = try reviewFunding(solana, connection.solana, operation, amount)
-    try page.review("Transfer", operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts)
+    try page.review("Transfer", operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts, unreadLocks)
     return { kind: "solana", funding } satisfies ActionReview
   }
   if (evm === undefined) throw stopped(fundingMessages.unsupported)
   const review = try reviewTransfer(connection.evm, evm, operation, amount, "finalized")
-  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, facts)
+  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, facts, unreadLocks)
   let offered = false
   if (review.batch) offered = (try batch.review(account, review)).phase === "Offered"
   return { kind: "evm", review, batch: offered } satisfies ActionReview

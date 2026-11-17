@@ -58,8 +58,8 @@ function routeCall(call: ModelCall): CallRecord {
 
 function denialOf(call: ModelCall, resetAt: number): Denial {
   const at = resetAt > 0 ? clockAt(resetAt) : 0;
-  if (call.provider === "OrbioSonnet") return { source: "OrbioFailure", resetAt: at };
-  return { source: call.outcome === "CallBudgetDenied" ? "SurplusSpendingDenial" : "SurplusOtherFailure", resetAt: at };
+  if (call.provider === "OrbioSonnet") return { source: "OrbioFailure", resetAt: at, orbioServed: false };
+  return { source: call.outcome === "CallBudgetDenied" ? "SurplusSpendingDenial" : "SurplusOtherFailure", resetAt: at, orbioServed: false };
 }
 
 async function opened(route: Route) {
@@ -118,6 +118,9 @@ async function dispatch(event: Event) {
     }
     case "finish":
       return settled(completeAttempt(held, {}, event.unreviewed), runtime);
+    case "admitMonthly":
+    case "refuseMonthlyCap":
+      return "refused" as const;
   }
 }
 

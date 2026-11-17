@@ -132,12 +132,13 @@ pure def sometimesReinstatementReviewRequested(m: Moderation): bool = m.items.so
 The payout exception goes to the project's
 [payout audience](./payoutAudience.md) (its steward, or the account that
 listed the project when the steward is a GitHub Organization), which the
-monthly job passes as `steward`. It is keyed by project and month, without a
-time, so a coordinator retry never adds a second row. Each committed owner
-cut is keyed by its sequence and reaches the contributor whose amount was
-cut; a refused cut writes nothing.
+monthly job passes as `steward`: `payoutRecipient` of the project. It is
+keyed by project and month, without a time, so a coordinator retry never
+adds a second row. Each committed owner cut is keyed by its sequence and
+reaches the contributor whose amount was cut; a refused cut writes nothing.
 
 ```quint
+import payoutAudience as PA from "./payoutAudience"
 pure def underfundedKey(project: int, period: int): Key = { ...noKey, kind: MonthlyUnderfunded, project: project, period: period }
 pure def cutKey(project: int, period: int, sequence: int): Key =
   { ...noKey, kind: MonthlyCut, project: project, period: period, sequence: sequence }
@@ -154,6 +155,12 @@ pure def noteCut(m: Moderation, by: int, project: int, period: int, sequence: in
 pure def alwaysOneUnderfundedRowPerMonth(m: Moderation): bool = m.items.every(i => i.key.kind == MonthlyUnderfunded implies
   m.items.select(o => o.key == i.key).length() == 1)
 pure def sometimesUnderfundedRetried(m: Moderation): bool = m.items.some(i => i.key.kind == MonthlyUnderfunded)
+pure def lawUnderfundedGoesToPayoutRecipient(payout: PA::PayoutProject): bool =
+  val payee = PA::payoutRecipient(payout)
+  payee > 0 implies (canNoteUnderfunded(initial, monthlyJob, 1, 1, payee)
+    and has(noteUnderfunded(initial, monthlyJob, 1, 1, payee), underfundedKey(1, 1), payee)
+    and PA::inPayoutAudience(payout, payee))
+pure val payoutValues = PA::projectValues
 ```
 
 ## Story: A moderator reads only what current authority allows and records each decision with a reason

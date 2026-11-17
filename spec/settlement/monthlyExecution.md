@@ -17,10 +17,15 @@ every published [monthly allocation](./monthly.md); each row is one
 
 A row is published once a month's authorization is signed. It is pending,
 submitted to the executor, or complete. A completed row never changes, and
-every step touches at most one row.
+every step touches at most one row. The publisher refuses a month unless the
+frozen run's own vault holds a stored pledge for it above zero or the
+project's automatic default is on, as [month pledges](./monthPledges.md)
+"Publication, a newer attempt and on-chain admission need a pledge in the
+run's own vault or the automatic default on" requires (`runConsent`).
 
 ```quint
 import monthly as Mo from "./monthly"
+import monthPledges as P from "./monthPledges"
 type RowPhase = Pending | Submitted | Complete
 type Row = { key: int, project: int, period: int, network: int, vault: int, v2: bool,
   lastAttempt: int, phase: RowPhase, invalidated: bool, height: int, attempts: int }
@@ -28,10 +33,13 @@ type Execution = { rows: List[Row], now: int, ordinaryRun: List[int], prerequisi
 pure val batchLimit = 50
 pure val initial: Execution = { rows: List(), now: 0, ordinaryRun: List(), prerequisiteRun: List(), reverts: 0, touched: 0 }
 pure def hasRow(e: Execution, key: int): bool = e.rows.some(r => r.key == key)
-pure def canPublish(e: Execution, key: int, project: int, period: int, network: int, vault: int, v2: bool, by: str): bool =
+pure def canPublish(e: Execution, key: int, project: int, period: int, network: int, vault: int,
+    runVaultPledged: bool, automatic: bool, v2: bool, by: str): bool =
   by == "scheduler" and key > 0 and project > 0 and Mo::validPeriod(period) and network > 0 and vault > 0 and not(hasRow(e, key))
     and not(e.rows.some(r => r.project == project and r.period == period and r.network == network))
-pure def publish(e: Execution, key: int, project: int, period: int, network: int, vault: int, v2: bool, by: str): Execution =
+    and P::runConsent(runVaultPledged, automatic)
+pure def publish(e: Execution, key: int, project: int, period: int, network: int, vault: int,
+    runVaultPledged: bool, automatic: bool, v2: bool, by: str): Execution =
   { ...e, touched: key, rows: e.rows.append({ key: key, project: project, period: period, network: network, vault: vault, v2: v2,
     lastAttempt: 0, phase: Pending, invalidated: false, height: 0, attempts: 0 }) }
 pure def alwaysOneRowPerMonth(e: Execution): bool = e.rows.every(r => r.key > 0
