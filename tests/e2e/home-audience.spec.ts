@@ -15,6 +15,8 @@ test("journey labels retain readable contrast while switching with motion", asyn
     await page
       .getByRole("button", { name, exact: true })
       .evaluate(async (button) => {
+        if (!(button instanceof HTMLButtonElement))
+          throw new Error("The journey control must be a button");
         // Flush the old style before the rendered control changes it.
         getComputedStyle(button).color;
         button.click();
@@ -135,7 +137,8 @@ test("the homepage journey survives reload and browser history without dropping 
     "href",
     "https://slop.cash/",
   );
-  await page.mouse.wheel(0, -10_000);
+  // Opposite wheel packets can share a native scroll sequence on macOS.
+  await page.keyboard.press("Home");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await page.getByRole("button", { name: "Contributor", exact: true }).click();
   await expect(page).toHaveURL(/\/\?period=lifetime#projects$/u);
