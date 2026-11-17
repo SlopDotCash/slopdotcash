@@ -9,7 +9,8 @@
   "include": [
     "vibestack",
     "gen/*.ts",
-    "formal/check.ts"
+    "formal/check.ts",
+    "formal/catalog.ts"
   ],
   "exclude": [
     "vibestack/examples",
