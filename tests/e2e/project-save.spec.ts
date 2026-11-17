@@ -555,6 +555,9 @@ for (const boundary of ["departure", "actor-change"] as const) {
           .getByRole("link", { name: "Slop home", exact: true })
           .click();
         await expect(description).toHaveCount(0);
+        // Finish the destination's independent reads before navigating back;
+        // only the old publication response is deliberately held in this case.
+        await page.waitForLoadState("networkidle");
         await page.goBack();
       } else {
         // The real fixture changes both its session response and the actor

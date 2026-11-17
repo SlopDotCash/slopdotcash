@@ -224,7 +224,10 @@ test("an invalid admin scope explains its range and recovers before saving", asy
       name: "Approved scope",
       exact: true,
     });
-    const original = await scope.inputValue();
+    const approvedScope =
+      "Maintain the project's published integration branch.";
+    await scope.fill(approvedScope);
+    await expect(save).toBeEnabled();
     await scope.fill("tiny");
     await expect(scope).toHaveAttribute("aria-invalid", "true");
     await expect(save).toBeDisabled();
@@ -233,7 +236,7 @@ test("an invalid admin scope explains its range and recovers before saving", asy
       page.getByText("6–2000 characters", { exact: true }),
     ).toBeVisible();
     await expectAccessibleReflow(page, "admin-scope-range-error");
-    await scope.fill(original);
+    await scope.fill(approvedScope);
     await expect(scope).not.toHaveAttribute("aria-invalid", "true");
     await expect(save).toBeEnabled();
     await expect(
@@ -243,7 +246,7 @@ test("an invalid admin scope explains its range and recovers before saving", asy
     await save.click();
     await expect.poll(() => fixture.saves.length).toBe(1);
     expect(fixture.saves[0].manifest.contribution?.approvedScope).toBe(
-      original,
+      approvedScope,
     );
   } finally {
     fixture.releaseSave();

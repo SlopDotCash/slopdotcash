@@ -735,7 +735,10 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     },
   );
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards", exact: true })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   await selectAwardMonth(page, "2026-09");
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
@@ -752,7 +755,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("owner's wallet");
   await ownerActions
@@ -763,7 +766,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await expect(
     ownerActions.getByRole("region", {
@@ -778,7 +781,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   });
   rejected = true;
   await ownerActions
-    .getByRole("button", { name: "Authorize this award in wallet" })
+    .getByRole("button", { name: "Reserve in wallet", exact: true })
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(4);
@@ -790,19 +793,18 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   holdRejectedSend = true;
   await ownerActions
-    .getByRole("button", { name: "Authorize this award in wallet" })
+    .getByRole("button", { name: "Reserve in wallet", exact: true })
     .click();
   await expect.poll(() => heldRejectedSendStarted).toBe(true);
   await page.getByRole("link", { name: "Slop home", exact: true }).click();
   await expect(ownerActions).toHaveCount(0);
   await page.goBack();
   await expect(ownerActions).toBeVisible();
-  await ownerActions
-    .getByText("Wallet confirms nothing was sent", { exact: true })
-    .click();
+  await ownerActions.getByText("Nothing was sent?", { exact: true }).click();
   await ownerActions
     .getByRole("button", {
-      name: "I checked my wallet; this request was not sent",
+      name: "Not sent — clear",
+      exact: true,
     })
     .click();
   rejected = false;
@@ -812,14 +814,12 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Authorize this award in wallet" })
+    .getByRole("button", { name: "Reserve in wallet", exact: true })
     .click();
-  await expect(ownerActions.getByRole("alert")).toContainText(
-    "wallet result is unclear",
-  );
+  await expect(ownerActions.getByRole("alert")).toContainText("Result unclear");
   expect(sends).toHaveLength(5);
   const commitmentKey =
     "slop:award-commitment:v2:eliza:2026-09:base-sepolia:1234";
@@ -847,7 +847,10 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "/api/v1/payments/projects/eliza/monthly/2026-09",
   );
   await page.reload();
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards", exact: true })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   await selectAwardMonth(page, "2026-09");
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
@@ -858,22 +861,25 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect(
     ownerActions.getByRole("button", {
-      name: "Authorize this award in wallet",
+      name: "Reserve in wallet",
+      exact: true,
     }),
   ).toHaveCount(0);
   expect(reviewReads).toBe(2);
   expect(diagnostics.count(unavailableReview)).toBe(1);
-  await ownerActions.getByLabel("Commitment transaction hash").fill(sends[1]);
+  await ownerActions
+    .getByLabel("Transaction hash", { exact: true })
+    .fill(sends[1]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
   await expect(ownerActions.getByRole("alert")).toContainText(
     "does not match the pending wallet action",
   );
-  await ownerActions.getByLabel("Commitment transaction hash").fill(sends[4]);
+  await ownerActions
+    .getByLabel("Transaction hash", { exact: true })
+    .fill(sends[4]);
   await rpc("anvil_mine", ["0x40"]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
-  await expect(ownerActions.getByRole("status")).toContainText(
-    "Award reserved on the finalized chain",
-  );
+  await expect(ownerActions.getByRole("status")).toContainText("Reserved");
   const counters = parseAbi([
     "function reservedPrincipal() view returns (uint128)",
     "function reservedFees() view returns (uint128)",
@@ -895,7 +901,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     ).toBe(expected);
   }
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText(
     "already committed",
@@ -1628,12 +1634,11 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
     await expect(setup).toHaveCount(0);
     await page.goBack();
-    await setup
-      .getByText("Wallet confirms nothing was sent", { exact: true })
-      .click();
+    await setup.getByText("Nothing was sent?", { exact: true }).click();
     await setup
       .getByRole("button", {
-        name: "I checked my wallet; this request was not sent",
+        name: "Not sent — clear",
+        exact: true,
       })
       .click();
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
@@ -1666,7 +1671,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     // The original tab keeps the interrupted request and offers no second send.
     await expect(setup.getByLabel("Creation transaction hash")).toHaveValue("");
     await expect(
-      setup.getByText("Wallet confirms nothing was sent"),
+      setup.getByText("Nothing was sent?", { exact: true }),
     ).toBeVisible();
     await expect(
       setup.getByRole("button", { name: "Create vault in wallet" }),
