@@ -10,6 +10,14 @@ Deep value, quality and recovery detail lives in the modules named below and in
 [`QUALITY.md`](QUALITY.md). Do not treat older narrative in git history as
 current behavior.
 
+The production config declares `limits.cpu_ms = 300000`, a CPU ceiling per
+invocation on Workers Paid with Standard usage. Cloudflare enforces it on its
+network. It applies to HTTP and queue work, including historical validation;
+the cron that runs every five minutes retains its platform 30-second CPU cap.
+Network waits and wall-time caps are separate. After a protected release,
+verify the 100% active version, `cpu_ms = 300000`, Standard usage and a supported
+plan before retrying an import. This budget does not guarantee completion.
+
 ## Flow
 
 1. **Webhook.** `POST /github/webhook` verifies `X-Hub-Signature-256`, records
