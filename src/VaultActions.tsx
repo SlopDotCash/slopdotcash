@@ -34,7 +34,6 @@ import {
   updatePendingRecord,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
-import { receivedNotice } from "./lib/vault-auto-register";
 import {
   checkSolanaVaultAction,
   reviewSolanaVaultAction,
@@ -44,6 +43,7 @@ import {
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
+import { receivedNotice } from "./lib/vault-auto-register";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 import { PendingWalletCheck } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
