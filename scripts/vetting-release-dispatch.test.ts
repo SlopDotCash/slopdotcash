@@ -28,7 +28,19 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 const path = process.env.DISPATCH_STATE;
 const state = JSON.parse(fs.readFileSync(path, "utf8"));
+const refuse = (key, message) => {
+ if((state[key] ?? 0) <= 0) return false;
+ state[key] -= 1;
+ fs.writeFileSync(path, JSON.stringify(state));
+ console.error(message);
+ process.exit(1);
+};
+if(args[0] === "api" && args[1] === "rate_limit") {
+ process.stdout.write(String(Math.floor(Date.now() / 1000) - 10));
+ process.exit(0);
+}
 if(args[0] === "api") {
+ if(args[1].includes("commits/heads/")) refuse("serverErrors", "HTTP 502: Bad Gateway (https://api.github.com/" + args[1] + ")");
  if(args.includes("--slurp") && (args.includes("--jq") || args.includes("--template"))) {
   console.error("the --slurp option is not supported with --jq or --template");
   process.exit(1);
@@ -52,6 +64,7 @@ if(args[0] === "api") {
  const ref = args[args.indexOf("--branch") + 1];
  process.stdout.write(state.active.includes(ref) ? "1" : "0");
 } else if(args[0] === "workflow" && args[1] === "run") {
+ refuse("rateLimited", "HTTP 403: API rate limit exceeded for installation.");
  if(state.failDispatch) process.exit(8);
  state.queued.push(args[args.indexOf("--ref") + 1]);
  fs.writeFileSync(path, JSON.stringify(state));
@@ -76,6 +89,25 @@ test.skipIf(process.platform === "win32")(
         exit: 8,
       },
       {
+        name: "dispatch waits out a spent quota",
+        ref: "main",
+        rateLimited: 2,
+        queue: ["main"],
+      },
+      {
+        name: "quota still spent after the budget",
+        ref: "main",
+        rateLimited: 99,
+        queue: [],
+        exit: 1,
+      },
+      {
+        name: "server error retried",
+        ref: "main",
+        serverErrors: 1,
+        queue: ["main"],
+      },
+      {
         name: "cron backstop",
         ref: "main",
         cron: true,
@@ -98,6 +130,8 @@ test.skipIf(process.platform === "win32")(
             deployed: scenario.skipped ? [] : [17, 18],
             active: scenario.active ? ["main"] : [],
             failDispatch: scenario.rejected ?? false,
+            rateLimited: scenario.rateLimited ?? 0,
+            serverErrors: scenario.serverErrors ?? 0,
             queued: [],
           }),
         );
@@ -108,6 +142,8 @@ test.skipIf(process.platform === "win32")(
             ...process.env,
             PATH: `${root}${delimiter}${process.env.PATH}`,
             DISPATCH_STATE: state,
+            SCAN_DISPATCH_MIN_WAIT: "0",
+            SCAN_DISPATCH_WAIT_BUDGET: "0",
             GITHUB_REPOSITORY: "example/slop",
             TRIGGER_EVENT: scenario.cron ? "schedule" : "workflow_run",
             RELEASE_REF: scenario.ref,
