@@ -31,6 +31,7 @@ import {
   loopbackCommand,
   manifestFor,
   productionCommand,
+  rendered,
   requestLines,
   reviewSkill,
   reviewerTemplate,
@@ -578,9 +579,8 @@ function generatedFixture(label: string, notes = "Prefer small PRs.", revision =
   const root = freshRoot(label);
   const manifest = manifestFor(notes);
   const binding = publishRevision(root, manifest, revision);
-  const { rendered, artifact } = generatedArtifact(root, manifest, binding);
-  const authority = generatedAuthority(root);
-  return { root, manifest, binding, rendered, artifact, authority, installRoot: join(root, "install") };
+  const generated = generatedArtifact(root, manifest, binding);
+  return { root, manifest, binding, rendered: generated.rendered, artifact: generated.artifact, authority: generatedAuthority(root), installRoot: join(root, "install") };
 }
 
 function installedFiles(directory: string, files: Readonly<Record<string, Buffer>>): void {
@@ -593,10 +593,10 @@ export function everyIntegrationBranchInstallsTheServerRendering(): void {
     const root = freshRoot("generated-branch");
     const manifest = manifestFor("Use the selected integration branch.", branch);
     const binding = publishRevision(root, manifest, 3);
-    const { rendered, artifact } = generatedArtifact(root, manifest, binding);
+    const generated = generatedArtifact(root, manifest, binding);
     const installRoot = join(root, "install");
-    succeeded(run(generatedCommand(fileOrigin(artifact), generatedAuthority(root), root), installRoot));
-    installedFiles(join(skillsDirectory(installRoot), generatedSkill), rendered);
+    succeeded(run(generatedCommand(fileOrigin(generated.artifact), generatedAuthority(root), root), installRoot));
+    installedFiles(join(skillsDirectory(installRoot), generatedSkill), generated.rendered);
   }
 }
 
@@ -723,7 +723,7 @@ export async function thePublicationRouteArchiveInstalls(): Promise<void> {
     const installRoot = join(root, "install");
     succeeded(run(generatedCommand(served.origin, generatedAuthority(root), root), installRoot));
     expect(currentLink(installRoot, generatedSkill)).toBe(versionLink(`${revisionA}-r5`, generatedSkill));
-    installedFiles(join(skillsDirectory(installRoot), generatedSkill), generatedArtifact(root, manifest, binding).rendered);
+    installedFiles(join(skillsDirectory(installRoot), generatedSkill), rendered(manifest, binding));
   } finally {
     await served.close();
   }

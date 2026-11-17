@@ -1,0 +1,1825 @@
+// spec/contributor/publication.md, "Story: Serve a project's skills only while it is listed and cleared"; spec/contributor/traceServer.md, "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes"; spec/contributor/artifactTransport.md, "Story: Fetch evidence without leaking the credential or accepting partial documents"
+import { assert, it, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex as digestOf, webCrypto } from "@repo/platform/crypto"
+import { sql } from "@repo/platform/d1"
+import { outboundVia } from "@repo/platform/http"
+import { repoRoot } from "@repo/platform/testing/paths"
+import { workerBuild } from "@repo/platform/vite"
+import { type ProjectView, Registry } from "@repo/ports/backend"
+import { EvidenceArtifacts, type VerificationPurpose } from "@repo/ports/contributor"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { createBuilder } from "vite"
+import { SKILL_AUTHORITY_PYTHON } from "../../../skills/project-contributor-template/scripts/skill-authority.mjs"
+import { incompleteDocumentDetail } from "../src/artifacts/media.ts"
+import { evidenceArtifacts } from "../src/artifacts/live.vibe"
+import { requiredEvidenceRows } from "../src/artifacts/policy.ts"
+import { IDENTITY_RECORD, SIGNED_ATTRIBUTION_MARKER, identityRecordText, validateIdentityRecord } from "../src/client/identity/record.schema.ts"
+import { type ReceiptPolicyProject, type ReceiptRegistry, joinPolicy, markerOf, parseRunMarker } from "../src/client/receipts/receipt.ts"
+import { verifyRunReceipt } from "../src/client/receipts/verify.vibe"
+import { storedZip } from "../src/render/archive.ts"
+import { type Role, templatePaths } from "../src/render/fields.ts"
+import { type GuideRequest, installClients, renderInstallGuide } from "../src/render/installGuide.ts"
+import { type InstallerAuthority, type InstallerText, createInstallCommand, productionAuthority } from "../src/render/installerProgram.ts"
+import { type Publication, buildProjectPublication } from "../src/render/publication.ts"
+import { type Rendered, type SkillFile, comparePaths, generatedSkillName, renderProjectSkill } from "../src/render/render.ts"
+import { type TemplateGroup, type TemplateIndex, acceptedRevisions, decodeTemplateIndex, guideRendererPaths, maxTemplateFileBytes, rendererSourcePaths, sha256Hex, sourceRepository, templateFilePath, templateGroup, templateSha256, verifyTemplateFiles } from "../src/render/templateIndex.ts"
+import { git, regularFiles, utf8Bytes, utf8Text } from "../src/site/sources.vibe"
+import { objectKey } from "../src/traces/objects.vibe"
+import { commentOnlyScreenshot, compressedPixels, concatenated, emptyIdat, gifDeltaOffset, largeScreenshot, longLog, png, pngChunk, recordedGif, screenshot, serverLog, withCorruptCrc, writeLittle16 } from "./fixtures/artifacts/media.ts"
+import { type Seen as Fetched, answering, artifactNetwork, cdnUrl, dropped, redirecting, serving, unavailableFirst, uploadUrl } from "./fixtures/artifacts/network.ts"
+import { bytesOf, manifestOf as receiptManifestOf, reparsed, retained, signedByFreshDevice } from "./fixtures/receipts/historical.ts"
+import { type Answer, type Call, type Site, author, other, startSite } from "./support/harness.ts"
+
+module node {
+  import { spawnSync } from "node:child_process"
+  import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+  import { tmpdir } from "node:os"
+  import { dirname, join } from "node:path"
+  export interface Run { readonly status: number | null; readonly stdout: string; readonly stderr: string }
+  function listed(root: string, prefix: string): string[] {
+    return readdirSync(join(root, prefix)).flatMap((name) => {
+      const path = prefix === "" ? name : `${prefix}/${name}`
+      const stats = lstatSync(join(root, path))
+      if (stats.isSymbolicLink() || !(stats.isDirectory() || stats.isFile())) throw new TypeError(`${root}/${path} is not a regular file`)
+      return stats.isDirectory() ? listed(root, path) : [path]
+    })
+  }
+  /** @throws {Error} */
+  export function repositoryBytes(root: string, path: string): Uint8Array {
+    return new Uint8Array(readFileSync(join(root, path)))
+  }
+  /** @throws {Error} */
+  export function treeFiles(root: string, directory: string): Array<{ path: string; bytes: Uint8Array }> {
+    return listed(join(root, directory), "").map((path) => ({ path, bytes: new Uint8Array(readFileSync(join(root, directory, path))) }))
+  }
+  /** @throws {never} */
+  export function base64(bytes: Uint8Array): string {
+    return Buffer.from(bytes).toString("base64")
+  }
+  /** @throws {Error} */
+  export function python(program: string, input: unknown): unknown {
+    const run = spawnSync("python3", ["-I", "-B", "-c", program], {
+      input: JSON.stringify(input),
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "" },
+      maxBuffer: 256 * 1024 * 1024,
+    })
+    if (run.error !== undefined) throw run.error
+    if (run.status !== 0) throw new Error(`python3 exited ${run.status}: ${run.stderr}`)
+    return JSON.parse(run.stdout)
+  }
+  /** @throws {Error} */
+  export function runNode(root: string, args: ReadonlyArray<string>, input: string): Run {
+    const run = spawnSync(process.execPath, [...args], { cwd: root, input, encoding: "utf8", env: { PATH: process.env.PATH ?? "" }, maxBuffer: 64 * 1024 * 1024 })
+    if (run.error !== undefined) throw run.error
+    return { status: run.status, stdout: run.stdout, stderr: run.stderr }
+  }
+  /** @throws {Error} */
+  export function siteDirectory(files: ReadonlyArray<{ readonly path: string; readonly bytes: Uint8Array }>): string {
+    const directory = mkdtempSync(join(tmpdir(), "slop-publication-"))
+    for (const file of files) {
+      mkdirSync(dirname(join(directory, file.path)), { recursive: true })
+      writeFileSync(join(directory, file.path), file.bytes)
+    }
+    return directory
+  }
+  /** @throws {never} */
+  export function removeDirectory(directory: string): void {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles } from node
+
+const frozenTemplateSha256 = "3c0d93f9fc6b574e09422b89c1fa312ccae9926fdc1e104ec933e4e1b8a0c476"
+const frozenCommit = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function templateTree(role: Role) {
+  const files = (try orDie(Effect.try(() => treeFiles(repoRoot, templatePaths[role])))).sort((left, right) => comparePaths(left.path, right.path))
+  const result = templateGroup(role, files)
+  if (result.kind !== "group") return try die(new Error(`${templatePaths[role]} is not a bounded template tree`))
+  return { files, group: result.group }
+}
+
+effect function frozenInputs() {
+  const contributor = try templateTree("contributor")
+  const reviewer = try templateTree("reviewer")
+  const sources = [] as Array<{ path: string; sha256: string }>
+  for (const path of rendererSourcePaths) sources.push({ path, sha256: sha256Hex(try orDie(Effect.try(() => repositoryBytes(repoRoot, path)))) })
+  return { contributor, reviewer, sources }
+}
+
+function indexText(contributor: TemplateGroup, reviewer: TemplateGroup, sources: ReadonlyArray<{ path: string; sha256: string }>, digest: string) {
+  return `${JSON.stringify({
+    schemaVersion: "1",
+    repository: sourceRepository,
+    commit: frozenCommit,
+    templateSha256: digest,
+    revisionStatus: "committed",
+    contributor,
+    reviewer,
+    renderer: { paths: guideRendererPaths, sources, revisionStatus: "committed" },
+    acceptedRevisions,
+  }, null, 2)}\n`
+}
+
+effect function frozenTemplates() {
+  const { contributor, reviewer, sources } = try frozenInputs()
+  const text = indexText(contributor.group, reviewer.group, sources, templateSha256({ contributor: contributor.group, reviewer: reviewer.group, rendererSources: sources, acceptedRevisions }))
+  const decoded = decodeTemplateIndex(text)
+  if (decoded.kind !== "decoded") return try die(new Error(`the frozen template index does not decode: ${decoded.kind}`))
+  const fetched = new Map<string, Uint8Array>()
+  for (const tree of [contributor, reviewer]) {
+    for (const file of tree.files) fetched.set(templateFilePath(tree.group, { path: file.path, sha256: sha256Hex(file.bytes) }), file.bytes)
+  }
+  return { index: decoded.index, text, fetched }
+}
+
+const pythonPrelude = [
+  "import base64", "import hashlib", "import io", "import json", "import os", "import re", "import sys", "import unicodedata",
+  "import urllib.error", "import urllib.parse", "import urllib.request", "import zipfile", "from pathlib import PurePosixPath",
+].join("\n")
+
+const pythonRenderer = `${pythonPrelude}
+${SKILL_AUTHORITY_PYTHON}
+results = []
+for case in json.loads(sys.stdin.read()):
+    skill_repository_path = case["sourcePath"]
+    files = {path: base64.b64decode(data) for path, data in case["templateFiles"]}
+    try:
+        rendered = render_project_skill(case["role"], files, case["manifest"], case["binding"])
+        results.append({"files": [[path, base64.b64encode(data).decode("ascii")] for path, data in rendered.items()]})
+    except ValueError:
+        results.append({"refused": True})
+print(json.dumps(results))
+`
+
+const pythonArchive = `${pythonPrelude}
+archive = zipfile.ZipFile(io.BytesIO(base64.b64decode(sys.stdin.read().strip('"'))))
+print(json.dumps({
+    "bad": archive.testzip(),
+    "comment": archive.comment.decode("ascii"),
+    "entries": [[info.filename, info.compress_type, list(info.date_time), info.external_attr >> 16, info.flag_bits, info.extra.hex(), base64.b64encode(archive.read(info)).decode("ascii")] for info in archive.infolist()],
+}))
+`
+
+function renderManifest(id: string, repository: string, integrationBranch: string, text: string) {
+  return {
+    id,
+    skill: { id: generatedSkillName("contributor", id), publicPath: `/projects/${id}`, publishAtRoot: false, sourcePath: templatePaths.contributor },
+    reviewSkill: { id: generatedSkillName("reviewer", id), sourcePath: templatePaths.reviewer },
+    repositories: [{ id: repository, integrationBranch }],
+    contribution: {
+      approvedScope: `Fix reproduced defects in ${repository}. ${text}`,
+      contributionGuide: "Read CONTRIBUTING.md.\n\tFollow \"the guide\" and \\ escapes.",
+      supportedTasks: text,
+      requiredTests: "",
+      reviewExpectations: "Reviewers check {{SLOP_PROJECT_ID}} literally.",
+      securityContact: "security@example.org",
+      closurePolicy: "Maintainers close stale work after 30 days.",
+      maintainerNotes: "\u0000\u001f  kept as data 🧪",
+    },
+  }
+}
+
+const renderProjects = [
+  renderManifest("slopdotcash", "SlopDotCash/slopdotcash", "development", "Settlement and scoring only."),
+  renderManifest("eliza", "elizaOS/eliza", "develop", "Agents, plugins and 日本語 docs."),
+  renderManifest("darling-arm64", "darling-arm64/darling", "main", ""),
+  renderManifest("a", "o/r", "feature/x`y``z", "Backtick branches fence wider."),
+  renderManifest("feed", "feed-dev/feed.app", "release/{{SLOP_PROJECT_ID}}", "A branch that looks like a placeholder stays literal."),
+  renderManifest("payzcode-ai", "PayzCode/payzcode_ai", "`", "A branch that is one backtick."),
+]
+
+function asPairs(rendered: Rendered) {
+  return rendered.kind === "rendered" ? { files: rendered.files.map((file) => [file.path, base64(file.bytes)]) } : { refused: true }
+}
+
+function pythonCase(role: Role, files: ReadonlyArray<SkillFile>, project: unknown, revision: number, digest: string) {
+  const id = (project as { id: string }).id
+  return {
+    role,
+    sourcePath: templatePaths[role],
+    templateFiles: files.map((file) => [file.path, base64(file.bytes)]),
+    manifest: project,
+    binding: { projectId: id, revision, manifestSha256: digest },
+  }
+}
+
+it.effect('The frozen template tree keeps its clearance digest and the index binds it (spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template")', () => effect {
+  const { contributor, reviewer, sources } = try frozenInputs()
+  const digest = templateSha256({ contributor: contributor.group, reviewer: reviewer.group, rendererSources: sources, acceptedRevisions })
+  const text = indexText(contributor.group, reviewer.group, sources, digest)
+  const decoded = decodeTemplateIndex(text)
+  const moved = { ...reviewer.group, sourcePath: "skills/review-template" }
+  const carriesProject = { ...contributor.group, files: [...contributor.group.files, { path: "project.json", sha256: "0".repeat(64) }] }
+  const refusals = [
+    decodeTemplateIndex("{").kind,
+    decodeTemplateIndex(JSON.stringify({ schemaVersion: "1" })).kind,
+    decodeTemplateIndex(indexText(contributor.group, reviewer.group, sources, "0".repeat(64))).kind,
+    decodeTemplateIndex(indexText(contributor.group, moved, sources, digest)).kind,
+    decodeTemplateIndex(indexText(carriesProject, reviewer.group, sources, digest)).kind,
+    decodeTemplateIndex(indexText(contributor.group, reviewer.group, sources.slice(1), digest)).kind,
+    decodeTemplateIndex(indexText(contributor.group, reviewer.group, sources.map((source, n) => n === 0 ? { ...source, sha256: "0".repeat(64) } : source), digest)).kind,
+    templateGroup("contributor", [...contributor.files, { path: "PROVENANCE.json", bytes: encoder.encode("{}") }]).kind,
+    templateGroup("reviewer", Array.from({ length: 33 }, (_, n) => ({ path: `f${String(n).padStart(2, "0")}.md`, bytes: encoder.encode(String(n)) }))).kind,
+    templateGroup("reviewer", []).kind,
+  ]
+  try Effect.try(() => assert.deepStrictEqual(
+    { digest, decoded: decoded.kind === "decoded" ? decoded.index.templateSha256 : decoded.kind, rendererPaths: sources.map((source) => source.path), refusals },
+    {
+      digest: frozenTemplateSha256,
+      decoded: frozenTemplateSha256,
+      rendererPaths: [...rendererSourcePaths],
+      refusals: ["notJson", "invalidShape", "templateSha256Mismatch", "wrongTemplatePath", "unboundedTree", "wrongRendererSources", "templateSha256Mismatch", "unboundedTree", "unboundedTree", "unboundedTree"],
+    },
+  ))
+})
+
+it.effect('Only template bytes that match the index digest are rendered (spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest")', () => effect {
+  const { contributor } = try frozenInputs()
+  const group = contributor.group
+  const fetched = new Map(contributor.files.map((file) => [`${group.sourcePath}/${file.path}`, file.bytes]))
+  const verified = verifyTemplateFiles(group, fetched)
+  const first = group.files[0]
+  if (first === undefined) return try die(new Error("the contributor template has no files"))
+  const firstPath = templateFilePath(group, first)
+  const tampered = new Map(fetched)
+  tampered.set(firstPath, encoder.encode("tampered\n"))
+  const missing = new Map(fetched)
+  missing.delete(firstPath)
+  const large = new Uint8Array(maxTemplateFileBytes + 1)
+  const oversized = verifyTemplateFiles(
+    { sourcePath: group.sourcePath, files: [{ path: "SKILL.md", sha256: sha256Hex(large) }] },
+    new Map([[`${group.sourcePath}/SKILL.md`, large]]),
+  )
+  try Effect.try(() => assert.deepStrictEqual(
+    {
+      verified: verified.kind === "verified" ? verified.files.map((file) => [file.path, base64(file.bytes)]) : verified.kind,
+      tampered: verifyTemplateFiles(group, tampered),
+      missing: verifyTemplateFiles(group, missing),
+      oversized,
+    },
+    {
+      verified: contributor.files.map((file) => [file.path, base64(file.bytes)]),
+      tampered: { kind: "digestMismatch", path: firstPath },
+      missing: { kind: "missing", path: firstPath },
+      oversized: { kind: "tooLarge", path: `${group.sourcePath}/SKILL.md` },
+    },
+  ))
+})
+
+it.effect('The server and installer renderers produce identical bytes (spec/contributor/rendering.md, "The server renderer and the installer\'s Python renderer produce identical bytes for every committed template"; spec/contributor/rendering.md, "Substitution is one pass over the four published placeholders and any other SLOP placeholder refuses"; spec/contributor/skillRendering.md, "A maintainer note that would cross a template rule never takes effect"; spec/contributor/rendering.md, "A template that carries project.json or lacks SKILL.md, or a manifest that fails the field checks, refuses"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {
+  const trees = { contributor: (try templateTree("contributor")).files, reviewer: (try templateTree("reviewer")).files }
+  const digest = sha256Hex(encoder.encode("approved manifest text"))
+  const skill = (text: string) => [{ path: "SKILL.md", bytes: encoder.encode(text) }]
+  const cases = [
+    ...renderProjects.flatMap((project, n) => roles.map((role) => ({ role, files: trees[role], project, revision: n + 1 }))),
+    { role: "contributor" as Role, files: skill("Owner {{SLOP_OWNER}} of {{SLOP_PROJECT_ID}}\n"), project: renderProjects[0], revision: 1 },
+    { role: "contributor" as Role, files: skill("{{SLOP_ is not a token, `{{SLOP_INTEGRATION_BRANCH}}` is\n"), project: renderProjects[0], revision: 1 },
+    { role: "reviewer" as Role, files: skill("{{SLOP{{SLOP_PROJECT_ID}}_X\n"), project: renderProjects[1], revision: 2 },
+    { role: "reviewer" as Role, files: [...trees.reviewer, { path: "project.json", bytes: encoder.encode("{}\n") }], project: renderProjects[1], revision: 2 },
+    { role: "reviewer" as Role, files: [{ path: "README.md", bytes: encoder.encode("no skill\n") }], project: renderProjects[1], revision: 2 },
+    { role: "contributor" as Role, files: trees.contributor, project: renderManifest("bad-branch", "o/r", "a..b", ""), revision: 3 },
+    { role: "contributor" as Role, files: trees.contributor, project: { ...renderProjects[2], skill: { id: "contribute-to-other", sourcePath: templatePaths.contributor } }, revision: 3 },
+  ]
+  const server = cases.map(({ role, files, project, revision }) => renderProjectSkill({ role, templateFiles: files, manifest: project, registry: { revision, manifestSha256: digest } }))
+  const installer = try orDie(Effect.try(() => python(pythonRenderer, cases.map(({ role, files, project, revision }) => pythonCase(role, files, project, revision, digest)))))
+  const fenced = server[6]?.kind === "rendered" ? decoder.decode(server[6].files.find((file) => file.path === "SKILL.md")?.bytes) : ""
+  const literal = server[8]?.kind === "rendered" ? decoder.decode(server[8].files.find((file) => file.path === "SKILL.md")?.bytes) : ""
+  try Effect.try(() => {
+    assert.deepStrictEqual(server.map(asPairs), installer)
+    assert.deepStrictEqual(
+      { kinds: server.map((rendered) => rendered.kind), fenced: fenced.includes("``` feature/x`y``z ```"), literal: literal.includes("`release/{{SLOP_PROJECT_ID}}`") },
+      {
+        kinds: [...renderProjects.flatMap(() => roles.map(() => "rendered")), "refusedPlaceholder", "refusedPlaceholder", "refusedPlaceholder", "refusedTemplate", "refusedTemplate", "refusedManifest", "refusedManifest"],
+        fenced: true,
+        literal: true,
+      },
+    )
+  })
+})
+
+it.effect('The skill archive is a deterministic stored ZIP that Python reads back (spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision")', () => effect {
+  const { files } = try templateTree("contributor")
+  const rendered = renderProjectSkill({ role: "contributor", templateFiles: files, manifest: renderProjects[0], registry: { revision: 7, manifestSha256: "a".repeat(64) } })
+  if (rendered.kind !== "rendered") return try die(new Error(`the contributor template did not render: ${rendered.kind}`))
+  const name = generatedSkillName("contributor", "slopdotcash")
+  const entries = [
+    ...rendered.files.map((file) => ({ path: `${name}/${file.path}`, bytes: file.bytes })),
+    { path: `${name}/PROVENANCE.json`, bytes: encoder.encode("{\n  \"schemaVersion\": \"1\"\n}\n") },
+  ].reverse()
+  const archive = storedZip(entries)
+  const read = try orDie(Effect.try(() => python(pythonArchive, base64(archive))))
+  const sorted = [...entries].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+  try Effect.try(() => assert.deepStrictEqual(
+    { again: base64(storedZip([...entries].reverse())), read },
+    {
+      again: base64(archive),
+      read: {
+        bad: null,
+        comment: "",
+        entries: sorted.map((entry) => [entry.path, 0, [1980, 1, 1, 0, 0, 0], 0o100644, 0x0800, "", base64(entry.bytes)]),
+      },
+    },
+  ))
+})
+
+const frozenRenderer = "scripts/render-install-guide.mjs"
+
+const frozenInstallCommand = `
+import { createInstallCommand } from "./src/lib/install-command.ts"
+let input = ""
+for await (const chunk of process.stdin) input += chunk
+const results = JSON.parse(input).map(({ origin, skillsRoot, options }) => {
+  try {
+    return { kind: "text", text: createInstallCommand(origin, skillsRoot, options) }
+  } catch (error) {
+    return { kind: "refused", message: error.message }
+  }
+})
+process.stdout.write(JSON.stringify(results))
+`
+
+effect function frozenGuide(request: GuideRequest) {
+  return try orDie(Effect.try(() => runNode(repoRoot, [
+    frozenRenderer,
+    "--artifact-origin", request.artifactOrigin,
+    "--client", request.client,
+    "--skill", request.skillName,
+    "--source", request.skillRepositoryPath,
+  ], "")))
+}
+
+function asRun(request: GuideRequest): Run {
+  const guide = renderInstallGuide(request)
+  return guide.kind === "guide"
+    ? { status: 0, stdout: guide.text, stderr: "" }
+    : { status: 1, stdout: "", stderr: `[Slop] installer guide refused: ${guide.message}\n` }
+}
+
+function skillRequests(projectId: string): ReadonlyArray<Omit<GuideRequest, "client">> {
+  const artifactOrigin = `https://slop.cash/projects/${projectId}`
+  return roles.map((role) => ({ artifactOrigin, skillName: generatedSkillName(role, projectId), skillRepositoryPath: templatePaths[role] }))
+}
+
+const fixtureSkills = [
+  ...skillRequests("slopdotcash"),
+  ...skillRequests("eliza"),
+  ...skillRequests("a"),
+  ...skillRequests("x".repeat(43)),
+  { artifactOrigin: "https://slop.cash/projects/slop", skillName: "slop", skillRepositoryPath: "skills/slop" },
+]
+
+const refusedGuides: ReadonlyArray<GuideRequest> = [
+  { artifactOrigin: "https://slop.cash/projects/a", client: "cursor", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "codex", skillName: "Contribute", skillRepositoryPath: "skills/Contribute" },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "codex", skillName: "slop", skillRepositoryPath: "skills/other" },
+  { artifactOrigin: "http://slop.cash/projects/a", client: "manual", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a/", client: "manual", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "claude-code", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.reviewer },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "claude-code", skillName: generatedSkillName("reviewer", "y".repeat(44)), skillRepositoryPath: templatePaths.reviewer },
+]
+
+const testAuthorities: ReadonlyArray<InstallerAuthority> = [
+  productionAuthority,
+  { kind: "test", apiOrigin: "file:///tmp/slop-api/", rawOrigin: "file:///tmp/slop-raw" },
+  { kind: "test", apiOrigin: "http://127.0.0.1:8080", rawOrigin: "http://127.0.0.1:8081/", registryOrigin: "http://127.0.0.1:8082/", requestTimeoutSeconds: 0.5 },
+  { kind: "test", apiOrigin: "https://api.github.com", rawOrigin: "file:///tmp/slop-raw" },
+  { kind: "test", apiOrigin: "file:///tmp/slop-api", rawOrigin: "file:///tmp/slop-raw", requestTimeoutSeconds: 301 },
+  { kind: "test", apiOrigin: "file:///tmp/slop-api?ref=main", rawOrigin: "file:///tmp/slop-raw" },
+  { kind: "test", apiOrigin: "file:///tmp/slop-api", rawOrigin: "file:///tmp/slop-raw", registryOrigin: "http://localhost:8082" },
+]
+
+const commandOrigins = ["https://slop.cash/projects/a/", "file:///tmp/slop-site", "http://127.0.0.1:3000/projects/a", "ftp://slop.cash/projects/a", "https://slop.cash/projects/a?x=1", "not a url"]
+
+const commandSkills = [
+  { skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { skillName: "review-a-contributions", skillRepositoryPath: templatePaths.reviewer },
+  { skillName: "slop", skillRepositoryPath: "skills/slop" },
+  { skillName: "slop", skillRepositoryPath: "skills/other" },
+  { skillName: "Slop", skillRepositoryPath: "skills/Slop" },
+]
+
+function frozenOptions(authority: InstallerAuthority, skill: { skillName: string; skillRepositoryPath: string }) {
+  if (authority.kind === "production") return skill
+  const { kind: _kind, ...testAuthority } = authority
+  return { ...skill, testAuthority }
+}
+
+function guideProject(id: string, contribution: boolean) {
+  return {
+    id,
+    skill: { id: generatedSkillName("contributor", id), sourcePath: templatePaths.contributor },
+    reviewSkill: { id: generatedSkillName("reviewer", id), sourcePath: templatePaths.reviewer },
+    repositories: [{ id: "SlopDotCash/slopdotcash", integrationBranch: "development" }],
+    ...(contribution
+      ? {
+          contribution: {
+            approvedScope: "Settlement and scoring.",
+            contributionGuide: "Read CONTRIBUTING.md.",
+            supportedTasks: "Bugs, tests and 日本語 docs.",
+            requiredTests: "pnpm check",
+            reviewExpectations: "One maintainer review.",
+            securityContact: "security@example.org",
+            closurePolicy: "Stale work closes after 30 days.",
+            maintainerNotes: "",
+          },
+        }
+      : {}),
+  }
+}
+
+schema GuideRenderer { entrypoint: string; revision: string | null; revisionStatus: string; paths: ReadonlyArray<string>; arguments: ReadonlyArray<string> }
+schema GuideRecord { publicUrl: string; sha256: string; renderer: GuideRenderer }
+schema ManifestGuides { codex: GuideRecord; claude: GuideRecord; manual: GuideRecord }
+schema ArchiveRecord { sha256: string }
+schema SkillManifest { name: string; archive: ArchiveRecord; guides: ManifestGuides }
+
+function servedFile(publication: Publication, path: string) {
+  return publication.kind === "published" ? publication.files.get(path) ?? new Uint8Array(0) : new Uint8Array(0)
+}
+
+it.effect('Every install guide equals the frozen renderer\'s bytes for every client and skill (spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential")', () => effect {
+  const requests = [...fixtureSkills.flatMap((skill) => installClients.map((client) => ({ ...skill, client }))), ...refusedGuides]
+  const frozen = [] as Array<Run>
+  for (const request of requests) frozen.push(try frozenGuide(request))
+  const production = requests.map(renderInstallGuide).filter((guide) => guide.kind === "guide").every((guide) => guide.text.includes("'https://api.github.com' 'https://raw.githubusercontent.com'"))
+  try Effect.try(() => assert.deepStrictEqual(
+    { guides: requests.map(asRun), production, refused: requests.map(asRun).filter((run) => run.status !== 0).length },
+    { guides: frozen, production: true, refused: refusedGuides.length },
+  ))
+})
+
+it.effect('The installer program text equals the frozen generator for production and test authorities (spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"; spec/contributor/skillAuthority.md, "Retry transient transport failures up to three attempts"; spec/contributor/installation.md, "Installation tracks verification, activation, and readback separately")', () => effect {
+  const cases = commandOrigins.flatMap((origin) => testAuthorities.flatMap((authority) => commandSkills.map((skill) => ({ origin, authority, skill }))))
+  const ours: ReadonlyArray<InstallerText> = cases.map(({ origin, authority, skill }) => createInstallCommand({ artifactOrigin: origin, skillsRoot: "${HOME}/.agents/skills", ...skill, authority }))
+  const run = try orDie(Effect.try(() => runNode(repoRoot, ["--input-type=module", "-e", frozenInstallCommand], JSON.stringify(cases.map(({ origin, authority, skill }) => ({ origin, skillsRoot: "${HOME}/.agents/skills", options: frozenOptions(authority, skill) }))))))
+  const frozen: unknown = try orDie(Effect.try(() => JSON.parse(run.stdout)))
+  try Effect.try(() => assert.deepStrictEqual(
+    { status: run.status, commands: ours, written: ours.filter((command) => command.kind === "text").length > 0, refused: ours.filter((command) => command.kind === "refused").length > 0 },
+    { status: 0, commands: frozen, written: true, refused: true },
+  ))
+})
+
+it.effect('A published project carries guides the bootstrap rebuilds from the frozen renderer and an archive matching its checksum (spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest")', () => effect {
+  const { index, fetched } = try frozenTemplates()
+  const inputs = { index, fetched, revision: 4, manifestSha256: "b".repeat(64), generatedAt: "2026-11-01T00:00:00.000Z" }
+  const publication = buildProjectPublication({ ...inputs, manifest: guideProject("slopdotcash", true) })
+  const checks = [] as Array<unknown>
+  for (const prefix of ["", "review-"]) {
+    const text = decoder.decode(servedFile(publication, `${prefix}skill-manifest.json`))
+    const manifest = try orDie(Schema.decodeUnknownEffect(SkillManifest)(try orDie(Effect.try(() => JSON.parse(text)))))
+    const archive = servedFile(publication, `downloads/${manifest.name}.skill`)
+    for (const [file, record] of [["codex.md", manifest.guides.codex], ["claude.md", manifest.guides.claude], ["manual.md", manifest.guides.manual]] as const) {
+      const rebuilt = try orDie(Effect.try(() => runNode(repoRoot, [record.renderer.entrypoint, ...record.renderer.arguments], "")))
+      const guide = decoder.decode(servedFile(publication, `${prefix}${file}`))
+      checks.push({
+        rebuilt: rebuilt.status === 0 && rebuilt.stdout === guide,
+        digest: sha256Hex(encoder.encode(rebuilt.stdout)) === record.sha256,
+        contract: [record.renderer.revision, record.renderer.revisionStatus, record.renderer.paths, record.publicUrl.endsWith(`/projects/slopdotcash/${prefix}${file}`)],
+      })
+    }
+    checks.push({
+      checksum: decoder.decode(servedFile(publication, `downloads/${manifest.name}.skill.sha256`)) === `${sha256Hex(archive)}  ${manifest.name}.skill\n`,
+      archive: manifest.archive.sha256 === sha256Hex(archive),
+      claudeAlias: decoder.decode(servedFile(publication, `${prefix}claude-code.md`)) === decoder.decode(servedFile(publication, `${prefix}claude.md`)),
+      mission: decoder.decode(servedFile(publication, `${prefix}mission.md`)).startsWith(decoder.decode(servedFile(publication, `${prefix}skill.md`))),
+    })
+  }
+  const tampered = new Map(fetched)
+  tampered.set(`${templatePaths.reviewer}/SKILL.md`, encoder.encode("tampered\n"))
+  const guide = { rebuilt: true, digest: true, contract: [frozenCommit, "committed", [...guideRendererPaths], true] }
+  const artifact = { checksum: true, archive: true, claudeAlias: true, mission: true }
+  try Effect.try(() => assert.deepStrictEqual(
+    {
+      paths: publication.kind === "published" ? [...publication.files.keys()] : publication.kind,
+      checks,
+      unpublished: buildProjectPublication({ ...inputs, manifest: guideProject("slopdotcash", false) }),
+      tampered: buildProjectPublication({ ...inputs, fetched: tampered, manifest: guideProject("slopdotcash", true) }),
+      uncommitted: buildProjectPublication({ ...inputs, index: { ...index, commit: "main" }, manifest: guideProject("slopdotcash", true) }),
+    },
+    {
+      paths: roles.flatMap((role) => {
+        const prefix = role === "reviewer" ? "review-" : ""
+        const name = generatedSkillName(role, "slopdotcash")
+        return [...["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json"].map((file) => `${prefix}${file}`), `downloads/${name}.skill`, `downloads/${name}.skill.sha256`]
+      }),
+      checks: [guide, guide, guide, artifact, guide, guide, guide, artifact],
+      unpublished: { kind: "unpublished" },
+      tampered: { kind: "unavailable", problem: { reason: "templateFiles", role: "reviewer", failure: { kind: "digestMismatch", path: `${templatePaths.reviewer}/SKILL.md` } } },
+      uncommitted: { kind: "unavailable", problem: { reason: "commitNotFullSha" } },
+    },
+  ))
+})
+
+error MissingManifest { sourceId: string }
+
+interface Replayed {
+  readonly sourceId: string
+  readonly verified: string
+  readonly sameBytes: boolean
+  readonly marker: string
+  readonly join: string
+}
+
+effect function outcome(value: unknown, registry: ReceiptRegistry) {
+  const verified = verifyRunReceipt(value, registry) catch (error) => error.reason
+  return typeof verified === "string" ? verified : "verified"
+}
+
+function joined(value: unknown, registry: ReceiptRegistry, project: ReceiptPolicyProject) {
+  const parsed = parseRunMarker(value, registry)
+  if (parsed.kind === "invalid") return parsed.reason
+  const join = joinPolicy(parsed.value, project)
+  return join.kind === "valid" ? "joined" : join.reason
+}
+
+layer(webCrypto)((it) => {
+  it.effect('Receipt replay over historical production receipts (spec/contributor/evidence.md, "A signed receipt binds the exact disclosure and either no trace or the stored trace"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"; spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"; spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable")', () => effect {
+    const replayed: Replayed[] = []
+    for (const { sourceId, run } of retained) {
+      const manifest = receiptManifestOf(run)
+      if (manifest === undefined) {
+        replayed.push({ sourceId, verified: "no manifest at the receipt's skill revision", sameBytes: false, marker: "", join: "" })
+        continue
+      }
+      const verified = try verifyRunReceipt(run, manifest.registry)
+      replayed.push({
+        sourceId,
+        verified: "verified",
+        sameBytes: bytesOf(verified) === bytesOf(run),
+        marker: bytesOf(parseRunMarker(reparsed(bytesOf(markerOf(verified))), manifest.registry)),
+        join: joined(markerOf(verified), manifest.registry, manifest.policy),
+      })
+    }
+
+    const [first] = retained
+    const manifest = receiptManifestOf(first.run)
+    if (manifest === undefined) throw new MissingManifest({ sourceId: first.sourceId })
+    const receipt = try verifyRunReceipt(first.run, manifest.registry)
+    const { registry, policy } = manifest
+    const signature = receipt.deviceSignature
+    const tampered = [
+      try outcome({ ...receipt, model: `${receipt.model}-mini` }, registry),
+      try outcome({ ...receipt, deviceSignature: `${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}` }, registry),
+      try outcome({ ...receipt, deviceKeyId: "0".repeat(64) }, registry),
+      try outcome({ ...receipt, devicePublicKey: "MCowBQYDK2VwAyEA".padEnd(59, "A") }, registry),
+      try outcome({ ...receipt, usage: { ...receipt.usage, totalTokens: 5 } }, registry),
+      try outcome({ ...receipt, traceUpload: receipt.traceUpload && { ...receipt.traceUpload, sha256: "0".repeat(64) } }, registry),
+      try outcome({ ...receipt, score: 1 }, registry),
+      try outcome(receipt, [{ id: "eliza", repositories: ["elizaOS/eliza"], skillSourcePath: "skills/project-contributor-template" }]),
+      try outcome(receipt, [{ id: "eliza", repositories: ["elizaOS/other"], skillSourcePath: "skills/contribute-to-eliza" }]),
+      try outcome(receipt, []),
+    ]
+    const placeholders = [
+      try outcome({ ...receipt, model: "unknown" }, registry),
+      try outcome({ ...receipt, model: "Claude" }, registry),
+      try outcome({ ...receipt, model: "unavailable" }, registry),
+      try outcome({ ...receipt, provider: "N/A" }, registry),
+      try outcome({ ...receipt, client: "CLI" }, registry),
+    ]
+
+    const { policyAcknowledgement: _acknowledgement, deviceKeyId: _key, devicePublicKey: _public, deviceSignature: _signature, ...unsigned } = receipt
+    const legacy = signedByFreshDevice({ ...unsigned, schemaVersion: "1", trajectorySha256: null, traceUpload: null })
+    const pending: ReceiptPolicyProject = { id: "eliza", terms: { ...policy.terms, receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] } } }
+    const otherBinding: ReceiptPolicyProject = {
+      id: "eliza",
+      terms: { ...policy.terms, receiptPolicy: { state: "active", activatedAt: "2026-08-18T20:45:06.000Z", bindings: [{ policyRevision: "2026-08-18.1", activatedAt: "2026-08-18T20:45:06.000Z", licenseSha256: "0".repeat(64), inboundTermsSha256: null, prizeRulesSha256: null }] } },
+    }
+    const policies = [
+      try outcome(legacy, registry),
+      joined(markerOf(legacy), registry, pending),
+      joined(markerOf(legacy), registry, policy),
+      joined(markerOf(receipt), registry, otherBinding),
+      joined(markerOf(receipt), registry, pending),
+      joined(markerOf(receipt), registry, { ...policy, id: "other" }),
+    ]
+
+    const identity = [
+      validateIdentityRecord(IDENTITY_RECORD).kind,
+      validateIdentityRecord(reparsed(identityRecordText())).kind,
+      validateIdentityRecord({ ...IDENTITY_RECORD, paymentMode: "enabled" }).kind,
+      validateIdentityRecord({ ...IDENTITY_RECORD, identifiers: { ...IDENTITY_RECORD.identifiers, walletMarker: { slop: "slop-wallet:v1", legacy: "gitarmy-wallet:v1" } } }).kind,
+      validateIdentityRecord({ ...IDENTITY_RECORD, finalAcceptedLegacyReleaseLabelEvent: "gitarmy-release-candidate" }).kind,
+      SIGNED_ATTRIBUTION_MARKER,
+    ]
+
+    try Effect.try(() => assert.deepStrictEqual({ replayed, tampered, placeholders, policies, identity }, {
+      replayed: retained.map(({ sourceId, run }) => ({
+        sourceId,
+        verified: "verified",
+        sameBytes: true,
+        marker: bytesOf({ kind: "valid", value: run }),
+        join: "joined",
+      })),
+      tampered: [
+        "run receipt device signature is invalid",
+        "run receipt device signature is invalid",
+        "run receipt device key id does not match public key",
+        "run receipt device key id does not match public key",
+        "unavailable usage must contain zero values",
+        "run marker trace upload evidence does not match",
+        "run receipt has unexpected or missing fields",
+        "run marker skill_revision is not the project skill",
+        "run marker repository does not belong to the project",
+        "run marker project is not registered",
+      ],
+      placeholders: [
+        "run marker.model must be an exact non-placeholder identifier",
+        "run marker.model must be an exact non-placeholder identifier",
+        "run marker.model must be an exact non-placeholder identifier",
+        "run marker.provider must be an exact non-placeholder identifier",
+        "run marker.client must be an exact non-placeholder identifier",
+      ],
+      policies: [
+        "verified",
+        "joined",
+        "v1 run receipt is not allowed after project policy activation",
+        "run receipt policy acknowledgement does not match the pinned project policy",
+        "joined",
+        "run receipt policy project does not match",
+      ],
+      identity: [
+        "valid",
+        "valid",
+        "invalid",
+        "invalid",
+        "invalid",
+        "slop-contribution-attribution:v1",
+      ],
+    }))
+    try Effect.try(() => assert.isAbove(replayed.length, 0))
+  })
+})
+
+const net = artifactNetwork()
+const credential = "ghs_artifactJourneyCredential000000"
+
+const widget: ProjectView = {
+  projectId: "widget",
+  revision: 3,
+  manifestSha256: "0".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "7",
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
+  repositories: [{ id: "acme/widget", nodeId: "R_kgDOwidget", fullName: "acme/widget", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const ActiveRegistry = Layer.succeed(Registry, {
+  project: (projectId) => effect { return projectId === widget.projectId ? widget : undefined },
+  byRepository: (repositoryId) => effect { return repositoryId === "acme/widget" ? widget : undefined },
+  byPath: () => effect { return undefined },
+  active: () => effect { return [widget] },
+  fence: () => effect { return sql`SELECT 1 AS fenced` },
+})
+
+const Verifier = Layer.provideMerge(evidenceArtifacts({ credential: Redacted.make(credential) }), Layer.mergeAll(outboundVia(net.fetcher), webCrypto, ActiveRegistry))
+
+function evidenceBody(entries: ReadonlyArray<readonly [string, string]>) {
+  return entries.map(([id, text]) => `<!-- evidence-row:${id} -->\n${text}`).join("\n\n")
+}
+
+function hosts(calls: ReadonlyArray<Fetched>) {
+  return calls.map((call) => `${call.host}${call.authorized ? " with credential" : ""}`)
+}
+
+function pathOf(url: string) {
+  return new URL(url).pathname
+}
+
+function trail(...urls: ReadonlyArray<string>) {
+  const paths = new Set(urls.map(pathOf))
+  return hosts(net.seen.filter((call) => paths.has(call.path)))
+}
+
+function hop(index: number) {
+  return `https://release-assets.githubusercontent.com/hops/7/${index}`
+}
+
+effect function verified(body: string, purpose: VerificationPurpose = "ReviewCheck") {
+  return try (try EvidenceArtifacts).verify({ body, rows: requiredEvidenceRows, purpose })
+}
+
+effect function statusOf(body: string) {
+  return (try verified(body)).findings.map((finding) => finding.status)
+}
+
+const label = Object.fromEntries(requiredEvidenceRows.map((row) => [row.id, row.label]))
+
+layer(Verifier, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('Evidence is fetched with the credential only at GitHub, retried from GitHub, and refused when redirected away, truncated or incomplete (spec/contributor/artifactTransport.md, "Story: Fetch evidence without leaking the credential or accepting partial documents"; spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const recorded = try orDie(Effect.try(() => recordedGif()))
+    const before = net.upload(1, serving(recorded, "image/gif"))
+    const after = net.upload(2, unavailableFirst(503, serving(screenshot, "image/png")))
+    const logs = net.upload(3, serving(serverLog, "text/plain; charset=utf-8"))
+    const away = net.route(uploadUrl(4), redirecting("https://evil.example/assets/4"))
+    const small = png([pngChunk("IDAT", compressedPixels.subarray(0, 4096))])
+    const truncated = net.upload(5, serving(small.subarray(0, small.length - 12), "image/png"))
+    const large = net.upload(6, serving(largeScreenshot, "image/png"))
+    const chain = net.route(uploadUrl(7), redirecting(hop(1)))
+    for (const index of [1, 2, 3, 4, 5]) net.route(hop(index), redirecting(hop(index + 1)))
+    const browserLog = net.upload(8, serving(longLog(25_000), "text/plain"))
+    const lost = net.upload(9, dropped())
+    const body = evidenceBody([
+      ["before-screenshots", `![Before](${before})`],
+      ["after-screenshots", `![After](${after})`],
+      ["backend-logs", `[Server log](${logs})`],
+      ["frontend-logs", `[Console log](${browserLog})`],
+      ["domain-artifacts", `![Away](${away})\n![Truncated](${truncated})\n![Large](${large})\n[Chain](${chain})\n[Lost](${lost})`],
+    ])
+    const verdict = try verified(body)
+    const digest = try digestOf(recorded)
+    const logDigest = try digestOf(serverLog)
+    const artifact = (id: string, url: string) => ({ id, label: label[id], url, artifactKind: "opaque-upload" })
+    try same(verdict, {
+      ok: false,
+      findings: [
+        { ...artifact("before-screenshots", before), status: "ok", contentSha256: digest, transient: false },
+        { ...artifact("after-screenshots", after), status: "ok", transient: false },
+        { ...artifact("backend-logs", logs), status: "ok", contentSha256: logDigest, transient: false },
+        { ...artifact("frontend-logs", browserLog), status: "artifact-invalid", detail: incompleteDocumentDetail, transient: false },
+        { ...artifact("domain-artifacts", away), status: "artifact-untrusted-redirect", detail: "redirect target is not an approved GitHub artifact host", transient: false },
+        { ...artifact("domain-artifacts", truncated), status: "artifact-kind-mismatch", detail: "expected image, received unrecognized bytes", transient: false },
+        { ...artifact("domain-artifacts", large), status: "ok", transient: false },
+        { ...artifact("domain-artifacts", chain), status: "artifact-redirect-error", detail: "redirect limit of 4 exceeded", transient: false },
+        { ...artifact("domain-artifacts", lost), status: "artifact-fetch-error", detail: "artifact request failed", transient: true },
+      ],
+    })
+    const credentialed = net.seen.filter((call) => call.authorized)
+    try same({
+      credentialHosts: [...new Set(credentialed.map((call) => call.host))],
+      evilCalls: net.seen.filter((call) => call.host === "evil.example").length,
+      before: trail(before, cdnUrl(1)),
+      after: trail(after, cdnUrl(2)),
+      chain: trail(chain, hop(1), hop(2), hop(3), hop(4), hop(5), hop(6)),
+      lost: trail(lost, cdnUrl(9)),
+    }, {
+      credentialHosts: ["github.com"],
+      evilCalls: 0,
+      before: ["github.com with credential", "objects.githubusercontent.com"],
+      after: ["github.com with credential", "objects.githubusercontent.com", "github.com with credential", "objects.githubusercontent.com"],
+      chain: ["github.com with credential", "release-assets.githubusercontent.com", "release-assets.githubusercontent.com", "release-assets.githubusercontent.com", "release-assets.githubusercontent.com"],
+      lost: ["github.com with credential", "objects.githubusercontent.com", "github.com with credential", "objects.githubusercontent.com"],
+    })
+  })
+
+  it.effect('Screenshot evidence accepts empty IDAT chunks and refuses an empty-only or corrupt image, without a credential at the legacy image host (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const ordinary = png([pngChunk("IDAT", compressedPixels)])
+    const cases = [
+      ordinary,
+      png([emptyIdat, pngChunk("IDAT", compressedPixels)]),
+      png([pngChunk("IDAT", compressedPixels.subarray(0, 10)), emptyIdat, pngChunk("IDAT", compressedPixels.subarray(10))]),
+      png([pngChunk("IDAT", compressedPixels), emptyIdat]),
+      commentOnlyScreenshot,
+      png([withCorruptCrc(emptyIdat), pngChunk("IDAT", compressedPixels)]),
+    ]
+    const findings: unknown[] = []
+    for (const [index, bytes] of cases.entries()) {
+      const url = net.upload(80 + index, serving(bytes, "image/png"))
+      const verdict = try verified(evidenceBody([["before-screenshots", `![Before](${url})`]]), "LedgerDigest")
+      findings.push(...verdict.findings.map((finding) => (finding.status === "ok" ? [finding.status, finding.contentSha256] : [finding.status])))
+    }
+    const digests: string[] = []
+    for (const bytes of cases.slice(0, 4)) digests.push(try digestOf(bytes))
+    const legacy = net.route("https://user-images.githubusercontent.com/123456/screenshot.png", serving(ordinary, "image/png"))
+    const legacyStatus = try statusOf(evidenceBody([["before-screenshots", `![Before](${legacy})`]]))
+    try same({
+      findings,
+      legacyStatus,
+      legacyCalls: hosts(net.seen.filter((call) => call.host === "user-images.githubusercontent.com")),
+    }, {
+      findings: [...digests.map((digest) => ["ok", digest]), ["artifact-kind-mismatch"], ["artifact-kind-mismatch"]],
+      legacyStatus: ["ok"],
+      legacyCalls: ["user-images.githubusercontent.com"],
+    })
+  })
+
+  it.effect('A recorded GIF with a small update is accepted and a malformed one is refused (spec/contributor/artifactTransport.md, "Story: Fetch evidence without leaking the credential or accepting partial documents")', () => effect {
+    const gif = try orDie(Effect.try(() => recordedGif()))
+    const delta = try orDie(Effect.try(() => gifDeltaOffset(gif)))
+    const cases = [
+      concatenated([gif.subarray(0, delta - 8), Uint8Array.of(59)]),
+      gif,
+      writeLittle16(gif, 6, 160),
+      writeLittle16(gif, delta + 5, 0),
+      writeLittle16(gif, delta + 1, 319),
+      concatenated([gif.subarray(0, delta + 11), Uint8Array.of(0, 59)]),
+      gif.subarray(0, gif.length - 1),
+    ]
+    const statuses: string[][] = []
+    for (const [index, bytes] of cases.entries()) {
+      const url = net.upload(20 + index, serving(bytes, "image/gif"))
+      statuses.push(try statusOf(evidenceBody([["after-screenshots", `![Recorded image](${url})`]])))
+    }
+    try same(statuses, [["ok"], ["ok"], ["artifact-kind-mismatch"], ["artifact-kind-mismatch"], ["artifact-kind-mismatch"], ["artifact-kind-mismatch"], ["artifact-kind-mismatch"]])
+  })
+
+  it.effect('Too many or reused artifacts are refused before any request, and the ledger counts only registered uploads (spec/contributor/artifactTransport.md, "Story: Fetch evidence without leaking the credential or accepting partial documents"; spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const crowded = Array.from({ length: 9 }, (_, index) => `![Shot ${index}](${net.upload(40 + index, serving(screenshot, "image/png"))})`).join("\n")
+    const reused = net.upload(50, serving(screenshot, "image/png"))
+    const before = net.seen.length
+    const limited = try verified(evidenceBody([["before-screenshots", crowded]]))
+    const conflicted = try verified(evidenceBody([["before-screenshots", `![Before](${reused})`], ["after-screenshots", `![After](${reused})`]]))
+    const requested = net.seen.length - before
+    const assetPath = "00000000-0000-4000-8000-0000000000aa"
+    const registered = `https://github.com/acme/widget/assets/12/${assetPath}`
+    const unregistered = `https://github.com/other/repo/assets/12/${assetPath}`
+    const release = "https://github.com/acme/widget/releases/download/pr-evidence/trace.jsonl"
+    const legacy = "https://user-images.githubusercontent.com/123456/before.png"
+    const planned = evidenceBody([["domain-artifacts", `![Upload](${uploadUrl(60)}) ![Registered](${registered}) ![Elsewhere](${unregistered}) [Release](${release}) ![Legacy](${legacy})`]])
+    const artifacts = try EvidenceArtifacts
+    const review = try artifacts.plan({ body: planned, rows: requiredEvidenceRows, purpose: "ReviewCheck" })
+    const ledger = try artifacts.plan({ body: planned, rows: requiredEvidenceRows, purpose: "LedgerDigest" })
+    try same({ limited, conflicted: conflicted.findings.map((finding) => [finding.id, finding.status]), requested, review, ledger }, {
+      limited: { ok: false, findings: [{ id: "before-screenshots", label: label["before-screenshots"], url: "(artifact count)", status: "artifact-limit-exceeded", detail: "row references 9 artifacts; maximum is 8", transient: false }] },
+      conflicted: [["before-screenshots", "artifact-conflict"], ["after-screenshots", "artifact-conflict"]],
+      requested: 0,
+      review: { referenceCount: 4, uniqueArtifactCount: 4 },
+      ledger: { referenceCount: 2, uniqueArtifactCount: 2 },
+    })
+  })
+
+  it.effect('The ledger reads whole uploads for their digest, and a missing upload is a terminal answer (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const whole = net.upload(70, serving(largeScreenshot, "image/png"))
+    const missing = net.route(uploadUrl(71), answering(404))
+    const verdict = try verified(evidenceBody([["before-screenshots", `![Before](${whole})`], ["after-screenshots", `![After](${missing})`]]), "LedgerDigest")
+    try same(verdict.findings.map((finding) => [finding.status, finding.contentSha256 ?? finding.detail, finding.httpStatus, finding.transient]), [
+      ["ok", try digestOf(largeScreenshot), undefined, false],
+      ["artifact-http-error", "HTTP 404", 404, false],
+    ])
+    try same(trail(missing), ["github.com with credential"])
+  })
+})
+
+service SiteProgram {
+  readonly program: string
+  readonly repository: string
+  readonly out: string
+}
+
+interface Ran {
+  readonly code: number
+  readonly refusal: string | undefined
+}
+
+const fixedGeneratedAt = "2026-11-16T00:00:00.000Z"
+const gitAuthor = ["-c", "user.name=Slop Site", "-c", "user.email=site@slop.invalid", "-c", "commit.gpgsign=false"]
+
+const copiedSources = [
+  "skills",
+  "scripts/render-install-guide.mjs",
+  "src/lib/install-command.ts",
+  "src/lib/project-skill-publication.mjs",
+  "src/lib/project-skill.mjs",
+  "src/lib/project-schema.mjs",
+  "apps/contributor/tools/quick_validate.py",
+  "apps/contributor/docs/private-trace-v1.md",
+]
+
+const requirements = "# Slop product requirements\n\n## 6. Funds and payments\n\nEarlier rules.\n\n## 7. Points, discovery, and clear pages\n\nPoints reward accepted work.\n\n### 7.1 Scoring\n\nEach merged pull request scores once.\n\n## 8. Security and private bounties\n\nLater rules.\n"
+
+function pointsDocument(name: string): string {
+  return `# Slop Points\n\nCurrent rules are published from [the canonical PRD, section 7](https://github.com/SlopDotCash/slopdotcash/blob/development/docs/slop-product-requirements.md#7-points-discovery-and-clear-pages).\n\nPoints reward accepted work.\n\n## 7.1 Scoring\n\nEach merged pull request scores once.\n\n## Historical protocol record\n\n[The former ${name} document](https://github.com/SlopDotCash/slopdotcash/blob/ebf468873147a7ec119858915deca6cb3177eb0d/protocol/${name}) is retained at an immutable source revision for historical rules and record formats. Current policy and historical preservation follow the PRD above.\n`
+}
+
+const legacyOutputs: Readonly<Record<string, string>> = {
+  ".well-known/agent-skills/index.json": "e123cd1b36d35b6dce1d937ec8b6210fd3c0c1d7898886d348139755d0cbe2fb",
+  ".well-known/agent-skills/slop/SKILL.md": "f3518d58c13d301c2a39884711134a7e60f6438c1858ed6fe37d47d551bec464",
+  "SKILL.md": "f3518d58c13d301c2a39884711134a7e60f6438c1858ed6fe37d47d551bec464",
+  "llms.txt": "5e064fda766258afdd6743d8ce5d525abfcbae200afa25a127e8b48b5e6ebe45",
+  "protocol/identity-v1.json": "5f78f4edc91349a8574c1049ec70c4791d97c52ed7a024e19ed12bc310684346",
+  "protocol/points-v1.md": sha256Hex(utf8Bytes(pointsDocument("points-v1.md"))),
+  "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
+  "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
+  "skill-manifest.json": "a245a9987271300a5da1be5b835eb533a3d8e974eb0209623638feed489a5f14",
+  "skill-templates/index.json": "c572dac26cecea240094fc30c3da74f8f3732cbd6523ca4dde4569a9251f0144",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "04a5f7e352c686f10f42f19bf1fad9ff2977877fb9d44e61f1cfbf40e72f2acb",
+  "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
+  "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "37f9a68890c23eb6a1988e57fe465df1c7ec4b7c80729f5bf9477e24b5270fa7",
+  "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
+  "skill-templates/skills/project-contributor-template/scripts/skill-authority.d.mts": "cbb5b0466305c37007951b25c7d1fcdc0557de690ff93e2d8db59ed4e1b0d8f0",
+  "skill-templates/skills/project-contributor-template/scripts/skill-authority.mjs": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
+  "skill-templates/skills/project-contributor-template/scripts/terms-preflight.mjs": "1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99",
+  "skill-templates/skills/project-contributor-template/scripts/wallet-claim.mjs": "970b46dc1b21c8848b0dffa3913b47522d60e89ce220479d01906203eb2dd32f",
+  "skill-templates/skills/project-reviewer-template/SKILL.md": "704905acdf0d69c7a1ae93f8e93a336e3b04d6bb6547896b3005847c9c4b8aa3",
+}
+
+const SiteBuilt = Layer.effect(SiteProgram, effect {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const scratch = try fs.makeTempDirectoryScoped({ prefix: "slop-site-" })
+  const packageRoot = new URL("..", import.meta.url).pathname
+  const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir: path.join(scratch, "dist") })
+  try promise(() => createBuilder({ root: packageRoot, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
+  const repository = path.join(scratch, "repository")
+  for (const source of copiedSources) {
+    try fs.makeDirectory(path.dirname(path.join(repository, source)), { recursive: true })
+    try fs.copy(path.join(repoRoot, source), path.join(repository, source))
+  }
+  try fs.makeDirectory(path.join(repository, "docs"), { recursive: true })
+  try fs.writeFileString(path.join(repository, "docs/slop-product-requirements.md"), requirements)
+  try git(repository, ["-c", "init.defaultBranch=main", "init", "-q"])
+  try git(repository, ["add", "-A"])
+  try git(repository, [...gitAuthor, "commit", "-q", "-m", "Site fixture"])
+  return { program: path.join(scratch, "dist/programs/main.js"), repository, out: path.join(scratch, "site") }
+})
+
+effect function runSite() {
+  const { program, repository, out } = try SiteProgram
+  return try scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("node", [program, "site", "--out", out], { cwd: repository }))
+    const [, stderr, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr)), handle.exitCode]
+    const status = Number(code)
+    return { code: status, refusal: status === 0 ? undefined : stderr.trim().split("\n").at(-1) } satisfies Ran
+  })
+}
+
+effect function outputText(path: string) {
+  const { out } = try SiteProgram
+  return try (try FileSystem.FileSystem).readFileString((try Path.Path).join(out, path))
+}
+
+effect function published() {
+  const { out, repository } = try SiteProgram
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const commit = (try utf8Text(try git(repository, ["rev-parse", "HEAD"]), "the fixture commit")).trim()
+  const legacy = (text: string) => text.replaceAll(commit, frozenCommit).replace(/"generatedAt": "[^"]*"/u, `"generatedAt": "${fixedGeneratedAt}"`)
+  const digests: Record<string, string> = {}
+  for (const file of (try regularFiles(out, ".")).paths) {
+    const bytes = try fs.readFile(path.join(out, file))
+    digests[file] = ["llms.txt", "skill-manifest.json", "skill-templates/index.json"].includes(file) ? sha256Hex(utf8Bytes(legacy(try outputText(file)))) : sha256Hex(bytes)
+  }
+  return digests
+}
+
+effect function statuses() {
+  const indexJson = try outputText("skill-templates/index.json")
+  const manifestText = try outputText("skill-manifest.json")
+  const index = try Effect.try(() => JSON.parse(indexJson) as { readonly revisionStatus: string; readonly renderer: { readonly revisionStatus: string } })
+  const manifest = try Effect.try(() => JSON.parse(manifestText) as { readonly revisionStatus: string })
+  const llms = /\((committed|working-tree)\)\./u.exec(try outputText("llms.txt"))?.[1]
+  return { templates: index.revisionStatus, renderer: index.renderer.revisionStatus, manifest: manifest.revisionStatus, llms }
+}
+
+effect function edited(file: string, bytes: Uint8Array) {
+  const { repository } = try SiteProgram
+  try (try FileSystem.FileSystem).writeFile((try Path.Path).join(repository, file), bytes)
+}
+
+effect function appended(file: string) {
+  const { repository } = try SiteProgram
+  const before = try (try FileSystem.FileSystem).readFile((try Path.Path).join(repository, file))
+  try edited(file, new Uint8Array([...before, 10]))
+}
+
+effect function restored() {
+  const { repository } = try SiteProgram
+  try git(repository, ["checkout", "-q", "--", "."])
+  try git(repository, ["clean", "-q", "-f", "--", "skills"])
+}
+
+layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The site program publishes the bootstrap skill, discovery files, template trees and protocol documents with the bytes of cc7cc3200, labels working-tree edits and refuses an invalid bootstrap (spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required")', () => effect {
+    const committedRun = try runSite()
+    const committedOutputs = try published()
+    const committedStatuses = try statuses()
+
+    try appended("skills/project-reviewer-template/SKILL.md")
+    try appended("skills/slop/SKILL.md")
+    const editedRun = try runSite()
+    const editedStatuses = try statuses()
+    const editedOutputs = try published()
+    try restored()
+
+    try edited("skills/project-reviewer-template/notes.md", utf8Bytes("untracked\n"))
+    const untrackedRun = try runSite()
+    try restored()
+
+    try edited("skills/slop/SKILL.md", utf8Bytes("---\nname: Not Valid\ndescription: A bootstrap the validator refuses.\n---\n\n# Not valid\n"))
+    const invalidRun = try runSite()
+    const afterRefusals = try published()
+    try restored()
+
+    try Effect.try(() => assert.deepStrictEqual(
+      { committedRun, committedOutputs, committedStatuses, editedRun, editedStatuses, untrackedRun, invalidRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs) },
+      {
+        committedRun: { code: 0, refusal: undefined },
+        committedOutputs: legacyOutputs,
+        committedStatuses: { templates: "committed", renderer: "committed", manifest: "committed", llms: "committed" },
+        editedRun: { code: 0, refusal: undefined },
+        editedStatuses: { templates: "working-tree", renderer: "committed", manifest: "working-tree", llms: "working-tree" },
+        untrackedRun: { code: 1, refusal: "SiteRefused: [Slop] skill template skills/project-reviewer-template must be a bounded, tracked, exact file tree" },
+        invalidRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop" },
+        refusalsWroteNothing: true,
+      },
+    ))
+  })
+})
+
+interface Repository {
+  readonly id: string
+  readonly aliases?: ReadonlyArray<string>
+}
+
+interface Fixture {
+  readonly id: string
+  readonly status: "active" | "paused"
+  readonly listingTier: "community" | "featured" | "retired"
+  readonly contribution: boolean
+  readonly repositories: ReadonlyArray<Repository>
+  readonly securityBounty?: unknown
+  readonly extra?: Readonly<Record<string, unknown>>
+}
+
+interface Stored {
+  readonly text: string
+  readonly digest: string
+  readonly updatedAt: string
+}
+
+service Published {
+  readonly index: TemplateIndex
+  readonly fetched: ReadonlyMap<string, Uint8Array>
+  readonly directory: string
+}
+
+service World { readonly site: Site }
+
+const passThroughPage = "the site serves this path\n"
+
+const alpha: Fixture = { id: "alpha", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "alpha-org/alpha" }, { id: "alpha-org/alpha-cli", aliases: ["old-org/alpha-cli", "alpha-org/alpha-cli-renamed"] }] }
+const beta: Fixture = { id: "beta", status: "active", listingTier: "featured", contribution: true, repositories: [{ id: "beta-org/beta", aliases: [] }], securityBounty: { state: "published", maximumMinor: "500000000", currency: "USDC" } }
+const pausedTool: Fixture = { id: "paused-tool", status: "paused", listingTier: "community", contribution: true, repositories: [{ id: "paused-org/tool" }] }
+const unsure: Fixture = { id: "unsure", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "unsure-org/unsure" }] }
+const unscanned: Fixture = { id: "unscanned", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "unscanned-org/unscanned" }] }
+const draft: Fixture = { id: "draft", status: "active", listingTier: "community", contribution: false, repositories: [{ id: "draft-org/draft" }] }
+const delisted: Fixture = { id: "delisted", status: "paused", listingTier: "retired", contribution: true, repositories: [{ id: "delisted-org/delisted" }] }
+const gamma: Fixture = { id: "gamma", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "gamma-org/gamma" }] }
+const shared: Fixture = { id: "shared", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "gamma-org/gamma-docs" }] }
+const fixtures = [alpha, beta, pausedTool, unsure, unscanned, draft, delisted, gamma, shared]
+const monthlyPool = {
+  reward: { kind: "monthly-pool", currency: "USDC", chain: "base", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000" },
+  escrow: { deployments: [{ network: "base-mainnet", vault: "0x4f891b8c3d3fab9150fcdc94176b96863cd02899" }] },
+}
+const poolProject: Fixture = { id: "pool-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/pool-project" }], extra: monthlyPool }
+const securityProject: Fixture = { id: "security-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/security-project" }], securityBounty: { status: "open" }, extra: monthlyPool }
+const pausedPool: Fixture = { id: "paused-pool", status: "paused", listingTier: "community", contribution: true, repositories: [{ id: "example/paused-pool" }], extra: monthlyPool }
+
+const programTerms = { revision: "draft-1", effectiveAt: "2026-11-01T00:00:00.000Z", paymentTransfersIp: false, retroactive: false }
+const registered = {
+  terms: { ...programTerms, repositoryLicense: { state: "verified", spdx: "MIT", url: "https://github.com/relay-org/relay/blob/main/LICENSE", commitSha: null, fileSha256: null } },
+  reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "points-only" },
+  funding: {},
+}
+const relay: Fixture = { id: "relay", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "relay-org/relay", aliases: ["relay-org/relay-renamed"] }], extra: registered }
+const relayQuarantined: Fixture = { id: "relay-quarantined", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "relay-org/quarantined" }], extra: registered }
+const relayPaused: Fixture = { id: "relay-paused", status: "paused", listingTier: "community", contribution: true, repositories: [{ id: "relay-org/paused" }], extra: registered }
+const relayRetired: Fixture = { id: "relay-retired", status: "paused", listingTier: "retired", contribution: true, repositories: [{ id: "relay-org/retired" }], extra: registered }
+
+const contributionFields = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
+function manifestOf(fixture: Fixture, headline = "Reproducible research tooling.") {
+  return {
+    schemaVersion: "1",
+    id: fixture.id,
+    name: `Project ${fixture.id}`,
+    headline,
+    listingTier: fixture.listingTier,
+    status: fixture.status,
+    steward: { displayName: "member-41", kind: "individual", github: { actorId: "41", nodeId: "U_41", login: "member-41", type: "User", profileUrl: "https://github.com/member-41" }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: "9101", repositoryNodeId: "R_9101", proof: null },
+    terms: programTerms,
+    ...fixture.securityBounty === undefined ? {} : { securityBounty: fixture.securityBounty },
+    repositories: fixture.repositories.map((repository) => ({ ...repository, displayName: repository.id, githubUrl: `https://github.com/${repository.id}`, integrationBranch: "main" })),
+    skill: { id: `contribute-to-${fixture.id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${fixture.id}/skill.md` },
+    reviewSkill: { id: `review-${fixture.id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    ...fixture.contribution ? { contribution: contributionFields } : {},
+    ...fixture.extra,
+  }
+}
+
+function termsOf(fixture: Fixture) {
+  const manifest = manifestOf(fixture)
+  return { schemaVersion: "1", projectId: fixture.id, status: fixture.status, steward: manifest.steward, authority: manifest.authority, terms: manifest.terms, securityBounty: fixture.securityBounty ?? null }
+}
+
+function discoveryRow(fixture: Fixture, repository: string) {
+  return {
+    project_id: fixture.id,
+    project_url: `https://slop.cash/projects/${fixture.id}/`,
+    repository,
+    review_skill: `review-${fixture.id}-contributions`,
+    review_skill_manifest: `https://slop.cash/projects/${fixture.id}/review-skill-manifest.json`,
+    skill: `contribute-to-${fixture.id}`,
+    skill_source: "skills/project-contributor-template",
+  }
+}
+
+const Built = Layer.effect(Published, effect {
+  const { index, text, fetched } = try frozenTemplates()
+  const files = [
+    { path: "skill-templates/index.json", bytes: encoder.encode(text) },
+    ...[...fetched].map(([path, bytes]) => ({ path: `skill-templates/${path}`, bytes })),
+    { path: "projects/Alpha/skill.md", bytes: encoder.encode(passThroughPage) },
+  ]
+  const directory = try acquireRelease(Effect.try(() => siteDirectory(files)), (made) => sync(() => removeDirectory(made)))
+  return { index, fetched, directory }
+})
+
+const Running = Layer.provideMerge(Layer.effect(World, effect {
+  const { directory } = try Published
+  const site = try acquireRelease(promise(() => startSite(directory)), (started) => promise(() => started.dispose()))
+  return { site }
+}), Built)
+
+effect function call(path: string, request: Call = {}) {
+  const { site } = try World
+  return try promise(() => site.call(path, request))
+}
+
+effect function dbRows(query: string, ...params: ReadonlyArray<string | number | null>) {
+  const { site } = try World
+  return try promise(() => site.rows(query, ...params))
+}
+
+effect function storeRevision(fixture: Fixture, revision: number, manifest: unknown) {
+  const text = JSON.stringify(manifest, null, 2)
+  const digest = sha256Hex(encoder.encode(text))
+  const updatedAt = `2026-11-1${revision}T00:00:00.000Z`
+  try dbRows("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", fixture.id, revision, text, digest, `Revision ${revision}`, "41", "member-41", updatedAt)
+  if (revision === 1) try dbRows("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", fixture.id, fixture.status, revision, text, digest, "2026-11-01T00:00:00.000Z", updatedAt)
+  else try dbRows("UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", revision, text, digest, updatedAt, fixture.id)
+  return { text, digest, updatedAt } satisfies Stored
+}
+
+effect function secured(restrictions: ReadonlyArray<{ readonly projectId: string; readonly sourceProjectId: string; readonly restriction: string }>, clearances: ReadonlyArray<{ readonly projectId: string; readonly revision: number; readonly read: string }>) {
+  const { index } = try Published
+  const answer = try call("/api/v1/test/publication-security", { json: { restrictions, clearances: clearances.map((clearance) => ({ ...clearance, templateSha256: index.templateSha256 })) } })
+  if (answer.status !== 200) return try Effect.die(new Error(`the security plan was refused: ${answer.status}`))
+}
+
+function cleared(projectId: string, revision = 1) {
+  return { projectId, revision, read: "ClearanceCleared" }
+}
+
+effect function expectedFiles(fixture: Fixture, record: Stored, revision: number) {
+  const { index, fetched } = try Published
+  const publication = buildProjectPublication({ index, fetched, manifest: try Effect.try((): unknown => JSON.parse(record.text)), revision, manifestSha256: record.digest, generatedAt: record.updatedAt })
+  if (publication.kind !== "published") return try Effect.die(new Error(`${fixture.id} does not publish: ${publication.kind}`))
+  return publication.files
+}
+
+effect function bodyOf(path: string, bytes: Uint8Array) {
+  const text = decoder.decode(bytes)
+  if (!path.endsWith(".json")) return text as unknown
+  return try Effect.try((): unknown => JSON.parse(text))
+}
+
+const fundingUnavailable = "project discovery pool funding unavailable"
+const cap = [0, 0, 0, 1]
+
+interface FundingSeen {
+  readonly asked: ReadonlyArray<ReadonlyArray<string>>
+  readonly logged: ReadonlyArray<string>
+}
+
+type FundingAnswer = "Facts" | "Short" | "Fail" | "Nothing"
+
+function pool(freeNow: ReadonlyArray<number>, pledged: ReadonlyArray<number> = [0]) {
+  return { read: "PoolCurrent", monthlyPool: true, period: 202611, amount: cap, priorAmount: [0], priorPending: false, freeNow, monthStartRead: false, freeAtStart: [0], withdrawnSince: false, pledgeSupport: pledged.some((limb) => limb !== 0), pledged }
+}
+
+function funding(answer: FundingAnswer, poolProjectFree: ReadonlyArray<number> = [0], pledged: ReadonlyArray<number> = [0]) {
+  return {
+    answer,
+    pools: [
+      { projectId: "pool-project", pool: pool(poolProjectFree, pledged) },
+      { projectId: "paused-pool", pool: pool(cap) },
+      ...answer === "Short" ? [] : [{ projectId: "security-project", pool: pool([0]) }],
+    ],
+  }
+}
+
+effect function planFunding(plan: ReturnType<typeof funding>) {
+  const answer = try call("/api/v1/test/publication-funding", { json: plan })
+  if (answer.status !== 200) return try Effect.die(new Error(`the funding plan was refused: ${answer.status}`))
+  return answer.body as FundingSeen
+}
+
+effect function underFunding<A>(plan: ReturnType<typeof funding>, step: A!!) {
+  try planFunding(plan)
+  const result = try step
+  const seen = try planFunding(plan)
+  return { result, asked: seen.asked, unavailable: seen.logged.filter((line) => line === fundingUnavailable).length }
+}
+
+effect function discoveredUnder(plan: ReturnType<typeof funding>) {
+  const { result, asked, unavailable } = try underFunding(plan, call("/.well-known/slop/projects.json"))
+  const body = result.body as { readonly projects: ReadonlyArray<{ readonly project_id: string }> }
+  return { status: result.status, cache: result.headers["cache-control"], listed: body.projects.map((entry) => entry.project_id), asked, unavailable }
+}
+
+function shown(answer: Answer) {
+  return { status: answer.status, body: answer.body }
+}
+
+function headersOf(answer: Answer) {
+  return {
+    status: answer.status,
+    origin: answer.headers["access-control-allow-origin"],
+    cache: answer.headers["cache-control"],
+    policy: answer.headers["content-security-policy"],
+    referrer: answer.headers["referrer-policy"],
+    transport: answer.headers["strict-transport-security"],
+    sniff: answer.headers["x-content-type-options"],
+    type: answer.headers["content-type"],
+    disposition: answer.headers["content-disposition"],
+  }
+}
+
+function artifactHeaders(status: number, type: string, disposition?: string) {
+  return {
+    status,
+    origin: "*",
+    cache: "no-store",
+    policy: "default-src 'none'; frame-ancestors 'none'",
+    referrer: "no-referrer",
+    transport: "max-age=31536000; includeSubDomains",
+    sniff: "nosniff",
+    type,
+    disposition,
+  }
+}
+
+const markdown = "text/markdown; charset=utf-8"
+const plain = "text/plain; charset=utf-8"
+const json = "application/json; charset=utf-8"
+const notFound = { status: 404, body: "Project not found.\n" }
+const unpublished = { status: 404, body: "This project has not published its skills yet. Its maintainers must complete the contribution fields first.\n" }
+const unusable = { status: 404, body: "This repository has no usable admission clearance. Slop serves no skill while admission or a required security investigation is unscanned, queued, quarantined, stale or banned.\n" }
+const unconfirmed = { status: 503, body: "Slop cannot confirm this repository's retained admission evidence. Try again.\n" }
+
+function gone(state: string) {
+  return { status: 410, body: `This project is ${state}. Its skills, guides and archives are not available.\n` }
+}
+
+effect function served(fixture: Fixture, record: Stored, revision: number) {
+  const expected = try expectedFiles(fixture, record, revision)
+  const actual: Record<string, unknown> = {}
+  const wanted: Record<string, unknown> = {}
+  for (const [path, bytes] of expected) {
+    actual[path] = (try call(`/projects/${fixture.id}/${path}`)).body
+    wanted[path] = try bodyOf(path, bytes)
+  }
+  return { actual, wanted, paths: [...expected.keys()] }
+}
+
+type Body = Readonly<Record<string, unknown>>
+
+const runFields = {
+  projectId: "slop-test",
+  repository: "slop-test/widget",
+  projectPolicyRevision: "a".repeat(40),
+  provider: "anthropic",
+  model: "claude-opus-4-1",
+  client: "claude-code",
+  clientVersion: "2.0.0",
+}
+
+function fields(answer: Answer): Body {
+  return typeof answer.body === "object" && answer.body !== null ? answer.body as Body : {}
+}
+
+function text(answer: Answer, name: string) {
+  const value = fields(answer)[name]
+  return typeof value === "string" ? value : ""
+}
+
+function refusalOf(answer: Answer) {
+  return [answer.status, fields(answer).error ?? null, fields(answer).message ?? null] as const
+}
+
+function signed(token: string, key?: string): Readonly<Record<string, string>> {
+  return { authorization: `Bearer ${token}`, ...key === undefined ? {} : { "idempotency-key": key } }
+}
+
+effect function exchange(assertion: string, origin?: string) {
+  return try call("/api/v1/auth/session", { method: "POST", headers: { "x-slop-identity-assertion": assertion, ...origin === undefined ? {} : { origin } } })
+}
+
+effect function session(login: string) {
+  const { site } = try World
+  return text(try exchange(try promise(() => site.assertion(login))), "token")
+}
+
+effect function observeIntake(hoursAgo: number) {
+  const at = try isoAt((try Clock.currentTimeMillis) - hoursAgo * 3_600_000)
+  try dbRows("INSERT INTO private_intake_status (singleton, enabled, verified_at) VALUES (1, 1, ?) ON CONFLICT(singleton) DO UPDATE SET enabled = excluded.enabled, verified_at = excluded.verified_at", at)
+}
+
+effect function upload(uploadUrl: string, bytes: Uint8Array, digest: string) {
+  return try call(new URL(uploadUrl).pathname, { method: "PUT", headers: { "content-type": "application/x-ndjson", digest: `sha-256=${digest}` }, body: bytes })
+}
+
+effect function eventAt(minutesAhead: number) {
+  return try isoAt((try Clock.currentTimeMillis) + minutesAhead * 60_000)
+}
+
+effect function runEvidence(pullRequest: { readonly repositoryId: string; readonly repositoryFullName: string; readonly projectId: string; readonly pullRequestNodeId: string; readonly authorGithubId: string }) {
+  const answer = try call("/api/v1/test/run-evidence", { json: pullRequest })
+  if (answer.status !== 200) return try Effect.die(new Error(`the run evidence probe answered ${answer.status}`))
+  return fields(answer).opened
+}
+
+const banLedger = "trace-ban-ledger"
+const enforcementColumns = "id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at"
+
+effect function ban(account: { readonly githubId: string; readonly login: string }) {
+  const manifest = JSON.stringify({ id: banLedger, status: "active" })
+  const manifestSha256 = try digestOf(manifest)
+  const at = try eventAt(0)
+  const issuer = JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "trace-assessment-1", policyVersion: "1", rule: "confirmed-malice" })
+  try dbRows("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'Activated automatically', ?)", banLedger, manifest, manifestSha256, at)
+  try dbRows("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)", banLedger, manifest, manifestSha256, at, at)
+  try dbRows(`INSERT INTO project_enforcements (${enforcementColumns}) VALUES ('enf_trace_ban_vetting', ?, 1, 'ban', 'banned', 'none', 'confirmed malice', 'trace-scan-1', '9001', '["github:9001"]', NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, NULL, NULL, 'no_revision_needed', ?)`, banLedger, issuer, manifestSha256, at)
+  try dbRows(`INSERT INTO project_enforcements (${enforcementColumns}) VALUES ('enf_trace_ban_moderator', ?, 2, 'ban', 'banned', 'none', 'moderator decision', 'trace-scan-1', '9001', '["github:9001"]', '7', 'moderator', NULL, 'project-moderator', 'admin-panel', 1, ?, NULL, NULL, 'no_revision_needed', ?)`, banLedger, manifestSha256, at)
+  try dbRows("INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES ('enf_trace_ban_moderator', ?, ?)", account.githubId, account.login)
+}
+
+effect function reinstate(githubId: string) {
+  const manifestSha256 = try digestOf(JSON.stringify({ id: banLedger, status: "active" }))
+  try dbRows(`INSERT INTO project_enforcements (${enforcementColumns}) VALUES ('enf_trace_ban_release', ?, 3, 'reinstate_accounts', 'banned', 'none', 'independent review', 'trace-scan-1', '9001', '["github:9001"]', '8', 'reviewer', NULL, 'project-moderator', 'admin-panel', 1, ?, NULL, NULL, 'no_revision_needed', ?)`, banLedger, manifestSha256, try eventAt(0))
+  try dbRows("INSERT INTO project_account_reinstatements (enforcement_id, ban_enforcement_id, github_id) VALUES ('enf_trace_ban_release', 'enf_trace_ban_moderator', ?)", githubId)
+}
+
+layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+    const records = new Map<string, Stored>()
+    for (const fixture of fixtures) records.set(fixture.id, try storeRevision(fixture, 1, manifestOf(fixture)))
+    try secured(
+      [{ projectId: "gamma", sourceProjectId: "gamma", restriction: "ModeratorBan" }, { projectId: "shared", sourceProjectId: "gamma", restriction: "ModeratorBan" }],
+      [cleared("alpha"), cleared("beta"), cleared("paused-tool"), cleared("draft"), cleared("delisted"), cleared("gamma"), cleared("shared"), { projectId: "unsure", revision: 1, read: "ClearanceUnverified" }],
+    )
+
+    const alphaRecord = records.get("alpha")
+    const pausedRecord = records.get("paused-tool")
+    if (alphaRecord === undefined || pausedRecord === undefined) return try Effect.die(new Error("fixtures were not stored"))
+    const alphaBytes = try served(alpha, alphaRecord, 1)
+    try same(alphaBytes.actual, alphaBytes.wanted)
+    try same(alphaBytes.paths, ["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json", "downloads/contribute-to-alpha.skill", "downloads/contribute-to-alpha.skill.sha256", "review-skill.md", "review-mission.md", "review-codex.md", "review-claude.md", "review-claude-code.md", "review-manual.md", "review-skill-manifest.json", "downloads/review-alpha-contributions.skill", "downloads/review-alpha-contributions.skill.sha256"])
+    const pausedBytes = try served(pausedTool, pausedRecord, 1)
+    try same(pausedBytes.actual, pausedBytes.wanted)
+    const aliases = try.all [call("/projects/alpha/SKILL.md"), call("/projects/alpha/review/SKILL.md")]
+    try same(aliases.map((answer) => answer.body), [alphaBytes.actual["skill.md"], alphaBytes.actual["review-skill.md"]])
+
+    const shapes = try.all [
+      call("/projects/alpha/skill.md"),
+      call("/projects/alpha/skill-manifest.json"),
+      call("/projects/alpha/downloads/contribute-to-alpha.skill"),
+      call("/projects/alpha/downloads/contribute-to-alpha.skill.sha256"),
+      call("/projects/gamma/skill.md"),
+      call("/.well-known/slop/projects.json"),
+    ]
+    try same(shapes.map(headersOf), [
+      artifactHeaders(200, markdown),
+      artifactHeaders(200, json),
+      artifactHeaders(200, "application/octet-stream", "attachment"),
+      artifactHeaders(200, plain),
+      artifactHeaders(410, plain),
+      artifactHeaders(200, json),
+    ])
+    const heads = try.all [
+      call("/projects/alpha/skill.md", { method: "HEAD" }),
+      call("/projects/alpha/downloads/contribute-to-alpha.skill", { method: "HEAD" }),
+      call("/projects/gamma/skill.md", { method: "HEAD" }),
+      call("/projects/unsure/skill.md", { method: "HEAD" }),
+      call("/.well-known/slop/projects.json", { method: "HEAD" }),
+    ]
+    try same(heads.map((answer) => ({ ...headersOf(answer), body: answer.body })), [
+      { ...artifactHeaders(200, markdown), body: "" },
+      { ...artifactHeaders(200, "application/octet-stream", "attachment"), body: "" },
+      { ...artifactHeaders(410, plain), body: "" },
+      { ...artifactHeaders(503, plain), body: "" },
+      { ...artifactHeaders(200, json), body: "" },
+    ])
+
+    const refusals = try.all [
+      call("/projects/gamma/skill.md"),
+      call("/projects/gamma/terms.json"),
+      call("/projects/shared/downloads/contribute-to-shared.skill"),
+      call("/projects/delisted/skill.md"),
+      call("/projects/delisted/terms.json"),
+      call("/projects/omega/skill.md"),
+      call("/projects/eliza/downloads/contribute-to-eliza.skill"),
+      call("/projects/draft/skill.md"),
+      call("/projects/unscanned/review-skill.md"),
+      call("/projects/unsure/skill.md"),
+      call("/projects/alpha/downloads/contribute-to-beta.skill"),
+    ]
+    try same(refusals.map(shown), [gone("banned"), gone("banned"), gone("banned"), notFound, notFound, notFound, notFound, unpublished, unusable, unconfirmed, { status: 404, body: "Artifact not found.\n" }])
+
+    const forged = try.all [
+      call("/projects/unsure/skill.md?clearance=cleared&state=cleared", { headers: { "x-slop-clearance": "cleared", "x-vetting-state": "cleared", "x-slop-template-sha256": "0".repeat(64) } }),
+      call("/projects/unscanned/skill.md?clearance=ClearanceCleared", { headers: { "x-slop-clearance": "ClearanceCleared", cookie: "clearance=cleared" } }),
+      call("/projects/gamma/skill.md?restriction=Clear", { headers: { "x-slop-restriction": "clear" } }),
+    ]
+    try same(forged.map(shown), [unconfirmed, unusable, gone("banned")])
+
+    const terms = try.all [call("/projects/beta/terms.json"), call("/projects/paused-tool/terms.json"), call("/projects/draft/terms.json"), call("/projects/unsure/terms.json")]
+    try same(terms.map(shown), [beta, pausedTool, draft, unsure].map((fixture) => ({ status: 200, body: termsOf(fixture) })))
+
+    try same(shown(try call("/.well-known/slop/projects.json")), { status: 200, body: { schemaVersion: "1", projects: [discoveryRow(alpha, "alpha-org/alpha"), discoveryRow(alpha, "alpha-org/alpha-cli-renamed"), discoveryRow(beta, "beta-org/beta")] } })
+
+    const elsewhere = try.all [call("/projects/Alpha/skill.md"), call("/downloads/contribute-to-eliza.skill")]
+    try same(elsewhere.map((answer) => ({ status: answer.status, origin: answer.headers["access-control-allow-origin"] })), [{ status: 200, origin: undefined }, { status: 404, origin: undefined }])
+    try same(elsewhere[0]?.body, passThroughPage)
+
+    for (const fixture of [poolProject, securityProject, pausedPool]) try storeRevision(fixture, 1, manifestOf(fixture))
+    try secured(
+      [{ projectId: "gamma", sourceProjectId: "gamma", restriction: "ModeratorBan" }, { projectId: "shared", sourceProjectId: "gamma", restriction: "ModeratorBan" }],
+      [cleared("alpha"), cleared("beta"), cleared("pool-project"), cleared("security-project"), cleared("paused-pool")],
+    )
+    const candidates = ["alpha", "beta", "pool-project", "security-project", "unscanned", "unsure"]
+    const withPool = ["alpha", "alpha", "beta", "pool-project", "security-project"]
+    const withoutPool = ["alpha", "alpha", "beta", "security-project"]
+    const listedAs = (listed: ReadonlyArray<string>, unavailable: number) => ({ status: 200, cache: "no-store", listed, asked: [candidates], unavailable })
+    const months = {
+      underfunded: try discoveredUnder(funding("Facts", [999, 999, 999])),
+      emptyVault: try discoveredUnder(funding("Facts", [0])),
+      funded: try discoveredUnder(funding("Facts", cap)),
+      pledged: try discoveredUnder(funding("Facts", [0], cap)),
+      failed: try discoveredUnder(funding("Fail", [999, 999, 999])),
+      nothing: try discoveredUnder(funding("Nothing", [999, 999, 999])),
+      short: try discoveredUnder(funding("Short", [999, 999, 999])),
+    }
+    try same(months, {
+      underfunded: listedAs(withoutPool, 0),
+      emptyVault: listedAs(withoutPool, 0),
+      funded: listedAs(withPool, 0),
+      pledged: listedAs(withPool, 0),
+      failed: listedAs(withPool, 1),
+      nothing: listedAs(withPool, 1),
+      short: listedAs(withPool, 1),
+    })
+
+    const direct = ["skill.md", "skill-manifest.json", "downloads/contribute-to-pool-project.skill", "terms.json"].map((path) => `/projects/pool-project/${path}`)
+    const directly = (plan: ReturnType<typeof funding>) => underFunding(plan, Effect.forEach(direct, (path) => call(path)))
+    const unfundedDirect = try directly(funding("Facts", [999, 999, 999]))
+    const fundedDirect = try directly(funding("Facts", cap))
+    try same({ unfunded: unfundedDirect.result.map(shown), asked: [unfundedDirect.asked, fundedDirect.asked] }, { unfunded: fundedDirect.result.map(shown), asked: [[], []] })
+    try same(unfundedDirect.result.map((answer) => answer.status), [200, 200, 200, 200])
+    try planFunding(funding("Nothing"))
+  })
+
+  it.effect('A restriction or a new registry revision that lands between two requests governs the next one (spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {
+    const discovered = effect {
+      const answer = try call("/.well-known/slop/projects.json")
+      return (answer.body as { readonly projects: ReadonlyArray<{ readonly project_id: string }> }).projects.map((entry) => entry.project_id)
+    }
+    try secured([], [cleared("alpha"), cleared("beta")])
+    const before = try call("/projects/alpha/skill.md")
+    const listedBefore = try discovered
+
+    try secured([{ projectId: "alpha", sourceProjectId: "alpha", restriction: "FlagQuarantine" }], [cleared("alpha"), cleared("beta")])
+    const quarantined = try.all [call("/projects/alpha/skill.md"), call("/projects/alpha/terms.json")]
+    const listedQuarantined = try discovered
+
+    try secured([{ projectId: "alpha", sourceProjectId: "beta", restriction: "ServiceBan" }, { projectId: "beta", sourceProjectId: "beta", restriction: "ServiceBan" }], [cleared("alpha"), cleared("beta")])
+    const closedByAnother = try call("/projects/alpha/skill.md")
+    const listedClosed = try discovered
+
+    try secured([], [cleared("alpha"), cleared("beta")])
+    const reopened = try call("/projects/alpha/skill.md")
+
+    const revised = try storeRevision(alpha, 2, manifestOf(alpha, "Reproducible research tooling, revised."))
+    const stalePin = try.all [call("/projects/alpha/skill.md"), call("/projects/alpha/terms.json")]
+    const listedStale = try discovered
+
+    try secured([], [cleared("alpha", 2), cleared("beta")])
+    const current = try call("/projects/alpha/skill-manifest.json")
+    const expected = try expectedFiles(alpha, revised, 2)
+    const manifestBytes = expected.get("skill-manifest.json")
+    if (manifestBytes === undefined) return try Effect.die(new Error("the revised publication has no skill-manifest.json"))
+    const binding = (current.body as { readonly authority: { readonly registry: unknown } }).authority.registry
+
+    try same({
+      before: before.status,
+      listedBefore,
+      quarantined: quarantined.map(shown),
+      listedQuarantined,
+      closedByAnother: shown(closedByAnother),
+      listedClosed,
+      reopened: { status: reopened.status, body: reopened.body },
+      stalePin: stalePin.map((answer) => answer.status),
+      staleBody: stalePin[0]?.body,
+      listedStale,
+      current: { status: current.status, body: current.body },
+      binding,
+    }, {
+      before: 200,
+      listedBefore: ["alpha", "alpha", "beta"],
+      quarantined: [gone("quarantined"), gone("quarantined")],
+      listedQuarantined: ["beta"],
+      closedByAnother: gone("banned"),
+      listedClosed: [],
+      reopened: { status: 200, body: before.body },
+      stalePin: [404, 200],
+      staleBody: unusable.body,
+      listedStale: ["beta"],
+      current: { status: 200, body: try bodyOf("skill-manifest.json", manifestBytes) },
+      binding: { projectId: "alpha", revision: 2, manifestSha256: revised.digest, url: "https://slop.cash/api/v1/project-revisions/alpha/2" },
+    })
+  })
+
+  it.effect('Install a listed project\'s skill, run it with a private trace and leave the pull request evidence the closure reads, through the composed contributor area (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "The author\'s own pull_request_opened event is the only closure run evidence")', () => effect {
+    const relayRecord = try storeRevision(relay, 1, manifestOf(relay))
+    for (const fixture of [relayQuarantined, relayPaused, relayRetired]) try storeRevision(fixture, 1, manifestOf(fixture))
+    try secured(
+      [{ projectId: "relay-quarantined", sourceProjectId: "relay-quarantined", restriction: "FlagQuarantine" }],
+      [cleared("relay"), cleared("relay-quarantined"), cleared("relay-paused"), cleared("relay-retired")],
+    )
+    try planFunding(funding("Facts"))
+    const relayBytes = try served(relay, relayRecord, 1)
+    const closed = try.all [call("/projects/relay-quarantined/skill.md"), call("/projects/relay-quarantined/terms.json"), call("/projects/relay-retired/skill.md"), call("/projects/relay-retired/terms.json")]
+    const paused = try.all [call("/projects/relay-paused/skill.md"), call("/projects/relay-paused/terms.json")]
+    const discovery = shown(try call("/.well-known/slop/projects.json"))
+
+    try observeIntake(1)
+    const token = try session(author.login)
+    const node = "PR_kwDOrelayJourney1"
+    const runBody = { ...runFields, projectId: "relay", repository: "relay-org/relay", clientRunId: "run_01JRELAYJOURNEY00000000001" }
+    const created = try call("/api/v1/runs", { json: runBody, headers: signed(token, "relay-run-key-0000000001") })
+    const runId = text(created, "serverRunId")
+    const opened = try call(`/api/v1/runs/${runId}/events`, { json: { kind: "pull_request_opened", occurredAt: try eventAt(0), source: "agent", githubObjectId: node, githubUrl: "https://github.com/relay-org/relay/pull/1" }, headers: signed(token, "relay-event-key-00000001") })
+    const trace = encoder.encode('{"role":"user","text":"relay private trace"}\n')
+    const digest = try digestOf(trace)
+    const intent = try call(`/api/v1/runs/${runId}/trace-intents`, { json: { sha256: digest, sizeBytes: trace.length, contentType: "application/x-ndjson" }, headers: signed(token, "relay-intent-key-0000001") })
+    const uploaded = try upload(text(intent, "uploadUrl"), trace, digest)
+    const finalized = try call(`/api/v1/runs/${runId}/finalize`, { method: "POST", headers: signed(token, "relay-finalize-key-00001") })
+    const pullRequest = { repositoryId: "9101", repositoryFullName: "relay-org/relay", projectId: "relay", pullRequestNodeId: node, authorGithubId: author.githubId }
+    const evidence = {
+      exact: try runEvidence(pullRequest),
+      renamed: try runEvidence({ ...pullRequest, repositoryId: "", repositoryFullName: "relay-org/relay-renamed" }),
+      otherAuthor: try runEvidence({ ...pullRequest, authorGithubId: other.githubId }),
+      otherPullRequest: try runEvidence({ ...pullRequest, pullRequestNodeId: "PR_kwDOrelayJourney2" }),
+      otherProject: try runEvidence({ ...pullRequest, projectId: "relay-paused" }),
+      otherRepository: try runEvidence({ ...pullRequest, repositoryId: "", repositoryFullName: "other-org/relay" }),
+    }
+
+    try same({
+      relay: relayBytes.actual,
+      closed: closed.map(shown),
+      paused: [paused[0]?.status, shown(paused[1] ?? { status: 0, headers: {}, body: null })],
+      discovery,
+      run: [created.status, text(created, "state"), opened.status, text(opened, "kind"), intent.status, uploaded.status, text(uploaded, "state"), finalized.status, text(finalized, "state"), text(finalized, "traceSha256")],
+      evidence,
+    }, {
+      relay: relayBytes.wanted,
+      closed: [gone("quarantined"), gone("quarantined"), notFound, notFound],
+      paused: [200, { status: 200, body: termsOf(relayPaused) }],
+      discovery: { status: 200, body: { schemaVersion: "1", projects: [discoveryRow(relay, "relay-org/relay-renamed")] } },
+      run: [201, "awaiting_trace", 201, "pull_request_opened", 201, 201, "trace_uploaded", 200, "finalized", digest],
+      evidence: { exact: true, renamed: true, otherAuthor: false, otherPullRequest: false, otherProject: false, otherRepository: false },
+    })
+  })
+
+  it.effect('Record the opened pull request once on its own authenticated run (spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event"; spec/contributor/traceServer.md, "Progress events are the owner\'s agent-source records, idempotent by key and refused once finalized"; spec/contributor/traceServer.md, "The author\'s own pull_request_opened event is the only closure run evidence"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing")', () => effect {
+    const token = try session(author.login)
+    const otherToken = try session(other.login)
+    const node = "PR_kwDOtraceJourney7"
+    const runBody = { ...runFields, clientRunId: `pr_opened_${node}` }
+    const runKey = "opened-run-key-000000001"
+    const created = try call("/api/v1/runs", { json: runBody, headers: signed(token, runKey) })
+    const runId = text(created, "serverRunId")
+    const othersRun = try call("/api/v1/runs", { json: runBody, headers: signed(otherToken, runKey) })
+    const events = `/api/v1/runs/${runId}/events`
+    const opened = { kind: "pull_request_opened", occurredAt: try eventAt(0), source: "agent", githubObjectId: node, githubUrl: "https://github.com/slop-test/widget/pull/7" }
+    const eventKey = "opened-event-key-0000001"
+    const recorded = try call(events, { json: opened, headers: signed(token, eventKey) })
+    const retried = try call(events, { json: opened, headers: signed(token, eventKey) })
+    const changed = try call(events, { json: { ...opened, githubObjectId: "PR_kwDOtraceOther8" }, headers: signed(token, eventKey) })
+    const foreign = try call(events, { json: opened, headers: signed(otherToken, "opened-event-key-0000002") })
+    const webhookSourced = try call(events, { json: { ...opened, source: "github" }, headers: signed(token, "opened-event-key-0000003") })
+    const future = try call(events, { json: { ...opened, occurredAt: try eventAt(10) }, headers: signed(token, "opened-event-key-0000004") })
+    const unknownKind = try call(events, { json: { ...opened, kind: "pull_request_merged" }, headers: signed(token, "opened-event-key-0000005") })
+    const stored = try dbRows("SELECT e.kind, e.source, e.github_object_id, r.client_run_id, r.github_user_id FROM run_progress_events e JOIN trace_runs r ON r.id = e.run_id WHERE e.run_id = ?", runId)
+    try Effect.try(() => assert.deepStrictEqual({
+      created: [created.status, text(created, "clientRunId"), text(created, "state")],
+      othersRun: [othersRun.status, text(othersRun, "serverRunId") !== runId],
+      recorded: [recorded.status, text(recorded, "kind"), text(recorded, "runId") === runId, text(recorded, "eventId") !== ""],
+      retried: [retried.status, text(retried, "eventId") === text(recorded, "eventId")],
+      changed: refusalOf(changed),
+      foreign: refusalOf(foreign),
+      webhookSourced: refusalOf(webhookSourced),
+      future: refusalOf(future),
+      unknownKind: refusalOf(unknownKind),
+      contract: recorded.headers["x-slop-trace-api-contract"],
+      stored,
+    }, {
+      created: [201, `pr_opened_${node}`, "awaiting_trace"],
+      othersRun: [201, true],
+      recorded: [201, "pull_request_opened", true, true],
+      retried: [200, true],
+      changed: [409, "idempotency_conflict", "Idempotency key was reused"],
+      foreign: [404, "not_found", "Run not found"],
+      webhookSourced: [400, "invalid_request", "Invalid event source"],
+      future: [400, "invalid_request", "Event time is too far in the future"],
+      unknownKind: [400, "invalid_request", "Invalid event kind"],
+      contract: "private-trace-v1-opaque-hmac-v1",
+      stored: [{ kind: "pull_request_opened", source: "agent", github_object_id: node, client_run_id: `pr_opened_${node}`, github_user_id: author.githubId }],
+    }))
+  })
+
+  it.effect('Upload an optional private trace through lost replies, a stale intake, a conflicting stored object, a ban and a revoked secret (spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply"; spec/contributor/sessionExchange.md, "A lost response preserves server registration without claiming local receipt"; spec/contributor/runEvidence.md, "The same local run resumes its own server record and bounded exact upload"; spec/contributor/runEvidence.md, "A retained digest can be finalized again while changed local bytes fail"; spec/contributor/evidence.md, "The server\'s retained digest is learned once and never replaced"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+    const { site } = try World
+    try observeIntake(1)
+    const intake = try call("/api/v1/private-request-intake")
+    const assertion = try promise(() => site.assertion(author.login))
+    const issued = try exchange(assertion)
+    const replayed = try exchange(assertion)
+    const otherAudience = try exchange(try promise(() => site.assertion(author.login, "slop-points-web")))
+    const malformed = try exchange("short")
+    const foreignOrigin = try exchange(assertion, "https://evil.example")
+    const preflighted = try call("/api/v1/auth/session", { method: "OPTIONS", headers: { origin: "https://slop.test", "access-control-request-method": "POST", "access-control-request-headers": "x-slop-identity-assertion" } })
+    const bearerPreflight = try call("/api/v1/auth/session", { method: "OPTIONS", headers: { origin: "https://slop.test", "access-control-request-method": "POST", "access-control-request-headers": "authorization" } })
+    const token = text(issued, "token")
+
+    const runBody = { ...runFields, clientRunId: "run_01JTRACEJOURNEY00000000001" }
+    const runKey = "create-run-key-author-0001"
+    const created = try call("/api/v1/runs", { json: runBody, headers: signed(token, runKey) })
+    const recreated = try call("/api/v1/runs", { json: runBody, headers: signed(token, runKey) })
+    const reused = try call("/api/v1/runs", { json: { ...runBody, model: "claude-sonnet-4-5" }, headers: signed(token, runKey) })
+    const forged = try call("/api/v1/runs", { json: { ...runBody, githubId: other.githubId }, headers: signed(token, "create-run-key-forged-0001") })
+    const unsigned = try call("/api/v1/runs", { json: runBody, headers: { "idempotency-key": runKey } })
+    const keyless = try call("/api/v1/runs", { json: runBody, headers: signed(token) })
+    const runId = text(created, "serverRunId")
+
+    const trace = encoder.encode('{"role":"user","text":"private trace one"}\n')
+    const digest = try digestOf(trace)
+    const intentBody = { sha256: digest, sizeBytes: trace.length, contentType: "application/x-ndjson" }
+    const intentKey = "intent-key-author-0000001"
+    const intent = try call(`/api/v1/runs/${runId}/trace-intents`, { json: intentBody, headers: signed(token, intentKey) })
+    const intentAgain = try call(`/api/v1/runs/${runId}/trace-intents`, { json: intentBody, headers: signed(token, intentKey) })
+    const uploadUrl = text(intent, "uploadUrl")
+
+    try observeIntake(25)
+    const stale = try upload(uploadUrl, trace, digest)
+    const staleReservations = try dbRows("SELECT trace_sha256 FROM trace_write_reservations WHERE run_id = ?", runId)
+    const staleIntake = try call("/api/v1/private-request-intake")
+    const staleEvent = try call(`/api/v1/runs/${runId}/events`, { json: { kind: "run_started", occurredAt: try eventAt(0), source: "agent" }, headers: signed(token, "stale-intake-event-00001") })
+    try observeIntake(1)
+
+    const changedBytes = encoder.encode('{"role":"user","text":"private trace two"}\n')
+    const changed = try upload(uploadUrl, changedBytes, try digestOf(changedBytes))
+    const misdeclared = try upload(uploadUrl, changedBytes, digest)
+
+    try promise(() => site.place(objectKey(digest), encoder.encode("conflicting object\n")))
+    const failedWrite = try upload(uploadUrl, trace, digest)
+    const reserved = try dbRows("SELECT trace_sha256 FROM trace_write_reservations WHERE run_id = ?", runId)
+    const beforeAttach = try dbRows("SELECT state, trace_sha256 FROM trace_runs WHERE id = ?", runId)
+    try promise(() => site.remove(objectKey(digest)))
+    const stored = try upload(uploadUrl, trace, digest)
+    const storedAgain = try upload(uploadUrl, trace, digest)
+    const kept = try promise(() => site.stored(objectKey(digest)))
+    const readBack = try call(new URL(uploadUrl).pathname)
+
+    const secondIntent = try call(`/api/v1/runs/${runId}/trace-intents`, { json: { ...intentBody, sha256: try digestOf(changedBytes) }, headers: signed(token, "intent-key-author-0000002") })
+    const finalized = try call(`/api/v1/runs/${runId}/finalize`, { method: "POST", headers: signed(token, "finalize-key-author-00001") })
+    const refinalized = try call(`/api/v1/runs/${runId}/finalize`, { method: "POST", headers: signed(token, "finalize-key-author-00001") })
+    const lateEvent = try call(`/api/v1/runs/${runId}/events`, { json: { kind: "run_completed", occurredAt: try eventAt(0), source: "agent" }, headers: signed(token, "late-event-key-author-001") })
+
+    const otherToken = try session(other.login)
+    const foreignFinalize = try call(`/api/v1/runs/${runId}/finalize`, { method: "POST", headers: signed(otherToken, "finalize-key-other-000001") })
+    const foreignIntent = try call(`/api/v1/runs/${runId}/trace-intents`, { json: intentBody, headers: signed(otherToken, "intent-key-other-00000001") })
+
+    const bannedRun = try call("/api/v1/runs", { json: { ...runBody, clientRunId: "run_01JTRACEJOURNEY00000000002" }, headers: signed(token, "create-run-key-author-0002") })
+    const bannedRunId = text(bannedRun, "serverRunId")
+    const bannedTrace = encoder.encode("plain private trace refused by a ban\n")
+    const bannedDigest = try digestOf(bannedTrace)
+    const bannedIntent = try call(`/api/v1/runs/${bannedRunId}/trace-intents`, { json: { sha256: bannedDigest, sizeBytes: bannedTrace.length, contentType: "application/x-ndjson" }, headers: signed(token, "intent-key-author-0000003") })
+    try ban(author)
+    const bannedUpload = try upload(text(bannedIntent, "uploadUrl"), bannedTrace, bannedDigest)
+    const bannedRows = try dbRows("SELECT r.state, r.trace_sha256, w.trace_sha256 AS reserved FROM trace_runs r LEFT JOIN trace_write_reservations w ON w.run_id = r.id WHERE r.id = ?", bannedRunId)
+    const bannedKept = try promise(() => site.stored(objectKey(bannedDigest)))
+    const bannedCreate = try call("/api/v1/runs", { json: { ...runBody, clientRunId: "run_01JTRACEJOURNEY00000000003" }, headers: signed(token, "create-run-key-author-0003") })
+    const bannedFinalize = try call(`/api/v1/runs/${bannedRunId}/finalize`, { method: "POST", headers: signed(token, "finalize-key-author-00002") })
+    try reinstate(author.githubId)
+    const liftedFinalize = try call(`/api/v1/runs/${bannedRunId}/finalize`, { method: "POST", headers: signed(token, "finalize-key-author-00002") })
+
+    try promise(() => site.redeploy({ TRACE_AUTH_SECRET: "trace-auth-secret-after-the-revocation-0002" }))
+    const revoked = try call("/api/v1/runs", { json: runBody, headers: signed(token, runKey) })
+
+    try Effect.try(() => assert.deepStrictEqual({
+      intake: [intake.status, fields(intake).enabled, fields(intake).source],
+      issued: [issued.status, text(issued, "tokenType"), token.startsWith("v1."), text(issued, "expiresAt").endsWith(".000Z")],
+      replayed: refusalOf(replayed),
+      otherAudience: refusalOf(otherAudience),
+      malformed: refusalOf(malformed),
+      foreignOrigin: [foreignOrigin.status, fields(foreignOrigin).error],
+      preflighted: [preflighted.status, preflighted.headers["access-control-allow-origin"], preflighted.headers["access-control-allow-headers"]],
+      bearerPreflight: [bearerPreflight.status, fields(bearerPreflight).error],
+      created: [created.status, text(created, "state")],
+      recreated: [recreated.status, text(recreated, "serverRunId") === runId],
+      reused: refusalOf(reused),
+      forged: refusalOf(forged),
+      unsigned: refusalOf(unsigned),
+      keyless: refusalOf(keyless),
+      intent: [intent.status, text(intent, "sha256"), fields(intent).sizeBytes, uploadUrl.startsWith("https://slop.test/api/v1/trace-uploads/")],
+      intentAgain: [intentAgain.status, text(intentAgain, "uploadUrl") === uploadUrl],
+      stale: refusalOf(stale),
+      staleReservations,
+      staleIntake: refusalOf(staleIntake),
+      staleEvent: staleEvent.status,
+      changed: refusalOf(changed),
+      misdeclared: refusalOf(misdeclared),
+      failedWrite: refusalOf(failedWrite),
+      reserved,
+      beforeAttach,
+      stored: [stored.status, text(stored, "state"), text(stored, "traceObjectId"), fields(stored).sizeBytes],
+      storedAgain: refusalOf(storedAgain),
+      kept,
+      readBack: [readBack.status >= 400, JSON.stringify(readBack.body).includes("private trace one")],
+      secondIntent: refusalOf(secondIntent),
+      finalized: [finalized.status, text(finalized, "state"), text(finalized, "traceSha256")],
+      refinalized: [refinalized.status, text(refinalized, "state"), text(refinalized, "traceSha256")],
+      lateEvent: refusalOf(lateEvent),
+      foreignFinalize: refusalOf(foreignFinalize),
+      foreignIntent: refusalOf(foreignIntent),
+      bannedUpload: refusalOf(bannedUpload),
+      bannedRows,
+      bannedKept,
+      bannedCreate: refusalOf(bannedCreate),
+      bannedFinalize: refusalOf(bannedFinalize),
+      liftedFinalize: refusalOf(liftedFinalize),
+      revoked: refusalOf(revoked),
+    }, {
+      intake: [200, true, "github-public-status"],
+      issued: [200, "Bearer", true, true],
+      replayed: [401, "unauthorized", "Identity authentication failed"],
+      otherAudience: [401, "unauthorized", "Identity authentication failed"],
+      malformed: [401, "unauthorized", "Identity authentication failed"],
+      foreignOrigin: [403, "origin_not_allowed"],
+      preflighted: [204, "https://slop.test", "x-slop-identity-assertion, content-type"],
+      bearerPreflight: [403, "headers_not_allowed"],
+      created: [201, "awaiting_trace"],
+      recreated: [200, true],
+      reused: [409, "idempotency_conflict", "Idempotency key was reused"],
+      forged: [400, "invalid_request", "Request body has unexpected fields"],
+      unsigned: [401, "unauthorized", "Authentication failed"],
+      keyless: [400, "invalid_idempotency_key", "A valid Idempotency-Key is required"],
+      intent: [201, digest, trace.length, true],
+      intentAgain: [200, true],
+      stale: [503, "private_intake_unavailable", null],
+      staleReservations: [],
+      staleIntake: [503, "private_intake_unavailable", null],
+      staleEvent: 201,
+      changed: [422, "digest_mismatch", "Trace digest does not match its bytes"],
+      misdeclared: [422, "digest_mismatch", "Trace digest does not match its bytes"],
+      failedWrite: [500, "internal_error", "Internal error"],
+      reserved: [{ trace_sha256: digest }],
+      beforeAttach: [{ state: "awaiting_trace", trace_sha256: null }],
+      stored: [201, "trace_uploaded", `sha256:${digest}`, trace.length],
+      storedAgain: [410, "upload_capability_invalid", "Upload capability is used or expired"],
+      kept: true,
+      readBack: [true, false],
+      secondIntent: [409, "trace_conflict", "The run already has a different trace"],
+      finalized: [200, "finalized", digest],
+      refinalized: [200, "finalized", digest],
+      lateEvent: [409, "run_finalized", "Run is finalized"],
+      foreignFinalize: [404, "not_found", "Run not found"],
+      foreignIntent: [404, "not_found", "Run not found"],
+      bannedUpload: [403, "participation_banned", "This account cannot start new Slop contributions. Funded awards and appeals remain available."],
+      bannedRows: [{ state: "awaiting_trace", trace_sha256: null, reserved: null }],
+      bannedKept: false,
+      bannedCreate: [403, "participation_banned", "This account cannot start new Slop contributions. Funded awards and appeals remain available."],
+      bannedFinalize: [403, "participation_banned", "This account cannot start new Slop contributions. Funded awards and appeals remain available."],
+      liftedFinalize: [409, "trace_required", "Every run must upload a trace before finalizing"],
+      revoked: [401, "unauthorized", "Authentication failed"],
+    }))
+  })
+})

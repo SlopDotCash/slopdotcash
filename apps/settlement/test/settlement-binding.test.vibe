@@ -8,13 +8,8 @@ import { internet } from "@repo/platform/testing/internet"
 import { type AttemptLedger, BindingAttempts } from "@repo/ports/settlement"
 import { Response } from "miniflare"
 import { BindingAttemptsLive } from "../src/payments/bindingAttempts.vibe"
+import { mint, networkDomain, privateVault, programId, projectPda, vault } from "./support/binding/deployment.vibe"
 
-const vault = "Gq2rk4nHSZZFpw9Lx4H9rwzEwLmFJYQAQHX4Lr4n9rCX"
-const privateVault = "3QZBA7XCw8pfJ1ECnynswkroXVejyTmBUvJFSoR3i2Wp"
-const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
-const programId = "BPFLoaderUpgradeab1e11111111111111111111111"
-const projectPda = "SysvarRent111111111111111111111111111111111"
-const networkDomain = "d".repeat(64)
 const at = "2026-11-17T03:00:00.000Z"
 const attesterAddress = "586Z7H2vpX9qNhN2T4e9Utugie3ogjbxzGaMtM3E6HR5"
 const firstWallet = {
@@ -48,6 +43,25 @@ const attester: Handler = async (request) => {
   return jsonAnswer({ transactionId: "binding-transaction-1", transaction: attesterPlan.transaction })
 }
 
+function gate() {
+  let open = () => {}
+  const opened = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { open, opened }
+}
+
+const executed: Attested[] = []
+const unblocked = Promise.resolve()
+const executorPlan = { reached: () => {}, release: unblocked }
+
+const executor: Handler = async (request) => {
+  executed.push({ path: new URL(request.url).pathname, key: request.headers.get("idempotency-key"), body: await request.json() })
+  executorPlan.reached()
+  await executorPlan.release
+  return jsonAnswer({ transactionId: "dispatch-transaction-1" })
+}
+
 const Site = areaLayer({
   root: new URL("..", import.meta.url).pathname,
   config: "test/support/binding/vite.config.ts",
@@ -58,7 +72,7 @@ const Site = areaLayer({
     PAYMENT_NETWORKS: JSON.stringify(["solana-devnet"]),
     PAYMENT_RPC_URLS: JSON.stringify({}),
   },
-  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester },
+  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester, SOLANA_PAYMENT_EXECUTOR: executor },
   internet: internet({}),
 })
 
@@ -169,6 +183,19 @@ effect function seededClaim(githubId: string, source: "d1_registry" | "profile_r
   return claimId
 }
 
+effect function dispatchedBy(obligationOf: string, reached: () => void) {
+  const answer = try (try Area).request("/test/binding/dispatch", { json: { obligationId: obligationOf } })
+  reached()
+  return answer
+}
+
+effect function preparedWhileSubmitting(member: Session, obligationOf: string, reached: Promise<void>, release: () => void) {
+  try promise(() => reached)
+  const answer = try pay(member, "solana-bind/prepare", { obligationId: obligationOf })
+  release()
+  return answer
+}
+
 effect function run(statement: Statement) {
   return try (try Area).sql(statement.text, ...statement.params)
 }
@@ -250,7 +277,9 @@ layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestService
     const foreign = obligationId("5")
     try obligation({ id: foreign, owner: "402", outbox: "ready" })
     const foreignAnswer = try prepareOf(foreign)
-    const wrongActor = try pay(member, "solana-bind/prepare", { obligationId: first }, { "x-slop-expected-github-id": "456" })
+    const impersonated = obligationId("4")
+    try obligation({ id: impersonated, owner: "401", outbox: "ready" })
+    const wrongActor = try pay(member, "solana-bind/prepare", { obligationId: impersonated }, { "x-slop-expected-github-id": "456" })
     const unconsented = try signIn("403")
     const unconsentedClaim = try registered(unconsented, attesterAddress)
     const unauthorized = obligationId("6")
@@ -263,7 +292,7 @@ layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestService
       fenced,
       refused: [
         [outcome(foreignAnswer), try attemptsOf("Ordinary", foreign)],
-        [wrongActor.status, try attemptsOf("Ordinary", first)],
+        [wrongActor.status, try attemptsOf("Ordinary", impersonated)],
         [unconsentedClaim === "", outcome(unauthorizedAnswer), try attemptsOf("Ordinary", unauthorized)],
         [outcome(settledAnswer), try attemptsOf("Ordinary", settled)],
       ],
@@ -272,7 +301,7 @@ layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestService
       fenced: outboxStates.slice(1).map((state) => [state, [409, "binding_not_ready"], []]),
       refused: [
         [[409, "binding_not_ready"], []],
-        [403, [{ id: key, claim_id: wallet.claimId, state: "prepared" }]],
+        [403, []],
         [false, [409, "binding_not_ready"], []],
         [[409, "binding_not_ready"], []],
       ],
@@ -289,6 +318,44 @@ layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestService
       attempts: racedAttempts.length,
       keys: [...new Set(attested.slice(beforeRace).map((call) => call.key))],
     }, { statuses: [200, 200], attempts: 1, keys: [String(racedAttempts[0]?.id ?? "")] })
+
+    const shared: unknown[] = []
+    const sharedExpected: unknown[] = []
+    for (const selfFirst of [true, false]) {
+      const id = obligationId(selfFirst ? "d" : "e")
+      try obligation({ id, owner: "401", outbox: "ready" })
+      const beforeAttested = attested.length
+      const beforeExecuted = executed.length
+      const opened = selfFirst ? outcome(try prepareOf(id)) : null
+      const reached = gate()
+      const release = gate()
+      executorPlan.reached = reached.open
+      executorPlan.release = release.opened
+      const [dispatchedAnswer, during] = try Effect.all([dispatchedBy(id, reached.open), preparedWhileSubmitting(member, id, reached.opened, release.open)], { concurrency: "unbounded" })
+      const sharedAttempts = try attemptsOf("Ordinary", id)
+      const sharedKey = String(sharedAttempts[0]?.id ?? "")
+      shared.push({
+        opened,
+        dispatched: [dispatchedAnswer.status, dispatchedAnswer.body],
+        during: outcome(during),
+        attempts: sharedAttempts,
+        outbox: try area.sql("SELECT state FROM payment_outbox WHERE obligation_id = ?", id),
+        executed: executed.slice(beforeExecuted).map((call) => [call.path, call.key]),
+        attested: attested.slice(beforeAttested).map((call) => [call.path, call.key]),
+      })
+      sharedExpected.push({
+        opened: selfFirst ? [200, null] : null,
+        dispatched: [200, { outcome: "Submitted" }],
+        during: [200, null],
+        attempts: [{ id: sharedKey, claim_id: wallet.claimId, state: "submitted" }],
+        outbox: [{ state: "submitted" }],
+        executed: [["/v1/pay", sharedKey]],
+        attested: (selfFirst ? [sharedKey, sharedKey] : [sharedKey]).map((sent) => ["/v1/pay", sent]),
+      })
+    }
+    executorPlan.reached = () => {}
+    executorPlan.release = unblocked
+    try same(shared, sharedExpected)
 
     const privateId = obligationId("9")
     const caseId = "sc_binding_attempt_1"

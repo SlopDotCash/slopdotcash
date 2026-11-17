@@ -26,7 +26,7 @@ export interface Plan {
 
 export error ContentUnreadable { projectId: string }
 
-effect function contentSha256(projectId: string) {
+export effect function contentSha256(projectId: string) {
   const text = try manifestText(projectId)
   const manifest: unknown = text === undefined ? undefined : try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ContentUnreadable({ projectId }) })
   if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) throw new ContentUnreadable({ projectId })

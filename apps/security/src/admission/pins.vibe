@@ -1,0 +1,41 @@
+// spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"
+import type { ProjectView } from "@repo/ports/backend"
+import type { Enforcement, PinRead } from "../../gen/security__enforcement.ts"
+import { identityOf } from "../../gen/security__enforcement.effect.vibe"
+import { type Pin, pinOrUndefined } from "./livePin.vibe"
+import { contentSha256 } from "./queue.vibe"
+import type { Assessment } from "./store.vibe"
+
+effect function currentContent(projectId: string) {
+  return contentSha256(projectId) catch effect (error) => {
+    if (error._tag === "ContentUnreadable") return undefined
+    throw error
+  }
+}
+
+function unavailable(repository: number): PinRead {
+  return { repository, assessment: 0, pin: "PinUnavailable" }
+}
+
+function pinOf(stored: Assessment | undefined, pin: Pin, content: string) {
+  return stored !== undefined && stored.commitSha === pin.commitSha && stored.templateSha256 === pin.templateSha256 && stored.contentSha256 === content ? "PinMatches" as const : "PinChanged" as const
+}
+
+export effect function pinReads(state: Enforcement, view: ProjectView, assessments: ReadonlyArray<Assessment>) {
+  const content = try currentContent(view.projectId)
+  if (content === undefined) return state.repositories.map(unavailable)
+  const reads: PinRead[] = []
+  for (const repository of state.repositories) {
+    const listed = view.repositories.find((entry) => entry.id === String(repository))
+    const pin = listed === undefined ? undefined : try pinOrUndefined(view, listed.fullName)
+    if (pin === undefined) {
+      reads.push(unavailable(repository))
+      continue
+    }
+    for (const recorded of state.recorded) {
+      if (recorded.repository !== repository || recorded.identity !== identityOf(state, repository)) continue
+      reads.push({ repository, assessment: recorded.id, pin: pinOf(assessments.find((each) => each.row === recorded.id), pin, content) })
+    }
+  }
+  return reads
+}

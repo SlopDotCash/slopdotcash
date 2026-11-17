@@ -212,6 +212,7 @@ layer(StartedFlagged, { excludeTestServices: true, timeout: "180 seconds" })((it
     const [singleClean = ""] = scans.get(single.id) ?? []
     const [pairOne = "", pairTwo = ""] = scans.get(pair.id) ?? []
     const [studiedOne = "", studiedTwo = ""] = scans.get(studied.id) ?? []
+    const [movedOne = "", movedTwoOld = ""] = scans.get(moved.id) ?? []
     const issuer = (assessmentId: string, assessmentIds?: ReadonlyArray<string>) => ({ kind: "vetting-service", keySha256: signingKeySha256, assessmentId, ...(assessmentIds === undefined ? {} : { assessmentIds }), policyVersion: "slop-scan-policy-v2", rule: "clean-fresh-scan-after-flags" })
     const olderApp = try promise(() => world.db.prepare(`INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
       VALUES('enf_older_app_pair',?,2,'reinstate','clear','none','A clean fresh security scan lifted a pause that contributor flags alone placed',?,'5201','["slop-test/pair-one","slop-test/pair-two"]',NULL,NULL,?,'vetting-service','standing-rule',1,?,NULL,NULL,'no_revision_needed',?)`)
@@ -230,8 +231,9 @@ layer(StartedFlagged, { excludeTestServices: true, timeout: "180 seconds" })((it
     }, {
       olderApp: "refused",
       status: 200,
-      reinstated: [pairTwo, singleClean].sort(),
+      reinstated: [movedTwoOld, pairTwo, singleClean].sort(),
       records: [
+        { project_id: moved.id, sequence: 2, state_after: "clear", appeal_after: "none", system_issuer: issuer(movedTwoOld, [movedTwoOld, movedOne]) },
         { project_id: pair.id, sequence: 2, state_after: "clear", appeal_after: "none", system_issuer: issuer(pairTwo, [pairTwo, pairOne]) },
         { project_id: single.id, sequence: 2, state_after: "clear", appeal_after: "none", system_issuer: issuer(singleClean, [singleClean]) },
       ],

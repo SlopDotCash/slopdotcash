@@ -2,7 +2,7 @@
 import { millisOf } from "@repo/platform/clock"
 import { DeploymentTier } from "@repo/platform/config"
 import { sha256Hex } from "@repo/platform/crypto"
-import { type Admission, type Bearer, admission, bytesBody, handleRaw, strictBody } from "@repo/platform/http"
+import { type Admission, type Bearer, bytesBody, handleRaw, strictBody } from "@repo/platform/http"
 import { IntakeHealth } from "@repo/ports/operations"
 import { traceCollectionReadyAt } from "../../gen/operations__intakeHealth.effect.vibe"
 import { type Reply, beginPut as probedPut, maxTraceBytes, serverRuntime } from "../../gen/contributor__traceServer.effect.vibe"
@@ -19,15 +19,11 @@ import { declaredDigest, exactClient, exactClientVersion, exactModel, exactProvi
 type Fields = Readonly<Record<string, unknown>>
 
 const jsonLimitBytes = 65536
-const runKeys: ReadonlyArray<string> = ["clientRunId", "projectId", "repository", "projectPolicyRevision", "provider", "model", "client", "clientVersion"]
-const intentKeys: ReadonlyArray<string> = ["sha256", "sizeBytes", "contentType"]
-const eventKeys: ReadonlyArray<string> = ["kind", "occurredAt", "source", "githubObjectId", "githubUrl", "headSha"]
 const isEventKind = Schema.is(StoredEventKind)
 const isSource = Schema.is(StoredSource)
 
-effect function fieldsOf(allowed: ReadonlyArray<string>) {
+effect function jsonFields() {
   const fields: Fields = try strictBody(Schema.Record(Schema.String, Schema.Unknown), jsonLimitBytes)
-  if (Object.keys(fields).some((key) => !allowed.includes(key))) throw refused({ status: admission.unexpectedFields.status, error: admission.unexpectedFields.code, message: admission.unexpectedFields.message })
   return fields
 }
 
@@ -88,7 +84,7 @@ effect function created(input: Admission<"bearer">) {
   if (off !== undefined) return off
   const rows = postRuns
   try writer(input.actor, rows)
-  const fields = try fieldsOf(runKeys)
+  const fields = try jsonFields()
   const request = {
     clientRunId: try required(fields, "clientRunId", validIdentifier, rows.invalidRequestInvalidClientRunId),
     projectId: try required(fields, "projectId", validIdentifier, rows.invalidRequestInvalidProjectId),
@@ -118,7 +114,7 @@ effect function intended(input: Admission<"bearer">) {
   const actor = input.actor
   const by = try writer(actor, rows)
   const key = try idempotencyKey(rows.invalidIdempotencyKey)
-  const fields = try fieldsOf(intentKeys)
+  const fields = try jsonFields()
   const digest = try required(fields, "sha256", validSha256, rows.invalidRequestInvalidSha256)
   const byteCount = fields.sizeBytes
   if (typeof byteCount !== "number" || !Number.isSafeInteger(byteCount) || byteCount < 1 || byteCount > maxTraceBytes) throw refused(rows.invalidRequestSizeBytesMustBe1)
@@ -173,7 +169,7 @@ effect function appended(input: Admission<"bearer">) {
   const runId = try runOf(input, rows.invalidRequestInvalidRunId)
   const actor = input.actor
   const by = try writer(actor, rows)
-  const fields = try fieldsOf(eventKeys)
+  const fields = try jsonFields()
   const kind = fields.kind
   if (!isEventKind(kind)) throw refused(rows.invalidRequestInvalidEventKind)
   const occurredAt = try required(fields, "occurredAt", validIsoTimestamp, rows.invalidRequestInvalidOccurredAt)

@@ -28,7 +28,6 @@ function refused(message: string) {
 export const packetLimitBytes = 48 * 1024
 
 const sha = /^[a-f0-9]{64}$/u
-const uint = /^(0|[1-9][0-9]*)$/u
 const projectName = /^[a-z0-9][a-z0-9-]*$/u
 const monthText = /^\d{4}-(?:0[1-9]|1[0-2])$/u
 const transactionHash = /^0x[a-f0-9]{64}$/u
@@ -108,8 +107,7 @@ function amountsValid(event: PacketEvent) {
   const gross = parseBaseUnits(event.grossBase, unbounded)
   const fee = parseBaseUnits(event.feeBase, unbounded)
   const net = parseBaseUnits(event.netBase, unbounded)
-  return [event.grossBase, event.feeBase, event.netBase].every((value) => uint.test(value)) && gross !== undefined && fee !== undefined && net !== undefined
-    && gross !== 0n && fee === (gross + 49n) / 50n && net + fee === gross
+  return gross !== undefined && fee !== undefined && net !== undefined && gross !== 0n && fee === (gross + 49n) / 50n && net + fee === gross
 }
 
 function reviewedEventOf(event: PacketEvent): ReviewedEvent | undefined {
@@ -135,12 +133,17 @@ function reviewedEventOf(event: PacketEvent): ReviewedEvent | undefined {
   return { ...facts, kind: "paid", destination: destination as Hex, claimId, payer: payer as Hex, bindingVersion }
 }
 
+function obligationOf(listed: unknown) {
+  return typeof listed === "object" && listed !== null && "obligationId" in listed ? listed.obligationId : undefined
+}
+
 export effect function readReconciliationPacket(text: string, expected: string) {
   if (!sha.test(expected) || utf8(text).length > packetLimitBytes || (try sha256Hex(text)) !== expected) throw refused("Reviewed reconciliation packet changed")
   const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
   const packet = Schema.decodeUnknownEffect(PacketShape)(parsed) catch effect () => { throw refused("Invalid reviewed reconciliation packet") }
   if (packet.schemaVersion !== "reviewed-payment-events:v1" || !projectName.test(packet.projectId) || !monthText.test(packet.period) || !Number.isSafeInteger(packet.revision) || packet.revision < 1
-    || !sha.test(packet.manifestSha256) || !sha.test(packet.snapshotSha256) || packet.events.length < 1 || packet.events.length > 20)
+    || !sha.test(packet.manifestSha256) || !sha.test(packet.snapshotSha256) || packet.events.length < 1 || packet.events.length > 20
+    || new Set(packet.events.map(obligationOf)).size !== packet.events.length)
     throw refused("Invalid reviewed reconciliation packet")
   const events: ReviewedEvent[] = []
   for (const listed of packet.events) {
@@ -149,7 +152,6 @@ export effect function readReconciliationPacket(text: string, expected: string) 
     if (event === undefined) throw refused("Invalid reviewed payment reference")
     events.push(event)
   }
-  if (new Set(events.map((event) => event.obligationId)).size !== events.length) throw refused("Invalid reviewed reconciliation packet")
   return { ...packet, schemaVersion: "reviewed-payment-events:v1", events } satisfies ReconciliationPacket
 }
 

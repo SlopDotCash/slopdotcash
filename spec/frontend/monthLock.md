@@ -18,10 +18,8 @@ read. The sender `by` is a connected wallet (positive; the vault owner's
 wallet is the `owner` the finalized read reports, development
 `deployment.owner`), the finalized vault read (`0`), the wallet and chain adapter
 (`-1`) or the card's check timer (`-2`). Development keeps a sent lock or
-release only in page memory, not in a saved [wallet attempt](./walletAttempt.md);
-whether it is saved before the wallet prompt
-([owner transactions](../settlement/ownerTransactions.md)) is owner decision
-D1, pending, and this model follows development.
+release only in page memory, not in a saved [wallet attempt](./walletAttempt.md)
+(decided from development 67fd54fd4, 17 November 2026).
 
 ## Story: Lock months from the owner's wallet
 

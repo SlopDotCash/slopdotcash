@@ -26,9 +26,11 @@ type BatchCapability = AlreadyAtomic | RequiresUpgrade | NoCapability
 type BatchPhase = Unreviewed | Offered | Separate | IntentSaved | WalletReference | Uncertain | HashKnown | Declined | NotSent | Failed | Verified
 type ChainResult = ChainPending | ChainIncluded | ChainFinalFailed | ChainFinalEvent | ChainFinalMissingEvent
 type Batch = { phase: BatchPhase, capability: BatchCapability, owner: int, intent: int, digest: str,
-  reference: str, transaction: str, requests: int, evidence: ChainResult, slot: WA::Attempt, storageBlocked: bool }
+  reference: str, transaction: str, requests: int, evidence: ChainResult, slot: WA::Attempt, storageBlocked: bool,
+  approval: ApprovalEvidence }
 pure val initial: Batch = { phase: Unreviewed, capability: NoCapability, owner: 0, intent: 0, digest: "",
-  reference: "", transaction: "", requests: 0, evidence: ChainPending, slot: WA::noAttempt, storageBlocked: false }
+  reference: "", transaction: "", requests: 0, evidence: ChainPending, slot: WA::noAttempt, storageBlocked: false,
+  approval: ApprovalPending }
 pure def canReview(b: Batch, owner: int): bool = b.phase == Unreviewed and owner > 0
 pure def review(b: Batch, owner: int, capability: BatchCapability): Batch =
   { ...b, owner: owner, capability: capability, phase: if (capability == AlreadyAtomic) Offered else Separate }
@@ -70,6 +72,29 @@ pure def canRecoverHash(b: Batch, transaction: str, by: int): bool = b.phase == 
 pure def recoverHash(b: Batch, transaction: str, by: int): Batch = { ...b, phase: HashKnown, transaction: transaction }
 ```
 
+### A separate approval proceeds at canonical inclusion and never counts as funding
+
+On the separate-signature path the token approval, or the allowance reset
+before it, moves no funds. The chain reader (`by` is `chainReader`) settles it
+from a successful matching transaction in a canonical block, included or
+finalized; a failed receipt fails it. A settled approval only lets the owner
+go on: the deposit review reads the live allowance again before its own
+wallet prompt, so a reorganized approval fails there, and only the
+deposit's own finalized vault event counts as funding (development
+`src/lib/evm-vault-actions.ts` `checkVaultAction`, 67fd54fd4).
+
+```quint
+type ApprovalEvidence = ApprovalPending | ApprovalIncluded | ApprovalFinal | ApprovalFailed
+pure val chainReader = -1
+pure def approvalSettled(e: ApprovalEvidence): bool = e == ApprovalIncluded or e == ApprovalFinal
+pure def canObserveApproval(b: Batch, approvalRead: ApprovalEvidence, by: int): bool = b.phase == Separate
+  and by == chainReader and not(approvalSettled(b.approval)) and b.approval != ApprovalFailed and approvalRead != ApprovalPending
+pure def observeApproval(b: Batch, approvalRead: ApprovalEvidence, by: int): Batch = { ...b, approval: approvalRead }
+pure def alwaysApprovalNeverFunds(b: Batch): bool = b.approval != ApprovalPending implies b.phase == Separate
+pure def sometimesApprovalIncluded(b: Batch): bool = b.approval == ApprovalIncluded and b.phase == Separate
+pure def sometimesApprovalFailed(b: Batch): bool = b.approval == ApprovalFailed
+```
+
 ## Story: Verify money moved from matching finalized evidence
 
 ### Included or missing-event evidence leaves verification pending
@@ -104,7 +129,7 @@ pure def sometimesSeparate(b: Batch): bool = b.phase == Separate and b.capabilit
 pure def sometimesUncertain(b: Batch): bool = b.phase == Uncertain
 pure def sometimesMissingEvent(b: Batch): bool = b.phase == HashKnown and b.evidence == ChainFinalMissingEvent
 pure val ownerValues = Set(1, 2)
-pure val byValues = Set(1, 2)
+pure val byValues = Set(1, 2, chainReader)
 pure val intentValues = Set(1, 2)
 pure val digestValues = Set("plan", "wrong", "")
 pure val expectedDigestValues = Set("plan", "wrong", "")

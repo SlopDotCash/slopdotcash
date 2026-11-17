@@ -142,7 +142,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     }))
   })
 
-  it.effect('Upload an optional private trace through lost replies, a stale intake, a conflicting stored object, a ban and a revoked secret (spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply"; spec/contributor/sessionExchange.md, "A lost response preserves server registration without claiming local receipt"; spec/contributor/runEvidence.md, "The same local run resumes its own server record and bounded exact upload"; spec/contributor/runEvidence.md, "A retained digest can be finalized again while changed local bytes fail"; spec/contributor/evidence.md, "The server\'s retained digest is learned once and never replaced"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+  it.effect('Upload an optional private trace through lost replies, a stale intake, a conflicting stored object, a ban and a revoked secret (spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply"; spec/contributor/sessionExchange.md, "A lost response preserves server registration without claiming local receipt"; spec/contributor/runEvidence.md, "The same local run resumes its own server record and bounded exact upload"; spec/contributor/runEvidence.md, "A retained digest can be finalized again while changed local bytes fail"; spec/contributor/evidence.md, "The server\'s retained digest is learned once and never replaced"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
     const { traces } = try World
     try observeIntake(1)
     const intake = try call("/api/v1/private-request-intake")
@@ -161,7 +161,10 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     const created = try call("/api/v1/runs", { json: runBody, headers: signed(token, runKey) })
     const recreated = try call("/api/v1/runs", { json: runBody, headers: signed(token, runKey) })
     const reused = try call("/api/v1/runs", { json: { ...runBody, model: "claude-sonnet-4-5" }, headers: signed(token, runKey) })
-    const forged = try call("/api/v1/runs", { json: { ...runBody, githubId: other.githubId }, headers: signed(token, "create-run-key-forged-0001") })
+    const forgedKey = "create-run-key-forged-0001"
+    const forged = try call("/api/v1/runs", { json: { ...runBody, githubId: other.githubId, githubLogin: other.login, owner: other.githubId }, headers: signed(token, forgedKey) })
+    const forgedRetried = try call("/api/v1/runs", { json: runBody, headers: signed(token, forgedKey) })
+    const forgedOwner = try rows("SELECT github_user_id, github_login FROM trace_runs WHERE id = ?", text(forged, "serverRunId"))
     const unsigned = try call("/api/v1/runs", { json: runBody, headers: { "idempotency-key": runKey } })
     const keyless = try call("/api/v1/runs", { json: runBody, headers: signed(token) })
     const runId = text(created, "serverRunId")
@@ -233,7 +236,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
       created: [created.status, text(created, "state")],
       recreated: [recreated.status, text(recreated, "serverRunId") === runId],
       reused: shown(reused),
-      forged: shown(forged),
+      forged: [forged.status, text(forged, "state"), text(forged, "serverRunId") !== runId],
+      forgedRetried: [forgedRetried.status, text(forgedRetried, "serverRunId") === text(forged, "serverRunId")],
+      forgedOwner,
       unsigned: shown(unsigned),
       keyless: shown(keyless),
       intent: [intent.status, text(intent, "sha256"), fields(intent).sizeBytes, uploadUrl.startsWith("https://slop.test/api/v1/trace-uploads/")],
@@ -276,7 +281,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
       created: [201, "awaiting_trace"],
       recreated: [200, true],
       reused: [409, "idempotency_conflict", "Idempotency key was reused"],
-      forged: [400, "invalid_request", "Request body has unexpected fields"],
+      forged: [201, "awaiting_trace", true],
+      forgedRetried: [200, true],
+      forgedOwner: [{ github_user_id: author.githubId, github_login: author.login }],
       unsigned: [401, "unauthorized", "Authentication failed"],
       keyless: [400, "invalid_idempotency_key", "A valid Idempotency-Key is required"],
       intent: [201, digest, trace.length, true],

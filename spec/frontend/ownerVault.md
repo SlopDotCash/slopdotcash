@@ -50,7 +50,7 @@ pure val server = 0
 pure val adapter = -1
 pure val timer = -2
 pure val tab = -3
-pure val autoAskLimit = 4
+pure def autoAskLimit(target: Target): int = if (target == Creation) 120 else 240
 pure val hiddenAskLimit = 120
 pure val refusalLimit = 3
 pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awaiting: "", sentLifetime: 0, inflight: NoCheck,
@@ -157,8 +157,10 @@ pure def enterCandidate(v: OwnerVault, target: Target, candidate: str, by: int):
 
 The page asks the server to register a saved creation, or reads the chain
 for a saved transfer, without a click: only for a hash the wallet returned,
-while the owner is not editing it and no check runs, at most four times. The
-owner's button asks the same question for any saved hash or candidate. An
+while the owner is not editing it and no check runs: a creation at most 120
+times while the tab is shown, a transfer at most 240 times (development
+`src/OwnerVaultSetup.tsx` `AUTO_REGISTER_ATTEMPTS`, `src/VaultActions.tsx`
+`AUTO_CHECK_ATTEMPTS` at 67fd54fd4). The owner's button asks the same question for any saved hash or candidate. An
 owner action retires an automatic check in flight, never the reverse; a
 retired answer and an answer from an earlier lifetime are discarded. No
 check opens a wallet prompt. While the tab is hidden a transfer is not
@@ -181,7 +183,7 @@ pure def canAsk(v: OwnerVault, target: Target, origin: Origin, by: int): bool =
   val flow = flowOf(v, target)
   v.owner > 0 and flow.phase == Sent and
   (if (origin == AutoCheck) by == timer and flow.slot.hash != "" and not(v.editing) and flow.inflight == NoCheck
-      and not(flow.stopped) and flow.autoAsks < autoAskLimit
+      and not(flow.stopped) and flow.autoAsks < autoAskLimit(target)
       and (not(v.hidden) or (target == Creation and flow.hiddenAsks < hiddenAskLimit))
     else origin == OwnerCheck and by == v.owner and flow.inflight != OwnerCheck)
 pure def ask(v: OwnerVault, target: Target, origin: Origin, by: int): OwnerVault =
@@ -200,8 +202,10 @@ before finality; a reverted creation fails it, and an unrelated transaction
 is refused. A transfer read in a canonical block that is not final shows as
 received and counts nothing; a final read counts it; a later read that no
 longer sees it withdraws the notice. A refusal or failed read keeps the saved
-request. A reverted result, three refusals in a row, or a refusal the owner
-saw from the button stops the timer. A finalized result clears the slot.
+request. A reverted result stops the timer. For a creation, three refusals
+in a row or a refusal the owner saw from the button also stop it; a transfer
+keeps being checked after refusals, showing the error until a later success
+withdraws it. A finalized result clears the slot.
 
 ```quint
 pure def canAnswer(v: OwnerVault, target: Target, lifetime: int, origin: Origin, result: Answer, by: int): bool =
@@ -211,7 +215,8 @@ pure def answer(v: OwnerVault, target: Target, lifetime: int, origin: Origin, re
   val flow = { ...flowOf(v, target), inflight: NoCheck }
   val refused = result == Refused or result == ReadFailed
   val refusals = if (refused) flow.refusals + 1 else 0
-  val stopped = flow.stopped or result == Reverted or (refused and (origin == OwnerCheck or refusals >= refusalLimit))
+  val stopped = flow.stopped or result == Reverted
+    or (target == Creation and refused and (origin == OwnerCheck or refusals >= refusalLimit))
   if (result == FinalRead) withFlow(target, { ...flow, phase: Done, slot: WA::compareAndClear(flow.slot, flow.slot), refusals: 0 },
     { ...v, notice: if (target == Creation) Registered else Counted })
   else if (result == Reverted) withFlow(target, { ...flow, phase: Failed, slot: WA::compareAndClear(flow.slot, flow.slot),
@@ -223,12 +228,13 @@ pure def answer(v: OwnerVault, target: Target, lifetime: int, origin: Origin, re
 ### Rules
 
 ```quint
-pure def flowSaved(flow: Flow): bool =
+pure def flowSaved(flow: Flow, limit: int): bool =
   (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != "")
   and ((flow.phase == Sent or flow.phase == Unclear) implies flow.slot != WA::noAttempt)
   and (flow.phase == Sent implies (flow.slot.hash != "" or flow.slot.candidate != ""))
-  and flow.autoAsks >= 0 and flow.autoAsks <= autoAskLimit and flow.refusals >= 0
-pure def alwaysLiveRequestsAreSaved(v: OwnerVault): bool = flowSaved(v.creation) and flowSaved(v.transfer)
+  and flow.autoAsks >= 0 and flow.autoAsks <= limit and flow.refusals >= 0
+pure def alwaysLiveRequestsAreSaved(v: OwnerVault): bool = flowSaved(v.creation, autoAskLimit(Creation))
+  and flowSaved(v.transfer, autoAskLimit(Transfer))
 pure def alwaysTransfersNeedRegistration(v: OwnerVault): bool =
   (v.transfer.phase != Idle or v.transfer.slot != WA::noAttempt) implies v.creation.phase == Done
 pure def flowOwned(flow: Flow, v: OwnerVault): bool = (flow.slot != WA::noAttempt implies flow.slotOwner > 0)

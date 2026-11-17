@@ -1,0 +1,27 @@
+// spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"
+import type { SolanaPaymentDeployment, VaultAsset } from "../../../src/payments/terms.vibe"
+
+export const vault = "Gq2rk4nHSZZFpw9Lx4H9rwzEwLmFJYQAQHX4Lr4n9rCX"
+export const privateVault = "3QZBA7XCw8pfJ1ECnynswkroXVejyTmBUvJFSoR3i2Wp"
+export const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+export const programId = "BPFLoaderUpgradeab1e11111111111111111111111"
+export const projectPda = "SysvarRent111111111111111111111111111111111"
+export const networkDomain = "d".repeat(64)
+
+export const bindingDeployment: SolanaPaymentDeployment = {
+  family: "solana",
+  chain: "solana",
+  projectId: "binding-journey",
+  network: "solana-devnet",
+  vault,
+  owner: projectPda,
+  feeRecipient: programId,
+  scope: "Ordinary",
+  rpc: Redacted.make([]),
+  program: programId,
+  project: projectPda,
+  mint,
+  genesis: networkDomain,
+}
+
+export const bindingAsset: VaultAsset = { address: mint, decimals: 6 }

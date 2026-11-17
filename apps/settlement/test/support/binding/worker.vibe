@@ -1,10 +1,11 @@
 // spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"
-import type { D1Database } from "@repo/platform/bindings"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { Bearers, Unauthenticated, handle, outbound } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
@@ -13,17 +14,38 @@ import { noticePorts } from "@repo/operations/live"
 import { contributorAudience } from "@repo/points/live"
 import { AccessJournalLive, AuditLive, EnforcementRowsLive } from "@repo/security/live"
 import { BindingAttemptsLive } from "../../../src/payments/bindingAttempts.vibe"
+import { dispatchPayment, executors } from "../../../src/payments/dispatch.vibe"
+import { failureTag } from "../../../src/payments/terms.vibe"
+import { bindingAsset, bindingDeployment } from "./deployment.vibe"
 
 interface Env extends RoleVars, BackendVars {
   readonly SLOP_DB: D1Database
+  readonly SOLANA_PAYMENT_EXECUTOR: Fetcher
 }
 
+schema DispatchAsked {
+  readonly obligationId: string
+}
+
+schema DispatchAnswer {
+  readonly outcome: string
+}
+
+const dispatch = route({ method: "POST", path: "/test/binding/dispatch", access: "public", limitKib: 1, request: DispatchAsked, answer: DispatchAnswer, rejected: "rejected", cache: "no-store" })
+
+effect function dispatched(obligationId: string) {
+  const outcome = dispatchPayment(bindingDeployment, bindingAsset, obligationId) catch (error) => failureTag(error)
+  return { outcome }
+}
+
+const noBearers = Layer.succeed(Bearers, { verify: () => effect { throw new Unauthenticated() } })
+
 function services(env: Env) {
-  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(env), BindingAttemptsLive)
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(env), noBearers, BindingAttemptsLive, executors({ solana: env.SOLANA_PAYMENT_EXECUTOR }))
   const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
   const security = Layer.provideMerge(Layer.mergeAll(EnforcementRowsLive, AccessJournalLive, AuditLive), notices)
   const settings = Layer.provideMerge(backendServices(env), security)
   return Layer.provideMerge(Layer.mergeAll(CallerLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive, AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ReferralAttributionsLive), settings)
 }
 
-export default worker({ services, routes: backend.routes })
+export default worker({ services, routes: Layer.mergeAll(backend.routes, handle(dispatch, (input) => dispatched(input.body.obligationId))) })

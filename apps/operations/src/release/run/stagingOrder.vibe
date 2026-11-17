@@ -1,0 +1,20 @@
+// spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"
+import { type Event, type StagingOrder, initial, machineOver } from "../../../gen/operations__stagingOrder.effect.vibe"
+
+export error StagingOrderRefused { step: string; phase: string }
+
+export interface StagingOrderRecord {
+  state(): StagingOrder!!
+  send(event: Event): StagingOrder!StagingOrderRefused
+}
+
+export effect function startStagingOrder() {
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  effect function send(event: Event) {
+    return machine.send(event) catch effect (error) => {
+      throw new StagingOrderRefused({ step: event.type, phase: error.state.phase })
+    }
+  }
+  return { state: () => machine.get(), send } satisfies StagingOrderRecord
+}
