@@ -4129,17 +4129,18 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "17d3847022390ee1cbf40a60a06ec9a816fcd601be946b874350c6a2081de86c",
+      "sha256": "9e42a969553af04c9dbfa4db9828d5bf77cc8fb5047f63766bf47b1599d25720",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_journal.qnt",
+        "formal/models/points/points_projection_transport.qnt",
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 37, 64, 101, 123, 126, 139, 146, 155, 163, 171, 247, 279, 285, 288,
-        292, 293, 294, 295, 385, 671, 678, 679, 681, 686, 690, 694
+        2, 37, 50, 86, 125, 147, 150, 163, 170, 179, 187, 195, 274, 306, 312,
+        315, 319, 320, 321, 322, 412, 698, 705, 706, 708, 713, 717, 721
       ],
       "review": "mapped-abstraction"
     },
@@ -14676,6 +14677,19 @@
         "reverseDebitTest",
         "testnetPaymentTest",
         "unprovenPaymentTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/points_projection_transport.qnt",
+      "sha256": "7042f1fc0921629d11d954dae56bec2e51742654d9bfa2c0bc353287d1c4f766",
+      "sources": ["scripts/generate-points.ts"],
+      "scenarios": [
+        "invalidReadNeverRetriesTest",
+        "oneChangedIndexCanRepairMismatchTest",
+        "resetResumesSameReadTest",
+        "secondMismatchRefusesTest",
+        "thirdResetRefusesTest",
+        "unchangedIndexCannotRepairMismatchTest"
       ]
     },
     {
