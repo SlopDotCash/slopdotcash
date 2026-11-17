@@ -19,7 +19,7 @@ import {
   correctionBatchRecorded,
   recordCorrection,
 } from "./prepare-implementation-corrections";
-import { privatePayoutStorage } from "./private-payout-packet";
+import { reviewedPacketStorage } from "./private-payout-packet";
 import {
   decodeHistoricalPacket,
   decodeHistoricalPacketBytes,
@@ -593,9 +593,11 @@ async function main() {
   const manifest = process.env.HISTORICAL_POINTS_OBJECT_MANIFEST;
   const packet = manifest
     ? decodeHistoricalPacketBytes(
-        await privatePayoutStorage(
-          process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-          process.env.CLOUDFLARE_API_TOKEN ?? "",
+        await (
+          await reviewedPacketStorage(
+            process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+            process.env.CLOUDFLARE_API_TOKEN ?? "",
+          )
         ).read(manifest),
         digest,
       )

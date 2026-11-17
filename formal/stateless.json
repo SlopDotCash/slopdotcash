@@ -12,7 +12,7 @@
   "contracts/evm/vendor/openzeppelin/contracts/utils/StorageSlot.sol": "Pure storage-pointer constructors, with no writes in their bodies. Reads and writes through returned pointers belong to proxy callers.",
   "contracts/vault-totals.ts": "Type-only interface for finalized vault counters. No emitted runtime state; actual atomic reads, identity and reconciliation belong to the EVM/Solana adapters.",
   "functions/[[path]].ts": "Re-exports the stateless response middleware; no independent transition.",
-  "functions/index.ts": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests.",
+  "functions/index.ts": "Transforms one successful HTML response by request host and path and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests.",
   "scripts/bash-command.ts": "Per-invocation platform/path discovery selects a Bash executable without launching it or retaining state; installer/executor callers own the process lifecycle.",
   "scripts/child-environment.mjs": "Per-invocation environment projection with explicit overrides. It neither launches a process nor changes the parent environment; process authority belongs to callers.",
   "scripts/closure-discussion-signals.ts": "Pure advisory string classifier over supplied discussion bodies/completeness. No state persists, and no moderation, scoring or payment action is performed.",

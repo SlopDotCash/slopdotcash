@@ -361,9 +361,17 @@ async function collectWithWorkspace(
         if (!combinedPaths.includes(path) || observed.includes(path))
           throw new Error("Incomplete combined merge paths");
         observed.push(path);
-        const prefixes = section
-          .split("\n")
-          .map((line) => line.slice(0, parents.length));
+        // Read prefixes from the hunk lines only: with three parents the
+        // "--- a/" and "+++ b/" header lines also start with "---"/"+++".
+        // Line 0 is the path itself, which may also start like a hunk header.
+        const lines = section.split("\n");
+        const hunk = lines.findIndex(
+          (line, index) =>
+            index > 0 && line.startsWith(`${"@".repeat(parents.length + 1)} `),
+        );
+        const prefixes = (hunk < 0 ? [] : lines.slice(hunk + 1)).map((line) =>
+          line.slice(0, parents.length),
+        );
         if (
           !prefixes.some(
             (prefix) =>

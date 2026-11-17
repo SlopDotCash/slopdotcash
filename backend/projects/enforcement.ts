@@ -553,6 +553,7 @@ export function planScanReinstatement(input: {
   restriction: ProjectRestriction;
   scan: {
     assessmentId: string;
+    assessmentIds: string[];
     requestedAt: string;
     contentSha256: string;
     keySha256: string;
@@ -597,6 +598,7 @@ export function planScanReinstatement(input: {
       kind: "vetting-service",
       keySha256: scan.keySha256,
       assessmentId: scan.assessmentId,
+      assessmentIds: scan.assessmentIds,
       policyVersion: scan.policyVersion,
       rule: SCAN_REINSTATEMENT_RULE,
     },

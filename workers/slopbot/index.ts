@@ -16,6 +16,12 @@ import {
 } from "./points-disputes";
 import { QUALITY_MARKER } from "./quality";
 import {
+  dispatchReadyChecks,
+  readyJob,
+  readyLabelWanted,
+  refreshReadyLabel,
+} from "./ready-label";
+import {
   registeredHistoryProject,
   registeredHistoryRepository,
   registeredRepository,
@@ -57,6 +63,19 @@ const REVIEW_ACTIONS: Record<string, ReadonlySet<string>> = {
     "synchronize",
     "ready_for_review",
   ]),
+};
+
+/** Events that can change a slopbot:ready decision (PRD section 5). A closed
+ * pull request keeps its last label, so closing is not one of them. */
+const READY_ACTIONS: Record<string, ReadonlySet<string>> = {
+  pull_request: new Set([
+    "synchronize",
+    "edited",
+    "reopened",
+    "converted_to_draft",
+    "ready_for_review",
+  ]),
+  pull_request_review: new Set(["submitted", "edited", "dismissed"]),
 };
 
 const VALUE_ACTIONS: Record<string, ReadonlySet<string>> = {
@@ -466,6 +485,28 @@ export default {
           valuationPending = true;
         }
       }
+      // A push, a draft change or a review decision re-checks the label. The
+      // check itself re-reads everything; this only decides whether to queue.
+      if (
+        payload.action &&
+        READY_ACTIONS[event]?.has(payload.action) &&
+        payload.installation &&
+        payload.repository &&
+        payload.repository.private === false &&
+        payload.pull_request !== undefined &&
+        String(payload.sender?.id) !== env.SLOPBOT_APP_USER_ID
+      ) {
+        const ready = readyJob({
+          deliveryId: `${deliveryId}:ready`,
+          installationId: payload.installation.id,
+          repositoryId: payload.repository.id,
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          number: payload.pull_request.number,
+        });
+        if (await readyLabelWanted(env.SLOPBOT_DB, ready))
+          await env.SLOPBOT_QUEUE.send(ready);
+      }
       const job = jobFor(event, deliveryId, payload, env.SLOPBOT_APP_USER_ID);
       if (job !== null) {
         // Paused projects stay registered: their review is security-only.
@@ -528,6 +569,7 @@ export default {
       resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      dispatchReadyChecks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       processPendingPointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
@@ -553,16 +595,19 @@ export default {
   ) {
     for (const message of batch.messages) {
       try {
+        const body = message.body;
         const outcome =
-          message.body.kind === "review"
-            ? await reviewItem(env, message.body)
-            : message.body.kind === "maintainer_hold"
-              ? await applyMaintainerHold(env, message.body)
-              : message.body.kind === "appeal_command"
-                ? await applyAppealCommand(env, message.body)
-                : message.body.kind === "appeal_due"
-                  ? await escalateDueAppeal(env, message.body)
-                  : await recordHumanSignal(env, message.body);
+          body.kind === "review"
+            ? await reviewItem(env, body)
+            : body.kind === "ready_label"
+              ? await refreshReadyLabel(env, body)
+              : body.kind === "maintainer_hold"
+                ? await applyMaintainerHold(env, body)
+                : body.kind === "appeal_command"
+                  ? await applyAppealCommand(env, body)
+                  : body.kind === "appeal_due"
+                    ? await escalateDueAppeal(env, body)
+                    : await recordHumanSignal(env, body);
         console.log(
           JSON.stringify({
             delivery: message.body.deliveryId,
@@ -570,6 +615,30 @@ export default {
             outcome,
           }),
         );
+        // A finished review of a pull request may change its ready label. A
+        // failure here must not replay the review; the next pull request
+        // event checks the label again.
+        if (body.kind === "review" && body.itemKind === "pull_request")
+          try {
+            if (await readyLabelWanted(env.SLOPBOT_DB, body))
+              await env.SLOPBOT_QUEUE.send(
+                readyJob({
+                  deliveryId: `${body.deliveryId}:ready`,
+                  installationId: body.installationId,
+                  repositoryId: body.repositoryId,
+                  owner: body.owner,
+                  repo: body.repo,
+                  number: body.number,
+                }),
+              );
+          } catch (error) {
+            console.error(
+              JSON.stringify({
+                delivery: body.deliveryId,
+                readyLabel: String(error).slice(0, 300),
+              }),
+            );
+          }
         // A changed source leaves the review failed. Retry it against the
         // current source instead of acknowledging unfinished work.
         if (

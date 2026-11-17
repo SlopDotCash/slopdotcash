@@ -19,3 +19,27 @@ An optional `duplicateRetirements` entry removes a reviewed duplicate implementa
 Large packets use the private operational R2 bucket `slop-reviewed-payouts`. The main-only `private-payout-packet.yml` workflow creates that bucket when absent and refuses managed or custom public domains. A private manifest records the exact raw JSON length and SHA-256, compressed length and SHA-256, and ordered chunk lengths and digests. An omitted `compression` field selects the retained gzip format. Set `compression` to `br` for Brotli. Keep the manifest in `HISTORICAL_POINTS_OBJECT_MANIFEST`. Each compressed chunk is at most 393,216 bytes. Split its base64 into sixteen secrets named `PRIVATE_PACKET_CHUNK_1` through `_16`, each at most 32,768 characters, then dispatch its zero-based `chunk_index`. Clear unused chunk secrets before each dispatch. The shared production lock serializes staging and publication. Stored exact replay is idempotent and any differing existing bytes refuse.
 
 The publication workflow uses the private object manifest when present. It downloads every ordered chunk, verifies compressed and raw byte identities, then passes the full UTF-8 JSON to the existing reviewed packet validator. Streamed decompression is bounded by the declared exact raw length. This path retains the full source evidence. It does not change historical scoring or protection checks. For a smaller four-secret packet, clear `HISTORICAL_POINTS_OBJECT_MANIFEST` and use the existing gzip/base64 inputs. The bucket has no website, Worker route or public artifact export.
+
+
+The protected staging and publication workflows now explicitly select
+`PRIVATE_PACKET_TRANSPORT=bound-preview`. This transport creates an ephemeral
+Cloudflare preview using the existing `slop-vetting-evidence` binding. It has no
+production route and can access only the exact manifest's object names under
+`reviewed-payouts/v1/<raw digest>/<compressed digest>/`. Scanner records and their
+`vetting/` namespace keep their existing contract, backup and retention rules.
+The packet namespace is retained until a separately reviewed cleanup is performed.
+
+`PRIVATE_PACKET_ENCRYPTION_KEY` is a separate 32-byte base64url environment
+secret. The client encrypts every manifest and chunk with AES-256-GCM before
+storage. Its nonce binds the key, manifest, object path and exact plaintext
+digest, and its additional authenticated data binds the path and manifest.
+The preview receives ciphertext, fixed frame lengths and nonces, plus a fresh
+independent request-authentication secret. It receives no encryption key.
+Create-only writes and readback refuse changed objects. The client authenticates
+and verifies the full plaintext before the existing decoder and publication
+checks run. This confidentiality boundary also applies if bucket exposure changes.
+No plaintext packet, encryption key or preview credential is logged or exported.
+
+The original `r2-api` transport remains available and keeps its private-bucket
+metadata checks. An ephemeral preview grants no authority to import Points,
+reserve awards or send payments. Successful staging records storage only.

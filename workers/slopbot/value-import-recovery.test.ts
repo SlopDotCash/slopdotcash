@@ -20,6 +20,7 @@ import {
   verifiedValueFileClient,
 } from "./value-file-recovery";
 import { importSubscriptionAssessment } from "./value-import";
+import type { HistoricalIntakeProgress } from "./value-import-diagnostics";
 import type { ValueMergeInput } from "./value-merge-profile";
 import { mergeRecipe } from "./value-merge-profile";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
@@ -50,6 +51,7 @@ for (const variant of [
     delete source.files[0].patch;
     const laterContext = variant === "later unclaimed context";
     let collections = 0;
+    const commitPages = new Map<string, number>();
     let recoveryCompleted = false;
     const client = {
       ...source.client,
@@ -78,6 +80,10 @@ for (const variant of [
           return value;
         }
         const value = await source.client.get<T>(path);
+        if (
+          /\/commits\/[a-f0-9]{40}\?per_page=100&page=[1-9][0-9]*$/u.test(path)
+        )
+          commitPages.set(path, (commitPages.get(path) ?? 0) + 1);
         if (value && path.includes("/commits/") && !path.includes("/git/"))
           (value as unknown as { stats: unknown }).stats = {
             additions: 100000,
@@ -281,6 +287,8 @@ for (const variant of [
     let recoveryCalls = 0,
       mergeCalls = 0;
     try {
+      commitPages.clear();
+      const observed: HistoricalIntakeProgress[] = [];
       const pending = importSubscriptionAssessment(
         {
           SLOPBOT_DB: db,
@@ -325,6 +333,9 @@ for (const variant of [
           revisionReason: null,
         },
         new Blob(["fixture bundle"]).stream(),
+        (progress) => {
+          observed.push(progress);
+        },
       );
       if (changed) {
         await expect(pending).rejects.toThrow(
@@ -335,13 +346,27 @@ for (const variant of [
             .query("SELECT COUNT(*) AS n FROM slopbot_work_unit_journal")
             .get(),
         ).toEqual({ n: 0 });
+        expect(observed.at(-1)?.stage).toBe("bundle-metadata");
         return;
       }
       const stored = await pending;
       expect(stored.sequence).toBe(1);
+      expect(observed.at(-1)?.stage).toBe("publish-work-unit");
+      expect(
+        observed.some(
+          (p) =>
+            p.stage === "source-evidence" &&
+            p.sourceIndex === (laterContext ? 1 : 0) &&
+            p.sourceCount === (laterContext ? 2 : 1),
+        ),
+      ).toBe(true);
       expect(recoveryCalls).toBe(1);
       expect(mergeCalls).toBe(1);
       expect(collections).toBeGreaterThanOrEqual(4);
+      expect(commitPages.size).toBeGreaterThan(0);
+      expect([...commitPages]).toEqual(
+        [...commitPages].map(([path]) => [path, 1]),
+      );
       expect(
         sqlite
           .query("SELECT COUNT(*) AS n FROM slopbot_work_unit_journal")

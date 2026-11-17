@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "bc6215d9399de3ecbf3dc24600e0eed051a525e3a84902273148ecc5c396bb10",
+      "sha256": "5e0b2df969095c1bc8f0ca3dd3f986477822c1340e62c7dff7ed90d718327fac",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -27,7 +27,7 @@
         36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
         738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1389, 1391, 1392,
         1596, 1679, 1832, 1834, 1864, 1973, 1995, 2066, 2077, 2102, 2173, 2186,
-        2199, 2208, 2209, 2210
+        2199, 2208, 2209, 2210, 2227
       ],
       "review": "mapped-abstraction"
     },
@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "06ba282a853c7def225039d743259ba7701287be963f0099592faf61e0456321",
+      "sha256": "d3061786f833f8bdb2087f0f639886c8bb88303d2fb722b8b8c2d62033dd7d56",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [18, 49, 71],
+      "candidateLines": [22, 53, 75],
       "review": "mapped-abstraction"
     },
     {
@@ -88,6 +88,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/payment-event-reconciliation.yml",
+      "sha256": "4330d94fb0e71dd66d86140227bef779036f35b01f1bb7900f14d5caa6861558",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/points-implementation-corrections.yml",
       "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
       "models": [
@@ -106,7 +113,7 @@
     },
     {
       "path": ".github/workflows/private-payout-packet.yml",
-      "sha256": "f0c7f8bb56bbf9bd6af837447dd8f38e96f81e792f14c033c44a06ea46ee5096",
+      "sha256": "62197751580c9763ee95f0cd0014da7da7cb73f7c5bd6f496ae8197a28ab5e5e",
       "models": ["formal/models/points/source_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -134,9 +141,9 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "5dd36efc2bde60d2268a4dc9d47f4abc8c1573c9922148b157978ff30c60423b",
+      "sha256": "439192752ac7176a6a2ab65b4e3b79362b0c0bec46af6025330e7cb60bd3a0bb",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [39],
+      "candidateLines": [39, 43],
       "review": "mapped-abstraction"
     },
     {
@@ -147,10 +154,17 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "afac582e8220fe6e508caad2039285c33cd7fda0cfc45f811097c038c7941721",
+      "path": ".github/workflows/value-intake-diagnostic.yml",
+      "sha256": "9c8267bc7c975017ddbe1702e9927ae21d1e9c041226aebc1848acdf5b1b612a",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [51, 66, 92],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": ".github/workflows/vetting-controller.yml",
+      "sha256": "48fbd7948eac50446fb35f1391b33a24a63dab5a244f2cbb307ae4db2996f87b",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 138],
       "review": "mapped-abstraction"
     },
     {
@@ -290,7 +304,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "d4334ce219f2489015dfedf889bf9366935d7bb2b4efd41e8e90593d524bed02",
+      "sha256": "f970d20172aa94131f47251dae8328b0c7f1b4cd00e7b2e93110a2f81e3b1b93",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -301,9 +315,9 @@
         "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "candidateLines": [
-        15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
-        290, 304, 310, 324, 346, 354, 375, 408, 424, 432, 466, 496, 512, 527,
-        559, 585, 614, 678, 695
+        15, 29, 130, 138, 139, 165, 168, 177, 183, 196, 251, 280, 288, 297, 306,
+        313, 327, 333, 347, 369, 376, 397, 429, 445, 453, 487, 517, 533, 548,
+        580, 606, 635, 699, 716
       ],
       "review": "mapped-abstraction"
     },
@@ -500,12 +514,12 @@
     },
     {
       "path": "backend/payments/public-records.ts",
-      "sha256": "84cfe037dcf98628bbd5602a3f6a2af00d3a35a3c9cf2403266baada1d77fecd",
+      "sha256": "3d295b846ad6027a168236827c68a8c791695dc4d8aa820d03e493ec92697773",
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/received_totals.qnt"
       ],
-      "candidateLines": [28, 67, 85, 92, 177, 216, 217],
+      "candidateLines": [29, 89, 108, 115, 200, 239, 240],
       "review": "mapped-abstraction"
     },
     {
@@ -524,14 +538,14 @@
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "b85302f454d7371440983d041656b93051d8e51d4fba9d5d3df37063ba44f973",
+      "sha256": "28bdee9764823da89d29a3a2aac52519763913f241042ec86e260c9215df1c99",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt"
       ],
-      "candidateLines": [13, 71, 133, 145, 151, 211, 224, 260],
+      "candidateLines": [14, 73, 135, 147, 153, 215, 228, 264],
       "review": "mapped-abstraction"
     },
     {
@@ -630,7 +644,7 @@
     },
     {
       "path": "backend/projects/cloudflare-persistence.ts",
-      "sha256": "3f465e0271811adc5fa976f16b5a6eb243c63a2f654f1b0ce74e14ae3621ea00",
+      "sha256": "03ce0e8ff0f3550a1cd964071434a55fee3ec563862dd1490c40a00502a81400",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -638,26 +652,30 @@
         "formal/models/api/api_project_removal.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
-        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
-        26, 32, 33, 43, 66, 80, 82, 99, 129, 216, 250, 268, 410, 427, 443, 462,
-        465, 472, 475, 490, 491, 508, 509, 520, 521, 523, 547, 552, 553, 556,
-        584, 600, 621, 622, 627, 641, 657, 665, 814, 829, 839, 847, 867, 868,
-        873
+        30, 36, 37, 47, 70, 84, 86, 103, 133, 220, 254, 272, 346, 349, 351, 355,
+        356, 357, 363, 389, 426, 428, 438, 439, 447, 453, 454, 455, 457, 469,
+        470, 472, 556, 573, 589, 608, 611, 618, 621, 636, 637, 654, 655, 666,
+        667, 669, 693, 698, 699, 702, 730, 746, 767, 768, 773, 787, 803, 811,
+        960, 975, 985, 993, 1013, 1014, 1019
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/projects/contracts.ts",
-      "sha256": "99a7439212d73c0a29503f1a3464fe10432934202e55eeb6d75419bf3d0f25e8",
+      "sha256": "a0b9f0a396aed27e1105304b76d335e5a96afd424d7e3ac6a453fc06b71b92cb",
       "models": [
         "formal/models/api/api_project_registry.qnt",
-        "formal/models/api/api_project_removal.qnt"
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt"
       ],
-      "candidateLines": [19, 20, 57, 64, 78],
+      "candidateLines": [19, 20, 84, 109, 116, 130],
       "review": "mapped-abstraction"
     },
     {
@@ -674,14 +692,17 @@
     },
     {
       "path": "backend/projects/enforcement.ts",
-      "sha256": "bf0959ce30a9d17158460f172b4e59c58f105acfb6fb7501152bfb4f3311d23a",
+      "sha256": "af79786b4b5096cbdfd3fb999a92bd05295b23c061f8a6650d7256099b98ce49",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
-        "formal/models/vetting/vetting_flag_reinstatement.qnt"
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/vetting/vetting_flag_reinstatement.qnt",
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
         5, 51, 67, 125, 145, 199, 257, 347, 354, 374, 418, 458, 476, 482, 490,
-        496, 540, 568
+        496, 540, 569
       ],
       "review": "mapped-abstraction"
     },
@@ -700,7 +721,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "d7b50e2db234ce8a2d6c3814ccef1b534c7ee79e30bc051ecb255fde73c8bf79",
+      "sha256": "33c1451abf6f335aef22755f01f0ef92e8f4d15f4ad5459831a8649b111a9405",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -711,6 +732,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
@@ -728,16 +750,17 @@
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "candidateLines": [
-        167, 172, 182, 186, 244, 269, 274, 301, 302, 304, 306, 355, 439, 446,
-        452, 456, 457, 465, 531, 535, 866, 903, 919, 1015, 1029, 1034, 1041,
-        1042, 1045, 1048, 1066, 1068, 1070, 1081, 1099, 1106, 1117, 1149, 1150,
-        1166, 1172, 1181, 1183, 1188, 1189, 1190, 1191, 1203, 1204, 1205, 1208,
-        1213, 1252, 1311, 1361, 1395, 1413, 1481, 1563, 1574, 1577, 1578, 1588,
-        1592, 1612, 1654, 1660, 1664, 1682, 1688, 1724, 1732, 1735, 1736, 1786,
-        1787, 1788, 1808, 1853, 1854, 1862, 1882, 1884, 1888, 1899, 1909, 1924,
-        1930, 1940, 1977, 1996, 2000, 2051, 2196, 2200, 2227, 2248, 2249, 2263,
-        2266, 2271, 2272, 2318, 2332, 2350, 2367, 2399, 2408, 2552, 2578, 2729,
-        2749, 2795, 2835, 2846, 2847, 2960, 2968, 2986, 3183
+        168, 173, 183, 187, 245, 270, 275, 302, 303, 305, 307, 356, 440, 447,
+        453, 457, 458, 466, 532, 536, 867, 904, 920, 1016, 1030, 1035, 1042,
+        1043, 1046, 1049, 1067, 1069, 1071, 1082, 1100, 1107, 1118, 1150, 1151,
+        1167, 1173, 1182, 1184, 1189, 1190, 1191, 1192, 1204, 1205, 1206, 1209,
+        1214, 1253, 1312, 1362, 1398, 1416, 1490, 1572, 1583, 1610, 1611, 1624,
+        1634, 1668, 1726, 1727, 1780, 1822, 1828, 1832, 1850, 1856, 1892, 1900,
+        1903, 1904, 1954, 1955, 1956, 1976, 2021, 2022, 2034, 2055, 2057, 2061,
+        2072, 2082, 2097, 2103, 2113, 2150, 2169, 2173, 2224, 2372, 2376, 2403,
+        2424, 2425, 2439, 2442, 2447, 2448, 2494, 2508, 2526, 2543, 2575, 2579,
+        2589, 2598, 2742, 2768, 2919, 2939, 2985, 3025, 3036, 3037, 3150, 3158,
+        3176, 3375
       ],
       "review": "mapped-abstraction"
     },
@@ -827,6 +850,7 @@
       "sha256": "b2d69694a9ffd3ba13fe8baf423b50ac6f709441d857fa4b89679cd60fc4218c",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/api/api_project_removal.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [
@@ -1412,7 +1436,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "sha256": "9a6d563e0f607953d8b90893305d77bd9adde2cc698b12ac45d0cb91f6c73e6c",
+      "sha256": "60f2d6528bec57d98e793ef192e90d9989f75184fa5bb0d49a1050da88bdabf9",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
@@ -1420,14 +1444,17 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "candidateLines": [
         80, 106, 124, 142, 171, 177, 240, 319, 365, 398, 403, 444, 470, 524,
-        554, 570, 571, 572, 575, 617, 618, 710, 711, 749, 760, 834, 884, 936,
-        939, 947, 1015, 1059, 1090, 1126, 1138, 1179, 1187, 1199, 1201, 1202,
-        1205, 1214, 1221, 1223, 1228, 1233, 1246, 1249, 1251, 1253, 1254
+        554, 570, 571, 572, 575, 617, 618, 710, 711, 749, 760, 830, 833, 848,
+        890, 942, 945, 953, 1021, 1065, 1096, 1132, 1144, 1185, 1193, 1205,
+        1207, 1208, 1211, 1220, 1227, 1229, 1234, 1239, 1252, 1255, 1257, 1259,
+        1260
       ],
       "review": "mapped-abstraction"
     },
@@ -2155,11 +2182,11 @@
     },
     {
       "path": "functions/index.ts",
-      "sha256": "fd0e475b20201e174ba3228e2e1185f5cc26bf11df43c9a000db35eeda700ed3",
+      "sha256": "d835f9b6371c3778432240d1a5f66c3e153870991d675089ede31df42198219a",
       "models": [],
-      "candidateLines": [83, 84, 91, 116, 125, 152],
+      "candidateLines": [159, 160, 167, 203, 220, 229, 256],
       "review": "reviewed-no-independent-state",
-      "statelessReason": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
+      "statelessReason": "Transforms one successful HTML response by request host and path and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
     },
     {
       "path": "migrations/0001_private_trace_backend.sql",
@@ -3469,6 +3496,37 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0130_slopbot_ready_labels.sql",
+      "sha256": "6c64c389b3c697d82b2f50651006bd3e5d3d1da39f9db6253ee9e6129a757734",
+      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
+      "candidateLines": [5, 15],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0131_vetting_reinstatement_latest.sql",
+      "sha256": "e9e80b8cf0690457b84b9d4e1c7654743cdbf4f9862901ab84c7bc33e47b13d8",
+      "models": [
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
+      ],
+      "candidateLines": [3, 7, 8, 39, 40, 50],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0132_saved_vault_creations.sql",
+      "sha256": "095f0ea6651de1dd38da6fe3d8b8ee7bb35746b997d8cbecbfecf2a907bb2aa7",
+      "models": ["formal/models/api/api_saved_vault_creation.qnt"],
+      "candidateLines": [2, 16, 25],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
+      "sha256": "cccfefe22c0b0d964f6feee80044b910207a4be0a46e7d71e4681717654daa36",
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -3616,12 +3674,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "a0958646461865675c03c99d9bcb38d68704f6c78d095483ef4abf4e41183bc1",
+      "sha256": "9fefab0e13ed933340b8ecd70275520ae21b78983d8d71108981a883986caec1",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [110, 119, 120, 172, 178, 179, 194],
+      "candidateLines": [114, 123, 124, 176, 182, 183, 198],
       "review": "mapped-abstraction"
     },
     {
@@ -3882,9 +3940,9 @@
     },
     {
       "path": "scripts/escrow-acceptance/solana-local.ts",
-      "sha256": "99261a1cfdb1e858014f2c4a1e730fd64f85d1f4170a3db2ae6cd1886d1d66fe",
+      "sha256": "613f6defb5a7b23f0576d4debf88296ca2569281f1bb2a72db02543589db7ba8",
       "models": ["formal/models/contracts/local_solana_acceptance.qnt"],
-      "candidateLines": [58, 59, 60, 61, 72, 117, 210],
+      "candidateLines": [58, 59, 60, 61, 72, 117, 214],
       "review": "mapped-abstraction"
     },
     {
@@ -3928,12 +3986,12 @@
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "2e2c7f4897eb9865a76d59bf62e954d02e421409526e686bbdb72ca79b43011f",
+      "sha256": "910f378791f465bd99217b162689acf49dccc3b7d108b1d57938ec1e8d2ad997",
       "models": [
         "formal/models/tooling/evidence_capture.qnt",
         "formal/models/tooling/evidence_transport.qnt"
       ],
-      "candidateLines": [295, 296, 297, 320, 475, 572, 607],
+      "candidateLines": [299, 300, 301, 324, 479, 576, 611],
       "review": "mapped-abstraction"
     },
     {
@@ -3994,7 +4052,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "91125d6d6bb1bfa52d585f45fa2c9391e74ab73bbc9a599e05b25e363f0e7a57",
+      "sha256": "76d8df6a9a2746447197226c753187f1d3023544e1c1a0c6d13c59b6d5e1ec2a",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -4006,15 +4064,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 495, 583, 604, 640, 671, 736,
-        768, 858, 891, 900, 909, 928, 1018, 1214, 1449, 1511, 1519, 1577, 1630,
-        1633, 1826, 1835, 1840, 1847, 1930, 1931, 2078, 2079, 2136, 2162, 2190,
-        2192, 2196, 2230, 2233, 2234, 2237, 2239, 2250, 2277, 2486, 2489, 2738,
-        2858, 2979, 2992, 3003, 3004, 3191, 3192, 3383, 3399, 3411, 3418, 3444,
-        3454, 3458, 3462, 3466, 3521, 3540, 3567, 3584, 3618, 3619, 3621, 3637,
-        3654, 3655, 3656, 3665, 3670, 3850, 4208, 4230, 4239, 4289, 4324, 4330,
-        4337, 4406, 4492, 4650, 4890, 4900, 4902, 4915, 4946, 4948, 4949, 4953,
-        4957, 5013, 5067, 5118, 5121, 5157
+        29, 184, 195, 204, 284, 296, 298, 301, 509, 597, 618, 654, 685, 750,
+        782, 872, 905, 914, 923, 942, 1032, 1228, 1463, 1525, 1533, 1591, 1644,
+        1647, 1840, 1849, 1854, 1861, 1944, 1945, 2092, 2093, 2150, 2176, 2204,
+        2206, 2210, 2244, 2247, 2248, 2251, 2253, 2264, 2291, 2500, 2503, 2752,
+        2872, 2993, 3006, 3017, 3018, 3205, 3206, 3397, 3413, 3425, 3432, 3458,
+        3468, 3472, 3476, 3480, 3535, 3554, 3581, 3598, 3632, 3633, 3635, 3651,
+        3668, 3669, 3670, 3679, 3684, 3864, 4222, 4244, 4253, 4303, 4338, 4344,
+        4351, 4420, 4506, 4664, 4904, 4914, 4916, 4929, 4960, 4962, 4963, 4967,
+        4971, 5027, 5081, 5132, 5135, 5171
       ],
       "review": "mapped-abstraction"
     },
@@ -4057,11 +4115,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "f305345f6dbf48ededc9c85e1dcce82d6b12dfe77289dee3a5760767e87ce9bb",
+      "sha256": "c9718082a07abcf123dac2a34433c0d87fe9217fb56c62cee855aebe8f4dcb6c",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        37, 70, 91, 93, 111, 149, 219, 239, 249, 254, 260, 269, 291, 301, 310,
-        316
+        35, 53, 86, 107, 109, 127, 165, 235, 255, 265, 270, 276, 285, 307, 317,
+        326, 334
       ],
       "review": "mapped-abstraction"
     },
@@ -4096,12 +4154,39 @@
     },
     {
       "path": "scripts/inspect-fee-worker-operations.ts",
-      "sha256": "1451c2e49d687d0cc8411d77cfd52253d61c58ac1d60acef8a2ec283771631cd",
+      "sha256": "61f6f9e82654d1ad0e164dbcbd92c77631620d042d1e9b02c567f75a853784c0",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [
-        40, 44, 56, 58, 81, 134, 173, 182, 187, 190, 217, 234, 241, 280, 365,
-        395, 399, 520
+        41, 45, 57, 59, 93, 107, 176, 215, 224, 229, 232, 259, 276, 283, 322,
+        407, 437, 441, 562
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-slopbot-runtime.ts",
+      "sha256": "78adec70fd02a47681942591fac938d37cdd12e0ef5597fc3c5b6faf4c27dc36",
+      "models": [
+        "formal/models/release/slopbot_runtime_metadata.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [116, 118, 124, 127, 165, 181, 226],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-value-intake-history.ts",
+      "sha256": "26277d9800886d4830b1c19d8f81778b4ab7736257fda1f94275df7d632ca913",
+      "models": [
+        "formal/models/release/intake_history_projection.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [177, 184, 240],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-value-intake.ts",
+      "sha256": "ad36e272cc02d0b00a58cd59a55d1c2a80866ea0e5dccbcc9c91921b663a0bf5",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [20, 66, 132, 133, 134, 247, 309, 315, 388],
       "review": "mapped-abstraction"
     },
     {
@@ -4387,12 +4472,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "bb35b1fed7cfac71ed15e03465ee794a37cff36c56a2bc7cbe3d5b7b5cbfe4ad",
+      "sha256": "2e9c1e6b4858d9341303070c3c79edfceb75054150537f39e8c954f2139acb04",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
-        "formal/models/release/release_publication.qnt"
+        "formal/models/release/release_publication.qnt",
+        "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [214, 297],
+      "candidateLines": [218, 263, 329],
       "review": "mapped-abstraction"
     },
     {
@@ -4430,10 +4516,19 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": "scripts/private-payout-packet.ts",
-      "sha256": "76834ca65fec51044bd4c78f3061943f5672f89acd9ae34ba172c684e0edfcc8",
+      "path": "scripts/private-packet-preview.ts",
+      "sha256": "c766645bde4aa32c2d4d23fdea10a1e14beff92151efd666b0c3d38fb0a2001e",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [30, 127, 135, 158],
+      "candidateLines": [
+        39, 59, 83, 139, 141, 144, 148, 153, 155, 157, 190, 279, 280
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/private-payout-packet.ts",
+      "sha256": "6b04cb134493ccab947cd694add07da89b1189efbd861548af1ed9e0581afdf1",
+      "models": ["formal/models/points/source_import.qnt"],
+      "candidateLines": [33, 40, 43, 143, 151, 174],
       "review": "mapped-abstraction"
     },
     {
@@ -4590,6 +4685,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/reconcile-payment-events.ts",
+      "sha256": "fa65a4a17addaea184ebd8131ef653572e7c2e2401c237cc135c4302bf100755",
+      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "candidateLines": [
+        43, 184, 210, 214, 215, 216, 271, 354, 371, 386, 387, 448, 506, 509,
+        512, 562, 616
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/record-evidence.mjs",
       "sha256": "889f4e43311de83e5fec48d26064120692e16f8113b97781e414392873f60762",
       "models": [
@@ -4666,9 +4771,9 @@
     },
     {
       "path": "scripts/render-social-images.mjs",
-      "sha256": "fff2b89cc25e0d4bad975f9dd125f78e10c05b12baeea5ebf9181a0f168d0479",
+      "sha256": "fccf832da95485bacd324e1e4c8f26c12a5507c33d54331d61d1bbd935d68a28",
       "models": ["formal/models/release/static_asset_generation.qnt"],
-      "candidateLines": [9],
+      "candidateLines": [10],
       "review": "mapped-abstraction"
     },
     {
@@ -4771,9 +4876,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "c221e909cc911d9530e45ae31551ce7c43c861fe0ac6feb3de7defcd2ea5a815",
+      "sha256": "8710713ef53476494445f148f0defa5859850345abd1653f58c2b013347babff",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 545, 565, 641, 731],
+      "candidateLines": [3, 545, 565, 643, 733],
       "review": "mapped-abstraction"
     },
     {
@@ -4969,17 +5074,17 @@
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "9ab37e64df36bcc90479c078724b0c1ef74477ce251d272c7fa927756e38c297",
+      "sha256": "2ff36a0430a94c8da799e4175c41eb2b1504f1657ad1d6cfbf69ae7308b2d7d5",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [262, 263, 273, 409, 425, 477, 483, 506, 527, 529],
+      "candidateLines": [262, 263, 273, 417, 433, 485, 491, 514, 535, 537],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/vault-setup-browser-server.ts",
-      "sha256": "ae2ea1e385dcf7a01d5984abc6d57fb255b068cdc62fc703a2b643afc699d45a",
+      "sha256": "314b6e0176f9184056014738fedb6bc74fbedd903e39563faf3e8766538358d4",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        50, 55, 59, 75, 79, 136, 161, 264, 289, 304, 307, 310, 317
+        52, 57, 61, 77, 81, 138, 163, 266, 291, 314, 317, 320, 327
       ],
       "review": "mapped-abstraction"
     },
@@ -5148,13 +5253,14 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "52edb93b2af4890be28eb6cc1640aa13dd425443891dea937fb2175ab442d9d5",
+      "sha256": "fa81ad7419d03b888e5d2cc2e1a0384092a54f569d787f8d8ac6792d7e87d751",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -5167,14 +5273,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        14, 16, 302, 312, 322, 333, 342, 343, 344, 345, 346, 348, 349, 410, 465,
-        466, 467, 470, 493, 559, 590, 627, 673, 677, 679, 687, 740, 801, 857,
-        887, 895, 1099, 1114, 1128, 1138, 1176, 1178, 1181, 1245, 1248, 1250,
-        1254, 1255, 1263, 1282, 1286, 1294, 1295, 1302, 1306, 1341, 1385, 1388,
-        1405, 1406, 1456, 1459, 1462, 1463, 1464, 1465, 1469, 1472, 1492, 1494,
-        1571, 1572, 1577, 1578, 1583, 1621, 1622, 1625, 1626, 1629, 1630, 1649,
-        1650, 1656, 1661, 1663, 1667, 1668, 1726, 1736, 1767, 1769, 1794, 1795,
-        1812, 1813, 1824, 1826, 1839, 1842, 1853
+        7, 9, 306, 316, 326, 337, 346, 347, 348, 349, 350, 352, 353, 414, 470,
+        471, 472, 475, 498, 564, 595, 632, 673, 695, 770, 771, 781, 987, 1002,
+        1016, 1026, 1069, 1071, 1074, 1138, 1141, 1143, 1147, 1148, 1156, 1175,
+        1179, 1187, 1188, 1195, 1199, 1234, 1278, 1281, 1298, 1299, 1349, 1352,
+        1355, 1356, 1357, 1358, 1362, 1365, 1385, 1387, 1464, 1465, 1470, 1471,
+        1476, 1514, 1515, 1518, 1519, 1522, 1523, 1542, 1543, 1549, 1554, 1556,
+        1560, 1561, 1600, 1623, 1633, 1664, 1666, 1691, 1692, 1709, 1710, 1721,
+        1723, 1736, 1739, 1750
       ],
       "review": "mapped-abstraction"
     },
@@ -5377,14 +5483,14 @@
     },
     {
       "path": "src/Link.tsx",
-      "sha256": "e9deac09fa0a079b3b1b39b488b8407976252de2aeb09ca8c32b962cb573a835",
+      "sha256": "d924fc4af9ef52ccaae7e0d289d6750c3a43a75c2eeaf72008d6db03c1cb616c",
       "models": [
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_points_disputes.qnt"
       ],
-      "candidateLines": [1, 47, 49, 61, 67, 73, 93, 140],
+      "candidateLines": [1, 51, 53, 65, 77, 83, 106, 153],
       "review": "mapped-abstraction"
     },
     {
@@ -5481,7 +5587,7 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "3d39a0a6412c320fa2b312a3485f9ba03772ed56443540089266440164ae0012",
+      "sha256": "f43b462d7757b73d0e8c235f21e43c0c0d451a69e01bb35a06e8fd8e18d06546",
       "models": [
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
@@ -5490,12 +5596,12 @@
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        1, 15, 37, 60, 62, 68, 71, 110, 148, 152, 154, 159, 166, 167, 169, 173,
-        174, 175, 176, 177, 178, 181, 182, 183, 184, 186, 188, 190, 200, 201,
-        203, 205, 274, 276, 286, 296, 392, 446, 478, 479, 488, 496, 500, 502,
-        524, 536, 550, 554, 562, 572, 594, 598, 604, 608, 617, 621, 622, 628,
-        630, 679, 700, 703, 913, 924, 947, 952, 967, 980, 983, 1006, 1007, 1008,
-        1011, 1018
+        1, 15, 38, 61, 63, 69, 72, 111, 149, 153, 155, 160, 167, 168, 170, 174,
+        175, 176, 177, 178, 179, 182, 183, 184, 185, 187, 189, 191, 201, 202,
+        204, 206, 275, 277, 287, 297, 393, 447, 479, 480, 489, 497, 501, 503,
+        525, 537, 551, 555, 563, 573, 595, 598, 600, 606, 610, 620, 624, 625,
+        633, 635, 704, 725, 728, 938, 949, 972, 977, 992, 1005, 1008, 1031,
+        1032, 1033, 1037, 1044
       ],
       "review": "mapped-abstraction"
     },
@@ -5693,7 +5799,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "c1e84ee5324a72a6045ce0f2e20cc70f5ac5495845facb3599bdb04df4011a29",
+      "sha256": "71c0327b74c496c9d3b4285da8bf3b2902264d4e20a977578e1f1a0bbac9eaae",
       "models": [
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
@@ -5710,20 +5816,21 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        10, 138, 461, 464, 465, 466, 467, 468, 469, 470, 472, 475, 479, 484,
-        500, 511, 519, 520, 537, 553, 557, 575, 583, 591, 598, 601, 621, 636,
-        637, 812, 823, 824, 834, 845, 848, 853, 856, 865, 868, 869, 871, 872,
-        877, 905, 909, 912, 922, 923, 982, 984, 988, 993, 1002, 1012, 1017,
-        1071, 1084, 1092, 1095, 1102, 1175, 1200, 1208, 1209, 1211, 1216, 1220,
-        1229, 1244, 1251, 1345, 1346, 1347, 1349, 1355, 1365, 1372, 1388, 1401,
-        1433, 1443, 1450, 1455, 1458, 1469, 1491, 1492, 1494, 1495, 1585, 1588,
-        1615, 1982, 1984, 2021, 2051, 2100, 2103, 2109, 2110, 2112, 2122, 2124,
-        2128, 2139, 2153, 2165, 2182, 2192, 2196, 2197, 2200, 2203, 2204, 2205,
-        2206, 2207, 2208, 2209, 2210, 2211, 2212, 2215, 2216, 2217, 2218, 2220,
-        2226, 2288, 2298, 2312, 2343, 2348, 2647, 2671, 2676, 2705, 2730, 2737,
-        2750, 2771, 2775, 2789, 2797, 2807, 2820, 2825, 2830, 2831, 2834, 2854,
-        2855, 2859, 2864, 2981, 3013, 3021, 3022, 3030, 3032, 3112, 3120, 3121,
-        3132, 3170, 3175, 3181, 3187, 3201, 3214, 3215, 3228, 3253, 3254, 3255
+        10, 144, 467, 470, 471, 472, 473, 474, 475, 476, 478, 481, 485, 490,
+        506, 517, 525, 526, 543, 559, 563, 581, 589, 597, 604, 607, 627, 642,
+        643, 975, 986, 987, 997, 1008, 1011, 1016, 1019, 1028, 1031, 1032, 1034,
+        1035, 1040, 1068, 1072, 1075, 1085, 1086, 1145, 1147, 1151, 1156, 1165,
+        1175, 1180, 1234, 1247, 1255, 1258, 1265, 1338, 1363, 1371, 1372, 1374,
+        1379, 1383, 1392, 1407, 1414, 1508, 1509, 1510, 1512, 1518, 1528, 1535,
+        1551, 1564, 1596, 1606, 1613, 1618, 1621, 1632, 1654, 1655, 1657, 1658,
+        1748, 1751, 1778, 2145, 2147, 2184, 2219, 2268, 2271, 2277, 2278, 2280,
+        2290, 2292, 2296, 2307, 2321, 2333, 2350, 2360, 2364, 2365, 2368, 2371,
+        2372, 2373, 2374, 2375, 2376, 2377, 2378, 2379, 2380, 2383, 2384, 2385,
+        2386, 2388, 2394, 2468, 2478, 2492, 2523, 2528, 2851, 2875, 2880, 2909,
+        2934, 2941, 2954, 2975, 2979, 2993, 3001, 3011, 3024, 3029, 3034, 3035,
+        3038, 3058, 3059, 3063, 3068, 3190, 3222, 3230, 3231, 3239, 3241, 3321,
+        3329, 3330, 3341, 3379, 3384, 3390, 3396, 3410, 3423, 3424, 3437, 3462,
+        3463, 3464
       ],
       "review": "mapped-abstraction"
     },
@@ -5778,14 +5885,14 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "6e323cd70105be9fc252ac12dd2178827d3acb1f198f0b0bab10833f00ba8a4f",
+      "sha256": "404d1313b3b447ff62f0963973fefddf6671f787f3bc83f786e7398471fcaf90",
       "models": [
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        222, 307, 318, 375, 404, 405, 407, 408, 441, 443, 454, 603, 604, 606,
-        607, 614, 663, 665, 764
+        217, 302, 313, 370, 399, 400, 402, 403, 436, 438, 449, 598, 599, 601,
+        602, 609, 658, 660, 759
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -5927,7 +6034,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "28017fe0852a5aa0dc1556a60800d4c1aab6f44fa776e0407eb3bc6157b4ed3e",
+      "sha256": "8f92729c32984e3b427e157521f445744a5b6deb8ffc1b44a67dadea853167c3",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -5940,12 +6047,12 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 36, 45, 52, 79, 81, 144, 153, 162, 168, 178, 181, 182, 184, 185, 186,
-        187, 209, 212, 220, 222, 232, 292, 314, 376, 424, 425, 428, 437, 439,
-        441, 447, 448, 449, 454, 455, 460, 464, 465, 475, 481, 492, 493, 494,
-        501, 502, 504, 509, 513, 515, 516, 517, 526, 533, 534, 567, 575, 585,
-        590, 598, 612, 618, 619, 620, 621, 625, 627, 665, 679, 706, 722, 727,
-        730, 737, 740, 747, 748, 754, 898
+        2, 36, 45, 53, 80, 82, 145, 154, 163, 169, 179, 182, 183, 185, 186, 187,
+        188, 210, 213, 221, 223, 233, 293, 315, 377, 425, 426, 429, 438, 440,
+        442, 448, 449, 450, 455, 456, 461, 465, 466, 476, 482, 493, 494, 495,
+        502, 503, 505, 510, 515, 521, 522, 523, 532, 539, 540, 573, 581, 591,
+        596, 604, 618, 624, 625, 626, 627, 631, 633, 671, 685, 712, 728, 733,
+        736, 743, 746, 753, 754, 760, 904
       ],
       "review": "mapped-abstraction"
     },
@@ -6295,10 +6402,10 @@
     },
     {
       "path": "src/lib/home-projects.ts",
-      "sha256": "4fe398bf9cfd99d27bc37ec67e4ad945cf16058d85dad9a1da0be0b86c77d6f6",
-      "models": [],
-      "candidateLines": [1, 6, 7],
-      "review": "reviewed-no-independent-state",
+      "sha256": "421bc3013d2cdc664c9ab99f7b10946b31d0b1827d254c2727fd606a1f053f75",
+      "models": ["formal/models/ui/ui_project_listing.qnt"],
+      "candidateLines": [1, 7, 8],
+      "review": "mapped-abstraction",
       "statelessReason": "Pure filters over the immutable runtime registry and bounty status. Registry transitions are owned by project policy/boot models."
     },
     {
@@ -6320,7 +6427,7 @@
     },
     {
       "path": "src/lib/implementation-lines.ts",
-      "sha256": "3fa879045b2d0a873e8138750cc05a34b45f2c74a0ce87601013fac911af8e2a",
+      "sha256": "1fe39672aa0f09214a0514cac89189361e962cdf7b5c6297cbe98a3d9acc6fb4",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt"
@@ -6643,7 +6750,7 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "82154f50ad504284bd8008a9fb6b7745803f5b01d97f0b4ba6b6669bf88ed611",
+      "sha256": "78bd748d0bac824dc24c7a11364d9467f53dc14b58eec3e682f4f1f78637821f",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
@@ -6681,7 +6788,7 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "f525e1a63ff999496b6b196d9d3a0867ecf9fece2dbb1b0e06a572f58107d77c",
+      "sha256": "bd8c143a7056afe8ae5d43a8e1f866b20f9701513f979235ada3d2b0435c5ef3",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -6708,8 +6815,9 @@
       ],
       "candidateLines": [
         6, 25, 111, 121, 125, 149, 163, 168, 233, 255, 271, 307, 308, 309, 310,
-        326, 335, 338, 342, 344, 351, 363, 365, 366, 379, 380, 410, 414, 415,
-        420, 422, 423, 429, 431, 433, 454, 467, 476, 482, 494, 500
+        326, 332, 340, 342, 343, 344, 347, 352, 359, 362, 366, 368, 390, 391,
+        394, 396, 403, 436, 440, 441, 446, 450, 451, 457, 459, 461, 482, 495,
+        504, 510, 522, 528
       ],
       "review": "mapped-abstraction"
     },
@@ -6725,14 +6833,16 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "e3c000f6b6decd048e09cf9bfe35f402ee319b2973edf5f3e5030f62013c36ef",
+      "sha256": "b46498fd0ee03bdd82f03dbc17db74669aa61c8eb9eb751bca70a72b3a260b95",
       "models": [
         "formal/models/api/api_project_removal.qnt",
-        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+        "formal/models/slopbot/bot_repository_authority_scope.qnt",
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
-        11, 32, 36, 49, 169, 195, 196, 207, 208, 300, 301, 302, 318, 327, 328,
-        333, 337, 357, 366, 412, 413
+        11, 32, 36, 49, 171, 197, 198, 209, 210, 302, 303, 304, 320, 329, 330,
+        335, 339, 359, 368, 414, 415
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
@@ -6833,16 +6943,16 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "e20fd899aad6cb5875439122d0478bd0a09acc3de5996278d21de961a04f756f",
+      "sha256": "da713e508d4acf46b813efc32c8e8b6991d3eac4671c08fb6960d52122307113",
       "models": [
         "formal/models/api/project_repository_append.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
       "candidateLines": [
-        126, 331, 342, 347, 351, 352, 411, 417, 423, 426, 430, 434, 535, 538,
-        545, 548, 566, 592, 693, 694, 696, 701, 711, 1280, 1281, 1284, 1292,
-        1295, 1305, 1306, 1308, 1310, 1423, 1424, 1425, 1429, 1432, 1434, 1444,
-        1445, 1447, 1557
+        127, 332, 343, 348, 352, 353, 412, 418, 424, 427, 431, 435, 536, 539,
+        546, 549, 567, 593, 694, 695, 697, 702, 712, 1292, 1293, 1296, 1304,
+        1307, 1317, 1318, 1320, 1322, 1435, 1436, 1437, 1441, 1444, 1446, 1456,
+        1457, 1459, 1569
       ],
       "review": "mapped-abstraction"
     },
@@ -7065,8 +7175,15 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "2b6bdcb44a7563537c7e3912adff16779335f051c87effa9ffa8a840c8f43f9e",
+      "sha256": "6047f5b9938279639f5cf0abbbf819957934e610a47f409c915c79c3943a7bde",
       "models": ["formal/models/ui/ui_navigation.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/slopbot-ready.mjs",
+      "sha256": "f786fc0d126a462548e52be9b74e4d44a280bd1945438e6d34447f2ed0ea4a18",
+      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7259,6 +7376,13 @@
       "candidateLines": [
         26, 49, 59, 133, 144, 168, 173, 179, 184, 240, 263, 265
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/vault-auto-register.ts",
+      "sha256": "7da084386a6a73ae532d37bc078c52475510b4169c2e0db80d2302065964b488",
+      "models": ["formal/models/ui/ui_vault_auto_register.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -7506,7 +7630,10 @@
     {
       "path": "workers/fee-converter/buyback-config.ts",
       "sha256": "b80298700a56b26d71a2c48c9f6d4271515675fc39d9304050a5271c3732e411",
-      "models": ["formal/models/fees/buyback_market.qnt"],
+      "models": [
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt"
+      ],
       "candidateLines": [39, 49, 123],
       "review": "mapped-abstraction"
     },
@@ -7526,18 +7653,19 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "9c99922657b795f0b0e1497386de34abbf30d77a34e42b165695a0e9572be3dc",
+      "sha256": "ce96452a5e44626a87e3f7de95b53aeb7b857fc8e97ba02ffbc7a6091cc65099",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
       "candidateLines": [
-        4, 16, 86, 93, 95, 96, 110, 115, 127, 211, 312, 328, 330, 337, 342, 343,
-        344, 349, 376, 378, 385, 389, 403, 404, 411, 412, 432, 477, 510, 607,
-        636, 641, 751, 755, 841, 847, 849, 884, 885, 886
+        4, 16, 86, 93, 95, 96, 110, 115, 127, 213, 314, 330, 332, 339, 344, 345,
+        346, 351, 378, 380, 387, 391, 405, 406, 413, 414, 434, 479, 512, 609,
+        638, 643, 707, 718, 747, 783, 787, 873, 879, 881, 916, 917, 918
       ],
       "review": "mapped-abstraction"
     },
@@ -7545,6 +7673,7 @@
       "path": "workers/fee-converter/config.ts",
       "sha256": "1541d6103506568e1e9e8feeaeabaee909ebe18708e75a873f386bed536e112c",
       "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
@@ -7617,10 +7746,11 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "17ebba2a9cfa9a758976a7ce9424d05263e7ebb3b3e9eb45f9653a3c7743f890",
+      "sha256": "61af438ac617a02be5f0e9391a7e3f250aed79c3c8bf1fd653c6ded3f83bb27e",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -7724,21 +7854,21 @@
     },
     {
       "path": "workers/fee-converter/solana-route-accounts.ts",
-      "sha256": "a2f777efa35551cf3e32a5075e4fbf49c07d6000b4fc9a7e9de061fcf3279f3c",
+      "sha256": "a35460c1d78818bc41a62647ed078e78dd6b61e3649f198ecf8fe46eccc79ce5",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [
-        42, 96, 97, 98, 101, 102, 103, 105, 150, 161, 164, 169, 172, 175, 176,
-        177, 178, 179, 212, 213, 218, 221, 222, 224, 226, 227, 229, 232, 234,
-        236, 247, 249, 250, 251, 274, 284, 328, 342, 358
+        42, 96, 97, 98, 101, 102, 103, 105, 117, 157, 168, 171, 176, 179, 182,
+        183, 184, 185, 186, 219, 220, 225, 228, 229, 231, 233, 234, 236, 239,
+        241, 243, 254, 256, 257, 258, 281, 291, 335, 349, 365
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/solana-route-receipt.ts",
-      "sha256": "320be0037a87dbd3c9daa671c321d482e9f03929b8a7703cf4490fd00a7eb451",
+      "sha256": "8716c132bbe7a382457b747d0112981254ef30400356a397acc06fbfa8bd74e8",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [
-        64, 70, 83, 94, 102, 106, 116, 174, 177, 180, 194, 206
+        64, 70, 83, 94, 102, 106, 116, 190, 193, 196, 209, 221
       ],
       "review": "mapped-abstraction"
     },
@@ -7809,6 +7939,7 @@
       "sha256": "12eabf3a9e6c778ad5408ddd08879046e7cbdc22de630775351c8e185f057f49",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt"
       ],
       "candidateLines": [],
@@ -7871,15 +8002,21 @@
     },
     {
       "path": "workers/fee-converter/wrangler.staging.toml",
-      "sha256": "da8dada8cc508e35f7ecc6020a995a1874b250132c7cdfe7084f8579d43c2781",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "sha256": "e28350524d1e15dc8c588fd527717372c18c97de0dacbb3f47ac01494b304b91",
+      "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
+        "formal/models/payments/payment_worker_run.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "b369860dbab16dab769a582566c24235ca0c4a4a9a674b1c9c9e8718f94910f2",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "sha256": "4f98232cc1e86f6a85079811d1d75848f63d3b23948d05e5e95bf2ea275dde07",
+      "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
+        "formal/models/payments/payment_worker_run.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7985,13 +8122,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "58e062d7cfe9a2019956e4c8f6ef2fce041e4d3ad1edbfc40dc54e7f6bc65512",
+      "sha256": "a8973013b64c26cf23a77dc39578b66e35d353f1ab20c780fc1b6a5ecc00bf13",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [303, 305, 324, 330, 344],
+      "candidateLines": [301, 303, 322, 328, 342],
       "review": "mapped-abstraction"
     },
     {
@@ -8144,7 +8281,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "sha256": "b40045e2e2db336f5d80c0000113566d98efe250e040e6a9c2dd1659a56bb6a9",
+      "sha256": "7fbe52e20307846ee7970fb26260a4bc07e82ae08e655f76bf2b1ea8b4f0e763",
       "models": [
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
@@ -8161,12 +8298,13 @@
       "candidateLines": [
         109, 119, 146, 208, 209, 211, 212, 254, 256, 262, 263, 264, 265, 272,
         274, 275, 280, 282, 283, 284, 285, 286, 290, 310, 315, 318, 568, 679,
-        686, 688, 708, 1067, 1068, 1217, 1249, 1258, 1261, 1271, 1296, 1375,
-        1376, 1377, 1378, 1384, 1392, 1500, 1505, 1506, 1507, 1513, 1517, 1518,
-        1519, 1522, 1523, 1526, 1567, 1575, 1577, 1585, 1709, 1710, 1711, 1738,
-        1767, 1773, 1777, 1794, 1799, 1821, 1822, 1829, 1848, 1849, 1853, 2007,
-        2008, 2038, 2039, 2045, 2049, 2156, 2195, 2206, 2213, 2214, 2223, 2266,
-        2273, 2300, 2330, 2331, 2376, 2386, 2484, 2486, 2487, 2491
+        686, 688, 708, 1037, 1039, 1040, 1060, 1062, 1064, 1076, 1077, 1226,
+        1258, 1267, 1270, 1280, 1305, 1384, 1385, 1386, 1387, 1393, 1401, 1417,
+        1509, 1514, 1515, 1516, 1522, 1526, 1527, 1528, 1531, 1532, 1535, 1576,
+        1584, 1586, 1594, 1718, 1719, 1720, 1747, 1776, 1782, 1786, 1803, 1808,
+        1830, 1831, 1838, 1857, 1858, 1862, 2016, 2017, 2047, 2048, 2054, 2058,
+        2165, 2211, 2222, 2229, 2230, 2239, 2282, 2289, 2316, 2346, 2347, 2392,
+        2402, 2500, 2502, 2503, 2507
       ],
       "review": "mapped-abstraction"
     },
@@ -8314,7 +8452,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "09a13fc413515d643221eb38bf73127a62608f3e85182115ce68133dc328777b",
+      "sha256": "e26d0379b6b9b30cf79e60035b971d35a7d9927b40e3ceced444077ebe495108",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -8333,10 +8471,10 @@
     },
     {
       "path": "workers/payments/reconcile.ts",
-      "sha256": "3e9926d64c6cb7e0810912ce06a46643764dba2d696b7575ed708b6cbb18d827",
+      "sha256": "3d3298580b59b74dbc1bad1bcd0f90ff2b8519396791d8d2056562969f0e7570",
       "models": ["formal/models/payments/payment_dispatch.qnt"],
       "candidateLines": [
-        7, 22, 27, 28, 47, 48, 52, 63, 101, 109, 115, 125, 133
+        7, 22, 27, 28, 47, 48, 52, 71, 110, 118, 124, 134, 142
       ],
       "review": "mapped-abstraction"
     },
@@ -8517,7 +8655,7 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "sha256": "b812ae43ab66bbe18269efb488c303216729e637b5b78eb3f253259107dff5e2",
+      "sha256": "047914eebef46d18c1716a2cd7a46ec45eeb36ca63ff9a9bf2cd92c3b570d3f3",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -8536,12 +8674,12 @@
     },
     {
       "path": "workers/slopbot/failure-alerts.ts",
-      "sha256": "283d8eb97585ccfbd44c602114b72a4ad7f7c9dd6f3537205d8841dd5fb1133d",
+      "sha256": "cc2ca6ef66f74e5c3e69d7edefad5fa909878e1058e1413799b745020237cc1c",
       "models": [
         "formal/models/api/notification_admin_fanout.qnt",
         "formal/models/slopbot/bot_notice_delivery.qnt"
       ],
-      "candidateLines": [31, 43, 70],
+      "candidateLines": [63, 71, 87, 116],
       "review": "mapped-abstraction"
     },
     {
@@ -8569,15 +8707,16 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "2b399ea27fe5816edb60067a53328e9dd1c94949fbe6b112a3578a46461da411",
+      "sha256": "4ea4b8af5bdee2293ab7c210a8477f4dbb14108b5604b878f6af747857277c91",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_ready_label.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 225, 232, 233, 256, 262, 288, 317, 328, 367, 376, 388, 397, 402, 409,
-        419, 421, 431, 434, 437, 441, 487, 502, 511, 515, 540, 549, 573, 579,
-        589
+        3, 244, 251, 252, 275, 281, 307, 336, 347, 386, 395, 407, 416, 421, 428,
+        438, 440, 450, 453, 456, 460, 528, 543, 552, 556, 582, 591, 642, 648,
+        658
       ],
       "review": "mapped-abstraction"
     },
@@ -8653,13 +8792,25 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/ready-label.ts",
+      "sha256": "f0a901f542eb1fae8917d9ee422edf67496662b0bb8d5cd149c63c5b3ab7d5bf",
+      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
+      "candidateLines": [
+        25, 29, 303, 315, 323, 359, 368, 371, 420, 460, 474, 488, 495, 496, 512,
+        530, 535, 547, 549, 594, 612, 644, 647, 655, 666, 675, 677, 679, 690,
+        715, 720, 727, 730, 732, 784, 786, 787, 800, 803, 804, 825, 844, 854,
+        864, 871, 890, 904, 924, 931, 978
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/registry.ts",
-      "sha256": "4f643a1c6c632dd6bcc5353d714d3b437b77d85dece7a914f2fdb8e6954eed34",
+      "sha256": "7c4d3a42c1255cf51f7d6bf50e6f14b5aa8b46d3f6d9dab26b1d4ff29c4fe2ab",
       "models": [
         "formal/models/slopbot/bot_value_freshness.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [113, 117, 142, 151, 171, 172, 173, 178],
+      "candidateLines": [111, 127, 141, 188, 189, 190],
       "review": "mapped-abstraction"
     },
     {
@@ -8812,6 +8963,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-commit-pages.ts",
+      "sha256": "f8caa6293a9eaad5256b9a444335d3c6946efeb1968398784816f13a0098b92d",
+      "models": ["formal/models/points/value_source_cache.qnt"],
+      "candidateLines": [38, 39, 76],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/value-comparison-counts.ts",
       "sha256": "145d51cb69053c4afbb6699110716e1ee832c828d71d446f3f5abdc5f832afb0",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
@@ -8909,8 +9067,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-import-diagnostics.ts",
+      "sha256": "6f1d12a768600a1dc983712615462e87859d771df82c59366c7f25149f65ea41",
+      "models": ["formal/models/slopbot/bot_historical_import.qnt"],
+      "candidateLines": [136],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/value-import-service.ts",
-      "sha256": "0cdbc30a6a25717a38498ef522e69b15c7e9260864c9425df689fcd444f8bcb9",
+      "sha256": "74323860304da2081dacb0c299403994a86f17d01303773d1933fd361a4b0b3b",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -8920,12 +9085,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "c7da5d6d301a18266c42f10a1f7f6543b19067085d9e1a03c5b3c803443f6fa6",
+      "sha256": "9e6d64b76e3f697ee6e249c419d139dad45539f435cb77eb0dd7098b763242e6",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [172],
+      "candidateLines": [200],
       "review": "mapped-abstraction"
     },
     {
@@ -9081,13 +9246,13 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "sha256": "60b01176dc2e61ce62c4865dbaa14407a6f4183aa3f478e4f49aa0ea8915a978",
+      "sha256": "4ecd0e95c824689a1ae71b79985981e5b2d432850112ae3878e1b967e76550d6",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [116, 248, 250, 253, 255, 258, 269, 272, 274],
+      "candidateLines": [117, 255, 257, 260, 262, 265, 276, 279, 281],
       "review": "mapped-abstraction"
     },
     {
@@ -9184,7 +9349,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-publication.ts",
-      "sha256": "b806c18a348a2d221326354851e1e1bb2b835263eaf2bf98d343c6dd66037802",
+      "sha256": "1910b894728224389e8e92cc987ea68adb7ec156a9597836c27856ad79e08924",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
@@ -9265,7 +9430,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "5b0cbea63d87b82c7d5cea292a47b9cee0bb7ae1ab1db2c3b28eb6e0cc71efc3",
+      "sha256": "6011bcf5967b63ccbdf938acefd49151a1c7866a4ca79091f3d3d9cb8eb33f46",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -10274,11 +10439,13 @@
     },
     {
       "path": "formal/models/api/api_project_removal.qnt",
-      "sha256": "a034e2d1692d2fd57844f53e811717c832bdc32dcaf6a65e1d1df5961e215415",
+      "sha256": "b001eae33eb16d90c0fca8b4b0f91a3db1261fcfb25c952c39c7e48a9c43a53b",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/contracts.ts",
+        "backend/projects/enforcement.ts",
         "backend/projects/handler.ts",
+        "backend/projects/verified-enforcement.ts",
         "migrations/0121_project_application_cancellation.sql",
         "src/lib/project-contracts.ts"
       ],
@@ -10295,8 +10462,12 @@
         "nonMaintainerCannotRemoveTest",
         "preparedUpdateCannotRestoreRemovedProjectTest",
         "publicationWinsCancellationRaceTest",
+        "removalBeforeRestrictionSurvivesReinstatementTest",
         "removalRetainsHistoryAndObligationsTest",
         "removedProjectRejectsPreparedSetupTest",
+        "restrictionDuringRemovalRefusesItTest",
+        "restrictionRetirementIsNoRemovalTest",
+        "staleRemovalDuringRestrictionIsRefusedTest",
         "staleUpdateCanStillBeCancelledTest",
         "unavailableAuthorityDoesNotRemoveTest"
       ]
@@ -10425,6 +10596,24 @@
         "brokenPaymentAllowsSignoutTest",
         "brokenPaymentCannotPayTest",
         "changedActorCannotReadTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_saved_vault_creation.qnt",
+      "sha256": "a14a912ce66bc99f1e3bb241a376001304307543a13d4c35b2e630ce6a396ee1",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/contracts.ts",
+        "backend/projects/handler.ts",
+        "migrations/0132_saved_vault_creations.sql"
+      ],
+      "scenarios": [
+        "expiredRequestWaitsAgainTest",
+        "expiryEndsWithoutRegisteringTest",
+        "failedCreationEndsTest",
+        "lostAccessWaitsTest",
+        "ownerClosesSavedRequestTest",
+        "serverFinishesTest"
       ]
     },
     {
@@ -12592,6 +12781,36 @@
       ]
     },
     {
+      "path": "formal/models/fees/buyback_quote_eligibility.qnt",
+      "sha256": "3ee77d1be3e12f39b33e56db191d87142c4af92d70db0f055166f2e20a6a64d4",
+      "sources": [
+        "workers/fee-converter/buyback-config.ts",
+        "workers/fee-converter/buyback.ts",
+        "workers/fee-converter/config.ts",
+        "workers/fee-converter/evm.ts",
+        "workers/fee-converter/verified-buyback.ts",
+        "workers/fee-converter/wrangler.staging.toml",
+        "workers/fee-converter/wrangler.toml"
+      ],
+      "scenarios": [
+        "aboveTenPercentCostRefusedTest",
+        "belowHalfEntitlementDoesNotQuoteTest",
+        "exactlyThresholdQuotesTest",
+        "owedBurnRemainsPossibleBelowQuoteThresholdTest",
+        "ownerTopupIsNotFeeIncomeTest",
+        "priorCommitmentLeavesOnlyRemainderTest",
+        "referenceArrivalIsNotHalvedAgainTest",
+        "refundRestoresEntitlementWithoutErasingCapUsageTest",
+        "remainingCapStopsNewQuoteTest",
+        "sweepBoundsActualAvailableFundsTest",
+        "tenPercentAllInBridgeCostAcceptedTest",
+        "tokenUnitsNeedValuationTest",
+        "unavailableValuationDoesNotRequestSlopTest",
+        "unfinalizedFeeWaitsForEvidenceTest",
+        "valuedOtherAssetCanRequestSlopRouteTest"
+      ]
+    },
+    {
       "path": "formal/models/fees/buyback_slop_accounting.qnt",
       "sha256": "a9d36778fb1ac7022eee57c87472f93a684a9546c03165c4e5ed2c559d14c4a0",
       "sources": [
@@ -12929,7 +13148,7 @@
     },
     {
       "path": "formal/models/payments/chain_evidence.qnt",
-      "sha256": "dec3692972ec76f2ffc0a2f16173c82dc606bb4ff2ea0b30fa26f4ace44506ea",
+      "sha256": "e90640d6cb7d4a6704555d9d07ee75027c7395a3d6cac5c3870460ed52370d12",
       "sources": [
         "backend/payments/evm-adapter.ts",
         "backend/payments/solana-funding.ts",
@@ -12937,7 +13156,8 @@
         "backend/payments/verified-evidence.ts",
         "contracts/evm/adapter.ts",
         "contracts/solana/adapter.ts",
-        "contracts/solana/wallet-transactions.ts"
+        "contracts/solana/wallet-transactions.ts",
+        "scripts/reconcile-payment-events.ts"
       ],
       "scenarios": [
         "acceptedTest",
@@ -13990,7 +14210,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "0acbfdc0fb6729ca71188c9c5fedfe6322e0eea9e8c9aa34fda20032a2d0f9ca",
+      "sha256": "fdc3629501e65b3ed04384f98031b25241095a142281a52fdef4b22059bff295",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -14004,6 +14224,8 @@
         "mismatchedValidatorReadsLiveTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
+        "repeatedSecondaryLimitFailsTest",
+        "secondaryLimitMessageResumesTest",
         "timedOutCheckpointCannotPublishTest",
         "writeDoesNotRetryTest"
       ]
@@ -14282,7 +14504,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "c6e4e9862a876e27f9a9adeec6af392cf77beb098a29f1a7226fc775f7c55735",
+      "sha256": "060ba5c48d3c19786640dcd5427f72f141503b1a629666c36ac54b6f689998c3",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -14290,6 +14512,7 @@
         "scripts/check-direct-payment-disclosures.ts",
         "scripts/prepare-payments-import.ts",
         "scripts/prepare-points-import.ts",
+        "scripts/private-packet-preview.ts",
         "scripts/private-payout-packet.ts",
         "scripts/reviewed-historical-points.ts",
         "scripts/run-reviewed-historical-points.ts",
@@ -14306,6 +14529,18 @@
       "sha256": "fc4eb45346ada970828ac4912549a7523b5c3696cd58722003bcf149b50dab5b",
       "sources": ["scripts/benchmark-points-snapshot.ts"],
       "scenarios": ["nondeterministicReplayRefusedTest", "warmupExcludedTest"]
+    },
+    {
+      "path": "formal/models/points/value_source_cache.qnt",
+      "sha256": "0bca3b7f14e34fb46cd248cab5bbf391a8d456a0fd1956e67744a01cf5db0aeb",
+      "sources": ["workers/slopbot/value-commit-pages.ts"],
+      "scenarios": [
+        "currentPublicIdentityPermitsReuseTest",
+        "incompleteCannotRetainTest",
+        "mutableCannotRetainTest",
+        "newClientNeedsRepositoryTest",
+        "privateRepositoryCannotReuseTest"
+      ]
     },
     {
       "path": "formal/models/referrals/referral_accrual.qnt",
@@ -14522,6 +14757,19 @@
       ]
     },
     {
+      "path": "formal/models/release/intake_history_projection.qnt",
+      "sha256": "3057ecb131dc32497de906c23fb2f87c1eb978feb814e9466eb22c6c99e2758b",
+      "sources": ["scripts/inspect-value-intake-history.ts"],
+      "scenarios": [
+        "boundedStableProjectionTest",
+        "changedDeploymentKeepsNoRowsTest",
+        "invalidWindowHasNoCallsTest",
+        "refusedQueryKeepsNoRowsTest",
+        "sampledQueryRefusedTest",
+        "truncatedQueryNotCompleteTest"
+      ]
+    },
+    {
       "path": "formal/models/release/pages_metadata_retry.qnt",
       "sha256": "1ea2e34bddc640fee9e7fe3d0fd79936f6b2e4f72202e8c87204d43dfeb598d5",
       "sources": ["scripts/prepare-vetting-public-key.ts"],
@@ -14615,7 +14863,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "4c8cf61648d267e4d1b32f3d8a76a369f281f3fb89defa6c7fd15fb5ccd9885e",
+      "sha256": "d043886d571fa5c0d26bcfddf0c2efea12db6b3eabeadbedb330f6678612f031",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/check-retained-release-data.ts",
@@ -14652,9 +14900,11 @@
         "rpcRotationAmbiguousDeployRemainsUncertainTest",
         "rpcRotationCannotWriteOtherServicesTest",
         "rpcRotationChangedVersionCannotPromoteTest",
+        "rpcRotationCommandFailureThenReadbackConfirmsTest",
         "rpcRotationMissingPreflightCannotUploadTest",
         "rpcRotationNeedsManualMainTest",
         "rpcRotationOnlyPublishesCandidateTest",
+        "rpcRotationUnconfirmedReadbackCannotRedeployTest",
         "sourceAdvanceAfterUploadIsPartialTest",
         "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",
@@ -14683,6 +14933,25 @@
         "exactPrivateQualificationTest",
         "keyRotationRequiresSeparateAuthorityTest",
         "publicationIsNotVerificationTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/slopbot_runtime_metadata.qnt",
+      "sha256": "8e9b7233e66f0716d1019e6e77700fcab4f00011376d0ae1e946dbb9f618f36d",
+      "sources": ["scripts/inspect-slopbot-runtime.ts"],
+      "scenarios": [
+        "deniedRefusedTest",
+        "deploymentDriftRefusedTest",
+        "incoherentVersionRefusedTest",
+        "invalidRuntimeRefusedTest",
+        "malformedExpectedSourceTest",
+        "malformedRefusedTest",
+        "missingAuthorityTest",
+        "mixedSelectionRefusedTest",
+        "positiveMetadataTest",
+        "privacyProjectionTest",
+        "pureReadbackSelectionTest",
+        "wrongSourceRefusedTest"
       ]
     },
     {
@@ -14740,18 +15009,23 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "702f56c49fbad971ef04402f11e7a0f8aff23863a17c7f492b1c18db825d3886",
+      "sha256": "e096e271a97e60f4efa7dab7bb559af00fbda31f3a0514312e1e65910dd40767",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
         ".github/workflows/monthly-rewards.yml",
         ".github/workflows/october-rewards.yml",
+        ".github/workflows/payment-event-reconciliation.yml",
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
+        ".github/workflows/value-intake-diagnostic.yml",
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
         "scripts/inspect-fee-worker-operations.ts",
+        "scripts/inspect-slopbot-runtime.ts",
+        "scripts/inspect-value-intake-history.ts",
+        "scripts/inspect-value-intake.ts",
         "scripts/probe-fee-solana-rpc.ts",
         "scripts/run-vetting-controller.ts"
       ],
@@ -15335,8 +15609,9 @@
     },
     {
       "path": "formal/models/slopbot/bot_historical_import.qnt",
-      "sha256": "c3a7daa943c8f17026e5f5ae36b9301023bf3580db44defd26143d2dddef731a",
+      "sha256": "47bbd2b340d5467810db24bd213a1065e2d03abc38625e949ccae5c2a8513f5a",
       "sources": [
+        "workers/slopbot/value-import-diagnostics.ts",
         "workers/slopbot/value-import-service.ts",
         "workers/slopbot/value-import.ts",
         "workers/slopbot/value-merge-resolution.ts",
@@ -15448,11 +15723,12 @@
     },
     {
       "path": "formal/models/slopbot/bot_notice_delivery.qnt",
-      "sha256": "8e185cf5f1ca572ffc37552b2eb6a2e115dba23bcd76b125a96c8882229ca9d8",
+      "sha256": "3df978fb8de6252aa8c9aba76120f533e30b3698b9d35ccfd533bcfbf7710c84",
       "sources": [
         "migrations/0049_slopbot_spend_alerts.sql",
         "migrations/0085_slopbot_provider_failure_notices.sql",
         "migrations/0122_orbio_provider_failure_notices.sql",
+        "migrations/0133_slopbot_failure_notice_suppressions.sql",
         "workers/notify/contracts.ts",
         "workers/slopbot/failure-alerts.ts",
         "workers/slopbot/spend-alerts.ts"
@@ -15566,6 +15842,25 @@
         "expiredReceiptRefusedTest",
         "receiptDoesNotQualifyProfileTest",
         "signatureDoesNotProveCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/bot_ready_label.qnt",
+      "sha256": "8f9b1be1e021e550685251b7f2e82caa3ec7e6104dd6bcbcebfd240f0255120e",
+      "sources": [
+        "migrations/0130_slopbot_ready_labels.sql",
+        "src/lib/slopbot-ready.mjs",
+        "workers/slopbot/index.ts",
+        "workers/slopbot/ready-label.ts"
+      ],
+      "scenarios": [
+        "allConditionsLabelTest",
+        "failingCheckRemovesLabelTest",
+        "mergedPullRequestKeepsLabelTest",
+        "offByDefaultNeverLabelsTest",
+        "ownerTurningOffRemovesLabelTest",
+        "pushRemovesLabelAtNextCheckTest",
+        "readOnlyApprovalIsIgnoredTest"
       ]
     },
     {
@@ -15830,7 +16125,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_freshness.qnt",
-      "sha256": "80a9bcd0f87d911ecd21b0347b70f8b06d0a720553395ca77fef9f9c1aca1bca",
+      "sha256": "02bf126aab57fab5fbb97836a934cf7f716d4c0120d4b846c6036c9b976a6fbe",
       "sources": [
         "workers/slopbot/registry.ts",
         "workers/slopbot/value-consumer.ts",
@@ -16546,6 +16841,17 @@
         "duplicatePathRefusedTest",
         "incompleteNumstatRefusedTest",
         "matchingMergePublishesTest"
+      ]
+    },
+    {
+      "path": "formal/models/tooling/global_skill_publication.qnt",
+      "sha256": "dffdb786e9e5935acd3ed8759c988e7ad83e8e4a054e77e2438368865ba4b403",
+      "sources": ["scripts/prepare-site.mjs"],
+      "scenarios": [
+        "completeSetTest",
+        "interruptedWriteIsIncompleteTest",
+        "invalidSourceDoesNotReplaceTest",
+        "missingRoleCannotPublishIndexTest"
       ]
     },
     {
@@ -17420,9 +17726,10 @@
     },
     {
       "path": "formal/models/ui/ui_hash_navigation.qnt",
-      "sha256": "efdc999363d0267088eb43013d45e9278cb17c1009ab2a8eae581bd928edf518",
+      "sha256": "819e86cc6d811dc65cf9f6aa8d0665fbce6824c3bdf1f1560611440764261825",
       "sources": ["src/App.tsx", "src/Link.tsx"],
       "scenarios": [
+        "audienceEntryKeepsViewportAndReturnTest",
         "delayedTargetTest",
         "readerStopsObserverTest",
         "restoreReaderPositionTest",
@@ -17455,6 +17762,21 @@
         "diagnosticUsageTest",
         "emptyTest",
         "immutableArchiveTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_home_audience.qnt",
+      "sha256": "aa8c501d3720d04fbe3913424d41f6552737de75798e7929d334d7438d43b1cf",
+      "sources": ["src/App.tsx"],
+      "scenarios": [
+        "defaultContributorTest",
+        "directMaintainerTest",
+        "historyRestoresRoleTest",
+        "invalidFallsBackTest",
+        "newSelectionDiscardsForwardHistoryTest",
+        "roleChangeClearsFailureTest",
+        "roleChangeClearsSuccessTest",
+        "selectedRoleSurvivesReloadTest"
       ]
     },
     {
@@ -18192,7 +18514,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_authority.qnt",
-      "sha256": "7463ffa0eb313a7536800789f68995cead43fc36d4ce1f66acc3e9f85379e7c4",
+      "sha256": "f966223de5d83a76c12cab7310c6c02195920ed1dba06654fc4965cd87c530f9",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -18206,11 +18528,14 @@
         "cookieSwapBeforeDispatchRefusesTest",
         "departedReplyCannotGrantTest",
         "failedRequestStillChecksIdentityTest",
-        "focusInvalidatesOldAuthorityTest",
         "matchingActorGrantsTest",
         "newerActorOwnsGrantTest",
         "oldProjectReplyCannotGrantTest",
         "refusedSameActorIsNotGrantedTest",
+        "tabReturnDropsChangedActorTest",
+        "tabReturnDropsEndedSessionTest",
+        "tabReturnDuringCheckStillGrantsTest",
+        "tabReturnKeepsSameActorTest",
         "unknownFinalIdentityCannotGrantTest",
         "wrongViewerCannotGrantTest"
       ]
@@ -18254,24 +18579,28 @@
     },
     {
       "path": "formal/models/ui/ui_project_listing.qnt",
-      "sha256": "b431ffa8bbd59d26aa6c8326c6a40cee57e0d34d98016c7b73b321cba82a4a3b",
+      "sha256": "5dcb29be1a5d081aeb31197ff2db55a83c6ff0a839e12cee1cae7cb1be55ac6b",
       "sources": [
         "backend/projects/pool-funding.ts",
         "backend/projects/skill-publication.ts",
         "functions/[[path]].ts",
         "src/App.tsx",
         "src/PublicPages.tsx",
+        "src/lib/home-projects.ts",
         "src/lib/pool-funding.ts"
       ],
       "scenarios": [
         "externalPrizeStaysListedTest",
+        "failedFundingReadKeepsHomeCardTest",
         "failedReadsListAsBeforeTest",
         "fundedPoolIsListedTest",
+        "fundingLossKeepsHomeCardTest",
         "fundingTheMonthListsItTest",
         "loadingListsAsBeforeTest",
         "pausedProjectKeepsItsListingTest",
+        "registryEligibilityStillGatesHomeTest",
         "securityProgramStaysListedTest",
-        "unfundedPoolIsHiddenTest"
+        "unfundedPoolStaysOnHomeTest"
       ]
     },
     {
@@ -19050,10 +19379,12 @@
     },
     {
       "path": "formal/models/ui/ui_vault_auto_register.qnt",
-      "sha256": "0e544eb98b07b0aa5a1ce3a2cab377cb9fe2f9b05b697bf003ab3e0ee83cc350",
-      "sources": ["src/OwnerVaultSetup.tsx"],
+      "sha256": "6ea16490f594d404eff53af042524d8a5fef5a792ba23f8a6bb6218e2ae50107",
+      "sources": ["src/OwnerVaultSetup.tsx", "src/lib/vault-auto-register.ts"],
       "scenarios": [
         "attemptLimitTest",
+        "backgroundLimitWaitsForTabTest",
+        "backgroundTabRegistersTest",
         "editingRetiresAutomaticAnswerTest",
         "failedCreationStopsTest",
         "ownerRefusalStopsTimerTest",
@@ -19965,6 +20296,52 @@
         "crashAfterReservationTest",
         "lostAcceptedResponseTest",
         "rejectedIsNotRetriedTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+      "sha256": "73247387a11f81e73c7d7cab0b6abbfc751b371c4ac2214bd5a42012acc39d8f",
+      "sources": [
+        "backend/projects/enforcement.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0131_vetting_reinstatement_latest.sql",
+        "src/lib/project-contracts.ts"
+      ],
+      "scenarios": [
+        "bothCleanRepositoriesReinstateTest",
+        "incompleteProvenanceRefusesTwoRepositoriesTest",
+        "laterCleanOfOtherRepositoryRecoversTest",
+        "legacyIssuerFallbackReinstatesOneRepositoryTest",
+        "missingProvenanceRefusesTwoRepositoriesTest",
+        "otherRepositoryAtDifferentPinDoesNotBlockTest",
+        "otherRepositoryCompletionRaceRefusedTest",
+        "otherRepositoryPendingRemainsExcludedTest",
+        "otherRepositorySequentialIncompleteRefusesPlanTest",
+        "requestTimePrecedesOtherRepositoryRowidTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_reinstatement_terminal.qnt",
+      "sha256": "f6492a303b5673a91a6b1bc12f690c3dad5ef8c16869dfe19ea45ab09ce9a30c",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/enforcement.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0131_vetting_reinstatement_latest.sql",
+        "src/lib/project-contracts.ts"
+      ],
+      "scenarios": [
+        "completedInvestigationBeforePlanRefusedTest",
+        "differentContentDoesNotBlockTest",
+        "differentPinDoesNotBlockTest",
+        "differentRepositoryDoesNotBlockTest",
+        "laterCleanSupersedesIncompleteTest",
+        "latestCleanReinstatesTest",
+        "legacyOwnRevisionSelectsOtherRepositoryTest",
+        "legacySameRepositoryBlocksTest",
+        "pendingCompletionRaceRefusedTest",
+        "pendingInvestigationExcludedTest",
+        "requestTimePrecedesRowidTest"
       ]
     },
     {
