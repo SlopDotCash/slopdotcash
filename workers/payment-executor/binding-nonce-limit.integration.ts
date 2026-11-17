@@ -1524,6 +1524,31 @@ try {
       assert.deepEqual(await journal.get(original.key), original.value);
     },
   );
+  await run(
+    "a 1000-entry consent history refuses a new binding on both paths",
+    async () => {
+      // Stored path: 1000 entries under `bind:stored:` trip the stored-size
+      // bound before any attempt is read.
+      active = await fixture("137", "consent");
+      for (let index = 0; index < 1000; index++)
+        await active.env.JOURNAL.put(`${STORED_BINDING}${index}`, null);
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /Binding consent history exceeds review bound/,
+      );
+      assert.equal(active.signatures(), 0);
+      // Request path: 1000 entries under `bind:<idempotencyKey>` trip the
+      // request-size bound with no stored entry at all.
+      active = await fixture("138", "consent");
+      for (let index = 0; index < 1000; index++)
+        await active.env.JOURNAL.put(`bind:request-${index}`, null);
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /Binding consent history exceeds review bound/,
+      );
+      assert.equal(active.signatures(), 0);
+    },
+  );
   console.log(
     JSON.stringify({
       passed: cases.length,
