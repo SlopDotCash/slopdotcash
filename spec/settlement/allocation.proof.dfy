@@ -1082,3 +1082,155 @@ lemma AllocationMapSum(portions: seq<Portion>, rankSource: seq<Portion>, remaini
     settlement__money_addAmounts(p.floor,if settlement__money_compareAmounts(remainderRank(p,rankSource),remaining) < 0 then [1] else settlement__money_zero));
   ProofLib.FoldLeftPointwise(sum,byPortion,start,shares,portions);
 }
+
+lemma lawShareWithinOneOfQuota_ensures(total: seq<int>, weights: seq<Weight>)
+  ensures (lawShareWithinOneOfQuota(total, weights) == true)
+{
+  if canAllocate(total, weights) {
+    var shares := allocateAmounts(total, weights);
+    if |weights| == 1 {
+      var w := weights[0];
+      assert w in weights;
+      assert shares == [Share(w.actor, total)];
+      settlement__money_lawEqualReflexive_ensures(total);
+      assert quota(total, w, weights) == total;
+      assert withinOneUnit(total, quota(total, w, weights));
+    } else if |weights| > 1 {
+      var denom := totalWeight(weights);
+      var portions := seq(|weights|, i_map requires 0 <= i_map < |weights| => var recipient := weights[i_map]; weightedPortion(total, recipient, denom));
+      var remaining := settlement__money_subtractAmounts(total, portionTotal(portions));
+      ValidWeightedPortions(weights, total, denom, portions);
+      assert |shares| == |weights|;
+      forall s | s in shares
+        ensures exists w :: w in weights && w.actor == s.actor && withinOneUnit(s.amount, quota(total, w, weights))
+      {
+        var i :| 0 <= i < |shares| && shares[i] == s;
+        var w := weights[i];
+        assert w in weights;
+        var p := portions[i];
+        assert p in portions;
+        assert p.floor == quota(total, w, weights);
+        var extra := if settlement__money_compareAmounts(remainderRank(p, portions), remaining) < 0 then [1] else settlement__money_zero;
+        assert s.amount == settlement__money_addAmounts(p.floor, extra);
+        if extra == settlement__money_zero {
+          settlement__money_lawZeroIdentity_ensures(p.floor);
+        } else {
+          settlement__money_lawEqualReflexive_ensures(s.amount);
+        }
+        assert withinOneUnit(s.amount, quota(total, w, weights));
+      }
+    }
+  }
+}
+
+// Two listed recipients with the same actor are the same entry.
+lemma WeightAtActor(weights: seq<Weight>, w: Weight, i: int)
+  requires validWeights(weights) && w in weights && 0 <= i < |weights| && weights[i].actor == w.actor
+  ensures weights[i] == w
+{
+  var k :| 0 <= k < |weights| && weights[k] == w;
+  WeightListActorCount(weights, w);
+  ProofLib.FilterCountOneIffUnique((other: Weight) => (other.actor == w.actor), weights, (other: Weight) => other.actor, k);
+}
+
+// Equal remainders rank the lower actor strictly ahead.
+lemma TieRankBelow(portions: seq<Portion>, pa: Portion, pb: Portion)
+  requires ProofLib.DistinctBy(portions, (r: Portion) => r.actor)
+  requires forall r :: r in portions ==> settlement__money_validAmount(r.remainder)
+  requires pa in portions && pb in portions && pa.remainder == pb.remainder && pa.actor < pb.actor
+  ensures settlement__money_validAmount(remainderRank(pa, portions)) && settlement__money_validAmount(remainderRank(pb, portions))
+  ensures settlement__money_compareAmounts(remainderRank(pa, portions), remainderRank(pb, portions)) < 0
+{
+  var less := (x: Portion, y: Portion) => settlement__money_validAmount(x.remainder) && settlement__money_validAmount(y.remainder) && portionBefore(x, y);
+  PortionOrderProperties(portions, less);
+  settlement__money_lawEqualReflexive_ensures(pa.remainder);
+  assert portionBefore(pa, pb);
+  RankStrict(less, portions, pa, pb);
+  var beforeA := (other: Portion) => portionBefore(other, pa);
+  var beforeB := (other: Portion) => portionBefore(other, pb);
+  ProofLib.FilterSamePredicate((x: Portion) => less(x, pa), beforeA, portions);
+  ProofLib.FilterSamePredicate((x: Portion) => less(x, pb), beforeB, portions);
+  ExactRankDigits(portions, pa, settlement__money_zero);
+  ExactRankDigits(portions, pb, settlement__money_zero);
+  UnitCountsStrict(ProofLib.Filter(beforeA, portions), ProofLib.Filter(beforeB, portions), settlement__money_zero);
+}
+
+// The same floor plus the extra unit of a strictly lower rank is never smaller.
+lemma TieExtraOrder(floor: seq<int>, rankA: seq<int>, rankB: seq<int>, remaining: seq<int>)
+  requires settlement__money_validAmount(floor) && settlement__money_validAmount(rankA) && settlement__money_validAmount(rankB)
+  requires settlement__money_validAmount(remaining) && settlement__money_compareAmounts(rankA, rankB) < 0
+  ensures var extraA := if settlement__money_compareAmounts(rankA, remaining) < 0 then [1] else settlement__money_zero;
+    var extraB := if settlement__money_compareAmounts(rankB, remaining) < 0 then [1] else settlement__money_zero;
+    settlement__money_compareAmounts(settlement__money_addAmounts(floor, extraA), settlement__money_addAmounts(floor, extraB)) >= 0
+{
+  var extraA := if settlement__money_compareAmounts(rankA, remaining) < 0 then [1] else settlement__money_zero;
+  var extraB := if settlement__money_compareAmounts(rankB, remaining) < 0 then [1] else settlement__money_zero;
+  if extraB == [1] {
+    settlement__money_lawNumericOrderTransitive_ensures(rankA, rankB, remaining);
+    assert extraA == [1];
+    settlement__money_lawEqualReflexive_ensures(settlement__money_addAmounts(floor, extraA));
+  } else if extraA == [1] {
+    settlement__money_lawAddCommutative_ensures(floor, [1]);
+    settlement__money_lawAddCommutative_ensures(floor, settlement__money_zero);
+    settlement__money_lawAddOrder_ensures([1], settlement__money_zero, floor);
+    assert settlement__money_compareAmounts([1], settlement__money_zero) == 1;
+  } else {
+    settlement__money_lawEqualReflexive_ensures(settlement__money_addAmounts(floor, extraA));
+  }
+}
+
+// With several members, each share sits at its weight's position and actor.
+lemma SharesFollowWeights(total: seq<int>, weights: seq<Weight>)
+  requires canAllocate(total, weights) && |weights| > 1
+  ensures |allocateAmounts(total, weights)| == |weights|
+  ensures forall k :: 0 <= k < |weights| ==> allocateAmounts(total, weights)[k].actor == weights[k].actor
+{
+}
+
+// Two positions with equal weight: the lower actor's share is at least the higher actor's.
+lemma TiePair(total: seq<int>, weights: seq<Weight>, i: int, j: int)
+  requires canAllocate(total, weights) && |weights| > 1
+  requires 0 <= i < |weights| && 0 <= j < |weights|
+  requires weights[i].weight == weights[j].weight && weights[i].actor < weights[j].actor
+  ensures |allocateAmounts(total, weights)| == |weights|
+  ensures settlement__money_compareAmounts(allocateAmounts(total, weights)[i].amount, allocateAmounts(total, weights)[j].amount) >= 0
+{
+  var shares := allocateAmounts(total, weights);
+  var denom := totalWeight(weights);
+  var portions := seq(|weights|, i_map requires 0 <= i_map < |weights| => var recipient := weights[i_map]; weightedPortion(total, recipient, denom));
+  var remaining := settlement__money_subtractAmounts(total, portionTotal(portions));
+  ValidWeightedPortions(weights, total, denom, portions);
+  WeightedPortionActors(weights, total, denom, portions);
+  WeightedAllocationFloorBound(weights, total, denom, portions);
+  settlement__money_lawSubtractionValid_ensures(total, portionTotal(portions));
+  var pa := portions[i];
+  var pb := portions[j];
+  assert pa in portions && pb in portions;
+  assert pa.floor == pb.floor && pa.remainder == pb.remainder;
+  TieRankBelow(portions, pa, pb);
+  TieExtraOrder(pa.floor, remainderRank(pa, portions), remainderRank(pb, portions), remaining);
+  assert |shares| == |weights|;
+  assert shares[i].amount == settlement__money_addAmounts(pa.floor,
+    if settlement__money_compareAmounts(remainderRank(pa, portions), remaining) < 0 then [1] else settlement__money_zero);
+  assert shares[j].amount == settlement__money_addAmounts(pb.floor,
+    if settlement__money_compareAmounts(remainderRank(pb, portions), remaining) < 0 then [1] else settlement__money_zero);
+}
+
+lemma lawTieFavorsLowerActor_ensures(total: seq<int>, weights: seq<Weight>, lower: Weight, higher: Weight)
+  ensures (lawTieFavorsLowerActor(total, weights, lower, higher) == true)
+{
+  if canAllocate(total, weights) && lower in weights && higher in weights && lower.weight == higher.weight && lower.actor < higher.actor {
+    assert |weights| > 1;
+    var shares := allocateAmounts(total, weights);
+    SharesFollowWeights(total, weights);
+    forall a, b | a in shares && b in shares && a.actor == lower.actor && b.actor == higher.actor
+      ensures settlement__money_compareAmounts(a.amount, b.amount) >= 0
+    {
+      var i :| 0 <= i < |shares| && shares[i] == a;
+      var j :| 0 <= j < |shares| && shares[j] == b;
+      WeightAtActor(weights, lower, i);
+      WeightAtActor(weights, higher, j);
+      TiePair(total, weights, i, j);
+    }
+  }
+}
