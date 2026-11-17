@@ -1,4 +1,50 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, expectAccessibleReflow, test } from "./fixtures";
+
+test("journey labels retain readable contrast while switching with motion", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/", { waitUntil: "networkidle" });
+  const journeys = page.getByRole("group", {
+    name: "Choose your Slop journey",
+  });
+  for (const name of ["Maintainer", "Contributor"]) {
+    await page
+      .getByRole("button", { name, exact: true })
+      .evaluate(async (button) => {
+        // Flush the old style before the rendered control changes it.
+        getComputedStyle(button).color;
+        button.click();
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        );
+        for (const animation of button
+          .closest("fieldset")
+          ?.getAnimations({ subtree: true }) ?? [])
+          animation.pause();
+      });
+    // Seek browser transitions so a busy frame cannot skip unreadable colors.
+    for (const progress of [0, 0.25, 0.375, 0.5, 0.75, 1]) {
+      await journeys.evaluate((group, fraction) => {
+        for (const animation of group.getAnimations({ subtree: true }))
+          animation.currentTime =
+            Number(animation.effect?.getComputedTiming().duration) * fraction;
+      }, progress);
+      const { violations } = await new AxeBuilder({ page })
+        .include(".home-audience-switch")
+        .withRules(["color-contrast"])
+        .analyze();
+      expect(violations, `${name} transition at ${progress}`).toEqual([]);
+    }
+    await journeys.evaluate((group) => {
+      for (const animation of group.getAnimations({ subtree: true }))
+        animation.finish();
+    });
+  }
+});
 
 test("switching journey resets an active campaign animation @desktop-only", async ({
   page,

@@ -1,6 +1,7 @@
 // @source workers/slopbot/verified-retained-binding.ts
 // @source workers/slopbot/value-retained-copy.ts
 // @source workers/slopbot/value-retained-reference.ts
+// @source workers/slopbot/value-native-merge.ts
 // @source workers/slopbot/value-indirect.ts
 // @source workers/slopbot/value-indirect-retention.ts
 // @source workers/slopbot/value-no-change-promotion.ts
@@ -15,14 +16,18 @@ module bot_retained_acceptance {
     originals: Set(), promotion: false, accepted: false, newCredit: false}
   action hint = s' = s.with("hinted", true)
   action observeRegisteredBranch = all { s.hinted, s' = s.with("observed", true) }
+  action observeNativeCarrier = all { s.hinted, s' = s.with("observed", true) }
   action verifyAncestry = all { s.observed, s' = s.with("ancestry", true) }
   action verifyRetainedTrees = all { s.ancestry, s' = s.with("trees", true) }
   action original(commit: int): bool = all { s.trees, not(commit.in(s.originals)),
     s' = s.with("originals", s.originals.union(Set(commit))) }
+  action classifyNativeAncestor = all { s.observed, s.ancestry, s.trees,
+    s' = s.with("accepted", true).with("newCredit", false) }
   action classifyPromotion = all { s.trees, s.originals == Set(1, 2),
     s' = s.with("promotion", true).with("accepted", true).with("newCredit", false) }
   action step = { nondet commit = Set(1, 2).oneOf()
-    any { hint, observeRegisteredBranch, verifyAncestry, verifyRetainedTrees,
+    any { hint, observeRegisteredBranch, observeNativeCarrier, verifyAncestry, verifyRetainedTrees,
+      classifyNativeAncestor,
       original(commit), classifyPromotion, s' = s } }
   val invariant = all { s.accepted implies s.observed and s.ancestry and s.trees,
     s.promotion implies s.originals == Set(1, 2) and not(s.newCredit) }
@@ -30,4 +35,8 @@ module bot_retained_acceptance {
   run unchangedPromotionHasNoAdditionalCreditTest = init.then(hint).then(observeRegisteredBranch)
     .then(verifyAncestry).then(verifyRetainedTrees).then(original(1)).then(original(2))
     .then(classifyPromotion).expect(s.accepted and not(s.newCredit) and invariant)
+
+  run nativeAncestorRequiresCompleteCarrierTest = init.then(hint).then(observeNativeCarrier)
+    .then(verifyAncestry).then(verifyRetainedTrees).then(classifyNativeAncestor)
+    .expect(s.accepted and not(s.newCredit) and invariant)
 }

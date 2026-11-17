@@ -115,6 +115,107 @@ export function addedBinaryRecovery(
   };
 }
 
+/** Bind binary bytes already present before this native merge without inventing
+ * an added file in the merge diff. First-acceptance ownership stays separate. */
+export async function recoverRetainedBinaryAtMerge(
+  client: EvidenceClient,
+  evidence: Pick<
+    ValueEvidence,
+    | "repository"
+    | "repositoryNodeId"
+    | "repositoryDatabaseId"
+    | "pull"
+    | "files"
+    | "mergeCommitEvidence"
+  >,
+): Promise<void> {
+  const merge = evidence.mergeCommitEvidence;
+  const files = evidence.files.filter(
+    (file) =>
+      file.addedBinary &&
+      !merge?.files.some((accepted) => accepted.filename === file.filename),
+  );
+  if (
+    !files.length ||
+    !merge ||
+    merge.sha !== evidence.pull.merge_commit_sha ||
+    merge.parents.length !== 2 ||
+    merge.parents[1].sha !== evidence.pull.head.sha
+  )
+    return;
+  const repository = await client.get<{
+    id: number;
+    node_id: string;
+    private: boolean;
+  }>(`/repos/${evidence.repository}`);
+  if (
+    repository?.private !== false ||
+    repository.id !== evidence.repositoryDatabaseId ||
+    repository.node_id !== evidence.repositoryNodeId
+  )
+    return;
+  const parentSha = merge.parents[0].sha;
+  const [head, parent, accepted] = await Promise.all(
+    [evidence.pull.head.sha, parentSha, merge.sha].map((sha) =>
+      readValueTreeProof(client, evidence.repository, sha),
+    ),
+  );
+  if (!head || !parent || !accepted) return;
+  for (const file of files) {
+    const proof = file.addedBinary;
+    if (
+      !proof ||
+      !(await validAddedBinaryProof(file)) ||
+      proof.headSha !== evidence.pull.head.sha ||
+      proof.headTreeSha !== head.treeSha
+    )
+      continue;
+    const entries = [head, parent, accepted].map((tree) =>
+      tree.entries.get(file.filename),
+    );
+    if (
+      entries.some(
+        (entry) =>
+          entry?.type !== "blob" ||
+          entry.mode !== proof.mode ||
+          entry.sha !== proof.blobSha,
+      )
+    )
+      continue;
+    proof.retainedAtMerge = {
+      mergeSha: merge.sha,
+      parentSha,
+      mergeTreeSha: accepted.treeSha,
+      parentTreeSha: parent.treeSha,
+    };
+  }
+}
+
+function validRetainedBinaryAtMerge(
+  file: FileChange,
+  evidence: ValueEvidence,
+): boolean {
+  const retained = file.addedBinary?.retainedAtMerge;
+  const merge = evidence.mergeCommitEvidence;
+  return (
+    retained !== null &&
+    typeof retained === "object" &&
+    Object.keys(retained).sort().join() ===
+      "mergeSha,mergeTreeSha,parentSha,parentTreeSha" &&
+    Object.values(retained).every(
+      (sha) => typeof sha === "string" && oid.test(sha),
+    ) &&
+    merge !== null &&
+    merge.parents.length === 2 &&
+    retained.mergeSha === merge.sha &&
+    retained.mergeSha === evidence.pull.merge_commit_sha &&
+    retained.parentSha === merge.parents[0].sha &&
+    merge.parents[1].sha === evidence.pull.head.sha &&
+    file.addedBinary?.headSha === evidence.pull.head.sha &&
+    !merge.files.some((accepted) => accepted.filename === file.filename)
+  );
+}
+
 /** Validate retained bodies before a private assessment can use them. Import
  * also regenerates the tree/byte proof through the authenticated collector. */
 async function validAddedBinaryProof(file: FileChange): Promise<boolean> {
@@ -122,7 +223,18 @@ async function validAddedBinaryProof(file: FileChange): Promise<boolean> {
   if (
     !proof ||
     !needsAddedBinaryProof(file) ||
-    Object.keys(proof).sort().join() !== keys ||
+    Object.keys(proof).sort().join() !==
+      (proof.retainedAtMerge === undefined
+        ? keys
+        : `${keys},retainedAtMerge`.split(",").sort().join()) ||
+    (proof.retainedAtMerge !== undefined &&
+      (proof.retainedAtMerge === null ||
+        typeof proof.retainedAtMerge !== "object" ||
+        Object.keys(proof.retainedAtMerge).sort().join() !==
+          "mergeSha,mergeTreeSha,parentSha,parentTreeSha" ||
+        Object.values(proof.retainedAtMerge).some(
+          (sha) => typeof sha !== "string" || !oid.test(sha),
+        ))) ||
     proof.schemaVersion !== 1 ||
     typeof proof.path !== "string" ||
     proof.path !== file.filename ||
@@ -196,16 +308,7 @@ export async function binarySourceLimitations(
   const proofs = groups.flatMap((files) =>
     files.flatMap((file) => (file.addedBinary ? [file.addedBinary] : [])),
   );
-  if (
-    proofs.length > 48 ||
-    proofs.reduce(
-      (sum, proof) =>
-        sum +
-        (Number.isSafeInteger(proof.size) && proof.size > 0 ? proof.size : 0),
-      0,
-    ) >
-      2 * 1024 * 1024
-  )
+  if (proofs.length > 48)
     return ["Added binary evidence exceeds the recovery budget"];
   const limitations: string[] = [];
   const submitted = evidence.files.filter(
@@ -230,15 +333,36 @@ export async function binarySourceLimitations(
       "Added binary evidence requires direct, unchanged acceptance",
     );
   }
+  const content = new Map<string, { size: number; bytes: string }>();
   for (const files of groups) {
     for (const file of files) {
-      if (
-        file.addedBinary !== undefined &&
-        !(await validAddedBinaryProof(file))
-      )
+      const proof = file.addedBinary;
+      if (proof === undefined) continue;
+      if (!(await validAddedBinaryProof(file))) {
         limitations.push(`Invalid added binary proof: ${file.filename}`);
+        continue;
+      }
+      const previous = content.get(proof.blobSha);
+      if (
+        previous &&
+        (previous.size !== proof.size || previous.bytes !== proof.contentBase64)
+      ) {
+        limitations.push(`Conflicting added binary proof: ${file.filename}`);
+        continue;
+      }
+      content.set(proof.blobSha, {
+        size: proof.size,
+        bytes: proof.contentBase64,
+      });
     }
   }
+  // Submitted, accepted and attribution scopes repeat the same immutable bytes.
+  // Every proof above is checked, while the byte budget counts each object once.
+  if (
+    [...content.values()].reduce((sum, proof) => sum + proof.size, 0) >
+    2 * 1024 * 1024
+  )
+    limitations.push("Added binary evidence exceeds the recovery budget");
   for (const file of evidence.mergeCommitEvidence?.files ?? []) {
     if (
       file.addedBinary &&
@@ -254,11 +378,12 @@ export async function binarySourceLimitations(
     );
     if (
       file.addedBinary?.headSha !== evidence.pull.head.sha ||
-      !accepted ||
-      accepted.addedBinary?.headSha !== evidence.mergeCommitEvidence?.sha ||
-      accepted.addedBinary?.baseSha !==
-        evidence.mergeCommitEvidence?.parents[0]?.sha ||
-      !sameAddedBinary(file, accepted)
+      (!validRetainedBinaryAtMerge(file, evidence) &&
+        (!accepted ||
+          accepted.addedBinary?.headSha !== evidence.mergeCommitEvidence?.sha ||
+          accepted.addedBinary?.baseSha !==
+            evidence.mergeCommitEvidence?.parents[0]?.sha ||
+          !sameAddedBinary(file, accepted)))
     )
       limitations.push(
         `Added binary accepted identity is unavailable: ${file.filename}`,

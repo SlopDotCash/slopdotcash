@@ -1,12 +1,6 @@
+import { ArrowRight, Check, Clipboard, Plus } from "lucide-react";
 import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  ChevronRight,
-  Clipboard,
-  Plus,
-} from "lucide-react";
-import {
+  Fragment,
   lazy,
   type ReactNode,
   Suspense,
@@ -31,10 +25,24 @@ import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
-  communityProjects,
   hasBountyOverview,
+  homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
+import {
+  loadMergeActivity,
+  mergeActivityCardLine,
+  mergeActivityLine,
+} from "./lib/merge-activity";
+import {
+  asShown,
+  listedThisMonth,
+  loadPoolFunding,
+  monthName,
+  NOT_LISTED_NOTICE,
+  poolFundingStatus,
+} from "./lib/pool-funding";
+import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
 import {
   findHistoricalProject,
   findProject,
@@ -47,6 +55,7 @@ import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
+import { usePublicResource } from "./lib/use-public-resource";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountPage,
@@ -627,7 +636,13 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
-function ProjectCard({ project }: { project: ProjectDefinition }) {
+function ProjectCard({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -635,10 +650,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     ? securityBountyAmountLabel(bounty)
     : project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
-      : compactPrizeLabel(
-          project.reward.externalOpportunity?.advertisedAmountDisplay ??
-            "External",
-        );
+      : // An external prize is someone else's money: the card leads with
+        // points, and the project page names the prize (operator decision,
+        // 16 November 2026).
+        "Points";
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
@@ -656,8 +671,9 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
                 ? "/ Critical"
                 : "/ Finding"}
             </span>
-          ) : monthlyPoolPointsOnly(project.reward) ||
-            project.reward.kind === "external-prize-share" ? (
+          ) : project.reward.kind === "external-prize-share" ? (
+            <span> + external prize</span>
+          ) : monthlyPoolPointsOnly(project.reward) ? (
             <span> + points</span>
           ) : (
             <span>/mo</span>
@@ -669,93 +685,19 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
           </small>
         ) : monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
-        ) : project.reward.kind === "monthly-pool" ? null : (
-          <small className="project-money-state">External prize</small>
-        )}
+        ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
           </small>
         ) : null}
+        {merge ? (
+          <small className="project-money-state project-merge-activity">
+            {merge}
+          </small>
+        ) : null}
       </div>
     </Link>
-  );
-}
-
-function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const bounty = hasProjectCardBounty(project)
-    ? project.securityBounty
-    : undefined;
-  const amount = bounty
-    ? `${securityBountyAmountLabel(bounty)} / ${bounty.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"} · ${bountyFundingLabel(bounty)}`
-    : monthlyPoolPointsOnly(project.reward)
-      ? "Points only"
-      : project.reward.kind === "monthly-pool"
-        ? `${monthlyPoolCapLabel(project)}/mo`
-        : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
-  return (
-    <li>
-      <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectImage lazy project={project} />
-        <span className="project-row-name">
-          <strong>{project.name}</strong>
-          <small>{project.description}</small>
-        </span>
-        <span className="project-row-amount">{amount}</span>
-        <ChevronRight aria-hidden="true" />
-      </Link>
-    </li>
-  );
-}
-
-const COMMUNITY_PAGE_SIZE = 10;
-
-function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
-  const [page, setPage] = useState(0);
-  if (projects.length === 0) return null;
-  const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
-  const current = Math.min(page, pages - 1);
-  const visible = projects.slice(
-    current * COMMUNITY_PAGE_SIZE,
-    (current + 1) * COMMUNITY_PAGE_SIZE,
-  );
-  return (
-    <section
-      className="project-tier community-projects"
-      aria-labelledby="community-projects"
-    >
-      <h3 id="community-projects">Community</h3>
-      <ul className="project-rows">
-        {visible.map((project) => (
-          <ProjectRow key={project.id} project={project} />
-        ))}
-      </ul>
-      {pages > 1 ? (
-        <nav aria-label="Community project pages" className="pagination">
-          <button
-            aria-label="Previous page"
-            className="button secondary-button icon-button"
-            disabled={current === 0}
-            onClick={() => setPage(current - 1)}
-            type="button"
-          >
-            <ArrowLeft aria-hidden="true" />
-          </button>
-          <span>
-            {current + 1} / {pages}
-          </span>
-          <button
-            aria-label="Next page"
-            className="button secondary-button icon-button"
-            disabled={current === pages - 1}
-            onClick={() => setPage(current + 1)}
-            type="button"
-          >
-            <ArrowRight aria-hidden="true" />
-          </button>
-        </nav>
-      ) : null}
-    </section>
   );
 }
 
@@ -851,8 +793,35 @@ function HomePage() {
     window.history.pushState(window.history.state, "", destination);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
-  const featuredProjects = homeProjects();
-  const listedCommunityProjects = communityProjects();
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  // One shared read of vault balances: only money in a vault is shown, and
+  // an unfunded monthly pool is not listed this month. The list never waits
+  // for the read: until it loads, or when it fails, every project is listed
+  // as before.
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const now = new Date();
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const listed = (project: ProjectDefinition) =>
+    listedThisMonth(project, fundingIndex, now);
+  const listedProjects = homeProjectOrder(
+    homeProjects()
+      .filter(listed)
+      .map((project) => asShown(project, fundingIndex, now)),
+  );
+  const mergeLine = (project: ProjectDefinition) =>
+    project.status === "active" && merge.status === "ready"
+      ? mergeActivityCardLine(merge.index.get(project.id), now)
+      : null;
+
   return (
     <main>
       <section className="hero shell">
@@ -884,25 +853,18 @@ function HomePage() {
             <Plus aria-hidden="true" /> Add a project
           </Link>
         </div>
-        {featuredProjects.length + listedCommunityProjects.length === 0 ? (
+        {listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
         ) : (
-          <>
-            {featuredProjects.length > 0 ? (
-              <section
-                className="project-tier"
-                aria-labelledby="featured-projects"
-              >
-                <h3 id="featured-projects">Featured</h3>
-                <div className="project-grid">
-                  {featuredProjects.map((project) => (
-                    <ProjectCard key={project.id} project={project} />
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <CommunityProjects projects={listedCommunityProjects} />
-          </>
+          <div className="project-grid">
+            {listedProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                merge={mergeLine(project)}
+              />
+            ))}
+          </div>
         )}
       </section>
       <section
@@ -1139,6 +1101,16 @@ function InstallPanel({ audience }: { audience: HomeAudience }) {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
+  // Discovery leaves out an unfunded monthly pool this month; that is not a
+  // clearance problem, so the owner setup link does not apply.
+  const [funding] = usePublicResource(
+    project.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const unlisted =
+    funding.status === "ready" &&
+    !listedThisMonth(project, funding.index, new Date());
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1182,9 +1154,11 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
           {eligibility === "loading"
             ? "Checking project clearance…"
             : eligibility === "blocked"
-              ? "This project is not cleared for agents. The prompt below picks only cleared projects."
+              ? unlisted
+                ? "This project is not listed this month. The prompt below picks only listed projects."
+                : "This project is not cleared for agents. The prompt below picks only cleared projects."
               : "Project clearance could not be checked. The prompt below picks only cleared projects."}
-          {eligibility === "blocked" ? (
+          {eligibility === "blocked" && !unlisted ? (
             <>
               {" "}
               <Link href={`/projects/${project.slug}/manage`}>
@@ -1405,10 +1379,31 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
 }
 
 /** Shared copy for every registry reward model; no project-specific descriptions. */
-function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+function ProjectRewardSummary({
+  project: registered,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [funding] = usePublicResource(
+    registered.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const index = funding.status === "ready" ? funding.index : null;
+  const now = new Date();
+  const project = asShown(registered, index, now);
+  const status = poolFundingStatus(registered, index, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
+        {status.state === "withdrawn" ? (
+          <p className="project-reward-status">
+            {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
+          </p>
+        ) : null}
+        {index !== null && !listedThisMonth(registered, index, now) ? (
+          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
+        ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
@@ -1454,6 +1449,77 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
   );
 }
 
+/** #2295: the vault network, website and X account, each only when present. */
+function ProjectLinks({ project }: { project: ProjectDefinition }) {
+  const chains = projectChains(project);
+  const website = project.links.website;
+  const x = project.links.x;
+  const handle = xHandle(x);
+  const parts: { key: string; node: ReactNode }[] = [];
+  if (chains.length > 0)
+    parts.push({
+      key: "chain",
+      node: `Chain: ${chains
+        .map((chain) =>
+          chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name,
+        )
+        .join(", ")}`,
+    });
+  if (website)
+    parts.push({
+      key: "website",
+      node: (
+        <>
+          Website:{" "}
+          <a href={website} target="_blank" rel="noopener noreferrer">
+            {websiteLabel(website)}
+          </a>
+        </>
+      ),
+    });
+  if (x && handle)
+    parts.push({
+      key: "x",
+      node: (
+        <>
+          X:{" "}
+          <a href={x} target="_blank" rel="noopener noreferrer">
+            @{handle}
+          </a>
+        </>
+      ),
+    });
+  if (parts.length === 0) return null;
+  return (
+    <p className="project-links-line">
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " · " : null}
+          {part.node}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
+/** #1993: how promptly the project merges outside work, from the daily D1 read. */
+function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
+  const active = project.status === "active";
+  const [state] = usePublicResource(
+    active,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  if (!active || state.status === "loading") return null;
+  if (state.status === "error")
+    return (
+      <p className="project-merge-activity">Merge activity unavailable.</p>
+    );
+  // A repository not read yet shows nothing rather than an empty claim.
+  const line = mergeActivityLine(state.index.get(project.id), new Date());
+  return line ? <p className="project-merge-activity">{line}</p> : null;
+}
+
 function ProjectBountyIntroduction({
   project,
 }: {
@@ -1468,6 +1534,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <ProjectLinks project={project} />
         <Link
           className="button primary-button"
           href={`/projects/${project.slug}/security`}
@@ -1504,6 +1571,8 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectLinks project={project} />
+          <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}

@@ -477,11 +477,16 @@ Generated points projections are build outputs; do not edit them by hand.
 
 ## Rewards, funding, and settlement
 
-Monthly allocations are private D1 records. The trusted `monthly-rewards.yml`
+Monthly allocations are D1 records. The trusted `monthly-rewards.yml`
 workflow freezes the complete ledger of the closed UTC month and writes each
 funded project's proposal to D1 once; a repeat run never adds or replaces
-rows. The owner changes amounts privately, and the owner or the automatic
-cutoff freezes the final allocation (`backend/payments/README.md`).
+rows. The owner changes amounts, and the owner or the automatic cutoff
+freezes the final allocation (`backend/payments/README.md`). A change below
+a contributor's proposed amount is a cut: it needs a 20 to 500 character
+reason, is public with its reason, and sends the contributor an Inbox notice.
+Cuts close 24 hours before the cutoff while automatic finalization is on, and
+the owner can finalize only 24 hours after the latest cut. Operator decision,
+15 November 2026.
 `cycles/` keeps only the format notes of historical cycles; do not add cycle
 files.
 
@@ -495,8 +500,9 @@ Review credit follows the canonical scoring policy.
 
 Automatic monthly payment is the PRD default for every project with funds
 committed in its vault. The owner sets the monthly amount during setup, can
-adjust allocations before execution, and can turn the default off; do not show
-adjustment history or require public reasons. Distribute the current
+adjust allocations before execution, and can turn the default off. Only cuts
+below the proposed amount are public, each with its required reason; other
+changes stay private. Distribute the current
 allocations at the monthly cutoff if the owner has not done so. The period is
 the calendar UTC month, starting with 2026-11, and the cutoff is 72 hours after
 the month ends (PRD sections 6 and 11). Keep internal reconciliation and prevent
@@ -572,7 +578,11 @@ Public pages never read chain or GitHub state live per page view (PRD
 section 9). They serve cached D1 data and snapshots that background jobs
 refresh. Vault totals come from finalized on-chain counters cached in D1 with
 their observed time. A failed refresh shows the last value as stale, never
-zero.
+zero. A monthly amount is shown to contributors only when the project's
+vault holds it; otherwise the pool reads as points only (PRD section 6,
+operator decision of 15 November 2026). From December 2026 a month is
+promised only if the vault covered it on the 1st, and Slop's pages refuse a
+withdrawal below the promised amount.
 
 ## Project authority and IP
 
@@ -618,9 +628,20 @@ that run's own environment (production or staging) after validation, with their
 original timestamps and history (operator decision, 13 November 2026). This
 option cannot run with staging bootstrap; missing or invalid published data
 stops the release. It never uses the pull-request data adapter or skips code, browser,
-sandbox, source-identity or deployment checks. To publish new data without a
-commit, run the release workflow by hand (`workflow_dispatch`) with the option
-off. Every production release requires current main equivalence. Every
+sandbox, source-identity or deployment checks. An explicit manual `main` or
+`development` run may also set `skip_proofs` (operator decision, 14 November
+2026; PRD section 12, STATE-05): it repeats neither the Quint state-model
+stages nor the LemmaScript proofs. Both inventory checks and every code,
+browser, sandbox, source-identity and deployment check still run. A push
+release cannot skip them, pull requests still run the affected models and
+proofs, and scheduled nightly runs check all of them on the default branch.
+The same kind of run may set `skip_browser_tests` (operator decision,
+14 November 2026; PRD section 9): it runs the browser smoke lane instead of
+the complete browser lanes, and every other check still runs. A push release
+cannot skip them. A release that skipped either set is not evidence that
+the skipped checks passed.
+To publish new data without a commit, run the release workflow by hand
+(`workflow_dispatch`) with the `use_published_data` option off. Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

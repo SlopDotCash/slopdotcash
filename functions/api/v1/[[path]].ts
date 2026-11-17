@@ -32,6 +32,8 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { handleMergeActivityApi } from "../../../backend/projects/merge-activity";
+import { handlePoolFundingApi } from "../../../backend/projects/pool-funding";
 import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
@@ -41,6 +43,7 @@ import {
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
+import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
@@ -474,8 +477,20 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralClaims !== null) return referralClaims;
+  const referralCode = await handleReferralCode(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (referralCode !== null) return referralCode;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
+  const mergeActivity = await handleMergeActivityApi(request, { db });
+  if (mergeActivity !== null) return mergeActivity;
+  const poolFunding = await handlePoolFundingApi(request, { db, tier });
+  if (poolFunding !== null) return poolFunding;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
@@ -532,7 +547,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           verifyProjectAuthority(
             project.manifest,
             actor,
-            env.SLOP_GITHUB_READ_TOKEN,
+            repositoryAccess,
             level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
@@ -638,6 +653,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
+      waitUntil,
     });
   if (pathname.startsWith("/api/v1/slopbot/"))
     return handleSlopbotApi(request, db);

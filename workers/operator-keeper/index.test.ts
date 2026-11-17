@@ -79,31 +79,41 @@ test("unavailable work retains its failure and logs aggregate causes without pri
   expect(log.mock.calls[0]).toEqual([
     {
       event: "operator_keeper_unavailable",
-      schemaVersion: 1,
+      schemaVersion: 2,
       failedResults: 6,
       groups: [
-        { operation: "award", state: "waiting", cause: "other", count: 1 },
+        {
+          operation: "award",
+          state: "waiting",
+          stage: "other",
+          cause: "other",
+          count: 1,
+        },
         {
           operation: "deployment",
           state: "unavailable",
+          stage: "other",
           cause: "other",
           count: 1,
         },
         {
           operation: "monthly",
           state: "publication-unavailable",
+          stage: "other",
           cause: "other",
           count: 1,
         },
         {
           operation: "registry",
           state: "unavailable",
+          stage: "other",
           cause: "deployment-unavailable",
           count: 1,
         },
         {
           operation: "registry",
           state: "unavailable",
+          stage: "other",
           cause: "project-unavailable",
           count: 2,
         },
@@ -140,10 +150,16 @@ test("unknown operation, state and error values collapse into one fixed counter"
     [
       {
         event: "operator_keeper_unavailable",
-        schemaVersion: 1,
+        schemaVersion: 2,
         failedResults: 41,
         groups: [
-          { operation: "other", state: "other", cause: "other", count: 41 },
+          {
+            operation: "other",
+            state: "other",
+            stage: "other",
+            cause: "other",
+            count: 41,
+          },
         ],
       },
     ],
@@ -173,18 +189,20 @@ test("identical error text outside a registry result does not claim a trusted re
     [
       {
         event: "operator_keeper_unavailable",
-        schemaVersion: 1,
+        schemaVersion: 2,
         failedResults: 2,
         groups: [
           {
             operation: "deployment",
             state: "unavailable",
+            stage: "other",
             cause: "other",
             count: 1,
           },
           {
             operation: "monthly",
             state: "publication-unavailable",
+            stage: "other",
             cause: "other",
             count: 1,
           },
@@ -192,6 +210,77 @@ test("identical error text outside a registry result does not claim a trusted re
       },
     ],
   ]);
+});
+
+test("deployment stages and typed causes aggregate without exposing private diagnostics", async () => {
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  const preflight = {
+    ...result("deployment", "unavailable", privateValue),
+    failureStage: "preflight" as const,
+    failureCause: "rpc-unavailable" as const,
+  };
+  const rows = [
+    preflight,
+    preflight,
+    {
+      ...result("deployment", "unavailable", privateValue),
+      failureStage: "payment-scan" as const,
+      failureCause: "rpc-error" as const,
+    },
+    {
+      ...result("deployment", "unavailable", privateValue),
+      failureStage: privateValue,
+      failureCause: privateValue,
+    } as unknown as KeeperResult,
+    {
+      ...result("monthly:2026-11", "waiting", privateValue),
+      failureStage: "preflight" as const,
+      failureCause: "rpc-unavailable" as const,
+    },
+  ];
+  await expect(worker.scheduled(null, environment(rows))).rejects.toThrow(
+    failures,
+  );
+  expect(log.mock.calls).toEqual([
+    [
+      {
+        event: "operator_keeper_unavailable",
+        schemaVersion: 2,
+        failedResults: 5,
+        groups: [
+          {
+            operation: "deployment",
+            state: "unavailable",
+            stage: "other",
+            cause: "other",
+            count: 1,
+          },
+          {
+            operation: "deployment",
+            state: "unavailable",
+            stage: "payment-scan",
+            cause: "rpc-error",
+            count: 1,
+          },
+          {
+            operation: "deployment",
+            state: "unavailable",
+            stage: "preflight",
+            cause: "rpc-unavailable",
+            count: 2,
+          },
+          {
+            operation: "monthly",
+            state: "waiting",
+            stage: "other",
+            cause: "other",
+            count: 1,
+          },
+        ],
+      },
+    ],
+  ]);
+  expect(JSON.stringify(log.mock.calls)).not.toContain(privateValue);
 });
 
 test.each([{ rows: [] }, { rows: [result("deployment", "checked")] }])(

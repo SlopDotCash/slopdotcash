@@ -1,11 +1,16 @@
-/** Shared session consumers must remove stale authority while rechecking. */
+/**
+ * Shared session consumers must remove stale authority. Administration closes
+ * while a tab return rechecks; an owner page keeps its form and wallet
+ * requests during the recheck and closes once the answer shows a changed or
+ * ended session (operator decision, 17 November 2026).
+ */
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { expect, test } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 test.use({ video: "on" });
 for (const surface of ["admin", "owner"] as const) {
-  test(`${surface} controls close while focus revalidates a signed-out account`, async ({
+  test(`${surface} controls close when focus revalidates a signed-out account`, async ({
     page,
     diagnostics,
   }, info) => {
@@ -60,8 +65,10 @@ for (const surface of ["admin", "owner"] as const) {
       // separate cross-tab test changes the real shared browser cookie.
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await requested;
-      await expect(controls).toHaveCount(0);
+      if (surface === "owner") await expect(controls).toBeVisible();
+      else await expect(controls).toHaveCount(0);
       release();
+      await expect(controls).toHaveCount(0);
       await expect(
         page
           .getByRole("link", { name: "Sign in with GitHub", exact: true })

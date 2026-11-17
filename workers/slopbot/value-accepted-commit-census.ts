@@ -95,6 +95,11 @@ export async function collectAcceptedCommitCensus(
 
 type MergeRange = { start: number; end: number };
 
+/** GitHub search accepts one inclusive merged-time range qualifier. */
+export function mergedTimeRangeQualifier(start: number, end: number): string {
+  return `merged:${new Date(start).toISOString().replace(".000Z", "Z")}..${new Date(end).toISOString().replace(".000Z", "Z")}`;
+}
+
 async function collectRange(
   github: ValueClient,
   evidence: ValueEvidence,
@@ -105,7 +110,7 @@ async function collectRange(
   if (!github.graphql || !Number.isFinite(startAt)) return null;
   const [owner, name] = current.split("/");
   const period = range
-    ? `merged:${new Date(range.start).toISOString().replace(".000Z", "Z")}..${new Date(range.end).toISOString().replace(".000Z", "Z")}`
+    ? mergedTimeRangeQualifier(range.start, range.end)
     : `merged:>=${new Date(startAt).toISOString().slice(0, 10)}`;
   const query = `repo:${current} is:pr is:merged ${period}`;
   const ids = new Set<string>();

@@ -461,3 +461,93 @@ test("fractional Orbio receipts bound qualification spending without inventing a
   expect(await wrapped.mayCall()).toBe(false);
   expect(source.calls()).toBe(1);
 });
+
+test("exact Orbio quota denial reserves its full bound and permits one fallback", async () => {
+  let calls = 0;
+  const wrapped = qualificationTransport((async () => {
+    calls++;
+    return calls === 1
+      ? Response.json(
+          { error: { type: "insufficient_quota", code: "insufficient_quota" } },
+          { status: 402 },
+        )
+      : Response.json({ ...body, usage: { buyer_cost_micro: 0 } });
+  }) as unknown as typeof fetch);
+  const denied = new Request("https://api.orbio.so/api/v1/messages", {
+    method: "POST",
+    body: JSON.stringify({
+      model: "anthropic/claude-sonnet-5.5",
+      item: { contentOmittedFromModel: true },
+    }),
+  });
+  expect((await wrapped.fetch(denied)).status).toBe(402);
+  expect(await wrapped.mayCall()).toBe(true);
+  await wrapped.fetch(request());
+  expect(await wrapped.mayCall()).toBe(false);
+  expect(calls).toBe(2);
+});
+
+test("unreceipted errors outside the exact Orbio quota denial remain uncertain", async () => {
+  for (const [url, status, error] of [
+    [
+      "https://api.orbio.so/api/v1/messages",
+      503,
+      { type: "insufficient_quota" },
+    ],
+    [
+      "https://api.orbio.so/api/v1/messages",
+      402,
+      { type: "authentication_error" },
+    ],
+    [
+      "https://api.orbio.so/api/v1/messages",
+      402,
+      { type: "insufficient_quota", code: "other" },
+    ],
+    [ENDPOINT, 402, { type: "insufficient_quota" }],
+  ] as const) {
+    const wrapped = qualificationTransport((async () =>
+      Response.json({ error }, { status })) as unknown as typeof fetch);
+    const req = new Request(url, {
+      method: "POST",
+      body: JSON.stringify({
+        model:
+          url === ENDPOINT
+            ? "claude-sonnet-5.5"
+            : "anthropic/claude-sonnet-5.5",
+        item: { contentOmittedFromModel: true },
+      }),
+    });
+    await expect(wrapped.fetch(req)).rejects.toThrow(
+      "Slopbot model qualification failed",
+    );
+    expect(await wrapped.mayCall()).toBe(false);
+  }
+});
+
+test("a quota-denied request cannot make its unknown charge free", async () => {
+  let calls = 0;
+  const wrapped = qualificationTransport((async () => {
+    calls++;
+    return calls === 1
+      ? Response.json(
+          { error: { type: "insufficient_quota" } },
+          { status: 402 },
+        )
+      : Response.json({ ...body, usage: { buyer_cost_micro: 1_000_000 } });
+  }) as unknown as typeof fetch);
+  await wrapped.fetch(
+    new Request("https://api.orbio.so/api/v1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "anthropic/claude-sonnet-5.5",
+        item: { contentOmittedFromModel: true },
+      }),
+    }),
+  );
+  await expect(wrapped.fetch(request())).rejects.toThrow(
+    "Slopbot model qualification failed",
+  );
+  expect(await wrapped.mayCall()).toBe(false);
+  expect(calls).toBe(2);
+});

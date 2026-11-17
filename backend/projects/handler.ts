@@ -1565,13 +1565,18 @@ async function ownerVault(
       manifestSha256: stored.manifestSha256,
     };
   }
-  const deployment = await deps.vaultSetup.register(
+  const verified = await deps.vaultSetup.register(
     creation,
     actor,
     input,
     transactionId,
   );
-  if (!deployment) return json(200, { status: "pending" });
+  if (!verified) return json(200, { status: "pending" });
+  // Included but not final: answer the verified deployment so the owner can
+  // fund it now. Nothing is registered, appended or observed before finality.
+  if (verified.evidence !== "finalized")
+    return json(200, { status: "pending", provisional: verified.deployment });
+  const { deployment } = verified;
   const updated = await appendRevision(request, deps, {
     current,
     actor,
@@ -1848,6 +1853,10 @@ async function removeProject(
   // The stored immutable repository, never submitted facts or creator status,
   // supplies authority. Recheck even an already-removed retry.
   requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  // A restriction's own paused, retired revision is not a removal.
+  refuseRestrictedRemoval(
+    projectRestriction(projectId, await deps.persistence.listEnforcements()),
+  );
   if (enforcedManifest(current.manifest))
     return json(200, { project: adminProject(current) });
   if (current.revision !== expectedRevision)
@@ -1857,6 +1866,7 @@ async function removeProject(
     manifest: { ...current.manifest, status: "paused", listingTier: "retired" },
     actor,
     reason: "Removed by a current repository maintainer",
+    removal: true,
   });
   return json(200, { project: adminProject(project) });
 }
@@ -2175,6 +2185,8 @@ async function appendRevision(
     applicationId?: string;
     /** Recheck owner eligibility within the guarded enforcement snapshot. */
     ownerParticipation?: true;
+    /** Recheck a maintainer removal within the same snapshot. */
+    removal?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -2187,6 +2199,7 @@ async function appendRevision(
   if (input.ownerParticipation)
     assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = projectRestriction(projectId, enforcements);
+  if (input.removal) refuseRestrictedRemoval(restriction);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
     fail(
@@ -2382,6 +2395,20 @@ function assertMaintainerNotBanned(
       403,
       "maintainer_banned",
       "A moderator banned this maintainer after a confirmed malicious scan result. The account cannot start new Slop participation. The banned account, project steward or original applicant may appeal the project decision.",
+    );
+}
+
+/**
+ * Removal waits until the project's own Quarantine or Ban is lifted.
+ * Reinstatement lists the project again from the revision the restriction
+ * opened on (PRD ADM-06), which would undo a removal recorded under it.
+ */
+function refuseRestrictedRemoval(restriction: ProjectRestriction): void {
+  if (restriction.state !== "clear")
+    fail(
+      409,
+      "project_restricted",
+      `The project is ${restriction.state}; request reinstatement before removing it`,
     );
 }
 

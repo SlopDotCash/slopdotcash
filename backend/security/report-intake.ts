@@ -10,6 +10,7 @@ import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
+  analysisScope,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
   priorCaseSummaries,
   runAppealTriage,
@@ -626,13 +627,7 @@ async function screenStoredReport(
         : null;
       const input: SecurityAnalysisInput = {
         report: analysisReport(await reportVersion(deps, row)),
-        scope: scope
-          ? {
-              includedAssets: scope.includedAssets,
-              severityRubric: scope.severityRubric,
-              lossDefinition: scope.lossDefinition,
-            }
-          : null,
+        scope: analysisScope(scope),
         priorCases: (
           await priorCaseSummaries(deps.db, submission.project_id, row.case_id)
         ).filter((entry) => entry.summary !== null),
@@ -730,13 +725,7 @@ export async function screenLegacyReport(
     proposal = await deps.analyzer.screen(
       {
         report: analysisReport(report),
-        scope: scope
-          ? {
-              includedAssets: scope.includedAssets,
-              severityRubric: scope.severityRubric,
-              lossDefinition: scope.lossDefinition,
-            }
-          : null,
+        scope: analysisScope(scope),
         priorCases: (await priorCaseSummaries(deps.db, projectId, null)).filter(
           (entry) => entry.summary !== null,
         ),

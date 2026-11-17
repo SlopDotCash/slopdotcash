@@ -645,6 +645,7 @@ label {
   background: transparent;
   color: var(--muted);
   font-size: 14px;
+  transition: border-color var(--brand-motion-fast) var(--brand-motion-ease);
 }
 
 .home-audience-switch .button[aria-pressed="true"] {
@@ -1375,7 +1376,8 @@ main h2 {
   gap: 6px;
 }
 
-.email-enrollment input[type="email"] {
+.email-enrollment input[type="email"],
+.email-enrollment input[type="text"] {
   width: 100%;
   min-width: 0;
   min-height: 44px;
@@ -1384,6 +1386,19 @@ main h2 {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--brand-radius-small);
+}
+
+.referral-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.referral-link code {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .email-enrollment fieldset {

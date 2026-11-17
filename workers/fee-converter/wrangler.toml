@@ -27,11 +27,11 @@ FEE_CONVERTER_MODE = "live"
 # operating limits below are owner-approved. Solana's separate rotation
 # authority is verified; approved lamport limits use the durable native journal.
 # The controls release and approved 0.05 SOL gas top-up are complete (#905).
-# Owner decision, 27 October 2026: approval is conditional; live Solana remains
-# deferred while owner vault setup is on another computer. Verify an independent
-# full-history recovery RPC and the first registered Solana vault, then use a
-# later reviewed main release to activate. Do not repeat funding or upgrades.
-FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
+# Owner decision, 27 October 2026: Solana activation requires the first
+# registered vault and independently qualified full-history recovery RPCs.
+# The version-bound public-pair rotation and vault verification satisfy those
+# prerequisites for this reviewed activation. Do not repeat funding or upgrades.
+FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood,solana"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.
 FEE_CONVERTER_ALLOWLIST = ""
@@ -74,18 +74,19 @@ KYBERSWAP_CLIENT_ID = "slop-fee-converter"
 # 2026 (PRD section 6 and the release gates): the dry-run period and the small
 # verified first order were not run, because no fee income existed to run
 # them. Verify the first real order on chain (README.md, "SLOP buyback"). To
-# stop, land BUYBACK_MODE = "off". The owner confirmed each limit below on
-# 10 November 2026 (PRD section 6); the code has no fallback for any of them.
+# stop, land BUYBACK_MODE = "off". Original limits were confirmed on
+# 10 November; the 16–17 November decisions amend the minimum and cost cap.
+# The code has no fallback for these values (PRD section 6).
 BUYBACK_MODE = "live"
 # UTC instant from which fee income counts; earlier fees never enter the buyback.
 BUYBACK_START_AT = "2026-11-12T00:00:00.000Z"
 # Half of all fee income funds the buyback; half of acquired SLOP is burned.
 BUYBACK_SHARE_BPS = "5000"
 BUYBACK_BURN_BPS = "5000"
-# Bridge at least 500 USDC per order; spread, fixed protocol fee and network
-# fee together may cost at most 1.5% of it.
-BUYBACK_MIN_BRIDGE_MICRO = "500000000"
-BUYBACK_MAX_BRIDGE_COST_BPS = "150"
+# Owner decision, 16–17 November 2026: check and bridge from 25 USDC of
+# available buyback funds; all bridge costs together may take at most 10%.
+BUYBACK_MIN_BRIDGE_MICRO = "25000000"
+BUYBACK_MAX_BRIDGE_COST_BPS = "1000"
 # Highest native cost of one order: the deBridge fixed fee on Base and
 # Ethereum (0.001 ETH), and on Solana the whole SOL debit of the order
 # (order-account rent, fixed fee and network fee; 0.05 SOL).

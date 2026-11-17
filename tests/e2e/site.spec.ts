@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { communityProjects } from "../../src/lib/home-projects";
+import { homeProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
   assignLeaderboardRanks,
@@ -26,7 +26,12 @@ import {
 } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 import { adminProjectRecord } from "./project-maintainer-fixture";
 
 const deployment = deploymentOrigins(
@@ -497,22 +502,13 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     "href",
     "https://github.com/SlopDotCash/slopdotcash",
   );
-  const community = page.locator("section.community-projects");
-  const listedCommunity = communityProjects();
-  if (listedCommunity.length === 0) {
-    await expect(community).toHaveCount(0);
-  } else {
-    // Community projects list ten per page; every page stays reachable.
-    const pages = Math.ceil(listedCommunity.length / 10);
-    for (let index = 0; index < pages; index += 1) {
-      for (const project of listedCommunity.slice(index * 10, (index + 1) * 10))
-        await expect(
-          community.locator(`a.project-row[href="/projects/${project.id}"]`),
-        ).toBeVisible();
-      if (index < pages - 1)
-        await community.getByRole("button", { name: "Next page" }).click();
-    }
-  }
+  // Every open project is one card in the single projects grid.
+  const projects = page.locator("#projects");
+  for (const project of homeProjects())
+    await expect(
+      projects.locator(`a.project-card[href="/projects/${project.id}"]`),
+    ).toBeVisible();
+  await expect(page.locator("section.community-projects")).toHaveCount(0);
   for (const project of PROJECTS.filter(
     (project) => project.status === "paused",
   )) {
@@ -521,11 +517,17 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  await expect(elizaCard.getByText("$1k", { exact: true })).toBeVisible();
-  // The external prize is a community listing that also earns points.
+  // The frozen project has a pledge and no verified vault funding.
   await expect(
-    community.locator('a.project-row[href="/projects/delta-star"]'),
-  ).toContainText("$1,000,000");
+    elizaCard.getByText("Points only", { exact: true }),
+  ).toBeVisible();
+  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
+  // An external prize leads with points; the card never headlines its amount.
+  const deltaStar = projects.locator(
+    'a.project-card[href="/projects/delta-star"]',
+  );
+  await expect(deltaStar).toContainText("Points + external prize");
+  await expect(deltaStar).not.toContainText("$1m");
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).toContainText(`${new URL(page.url()).origin}/contribute/SKILL.md`);
@@ -639,6 +641,19 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
+});
+
+test("public project summaries read the migrated Pages database", {
+  tag: ["@pages", "@pages-only"],
+}, async ({ request }) => {
+  for (const [path, schema] of [
+    ["merge-activity", "slop-merge-activity-v1"],
+    ["pool-funding", "slop-pool-funding-v1"],
+  ]) {
+    const response = await request.get(`/api/v1/${path}`);
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ schema, projects: [] });
+  }
 });
 
 test("renders contributor and cycle records from validated public data", {
@@ -1907,6 +1922,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
   diagnostics,
 }, testInfo) => {
+  await servePublicProjectReads(page);
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
@@ -1960,7 +1976,17 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  // Finish the remounted Sponsors page's funding read before leaving for Home.
+  const [fundingResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/pool-funding" &&
+        response.request().method() === "GET",
+    ),
+    page.goBack({ waitUntil: "networkidle" }),
+  ]);
+  expect(fundingResponse.ok()).toBe(true);
+  expect(await fundingResponse.finished()).toBeNull();
   await expect(page).toHaveURL(/\/sponsors$/u);
 
   await expect(pools).toBeVisible();
@@ -2077,7 +2103,8 @@ test("how it works answers the referral and buyback questions", async ({
   const referral = faq.locator("article", {
     has: page.getByRole("heading", { name: "Is there a referral program?" }),
   });
-  await expect(referral).toContainText("none pay until the program");
+  await expect(referral).toContainText("slop.cash/r/");
+  await expect(referral).toContainText("paid its contributors");
   await expect(
     referral.getByRole("link", { name: "Referral terms" }),
   ).toHaveAttribute("href", "https://record.slop.cash/referrals");

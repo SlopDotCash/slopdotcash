@@ -75,7 +75,7 @@ start_validator() {
     cat .local/validator.log >&2
     return 1
   fi
-  solana --url "$ANCHOR_PROVIDER_URL" airdrop 100 --keypair "$ANCHOR_WALLET" >/dev/null
+  node scripts/airdrop-local.mjs
 }
 # CI qualifies the exact retained production artifact. Local runs without one
 # keep building their program as before. IDL extraction does not replace it.
@@ -91,13 +91,15 @@ start_validator
 bash scripts/run-test-stage.sh production-delay node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
 stop_validator
 # Reuse the same production build for the funded lifecycle suite. The validator also
-# preloads a Project of the earlier 316-byte layout for the migrate_project check, and
+# preloads Projects of the earlier 316- and 332-byte layouts for the migrate_project checks,
+# month pledges a live validator cannot create (the recordable month and a lapsed one), and
 # states no live validator reaches: a funded month past its admission window, an earlier month
 # that already committed sources, and a vault holding less than its counters owe.
 read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
 read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"
 read -ra token_accounts <<<"$(node integration/token-2022-preload.mjs)"
-start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}" "${token_accounts[@]}"
+read -ra pledge_accounts <<<"$(node integration/pledge-preload.mjs)"
+start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}" "${token_accounts[@]}" "${pledge_accounts[@]}"
 bun build adapter.ts --target=node --outfile=.local/adapter.mjs
 bun build monthly-reserve.ts --target=node --outfile=.local/monthly-reserve.mjs
 bun build ../../workers/payment-executor/monthly-release.ts --target=node --outfile=.local/monthly-release-service.mjs
@@ -115,4 +117,4 @@ bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/disp
 bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit \
   --test-reporter=tap --test-reporter=spec \
   --test-reporter-destination=stdout --test-reporter-destination=stderr \
-  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs integration/native.e2e.mjs
+  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs integration/native.e2e.mjs integration/pledge.e2e.mjs

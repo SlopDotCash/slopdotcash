@@ -9,6 +9,8 @@ import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
+import { handleMergeActivityApi } from "../backend/projects/merge-activity";
+import { handlePoolFundingApi } from "../backend/projects/pool-funding";
 import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
 import type { SolanaEscrowConfig } from "../contracts/solana/adapter";
@@ -212,6 +214,9 @@ Bun.serve({
               REGISTRY_DB: db,
               PAYMENT_NETWORKS: JSON.stringify([servedNetwork]),
               PAYMENT_RPC_URLS: JSON.stringify({ [servedNetwork]: rpcUrl }),
+              PAYMENT_SOLANA_GENESIS: JSON.stringify({
+                [servedNetwork]: ESCROW_NETWORKS[servedNetwork].genesisHash,
+              }),
               // This zero-award fixture exercises the real scanner, not payouts.
               EVM_PAYMENT_EXECUTOR: {
                 fetch: async () => {
@@ -287,6 +292,14 @@ Bun.serve({
         );
       const projectResponse = await handleProjectApi(projectRequest, deps);
       if (projectResponse) return projectResponse;
+      const mergeActivity = await handleMergeActivityApi(request, { db });
+      if (mergeActivity) return mergeActivity;
+      const poolFunding = await handlePoolFundingApi(request, {
+        db,
+        tier: "staging",
+        now,
+      });
+      if (poolFunding) return poolFunding;
       if (url.pathname.startsWith("/api/v1/payments"))
         return handlePaymentsApi(request, {
           db,

@@ -100,8 +100,10 @@ is accepted (Base Sepolia, Robinhood Chain Testnet, Ethereum Sepolia, Solana
 Devnet and Testnet); each network's chain and chain id come from
 `src/lib/escrow-policy.mjs`. A mainnet network (Base, Ethereum, Robinhood
 Chain, Solana) is accepted only when its value in `mainnet-execution.mjs` is
-`true`. Only `base-mainnet` is `true` (owner activation of 24 October 2026,
-`contracts/DEPLOY-MAINNET.md` section 3.6); every other value is `false`. Only
+`true`. `base-mainnet` is `true` (owner activation of 24 October 2026,
+`contracts/DEPLOY-MAINNET.md` section 3.6), and so are `robinhood-mainnet` and
+`solana-mainnet` (operator decision of 14 November 2026, section 3.7);
+`ethereum` is `false`. Only
 a reviewed pull request that records that network's production activation can
 change one. The local integration
 override exists only in the core APIs and is not forwarded by the hosted
@@ -183,12 +185,13 @@ then examines at most 16 proven leaves per call under the existing gas limit.
 A finalized cursor bounds repeated work when another keeper committed a prefix.
 If another sender completes a commitment, admission or leaf after this signer
 journaled its own transaction for that step, the executor sends the same bytes
-again until the signer's mined nonce passes them. They cannot commit the step
-twice, and an unsent signed nonce would hold every later send of the signer.
-The finalized cursor passes such a leaf only after that nonce is mined, also
-when other senders already committed every leaf. Until every such nonce of the
-month is mined, the response reports `complete: false`, so the scheduler does not
-retire the month.
+again until the signer's mined nonce passes them, then waits until the signer's
+finalized nonce passes them, because a mined nonce can disappear in a reorg.
+They cannot commit the step twice, and an unsent signed nonce would hold every
+later send of the signer. The finalized cursor passes such a leaf only after
+that nonce is finalized, also when other senders already committed every leaf.
+Until every such nonce of the month is finalized, the response reports
+`complete: false`, so the scheduler does not retire the month.
 The economic snapshot stays fixed; source changes before admission append a new
 immutable execution authorization. The original V1 authorization remains
 available when an older transaction is pending. The executor reconciles that
