@@ -38,11 +38,12 @@ import projects as P from "./backend/projects"
 import enforcement as E from "./security/enforcement"
 import admission as A from "./security/admission"
 import projectRegistry as R from "./backend/projectRegistry"
+import skillRendering as SR from "./contributor/skillRendering"
 type Registry = { project: P::Project, security: E::Enforcement }
 pure val initial: Registry = { project: P::initial, security: E::initial }
 pure def sync(p: P::Project, e: E::Enforcement): E::Enforcement =
   if (p.revision > e.revision and p.steward > 0 and p.creator > 0 and (e.creator == 0 or p.creator == e.creator))
-    E::observeRevision(e, p.revision, p.steward, p.creator) else e
+    E::observeRevision(e, E::platform, p.revision, p.steward, p.creator) else e
 pure def alwaysRepositoriesAgree(c: Registry): bool = c.project.repositories == c.security.repositories
 pure def alwaysRevisionMirrored(c: Registry): bool =
   c.security.revision == c.project.revision and c.security.steward == c.project.steward and c.security.creator == c.project.creator
@@ -142,18 +143,22 @@ pure val policyValues = tuples(1.to(5), Set(PolicyAccepts, PolicyRefuses)).map(x
 
 The setup check activates a paused project only when every repository clears,
 no restriction holds and neither the acting account nor the steward is
-banned (activation is an owner-participation revision). Owner revisions,
+banned (activation is an owner-participation revision). It commits only
+against the revision, enforcement record count and clearance generation it
+read, so a scan result, grant, revocation or identity change recorded in
+between refuses it and the check runs again. Owner revisions,
 appended repositories, consent edits and placements are refused while any
 restriction holds (`project_restricted`). An owner
 revision's clearance input is the composed clearance, so an executable change
-pauses an active project whose admission is not retained.
+pauses an active project whose admission is not retained: an executable
+change never leaves the project collectable without clearance.
 
 ```quint
 pure def clearanceOf(e: E::Enforcement): P::Clearance = if (E::cleared(e)) P::ClearanceRetained else P::ClearanceMissing
-pure def canActivate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding): bool =
+pure def canActivate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding, observed: RegistryObservation): bool =
   P::canActivate(c.project, by, check) and E::mayContribute(c.security) and unbanned(by, c.project.steward, account) and
-  not(c.security.accountBans.includes(by))
-pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding): Registry =
+  not(c.security.accountBans.includes(by)) and observed == observation(c)
+pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding, observed: RegistryObservation): Registry =
   val p = P::activate(c.project, by, check)
   { project: p, security: sync(p, c.security) }
 pure def ownerWriteAllowed(c: Registry, by: int, account: AccountStanding): bool =
@@ -163,6 +168,9 @@ pure def canPublishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, a
 pure def publishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding): Registry =
   val p = P::publishOwnerRevision(c.project, by, change)
   { project: p, security: sync(p, c.security) }
+pure def lawExecutableChangeNeedsClearance(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding): bool =
+  (canPublishOwnerRevision(c, by, change, account) and change.executable) implies
+    (publishOwnerRevision(c, by, change, account).project.status == P::Paused or E::cleared(c.security))
 pure def canPublishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding): bool =
   P::canPublishUpdate(c.project, by, change) and ownerWriteAllowed(c, by, account) and change.clearance == clearanceOf(c.security)
 pure def publishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding): Registry =
@@ -183,10 +191,10 @@ pure def canRemove(c: Registry, by: int, removal: P::Removal): bool = P::canRemo
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
   val p = P::remove(c.project, by, removal)
   { project: p, security: E::withRevisionLanded(p.tier == P::Retired, sync(p, c.security)) }
-pure def canAdminRevise(c: Registry, by: int, kind: P::AdminKind, steward: int): bool =
-  P::canAdminRevise(c.project, by, kind, steward) and c.security.restriction == E::Clear
-pure def adminRevise(c: Registry, by: int, kind: P::AdminKind, steward: int): Registry =
-  val p = P::adminRevise(c.project, by, kind, steward)
+pure def canAdminRevise(c: Registry, by: int, exception: P::Exception): bool =
+  P::canAdminRevise(c.project, by, exception) and c.security.restriction == E::Clear
+pure def adminRevise(c: Registry, by: int, exception: P::Exception): Registry =
+  val p = P::adminRevise(c.project, by, exception)
   { project: p, security: sync(p, c.security) }
 pure def canPlace(c: Registry, by: int, tier: P::Tier): bool = P::canPlace(c.project, by, tier) and c.security.restriction == E::Clear
 pure def place(c: Registry, by: int, tier: P::Tier): Registry =
@@ -256,10 +264,13 @@ pure def canGrantExemption(c: Registry, by: int, fence: E::Fence, request: E::Gr
   E::canGrantExemption(c.security, by, fence, request)
 pure def grantExemption(c: Registry, by: int, fence: E::Fence, request: E::GrantRequest): Registry =
   { ...c, security: E::grantExemption(c.security, by, fence, request) }
-pure def canRevokeExemption(c: Registry, by: int, repository: int, grantId: int, decision: int): bool =
-  E::canRevokeExemption(c.security, by, repository, grantId, decision)
-pure def revokeExemption(c: Registry, by: int, repository: int, grantId: int, decision: int): Registry =
-  { ...c, security: E::revokeExemption(c.security, by, repository, grantId, decision) }
+pure def canRevokeExemption(c: Registry, by: int, revoke: E::RevokeRequest): bool = E::canRevokeExemption(c.security, by, revoke)
+pure def revokeExemption(c: Registry, by: int, revoke: E::RevokeRequest): Registry =
+  { ...c, security: E::revokeExemption(c.security, by, revoke) }
+pure def canObserveIdentity(c: Registry, by: int, repository: int, identity: int): bool =
+  E::canObserveIdentity(c.security, by, repository, identity)
+pure def observeIdentity(c: Registry, by: int, repository: int, identity: int): Registry =
+  { ...c, security: E::observeIdentity(c.security, by, repository, identity) }
 pure def canRecognizeFrozen(c: Registry, by: int, row: E::FrozenRow): bool = E::canRecognizeFrozen(c.security, by, row)
 pure def recognizeFrozen(c: Registry, by: int, row: E::FrozenRow): Registry = { ...c, security: E::recognizeFrozen(c.security, by, row) }
 pure def alwaysRestrictionRetiresRegistry(c: Registry): bool =
@@ -282,13 +293,16 @@ current revision, enforcement record count and clearance generation, which
 this machine computes from its own state; a stale or partial observation
 collects nothing. A paused project with current clearance and no restriction
 serves skill bytes for inspection; discovery and installation need an active
-project.
+project. The served bytes are the [rendering](./contributor/skillRendering.md)
+of the canonical template commit and the approved revision at the current
+registry revision, published once as raw Markdown and inside the `.skill`
+archive; no other bytes are served.
 
 ```quint
 type RegistryObservation = { revision: int, enforcementGeneration: int, clearanceGeneration: int }
 type Coverage = CompleteSnapshot | PartialSnapshot
 type WorkEvidence = { captured: RegistryObservation, coverage: Coverage }
-type TemplateEvidence = { checkedDigest: int, renderedDigest: int }
+type SkillServing = { revision: int, template: SR::Template, approved: SR::Revision, served: SR::Publication }
 pure def observation(c: Registry): RegistryObservation =
   { revision: c.project.revision, enforcementGeneration: c.security.journal.length(), clearanceGeneration: c.security.seq }
 pure def currentEvidence(c: Registry, evidence: WorkEvidence): bool =
@@ -297,15 +311,21 @@ pure def unclosed(c: Registry, closure: R::Closure): bool = closure.project == c
 pure def mayCollect(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
   currentEvidence(c, evidence) and unclosed(c, closure) and c.project.status == P::Active and P::listed(c.project) and
   E::mayContribute(c.security) and c.project.repositories.includes(repository) and P::repositoryEligible(c.project, repository, period)
-pure def mayServeSkill(c: Registry, evidence: WorkEvidence, closure: R::Closure, template: TemplateEvidence): bool =
+pure def rendered(c: Registry, skill: SkillServing): bool =
+  skill.revision == c.project.revision and skill.template.commit != "" and skill.approved.digest != "" and
+  skill.served == SR::publish(skill.template, skill.approved)
+pure def mayServeSkill(c: Registry, evidence: WorkEvidence, closure: R::Closure, skill: SkillServing): bool =
   currentEvidence(c, evidence) and unclosed(c, closure) and P::listed(c.project) and c.project.fieldsComplete and
-  E::mayContribute(c.security) and template.checkedDigest > 0 and template.checkedDigest == template.renderedDigest
-pure def mayDiscoverSkill(c: Registry, evidence: WorkEvidence, closure: R::Closure, template: TemplateEvidence): bool =
-  mayServeSkill(c, evidence, closure, template) and c.project.status == P::Active
+  E::mayContribute(c.security) and rendered(c, skill)
+pure def mayDiscoverSkill(c: Registry, evidence: WorkEvidence, closure: R::Closure, skill: SkillServing): bool =
+  mayServeSkill(c, evidence, closure, skill) and c.project.status == P::Active
+pure def lawServedSkillIsTheRendering(c: Registry, evidence: WorkEvidence, closure: R::Closure, skill: SkillServing): bool =
+  mayServeSkill(c, evidence, closure, skill) implies
+    (skill.served.rawMarkdown == SR::render(skill.template, skill.approved) and skill.served.archivedSkill == skill.served.rawMarkdown)
 pure def lawRestrictionStopsCollection(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
   (c.security.restriction != E::Clear or closure.source != 0) implies
     (not(mayCollect(c, evidence, closure, repository, period)) and
-     not(mayServeSkill(c, evidence, closure, { checkedDigest: 1, renderedDigest: 1 })))
+     not(mayServeSkill(c, evidence, closure, renderedSkill(c.project.revision))))
 pure def lawPauseStopsCollection(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
   (c.project.status == P::Paused or c.project.tier == P::Retired) implies not(mayCollect(c, evidence, closure, repository, period))
 pure def lawStaleObservationStopsCollection(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
@@ -316,8 +336,8 @@ pure def lawAppendedRepositoryWaitsForItsMonth(c: Registry, evidence: WorkEviden
   mayCollect(c, evidence, closure, repository, period) implies P::repositoryEligible(c.project, repository, period)
 pure def lawUnclearedRepositoryStopsAll(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
   c.security.repositories.some(r => not(E::repositoryCleared(c.security, r))) implies not(mayCollect(c, evidence, closure, repository, period))
-pure def lawPausedProjectNotDiscoverable(c: Registry, evidence: WorkEvidence, closure: R::Closure, template: TemplateEvidence): bool =
-  c.project.status == P::Paused implies not(mayDiscoverSkill(c, evidence, closure, template))
+pure def lawPausedProjectNotDiscoverable(c: Registry, evidence: WorkEvidence, closure: R::Closure, skill: SkillServing): bool =
+  c.project.status == P::Paused implies not(mayDiscoverSkill(c, evidence, closure, skill))
 ```
 
 ### Slopbot scope and monthly eligibility derive from the same state
@@ -449,7 +469,7 @@ pure val weight_publishUpdate = 4
 pure val appendEvidenceValues = Set({ ...P::append1, expectedRevision: 1 }, P::append1)
 pure val editValues = Set({ authority: P::owner1, expectedRevision: 2, checked: true })
 pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 }, { authority: P::owner1, expectedRevision: 3 })
-pure val requestValues = Set(E::goodGrant)
+pure val requestValues = Set({ ...E::goodGrant, kind: E::OwnerApproved, branch: E::IntegrationBranch })
 pure val fenceValues = E::fenceValues
 pure val rowValues = Set({ projectId: 1, repository: 1 })
 pure val pinsValues = Set(List({ repository: 1, pin: E::PinMatches }, { repository: 2, pin: E::PinMatches }))
@@ -461,9 +481,17 @@ pure val evidenceValues = Set(
   { captured: { revision: 2, enforcementGeneration: 0, clearanceGeneration: 1 }, coverage: CompleteSnapshot },
   { captured: { revision: 2, enforcementGeneration: 0, clearanceGeneration: 1 }, coverage: PartialSnapshot })
 pure val periodValues = Set(202611, 202612)
-pure val stewardValues = Set(0, 4)
 pure val evidenceReadValues = Set({ assessment: 1, present: false })
-pure val templateValues = Set({ checkedDigest: 1, renderedDigest: 1 }, { checkedDigest: 1, renderedDigest: 2 })
+pure def renderedSkill(revision: int): SkillServing =
+  { revision: revision, template: SR::templateA, approved: { digest: "d1", notes: List() },
+    served: SR::publish(SR::templateA, { digest: "d1", notes: List() }) }
+pure val skillValues = Set(renderedSkill(2), renderedSkill(1),
+  { ...renderedSkill(2), served: SR::publish(SR::templateA, { digest: "d2", notes: List() }) })
+pure val observedValues = tuples(1.to(3), Set(0), 1.to(3)).map(x => { revision: x._1, enforcementGeneration: x._2, clearanceGeneration: x._3 })
+pure val exceptionValues = tuples(Set(P::Hold, P::ChangeSteward), 1.to(3)).map(x =>
+  { kind: x._1, steward: if (x._1 == P::ChangeSteward) 4 else 0, expectedRevision: x._2, reason: 1, exclusions: List() })
+pure val revokeValues = Set({ grant: 11, decision: 1, reason: 1, confirmed: true })
+pure val identityValues = Set(2)
 pure val cValues = Set(initial)
 pure val weight_create = 4
 pure val weight_publishApplication = 10
