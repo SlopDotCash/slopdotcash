@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { ChainIcon } from "./ChainIcon";
-import { networkLabel } from "./lib/network-names";
+import { isTestNetwork, networkLabel } from "./lib/network-names";
 import {
   type AccountMonthlyAward,
   type AccountPayment,
@@ -81,6 +81,7 @@ export function PayoutRow({
   note,
   status,
   statusTitle = status.title,
+  statusHref,
   transactionUrl,
   transactionLabel,
   children,
@@ -94,39 +95,55 @@ export function PayoutRow({
   note?: string;
   status: PayoutStatus;
   statusTitle?: string;
+  /** Where the viewer resolves this status; the badge becomes the link. */
+  statusHref?: string;
   transactionUrl: string | null;
   transactionLabel: string;
   /** Actions for this payout, shown below the line. */
   children?: ReactNode;
 }) {
+  const badge = (
+    <StatusBadge
+      className={statusHref ? "" : "payout-pill"}
+      tone={status.tone}
+      title={statusTitle}
+      icon={<status.icon aria-hidden="true" size={14} />}
+    >
+      {status.label}
+    </StatusBadge>
+  );
+  const testNetwork = isTestNetwork(network);
   return (
     <li className="payout-row">
-      <span className="payout-network">
+      <span
+        className="payout-network"
+        role="img"
+        aria-label={networkLabel(network)}
+        title={networkLabel(network)}
+      >
         <ChainIcon chain={chain} decorative />
       </span>
       <span className="payout-main">
         {amount}
         <small>
           {projectId ? (
-            <>
-              <a href={`/projects/${encodeURIComponent(projectId)}`}>
-                {projectId}
-              </a>{" "}
-              ·{" "}
-            </>
+            <a href={`/projects/${encodeURIComponent(projectId)}`}>
+              {projectId}
+            </a>
           ) : null}
-          {networkLabel(network)}
-          {note ? ` · ${note}` : ""}
+          {testNetwork
+            ? `${projectId ? " · " : ""}${networkLabel(network)}`
+            : ""}
+          {note ? `${projectId || testNetwork ? " · " : ""}${note}` : ""}
         </small>
       </span>
-      <StatusBadge
-        className="payout-pill"
-        tone={status.tone}
-        title={statusTitle}
-        icon={<status.icon aria-hidden="true" size={14} />}
-      >
-        {status.label}
-      </StatusBadge>
+      {statusHref ? (
+        <a className="payout-pill" href={statusHref} aria-label={statusTitle}>
+          {badge}
+        </a>
+      ) : (
+        badge
+      )}
       {transactionUrl ? (
         <a
           className="payout-tx"
@@ -177,9 +194,12 @@ export function PayoutAmount({
       ) : (
         <span className="payout-unit payout-token">
           <Coins aria-hidden="true" size={16} />
-          <span>
-            Token <code>{address}</code>
-          </span>
+          {address ? (
+            <span>
+              <span className="visually-hidden">Token </span>
+              <code>{address}</code>
+            </span>
+          ) : null}
         </span>
       )}
     </span>
@@ -231,7 +251,7 @@ export function NetAmount({
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
           tabIndex={0}
         >
-          fee {formatAssetAmount(payout.feeBase, payout)}
+          −{formatAssetAmount(payout.feeBase, payout)} fee
         </span>
       </small>
     </span>

@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
@@ -41,10 +42,13 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
+  MetricGrid,
+  MetricTile,
   NetworkName,
   PaymentLifecycle,
+  ReviewBudget,
   RoutePageHeader,
-  reviewBudgetLabel,
+  StatusBadge,
 } from "./Presentation";
 
 export function HowItWorksPage() {
@@ -66,27 +70,16 @@ export function HowItWorksPage() {
             <li>
               <GitPullRequest className="route-step-icon" aria-hidden="true" />
               <strong>2. Submit a PR</strong>
-              <p>
-                Use any agent. Test the result and disclose the exact provider,
-                model and client.
-              </p>
             </li>
             <li>
               <ShieldCheck className="route-step-icon" aria-hidden="true" />
               <strong>3. Maintainer review</strong>
-              <p>
-                Maintainers accept the work. Accepted work and useful reviews
-                earn Points.
-              </p>
             </li>
             <li>
               <Wallet className="route-step-icon" aria-hidden="true" />
-              <strong>4. Points and payout</strong>
-              <p>
-                Track points and funded awards in{" "}
-                <Link href="/earnings">Payouts</Link>.{" "}
-                <a href="#payments">Payment stages and timing</a>.
-              </p>
+              <strong>
+                <Link href="/earnings">4. Points and payout</Link>
+              </strong>
             </li>
           </ol>
         </section>
@@ -127,34 +120,19 @@ export function HowItWorksPage() {
       <section className="worked-example score-contract" id="points">
         <div>
           <h2>Points</h2>
-          <p>
-            Slopbot sizes each accepted pull request with the tiers in this
-            table and awards points. Every accepted merge earns at least 10
-            points. Only accepted-work points count toward payouts. Joining and
-            connecting X earn no points.
-          </p>
+          <p>Min 10 points per accepted merge.</p>
         </div>
         <ContributionPointTiers />
       </section>
       <section className="worked-example score-contract" id="penalties">
         <div>
           <h2>Penalties</h2>
-          <p>
-            Slopbot applies this one published penalty table. A debit reduces
-            only that UTC month's accepted-work points and never takes it below
-            zero. A debit never changes an approved, scheduled, or paid award.
-            Maintainers and authors outside the closure scope receive no
-            penalty.
-          </p>
         </div>
         <PenaltyPointTable />
       </section>
       <section className="worked-example">
         <div>
           <h2>Example allocation</h2>
-          <p>
-            Your points ÷ project points × funded pool = projected allocation.
-          </p>
         </div>
         <dl className="equation-card" aria-label="Example projected allocation">
           <div>
@@ -174,12 +152,9 @@ export function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
         <p>
-          After each UTC month ends, the owner has 72 hours to adjust awards. A
-          cut below the proposed amount needs a public reason, and the
-          contributor gets 24 hours of notice before the month locks. When
-          payments are enabled, the vault then pays funded awards automatically
-          unless the owner turned this off. Awards without a wallet remain
-          reserved.
+          Funded awards pay automatically 72 h after month end unless the owner
+          turned this off. Awards without a wallet stay reserved. A cut needs a
+          public reason and 24 h notice.
         </p>
         <PaymentLifecycle />
       </section>
@@ -194,29 +169,15 @@ export function HowItWorksPage() {
             <h3>What work can I contribute?</h3>
             <div>
               <p>
-                Choose unblocked work in an active{" "}
-                <Link href="/#projects">project</Link> and follow its
-                contribution rules. You do not need to claim an issue.
-              </p>
-              <p>
-                Non-code work counts only on projects that opt in. The{" "}
-                <Link href="/projects/slopdotcash">Slop project</Link> ran one
-                round for October 2026: a tutorial, explainer, video, or support
-                answer about Slop could receive a reviewed award of 1 to 8
-                points. That round closed on 28 October 2026. Check each
-                project's current contribution rules before preparing non-code
-                work.
+                Any unblocked work in an active{" "}
+                <Link href="/#projects">project</Link>. No claim needed.
               </p>
             </div>
           </article>
           <article className="faq-answer">
             <h3>When will my work show up?</h3>
             <div>
-              <p>
-                Merged pull requests and their qualifying reviews appear at the
-                next site update. There is no waiting period or minimum account
-                age.
-              </p>
+              <p>At the next site update.</p>
             </div>
           </article>
           <article className="faq-answer">
@@ -284,22 +245,11 @@ export function HowItWorksPage() {
             <h3>GitHub flagged my account. What happens to my work?</h3>
             <div>
               <p>
-                A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does
-                not report accounts and cannot lift a flag. Appeal to GitHub
-                through its{" "}
+                Appeal to GitHub (
                 <ExternalLinkAnchor href="https://support.github.com/contact/flagged">
                   flagged account form
-                </ExternalLinkAnchor>{" "}
-                from the account&apos;s primary email.
-              </p>
-              <p>
-                Keep the same account. Sign-in and wallet registration are tied
-                to it, and a new account inherits nothing. If GitHub prevents
-                Slop from verifying your account, Slop sign-in will fail. Your
-                wallet registrations are unchanged. If GitHub hides your pull
-                requests, merged work may be missing from the site. Once GitHub
-                restores access, eligible work can appear again after a
-                successful Slop collection and site update.
+                </ExternalLinkAnchor>
+                ). Keep the same account.
               </p>
             </div>
           </article>
@@ -307,22 +257,15 @@ export function HowItWorksPage() {
             <h3>How do I receive an award?</h3>
             <div>
               <p>
-                Add a wallet for your award's network in{" "}
-                <Link href="/account#wallets">Account wallets</Link>. Wallet
-                confirmation requires your signature. Follow the award and its
-                payment status in <Link href="/earnings">Payouts</Link>.
+                Add a wallet in <Link href="/account#wallets">Settings</Link>.
+                Track it in <Link href="/earnings">Payouts</Link>.
               </p>
             </div>
           </article>
           <article className="faq-answer">
             <h3>What does projected mean? Is the pool funded?</h3>
             <div>
-              <p>
-                A live estimate at the project&apos;s cap. It is not a balance
-                or a guarantee: a cap is a target, and only funds in the vault
-                can be allocated. Funds added after a month freezes count toward
-                later months.
-              </p>
+              <p>An estimate at the cap, not a balance.</p>
             </div>
           </article>
           <article className="faq-answer">
@@ -385,10 +328,14 @@ export function HowItWorksPage() {
 function sponsorPoolLabel(
   registered: ProjectDefinition,
   index: PoolFundingIndex | null,
-): string {
+): ReactNode {
   const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
-    return `external prize share · ${reward.externalOpportunity.name}`;
+    return (
+      <StatusBadge title={reward.externalOpportunity.name}>
+        External
+      </StatusBadge>
+    );
   }
   const project = asShown(registered, index, new Date());
   if (project.reward.monthlyCapMinor === "0") return "points only";
@@ -429,9 +376,7 @@ function WhoBuildsOnSlop({
   const massNote =
     massCount === 0
       ? ""
-      : massCount === 1
-        ? ", one mass pull-request account excluded"
-        : `, ${massCount === 2 ? "two" : count.format(massCount)} mass pull-request accounts excluded`;
+      : ` · ${count.format(massCount)} mass ${massCount === 1 ? "account" : "accounts"} excluded`;
   const footprint =
     state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
   const models =
@@ -441,39 +386,37 @@ function WhoBuildsOnSlop({
       aria-labelledby="who-builds-heading"
       className="model-outcomes-section who-builds"
     >
-      <h2 id="who-builds-heading">Who builds on Slop.</h2>
+      <h2 id="who-builds-heading">Who builds on Slop</h2>
       <p>
-        What the {count.format(all.size)} contributors on the leaderboard as of{" "}
-        {dateLabel} did elsewhere on GitHub in 2026.
+        {count.format(all.size)} contributors · {dateLabel}
       </p>
       <DataNotice retry={retry} state={state} />
-      <div className="money-summary model-outcomes-summary">
-        <span>
-          <strong>{percent(all.aiPrimary, all.classifiable)}</strong> build AI
-          agents or LLM tooling as their primary focus (
-          {count.format(all.aiPrimary)} of the {count.format(all.classifiable)}{" "}
-          with classifiable public work)
-        </span>
-        <span>
-          <strong>{percent(all.aiExternalPr, all.size)}</strong> merged into an
-          outside AI repository this year ({count.format(all.aiExternalPr)} of{" "}
-          {count.format(all.size)})
-        </span>
-      </div>
+      <MetricGrid>
+        <MetricTile
+          label="build AI tooling"
+          value={percent(all.aiPrimary, all.classifiable)}
+          detail={`${count.format(all.aiPrimary)} of ${count.format(all.classifiable)} classifiable`}
+        />
+        <MetricTile
+          label="merged into AI repos"
+          value={percent(all.aiExternalPr, all.size)}
+          detail={`${count.format(all.aiExternalPr)} of ${count.format(all.size)}`}
+        />
+      </MetricGrid>
       <details className="audience-data">
         <summary>Research details</summary>
-        <div className="money-summary model-outcomes-summary">
-          <span>
-            <strong>{count.format(outside.externalPrsExMass)}</strong> merged
-            pull requests across {count.format(outside.externalReposExMass)}{" "}
-            outside repositories since 1 January 2026
-          </span>
-          <span>
-            <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
-            the median outside AI repository they work in;{" "}
-            {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
-          </span>
-        </div>
+        <MetricGrid>
+          <MetricTile
+            label={`outside PRs · ${count.format(outside.externalReposExMass)} repos`}
+            value={count.format(outside.externalPrsExMass)}
+            detail={`since 1 Jan 2026${massNote}`}
+          />
+          <MetricTile
+            label="median AI repo"
+            value={`${count.format(outside.aiRepoMedianStars)}★`}
+            detail={`${percentOfRatio(outside.aiRepoShareUnder10)} under 10 stars`}
+          />
+        </MetricGrid>
         <div className="who-builds-grid">
           <section
             className="who-builds-block"
@@ -524,9 +467,7 @@ function WhoBuildsOnSlop({
             className="who-builds-block"
             aria-labelledby="who-builds-known-heading"
           >
-            <h3 id="who-builds-known-heading">
-              Well-known repositories they merged into this year
-            </h3>
+            <h3 id="who-builds-known-heading">Notable repos</h3>
             <section
               className="plain-table-wrap"
               aria-label="Well-known repositories outside Slop"
@@ -567,27 +508,29 @@ function WhoBuildsOnSlop({
           </section>
         </div>
         {footprint && models && footprint.scoredEvents > 0 ? (
-          <p className="model-outcomes-note">
-            Inside Slop, live: {count.format(footprint.contributors)}{" "}
-            contributors scored in the last {footprint.windowDays} days, and{" "}
-            {percent(
-              models.totals.mergedPullRequestsWithModel,
-              models.totals.mergedPullRequests,
-            )}{" "}
-            of merged pull requests name the model that did the work (
-            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-            {count.format(models.totals.mergedPullRequests)}).
-          </p>
+          <MetricGrid>
+            <MetricTile
+              label={`active · ${footprint.windowDays}d`}
+              value={count.format(footprint.contributors)}
+            />
+            <MetricTile
+              label="PRs name model"
+              value={percent(
+                models.totals.mergedPullRequestsWithModel,
+                models.totals.mergedPullRequests,
+              )}
+              detail={`${count.format(models.totals.mergedPullRequestsWithModel)} of ${count.format(models.totals.mergedPullRequests)}`}
+            />
+          </MetricGrid>
         ) : null}
       </details>
       <p className="who-builds-sources">
-        Public GitHub data since 1 January 2026{massNote}.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
-          Snapshot JSON, {pin.date}
+          Snapshot
         </ExternalLinkAnchor>
         {" · "}
         <ExternalLinkAnchor href={pinnedFile(pin.methodPath)}>
-          Method and caveats
+          Method
         </ExternalLinkAnchor>
       </p>
     </section>
@@ -607,12 +550,6 @@ export function SponsorsPage({
     "Pool funding unavailable",
   );
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const hasReviewBudget = PROJECTS.some(
-    (project) => project.reward.reviewBudget,
-  );
-  const hasExternalPrize = PROJECTS.some(
-    (project) => project.reward.kind === "external-prize-share",
-  );
   // One shared read of the daily merge activity (#1993) for every card.
   const [merge] = usePublicResource(
     true,
@@ -622,11 +559,7 @@ export function SponsorsPage({
   const now = new Date();
   return (
     <main className="shell evidence-page route-sponsors">
-      <RoutePageHeader
-        title="Fund a project"
-        icon={<HandCoins />}
-        lead="Deposit into a project’s vault. Funded awards pay monthly when payments are enabled."
-      />
+      <RoutePageHeader title="Fund a project" icon={<HandCoins />} />
       <section className="custody-proof sponsor-pools">
         <div className="section-heading">
           <h2>Projects</h2>
@@ -668,12 +601,10 @@ export function SponsorsPage({
                       ) : null;
                     })()
                   : null}
-                {hasReviewBudget ? (
-                  project.reward.reviewBudget ? (
-                    <small>
-                      {reviewBudgetLabel(project.reward.reviewBudget)}
-                    </small>
-                  ) : null
+                {project.reward.reviewBudget?.fundingState === "committed" ? (
+                  <small>
+                    <ReviewBudget reviewBudget={project.reward.reviewBudget} />
+                  </small>
                 ) : null}
               </li>
             );
@@ -681,72 +612,43 @@ export function SponsorsPage({
         </ul>
       </section>
       <details className="sponsor-details">
-        <summary>Funding rules and fees</summary>
+        <summary>Fees &amp; rules</summary>
         <section className="worked-example sponsor-fee">
           <div>
             <h2>Fees</h2>
-            <p>Ordinary awards deduct 2% in the award asset.</p>
-            {hasExternalPrize ? (
-              <p>
-                External prize shares use the terms published for that project.
-                The prize sponsor controls eligibility and payment.
-              </p>
-            ) : null}
+            <p>
+              <StatusBadge>2% fee</StatusBadge>
+            </p>
           </div>
           <dl
             className="equation-card"
             aria-label="Example: $5,000 in gross escrow awards"
           >
             <div>
-              <dt>Example gross awards</dt>
+              <dt>Awards</dt>
               <dd>$5,000</dd>
             </div>
             <div>
-              <dt>Slop fee, deducted</dt>
+              <dt>Fee 2%</dt>
               <dd>$100</dd>
             </div>
             <div>
-              <dt>Contributors receive</dt>
+              <dt>Paid out</dt>
               <dd>$4,900</dd>
             </div>
           </dl>
         </section>
-        <section className="worked-example sponsor-controls">
-          <div>
-            <h2>What you decide</h2>
-            <ul>
-              <li>The monthly cap.</li>
-              <li>
-                Award changes before the monthly cutoff, and whether automatic
-                payment runs.
-              </li>
-            </ul>
-            <p>
-              <Link href="/how-it-works">Payment stages</Link>
-            </p>
-          </div>
-        </section>
         <section className="custody-proof">
           <h2>Custody and keys</h2>
           <ul>
+            <li>Held in the project vault contract.</li>
+            <li>Owner withdrawals: 2% fee. Reserved awards locked.</li>
             <li>
-              Funds are held by the project vault contract. Private bounties use
-              a separate vault.
-            </li>
-            <li>
-              The owner can withdraw free funds with the 2% fee. Reserved awards
-              cannot be withdrawn.
-            </li>
-            <li>
-              Slop’s fee key can only claim and convert fees. A compromised
-              identity attester key can redirect unpaid awards, and Slop’s
-              upgrade keys can change the contracts. Read the{" "}
               <ExternalLinkAnchor
                 href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/docs/slop-product-requirements.md#11-source-delivery-and-acceptance`}
               >
-                authority and key risks
+                Key risks
               </ExternalLinkAnchor>
-              .
             </li>
           </ul>
         </section>

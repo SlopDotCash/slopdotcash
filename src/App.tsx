@@ -1,4 +1,16 @@
-import { ArrowRight, Check, Clipboard, Plus } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  Clipboard,
+  ExternalLink,
+  Lock,
+  Pause,
+  Plus,
+  RotateCcw,
+  Shield,
+  ShieldAlert,
+  ShieldQuestion,
+} from "lucide-react";
 import {
   Fragment,
   lazy,
@@ -63,16 +75,17 @@ import {
 } from "./Points";
 import {
   cycleLifecycleLabel,
-  EmptyState,
+  cycleLifecycleTone,
   ExternalLinkAnchor,
   formatCycleMonth,
-  formatDate,
   formatDateTime,
   formatMicroUsdc,
   monthlyPoolPointsOnly,
   NotFound,
+  ReviewBudget,
   RoutePageHeader,
-  reviewBudgetLabel,
+  Spinner,
+  StatusBadge,
 } from "./Presentation";
 
 /**
@@ -629,7 +642,7 @@ function compactPrizeLabel(label: string): string {
 }
 
 function bountyFundingLabel(terms: SecurityBountyTerms): string {
-  return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
+  return terms.funding.state === "pledged" ? "Pledged" : "Funded";
 }
 
 function ProjectCard({ project }: { project: ProjectDefinition }) {
@@ -672,9 +685,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
         {!bounty && monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
         ) : null}
-        {project.reward.reviewBudget ? (
+        {project.reward.reviewBudget?.fundingState === "committed" ? (
           <small className="project-review-budget">
-            + {reviewBudgetLabel(project.reward.reviewBudget)}
+            +{formatMicroUsdc(project.reward.reviewBudget.committedMinor)}{" "}
+            reviews
           </small>
         ) : null}
       </div>
@@ -710,9 +724,8 @@ function SecurityBounties() {
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
-          No paid security bounties are open.{" "}
-          <a href="#projects">Choose a project</a> to report a security issue
-          privately without a promised award.
+          No open bounties. <a href="#projects">Report privately</a> on any
+          project.
         </p>
       ) : (
         <div className="project-grid">
@@ -731,15 +744,19 @@ function SecurityBounties() {
               >
                 <div className="project-card-heading">
                   <ProjectImage lazy project={project} />
-                  <h3>{project.name}</h3>
+                  <h3>
+                    <span
+                      role="img"
+                      aria-label="Security bounty"
+                      title="Security bounty"
+                    >
+                      <Shield aria-hidden="true" size={22} />
+                    </span>{" "}
+                    {project.name}
+                  </h3>
                   <ArrowRight aria-hidden="true" />
                 </div>
                 <div className="project-card-content">
-                  <p className="project-summary">
-                    {terms.eligibility === "critical-loss-of-funds"
-                      ? `Find a critical security vulnerability in ${project.name}`
-                      : `Find a security vulnerability in ${project.name}`}
-                  </p>
                   <p className="project-bounty">
                     <strong>{securityBountyAmountLabel(terms)}</strong>
                     <span>
@@ -1002,13 +1019,17 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   if (project.participation?.state === "permission-required") {
     return (
       <section className="section" id="start">
-        <h2>Permission required</h2>
         <p>
-          Contact{" "}
+          <span
+            role="img"
+            aria-label="Permission required"
+            title="Permission required"
+          >
+            <Lock aria-hidden="true" size={16} />
+          </span>{" "}
           <ExternalLinkAnchor href={project.steward.github.profileUrl}>
-            {project.steward.displayName}
-          </ExternalLinkAnchor>{" "}
-          about permission before contributing.
+            Ask {project.steward.displayName}
+          </ExternalLinkAnchor>
         </p>
       </section>
     );
@@ -1016,18 +1037,11 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   if (project.status === "paused") {
     return (
       <section className="section" id="start">
-        <h2>Project paused</h2>
-        <p>Do not install this project's skill or start work.</p>
         <p>
-          A paused project is not collected or scored. Its steward,{" "}
-          <ExternalLinkAnchor href={project.steward.github.profileUrl}>
-            {project.steward.displayName}
-          </ExternalLinkAnchor>
-          , can review its status and next steps on the project setup page.
-          Check back here for a change.{" "}
-          <Link href={`/projects/${project.slug}/manage`}>
-            Project owner: review setup
-          </Link>
+          <StatusBadge tone="warning" icon={<Pause />}>
+            Paused
+          </StatusBadge>{" "}
+          <Link href={`/projects/${project.slug}/manage`}>Owner setup</Link>
         </p>
       </section>
     );
@@ -1104,25 +1118,26 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   return (
     <div id="start">
       <div className="install-heading">
-        <h2>Copy this into your agent.</h2>
+        <h2>Start</h2>
       </div>
       {ready ? null : (
         <p>
-          {eligibility === "loading"
-            ? "Checking project clearance…"
-            : eligibility === "blocked"
-              ? unlisted
-                ? "This project is not listed this month. The prompt below picks only listed projects."
-                : "This project is not cleared for agents. The prompt below picks only cleared projects."
-              : "Project clearance could not be checked. The prompt below picks only cleared projects."}
-          {eligibility === "blocked" && !unlisted ? (
+          {eligibility === "loading" ? (
+            <Spinner label="Checking project clearance" />
+          ) : eligibility === "blocked" && unlisted ? (
+            <StatusBadge tone="warning">Not listed this month</StatusBadge>
+          ) : eligibility === "blocked" ? (
             <>
-              {" "}
-              <Link href={`/projects/${project.slug}/manage`}>
-                Project owner: review setup
-              </Link>
+              <StatusBadge tone="warning" icon={<ShieldAlert />}>
+                Not cleared
+              </StatusBadge>{" "}
+              <Link href={`/projects/${project.slug}/manage`}>Owner setup</Link>
             </>
-          ) : null}
+          ) : (
+            <StatusBadge icon={<ShieldQuestion />}>
+              Clearance unknown
+            </StatusBadge>
+          )}
         </p>
       )}
       <AgentPromptBox
@@ -1149,21 +1164,16 @@ function ProjectPaymentHistory({
     .filter((cycle) => cycle.projectId === project.id)
     .sort((left, right) => right.cycleId.localeCompare(left.cycleId));
   const externalPrize = project.reward.kind === "external-prize-share";
-  const direct = new Map<
-    string,
-    { amount: bigint; count: number; paidOn: string }
-  >();
+  const direct = new Map<string, { amount: bigint; count: number }>();
   for (const payment of directState.status === "ready"
     ? directState.transfers
     : []) {
     const month = direct.get(payment.contributionMonth) ?? {
       amount: 0n,
       count: 0,
-      paidOn: payment.blockTime,
     };
     month.amount += BigInt(payment.amountMicro);
     month.count += 1;
-    if (payment.blockTime > month.paidOn) month.paidOn = payment.blockTime;
     direct.set(payment.contributionMonth, month);
   }
   const directMonths = [...direct].sort(([left], [right]) =>
@@ -1186,38 +1196,36 @@ function ProjectPaymentHistory({
       </div>
       {directState.status === "error" && !externalPrize ? (
         <p role="status">
-          Direct payments unavailable.{" "}
+          Payments unavailable{" "}
           <button
-            className="button secondary-button button-small"
+            aria-label="Retry"
+            className="button secondary-button button-small icon-button"
+            title="Retry"
             type="button"
             onClick={retryDirect}
           >
-            Retry direct payments
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : null}
       {directLoading ? <p role="status">Loading direct payments…</p> : null}
       {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
-        ([month, { amount, count, paidOn }]) => (
+        ([month, { amount, count }]) => (
           <p className="money-summary" key={month}>
-            <strong>{formatMicroUsdc(amount.toString())} paid directly</strong>
+            <strong>{formatMicroUsdc(amount.toString())}</strong>
             <span>
-              Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
-              {count} transfers ·{" "}
+              {formatCycleMonth(month)} · {count} transfers ·{" "}
               <ExternalLinkAnchor
                 href={`${browserDeployment.site}/api/v1/payments/projects/${project.id}/direct-transfers`}
+                label="Disclosure"
               >
-                Disclosure
+                <ExternalLink aria-hidden="true" size={15} />
               </ExternalLinkAnchor>
             </span>
           </p>
         ),
       )}
-      {cycles.length === 0 ? (
-        directLoading ? null : (
-          <EmptyState text="No cycles have closed yet." />
-        )
-      ) : (
+      {cycles.length === 0 ? null : (
         <div className="plain-table-wrap">
           <table className="plain-table">
             <caption className="visually-hidden">{project.name} cycles</caption>
@@ -1249,7 +1257,11 @@ function ProjectPaymentHistory({
                       <td>{formatMicroUsdc(cycle.reward.paidMinor)}</td>
                     </>
                   )}
-                  <td>{cycleLifecycleLabel(cycle)}</td>
+                  <td>
+                    <StatusBadge tone={cycleLifecycleTone(cycle)}>
+                      {cycleLifecycleLabel(cycle)}
+                    </StatusBadge>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1263,9 +1275,7 @@ function ProjectPaymentHistory({
           onClick={() => setShowHistory((value) => !value)}
           type="button"
         >
-          {showHistory
-            ? "Show recent history"
-            : `Show complete ${externalPrize ? "cycle" : "payment"} history`}
+          {showHistory ? "Show less" : "Show all"}
         </button>
       ) : null}
     </section>
@@ -1286,9 +1296,7 @@ function ProjectFundsAndAwards({
       className="project-funds-and-awards"
       aria-label="Funds and awards"
     >
-      {project.reward.kind === "external-prize-share" ? (
-        <p>The organizer pays this prize.</p>
-      ) : project.escrow ? (
+      {project.reward.kind !== "external-prize-share" && project.escrow ? (
         <>
           <EscrowFunding readOnly project={project} />
           <OwnerAwards
@@ -1374,14 +1382,14 @@ function ProjectRewardSummary({
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
-                {" monthly, split between contributors"}
+                {" /mo"}
               </>
             ) : summary.kind === "security-bounty" ? (
               <>
                 {summary.amount}{" "}
                 {summary.eligibility === "critical-loss-of-funds"
-                  ? "per critical vulnerability that would result in loss of funds"
-                  : "per accepted security finding"}
+                  ? "/ critical finding"
+                  : "/ finding"}
                 {summary.status === "open"
                   ? null
                   : ` · bounty ${summary.status}`}
@@ -1390,14 +1398,13 @@ function ProjectRewardSummary({
                   : ""}
               </>
             ) : summary.kind === "external-prize" ? (
-              <>
-                {summary.amount
-                  ? `${compactPrizeLabel(summary.amount)} external prize pool`
-                  : "External prize"}{" "}
-                · organizer decides awards
-              </>
+              summary.amount ? (
+                `${compactPrizeLabel(summary.amount)} external prize`
+              ) : (
+                "External prize"
+              )
             ) : (
-              "Points only · no cash rewards"
+              "Points only"
             )}
           </p>
         ))}
@@ -1500,7 +1507,7 @@ function ProjectBountyIntroduction({
         </Link>
         <div id="start">
           <div className="install-heading">
-            <h2>Copy this into your agent.</h2>
+            <h2>Start</h2>
           </div>
           <AgentPromptBox openIn prompt={prompt} />
         </div>
@@ -1530,8 +1537,10 @@ function ProjectPage({
           <ProjectRewardSummary project={project} />
           <ProjectLinks project={project} />
           <ProjectMergeActivity project={project} />
-          {project.reward.reviewBudget ? (
-            <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
+          {project.reward.reviewBudget?.fundingState === "committed" ? (
+            <p>
+              <ReviewBudget reviewBudget={project.reward.reviewBudget} />
+            </p>
           ) : null}
           <ProjectParticipation project={project} />
         </div>
@@ -1695,7 +1704,6 @@ function AppContent({ route }: { route: Route }) {
     ) : (
       <main className="shell route-main">
         <h1>Project not found</h1>
-        <p>This project isn&apos;t listed.</p>
         <p>
           <Link href="/">See open projects</Link>
         </p>
@@ -1737,18 +1745,23 @@ function AppContent({ route }: { route: Route }) {
             className="shell registry-stale"
           >
             <p className="data-notice data-stale" role="status">
-              Projects may be outdated · updated{" "}
-              {formatDateTime(staleRegistry.syncedAt)}.
-              <button onClick={() => window.location.reload()} type="button">
-                Try again
+              <span className="pr-dot pr-bar-open" aria-hidden="true" />
+              Projects stale · {formatDateTime(staleRegistry.syncedAt)}
+              <button
+                aria-label="Try again"
+                onClick={() => window.location.reload()}
+                title="Try again"
+                type="button"
+              >
+                <RotateCcw aria-hidden="true" size={15} />
               </button>
             </p>
           </aside>
         ) : null}
         <Suspense
           fallback={
-            <main className="shell route-main" role="status">
-              Loading page…
+            <main className="shell route-main">
+              <Spinner label="Loading page" />
             </main>
           }
         >

@@ -160,7 +160,9 @@ test("a manual Points award reaches private Inbox review and an independent mode
   // must retain the private receipt and offer recovery, never fake a draft.
   await expect(page.getByText("Slopbot review", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Retry Slopbot review", exact: true }),
+    page
+      .getByRole("region", { name: "Points review", exact: true })
+      .getByRole("button", { name: "Retry review", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("The accepted manual work was assigned to the wrong month."),
@@ -179,10 +181,21 @@ test("a manual Points award reaches private Inbox review and an independent mode
       response.request().method() === "POST" &&
       new URL(response.url()).pathname === "/api/v1/notifications/read",
   );
+  // An unread notice carries the "Unread" dot; a read one carries no marker.
+  const inboxItem = page.locator(".inbox-item");
+  const unreadDot = inboxItem.getByRole("img", { name: "Unread", exact: true });
+  await expect(inboxItem).toHaveCount(1);
+  await expect(unreadDot).toBeVisible();
   await page.getByRole("button", { name: /^Mark as read:/u }).click();
-  await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
+  await expect(unreadDot).toHaveCount(0);
+  await expect(inboxItem).not.toHaveClass(/inbox-unread/u);
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
+  await expect(inboxItem).toHaveCount(1);
+  await expect(unreadDot).toHaveCount(0);
+  await expect(inboxItem).not.toHaveClass(/inbox-unread/u);
+  await expect(
+    page.getByRole("button", { name: /^Mark as read:/u }),
+  ).toHaveCount(0);
   const readRequest = (await readAcknowledgement).request();
   expect(readRequest.failure()).toBeNull();
   expect(completedRequests.has(readRequest)).toBe(true);
@@ -350,7 +363,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
     await page.reload({ waitUntil: "load" });
     await expect(page.locator(".inbox-unread")).toHaveCount(1);
     await expect(page.locator(".inbox-unread")).toContainText(
-      "The Points dispute was resolved.",
+      "Points dispute resolved",
     );
     await expect(
       page.getByText("Dispute upheld", { exact: true }),

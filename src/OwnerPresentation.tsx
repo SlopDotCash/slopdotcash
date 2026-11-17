@@ -1,3 +1,4 @@
+import { ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import "./owner-review.css";
 
@@ -38,18 +39,14 @@ export function UnsentTransactionRecovery({
 }) {
   return (
     <details className="owner-transaction-recovery">
-      <summary>Wallet confirms nothing was sent</summary>
-      <p>
-        Check wallet activity first. If it was sent, enter its transaction hash
-        or signature above.
-      </p>
+      <summary>Nothing was sent?</summary>
       <button
         type="button"
         className="button secondary-button"
         disabled={disabled}
         onClick={onClear}
       >
-        I checked my wallet; this request was not sent
+        Not sent — clear
       </button>
     </details>
   );
@@ -91,15 +88,13 @@ export function PendingWalletCheck({
       {link ? (
         <p>
           <a href={link} target="_blank" rel="noreferrer">
-            {hashSource === "wallet"
-              ? "View submitted transaction"
-              : "View transaction to check"}
+            <ExternalLink aria-hidden="true" size={15} /> Transaction
           </a>
         </p>
       ) : null}
       {hashSource !== "wallet" ? (
         <label>
-          Transaction {solana ? "signature" : "hash"} from your wallet
+          Transaction {solana ? "signature" : "hash"}
           <input
             value={recoveryHash}
             disabled={busy}

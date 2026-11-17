@@ -66,35 +66,30 @@ test("profiles preserve legacy coverage and a valid census", async ({
     }),
   ).toBeVisible();
   const profile = page.getByRole("region", { name: "Contributor profile" });
-  await expect(profile.locator(".pr-legend")).toContainText("3 PRs open");
-  await expect(profile.locator(".pr-legend")).toContainText(
-    "2 PRs closed without merging",
-  );
+  await expect(profile.locator(".pr-legend")).toContainText("3 Open");
+  await expect(profile.locator(".pr-legend")).toContainText("2 Closed");
   // github.com/pulls is the signed-in dashboard and redirects anonymous
   // visitors to login. The counts must open the public pull search.
   await expect(
-    profile.getByRole("link", { name: "3 PRs open" }),
+    profile.getByRole("link", { name: "3 Open", exact: true }),
   ).toHaveAttribute(
     "href",
     "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Aopen&type=pullrequests",
   );
   await expect(
-    profile.getByRole("link", { name: "2 PRs closed without merging" }),
+    profile.getByRole("link", { name: "2 Closed", exact: true }),
   ).toHaveAttribute(
     "href",
     "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Aclosed%20is%3Aunmerged&type=pullrequests",
   );
   await expect(
-    profile.getByRole("link", { name: "0 PRs merged" }),
+    profile.getByRole("link", { name: "0 Merged", exact: true }),
   ).toHaveAttribute(
     "href",
     "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Amerged&type=pullrequests",
   );
   await expect(
-    page
-      .getByText("total points", { exact: true })
-      .locator("..")
-      .locator("strong"),
+    page.getByText("Total", { exact: true }).locator("..").locator("strong"),
   ).toHaveText("0");
   await expect(
     profile.getByRole("link", { name: "GitHub · @profile-only-contributor" }),

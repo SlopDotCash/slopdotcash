@@ -1,9 +1,12 @@
+import { ExternalLink, Lock } from "lucide-react";
+import { evmExplorerOrigin } from "./lib/payments/contracts";
 import type { FundingChoice } from "./lib/project-proposal";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
 } from "./lib/reward-asset.mjs";
+import { ExternalLinkAnchor, NetworkName } from "./Presentation";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 
 export type RewardAssetSelection = Pick<
@@ -44,32 +47,76 @@ export function RewardAssetFields({
   if (networkFixed)
     return (
       <p className="field-hint">
-        {compact
-          ? `${symbol} · ${network.name}`
-          : `Paid in ${symbol} on ${network.name} (fixed by the vault).`}
+        {symbol}{" "}
+        <NetworkName chain={choice.network}>{network.name}</NetworkName>{" "}
+        <span
+          aria-label="Fixed by the vault"
+          role="img"
+          title="Fixed by the vault"
+        >
+          <Lock size={14} aria-hidden="true" />
+        </span>
       </p>
     );
   return (
     <>
-      <Selection
-        label="Network"
-        error={networkError}
-        name={fieldName("settlementChain")}
-        onChange={(value) => set("network", value)}
-        options={Object.entries(NETWORK_NAMES)}
-        value={choice.network}
-      />
+      {compact ? (
+        // ChoiceField's markup, with each network's mark beside its name.
+        <fieldset
+          className="setup-choice"
+          aria-describedby={
+            networkError
+              ? `field-${fieldName("settlementChain")}-error`
+              : undefined
+          }
+        >
+          <legend>Network</legend>
+          <div className="setup-choice-options">
+            {Object.entries(NETWORK_NAMES).map(([value, name], index) => (
+              <label key={value}>
+                <input
+                  id={
+                    index === 0
+                      ? `field-${fieldName("settlementChain")}`
+                      : undefined
+                  }
+                  type="radio"
+                  name={fieldName("settlementChain")}
+                  value={value}
+                  checked={choice.network === value}
+                  onChange={() => set("network", value)}
+                />
+                <span>
+                  <NetworkName chain={value}>{name}</NetworkName>
+                </span>
+              </label>
+            ))}
+          </div>
+          {networkError ? (
+            <small
+              className="field-error"
+              id={`field-${fieldName("settlementChain")}-error`}
+            >
+              {networkError}
+            </small>
+          ) : null}
+        </fieldset>
+      ) : (
+        <SelectField
+          label="Network"
+          error={networkError}
+          name={fieldName("settlementChain")}
+          onChange={(value) => set("network", value)}
+          options={Object.entries(NETWORK_NAMES)}
+          value={choice.network}
+        />
+      )}
       <Selection
         label="Asset"
         name={fieldName("rewardKind")}
         onChange={(value) => set("assetKind", value)}
         options={[
-          [
-            "stablecoin",
-            compact
-              ? network.stablecoin.symbol
-              : `${network.stablecoin.symbol} (network stablecoin)`,
-          ],
+          ["stablecoin", network.stablecoin.symbol],
           ["native", network.native.symbol],
           ["token", "Another token"],
         ]}
@@ -79,13 +126,6 @@ export function RewardAssetFields({
         <>
           <TextField
             error={error("tokenAddress")}
-            hint={
-              compact
-                ? undefined
-                : network.family === "evm"
-                  ? `The ERC-20 contract address on ${network.name}.`
-                  : "The classic SPL mint address on Solana."
-            }
             label="Token address"
             name={fieldName("rewardAssetAddress")}
             onChange={(value) => set("tokenAddress", value)}
@@ -100,13 +140,18 @@ export function RewardAssetFields({
             value={choice.tokenSymbol}
           />
         </>
-      ) : compact ? null : (
-        <details className="proposal-advanced">
-          <summary>{symbol} asset details</summary>
-          <p className="field-hint">
-            {network.name}: <code>{network[choice.assetKind].address}</code>
-          </p>
-        </details>
+      ) : compact || choice.assetKind !== "stablecoin" ? null : (
+        <ExternalLinkAnchor
+          className="field-hint"
+          href={
+            network.family === "evm"
+              ? `${evmExplorerOrigin(choice.network)}/token/${network.stablecoin.address}`
+              : `https://explorer.solana.com/address/${network.stablecoin.address}`
+          }
+          label={`${symbol} on the ${network.name} explorer`}
+        >
+          {symbol} <ExternalLink size={14} aria-hidden="true" />
+        </ExternalLinkAnchor>
       )}
     </>
   );

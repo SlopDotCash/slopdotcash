@@ -114,9 +114,7 @@ test("archive filters narrow published cycles and Clear filters restores them", 
   await month.selectOption("2026-10");
   await expect(count).toHaveText("0 of 3 cycles");
   await expect(records).toHaveCount(0);
-  await expect(
-    page.getByText("No cycles match these filters.", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByText("No matches ·", { exact: false })).toBeVisible();
   await expect(page).toHaveURL(
     `/cycles?project=${eliza.id}&state=paid&month=2026-10`,
   );
@@ -125,9 +123,7 @@ test("archive filters narrow published cycles and Clear filters restores them", 
     path: info.outputPath("no-matching-cycles.png"),
     fullPage: true,
   });
-  await page
-    .getByRole("button", { name: "Clear filters", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(count).toHaveText("3 of 3 cycles");
   await expect(records).toHaveCount(3);
   await expect(project).toHaveValue("");
@@ -135,7 +131,7 @@ test("archive filters narrow published cycles and Clear filters restores them", 
   await expect(state).toHaveValue("");
   await expect(page).toHaveURL("/cycles");
   await expect(
-    page.getByRole("button", { name: "Clear filters", exact: true }),
+    page.getByRole("button", { name: "Clear", exact: true }),
   ).toHaveCount(0);
 
   // A filtered address restores the same selection after a reload.

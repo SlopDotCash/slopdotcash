@@ -47,33 +47,28 @@ export type Submission = {
 };
 
 const FAILURE_LABELS: Record<string, string> = {
-  "pvr-disabled":
-    "GitHub private vulnerability reporting is off for this repository. Nothing was published.",
-  "app-not-installed":
-    "The Slop private intake app is not installed on this repository. Report directly on GitHub instead.",
+  "pvr-disabled": "GitHub private reporting is off. Not sent.",
+  "app-not-installed": "Slop app not installed. Report on GitHub.",
   forbidden: "GitHub refused the report for your account.",
   invalid: "GitHub rejected the report fields. Fix them and send again.",
-  "author-mismatch":
-    "GitHub lists a different author for this advisory, so Slop cannot link it to you.",
-  "not-found": "GitHub has no advisory with that ID that your account can see.",
+  "author-mismatch": "Advisory belongs to another account.",
+  "not-found": "Advisory not found.",
   "grant-expired": "Your GitHub authorization expired. Authorize again.",
   "already-recorded": "This advisory already has a verified private case.",
-  "not-private-report":
-    "This advisory is not a live private report you filed. Link it for a maintainer to verify instead.",
-  unverifiable:
-    "GitHub has this report, but Slop could not confirm it within 24 hours. Link the advisory for a maintainer to verify instead.",
+  "not-private-report": "Not your private report. Link it instead.",
+  unverifiable: "Unconfirmed after 24h. Link the advisory.",
 };
 
 const SCREENING_LABELS: Record<
   NonNullable<Submission["intake"]>["state"],
   string
 > = {
-  queued: "Waiting for screening.",
-  running: "Screening in progress.",
-  legitimate: "Screening complete. Ready for the project owner's review.",
-  "needs-information": "More evidence needed before owner review.",
-  spam: "Held as spam or unsupported; available for owner review.",
-  unavailable: "Screening unavailable; report saved.",
+  queued: "Queued",
+  running: "Screening",
+  legitimate: "Owner review",
+  "needs-information": "Needs evidence",
+  spam: "Held",
+  unavailable: "Unscreened",
 };
 
 export function submissionStatus(submission: Submission): string {
@@ -82,9 +77,9 @@ export function submissionStatus(submission: Submission): string {
       submission.intake.canForward &&
       submission.intake.routingState === "pending"
     )
-      return "Report cleared for review. The owner notification is pending.";
+      return "Cleared · notifying owner";
     if (submission.intake.canForward && submission.intake.reviewedAt)
-      return "A maintainer cleared this report for owner review. No award has been approved by this routing decision.";
+      return "Cleared · no award yet";
     return SCREENING_LABELS[submission.intake.state];
   }
   return githubSubmissionStatus(submission);
@@ -98,26 +93,26 @@ export function rateLimitMessage(retryAfterSeconds: number | null): string {
       : retryAfterSeconds < 60
         ? "1 minute"
         : `${Math.ceil(retryAfterSeconds / 60)} minutes`;
-  return `GitHub is limiting new reports from your account right now. GitHub has no copy of this report. Wait ${wait}, then send it again.`;
+  return `GitHub rate limit. Not sent. Retry in ${wait}.`;
 }
 
 export function githubSubmissionStatus(submission: Submission): string {
   switch (submission.state) {
     case "draft":
       return submission.retryAllowed
-        ? "GitHub has no copy. You can send again."
+        ? "Not sent · resend"
         : submission.origin === "direct"
-          ? "Ready to verify with GitHub."
-          : "Not sent yet.";
+          ? "Ready to verify"
+          : "Not sent";
     case "submitting":
-      return "Sending to GitHub privately…";
+      return "Sending";
     case "uncertain":
       return submission.reconcileAfter &&
         Date.parse(submission.reconcileAfter) > Date.now()
-        ? `Not confirmed by GitHub yet. Check again after ${formatUtc(submission.reconcileAfter)}.`
-        : "Not confirmed by GitHub. Check again.";
+        ? `Unconfirmed · after ${formatUtc(submission.reconcileAfter)}`
+        : "Unconfirmed";
     case "submitted":
-      return "Received by GitHub. Confirming…";
+      return "Confirming";
     case "receipt-verified":
       return `GitHub receipt · ${formatUtc(submission.githubCreatedAt)}.`;
     case "failed":
@@ -126,7 +121,7 @@ export function githubSubmissionStatus(submission: Submission): string {
         "GitHub did not accept the report."
       );
     case "abandoned":
-      return "Expired after 24 hours without a send.";
+      return "Expired";
   }
 }
 
@@ -150,8 +145,7 @@ export function reportNeedsAction(submission: Submission): boolean {
 }
 
 export const GRANT_ERRORS: Record<string, string> = {
-  grant_identity_mismatch:
-    "GitHub authorized a different account than the one signed in to Slop. Nothing was sent.",
+  grant_identity_mismatch: "Wrong GitHub account. Nothing sent.",
   grant_state_mismatch: "The GitHub authorization did not match. Try again.",
   grant_exchange_failed:
     "GitHub did not complete the authorization. Try again.",

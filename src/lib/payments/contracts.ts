@@ -2,6 +2,8 @@ import { formatBaseUnits } from "../base-units.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowChain,
+  isBaseUnits,
+  isEscrowChain,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
 import {
@@ -142,6 +144,30 @@ export interface PublicVaultPaymentPage {
   through: number;
   next: number | null;
   total: number;
+}
+/** The shared public vault-payment contract, for the site and Points reader. */
+export function isPublicVaultPayment(
+  value: unknown,
+): value is PublicVaultPayment {
+  if (!value || typeof value !== "object") return false;
+  const p = value as PublicVaultPayment;
+  return (
+    typeof p.id === "string" &&
+    typeof p.projectId === "string" &&
+    typeof p.network === "string" &&
+    isEscrowChain(p.chain) &&
+    typeof p.assetAddress === "string" &&
+    Number.isSafeInteger(p.assetDecimals) &&
+    p.assetDecimals >= 0 &&
+    p.assetDecimals <= 36 &&
+    isBaseUnits(p.netBase) &&
+    (p.contributionMonth === null ||
+      /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(p.contributionMonth)) &&
+    typeof p.transactionId === "string" &&
+    transactionUrl(p.network, p.transactionId) !== null &&
+    typeof p.indexedAt === "string" &&
+    Number.isFinite(Date.parse(p.indexedAt))
+  );
 }
 export { isBaseUnits } from "../escrow-policy.mjs";
 export type PayoutPolicy = "ordinary" | "security-bounty";

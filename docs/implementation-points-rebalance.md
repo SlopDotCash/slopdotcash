@@ -57,6 +57,11 @@ recipients. The campaign freezes that journal prefix, registry and collection
 time. It collects the complete repository ownership census in monthly pieces
 and reconstructs cached results from retained raw GitHub responses on resume.
 A partial census never supplies a complete first-accepted-owner proof.
+When GitHub search omits a recorded positive pool, the collector checks the
+immutable PR directly before assigning first acceptance. It binds those raw
+observations to the census digest. A verified distinct squash SHA prevents
+duplicate credit in later PRs without adding line weights to the earlier pool.
+Unavailable evidence holds the source and any proven conflicting later claim.
 
 An ordinary PR uses its accepted commit changes. A grouped work unit requires
 the exact retained valuation decision and claim paths. A retained-copy fallback

@@ -89,7 +89,7 @@ test("a resumed setup check restarts after vault setup suspends and reveals the 
     });
     await suspended;
     await expect(
-      page.getByText("Loading page…", { exact: true }),
+      page.getByTitle("Loading page", { exact: true }),
     ).toBeVisible();
     const firstResponse = page.waitForResponse((response) =>
       response.url().includes("project-setup/eliza/check"),
@@ -104,7 +104,7 @@ test("a resumed setup check restarts after vault setup suspends and reveals the 
     );
     reveal();
     await expect(page.locator(".project-setup-status h2")).toHaveText(
-      "Setup status: Waiting for the security scan",
+      /^Setup\s*Scanning$/u,
     );
     expect(checks).toBe(2);
     await expect(

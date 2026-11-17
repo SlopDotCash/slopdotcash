@@ -164,7 +164,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     await queue.getByRole("button", { name: "Back", exact: true }).click();
     await expect(queue.getByRole("link")).toHaveCount(25);
     const privateNotice = page.getByText(
-      "The private-owner-marker project settings changed.",
+      "private-owner-marker settings changed",
       { exact: true },
     );
     await expect(privateNotice).toBeVisible();

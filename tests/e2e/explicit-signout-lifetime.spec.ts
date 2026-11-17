@@ -264,7 +264,7 @@ for (const activeWrite of [false, true]) {
     await expect(page.getByText(notice, { exact: true })).toBeVisible();
     if (activeWrite) {
       await page
-        .getByRole("button", { name: "Mark shown as read", exact: true })
+        .getByRole("button", { name: "Mark page read", exact: true })
         .click();
       await held.requested;
     }
@@ -475,7 +475,8 @@ test("header signout retires a pending owner awards refresh", async ({
     waitUntil: "networkidle",
   });
   await page
-    .getByRole("button", { name: "Review monthly awards", exact: true })
+    .getByRole("region", { name: "Monthly awards" })
+    .getByRole("button", { name: "Open", exact: true })
     .click();
   const settings = page.getByRole("region", {
     name: "Monthly payment settings",
@@ -503,10 +504,7 @@ test("header signout retires a pending owner awards refresh", async ({
   await settle(page);
   await expect(settings).toHaveCount(0);
   await expect(
-    page.getByRole("button", {
-      name: "Turn on automatic finalization",
-      exact: true,
-    }),
+    page.getByRole("switch", { name: "Auto-finalize", exact: true }),
   ).toHaveCount(0);
 });
 
@@ -567,7 +565,7 @@ for (const kind of ["verify", "unsubscribe"] as const) {
       if (kind === "verify")
         await expect(
           action.getByRole("link", {
-            name: "Sign in to verify email",
+            name: "Sign in",
             exact: true,
           }),
         ).toBeVisible();
@@ -581,13 +579,13 @@ for (const kind of ["verify", "unsubscribe"] as const) {
     );
     if (kind === "verify") {
       expect(JSON.parse(stored ?? "null")).toMatchObject({ kind, token });
-      await expect(
-        action.getByText("Email verified.", { exact: true }),
-      ).toHaveCount(0);
+      await expect(action.getByText("Verified", { exact: true })).toHaveCount(
+        0,
+      );
     } else {
       expect(stored).toBeNull();
       await expect(
-        action.getByText("Email notifications stopped.", { exact: true }),
+        action.getByText("Unsubscribed", { exact: true }),
       ).toBeVisible();
     }
   });
