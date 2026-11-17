@@ -171,6 +171,69 @@ export function validatePriorRotationProof(
   return proof;
 }
 
+export function safeRotationCommandError(error: unknown) {
+  const value = error as {
+    status?: unknown;
+    signal?: unknown;
+    stderr?: unknown;
+    stdout?: unknown;
+  };
+  const text = [value?.stderr, value?.stdout]
+    .map((part) =>
+      typeof part === "string"
+        ? part
+        : part instanceof Uint8Array
+          ? new TextDecoder().decode(part)
+          : "",
+    )
+    .join("\n");
+  const code = /\[code:\s*(\d+)\]/u.exec(text)?.[1];
+  const exitCode = Number.isSafeInteger(value?.status)
+    ? Number(value.status)
+    : null;
+  const providerCode =
+    code && Number.isSafeInteger(Number(code)) ? Number(code) : null;
+  const category =
+    /unauthorized|authentication|forbidden|\b(?:401|403)\b/iu.test(text)
+      ? "authentication"
+      : /rate.?limit|\b429\b/iu.test(text)
+        ? "rate-limit"
+        : /not found|does not exist|100146/iu.test(text)
+          ? "version-unavailable"
+          : /timeout|timed out/iu.test(text) || value?.signal === "SIGTERM"
+            ? "timeout"
+            : "command-failed";
+  return { category, exitCode, providerCode };
+}
+
+/** Observe one immutable activation without repeating its deployment request. */
+export async function confirmSolanaRotation(
+  get: ReturnType<typeof cloudflare>,
+  before: Parameters<typeof requireSameWorker>[0],
+  candidate: string,
+  sha: string,
+  wait: () => Promise<void> = () => Bun.sleep(1000),
+) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const state = await workerState(get);
+      requireRotationBase(state, candidate);
+      requireSameWorker(
+        before,
+        await inspectVersion(get, candidate),
+        sha,
+        "solana",
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < 9) await wait();
+  }
+  throw lastError;
+}
+
 export async function rotateFeeSolanaRpc() {
   const sha = process.env.GITHUB_SHA ?? "";
   const expectedVersion = process.env.SLOP_SOLANA_RPC_EXPECTED_VERSION ?? "";
@@ -431,25 +494,26 @@ export async function rotateFeeSolanaRpc() {
     receipt.phase = "deploying";
     save();
     uncertainDeploy = true;
-    runWrangler([
-      "versions",
-      "deploy",
-      "--config",
-      deploymentConfig,
-      "--name",
-      worker,
-      `--version-id=${candidate}`,
-      "--percentage=100",
-      `--message=slop.cash release ${sha}`,
-      "--yes",
-    ]);
-    requireRotationBase(await workerState(get), candidate);
-    requireSameWorker(
-      before,
-      await inspectVersion(get, candidate),
-      sha,
-      "solana",
-    );
+    try {
+      runWrangler([
+        "versions",
+        "deploy",
+        "--config",
+        deploymentConfig,
+        "--name",
+        worker,
+        `--version-id=${candidate}`,
+        "--percentage=100",
+        `--message=slop.cash release ${sha}`,
+        "--yes",
+      ]);
+    } catch (error) {
+      receipt.deploymentCommand = safeRotationCommandError(error);
+      save();
+    }
+    // The command can fail after the API accepted its one deployment. A
+    // bounded readback may reconcile it; it never repeats that POST.
+    await confirmSolanaRotation(get, before, candidate, sha);
     await renew();
     receipt.phase = "verified";
     receipt.verifiedAt = new Date().toISOString();

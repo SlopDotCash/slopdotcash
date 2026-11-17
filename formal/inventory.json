@@ -50,13 +50,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "cd4f3e4e5a7ac15e7efdc933917fe766f7405ab85bd6a1a9aae4d22e7f910901",
+      "sha256": "35aecd5631f076c0ad3d9be62f9570d9e433b2bd796dc9ca2455b2541b260b09",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 5, 95, 116, 181, 241, 266, 287, 374, 385],
+      "candidateLines": [1, 5, 95, 118, 183, 243, 268, 289, 376, 387],
       "review": "mapped-abstraction"
     },
     {
@@ -2149,10 +2149,11 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "c0c787bc15dc65b384d27c50071fe74f8182b0d1e61a04a4ad31bdd650f16a1c",
+      "sha256": "f48879661db754c704f25eed75782b64f89c74f49bc488593dc90e70835a89bf",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247
+        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247,
+        265, 283
       ],
       "review": "mapped-abstraction"
     },
@@ -3692,17 +3693,18 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "2e5bc186d7cd7585ad21491a5f154d0ce717bd6e0f3a15d45a80db67595ef536",
+      "sha256": "02da55248b7ee0bd3c8e6160de73b93a788559d609af2f48c145f7e3a7d2c6e6",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 115, 195, 272, 278, 281, 286, 296, 312, 318, 334, 335, 345,
-        348, 445, 491, 512, 537, 583, 590, 706, 717, 882, 1288, 1289, 1292,
-        1363, 1386, 1395, 1559, 1615, 1674, 1680, 1681, 1684, 1845, 1847, 1851,
-        1884, 2223, 2269, 2274, 2691, 2948, 2950, 2957, 2968, 3171, 3173, 3177,
-        3336, 3740, 3751, 4041, 4716, 4786, 4978, 5119, 5140, 5169, 5171
+        4, 11, 13, 116, 196, 273, 279, 282, 287, 297, 313, 319, 335, 336, 346,
+        349, 447, 493, 514, 539, 572, 595, 602, 726, 785, 952, 1360, 1361, 1364,
+        1435, 1458, 1467, 1631, 1687, 1746, 1752, 1753, 1756, 1917, 1919, 1923,
+        1956, 2295, 2341, 2346, 2763, 3020, 3022, 3029, 3040, 3243, 3245, 3249,
+        3408, 3812, 3823, 4113, 4335, 4340, 4343, 4358, 4371, 4373, 4418, 4452,
+        4839, 4840, 5069, 5139, 5348, 5489, 5510, 5540, 5542
       ],
       "review": "mapped-abstraction"
     },
@@ -4027,9 +4029,9 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "207b331410ca1daae844d110ab76e449f1a3f16405b5c8b28c5be0f81b35ebd9",
+      "sha256": "b86d6696a874100da163933e0b2666c27ef9d5a619b8431dc3fa0e3a3f5e57be",
       "models": [],
-      "candidateLines": [59, 62, 70],
+      "candidateLines": [64, 67, 75],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },
@@ -4116,11 +4118,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "c9718082a07abcf123dac2a34433c0d87fe9217fb56c62cee855aebe8f4dcb6c",
+      "sha256": "6c566a5b88d3c7cddf309c9489d90f7245d0e8a86ba9437bdf781a2d37ce8f80",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 235, 255, 265, 270, 276, 285, 307, 317,
-        326, 334
+        35, 53, 86, 107, 109, 127, 165, 218, 220, 255, 276, 286, 291, 295, 299,
+        313, 322, 344, 354, 363, 371
       ],
       "review": "mapped-abstraction"
     },
@@ -4659,10 +4661,11 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "ae69edab95b695a7e49b4377082175532489647de8e03d5135dacf2f89311635",
+      "sha256": "66548759041dbbfbb6cc59d08b3f307cf1a130297d622276b72caab596339ccb",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224, 241
+        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224, 241,
+        258, 275
       ],
       "review": "mapped-abstraction"
     },
@@ -4814,9 +4817,12 @@
     },
     {
       "path": "scripts/rotate-fee-solana-rpc.ts",
-      "sha256": "d28cff44fd991d50a30baa689c65ba3d72f456e07a75bc1f88b5678b1c6f344d",
+      "sha256": "e97e568c1587bf2a9c24ca3fbfcaa535249a76827e799aaad283f903bb3be3dc",
       "models": ["formal/models/release/release_publication.qnt"],
-      "candidateLines": [40, 41, 42, 43, 45, 111, 153, 183, 305, 343, 364, 460],
+      "candidateLines": [
+        40, 41, 42, 43, 45, 111, 153, 176, 191, 192, 220, 221, 246, 368, 406,
+        427, 524
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -5046,17 +5052,18 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "a5a167d93fb093d661cf8c452bb72fbaad101c1c92e32dc4de2171bc10949453",
+      "sha256": "c795ab09e5eb974b1a7f079588c6f64eddd82e513fed25c4c88737bf7d1646f9",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        68, 79, 126, 127, 128, 129, 131, 132, 199, 200, 201, 203, 204, 770, 790,
-        912, 948, 987, 1011
+        69, 80, 127, 128, 129, 130, 132, 133, 200, 201, 202, 204, 205, 773, 793,
+        915, 951, 990, 1014
       ],
       "review": "mapped-abstraction"
     },
@@ -14237,7 +14244,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "fdc3629501e65b3ed04384f98031b25241095a142281a52fdef4b22059bff295",
+      "sha256": "3f0b7659156d276320dde6054dc172f2b7f4ffc4421ce24b44968ac178964120",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -14246,14 +14253,26 @@
       ],
       "scenarios": [
         "authorizationDoesNotRetryTest",
+        "commitFileErrorRecoversTest",
+        "commitFileErrorRetriesOnceTest",
+        "commitPullServerErrorRecoversTest",
+        "commitPullServerErrorsStayBoundedTest",
+        "commitPullServerRetryPreservesQuotaCountTest",
+        "commitPullServerRetryRespectsCheckpointTest",
+        "commitPullValidationErrorNeverRetriesTest",
         "confirmedCheckpointReadTest",
         "mismatchedValidatorCannotReplayTest",
         "mismatchedValidatorReadsLiveTest",
+        "prFileServerErrorRecoversTest",
+        "prFileServerErrorsStayBoundedTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
         "repeatedSecondaryLimitFailsTest",
         "secondaryLimitMessageResumesTest",
+        "serverRetryRespectsCheckpointTest",
         "timedOutCheckpointCannotPublishTest",
+        "unrelatedServerErrorNeverRetriesTest",
+        "unrelatedValidationErrorNeverRetriesTest",
         "writeDoesNotRetryTest"
       ]
     },
@@ -14278,7 +14297,7 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "19dab37383086667e3da24133419d8ded2b428701b9c403d38550cc8137ae954",
+      "sha256": "f21ab7c9bd61f66e2a749a445747bd28184683f2c3da5c329caf03a0455d4214",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
@@ -14291,14 +14310,18 @@
       ],
       "scenarios": [
         "changedPredecessorRefusesImportTest",
+        "earlierAcceptanceRemovesLaterOwnershipTest",
         "incompleteConnectedProofHeldTest",
+        "invalidSupplementCannotPrepareTest",
         "privateProtectedPoolHeldTest",
         "protectionBypassNegativeControlTest",
         "protectionRaceBeforeAtomicImportTest",
         "replayAfterRevocationNeverRestoresTest",
         "replayResurrectionNegativeControlTest",
         "revaluationNegativeControlTest",
-        "unchangedPoolAndAppendOnlyTest"
+        "unavailableSupplementAllowsUnrelatedProofTest",
+        "unchangedPoolAndAppendOnlyTest",
+        "unresolvedEarlierAcceptanceHoldsAffectedPoolTest"
       ]
     },
     {
@@ -14567,8 +14590,11 @@
     },
     {
       "path": "formal/models/points/value_source_cache.qnt",
-      "sha256": "0bca3b7f14e34fb46cd248cab5bbf391a8d456a0fd1956e67744a01cf5db0aeb",
-      "sources": ["workers/slopbot/value-commit-pages.ts"],
+      "sha256": "f84e89315b30af08da593d0796716d2df52313048369e2041d521f476b585aa1",
+      "sources": [
+        "scripts/value-ingestion.ts",
+        "workers/slopbot/value-commit-pages.ts"
+      ],
       "scenarios": [
         "currentPublicIdentityPermitsReuseTest",
         "incompleteCannotRetainTest",
@@ -14898,7 +14924,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "4c8cf61648d267e4d1b32f3d8a76a369f281f3fb89defa6c7fd15fb5ccd9885e",
+      "sha256": "d043886d571fa5c0d26bcfddf0c2efea12db6b3eabeadbedb330f6678612f031",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/check-retained-release-data.ts",
@@ -14935,9 +14961,11 @@
         "rpcRotationAmbiguousDeployRemainsUncertainTest",
         "rpcRotationCannotWriteOtherServicesTest",
         "rpcRotationChangedVersionCannotPromoteTest",
+        "rpcRotationCommandFailureThenReadbackConfirmsTest",
         "rpcRotationMissingPreflightCannotUploadTest",
         "rpcRotationNeedsManualMainTest",
         "rpcRotationOnlyPublishesCandidateTest",
+        "rpcRotationUnconfirmedReadbackCannotRedeployTest",
         "sourceAdvanceAfterUploadIsPartialTest",
         "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",

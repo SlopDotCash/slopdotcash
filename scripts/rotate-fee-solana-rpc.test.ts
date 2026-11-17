@@ -139,6 +139,7 @@ test("the deployed fee source comparison retains the complete runtime dependency
 for (const failure of [
   "upload",
   "deploy",
+  "deploy-unresolved",
   "renew",
   "success",
   "source",
@@ -175,15 +176,15 @@ for (const failure of [
       const actualQualifier = await import(${JSON.stringify(qualifier)});
       mock.module(${JSON.stringify(qualifier)},()=>({...actualQualifier,SOLANA_PUBLIC_PAIR:["unused","https://public.rpc.solanavibestation.com"],qualifySolanaRpcPair:async(dir)=>{const fs=await import("node:fs");fs.writeFileSync(join(dir,"solana-rpc-public-pair-proof.json"),"{}");events.push("proof");}}));
       const actual = await import(${JSON.stringify(shared)});
-      mock.module(${JSON.stringify(shared)},()=>({...actual,cloudflare:()=>()=>{},workerState:async()=>({active:{id:failure==="active"&&++stateReads>1?"changed":"deployment",versions:[{version_id:beforeId,percentage:100}]},latest:{id:beforeId}}),inspectVersion:async(_,id)=>id===beforeId?before:({...before,id,number:2,resources:failure==="bindings"?{...before.resources,script:{etag:"changed-code"}}:before.resources,annotations:{"workers/tag":sha,"workers/message":actual.rotationMessage(sha,before,"solana")}}),requireLiveMain:()=>{},requireRotationBase:(state,id)=>{if(state.active.id==="changed")throw Error("Active changed");},runWrangler:args=>{events.push(args[1]);if(args[1]===failure)throw Error("fixture failure");return "Worker Version ID: "+afterId;}}));
+      mock.module(${JSON.stringify(shared)},()=>({...actual,cloudflare:()=>()=>{},workerState:async()=>({active:{id:failure==="active"&&++stateReads>1?"changed":"deployment",versions:[{version_id:beforeId,percentage:100}]},latest:{id:beforeId}}),inspectVersion:async(_,id)=>id===beforeId?before:({...before,id,number:2,resources:failure==="bindings"?{...before.resources,script:{etag:"changed-code"}}:before.resources,annotations:{"workers/tag":sha,"workers/message":actual.rotationMessage(sha,before,"solana")}}),requireLiveMain:()=>{},requireRotationBase:(state,id)=>{if(state.active.id==="changed"||(failure==="deploy-unresolved"&&id===afterId))throw Error("Active changed");},runWrangler:args=>{events.push(args[1]);if(args[1]===failure||(failure==="deploy-unresolved"&&args[1]==="deploy"))throw Error("fixture failure");return "Worker Version ID: "+afterId;}}));
       globalThis.fetch=async(_,init)=>{const {sql}=JSON.parse(init.body);events.push(sql.startsWith("INSERT")?"acquire":sql.startsWith("DELETE")?"release":"renew");return Response.json({success:true,result:[{success:true,meta:{changes:failure==="renew"&&sql.startsWith("UPDATE")?0:1}}]});};
       try {
         const {rotateFeeSolanaRpc}=await import(${JSON.stringify(fixture)});
-        try {await rotateFeeSolanaRpc();if(failure!=="success")throw Error("Expected failure");}catch(error){if(error.message==="Expected failure"||failure==="success")throw error; if(failure==="source"||failure==="active"){if(events.includes("acquire"))throw Error("Wrong source reached writes");process.exit(0);} if(!events.includes("acquire"))throw error;}
+        try {await rotateFeeSolanaRpc();if(failure!=="success"&&failure!=="deploy")throw Error("Expected failure");}catch(error){if(error.message==="Expected failure"||failure==="success"||failure==="deploy")throw error; if(failure==="source"||failure==="active"){if(events.includes("acquire"))throw Error("Wrong source reached writes");process.exit(0);} if(!events.includes("acquire"))throw error;}
         const report=JSON.parse(readFileSync(join(root,"fee-solana-rpc-rotation.json"),"utf8"));
         if(!events.includes("proof")||!events.includes("acquire"))throw Error("Missing normal entry");
-        if(failure==="success") {if(report.phase!=="verified"||!events.includes("release")||!events.includes("deploy"))throw Error("Unverified success");}
-        else if(failure==="deploy") {if(events.includes("release")||report.phase!=="deploying"||report.candidateVersion!==afterId)throw Error("Uncertain activation lost");}
+        if(failure==="success"||failure==="deploy") {if(report.phase!=="verified"||!events.includes("release")||!events.includes("deploy"))throw Error("Unverified success");}
+        else if(failure==="deploy-unresolved") {if(events.includes("release")||report.phase!=="deploying"||report.candidateVersion!==afterId)throw Error("Uncertain activation lost");}
         else {if(events.includes("deploy")||!events.includes("release"))throw Error("Unactivated lease was not released");}
       }finally{rmSync(root,{recursive:true,force:true});}
     `;
@@ -197,7 +198,7 @@ for (const failure of [
     const [code] = await once(child, "exit");
     expect(error).toBe("");
     expect(code).toBe(0);
-  });
+  }, 15000);
 }
 
 test("a shallow rotation checkout fetches only its exact deployed source before comparison", async () => {
@@ -313,4 +314,101 @@ test("a prior pre-activation witness is digest-bound and must retain its exact c
       receipt.checkout,
     ),
   ).toThrow("inconsistent");
+});
+
+test("deployment command diagnostics retain only fixed categories and numeric codes", async () => {
+  const { safeRotationCommandError } = await import("./rotate-fee-solana-rpc");
+  expect(
+    safeRotationCommandError({
+      status: 1,
+      stderr: "private-url unauthorized [code: 10000]",
+    }),
+  ).toEqual({ category: "authentication", exitCode: 1, providerCode: 10000 });
+  expect(
+    safeRotationCommandError({
+      status: 1,
+      stderr: "private version not found [code: 100146]",
+    }),
+  ).toEqual({
+    category: "version-unavailable",
+    exitCode: 1,
+    providerCode: 100146,
+  });
+  expect(
+    JSON.stringify(
+      safeRotationCommandError({ stderr: "https://secret.invalid token" }),
+    ),
+  ).not.toContain("secret");
+});
+
+test("activation readback tolerates stale observations but never redeploys", async () => {
+  const { confirmSolanaRotation } = await import("./rotate-fee-solana-rpc");
+  const previous = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    candidate = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    sha = "a".repeat(40);
+  const bindings = [
+    { name: "FEE_DB", type: "d1" },
+    { name: "RPC_URL_ROBINHOOD", type: "secret_text" },
+    { name: "RPC_URL_SOLANA", type: "secret_text" },
+    { name: "SOLANA_RECOVERY_RPC_URL", type: "secret_text" },
+    { name: "BUYBACK_MODE", type: "plain_text", text: "live" },
+    { name: "FEE_CONVERTER_MODE", type: "plain_text", text: "live" },
+  ];
+  const before = {
+    id: previous,
+    number: 1,
+    resources: {
+      bindings,
+      script: { etag: "same" },
+      script_runtime: { compatibility_date: "2026-07-30" },
+    },
+  };
+  let reads = 0;
+  const get = async (path: string) => {
+    if (path === "deployments")
+      return {
+        deployments: [
+          {
+            id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            versions: [
+              {
+                version_id: ++reads < 3 ? previous : candidate,
+                percentage: 100,
+              },
+            ],
+          },
+        ],
+      };
+    if (path === "versions") return { items: [{ id: candidate, number: 2 }] };
+    return {
+      ...before,
+      id: candidate,
+      number: 2,
+      annotations: {
+        "workers/tag": sha,
+        "workers/message": `slop.cash release ${sha}; Solana RPC rotation from ${previous}`,
+      },
+    };
+  };
+  await confirmSolanaRotation(get, before, candidate, sha, async () => {});
+  expect(reads).toBe(3);
+  await expect(
+    confirmSolanaRotation(
+      async (path: string) =>
+        path === "deployments"
+          ? {
+              deployments: [
+                {
+                  id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                  versions: [{ version_id: previous, percentage: 100 }],
+                },
+              ],
+            }
+          : { items: [{ id: candidate, number: 2 }] },
+      before,
+      candidate,
+      sha,
+      async () => {},
+    ),
+  ).rejects.toThrow("pinned");
 });

@@ -25,6 +25,7 @@ import { assertPenaltyHistory } from "../src/lib/score-penalties";
 import type { GitHubClient } from "../workers/slopbot/github";
 import type { PublishedPenaltyHistory as PublishedPenaltyRow } from "../workers/slopbot/penalties";
 import { loadPolicy } from "../workers/slopbot/review";
+import { publicationCommitPages } from "../workers/slopbot/value-commit-pages";
 import { readValueDecisionFromHistory } from "../workers/slopbot/value-consumption";
 import {
   collectValueContext,
@@ -536,6 +537,7 @@ export async function loadValueInputs(
     }
   }
   const sourceCache = new Map<string, WorkUnitSource>();
+  const commitPages = publicationCommitPages();
   const observedGroups = new Map<string, string | null>();
   const groups = new Map<string, JointDecision>();
 
@@ -570,6 +572,7 @@ export async function loadValueInputs(
     recipe?: ValueMergeRecipe,
   ) {
     const { repository, identity } = await repositoryIdentity(repositoryId);
+    const client = commitPages(github);
     const hydrate = async (raw: WorkUnitSource) => {
       const collected = {
         ...raw,
@@ -579,7 +582,7 @@ export async function loadValueInputs(
         collected,
         recipe,
         identity,
-        github,
+        client,
         repository,
       );
     };
@@ -595,7 +598,7 @@ export async function loadValueInputs(
         throw new Error("Joint source identity changed between records");
       return hydrate(cached);
     }
-    const evidence = await collectValueEvidence(github, repository.id, number);
+    const evidence = await collectValueEvidence(client, repository.id, number);
     const outcome = census.get(id);
     if (
       evidence.repositoryNodeId !== identity.node_id ||
