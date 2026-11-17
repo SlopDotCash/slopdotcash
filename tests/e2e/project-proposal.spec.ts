@@ -706,6 +706,10 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(honorSystem).toBeDisabled();
   await page.getByLabel("Amount / month").fill("2500");
   await honorSystem.check();
+  expect(await readProposalDraft(page)).toMatchObject({
+    honorSystem: "true",
+    monthlyPool: "2500",
+  });
   await page.reload({ waitUntil: "networkidle" });
   await expect(honorSystem).toBeChecked();
   await page.getByLabel("Points only", { exact: true }).check();
