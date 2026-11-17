@@ -5,6 +5,7 @@ import {
   type PoolFundingIndex,
   poolFunded,
   poolFundingStatus,
+  publicPoolReward,
   type VaultFreeBalance,
 } from "./pool-funding";
 import type { ProjectDefinition } from "./projects.mjs";
@@ -65,6 +66,18 @@ test("a vault short of the monthly amount reads as points only", () => {
 test("a pledge with no vault, or balances not loaded, shows no amount", () => {
   expect(poolFunded(project("250000000"), new Map(), NOW)).toBe(false);
   expect(poolFunded(project("250000000"), null, NOW)).toBe(false);
+});
+
+test("an owner promise distinguishes a short vault from an unread vault", () => {
+  const optedIn = project("250000000", "base-mainnet", { honorSystem: true });
+  const unread = publicPoolReward(optedIn, index({ freeBalance: null }), NOW);
+  expect(unread.promise).toBe("Promised · Vault funding unverified");
+  const short = index({ freeBalance: "249999999" });
+  const promised = publicPoolReward(optedIn, short, NOW);
+  expect(promised.promise).toBe("Promised · Not vaulted");
+  expect(promised.project.reward.monthlyCapDisplay).toBe("$250");
+  expect(poolFunded(optedIn, short, NOW)).toBe(false);
+  expect(publicPoolReward(optedIn, index({}), NOW).promise).toBeNull();
 });
 
 test("only the project's own recorded vault on a paying network counts", () => {

@@ -902,6 +902,164 @@ test("owner revisions publish presentation, require admission and apply money pr
   expect(budget.body.error).toBe("financial_change_restricted");
 });
 
+test("an owner explicitly publishes and removes an honor-system promise in immutable revisions", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  const reward = initial.reward as ProjectDefinition["reward"];
+  const created = await call("POST", "projects", OWNER, {
+    manifest: { ...initial, reward: { ...reward, honorSystem: true } },
+  });
+  expect(created.status).toBe(201);
+  const promised = await persistence.getProject("open-registry");
+  if (!promised) throw new Error("project expected");
+  expect(promised.manifest.reward).toEqual({ ...reward, honorSystem: true });
+  expect(promised.manifest.reward.paymentMode).toBe("disabled");
+  expect(promised.manifest.reward.committedMinor).toBe("0");
+  const raised = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        monthlyCapMinor: "2000000000",
+        monthlyCapDisplay: "$2,000",
+      },
+    },
+  });
+  expect(raised.status).toBe(200);
+  const changed = await persistence.getProject("open-registry");
+  if (!changed) throw new Error("project expected");
+  expect(changed.manifest.reward).toMatchObject({
+    honorSystem: true,
+    monthlyCapMinor: "2000000000",
+    paymentMode: "disabled",
+    committedMinor: "0",
+    cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "1000000000" }],
+  });
+  const { honorSystem: _promise, ...withoutPromise } = changed.manifest.reward;
+  const removed = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: changed.revision,
+    manifest: { ...changed.manifest, reward: withoutPromise },
+  });
+  expect(removed.status).toBe(200);
+  expect(
+    (await persistence.getProject("open-registry"))?.manifest.reward,
+  ).toEqual(withoutPromise);
+  const publicProject = await call("GET", "projects/open-registry", OWNER);
+  expect(
+    (publicProject.body.project as ProjectDefinition).reward.honorSystem,
+  ).toBeUndefined();
+  const history = (await persistence.listRevisions()).filter(
+    (entry) => entry.projectId === promised.id,
+  );
+  expect(
+    history.find((entry) => entry.revision === promised.revision)?.manifest,
+  ).toEqual(promised.manifest);
+  expect(
+    history.find((entry) => entry.revision === changed.revision)?.manifest,
+  ).toEqual(changed.manifest);
+});
+
+test("honor-system changes require current authority and cannot rewrite reward history", async () => {
+  const { persistence, call, create, state } = registry();
+  await create("open-registry", "example/open-registry");
+  const original = await persistence.getProject("open-registry");
+  if (!original) throw new Error("project expected");
+  const manifest = {
+    ...original.manifest,
+    reward: { ...original.manifest.reward, honorSystem: true as const },
+  };
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  const denied = await call("PUT", "projects/open-registry", OWNER, {
+    manifest,
+    expectedRevision: original.revision,
+  });
+  expect(denied.status).toBe(403);
+  expect(denied.body.error).toBe("authority_required");
+  expect((await persistence.getProject(original.id))?.revision).toBe(
+    original.revision,
+  );
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  };
+  const published = await call("PUT", "projects/open-registry", OWNER, {
+    manifest,
+    expectedRevision: original.revision,
+  });
+  expect(published.status).toBe(200);
+  const promised = await persistence.getProject(original.id);
+  if (!promised) throw new Error("project expected");
+  expect(promised.manifest.reward).toEqual(manifest.reward);
+  const stale = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: original.manifest,
+    expectedRevision: original.revision,
+  });
+  expect(stale.status).toBe(409);
+  expect(stale.body.error).toBe("stale_revision");
+  const historical = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "500000000" }],
+      },
+    },
+  });
+  expect(historical.status).toBe(422);
+  expect(historical.body.error).toBe("financial_change_restricted");
+  const alteredPolicy = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        honorSystem: undefined,
+        rewardStartAt: NOW,
+      },
+    },
+  });
+  expect(alteredPolicy.status).toBe(422);
+  expect(alteredPolicy.body.error).toBe("financial_change_restricted");
+  expect((await persistence.getProject(original.id))?.manifest).toEqual(
+    promised.manifest,
+  );
+});
+
+test("honor-system opt-in rejects false and a points-only pool before publication", async () => {
+  const { persistence, call } = registry();
+  const manifest = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+  );
+  const reward = manifest.reward as ProjectDefinition["reward"];
+  for (const changedReward of [
+    { ...reward, honorSystem: false },
+    {
+      ...reward,
+      honorSystem: true,
+      monthlyCapMinor: "0",
+      monthlyCapDisplay: "$0",
+    },
+  ]) {
+    const invalid = await call("POST", "projects", OWNER, {
+      manifest: { ...manifest, reward: changedReward },
+    });
+    expect(invalid.status).toBe(422);
+    expect(invalid.body.error).toBe("invalid_manifest");
+    expect(invalid.body.message).toContain("honorSystem");
+  }
+  expect(await persistence.listProjects()).toEqual([]);
+});
+
 test("an owner revision cannot record a vault; a reviewed admin revision can", async () => {
   const { persistence, call, create } = registry();
   await create("open-registry", "example/open-registry");

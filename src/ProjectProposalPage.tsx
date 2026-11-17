@@ -183,6 +183,7 @@ const EMPTY_PROPOSAL = {
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
+  honorSystem: "false",
   settlementChain: "base",
   rewardKind: "stablecoin",
   rewardAssetAddress: "",
@@ -879,6 +880,14 @@ function FundingFields({
       : choice.assetKind === "native"
         ? network.native.symbol
         : network.stablecoin.symbol;
+  const positiveAmount = monthlyPoolValue(
+    choice.monthlyAmount,
+    choice.assetKind === "token"
+      ? { symbol }
+      : choice.assetKind === "native"
+        ? network.native
+        : undefined,
+  ).valid;
   return (
     <>
       <fieldset className="funding-mode">
@@ -955,6 +964,27 @@ function FundingFields({
             onChange={(value) => set("monthlyAmount", value)}
             value={choice.monthlyAmount}
           />
+          {!bounty ? (
+            <>
+              <label className="checkbox-field">
+                <input
+                  aria-describedby="field-honorSystem-hint"
+                  checked={choice.honorSystem === true}
+                  disabled={!positiveAmount}
+                  id="field-honorSystem"
+                  onChange={(event) =>
+                    set("honorSystem", String(event.target.checked))
+                  }
+                  type="checkbox"
+                />
+                <span>Promise this amount on the honor system</span>
+              </label>
+              <small className="field-hint" id="field-honorSystem-hint">
+                Contributors will see that this amount is not vaulted or
+                guaranteed.
+              </small>
+            </>
+          ) : null}
           {compact ? null : (
             <p className="fee-preview">
               Payout fee: {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}%. Unused-fund
@@ -1204,6 +1234,9 @@ function ProjectProposalForm({
     setProposal((current) => ({
       ...current,
       [field]: value,
+      ...(field === "fundingMode" && value !== "monthly"
+        ? { honorSystem: "false" }
+        : {}),
       ...(field === "integrationBranch"
         ? { sourceCommit: branchChoices?.commits[value] ?? "" }
         : {}),
@@ -1312,6 +1345,7 @@ function ProjectProposalForm({
       tokenAddress: p.rewardAssetAddress,
       tokenSymbol: p.rewardAssetSymbol,
       monthlyAmount: p.monthlyPool,
+      honorSystem: p.honorSystem === "true",
     }),
     [
       p.fundingMode,
@@ -1320,6 +1354,7 @@ function ProjectProposalForm({
       p.rewardAssetAddress,
       p.rewardAssetSymbol,
       p.monthlyPool,
+      p.honorSystem,
     ],
   );
   const fundingSymbol =
@@ -2019,6 +2054,7 @@ function ProjectProposalForm({
                     tokenAddress: "rewardAssetAddress",
                     tokenSymbol: "rewardAssetSymbol",
                     monthlyAmount: "monthlyPool",
+                    honorSystem: "honorSystem",
                   } as const
                 )[field],
               )(value)
@@ -2070,7 +2106,7 @@ function ProjectProposalForm({
                       : p.fundingMode !== "monthly"
                         ? "None"
                         : pool.valid
-                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? formatRewardCapDisplay(pool.display, { kind: p.rewardKind, symbol: fundingSymbol }) : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
+                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? formatRewardCapDisplay(pool.display, { kind: p.rewardKind, symbol: fundingSymbol }) : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · ${p.honorSystem === "true" ? "honor system (not vaulted or guaranteed)" : "pledge"}`
                           : "Invalid"}
                   </dd>
                 </div>
@@ -2207,6 +2243,7 @@ type UpdateDraft = ReadyDraft & {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
+  honorSystem: string;
   /** Pending added repositories as JSON, or "" when there are none. */
   repositories: string;
 } & Record<SkillRuleField, string>;
@@ -2232,6 +2269,7 @@ const DRAFT_FIELDS = [
   "tokenAddress",
   "tokenSymbol",
   "monthlyAmount",
+  "honorSystem",
   "note",
   "repositories",
 ] as const;
@@ -2485,6 +2523,7 @@ function ProjectUpdateForm({
       capMinor === "0"
         ? ""
         : formatBaseUnits(capMinor, decimals, { grouping: false }),
+    honorSystem: String(reward.honorSystem === true),
     repositories: "",
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
@@ -2551,7 +2590,13 @@ function ProjectUpdateForm({
   const [attempted, setAttempted] = useState(false);
   const set = (field: keyof UpdateDraft) => (next: string) => {
     if (draft === null) setDraftRevision(base?.revision ?? null);
-    setDraft((existing) => ({ ...(existing ?? {}), [field]: next }));
+    setDraft((existing) => ({
+      ...(existing ?? {}),
+      [field]: next,
+      ...(field === "fundingMode" && next !== "monthly"
+        ? { honorSystem: "false" }
+        : {}),
+    }));
   };
   // Pending added repositories are kept in the draft like any other edit.
   const addedRepositories = useMemo(
@@ -2643,6 +2688,7 @@ function ProjectUpdateForm({
     tokenAddress: value.tokenAddress,
     tokenSymbol: value.tokenSymbol,
     monthlyAmount: value.monthlyAmount,
+    honorSystem: value.honorSystem === "true",
   };
   if (
     !bountyOnly &&
@@ -2679,17 +2725,26 @@ function ProjectUpdateForm({
           source.rewardAsset,
         ),
       };
+      const { honorSystem: _honorSystem, ...rewardWithoutPromise } =
+        source.reward;
+      const promise =
+        choice.mode === "monthly" && choice.honorSystem === true
+          ? { honorSystem: true }
+          : {};
       if (assetFixed || choice.mode === "none" || !assetTouched) {
         // The asset, network and vault stay; only the amount changes.
-        fundingFields = { reward: { ...source.reward, ...cap } };
+        fundingFields = {
+          reward: { ...rewardWithoutPromise, ...cap, ...promise },
+        };
       } else {
         const fields = rewardFields(choice, new Date());
         fundingFields = {
           ...fields,
           reward: {
-            ...source.reward,
+            ...rewardWithoutPromise,
             ...(fields.reward as Record<string, unknown>),
             rewardStartAt: source.reward.rewardStartAt,
+            ...promise,
           },
         };
       }
@@ -2860,6 +2915,12 @@ function ProjectUpdateForm({
                       String(next.reward.currency),
                     )
                 : "No monthly funding",
+          },
+          {
+            field: "honorSystem",
+            label: "Honor-system promise",
+            before: current.reward.honorSystem === true ? "On" : "Off",
+            after: next.reward.honorSystem === true ? "On" : "Off",
           },
         ]
       : []),
@@ -3317,6 +3378,7 @@ function ProjectUpdateForm({
                       tokenAddress: "tokenAddress",
                       tokenSymbol: "tokenSymbol",
                       monthlyAmount: "monthlyAmount",
+                      honorSystem: "honorSystem",
                     } as const
                   )[field],
                 )(entry)

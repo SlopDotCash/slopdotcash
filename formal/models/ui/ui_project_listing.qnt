@@ -19,26 +19,28 @@
 // and when it fails, every project is listed as before. Discovery reads the same cached vault rows on the
 // server; a failed read lists every cleared project, and the response is
 // no-store, so the next request reads again. The project page shows the
-// unfunded notice only after a successful read that leaves it out of funding
-// discovery. The
+// ordinary unfunded notice only after a successful read that leaves it out
+// of funding discovery. A visible honor-system promise uses its own warning.
+// The
 // funding rule itself is modelled in ui_pool_funding; here `funded` is an
 // input. Points, collection and scoring are outside this model.
 module ui_project_listing {
-  type S = {read: str, server: str, active: bool, monthly: bool, program: bool, funded: bool, homeEligible: bool, homeShown: bool, shownList: bool, discovered: bool, pageNotice: bool}
+  type S = {read: str, server: str, active: bool, monthly: bool, program: bool, funded: bool, promise: bool, homeEligible: bool, homeShown: bool, shownList: bool, discovered: bool, pageNotice: bool}
   var s: S
   pure def rule(t: S, known: bool): bool = not(known) or not(t.active) or not(t.monthly) or t.program or t.funded
   pure def shown(t: S): S =
     t.with("homeShown", t.homeEligible)
      .with("shownList", rule(t, t.read == "ready"))
      .with("discovered", rule(t, t.server == "ready"))
-     .with("pageNotice", t.read == "ready" and not(rule(t, true)))
-  action init = s' = shown({read: "loading", server: "ready", active: true, monthly: true, program: false, funded: false, homeEligible: true, homeShown: false, shownList: false, discovered: false, pageNotice: false})
+     .with("pageNotice", t.read == "ready" and not(rule(t, true)) and not(t.promise))
+  action init = s' = shown({read: "loading", server: "ready", active: true, monthly: true, program: false, funded: false, promise: false, homeEligible: true, homeShown: false, shownList: false, discovered: false, pageNotice: false})
   // The registry and the cached vault rows change between reads.
   action project(a: bool, m: bool, p: bool, f: bool): bool =
     s' = shown(s.with("active", a).with("monthly", m).with("program", p).with("funded", f))
   action browserRead(ok: bool): bool = s' = shown(s.with("read", if (ok) "ready" else "failed"))
   action serverRead(ok: bool): bool = s' = shown(s.with("server", if (ok) "ready" else "failed"))
   action homeEligibility(eligible: bool): bool = s' = shown(s.with("homeEligible", eligible))
+  action showPromise(visible: bool): bool = s' = shown(s.with("promise", visible))
   action step = any {
     nondet a = Bool.oneOf()
     nondet m = Bool.oneOf()
@@ -51,12 +53,14 @@ module ui_project_listing {
     serverRead(ok2),
     nondet eligible = Bool.oneOf()
     homeEligibility(eligible),
+    nondet visible = Bool.oneOf()
+    showPromise(visible),
   }
   pure def hidden(t: S): bool = t.active and t.monthly and not(t.program) and not(t.funded)
   val invariant = all {
     s.homeShown == s.homeEligible,
     s.read == "loading" implies s.shownList,
-    (s.read == "ready" and hidden(s)) implies (not(s.shownList) and s.pageNotice),
+    (s.read == "ready" and hidden(s)) implies (not(s.shownList) and (s.pageNotice == not(s.promise))),
     (s.server == "ready" and hidden(s)) implies not(s.discovered),
     s.read == "failed" implies s.shownList,
     s.server == "failed" implies s.discovered,
@@ -74,4 +78,5 @@ module ui_project_listing {
   run fundingLossKeepsHomeCardTest = init.then(project(true, true, false, true)).then(browserRead(true)).then(project(true, true, false, false)).expect(s.homeShown and not(s.shownList) and not(s.discovered) and invariant)
   run failedFundingReadKeepsHomeCardTest = init.then(browserRead(true)).then(browserRead(false)).expect(s.homeShown and invariant)
   run registryEligibilityStillGatesHomeTest = init.then(homeEligibility(false)).then(browserRead(true)).expect(not(s.homeShown) and invariant)
+  run honorSystemDoesNotQualifyForDiscoveryTest = init.then(showPromise(true)).then(browserRead(true)).expect(s.homeShown and not(s.shownList) and not(s.discovered) and not(s.pageNotice) and invariant)
 }
