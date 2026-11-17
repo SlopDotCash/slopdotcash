@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group";
-import { cn, focusRing, inactive } from "../lib/cn.ts";
+import { cn, focusRing, inactive, target } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 
 /** One segment of a `SegmentedControl`. */
@@ -41,6 +41,7 @@ export function SegmentedControl({ options, value, onValueChange, disabled = fal
           className={cn(
             focusRing,
             inactive,
+            target,
             "h-10 rounded-sm px-3 text-sm text-muted-foreground transition-colors duration-fast hover:text-foreground data-[state=on]:bg-secondary data-[state=on]:font-semibold data-[state=on]:text-secondary-foreground motion-reduce:transition-none",
           )}
         >

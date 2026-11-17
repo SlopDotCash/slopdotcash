@@ -1,0 +1,8 @@
+{"state":{"route":{"kind":"Home","projectId":"","cycleId":"","login":""},"opened":0}}
+{"event":{"type":"open","segments":["projects","slop","security"],"withX":false,"securitySettings":false},"state":{"route":{"kind":"SecurityProgram","projectId":"slop","cycleId":"","login":""},"opened":1}}
+{"event":{"type":"open","segments":["points"],"withX":true,"securitySettings":false},"state":{"route":{"kind":"Account","projectId":"","cycleId":"","login":""},"opened":2}}
+{"event":{"type":"open","segments":["projects","new","awards"],"withX":false,"securitySettings":false},"state":{"route":{"kind":"NewProject","projectId":"","cycleId":"","login":""},"opened":3}}
+{"event":{"type":"open","segments":["projects",""],"withX":false,"securitySettings":false},"state":{"route":{"kind":"NewProject","projectId":"","cycleId":"","login":""},"opened":3}}
+{"event":{"type":"openUndecodable"},"state":{"route":{"kind":"Unknown","projectId":"","cycleId":"","login":""},"opened":4}}
+{"event":{"type":"open","segments":["cycles","slop","2026-11"],"withX":false,"securitySettings":false},"state":{"route":{"kind":"Cycle","projectId":"slop","cycleId":"2026-11","login":""},"opened":5}}
+{"event":{"type":"open","segments":["projects","slop","manage"],"withX":false,"securitySettings":true},"state":{"route":{"kind":"SecurityProgram","projectId":"slop","cycleId":"","login":""},"opened":6}}

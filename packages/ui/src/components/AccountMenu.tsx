@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { LogOut } from "lucide-react";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, target } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { popover } from "../lib/overlay.ts";
 import { Avatar } from "./Avatar.tsx";
@@ -37,7 +37,7 @@ const item =
 export function AccountMenu({ login, avatarUrl, points, children, onSignOut, loading = false, signOutLabel = "Sign out" }: AccountMenuProps) {
   return (
     <Menu.Root modal={false}>
-      <Menu.Trigger className={cn(focusRing, "inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1 text-sm hover:bg-accent data-[state=open]:bg-accent")}>
+      <Menu.Trigger className={cn(focusRing, target, "inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1 text-sm hover:bg-accent data-[state=open]:bg-accent")}>
         <Avatar name={login} src={avatarUrl} />
         <span className="sr-only">{login}</span>
         {points ? <span className="font-mono tabular-nums">{points}</span> : null}
