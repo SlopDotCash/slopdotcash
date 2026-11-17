@@ -3,8 +3,9 @@ import { createElement } from "react";
 import type { Driver, Options } from "../../gen/ui__copy.conformance.ts";
 import type { CopyStatus } from "../../gen/ui__copy.ts";
 import { closeComponents, loadComponent, mount, type Page } from "./ui__confirmation.ts";
+import type * as CopyingModule from "../../src/components/CopyButton.tsx";
 
-type Copying = typeof import("../../src/components/CopyButton.tsx");
+type Copying = typeof CopyingModule;
 
 const label = "Copy address";
 const restAfter = 86_400_000;

@@ -6,6 +6,8 @@ import { createServer } from "vite";
 import { builtinEnvironments } from "vitest/runtime";
 import type { Driver, Options } from "../../gen/ui__confirmation.conformance.ts";
 import type { Event, Phase } from "../../gen/ui__confirmation.ts";
+import type * as DialogModule from "../../src/components/ConfirmDialog.tsx";
+import type * as ButtonsModule from "../../src/components/Button.tsx";
 
 await builtinEnvironments["happy-dom"].setup(globalThis, {});
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -52,8 +54,8 @@ export async function mount(view: FunctionComponent): Promise<Page> {
   };
 }
 
-type Dialog = typeof import("../../src/components/ConfirmDialog.tsx");
-type Buttons = typeof import("../../src/components/Button.tsx");
+type Dialog = typeof DialogModule;
+type Buttons = typeof ButtonsModule;
 
 const labels = { open: "Delete", confirm: "Delete project", cancel: "Cancel" } as const;
 const reason = "The project could not be deleted.";

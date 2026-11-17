@@ -121,9 +121,10 @@ export default defineConfig(
   // VibeLang's parser gives .vibe files typescript-eslint's tree without a program, so the rules that need types stay off: `vibelang --noEmit` checks them.
   { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibelang, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
   // React belongs to interfaces: the tools apart from Studio's page, and schemas, contracts, drivers and the shell everywhere, do without it.
+  // @repo/ui's drivers are the exception: they mount its React components to check them against their specs.
   {
     files: ["vibestack/**", "**/*.{schema,contract}.ts", "**/test/drivers/**", "**/*.vibe"],
-    ignores: ["vibestack/studio/src/page/**"],
+    ignores: ["vibestack/studio/src/page/**", "packages/ui/test/drivers/**"],
     rules: { "no-restricted-imports": ["error", noReact] },
   },
   // A key's own files may sign, but never reach the root poster's module; the poster's files are its own; tests and the
