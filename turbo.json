@@ -208,7 +208,6 @@
         "@repo/fees#build",
         "@repo/fees#typecheck",
         "@repo/fees#test",
-        "@repo/frontend#build",
         "@repo/frontend#typecheck",
         "@repo/frontend#test",
         "@repo/frontend#test:browser"
@@ -363,8 +362,8 @@
         "$TURBO_ROOT$/docs/**",
         "$TURBO_ROOT$/scripts/**",
         "$TURBO_ROOT$/src/lib/**",
-        "$TURBO_ROOT$/apps/frontend/public/**",
-        "$TURBO_ROOT$/apps/frontend/src/agent-logos/**",
+        "$TURBO_ROOT$/apps/app/public/**",
+        "$TURBO_ROOT$/packages/frontend/src/agent-logos/**",
         "$TURBO_ROOT$/apps/backend/src/projects/legacyProjects.json",
         "$TURBO_ROOT$/packages/contracts/evm/*.integration.ts",
         "$TURBO_ROOT$/packages/contracts/solana/{integration,scripts}/**",

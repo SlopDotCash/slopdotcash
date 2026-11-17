@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build && vite build -c vite.worker.config.ts",
     "typecheck": "vibelang --noEmit -p .",
     "test": "vitest run",
     "test:browser": "vitest run --project browser",

@@ -515,139 +515,6 @@ importers:
         specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
-  apps/frontend:
-    dependencies:
-      '@repo/backend':
-        specifier: workspace:*
-        version: link:../backend
-      '@repo/contributor':
-        specifier: workspace:*
-        version: link:../contributor
-      '@repo/design-system':
-        specifier: workspace:*
-        version: link:../../packages/design-system
-      '@repo/fees':
-        specifier: workspace:*
-        version: link:../fees
-      '@repo/operations':
-        specifier: workspace:*
-        version: link:../operations
-      '@repo/platform':
-        specifier: workspace:*
-        version: link:../../packages/platform
-      '@repo/points':
-        specifier: workspace:*
-        version: link:../points
-      '@repo/ports':
-        specifier: workspace:*
-        version: link:../../packages/ports
-      '@repo/security':
-        specifier: workspace:*
-        version: link:../security
-      '@repo/settlement':
-        specifier: workspace:*
-        version: link:../settlement
-      '@repo/slopbot':
-        specifier: workspace:*
-        version: link:../slopbot
-      '@repo/ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
-      '@solana/wallet-standard-features':
-        specifier: 'catalog:'
-        version: 1.5.0
-      '@wallet-standard/app':
-        specifier: 'catalog:'
-        version: 1.1.1
-      '@wallet-standard/base':
-        specifier: 'catalog:'
-        version: 1.1.1
-      '@wallet-standard/features':
-        specifier: 'catalog:'
-        version: 1.1.1
-      effect:
-        specifier: 4.1.1
-        version: 4.1.1
-      lucide-react:
-        specifier: 'catalog:'
-        version: 1.73.0(@types/react@19.3.0)(react@19.3.1)
-      react:
-        specifier: 'catalog:'
-        version: 19.3.1
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.3.1(react@19.3.1)
-      vibelang-runtime:
-        specifier: 0.0.13
-        version: 0.0.13(@effect/platform-node@4.1.1(effect@4.1.1)(redis@6.3.1(@opentelemetry/api@1.10.0)))(effect@4.1.1)
-      viem:
-        specifier: 'catalog:'
-        version: 2.57.3(typescript@6.0.3)(zod@4.6.7)
-    devDependencies:
-      '@effect/vitest':
-        specifier: 4.1.1
-        version: 4.1.1(effect@4.1.1)(vitest@5.1.0)
-      '@storybook/addon-a11y':
-        specifier: 'catalog:'
-        version: 10.6.7(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))
-      '@storybook/addon-vitest':
-        specifier: 'catalog:'
-        version: 10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)
-      '@storybook/react-vite':
-        specifier: 'catalog:'
-        version: 10.6.7(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(typescript@6.0.3)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
-      '@tailwindcss/vite':
-        specifier: 'catalog:'
-        version: 4.3.5(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.6.6
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.3.0
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.3.0(@types/react@19.3.0)
-      '@vitejs/plugin-react':
-        specifier: 'catalog:'
-        version: 6.3.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
-      '@vitest/browser-playwright':
-        specifier: 'catalog:'
-        version: 5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
-      happy-dom:
-        specifier: 'catalog:'
-        version: 21.0.4
-      miniflare:
-        specifier: 5.20261113.0-beta
-        version: 5.20261113.0-beta(@types/node@26.6.6)
-      playwright:
-        specifier: 'catalog:'
-        version: 1.65.0
-      storybook:
-        specifier: 'catalog:'
-        version: 10.6.7(@types/react@19.3.0)(react@19.3.1)
-      tailwindcss:
-        specifier: 'catalog:'
-        version: 4.3.5
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-      vibelang:
-        specifier: 0.0.13
-        version: 0.0.13(@babel/core@7.29.13)(effect@4.1.1)(typescript@6.0.3)
-      vibelang-vite:
-        specifier: 0.0.13
-        version: 0.0.13(vibelang@0.0.13(@babel/core@7.29.13)(effect@4.1.1)(typescript@6.0.3))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
-      vibestack:
-        specifier: workspace:*
-        version: link:../..
-      vite:
-        specifier: 'catalog:'
-        version: 8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
-      vitest:
-        specifier: 'catalog:'
-        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
-
   apps/operations:
     dependencies:
       '@repo/backend':
@@ -937,6 +804,139 @@ importers:
       typescript-eslint:
         specifier: 'catalog:'
         version: 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
+
+  packages/frontend:
+    dependencies:
+      '@repo/backend':
+        specifier: workspace:*
+        version: link:../../apps/backend
+      '@repo/contributor':
+        specifier: workspace:*
+        version: link:../../apps/contributor
+      '@repo/design-system':
+        specifier: workspace:*
+        version: link:../design-system
+      '@repo/fees':
+        specifier: workspace:*
+        version: link:../../apps/fees
+      '@repo/operations':
+        specifier: workspace:*
+        version: link:../../apps/operations
+      '@repo/platform':
+        specifier: workspace:*
+        version: link:../platform
+      '@repo/points':
+        specifier: workspace:*
+        version: link:../../apps/points
+      '@repo/ports':
+        specifier: workspace:*
+        version: link:../ports
+      '@repo/security':
+        specifier: workspace:*
+        version: link:../../apps/security
+      '@repo/settlement':
+        specifier: workspace:*
+        version: link:../../apps/settlement
+      '@repo/slopbot':
+        specifier: workspace:*
+        version: link:../../apps/slopbot
+      '@repo/ui':
+        specifier: workspace:*
+        version: link:../ui
+      '@solana/wallet-standard-features':
+        specifier: 'catalog:'
+        version: 1.5.0
+      '@wallet-standard/app':
+        specifier: 'catalog:'
+        version: 1.1.1
+      '@wallet-standard/base':
+        specifier: 'catalog:'
+        version: 1.1.1
+      '@wallet-standard/features':
+        specifier: 'catalog:'
+        version: 1.1.1
+      effect:
+        specifier: 4.1.1
+        version: 4.1.1
+      lucide-react:
+        specifier: 'catalog:'
+        version: 1.73.0(@types/react@19.3.0)(react@19.3.1)
+      react:
+        specifier: 'catalog:'
+        version: 19.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.1(react@19.3.1)
+      vibelang-runtime:
+        specifier: 0.0.13
+        version: 0.0.13(@effect/platform-node@4.1.1(effect@4.1.1)(redis@6.3.1(@opentelemetry/api@1.10.0)))(effect@4.1.1)
+      viem:
+        specifier: 'catalog:'
+        version: 2.57.3(typescript@6.0.3)(zod@4.6.7)
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.1.1
+        version: 4.1.1(effect@4.1.1)(vitest@5.1.0)
+      '@storybook/addon-a11y':
+        specifier: 'catalog:'
+        version: 10.6.7(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))
+      '@storybook/addon-vitest':
+        specifier: 'catalog:'
+        version: 10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)
+      '@storybook/react-vite':
+        specifier: 'catalog:'
+        version: 10.6.7(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(typescript@6.0.3)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@tailwindcss/vite':
+        specifier: 'catalog:'
+        version: 4.3.5(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: 'catalog:'
+        version: 6.3.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@vitest/browser-playwright':
+        specifier: 'catalog:'
+        version: 5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
+      happy-dom:
+        specifier: 'catalog:'
+        version: 21.0.4
+      miniflare:
+        specifier: 5.20261113.0-beta
+        version: 5.20261113.0-beta(@types/node@26.6.6)
+      playwright:
+        specifier: 'catalog:'
+        version: 1.65.0
+      storybook:
+        specifier: 'catalog:'
+        version: 10.6.7(@types/react@19.3.0)(react@19.3.1)
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.5
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vibelang:
+        specifier: 0.0.13
+        version: 0.0.13(@babel/core@7.29.13)(effect@4.1.1)(typescript@6.0.3)
+      vibelang-vite:
+        specifier: 0.0.13
+        version: 0.0.13(vibelang@0.0.13(@babel/core@7.29.13)(effect@4.1.1)(typescript@6.0.3))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      vibestack:
+        specifier: workspace:*
+        version: link:../..
+      vite:
+        specifier: 'catalog:'
+        version: 8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
   packages/platform:
     dependencies:

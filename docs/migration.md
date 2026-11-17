@@ -66,9 +66,11 @@ true to their diff. `.github/workflows/release.yml` is not vendored.
 All product specs live in the single root tree. These areas are domain
 ownership boundaries of the application packages `apps/backend`,
 `apps/operations`, `apps/security`, `apps/contributor`, `apps/points`,
-`apps/slopbot`, `apps/settlement`, `apps/fees` and `apps/frontend`, beside the
-shared packages `packages/platform`, `packages/ports`, `packages/contracts`,
-`packages/ui` and `packages/design-system`. When
+`apps/slopbot`, `apps/settlement` and `apps/fees`, beside the route shell
+`apps/app`, the page package `packages/frontend`, which owns `spec/frontend/`
+and gives the shell its pages, reads and actions, and the shared packages
+`packages/platform`, `packages/ports`, `packages/contracts`, `packages/ui` and
+`packages/design-system`. When
 implementation starts, a matching `apps/<name>` or `packages/<name>` owns that
 area under Vibestack's normal generation rules. Cross-area rules use imports
 and composed machines, and the generated core owns product state.
