@@ -19,7 +19,7 @@ jobs:
         github.event.workflow_run.head_repository.id == github.event.repository.id &&
         (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 40
     permissions:
       actions: write
       contents: read
@@ -33,6 +33,35 @@ jobs:
           RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
+          # Every workflow in this repository shares one GITHUB_TOKEN request
+          # quota. When it is spent, wait for its reset (at most 30 minutes in
+          # all) instead of skipping the scan; a 5xx is retried after a short
+          # wait. Any other failure keeps its exit status.
+          wait_budget="${SCAN_DISPATCH_WAIT_BUDGET:-1800}"
+          min_wait="${SCAN_DISPATCH_MIN_WAIT:-30}"
+          gh_retry() {
+            local attempt=1 status err wait reset now
+            err="$(mktemp)"
+            while :; do
+              if "$@" 2>"$err"; then rm -f "$err"; return 0; else status=$?; fi
+              if [ "$attempt" -ge 6 ]; then cat "$err" >&2; rm -f "$err"; return "$status"; fi
+              if grep -qiE 'rate limit|HTTP 429' "$err"; then
+                reset="$(gh api rate_limit --jq .resources.core.reset 2>/dev/null || echo 0)"
+                now="$(date +%s)"
+                wait=$((reset - now + 5))
+                [ "$wait" -lt "$min_wait" ] && wait="$min_wait"
+              elif grep -qE 'HTTP 50[0-9]' "$err"; then
+                wait=$((attempt * min_wait))
+              else
+                cat "$err" >&2; rm -f "$err"; return "$status"
+              fi
+              if [ "$wait" -gt "$wait_budget" ]; then cat "$err" >&2; rm -f "$err"; return "$status"; fi
+              wait_budget=$((wait_budget - wait))
+              echo "GitHub refused a request ($(head -c 200 "$err" | tr '\n' ' ')); retrying in ${wait}s." >&2
+              sleep "$wait"
+              attempt=$((attempt + 1))
+            done
+          }
           refs="main development"
           if [ "$TRIGGER_EVENT" = workflow_run ]; then
             case "$RELEASE_REF" in main|development) refs="$RELEASE_REF" ;; *) exit 1 ;; esac
@@ -40,7 +69,7 @@ jobs:
           for ref in $refs; do
             # The scan job requires the isolated runner of the exact branch
             # head. Dispatch only after the release of that head succeeded.
-            head="$(gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
+            head="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
             if [ "$TRIGGER_EVENT" = workflow_run ]; then
               if [ "$head" != "$RELEASE_SHA" ]; then
                 echo "::notice title=Scanner waits for release::$ref advanced after this release; its new head must deploy before scanning."
@@ -48,7 +77,7 @@ jobs:
               fi
               released="$RELEASE_RUN_ID"
             else
-              released="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
+              released="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
             fi
             if [ -z "$released" ]; then
               echo "::notice title=Scanner waits for release::$ref head $head has no successful release yet. Its isolated runner is not deployed, so no scan is dispatched."
@@ -58,14 +87,14 @@ jobs:
               main) release_job="Deploy trusted production bundle" ;;
               development) release_job="Deploy verified development to staging" ;;
             esac
-            deployed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp | jq "[.[].jobs[] | select(.name == \"$release_job\" and .conclusion == \"success\")] | length")"
+            deployed="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp | jq "[.[].jobs[] | select(.name == \"$release_job\" and .conclusion == \"success\")] | length")"
             if [ "$deployed" -eq 0 ]; then
               echo "::notice title=Scanner waits for release::$ref did not complete its deployment job."
               continue
             fi
-            active="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
+            active="$(gh_retry gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
             if [ "$active" -eq 0 ]; then
-              gh workflow run vetting-controller.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"
+              gh_retry gh workflow run vetting-controller.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"
             fi
           done
   scan:
