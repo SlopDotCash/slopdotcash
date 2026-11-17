@@ -341,8 +341,7 @@ async function draftApplication(
   ).toHaveValue("main");
   await page.getByLabel("Project name").fill(project.name);
   const consent = page.getByRole("checkbox", {
-    name: "Slopbot may close Slop-skill PRs",
-    exact: true,
+    name: /Slopbot may close Slop-skill PRs · authors can appeal/u,
   });
   await expect(consent).toBeChecked();
   if (!project.automaticClosure) await consent.uncheck();
@@ -620,7 +619,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await requiredTests.fill(originalTests);
   await expect(requiredTests).toBeVisible();
   const consent = returningOwner.getByRole("checkbox", {
-    name: /^Slopbot auto-close/u,
+    name: /Slopbot may close Slop-skill PRs · authors can appeal/u,
   });
   await expect(consent).not.toBeChecked();
   await consent.check();
@@ -3185,6 +3184,13 @@ for (const assetCase of [
     await expect(review).toContainText(assetCase.gross);
     await expect(review).toContainText(`Researcher ${assetCase.researcher}`);
     await expect(review).toContainText(`Slop ${assetCase.slop}`);
+    for (const terms of [
+      "Find critical contract defects that permit theft or permanent freezing of funds.",
+      "A reproducible critical finding in the selected repository, reviewed by its maintainer.",
+      "Use local tests with synthetic data and funds. Do not exploit live systems or access other users' data.",
+      "Keep reports private until the owner approves disclosure.",
+    ])
+      await expect(review.getByText(terms, { exact: true })).toBeVisible();
     await expect(
       page.getByRole("navigation", { name: "Setup steps" }).getByRole("button"),
     ).toHaveCount(3);

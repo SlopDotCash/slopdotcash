@@ -592,7 +592,7 @@ const DRAFT_STORAGE_ERROR = "Allow site storage, then retry.";
 function IntakeConsent({ login }: { login: string | null }) {
   return (
     <p>
-      <LockKeyhole aria-hidden="true" size={14} /> Filed privately as{" "}
+      <LockKeyhole aria-hidden="true" size={14} /> Submit privately to GitHub as{" "}
       {login ? `@${login}` : "you"}
     </p>
   );
@@ -876,7 +876,7 @@ export function SecurityProgramPage({
               </Fact>
               <Fact term="Awards">
                 {terms.capacity.awards === null
-                  ? "Unlimited"
+                  ? "No fixed count · owner decides"
                   : terms.capacity.awards}
                 {terms.capacity.closesAt
                   ? ` · closes ${formatUtc(terms.capacity.closesAt)}`
@@ -962,23 +962,20 @@ export function SecurityProgramPage({
               </ul>
             </>
           ) : null}
-          <details className="security-reference">
-            <summary>Testing</summary>
-            <p>{scope.testingPermission}</p>
-          </details>
-          <details className="security-reference">
-            <summary>Severity</summary>
-            <p>{scope.severityRubric}</p>
-          </details>
-          <details className="security-reference">
-            <summary>
-              {terms.eligibility === "critical-loss-of-funds"
-                ? "Loss"
-                : "Impact"}
-            </summary>
-            <p>{scope.lossDefinition}</p>
-          </details>
-          <p>Test on a fork only.</p>
+          <dl className="admin-facts">
+            <Fact term="Testing">{scope.testingPermission}</Fact>
+            <Fact term="Severity">{scope.severityRubric}</Fact>
+            <Fact
+              term={
+                terms.eligibility === "critical-loss-of-funds"
+                  ? "Loss"
+                  : "Impact"
+              }
+            >
+              {scope.lossDefinition}
+            </Fact>
+          </dl>
+          <p>No live exploitation, third-party funds or secrets.</p>
         </section>
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
@@ -998,8 +995,7 @@ export function SecurityProgramPage({
               <Fact term="Reviewers">{people(terms.approvers.technical)}</Fact>
               <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
               <Fact term="Disputes">
-                {people(terms.approvers.dispute)}{" "}
-                <InfoTip text={terms.dispute.process} />
+                {people(terms.approvers.dispute)} {terms.dispute.process}
               </Fact>
               <Fact term="Response targets">
                 <StatusBadge>
@@ -1013,14 +1009,8 @@ export function SecurityProgramPage({
                 </StatusBadge>
               </Fact>
             </dl>
-            <details className="security-reference">
-              <summary>Disclosure</summary>
-              <p>{terms.disclosure}</p>
-            </details>
-            <details className="security-reference">
-              <summary>Safe harbor</summary>
-              <p>{terms.safeHarbor}</p>
-            </details>
+            <p>{terms.disclosure}</p>
+            <p>{terms.safeHarbor}</p>
             <p>
               <StatusBadge icon={<LockKeyhole />}>
                 Cases stay private
@@ -3097,7 +3087,7 @@ function ActionForm({
               />
               {field.publicNotice ? <Eye aria-hidden="true" size={14} /> : null}
               {field.label}
-              {field.info ? <InfoTip text={field.info} /> : null}
+              {field.info ? ` · ${field.info}` : null}
             </label>
           );
         if (
@@ -4029,8 +4019,8 @@ function CaseDetail({
             <NetworkName chain={record.settlement.network} iconOnly>
               {record.settlement.network}
             </NetworkName>{" "}
-            <InfoTip text={record.settlement.privacyNotice} />
           </h4>
+          <p>{record.settlement.privacyNotice}</p>
           {record.viewerRoles.includes("reporter") &&
           record.settlement.state !== "paid" ? (
             <p>

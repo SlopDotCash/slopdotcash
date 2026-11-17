@@ -78,6 +78,8 @@ for (const ref of ["refs/heads/main", "refs/heads/development"]) {
 // and one unrelated path that must not select the installer job.
 for (const path of [
   "skills/slop/SKILL.md",
+  "skills/slop-contributor/SKILL.md",
+  "skills/slop-maintainer/SKILL.md",
   "src/lib/project-skill.mjs",
   "src/lib/project-schema.mjs",
   "src/lib/install-command.ts",
@@ -120,7 +122,7 @@ for (const path of [
       });
       const lines = readFileSync(output, "utf8").split("\n");
       expect(lines).toContain(`installer=${path !== "README.md"}`);
-      if (path === "skills/slop/SKILL.md") {
+      if (path.startsWith("skills/slop")) {
         const matrix = lines.find((line) => line.startsWith("browser_matrix="));
         if (!matrix) throw new Error("Browser matrix output is missing");
         expect(

@@ -8,7 +8,6 @@ import {
   CloudCheck,
   CloudOff,
   GitBranch,
-  Info,
   ListChecks,
   LoaderCircle,
   Lock,
@@ -106,6 +105,7 @@ import {
 import {
   bountyAmountPreview,
   PRIVATE_BOUNTY_CRITERIA,
+  PRIVATE_BOUNTY_DISCLOSURE,
   PRIVATE_BOUNTY_TESTING,
   privateBountyTerms,
 } from "./lib/security-bounty-proposal";
@@ -677,11 +677,9 @@ function AutoCloseMark({ on }: { on: boolean }) {
 function ClosureConsent({
   value,
   onChange,
-  compact = false,
 }: {
   value: string;
   onChange: (value: string) => void;
-  compact?: boolean;
 }) {
   return (
     <div>
@@ -692,19 +690,7 @@ function ClosureConsent({
           onChange={(event) => onChange(String(event.currentTarget.checked))}
           type="checkbox"
         />{" "}
-        {compact ? "Slopbot may close Slop-skill PRs" : "Slopbot auto-close"}
-        {compact ? null : (
-          <>
-            {" "}
-            <span
-              aria-label="Slop-skill PRs only · appealable"
-              role="img"
-              title="Slop-skill PRs only · appealable"
-            >
-              <Info size={16} aria-hidden="true" />
-            </span>
-          </>
-        )}
+        Slopbot may close Slop-skill PRs · authors can appeal
       </label>
     </div>
   );
@@ -1882,7 +1868,6 @@ function ProjectProposalForm({
             </div>
             {p.fundingMode === "bounty" ? null : (
               <ClosureConsent
-                compact
                 onChange={set("automaticClosure")}
                 value={p.automaticClosure}
               />
@@ -2194,6 +2179,14 @@ function ProjectProposalForm({
                   ) : null}
                 </p>
               </div>
+              <p>{p.goal}</p>
+              {bounty ? (
+                <>
+                  <p>{p.criteria}</p>
+                  <p>{p.requiredTests || PRIVATE_BOUNTY_TESTING}</p>
+                  <p>{PRIVATE_BOUNTY_DISCLOSURE}</p>
+                </>
+              ) : null}
             </article>
             {valid ? (
               <GeneratedSkillPreview manifest={manifest} draft compact />
@@ -3231,6 +3224,10 @@ function ProjectUpdateForm({
             value={value.x}
           />
         </details>
+        <ClosureConsent
+          onChange={set("automaticClosure")}
+          value={value.automaticClosure}
+        />
         <details className="proposal-advanced">
           <summary>Contribution rules</summary>
           <TextField
@@ -3240,10 +3237,6 @@ function ProjectUpdateForm({
             name="criteria"
             onChange={set("criteria")}
             value={value.criteria}
-          />
-          <ClosureConsent
-            onChange={set("automaticClosure")}
-            value={value.automaticClosure}
           />
           <ReadyLabelFields
             error={(field) => shown(field)}

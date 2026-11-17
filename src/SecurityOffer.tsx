@@ -58,6 +58,7 @@ export function SecurityOffer({
           </StatusBadge>
         )}
       </p>
+      <p>Owner approval required · no additional payout fee.</p>
     </section>
   );
 }

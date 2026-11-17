@@ -97,7 +97,7 @@ export default function OwnerReserveRelease({
           disabled={busy}
           onClick={() => void run(async () => clearUnreadable())}
         >
-          Clear saved record
+          Checked wallet activity · clear saved record
         </button>
       )}
       {pending ? (

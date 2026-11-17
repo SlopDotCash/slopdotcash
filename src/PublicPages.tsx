@@ -4,6 +4,7 @@ import {
   BookOpen,
   CalendarCheck,
   CircleSlash,
+  FolderPlus,
   GitPullRequest,
   HandCoins,
   ListChecks,
@@ -60,9 +61,11 @@ export function HowItWorksPage() {
           <ol className="mechanism-flow">
             <li>
               <Search className="route-step-icon" aria-hidden="true" />
-              <strong>
-                <Link href="/#projects">1. Choose work</Link>
-              </strong>
+              <strong>1. Choose work</strong>
+              <p>
+                <Link href="/">Use the contributor skill</Link> to find
+                unblocked work.
+              </p>
             </li>
             <li>
               <GitPullRequest className="route-step-icon" aria-hidden="true" />
@@ -84,26 +87,32 @@ export function HowItWorksPage() {
           <h2 id="maintainer-path">For maintainers</h2>
           <ol className="mechanism-flow">
             <li>
-              <GitPullRequest className="route-step-icon" aria-hidden="true" />
-              <strong>
-                <Link href="/projects/new">1. Add a project</Link>
-              </strong>
+              <FolderPlus className="route-step-icon" aria-hidden="true" />
+              <strong>1. Add or resume</strong>
+              <p>
+                <Link href="/?audience=maintainer">
+                  Use the maintainer skill
+                </Link>
+                .
+              </p>
             </li>
             <li>
-              <Wallet className="route-step-icon" aria-hidden="true" />
-              <strong>
-                <Link href="/sponsors">2. Fund the pool</Link>
-              </strong>
+              <ShieldCheck className="route-step-icon" aria-hidden="true" />
+              <strong>2. Get ready</strong>
+              <p>GitHub access. Free Slopbot. Admission.</p>
             </li>
             <li>
               <ListChecks className="route-step-icon" aria-hidden="true" />
-              <strong>3. Adjust awards</strong>
+              <strong>3. Maintain your project</strong>
+              <p>PRs, CI, rules and private reports.</p>
             </li>
             <li>
-              <CalendarCheck className="route-step-icon" aria-hidden="true" />
-              <strong>
-                <a href="#payments">4. Automatic payment</a>
-              </strong>
+              <Wallet className="route-step-icon" aria-hidden="true" />
+              <strong>4. Manage rewards</strong>
+              <p>
+                Funding is optional. Adjust allocations before the{" "}
+                <a href="#payments">monthly cutoff</a>.
+              </p>
             </li>
           </ol>
         </section>

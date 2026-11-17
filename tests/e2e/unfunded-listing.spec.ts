@@ -1,8 +1,7 @@
 /**
- * An unfunded monthly pool is not listed this month (operator decision,
- * 16 November 2026): the home page and /sponsors leave it out, its page
- * still opens by direct link and says why, and a failed funding read lists
- * every project as before.
+ * Home discovery keeps active community projects visible as funding loads
+ * and after it resolves. Funding still controls displayed amounts and the
+ * sponsor list; a failed read never invents a funded reward.
  */
 
 import type { Page } from "@playwright/test";
@@ -11,6 +10,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import {
   expect,
+  expectAccessibleReflow,
   failPoolFundingRead,
   servePublicProjectReads,
   test,
@@ -18,7 +18,9 @@ import {
 
 const OBSERVED_AT = "2026-11-16T12:00:00.000Z";
 
-/** The frozen registry with Eliza's pool given a Base vault. */
+test.use({ video: "on" });
+
+/** The frozen registry with a funded Eliza and an unfunded community ASI. */
 async function serveRegistry(page: Page) {
   const eliza = stagingPaymentProject("base-mainnet");
   await page.route(
@@ -28,7 +30,11 @@ async function serveRegistry(page: Page) {
         json: {
           schemaVersion: "1",
           projects: PROJECTS.map((entry) =>
-            entry.id === eliza.id ? eliza : entry,
+            entry.id === eliza.id
+              ? eliza
+              : entry.id === "asi"
+                ? { ...entry, listingTier: "community" }
+                : entry,
           ),
         },
       }),
@@ -42,7 +48,7 @@ async function serveRegistry(page: Page) {
   return eliza;
 }
 
-test("only funded monthly pools are listed this month", async ({
+test("home keeps unfunded community projects while sponsors list funded pools", async ({
   page,
 }, info) => {
   await page.clock.setFixedTime(new Date(OBSERVED_AT));
@@ -50,8 +56,37 @@ test("only funded monthly pools are listed this month", async ({
   const eliza = await serveRegistry(page);
   const vault = eliza.escrow?.deployments[0];
   if (!vault) throw new Error("The Eliza vault fixture is missing");
-  await page.route("**/api/v1/pool-funding", (route) =>
+  await page.route("**/api/v1/merge-activity", (route) =>
     route.fulfill({
+      json: {
+        schema: "slop-merge-activity-v1",
+        projects: [
+          {
+            projectId: eliza.id,
+            repositories: [
+              {
+                repository: eliza.repositories[0].id,
+                observedAt: OBSERVED_AT,
+                lastAttemptFailed: false,
+                lastMergedAt: OBSERVED_AT,
+                waitingOutside: 0,
+                waitingCapped: false,
+                mergedOutsideLast30Days: 1,
+                medianHoursToMerge: 312,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  let releaseFunding = () => {};
+  const fundingHeld = new Promise<void>((resolve) => {
+    releaseFunding = resolve;
+  });
+  await page.route("**/api/v1/pool-funding", async (route) => {
+    await fundingHeld;
+    await route.fulfill({
       json: {
         schema: "slop-pool-funding-v1",
         projects: [
@@ -69,22 +104,43 @@ test("only funded monthly pools are listed this month", async ({
           },
         ],
       },
-    }),
-  );
-  await page.goto("/", { waitUntil: "networkidle" });
+    });
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   const projects = page.locator("#projects");
-  await expect(projects.locator('a[href="/projects/eliza"]')).toBeVisible();
-  // Unfunded monthly pools, including a points-only pool, are not listed.
+  try {
+    for (const id of ["eliza", "asi", "slopdotcash", "thenetwork"])
+      await expect(projects.locator(`a[href="/projects/${id}"]`)).toBeVisible();
+    await expect(projects.locator('a[href="/projects/asi"]')).toContainText(
+      "Points only",
+    );
+  } finally {
+    releaseFunding();
+  }
+  // A successful funding read updates amounts without removing community work.
+  await expect(projects.locator('a[href="/projects/eliza"] strong')).toHaveText(
+    "$1k",
+  );
   for (const id of ["asi", "slopdotcash", "thenetwork"])
-    await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
+    await expect(projects.locator(`a[href="/projects/${id}"]`)).toContainText(
+      "Points only",
+    );
+  await expect(projects).not.toContainText("Last merge");
+  await expect(projects).not.toContainText("outside PRs waiting");
+  await expect(projects).not.toContainText("median merge");
+  await expect(page.locator("main")).not.toContainText("Pledged");
   // An external prize share stays listed.
   await expect(
     projects.locator('a[href="/projects/delta-star"]'),
   ).toBeVisible();
   await page.screenshot({
-    path: info.outputPath("home-funded-only.png"),
+    path: info.outputPath("home-funded-and-community.png"),
     fullPage: true,
   });
+  const communityLink = projects.locator('a[href="/projects/asi"]');
+  await communityLink.focus();
+  await expect(communityLink).toBeFocused();
+  await expectAccessibleReflow(page, "home-funded-and-community");
 
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   const pools = page.getByRole("list", { name: "Project funding pools" });
@@ -110,6 +166,10 @@ test("only funded monthly pools are listed this month", async ({
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.getByText(NOT_LISTED_NOTICE, { exact: true })).toHaveCount(
     0,
+  );
+  // Merge evidence remains available on the project page.
+  await expect(page.locator(".project-merge-activity")).toContainText(
+    "Merging: last merge today",
   );
 });
 

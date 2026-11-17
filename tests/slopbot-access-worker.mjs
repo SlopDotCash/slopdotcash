@@ -8,6 +8,7 @@
 import { githubAppReportingReader } from "../backend/security/github-advisories";
 import { refreshRegisteredReporting } from "../workers/slopbot/reporting-readiness";
 import { routeRepositoryAccess } from "../workers/slopbot/repository-access";
+import { runReportingFixtureRefresh } from "./reporting-refresh-fixture.mjs";
 
 export default {
   fetch(request, env) {
@@ -18,15 +19,17 @@ export default {
       url.hostname === "127.0.0.1" &&
       url.pathname === "/__fixture/reporting-refresh"
     ) {
-      return refreshRegisteredReporting(
-        env,
-        githubAppReportingReader({
-          appId: env.SLOPBOT_APP_ID,
-          privateKey: env.SLOPBOT_APP_PRIVATE_KEY,
-          apiOrigin: env.GITHUB_FIXTURE_ORIGIN,
-          fetch: (url, init) => fetch(url, init),
-          now: () => new Date(),
-        }),
+      return runReportingFixtureRefresh(() =>
+        refreshRegisteredReporting(
+          env,
+          githubAppReportingReader({
+            appId: env.SLOPBOT_APP_ID,
+            privateKey: env.SLOPBOT_APP_PRIVATE_KEY,
+            apiOrigin: env.GITHUB_FIXTURE_ORIGIN,
+            fetch: (url, init) => fetch(url, init),
+            now: () => new Date(),
+          }),
+        ),
       ).then((result) => Response.json(result));
     }
     return (
