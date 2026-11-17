@@ -103,11 +103,15 @@ source, on 10 November 2026.
 
 **Bridge: deBridge DLN.** The order itself names its receiver, arrival asset,
 amount and destination chain, so each can be compared with the Worker's own
-decision before signing. Relay was cheaper (about 0.06% against about 0.2%
-plus a fixed fee) but binds its receiver only through an opaque order id; no
-pre-sign check could prove where the funds go. Across reaches chain 4663 with
-ETH only. The canonical bridge would deliver a bridged USDC with no liquidity.
-LI.FI adds another party and a fee on top of the same underlying routes.
+decision before signing. This remains the implemented and approved bridge.
+The initial comparison was made on 10 November. The
+[17 November route review](slop-buyback-route-review-2026-11-17.md) supersedes
+its claims about Relay's opaque order identity and Across's advertised asset
+support: current Relay protocol data can bind the actual deposit to canonical
+order terms, while an Across announcement alone does not prove a usable
+Solana-to-Robinhood USDG quote. No alternative bridge is activated by that
+research. A new route needs its own reviewed signer, refund, accounting and
+qualification changes.
 
 **Purchase: KyberSwap.** It is the route the converter already uses and
 reviews on the EVM networks: one pinned router, decoded calldata, a signed
@@ -252,8 +256,8 @@ and use harness gas budgets and slippage, as each file's header explains.
 
 ## Owner decisions
 
-Confirmed by the owner on 10 November 2026 (PRD section 6 table). The code
-holds no fallback for any of these values.
+The original values were confirmed by the owner on 10 November 2026 (PRD
+section 6 table). The code holds no fallback for any of these values.
 
 1. Every limit in the configuration table, including the minimum order of 500
    USDC and the 1.5% bridge cost limit.
@@ -261,6 +265,17 @@ holds no fallback for any of these values.
    separate from and larger than the fee-conversion budget.
 3. The burn takes half of the SLOP the buyback acquired, once. The retained
    half is never burned again.
+
+Owner decisions, 16–17 November 2026: start new buyback checks with at least
+25 USD of available buyback funds, lower the bridge minimum to 25 USDC, and
+allow at most 10% total bridge cost. This replaces the original 500 USDC and
+1.5% values. Available funds retain the existing 50% fee allocation, prior
+commitments, wallet-balance and value-cap checks. The cost cap includes
+spread, fixed fees, rent and network fees; all costs must be priced before a
+send. Purchase slippage, native ceilings, the 25 USDG purchase minimum and
+the 5 USDG minimum burn value retain their existing limits. Reconcile old
+orders, refunds, arrivals and owed burns independently of the new-order
+threshold.
 
 Set at activation (operator decision, 12 November 2026):
 

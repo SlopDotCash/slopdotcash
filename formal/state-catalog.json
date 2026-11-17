@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2ba179881196ac8ec651c83e9ad6e1fd189c293bdf0ccd0e0a86fbda7f12638e",
+  "inventorySha256": "c3d865159a9062f306c4c48c33168da1ec9371fce404ca083b86b4413e04cd8b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3630,7 +3630,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 160,
+      "line": 162,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -3638,6 +3638,7 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
@@ -3646,7 +3647,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 223,
+      "line": 225,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3654,6 +3655,7 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
@@ -3662,7 +3664,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 229,
+      "line": 231,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3670,6 +3672,7 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
@@ -3678,7 +3681,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 330,
+      "line": 332,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],
@@ -3686,10 +3689,11 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
-      "lexicallyUnmentionedValues": ["no_route", "pending"],
+      "lexicallyUnmentionedValues": ["no_route"],
       "review": "candidate-only"
     },
     {
@@ -3699,6 +3703,7 @@
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
       "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"

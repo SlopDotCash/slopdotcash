@@ -384,15 +384,17 @@ Owner decision, 10 November 2026. Half of all fee income funds a programmatic bu
 | --- | --- |
 | Buyback share of fee income | 50% |
 | Burn share of acquired SLOP | 50% |
-| Minimum bridge order | 500 USDC |
-| Maximum bridge cost: spread, fixed protocol fee, and network fee | 1.5% of the order |
+| Minimum bridge order | 25 USDC of available buyback funds |
+| Maximum bridge cost: spread, fixed protocol fee, and network fee | 10% of the order |
 | Fixed protocol fee ceiling, Base and Ethereum | 0.001 ETH per order |
 | Solana order native ceiling: order-account rent, fixed fee, and network fee | 0.05 SOL per order, 0.1 SOL per UTC day |
 | Minimum purchase and minimum burn | 25 USDG and 5 USDG of value |
 | Purchase slippage and price impact | 1% and 3% |
 | Bridge and purchase value | 1,000 per run and 5,000 per rolling 24 hours, per network and leg |
 
-The owner confirmed these values on 10 November 2026, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Confirmation did not activate the buyback. Operator decision, 12 November 2026: the production buyback is live and counts fee income from `2026-11-12T00:00:00.000Z`; staging stays off. The Solana order ceiling is separate from the fee-conversion native budget.
+The owner confirmed the original limits on 10 November 2026, including a 500 USDC bridge minimum and a 1.5% bridge cost cap, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Owner decisions, 16–17 November 2026: start checking new buybacks when at least 25 USD of buyback funds is available, and allow total bridge costs of at most 10%. This changes the bridge minimum and cost cap to the values above. Count only unspent buyback entitlement from verified fee income or proven arrivals, bounded by the wallet balance and remaining caps; the retained half of fees and unrelated deposits do not make an order eligible. Below the minimum, do not request a new bridge or reference-asset purchase route. Other assets may need a valuation quote before their dollar eligibility is known. Continue reconciling existing orders, refunds and arrivals, and keep owed burns subject to their own limits. These checks do not change the 50% fee allocation, purchase slippage, burn share, native ceilings or other value caps.
+
+Confirmation did not activate the buyback. Operator decision, 12 November 2026: the production buyback is live and counts fee income from `2026-11-12T00:00:00.000Z`; staging stays off. The Solana order ceiling is separate from the fee-conversion native budget.
 
 The buyback trusts the pinned deBridge contracts and program, the pinned swap router, and the SLOP token, whose owner can pause and mint. It measures price impact from the aggregator's own prices. A hot fee-wallet key can sign any transaction from its wallet; the checks above bound what the Worker signs, not what a stolen key can do. Do not describe the buyback as guaranteed, and do not publish a burn before its finalized receipt.
 
