@@ -7,6 +7,7 @@
  * reinstatement path; ordinary publication does not request reinstatement.
  */
 
+import { type IntakeCount, intakePaused } from "../../src/lib/intake-cap.mjs";
 import {
   listedThisMonth,
   type PoolFundingIndex,
@@ -109,6 +110,13 @@ export type SkillPublicationDependencies = {
    * as before, so a funding outage never empties discovery.
    */
   poolFunding(): Promise<PoolFundingIndex | null>;
+  /**
+   * The stored open pull request counts behind `GET /api/v1/merge-activity`.
+   * Discovery leaves out an active project whose owner set an intake cap
+   * while a recent count is at or above it (`intakePaused`). Absent, null or
+   * a failed read pauses nothing, so an outage never empties discovery.
+   */
+  intakeCounts?(): Promise<Map<string, IntakeCount[]> | null>;
   now?: () => Date;
 };
 
@@ -202,14 +210,27 @@ async function readPoolFunding(
   }
 }
 
+/** Null when the counts cannot be read: no project is paused by its cap. */
+async function readIntakeCounts(
+  deps: SkillPublicationDependencies,
+): Promise<Map<string, IntakeCount[]> | null> {
+  try {
+    return (await deps.intakeCounts?.()) ?? null;
+  } catch {
+    console.error("project discovery intake counts unavailable");
+    return null;
+  }
+}
+
 /** The routing index the bootstrap skill matches a repository origin against. */
 async function discovery(
   deps: SkillPublicationDependencies,
 ): Promise<Response> {
-  const [all, records, funding] = await Promise.all([
+  const [all, records, funding, intake] = await Promise.all([
     deps.listProjects(),
     deps.listEnforcements(),
     readPoolFunding(deps),
+    readIntakeCounts(deps),
   ]);
   const now = deps.now?.() ?? new Date();
   const template = await deps.loadTemplate();
@@ -217,12 +238,15 @@ async function discovery(
   // skill bytes for inspection, but the bootstrap skill and installer only
   // accept active projects. Keep the discovery index identical to that gate.
   // An unfunded monthly pool is not listed this month (operator decision,
-  // 16 November 2026); its skills still serve by direct link.
+  // 16 November 2026); its skills still serve by direct link. Neither is a
+  // project that paused new contributors at its intake cap (operator
+  // decision, 17 November 2026).
   const candidates = all.filter(
     (project) =>
       project.status === "active" &&
       listed(project, records) &&
       listedThisMonth(project.manifest, funding, now) &&
+      !intakePaused(project.manifest, intake?.get(project.id), now) &&
       publishesGeneratedSkills(project.manifest),
   );
   const clearances = await Promise.all(

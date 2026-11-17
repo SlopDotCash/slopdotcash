@@ -5,6 +5,7 @@ import {
 } from "../backend/pages";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { githubApiOrigin } from "../backend/projects/github-lookup";
+import { readIntakeCounts } from "../backend/projects/merge-activity";
 import { readPoolFundingIndex } from "../backend/projects/pool-funding";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { referralRedirect } from "../backend/referrals/codes";
@@ -47,6 +48,7 @@ export async function onRequest(
           deploymentTier(env.SLOP_ENVIRONMENT),
           new Date(),
         ),
+      intakeCounts: () => readIntakeCounts(db),
     });
     if (artifact !== null) return artifact;
   }
