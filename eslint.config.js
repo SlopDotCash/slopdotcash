@@ -22,7 +22,7 @@ const exported = ["apps", "packages"].flatMap((parent) => readdirSync(parent).fi
   return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+"))
 }))
 // Files copied byte for byte from development and pinned by SHA-256 in frozen.json: records, never linted or rewritten.
-const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
+const frozen = JSON.parse(readFileSync(`${import.meta.dirname}/frozen.json`, "utf8")).ignore
 // ARCHITECTURE D14: a signing key is reached only from its own src/signer/ and that key's Worker or program entry.
 const custody = "A signing key stays in its app's src/signer/ and its own entry (ARCHITECTURE D14)"
 const signing = {
