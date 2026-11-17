@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1586921a9a9e9e9fb1bc7e07adfa8a44e7583aa69a0774ad12f647adf5dfd873",
+  "inventorySha256": "73cb6fd354856ba46fc43c5f9c0ad9fef32f0bccf36235c22f80c0d643b52959",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -154,6 +154,7 @@
       "values": ["apply", "preview"],
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -190,6 +191,7 @@
       "values": ["apply", "preview"],
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -747,7 +749,8 @@
       ],
       "models": [
         "formal/models/api/api_accounts.qnt",
-        "formal/models/api/api_identity.qnt"
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "assertion_issued",

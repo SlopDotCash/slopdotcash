@@ -346,12 +346,13 @@
     },
     {
       "path": "backend/pages.ts",
-      "sha256": "d788ae821f9643654a630c1ba34eeb805621c1935e24d3fcd6b199bcfd229584",
+      "sha256": "93c6474b8f720f3fd19214790b13f291ea06a0c40566a847389e3001d0f0a63e",
       "models": [
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/project_skill_publication.qnt"
       ],
-      "candidateLines": [112],
+      "candidateLines": [114],
       "review": "mapped-abstraction"
     },
     {
@@ -585,10 +586,10 @@
     },
     {
       "path": "backend/points/dependencies.ts",
-      "sha256": "c2664ddbc8d9b30bd7a5f3aa4f8a0b2989b9d233be322f00128ccfa3fb6106e4",
-      "models": [],
+      "sha256": "1db00db6ec5ab945277f53040a8dbc0868401b8c823da5f8c4f5bd218ad406ca",
+      "models": ["formal/models/api/api_points_session_lifetime.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Type declarations of the points API dependencies and X configuration; no runtime code or state transition."
     },
     {
@@ -605,17 +606,18 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "e2d6c92f3bd5b0492dbd04fc35eea011c826bd52b82c2f0bd0eca65503276252",
+      "sha256": "17663a1de5d552a3a804e2fb0730bdec5145d9930a271cbbe5320866ea64c1de",
       "models": [
         "formal/models/api/api_accounts.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/points/pr_review_identities.qnt",
         "formal/models/slopbot/bot_closure_membership.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        21, 22, 120, 220, 225, 230, 234, 304, 332, 336, 339, 342, 345, 350, 355,
-        359, 382, 398
+        23, 24, 122, 228, 233, 238, 242, 316, 344, 348, 351, 354, 357, 362, 367,
+        371, 394, 410
       ],
       "review": "mapped-abstraction"
     },
@@ -731,6 +733,7 @@
       "sha256": "160306a155927e6efaf8d00b89415ba04846131a4b509c7ca9596a2e18cd7080",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -2196,8 +2199,9 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "96cd67fe5ab1a1e74b1404ba29224f948fcabf471292b2be615c8fceca9dce91",
+      "sha256": "10ac1c43564ab9bbf507279dd3b98df865efc9eafdec173e1725bba28f1f9f82",
       "models": [
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/api_reserved_awards_feed.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2284,7 +2288,8 @@
       "sha256": "7daa14a2720f271daee8a9abdfd6c92e6bfa65808f31db4fda6896c349e50cd9",
       "models": [
         "formal/models/api/api_accounts.qnt",
-        "formal/models/api/api_identity.qnt"
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt"
       ],
       "candidateLines": [
         8, 9, 19, 23, 43, 45, 47, 49, 57, 60, 71, 74, 75, 85, 92, 98, 99
@@ -9935,10 +9940,10 @@
     },
     {
       "path": "wrangler.toml",
-      "sha256": "31c302ff2e5c11f3afec9f2cebca9c87bcef2d8bbae346619f7c6d7678bf11a3",
-      "models": [],
+      "sha256": "c8ee4d32dc0de5636b7e1caa9ea078926d7811224255b7f48051b5798475dc0e",
+      "models": ["formal/models/api/api_points_session_lifetime.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Static Pages bindings, environment constants and isolated preview declarations. No executable transition; API composition and service release models describe consumers. This configuration is not evidence of hosted binding availability."
     }
   ],
@@ -10282,6 +10287,30 @@
         "workers/slopbot/points-disputes.ts"
       ],
       "scenarios": ["escalationTest"]
+    },
+    {
+      "path": "formal/models/api/api_points_session_lifetime.qnt",
+      "sha256": "a6d7437717c0827ce8822ffb97916fd6c516933230fc4704bbc4d532ffa70ad9",
+      "sources": [
+        "backend/pages.ts",
+        "backend/points/dependencies.ts",
+        "backend/points/handler.ts",
+        "backend/projects/handler.ts",
+        "functions/api/v1/[[path]].ts",
+        "migrations/0008_points.sql",
+        "wrangler.toml"
+      ],
+      "scenarios": [
+        "closedOwnerMustReopenTest",
+        "configuredNonAdminGetsOneHourTest",
+        "currentAdminRoleStillRequiredTest",
+        "eligibilityOnlyExtendsFreshSignInTest",
+        "otherAdminExpiresAtOneHourTest",
+        "ownerExpiresAtSevenDaysTest",
+        "revokedSessionRefusesPresentedCookieTest",
+        "signoutClearsOwnerSessionTest",
+        "unverifiedJoinCannotIssueSessionTest"
+      ]
     },
     {
       "path": "formal/models/api/api_private_assessment.qnt",
