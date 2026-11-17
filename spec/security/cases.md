@@ -56,7 +56,7 @@ type AppealRecord = { from: Receipt, resolution: AppealState, by: int }
 type Triage = { state: TriageState, appealRevision: int, attempt: int, startedAt: int, escalated: bool, belowFloor: bool, returnDraft: bool,
   exclusions: T::ExclusionContext, matchedLine: int }
 type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSource, terms: T::ReceiptTerms, revision: int,
-  reportVersion: int, authority: Authority, triagers: List[int], revokedTriagers: List[int], memberEvents: int,
+  reportVersion: int, authority: Authority, triagers: List[int], triagerEpoch: int, revokedTriagers: List[int], memberEvents: int,
   receipt: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int,
   award: Award, grossChosen: M::Amount, commitment: Commitment, payment: PaymentState,
   related: Related, relatedReview: RelatedReview, deciders: List[int],
@@ -67,7 +67,7 @@ pure val noAppealRecord: AppealRecord = { from: Received, resolution: NoAppeal, 
 pure val noTriage: Triage = { state: NoTriage, appealRevision: 0, attempt: 0, startedAt: 0, escalated: false, belowFloor: false, returnDraft: false,
   exclusions: T::noExclusions, matchedLine: 0 }
 pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: NoSource, terms: T::unpaidTerms(0, 0), revision: 0,
-  reportVersion: 0, authority: noAuthority, triagers: List(), revokedTriagers: List(), memberEvents: 0,
+  reportVersion: 0, authority: noAuthority, triagers: List(), triagerEpoch: 0, revokedTriagers: List(), memberEvents: 0,
   receipt: Received, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0,
   award: NotApplicable, grossChosen: M::zero, commitment: NoCommitment, payment: PaymentNotApplicable,
   related: NotAssessed, relatedReview: ReviewNotApplicable, deciders: List(),
@@ -115,15 +115,21 @@ pure def sometimesUnpaidReceipt(c: PrivateCase): bool = c.submission == Verified
 
 A newer verified snapshot replaces every role at once. A current technical
 approver assigns or revokes a triager; the reporter can never triage their own
-case. Membership history and its audit event stay with the case revision.
+case. A triager reads the case only under an assignment made under the current
+snapshot (PRD section 8, "Private data and retention": only currently
+authorized case reviewers read retained bodies), so a newer snapshot revokes
+every triager, and a current technical approver assigns again whoever still
+triages. Membership history and its audit event stay with the case revision.
 
 ```quint
 pure def canObserveAuthority(c: PrivateCase, snapshot: Authority): bool = snapshot.epoch > c.authority.epoch
-pure def observeAuthority(c: PrivateCase, snapshot: Authority): PrivateCase = { ...c, authority: snapshot }
+pure def observeAuthority(c: PrivateCase, snapshot: Authority): PrivateCase =
+  { ...c, authority: snapshot, triagers: List(), revokedTriagers: c.revokedTriagers.concat(c.triagers),
+    memberEvents: c.memberEvents + c.triagers.length(), revision: if (c.triagers.length() > 0) c.revision + 1 else c.revision }
 pure def canAssignTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): bool = c.submission == Verified
   and technicalNow(c, by, checkedEpoch) and actor > 0 and actor != c.reporter and not(c.triagers.includes(actor))
 pure def assignTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): PrivateCase =
-  { ...c, triagers: c.triagers.append(actor), revision: c.revision + 1, memberEvents: c.memberEvents + 1 }
+  { ...c, triagers: c.triagers.append(actor), triagerEpoch: checkedEpoch, revision: c.revision + 1, memberEvents: c.memberEvents + 1 }
 pure def canRevokeTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): bool = c.submission == Verified
   and technicalNow(c, by, checkedEpoch) and c.triagers.includes(actor)
 pure def revokeTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): PrivateCase =
@@ -140,9 +146,13 @@ pure def mayReadAward(c: PrivateCase, actor: int, checkedEpoch: int): bool = may
   or (checkedEpoch == c.authority.epoch and c.authority.financial.includes(actor) and (c.award == Approved or c.award == Reserved))
 pure def alwaysTriagersExcludeReporter(c: PrivateCase): bool = not(c.triagers.includes(c.reporter))
 pure def alwaysMembershipAudited(c: PrivateCase): bool = c.memberEvents >= c.revokedTriagers.length() and c.memberEvents >= 0
+pure def alwaysTriagersAssignedUnderCurrentSnapshot(c: PrivateCase): bool =
+  c.triagers.length() > 0 implies c.triagerEpoch == c.authority.epoch and c.triagerEpoch > 0
 pure def stepMembershipHistoryRetained(before: PrivateCase, after: PrivateCase): bool =
   before.revokedTriagers.every(t => after.revokedTriagers.includes(t)) and after.memberEvents >= before.memberEvents
 pure def sometimesTriagerRevoked(c: PrivateCase): bool = c.revokedTriagers.length() > 0
+pure def sometimesTriagerReassignedAfterSnapshot(c: PrivateCase): bool = c.triagers.length() > 0 and c.authority.epoch > 1
+  and c.revokedTriagers.includes(c.triagers.nthOr(0, 0))
 ```
 
 ## Story: Obtain a human decision without automatic rejection

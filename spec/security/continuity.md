@@ -11,6 +11,13 @@ Destination recovery is already composed in the private award settlement and
 the bounty-vault [dispatch](../settlement/paymentDispatch.md). Participation
 bans belong to the access composition.
 
+Two owner decision gates stay open and are not modelled. PRD section 10
+("Continuity") requires restoring backups, but no restore scope, authority
+or reconciliation of a restored case, hold or obligation against later
+finalized steps is decided. Who prepares or recovers the request of an
+admitted direct award after its payer lost the financial role is the
+[private award settlement's](../settlement/privateAward.md) open gate.
+
 ## Story: Keep every private case and obligation through account and role changes
 
 ### Account closure withdraws email consent and keeps the case and its obligations
@@ -79,8 +86,11 @@ guards against later edits of the role step. With the settlement unchanged,
 the payout of a reserved award stays possible: its paid notice can always be
 saved for the reporter and every current approver. A committed vault-backed
 award is still paid after the whole role set changed. A direct award's
-request prepared before the change is still credited; who prepares it after
-its payer lost the role is the private award settlement's open decision.
+request prepared before the change is still credited. A replaced technical
+reviewer, or a triager assigned before the change, reads the report body
+afterwards only under a role of the new snapshot: the change revokes every
+triager ([case](./cases.md)), and a current technical approver may assign
+one again.
 
 ```quint
 pure def realActors(snapshot: C::Authority): bool = snapshot.technical.every(a => a > 0) and snapshot.financial.every(a => a > 0)
@@ -97,6 +107,19 @@ pure def stepRolesKeepCommitments(before: Continuity, via: str, after: Continuit
     and B::caseIds.every(id => PA::caseOf(after.award, id).grossChosen == PA::caseOf(before.award, id).grossChosen
       and PA::caseOf(after.award, id).commitment == PA::caseOf(before.award, id).commitment
       and PA::caseOf(after.award, id).award == PA::caseOf(before.award, id).award)
+pure def canAssignTriager(s: Continuity, id: int, by: int, checkedEpoch: int, actor: int): bool =
+  B::known(id) and C::canAssignTriager(PA::caseOf(s.award, id), by, checkedEpoch, actor)
+pure def assignTriager(s: Continuity, id: int, by: int, checkedEpoch: int, actor: int): Continuity =
+  withAward(PA::withBounty(B::putCase(id, C::assignTriager(PA::caseOf(s.award, id), by, checkedEpoch, actor), s.award.bounty), s.award), s)
+pure def reviewersOf(s: Continuity, id: int): List[int] = PA::caseOf(s.award, id).authority.technical
+  .concat(PA::caseOf(s.award, id).authority.financial).concat(PA::caseOf(s.award, id).authority.moderators).concat(PA::caseOf(s.award, id).triagers)
+pure def readsUnderCurrentRole(s: Continuity, id: int, a: int): bool =
+  C::mayReadBody(PA::caseOf(s.award, id), a, PA::caseOf(s.award, id).authority.epoch) implies (a == PA::caseOf(s.award, id).reporter
+    or PA::caseOf(s.award, id).authority.technical.includes(a) or PA::caseOf(s.award, id).authority.moderators.includes(a))
+pure def stepReplacedReviewerReadsOnlyUnderCurrentRole(before: Continuity, via: str, after: Continuity): bool = via == "replaceRoles" implies
+  B::caseIds.every(id => reviewersOf(before, id).every(a => readsUnderCurrentRole(after, id, a)))
+pure def sometimesTriagerRevokedByRoleChange(s: Continuity): bool = PA::caseOf(s.award, 1).revokedTriagers.length() > 0
+  and PA::caseOf(s.award, 1).authority.epoch > 1
 pure def sometimesPaidAfterRoleSetChanged(s: Continuity): bool = s.changedAfterCommit and s.award.settlement.payment.phase == P::Paid
   and PA::caseOf(s.award, 1).authority.epoch > 1
 ```
@@ -156,6 +179,7 @@ pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, technical: List
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false })
 pure val byValues = Set(1, 2)
+pure val actorValues = Set(2, 10)
 pure val checkedEpochValues = Set(1)
 pure val amountValues = Set(List(4))
 pure val grossValues = Set(List(4))
