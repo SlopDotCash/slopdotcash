@@ -5788,7 +5788,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "e87ad8679ea7d57761d8058ac5ca89f33987afc7e3463089daadfc9241249652",
+      "sha256": "c6e84297a4f51b35af810c8991e6adb1da9755ca3a679b2937fea0373b11cec2",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -5800,21 +5800,19 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        20, 25, 96, 113, 114, 115, 117, 123, 133, 142, 145, 153, 154, 156, 157,
-        173, 175, 225, 226, 227, 230, 231, 232, 233, 250, 256, 263, 271, 281,
-        288, 295, 309, 329, 346, 364, 365, 366, 371, 395, 396, 401, 404, 405,
-        406, 407, 408, 410, 411, 428, 487, 488, 493, 495, 525, 526, 527, 529,
-        531, 532, 539, 540, 554, 556, 558, 560, 562, 565, 566, 570, 572, 574,
-        584, 585, 590, 592, 604, 605, 635, 639, 640, 650, 651, 662, 664, 671,
-        675, 680, 681, 701, 707, 759, 760, 761, 762, 765, 775, 800, 847, 860,
-        865, 874, 940, 960, 966, 975, 981, 986, 988, 991, 997, 998, 1009, 1018,
-        1026, 1028, 1037, 1040, 1041, 1042, 1043, 1045, 1046, 1049, 1050, 1061,
-        1094, 1098, 1146, 1147, 1148, 1157, 1237, 1247, 1252, 1270, 1272, 1274,
-        1277, 1278, 1279, 1281, 1349, 1353, 1455, 1456, 1457, 1487, 1488, 1527,
-        1529, 1530, 1531, 1533, 1540, 1542, 1546, 1548, 1550, 1559, 1560, 1566,
-        1572, 1577, 1586, 1587, 1588, 1589, 1592, 1593, 1595, 1600, 1601, 1604,
-        1605, 1607, 1613, 1619, 1620, 1621, 1622, 1625, 1626, 1634, 1645, 1646,
-        1651
+        20, 25, 95, 112, 113, 114, 116, 122, 132, 141, 144, 152, 153, 155, 156,
+        172, 174, 224, 225, 226, 229, 230, 231, 232, 249, 255, 262, 270, 280,
+        287, 294, 308, 328, 345, 364, 365, 370, 394, 397, 398, 399, 400, 401,
+        403, 404, 421, 503, 504, 505, 507, 509, 510, 517, 518, 532, 534, 536,
+        538, 540, 543, 544, 548, 550, 552, 562, 563, 568, 570, 582, 583, 610,
+        614, 615, 625, 626, 637, 639, 646, 647, 666, 672, 698, 699, 700, 701,
+        704, 714, 739, 786, 799, 804, 813, 879, 899, 905, 914, 920, 925, 927,
+        930, 936, 937, 948, 957, 965, 967, 976, 979, 980, 981, 982, 984, 985,
+        988, 989, 1000, 1033, 1037, 1080, 1081, 1151, 1161, 1166, 1184, 1186,
+        1188, 1191, 1192, 1193, 1195, 1263, 1267, 1369, 1370, 1371, 1401, 1402,
+        1443, 1444, 1445, 1447, 1454, 1456, 1460, 1462, 1464, 1473, 1474, 1480,
+        1486, 1491, 1500, 1501, 1502, 1503, 1506, 1507, 1509, 1514, 1515, 1518,
+        1519, 1521, 1527, 1533, 1534, 1535, 1536, 1539, 1540, 1548, 1560
       ],
       "review": "mapped-abstraction"
     },
@@ -5879,7 +5877,7 @@
     },
     {
       "path": "src/ProfilePage.tsx",
-      "sha256": "7b8edcdd2ed3bf0fbb44504c012dc88bc62a5a364d89e754fc4b33759b0d5aec",
+      "sha256": "075a7508274db6f1cb3712de8c5214df061695bca5ba20b0cb58ec696c3db731",
       "models": [
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -5888,23 +5886,23 @@
       "candidateLines": [
         2, 39, 40, 43, 44, 50, 52, 54, 55, 61, 65, 70, 73, 75, 78, 87, 93, 95,
         96, 100, 108, 109, 110, 115, 120, 132, 139, 146, 150, 155, 158, 164,
-        166, 183, 287, 289, 293, 296, 297, 300, 308, 331, 332, 347, 349, 353,
-        356, 359, 372, 382, 403, 410, 419, 420, 426, 427, 428, 429
+        166, 183, 273, 275, 279, 282, 283, 286, 294, 317, 318, 333, 335, 339,
+        342, 345, 358, 368, 389, 396, 405, 406, 412, 413, 414, 415
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/Profiles.tsx",
-      "sha256": "8a8382c55ed185ea692e2b33385d8b5b06a5e24294224cda6e8276782b59813f",
+      "sha256": "74f4acd60f1b7370154057054f521255f18b9faa12db0e6c65d4ef409b119926",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        2, 65, 66, 73, 79, 80, 82, 87, 114, 116, 117, 127, 147, 148, 153, 154,
-        155, 161, 162, 167, 168, 169, 174, 271, 283, 285, 288, 304, 308, 347,
-        354, 408, 421, 446, 451, 452, 454, 455, 461, 462, 472
+        2, 62, 63, 70, 76, 77, 79, 84, 107, 109, 110, 120, 138, 139, 144, 145,
+        146, 152, 153, 158, 159, 160, 165, 234, 246, 248, 251, 267, 271, 310,
+        317, 371, 384, 409, 414, 415, 417, 418, 424, 425, 435
       ],
       "review": "mapped-abstraction"
     },
@@ -6019,7 +6017,7 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "013c4ccaa48f0923da45550b4a3984a000fc9609a83d3bfe5a1777e279bf6f00",
+      "sha256": "aad6585dd76cfeaac5e00fb62f8c02ad044fc0ff0b4ac4b47e2e33c48f688a82",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
@@ -6931,14 +6929,6 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": "src/lib/profile-activity.ts",
-      "sha256": "cd8c8a60741ae4060269313eab55f2aa5a18d8bbe072a1d0e017276f4b497050",
-      "models": ["formal/models/ui/ui_profile_history.qnt"],
-      "candidateLines": [],
-      "review": "mapped-abstraction",
-      "statelessReason": "Pure UTC-day bucketing and summed Point amounts from arguments; no retained state, I/O, lifecycle or mutation."
-    },
-    {
       "path": "src/lib/profile-actor.ts",
       "sha256": "4451e9d2eda699b05b4fc4b560bdf32861b416327ff4c069397f757f92a740f1",
       "models": [],
@@ -7345,7 +7335,7 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "6047f5b9938279639f5cf0abbbf819957934e610a47f409c915c79c3943a7bde",
+      "sha256": "79ea1f21c2f2b4a2c3dc00f44dbd378ff174ac4a37d515923bac1e9796c4cd03",
       "models": ["formal/models/ui/ui_navigation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -17775,7 +17765,7 @@
     },
     {
       "path": "formal/models/ui/ui_calendar_views.qnt",
-      "sha256": "ee28f9c7943d99ae5cc3b8cdb4f6fe78379062930c46b052f99168c9c0fa376b",
+      "sha256": "d1761113ceb5d94f02380316e64e651b91d3633f59dcd56f5c044df74bd9c181",
       "sources": [
         "src/OwnerAwards.tsx",
         "src/Points.tsx",
@@ -17783,13 +17773,7 @@
         "src/ProjectProposalPage.tsx",
         "src/lib/use-time-boundary.ts"
       ],
-      "scenarios": [
-        "chartRolloverTest",
-        "lifetimePreservedTest",
-        "monthRolloverTest",
-        "periodSwitchUsesCurrentMonthTest",
-        "projectMonthRolloverTest"
-      ]
+      "scenarios": ["monthRolloverTest", "projectMonthRolloverTest"]
     },
     {
       "path": "formal/models/ui/ui_clipboard_requests.qnt",
@@ -18944,8 +18928,8 @@
     },
     {
       "path": "formal/models/ui/ui_profile_history.qnt",
-      "sha256": "b02f575f92a5287da876ec86fa1d56cc07119061f4e6d04260e5c883c36be01e",
-      "sources": ["src/lib/profile-activity.ts", "src/lib/profiles.ts"],
+      "sha256": "7fba5f818ee9966e8a1a78360c96737e36ff413dd1a2e1a7ecad0b3eeea35bb5",
+      "sources": ["src/lib/profiles.ts"],
       "scenarios": [
         "hiddenHistoryTest",
         "overflaggedHistoryTest",

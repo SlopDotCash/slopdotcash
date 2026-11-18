@@ -13,8 +13,8 @@ const SCALED_DEADLINE_MS = 3_000;
 for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
   const broken = mode === "corrupted";
   const stalled = mode === "stalled";
-  const profile = mode === "slow" || stalled;
-  test(`${profile ? "profile" : "ranking"} ${stalled ? "times out stalled" : broken ? "refuses corrupted" : "loads complete"} multi-part snapshot${mode === "slow" ? " across individual request deadlines" : ""}`, async ({
+  // /points no longer reads the snapshot; the profile page does in every mode.
+  test(`profile ${stalled ? "times out stalled" : broken ? "refuses corrupted" : "loads complete"} multi-part snapshot${mode === "slow" ? " across individual request deadlines" : ""}`, async ({
     page,
     diagnostics,
   }) => {
@@ -95,7 +95,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         contentType: "application/json",
       });
     });
-    await page.goto(profile ? "/contributors/lalalune" : "/points");
+    await page.goto("/contributors/lalalune");
     if (broken || stalled) {
       await expect(page.getByRole("alert")).toContainText(
         "Data could not load",
@@ -110,9 +110,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
       await expect
         .poll(() => partReads, { timeout: 15_000 })
         .toBeGreaterThan(1);
-      await expect(
-        profile ? page.locator("main.profile-page") : page.getByRole("table"),
-      ).toBeVisible({
+      await expect(page.locator("main.profile-page")).toBeVisible({
         timeout: 10_000,
       });
       if (mode === "slow") {

@@ -1,381 +1,61 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import type { Page } from "@playwright/test";
-import { assertPointsJournal, pointRevisionId } from "../../src/lib/points";
-import { expect, expectAccessible, test } from "./fixtures";
+import { expect, expectAccessibleReflow, test } from "./fixtures";
 
-async function serveSingleAward(page: Page) {
-  await page.route("https://avatars.githubusercontent.com/**", async (route) =>
-    route.fulfill({ response: await page.request.get("/slop-mark.svg") }),
-  );
-  const journal = JSON.parse(readFileSync("data/points/history.json", "utf8"));
-  journal.generatedAt = "2026-07-31T23:59:00.000Z";
-  const { id: _id, ...revision } = journal.revisions[0];
-  revision.recordedAt = journal.generatedAt;
-  journal.revisions = [{ ...revision, id: pointRevisionId(revision) }];
-  journal.coverage = [{ ...journal.coverage[0], to: journal.generatedAt }];
-  assertPointsJournal(journal);
-  const shards = Array.from({ length: 16 }, (_, i) => {
-    const rows = journal.revisions
-      .map((revision, sequence) => ({ revision, sequence }))
-      .filter(({ revision }) => revision.award.key.startsWith(i.toString(16)));
-    const text = `${JSON.stringify(rows)}\n`;
-    return {
-      text,
-      path: `/data/points/${i.toString(16)}.json`,
-      count: rows.length,
-      sha256: createHash("sha256").update(text).digest("hex"),
-    };
-  });
-  await page.clock.install({ time: new Date("2026-07-31T00:00:00.000Z") });
-  await page.route("**/data/points.json", (route) =>
-    route.fulfill({
-      json: {
-        schemaVersion: "1",
-        ruleVersion: journal.ruleVersion,
-        generatedAt: journal.generatedAt,
-        coverage: journal.coverage,
-        revisionCount: 1,
-        shards: shards.map(({ text: _text, ...entry }) => entry),
-      },
-    }),
-  );
-  await page.route("**/data/points/*.json", (route) => {
-    const shard = shards.find(
-      (s) => s.path === new URL(route.request().url()).pathname,
-    );
-    return shard
-      ? route.fulfill({ body: shard.text, contentType: "application/json" })
-      : route.abort();
-  });
-  return journal.revisions[0].award.actor.login as string;
-}
-
-test("This month updates at UTC rollover before a period switch", async ({
-  page,
-}) => {
-  await serveSingleAward(page);
-  await page.goto("/points", { waitUntil: "networkidle" });
-  const table = page.getByRole("region", {
-    name: "Contributor standings table",
-    exact: true,
-  });
-  await expect(
-    table.getByRole("cell", { name: "10", exact: true }),
-  ).toHaveCount(1);
-  await page.clock.pauseAt(new Date("2026-07-31T23:59:59.000Z"));
-  await page.clock.fastForward(1001);
-  await expect(
-    table.getByRole("cell", { name: "10", exact: true }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "All time", exact: true }).click();
-  await expect(
-    table.getByRole("cell", { name: "10", exact: true }),
-  ).toHaveCount(1);
-  await page.getByRole("button", { name: "This month", exact: true }).click();
-  await expect(
-    table.getByRole("cell", { name: "10", exact: true }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "All time", exact: true }).click();
-  await expect(
-    table.getByRole("cell", { name: "10", exact: true }),
-  ).toHaveCount(1);
-  await page.clock.resume();
-  await expectAccessible(page);
-  await page.evaluate(() => {
-    document.documentElement.style.fontSize = "200%";
-  });
-  const thisMonth = page.getByRole("button", {
-    name: "This month",
-    exact: true,
-  });
-  await thisMonth.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    table.getByRole("cell", { name: "10", exact: true }),
-  ).toHaveCount(0);
-  await expectAccessible(page);
-});
-
-test("legacy people navigation preserves the pending ranking read and URL query", async ({
-  page,
-}) => {
-  let release: () => void = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let observed: () => void = () => {};
-  const requested = new Promise<void>((resolve) => {
-    observed = resolve;
-  });
-  let rankingReads = 0;
-  await page.route("**/data/leaderboard.json?**", async (route) => {
-    rankingReads++;
-    observed();
-    await held;
-    await route.continue();
-  });
-  try {
-    await page.goto("/points?q=profile", { waitUntil: "domcontentloaded" });
-    await requested;
-    await page.evaluate(() => {
-      history.pushState({}, "", "/points?view=people&q=profile");
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-    await expect(
-      page.getByRole("region", { name: "People", exact: true }),
-    ).toBeVisible();
-    await expect(page.getByLabel("Find a contributor")).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "People", exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "Rankings", exact: true }),
-    ).toHaveCount(0);
-    await expect(page).toHaveURL(/view=people.*q=profile/u);
-    await page.evaluate(() => {
-      history.pushState({}, "", "/points?q=profile");
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-    release();
-    await expect(page.getByRole("table")).toBeVisible();
-    await expect(page).toHaveURL(/q=profile/u);
-    expect(rankingReads).toBe(1);
-  } finally {
-    release();
-  }
-});
-
+// /points is a contributor directory, never a ranking (operator decision,
+// 18 November 2026). Points stay only where they explain a payout.
 test(
-  "points history is usable, accessible and independent of payments",
+  "the contributor directory lists people without points or rankings",
   { tag: ["@pages"] },
   async ({ page }, info) => {
+    await page.route(
+      "https://avatars.githubusercontent.com/**",
+      async (route) =>
+        route.fulfill({ response: await page.request.get("/slop-mark.svg") }),
+    );
     const response = await page.goto("/points");
     expect(response?.status()).toBe(200);
-    const reloaded = await page.reload();
-    expect(reloaded?.status()).toBe(200);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Contributors" }),
+    ).toBeVisible();
+    await expect(page).toHaveTitle(/^Contributors · Slop$/u);
+    const people = page.locator(".points-people li");
+    await expect(people.first()).toBeVisible({ timeout: 30_000 });
+    // No ranking table, no period switch and no Points figure anywhere.
+    await expect(page.getByRole("table")).toHaveCount(0);
     await expect(
       page.getByRole("columnheader", { name: "Points", exact: true }),
-    ).toHaveAttribute("aria-sort", "descending");
-    const header = page.locator(".route-page-header");
-    const actions = header.locator(".route-page-actions");
-    const month = actions.getByRole("button", {
-      name: "This month",
-      exact: true,
-    });
-    const allTime = actions.getByRole("button", {
-      name: "All time",
-      exact: true,
-    });
-    await expect(month).toHaveAttribute("aria-pressed", "true");
-    await expect(allTime).toHaveAttribute("aria-pressed", "false");
-    const buttonStyle = await allTime.evaluate((button) => {
-      const style = getComputedStyle(button);
-      return {
-        paddingLeft: style.paddingLeft,
-        paddingRight: style.paddingRight,
-        borderWidth: style.borderLeftWidth,
-        borderStyle: style.borderLeftStyle,
-        cursor: style.cursor,
-        background: style.backgroundColor,
-      };
-    });
-    expect(Number.parseFloat(buttonStyle.paddingLeft)).toBeGreaterThanOrEqual(
-      16,
+    ).toHaveCount(0);
+    for (const label of ["This month", "All time"])
+      await expect(
+        page.getByRole("button", { name: label, exact: true }),
+      ).toHaveCount(0);
+    await expect(page.locator(".points-people")).not.toContainText(/\bpts\b/u);
+    // Every row links to the contributor's profile.
+    const first = people.first().getByRole("link").first();
+    const login = (await first.innerText()).trim();
+    await expect(first).toHaveAttribute(
+      "href",
+      `/contributors/${encodeURIComponent(login)}`,
     );
-    expect(Number.parseFloat(buttonStyle.paddingRight)).toBeGreaterThanOrEqual(
-      16,
-    );
-    expect(buttonStyle.borderWidth).toBe("1px");
-    expect(buttonStyle.borderStyle).toBe("solid");
-    expect(buttonStyle.cursor).toBe("pointer");
-    if ((page.viewportSize()?.width ?? 0) >= 768) {
-      await allTime.hover();
-      await expect
-        .poll(() =>
-          allTime.evaluate(
-            (button) => getComputedStyle(button).backgroundColor,
-          ),
-        )
-        .not.toBe(buttonStyle.background);
-      await page.mouse.move(0, 0);
-    }
-
-    await expect(page.getByText("Period", { exact: true })).toHaveCount(0);
-    await expect(page.locator(".points-panel .points-period")).toHaveCount(0);
-    const titleBox = await header
-      .getByRole("heading", { level: 1 })
-      .boundingBox();
-    const actionsBox = await actions.boundingBox();
-    const headerBox = await header.boundingBox();
-    if (!titleBox || !actionsBox || !headerBox)
-      throw new Error("Missing leaderboard header");
-    if ((page.viewportSize()?.width ?? 0) >= 768) {
-      expect(actionsBox.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
-      expect(
-        Math.abs(
-          actionsBox.x + actionsBox.width - headerBox.x - headerBox.width,
-        ),
-      ).toBeLessThanOrEqual(2);
-      expect(actionsBox.y).toBeLessThan(titleBox.y + titleBox.height);
-      expect(actionsBox.y + actionsBox.height).toBeGreaterThan(titleBox.y);
-    } else {
-      expect(actionsBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
-    }
-
-    await expect(page.locator(".points-coverage-details")).toHaveCount(0);
-    await expect(page.getByLabel("Project", { exact: true })).toHaveCount(0);
-    await expect(page.getByLabel("Find a contributor")).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "People", exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "Rankings", exact: true }),
-    ).toHaveCount(0);
-    await page.getByRole("button", { name: "All time", exact: true }).click();
-    await expect(page.getByRole("table")).toBeVisible({ timeout: 30000 });
-    await expect(
-      page.getByRole("columnheader", { name: "Points", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("columnheader", { name: "Money received", exact: true }),
-    ).toHaveCount(0);
-    await page.reload();
-    await expect(
-      page.getByRole("button", { name: "All time", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByLabel("Cohort", { exact: true })).toHaveCount(0);
-    // Earlier period links still open All time.
-    await page.goto("/points?period=new");
-    await expect(
-      page.getByRole("button", { name: "All time", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
-    await page.goto("/points?sort=points&period=lifetime");
-    await expect(
-      page.getByRole("region", { name: "People", exact: true }),
-    ).toHaveCount(0);
-    await page.evaluate(() => document.fonts.ready);
-    if ((page.viewportSize()?.width ?? 0) <= 390) {
-      const scroller = page.getByRole("region", {
-        name: "Contributor standings table",
-        exact: true,
-      });
-      await scroller.focus();
-      await expect(scroller).toBeFocused();
-      // A narrower three-column table needs scrolling only if content overflows.
-      if (await scroller.evaluate((el) => el.scrollWidth > el.clientWidth)) {
-        await page.keyboard.press("ArrowRight");
-        await expect
-          .poll(() => scroller.evaluate((el) => el.scrollLeft))
-          .toBeGreaterThan(0);
-        await scroller.evaluate((el) => {
-          el.scrollLeft = 0;
-        });
-      }
-    }
-
-    await page.getByRole("button", { name: "All time", exact: true }).click();
-    const first = page.getByRole("table").getByRole("row").nth(1);
-    const login = await first.getByRole("link").innerText();
-    // Earlier contributor links still filter directly, without a search control.
-    await page.goto(`/points?period=lifetime&q=${encodeURIComponent(login)}`);
-    await expect(
-      page.getByRole("table").getByRole("link", { name: login, exact: true }),
-    ).toBeVisible();
-    await page.goto("/points?period=lifetime&q=no-such-contributor-987654321");
-    await expect(page.getByRole("table").locator("tbody tr")).toHaveCount(0);
-    await page.goto("/points?period=lifetime");
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.getByText(/^2 \/ \d+$/u)).toBeVisible();
-    await month.click();
-    await expect(month).toHaveAttribute("aria-pressed", "true");
-    await expect(allTime).toHaveAttribute("aria-pressed", "false");
-    await expect(page).not.toHaveURL(/page=2|period=lifetime/u);
-    await expect(page.getByText(/^2 \/ \d+$/u)).toHaveCount(0);
-    await allTime.click();
-    await expect(allTime).toHaveAttribute("aria-pressed", "true");
-    await expect(page).toHaveURL(/period=lifetime/u);
-    await expect(page).not.toHaveURL(/page=2/u);
-
+    // A shared query narrows the directory to matching logins.
+    await page.goto(`/points?q=${encodeURIComponent(login)}`);
+    await expect(people.first()).toBeVisible({ timeout: 30_000 });
+    for (const row of await people.getByRole("link").allInnerTexts())
+      if (!/^Project maintainer/u.test(row))
+        expect(row.toLowerCase()).toContain(login.toLowerCase());
+    await page.goto("/points?q=no-such-contributor-987654321");
+    await expect(page.getByText("No matches.", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.goto("/points");
+    await expect(people.first()).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press("Tab");
     expect(
       await page.evaluate(() => document.activeElement !== document.body),
     ).toBe(true);
-    await expectAccessible(page);
     await page.screenshot({
-      path: info.outputPath("points.png"),
+      path: info.outputPath("contributors.png"),
       fullPage: true,
     });
-    // Match the repository's 200% text-enlargement fixture without reducing
-    // a 320px viewport below the supported reflow width through CSS zoom.
-    await page.evaluate(() => {
-      const typography = [...document.querySelectorAll<HTMLElement>("body *")]
-        .filter((el) => el instanceof HTMLElement)
-        .map((el) => ({
-          el,
-          font: getComputedStyle(el).fontSize,
-          line: getComputedStyle(el).lineHeight,
-        }));
-      for (const { el, font, line } of typography) {
-        el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-        if (line !== "normal")
-          el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-      }
-    });
-    expect(
-      await page.evaluate(() => {
-        const overflow =
-          document.documentElement.scrollWidth > window.innerWidth + 1;
-        return {
-          overflow,
-          elements: !overflow
-            ? []
-            : [...document.querySelectorAll("main *")]
-                .filter(
-                  (el) =>
-                    el.getBoundingClientRect().right > window.innerWidth + 1,
-                )
-                .map((el) => ({
-                  tag: el.tagName,
-                  class: el.className,
-                  text: el.textContent?.slice(0, 80),
-                  right: el.getBoundingClientRect().right,
-                })),
-        };
-      }),
-    ).toEqual({ overflow: false, elements: [] });
-    await page.screenshot({
-      path: info.outputPath("points-zoom.png"),
-      fullPage: true,
-    });
+    await expectAccessibleReflow(page, "contributors");
   },
 );
-
-test("the activity chart advances its final UTC day without navigation", async ({
-  page,
-  diagnostics,
-}) => {
-  diagnostics.allowPreviewApiMisses();
-  const login = await serveSingleAward(page);
-  await page.route("**/api/v1/wallet-claims/actors/*/current", (route) =>
-    route.fulfill({ json: null }),
-  );
-  await page.goto(`/contributors/${login}`, { waitUntil: "networkidle" });
-  const chart = page.getByRole("figure", {
-    name: "Points per day, last 35 days",
-    exact: true,
-  });
-  const last = chart.locator(".activity-bars > span").last();
-  await expect(last).toHaveAttribute("title", /Jul 31, 2026/u);
-  await page.clock.pauseAt(new Date("2026-07-31T23:59:59.000Z"));
-  await page.screenshot({
-    path: test.info().outputPath("activity-july.png"),
-    fullPage: true,
-  });
-  await page.clock.fastForward(1001);
-  await expect(last).toHaveAttribute("title", /Aug 1, 2026/u);
-  await page.screenshot({
-    path: test.info().outputPath("activity-august.png"),
-    fullPage: true,
-  });
-});

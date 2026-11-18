@@ -8,8 +8,6 @@ import { deploymentTier } from "./lib/deployment";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { transactionUrl } from "./lib/payments/contracts";
-import type { PointsMember } from "./lib/points";
-import { dailyPoints } from "./lib/profile-activity";
 import {
   assertProfiles,
   contributorPullSearchUrl,
@@ -23,7 +21,6 @@ import {
   type PublicResourceState,
   usePublicResource,
 } from "./lib/use-public-resource";
-import { useUtcDay } from "./lib/use-time-boundary";
 import { useVaultPayments } from "./lib/use-vault-payments";
 import { PaymentRecord, VaultPaymentRecord } from "./PaymentRecords";
 import {
@@ -90,23 +87,19 @@ function dollars(n: bigint) {
   return formatMicroUsdc(n.toString());
 }
 export function ProfileActivity({
-  awards,
   login,
   actorId,
   showIdentity,
   cycles,
   census,
-  summary,
   badges,
   children,
 }: {
   login: string;
-  awards?: PointsMember["awards"];
   actorId?: string;
   showIdentity: boolean;
   cycles?: CycleIndex;
   census: ReturnType<typeof useProfiles>;
-  summary?: ReactNode;
   badges?: ReactNode;
   /** Sections shown between the record and the activity chart. */
   children?: ReactNode;
@@ -142,8 +135,6 @@ export function ProfileActivity({
         />
       ) : null}
       {badges}
-      <div className="profile-totals">{summary}</div>
-      {awards ? <ActivityChart awards={awards} /> : null}
       {state.status === "ready" && state.refreshError ? (
         <p role="status">
           <StatusBadge tone="warning">Stale</StatusBadge>{" "}
@@ -229,34 +220,6 @@ function PullRequestBar({
         ))}
       </ul>
     </section>
-  );
-}
-
-const ACTIVITY_DAYS = 35;
-
-/** The same point awards shown in the activity timeline, grouped by UTC day. */
-function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
-  useUtcDay();
-  const days = dailyPoints(awards, new Date(), ACTIVITY_DAYS);
-  const max = Math.max(...days.map((entry) => entry.points));
-  if (max <= 0) return null;
-  return (
-    <figure
-      className="activity-chart"
-      aria-label={`Points per day, last ${ACTIVITY_DAYS} days`}
-    >
-      <figcaption>{ACTIVITY_DAYS} days</figcaption>
-      <div className="activity-bars" aria-hidden="true">
-        {days.map((entry) => (
-          <span
-            key={entry.day}
-            style={{ height: `${Math.max(4, (entry.points / max) * 100)}%` }}
-            className={entry.points > 0 ? "" : "activity-bar-empty"}
-            title={`${formatDate(entry.day)} · ${entry.points.toLocaleString()} points`}
-          />
-        ))}
-      </div>
-    </figure>
   );
 }
 
