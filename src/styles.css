@@ -759,7 +759,9 @@ small {
   font-size: 13px;
 }
 
-.project-bounty span {
+.project-bounty > span:not(.project-monthly-reward),
+.project-bounty .project-monthly-unit,
+.project-bounty .project-funding-warning {
   color: var(--muted);
   font-size: 15px;
   font-weight: 700;

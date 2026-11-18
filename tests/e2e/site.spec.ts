@@ -550,8 +550,11 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
   await expect(elizaCard.locator(".project-bounty strong")).toHaveText(
     "$1,000",
   );
-  await expect(elizaCard.locator(".project-bounty")).toContainText(
-    "Configured · Not vaulted",
+  await expect(elizaCard.locator(".project-funding-tag")).toHaveText(
+    "Configured",
+  );
+  await expect(elizaCard.locator(".project-funding-warning")).toHaveText(
+    "Not vaulted",
   );
   // An external prize leads with points; the card never headlines its amount.
   const deltaStar = projects.locator(

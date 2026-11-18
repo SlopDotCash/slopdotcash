@@ -14,6 +14,8 @@
 // the project details keep the explicit opt-in rule. The two pure projections
 // are observed together: configuredWarning belongs only to home, promiseWarning
 // to explicit promises on either surface. No route state changes funding facts.
+// Home projects one tag from the visible funding state and owner opt-in.
+// Verified backing takes precedence over the owner promise.
 // This finite model uses a positive current-month cap; the zero override is
 // covered by the unit evidence.
 // A vault whose contract supports month pledges is judged only by the amount
@@ -33,6 +35,11 @@ module ui_pool_funding {
     if (not(visible) or t.cap <= 0 or funded(t)) "none"
     else if (t.unreadVault) "unverified"
     else "not-vaulted"
+  pure def homeFundingTag(t: S): str =
+    if (t.cap <= 0) "none"
+    else if (t.shownMoney) "vaulted"
+    else if (t.optedIn) "promised"
+    else "configured"
   pure def shown(t: S): S = t.with("shownMoney", funded(t)).with("shownWithdrawn", withdrawn(t)).with("shownLocked", locked(t)).with("promiseWarning", warning(t, t.optedIn)).with("configuredWarning", warning(t, not(t.optedIn)))
   // React re-renders on every change of the read, so what is shown follows it.
   action load(f: int, sf: int, dec: bool, w: bool, sup: bool, p: int): bool =
@@ -66,6 +73,9 @@ module ui_pool_funding {
     (s.configuredWarning == "not-vaulted") implies not(s.unreadVault),
     (s.configuredWarning == "unverified") implies s.unreadVault,
     not(s.configuredWarning != "none" and s.promiseWarning != "none"),
+    (homeFundingTag(s) == "vaulted") == (s.cap > 0 and funded(s)),
+    (homeFundingTag(s) == "promised") == (s.promiseWarning != "none"),
+    (homeFundingTag(s) == "configured") == (s.configuredWarning != "none"),
   }
   run loadingShowsNoMoneyTest = init.then(readFailed).expect(not(s.shownMoney) and invariant)
   run shortVaultShowsNoMoneyTest = init.then(load(1, 0, false, false, false, 0)).expect(not(s.shownMoney) and invariant)
@@ -73,14 +83,14 @@ module ui_pool_funding {
   run decemberNeedsTheFirstTest = init.then(load(5, 3, true, false, false, 0)).expect(not(s.shownMoney) and invariant)
   run decemberFundedOnTheFirstTest = init.then(load(2, 4, true, false, false, 0)).expect(s.shownMoney and invariant)
   run withdrawalIsShownTest = init.then(load(1, 4, true, true, false, 0)).expect(s.shownWithdrawn and not(s.shownMoney) and invariant)
-  run pledgedMonthIsLockedTest = init.then(load(0, 0, true, true, true, 2)).expect(s.shownMoney and s.shownLocked and not(s.shownWithdrawn) and invariant)
+  run pledgedMonthIsLockedTest = init.then(load(0, 0, true, true, true, 2)).expect(s.shownMoney and s.shownLocked and not(s.shownWithdrawn) and homeFundingTag(s) == "vaulted" and invariant)
   run freeFundsWithoutPledgeShowNoMoneyTest = init.then(load(5, 5, true, false, true, 0)).expect(not(s.shownMoney) and invariant)
   run shortPledgeShowsNoMoneyTest = init.then(load(5, 5, false, false, true, 1)).expect(not(s.shownMoney) and invariant)
-  run ownerPromiseIsNotVerifiedMoneyTest = init.then(choosePromise(true)).expect(s.promiseWarning == "unverified" and not(s.shownMoney) and invariant)
+  run ownerPromiseIsNotVerifiedMoneyTest = init.then(choosePromise(true)).expect(homeFundingTag(s) == "promised" and s.promiseWarning == "unverified" and not(s.shownMoney) and invariant)
   run shortReadShowsPromiseWarningTest = init.then(choosePromise(true)).then(load(1, 0, false, false, false, 0)).expect(s.promiseWarning == "not-vaulted" and invariant)
-  run fundedReadReplacesPromiseWarningTest = init.then(choosePromise(true)).then(load(2, 0, false, false, false, 0)).expect(s.promiseWarning == "none" and s.shownMoney and invariant)
+  run fundedReadReplacesPromiseWarningTest = init.then(choosePromise(true)).then(load(2, 0, false, false, false, 0)).expect(homeFundingTag(s) == "vaulted" and s.promiseWarning == "none" and s.shownMoney and invariant)
   run optOutRemovesPromiseTest = init.then(choosePromise(true)).then(choosePromise(false)).expect(s.promiseWarning == "none" and invariant)
-  run homeConfiguredAmountIsNotVerifiedMoneyTest = init.expect(s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
+  run homeConfiguredAmountIsNotVerifiedMoneyTest = init.expect(homeFundingTag(s) == "configured" and s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
   run homeShortReadShowsConfiguredWarningTest = init.then(load(1, 0, false, false, false, 0)).expect(s.configuredWarning == "not-vaulted" and s.promiseWarning == "none" and invariant)
   run homeFundedReadRemovesConfiguredWarningTest = init.then(load(2, 0, false, false, false, 0)).expect(s.configuredWarning == "none" and s.shownMoney and invariant)
   run homeOptOutKeepsConfiguredAmountTest = init.then(choosePromise(true)).then(choosePromise(false)).expect(s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
