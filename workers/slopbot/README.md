@@ -266,10 +266,22 @@ It retains no message, body, stack, path or source identity and rethrows the
 original failure. The protected intake diagnostic reprojects only that exact
 structured shape; an observation is not a publication receipt.
 
+To inspect one authorized upload, generate a fresh lowercase 64-hex nonce
+locally and put it in the request's `X-Slop-Intake-Correlation` header. Start
+the protected diagnostic workflow with the same `correlation` before the
+upload. This selects only the live production Pages tail. Pages records
+authorized admission, bounded upload EOF, successful parse, the first
+queued heartbeat for NDJSON, RPC dispatch, and application status. Each event
+contains only its nonce, fixed phase, elapsed milliseconds, and the applicable
+body byte count or terminal status. The tail filters the nonce before its
+retained event cap and again when projecting the fixed event shape. A queued
+heartbeat or terminal status does not establish delivery to the client.
+
 For an earlier failure, the trusted-main `value-intake-diagnostic.yml` workflow
 accepts paired `history_from` and `history_to` UTC bounds. They must cover at
 most 15 minutes within the last 24 hours. The existing short live-tail path is
-unchanged when both are absent. Retained inspection uses one dry Cloudflare
+available when both are absent. Use the live correlation mode separately.
+Retained inspection uses one dry Cloudflare
 query for this Worker, at most 200 events and 1 MiB, with no automatic retry or
 pagination. It checks the current deployment before and after reading. Only
 the existing seven-field failures and their event times are retained; raw

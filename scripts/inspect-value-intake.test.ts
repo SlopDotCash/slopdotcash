@@ -15,6 +15,48 @@ const options = { account: "a".repeat(32), token: secret };
 const messageHash = (message: string) =>
   createHash("sha256").update(message, "utf8").digest("hex");
 
+const correlation = "a1".repeat(32);
+const milestone = {
+  event: "historical-intake-pages-milestone",
+  correlation,
+  phase: "body-eof",
+  elapsedMs: 12,
+  bodyBytes: 30013623,
+  terminalStatus: null,
+};
+
+test("correlated Pages projection accepts only exact safe stage scalars", () => {
+  const sample = {
+    outcome: "ok",
+    logs: [
+      {
+        message: [
+          JSON.stringify(milestone),
+          JSON.stringify({ ...milestone, correlation: "b2".repeat(32) }),
+          { ...milestone, body: secret },
+          { ...milestone, phase: "parsed" },
+          { ...milestone, terminalStatus: 400 },
+          { ...milestone, bodyBytes: 33 * 1024 * 1024 + 1 },
+          { ...milestone, elapsedMs: -1 },
+          { ...milestone, elapsedMs: 1.01 },
+          {
+            ...milestone,
+            phase: "terminal",
+            bodyBytes: null,
+            terminalStatus: 503,
+          },
+          secret,
+        ],
+      },
+    ],
+  };
+  const safe = sanitizeIntakeTail(sample, correlation);
+  expect(safe).toEqual({ outcome: "ok", pagesIntakeMilestones: [milestone] });
+  expect(sanitizeIntakeTail(safe, correlation)).toEqual(safe);
+  expect(sanitizeIntakeTail(safe, "0".repeat(64))).toBeNull();
+  expect(JSON.stringify(safe)).not.toContain(secret);
+});
+
 test("structured historical stages survive both projections without raw payloads", () => {
   const safe = {
     event: "historical-intake-failure",
@@ -331,6 +373,52 @@ test("normal inspection binds both Workers and Pages and removes all three tails
   ]);
 });
 
+test("one correlated Pages tail filters unrelated records before the retained cap", async () => {
+  const f = fixture();
+  const result = await inspectValueIntake({
+    ...options,
+    correlation,
+    request: f.request,
+    tail: async () => [
+      ...Array.from({ length: 210 }, () => ({
+        outcome: "ok",
+        logs: [{ message: [secret] }],
+      })),
+      {
+        event: { response: { status: 200 } },
+        logs: [{ message: [JSON.stringify(milestone)] }],
+      },
+    ],
+  });
+  expect(result.correlation).toBe(correlation);
+  expect(result.targets).toHaveLength(1);
+  expect(result.targets[0]).toMatchObject({
+    target: "pages",
+    deploymentId: deployment,
+    complete: true,
+    observations: [{ httpStatus: 200, pagesIntakeMilestones: [milestone] }],
+  });
+  expect(f.calls.map((call) => call.method)).toEqual([
+    "GET",
+    "POST",
+    "DELETE",
+    "GET",
+  ]);
+  expect(f.calls[1].body).toEqual({ filters: [{ query: correlation }] });
+  expect(f.calls.every((call) => call.path.includes("/pages/"))).toBe(true);
+  expect(JSON.stringify(result)).not.toContain(secret);
+
+  const refused = fixture();
+  await expect(
+    inspectValueIntake({
+      ...options,
+      correlation: secret,
+      request: refused.request,
+    }),
+  ).rejects.toThrow("Invalid intake correlation");
+  expect(refused.calls).toHaveLength(0);
+});
+
 test("unsafe transport refuses but cleans every created tail", async () => {
   const f = fixture({ badTransport: true });
   const result = await inspectValueIntake({
@@ -439,5 +527,43 @@ test("an opened socket finishes bounded observation and rejects send failure", a
     } finally {
       globalThis.WebSocket = original;
     }
+  }
+});
+
+test("the live socket applies exact correlation before counting retained rows", async () => {
+  const original = globalThis.WebSocket;
+  class FilteredSocket {
+    binaryType = "";
+    addEventListener(
+      kind: string,
+      callback: (event?: { data: string }) => void,
+    ) {
+      if (kind === "open") queueMicrotask(() => callback());
+      if (kind === "message")
+        queueMicrotask(() => {
+          for (let i = 0; i < 210; i++)
+            callback({
+              data: JSON.stringify({
+                outcome: "ok",
+                logs: [{ message: [secret] }],
+              }),
+            });
+          callback({
+            data: JSON.stringify({
+              logs: [{ message: [JSON.stringify(milestone)] }],
+            }),
+          });
+        });
+    }
+    close() {}
+    send() {}
+  }
+  globalThis.WebSocket = FilteredSocket as unknown as typeof WebSocket;
+  try {
+    expect(
+      await readIntakeTail("wss://tail.workers.dev/secret", 0.005, correlation),
+    ).toEqual([{ pagesIntakeMilestones: [milestone] }]);
+  } finally {
+    globalThis.WebSocket = original;
   }
 });

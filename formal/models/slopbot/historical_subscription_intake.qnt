@@ -1,4 +1,6 @@
 // @source backend/slopbot/value-import.ts
+// @source backend/slopbot/value-import-observation.ts
+// @evidence backend/slopbot/value-import.test.ts
 // @source workers/slopbot/value-import-service.ts
 // @source workers/slopbot/value-import.ts
 // @source workers/slopbot/value-settings.ts
@@ -35,6 +37,8 @@
 // set for this bounded family; detailed multi-parent rules have separate models.
 // An INSERT or subsequent readback/RPC response can fail after commit. HTTP409
 // and a lost HTTP response are not proof that no journal row was written.
+// Opt-in Pages timing logs add no publication state or authority. Runtime
+// evidence checks their fixed schema, safe projection, and admission boundary.
 // Listed test files cover selected settings/fence branches only. No direct
 // HTTP-to-RPC historical import conformance test was found. These scenarios
 // have not been parsed, simulated, model-checked or executed.
