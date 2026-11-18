@@ -2743,6 +2743,8 @@ async function preflightRepository(
   };
 }
 
+class SplitSearchCountMismatchError extends Error {}
+
 export async function collectSearchReferences(
   client: GraphqlExecutor,
   repository: TargetRepository,
@@ -2758,6 +2760,47 @@ export async function collectSearchReferences(
   commitLines = new OutcomeCommitLineLoader(client),
   repositoryNodeId = repository.expectedNodeId,
   initialSearchPageSize = GRAPHQL_PAGE_SIZE,
+): Promise<NodeReference[]> {
+  const collectRange = () =>
+    collectSearchReferenceRange(
+      client,
+      repository,
+      from,
+      to,
+      qualifier,
+      kindQualifier,
+      expectedKind,
+      stats,
+      commitLines,
+      repositoryNodeId,
+      initialSearchPageSize,
+    );
+  try {
+    return await collectRange();
+  } catch (error) {
+    if (!(error instanceof SplitSearchCountMismatchError)) throw error;
+    // A split's parent and children can observe different index states.
+    // Discard that attempt's references and repeat the original range once
+    // with the same request accounting, cutoff, and completeness checks.
+    return collectRange();
+  }
+}
+
+async function collectSearchReferenceRange(
+  client: GraphqlExecutor,
+  repository: TargetRepository,
+  from: Date,
+  to: Date,
+  qualifier: "closed" | "merged",
+  kindQualifier:
+    | "is:issue is:closed"
+    | "is:pr is:merged"
+    | "is:pr is:closed is:unmerged",
+  expectedKind: NodeReference["kind"],
+  stats: { searchSliceCount: number },
+  commitLines: OutcomeCommitLineLoader,
+  repositoryNodeId: string | null,
+  initialSearchPageSize: number,
 ): Promise<NodeReference[]> {
   if (
     !Number.isInteger(initialSearchPageSize) ||
@@ -2785,7 +2828,7 @@ export async function collectSearchReferences(
       );
     }
     const split = midpoint(from, to);
-    const left = await collectSearchReferences(
+    const left = await collectSearchReferenceRange(
       client,
       repository,
       from,
@@ -2798,7 +2841,7 @@ export async function collectSearchReferences(
       repositoryNodeId,
       initialSearchPageSize,
     );
-    const right = await collectSearchReferences(
+    const right = await collectSearchReferenceRange(
       client,
       repository,
       split,
@@ -2813,7 +2856,7 @@ export async function collectSearchReferences(
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
-      throw new Error(
+      throw new SplitSearchCountMismatchError(
         `Split GitHub Search returned ${combined.length} unique references but parent reported ${firstPage.totalCount} for ${searchRange(from, to)}`,
       );
     }
