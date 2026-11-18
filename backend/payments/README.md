@@ -258,6 +258,21 @@ The protected main release repairs missing ordinary Solana observations through
 the same adapters and monotonic writer. It retains existing rows and never signs,
 submits a transaction, enables execution, or changes a scheduler.
 
+`GET /api/v1/payments/projects/<id>/deposits` serves the "Funded by" list
+(operator decision, 18 November 2026): the newest 50 finalized deposits of the
+project's ordinary vaults with the full count, from `vault_deposits`
+(migration 0138), under the same 60-second cache and deployment-tier rule as
+the vault totals. `workers/payments/deposits.ts` writes those rows after the
+payout steps of each scheduled run. It reads each vault's `Deposited` event
+with its own cursor (`vault_deposit_cursors`) from the vault's creation: ten
+reviewed log pages a run on EVM networks, 25 transactions a run on Solana,
+newest first. Each page's rows and its cursor are one atomic write. It never
+throws: a failed read is logged by error name and retried on the next run,
+and it cannot fail or delay a payout step. Private bounty vaults are skipped.
+A depositor is named by GitHub login only when exactly one public, open Slop
+account currently has that address registered. The list is display evidence;
+no balance, funded month or payment reads it.
+
 `GET /api/v1/payments/projects/<id>/vault` serves these rows with
 `staleAfterMs` (30 minutes). A page view reads D1 or the edge cache
 (`caches.default`, 60 seconds), never a chain RPC. The project page shows

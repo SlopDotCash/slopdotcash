@@ -51,6 +51,7 @@ import {
   loadRegistryPaymentDeployments,
   parsePaymentNetworks,
 } from "./deployments";
+import { type DepositScanReport, recordVaultDeposits } from "./deposits";
 import { reconcileFailedAttempts } from "./reconcile";
 import { type ScanEvent, scanEvmPayments, scanSolanaPayments } from "./scanner";
 
@@ -780,6 +781,35 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
   }
   return { deployments, rpcUrls, failures };
 }
+/**
+ * Records the served ordinary vaults' finalized deposits for the public
+ * "Funded by" list (operator decision, 18 November 2026). It runs after the
+ * payout steps and never throws, so it cannot delay or fail one; a failed
+ * read is logged and retried on the next run. A private bounty Worker
+ * records nothing.
+ */
+export async function recordRegistryDeposits(
+  env: PaymentsWorkerEnvironment,
+  deployments: readonly PaymentDeployment[],
+  rpcUrls: Record<string, string>,
+): Promise<DepositScanReport | null> {
+  if (env.PAYMENT_SCOPE === "security-bounty") return null;
+  try {
+    return await recordVaultDeposits(
+      env.PAYMENTS_DB,
+      deployments,
+      rpcUrls,
+      (network) => paymentSolanaGenesis(env, network),
+    );
+  } catch (error) {
+    // Display evidence only: the run's own result must not depend on it.
+    console.error(
+      "vault deposit record unavailable",
+      error instanceof Error ? error.name : "Error",
+    );
+    return null;
+  }
+}
 export default {
   async scheduled(_controller: unknown, env: PaymentsWorkerEnvironment) {
     // One failing deployment or step must not stop scanning or payouts elsewhere.
@@ -807,6 +837,7 @@ export default {
         failures.push(error);
       }
     }
+    await recordRegistryDeposits(env, deployments, rpcUrls);
     if (failures.length)
       throw new AggregateError(failures, "Payment worker failures");
   },

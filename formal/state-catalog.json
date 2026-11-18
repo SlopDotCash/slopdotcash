@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c81c6bf4f0f19de7da5c24ff1a23b7434b283cdc85729bb48c5c752fa954ba86",
+  "inventorySha256": "1700f1a540c6004d6bde26bd5e086b7c5bb4f013ceeb3c056ec687cda9fda6ea",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3341,7 +3341,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 442,
+      "line": 461,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -3356,6 +3356,7 @@
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui/ui_public_vault_funding.qnt",
         "formal/models/ui/ui_transaction.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",

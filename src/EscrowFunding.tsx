@@ -15,6 +15,8 @@ import {
   hasPledgeSupport,
   loadPoolFunding,
   monthName,
+  monthsCovered,
+  monthsCoveredLabel,
   poolFundingStatus,
   utcMonth,
   type VaultFreeBalance,
@@ -27,6 +29,7 @@ import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
 import { NetworkName } from "./Presentation";
+import { PublicVaultFunding, VaultFunders } from "./PublicVaultFunding";
 
 const AutomaticMonthlyPayment = lazy(() =>
   import("./AutomaticMonthlyPayment").then((module) => ({
@@ -406,6 +409,21 @@ export function EscrowFunding({
       : undefined;
   const chain = project.escrow?.chain ?? "solana";
   if (readOnly && totals.status === "none") return null;
+  // The public page (operator decision, 18 November 2026): what the free
+  // funds cover, a deposit control for any wallet, and who funded. A vault
+  // is offered for deposits only once its counters are on record, and only
+  // while the project is active.
+  const now = new Date();
+  const covered =
+    readOnly && totals.status === "ready"
+      ? monthsCovered(project, totals.vault.snapshots, now)
+      : null;
+  const fundable =
+    readOnly && project.status === "active" && totals.status === "ready"
+      ? (project.escrow?.deployments ?? []).filter(
+          (deployment) => decimalsOf(deployment) !== undefined,
+        )
+      : [];
   return (
     <section className="section project-funding" aria-label="Project escrow">
       <header className="vault-header">
@@ -436,6 +454,30 @@ export function EscrowFunding({
         <>
           {registrationNotice && <p role="status">{registrationNotice}</p>}
           <VaultTotalsView totals={totals} />
+          {covered !== null ? (
+            <p className="vault-covers">
+              {monthsCoveredLabel(covered)} at{" "}
+              {formatRewardMinor(
+                resolveRewardCapMinor(project, utcMonth(now)),
+                project.rewardAsset,
+              )}{" "}
+              a month
+            </p>
+          ) : null}
+          {fundable.map((deployment) => (
+            <PublicVaultFunding
+              key={`fund:${deployment.network}:${deployment.vault}`}
+              projectId={project.id}
+              deployment={deployment}
+              showNetwork={fundable.length > 1}
+              onFinalized={() => setRevision((value) => value + 1)}
+            />
+          ))}
+          {readOnly &&
+          totals.status === "ready" &&
+          totals.vault.snapshots.length > 0 ? (
+            <VaultFunders projectId={project.id} revision={revision} />
+          ) : null}
           {!readOnly &&
             project.escrow?.deployments.map((deployment) => {
               const vault = fundingVault(deployment);

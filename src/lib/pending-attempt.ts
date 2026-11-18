@@ -11,6 +11,18 @@ export function validPendingAttemptId(value: unknown) {
   );
 }
 
+/**
+ * The storage slot of a vault's saved funding request. The public project
+ * page reads it to reopen its deposit form after a reload.
+ */
+export function vaultActionKey(deployment: {
+  network: string;
+  vault: string;
+  asset: string;
+}): string {
+  return `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+}
+
 function matchesPendingAttempt(raw: string | null, expected: PendingAttempt) {
   if (raw === null) return false;
   const current = JSON.parse(raw) as PendingAttempt | null;
