@@ -1,0 +1,43 @@
+# Submission-fee Worker (workers/submission-fee; PRD section 6, "Submission
+# fee deposits", operator decision of 18 November 2026). The checked main
+# release installs this private Worker. It ships off: it reads no chain,
+# writes nothing and loads no key. Its contracts are not deployed yet.
+# See README.md before changing any value here.
+name = "slop-submission-fee"
+main = "index.ts"
+compatibility_date = "2026-07-30"
+workers_dev = false
+preview_urls = false
+
+# No routes. Every five minutes: read deposits and send what is due.
+# Once an hour: read the SLOP price and keep the SLOP rate.
+[triggers]
+crons = ["*/5 * * * *", "7 * * * *"]
+
+[[d1_databases]]
+binding = "SUBMISSION_FEE_DB"
+database_name = "slop-private"
+database_id = "1b453124-2709-45af-8389-151a8105c461"
+migrations_dir = "../../migrations"
+
+[vars]
+# off | dry_run | live. dry_run reads deposits, judges them, marks pull
+# requests paid and records the list it would send; it loads no key and signs
+# nothing. live also signs and sends the resolver's transactions, and is
+# refused by the release unless both contracts and the key are in place.
+# Going live is its own reviewed change.
+SUBMISSION_FEE_MODE = "off"
+# Resolver gas ceilings: 0.0002 ETH for one transaction, 0.002 ETH in one UTC
+# day on each network. A transaction that would pass either is not signed.
+SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI = "200000000000000"
+SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI = "2000000000000000"
+
+# Secret for live mode: SUBMISSION_FEE_RESOLVER_KEY. Install privately on the
+# Worker; never pass its value to CI. Optional secrets:
+# RPC_URL_SUBMISSION_FEE_BASE and RPC_URL_SUBMISSION_FEE_ROBINHOOD.
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  invocation_logs = false
