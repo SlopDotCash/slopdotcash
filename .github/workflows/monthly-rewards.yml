@@ -176,6 +176,10 @@ jobs:
 
       - name: Generate complete cycle ledger
         env:
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
           GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
         run: bun run leaderboard:generate -- --cutoff "${{ steps.cycle.outputs.cutoff }}"
@@ -183,6 +187,10 @@ jobs:
       - name: Propose private allocations
         id: propose
         env:
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
           # A project with a maintainer share needs one public GitHub read of
           # who merged or closed each outside pull request in the month.
           GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
