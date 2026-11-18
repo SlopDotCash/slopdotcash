@@ -875,20 +875,6 @@ label {
   font-size: 14px;
 }
 
-/* Leaderboard. */
-.home-leaderboard-section {
-  padding-block: 0 144px;
-}
-
-.home-leaderboard-section > .points-panel > h2 {
-  margin: 0 0 32px;
-  font-size: clamp(44px, 6vw, 88px);
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  line-height: 0.88;
-  text-transform: uppercase;
-}
-
 .points-panel {
   border-color: var(--line);
   border-radius: var(--brand-radius-large);

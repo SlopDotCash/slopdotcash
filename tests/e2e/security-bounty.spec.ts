@@ -3235,14 +3235,12 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
-  // Discovery keeps current security offers before project lists and rankings.
+  // Discovery keeps current security offers before project lists.
   expect(
     await page
-      .locator(
-        "main > #security-bounties, main > #projects, main > #leaderboard",
-      )
+      .locator("main > #security-bounties, main > #projects")
       .evaluateAll((sections) => sections.map((section) => section.id)),
-  ).toEqual(["security-bounties", "projects", "leaderboard"]);
+  ).toEqual(["security-bounties", "projects"]);
   // The bounty is listed once, in its own section, never again as a project.
   const projects = page.locator("#projects");
   await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
