@@ -10,7 +10,12 @@
 // @source scripts/rotate-fee-solana-rpc.ts
 // @source scripts/qualify-solana-rpc-pair.ts
 // @source scripts/check-retained-release-data.ts
+// @source scripts/restore-collected-data.py
+// @source scripts/github-app-token-refresh.ts
+// @source scripts/read-local-leaderboard.ts
 // @evidence scripts/check-retained-release-data.test.ts
+// @evidence scripts/restore-collected-data.test.ts
+// @evidence scripts/read-local-leaderboard.test.ts
 // @evidence scripts/pages-secret-inventory.test.ts
 // @evidence scripts/release-robinhood-rpc.test.ts
 // @evidence scripts/rotate-fee-solana-rpc.test.ts

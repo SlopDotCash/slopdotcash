@@ -654,7 +654,11 @@ live GitHub data. An explicit manual `main` or `development` run may set
 that run's own environment (production or staging) after validation, with their
 original timestamps and history (operator decision, 13 November 2026). This
 option cannot run with staging bootstrap; missing or invalid published data
-stops the release. It never uses the pull-request data adapter or skips code, browser,
+stops the release. Such a `main` run may also name, in `data_from_run`, a
+completed trusted `main` release whose own fresh collection succeeded at an
+ancestor commit; it then takes that run's collected leaderboard and profiles
+from its checked bundle instead of the live site, still refusing data older
+than the live publication (operator decision, 18 November 2026). It never uses the pull-request data adapter or skips code, browser,
 sandbox, source-identity or deployment checks. An explicit manual `main` or
 `development` run may also set `skip_proofs` (operator decision, 14 November
 2026; PRD section 12, STATE-05): it repeats neither the Quint state-model

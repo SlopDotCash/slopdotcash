@@ -21,6 +21,10 @@ on:
         description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
+      data_from_run:
+        description: "Manual main release with use_published_data only: take the leaderboard and profiles from this completed main release's own fresh collection instead of the live site"
+        type: string
+        default: ""
       discussion_resume_run:
         description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
         type: string
@@ -98,12 +102,53 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  # A fresh collection takes hours; when main advances meanwhile that run is
+  # superseded and publishes nothing. A manual retained-data release may name
+  # it, and only its collected ledger and profiles are restored here.
+  restore_collection:
+    name: Restore a trusted main release's collected data
+    if: github.event_name == 'workflow_dispatch' && inputs.data_from_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+    steps:
+      - name: Require a manual retained-data main release
+        env:
+          USE_PUBLISHED_DATA: ${{ inputs.use_published_data }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$USE_PUBLISHED_DATA" = true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Load the exact trusted main attempt's collected data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATA_RUN: ${{ inputs.data_from_run }}
+        run: python3 scripts/restore-collected-data.py
+      - name: Pass verified data to preparation
+        id: retained
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-collected-data-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collected-data
+          if-no-files-found: error
+          retention-days: 2
+
   prepare:
     name: Prepare checked browser bundle
-    needs: restore_discussions
+    needs: [restore_discussions, restore_collection]
     if: >-
       !cancelled() &&
-      (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped')
+      (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped') &&
+      (needs.restore_collection.result == 'success' || needs.restore_collection.result == 'skipped')
     outputs:
       browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
       sandbox: ${{ steps.scope.outputs.sandbox }}
@@ -258,6 +303,30 @@ jobs:
           artifact-ids: ${{ needs.restore_discussions.outputs.artifact_id }}
           path: ${{ runner.temp }}/leaderboard-discussions
 
+      # Every workflow in this repository shares one GITHUB_TOKEN request
+      # quota (1,000 REST requests an hour), and a full collection needs
+      # more than that, so it stalled behind releases, scans and checks. A
+      # dedicated read-only GitHub App has its own, larger quota. It reads
+      # only public data. Only production (main) collects with it, so staging
+      # collections on development never spend its quota. Without the App, or
+      # if minting fails, the steps below use GITHUB_TOKEN as before.
+      - name: Mint collector token
+        id: collector-token
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          github.event_name != 'pull_request' &&
+          inputs.use_published_data != true &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
       - name: Generate live contribution data
         id: live_ledger
         # Pull-request code is untrusted, so this step never explicitly injects
@@ -265,8 +334,12 @@ jobs:
         # ledger before producing a deployable build.
         if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
           leaderboard_origin="https://slop.cash"
@@ -323,8 +396,12 @@ jobs:
       - name: Generate live contributor profiles
         if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
           set -euo pipefail
@@ -358,8 +435,17 @@ jobs:
             echo "::warning::Profile census did not reconcile; retrying once."
           done
 
+      - name: Copy restored collected data
+        if: github.event_name == 'workflow_dispatch' && inputs.use_published_data == true && inputs.data_from_run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_collection.outputs.artifact_id }}
+          path: ${{ runner.temp }}/collected-data
+
       - name: Load validated published data for manual release
         if: inputs.use_published_data == true
+        env:
+          DATA_FROM_RUN: ${{ inputs.data_from_run || '' }}
         run: |
           set -euo pipefail
           # Each environment reuses only its own last publication, which was
@@ -372,12 +458,23 @@ jobs:
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-release-ledger.XXXXXX")"
           profiles_file="$(mktemp "$RUNNER_TEMP/slop-release-profiles.XXXXXX")"
           trap 'rm -f "$ledger_file" "$profiles_file"' EXIT
-          bun scripts/download-leaderboard.ts \
-            "$data_origin/data/leaderboard.json" "$ledger_file"
-          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
-            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-            "$data_origin/data/profiles.json" --output "$profiles_file"
+          if [ -n "$DATA_FROM_RUN" ]; then
+            # Verified by restore_collection: a completed trusted main
+            # release whose own collection step succeeded, at an ancestor of
+            # this commit. Production only; the retained-data age check in
+            # the deploy job still refuses data older than the live site.
+            test "$VITE_SLOP_ENVIRONMENT" = "production"
+            collected="$RUNNER_TEMP/collected-data"
+            bun scripts/read-local-leaderboard.ts "$collected" "$ledger_file"
+            cp "$collected/profiles.json" "$profiles_file"
+          else
+            bun scripts/download-leaderboard.ts \
+              "$data_origin/data/leaderboard.json" "$ledger_file"
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+              "$data_origin/data/profiles.json" --output "$profiles_file"
+          fi
           # shellcheck disable=SC2016
           bun --no-env-file -e '
             import { assertLeaderboardSnapshot } from "./src/lib/leaderboard";
