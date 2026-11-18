@@ -1,6 +1,5 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { TestClock } from "effect/testing"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import type { Handler } from "@repo/platform/testing"
 import { type Served, serve } from "@repo/platform/testing/chains"
@@ -112,6 +111,26 @@ const productionEdges = (identity: IdentityLookups): Handler => (request) => {
 }
 
 const scannerJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" })
+
+function retryClock(lookupFiber: number) {
+  let nanos = 0n
+  const waits: Array<number> = []
+  const millis = () => Number(nanos / 1_000_000n)
+  const live = Clock.Clock.defaultValue()
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: millis,
+    currentTimeMillis: Effect.sync(millis),
+    currentTimeNanosUnsafe: () => nanos,
+    currentTimeNanos: Effect.sync(() => nanos),
+    monotonicTimeNanosUnsafe: () => nanos,
+    monotonicTimeNanos: Effect.sync(() => nanos),
+    sleep: (duration) => Effect.flatMap(Effect.fiberId, (fiber) => fiber !== lookupFiber ? live.sleep(duration) : Effect.sync(() => {
+      waits.push(Duration.toMillis(duration))
+      nanos += Option.getOrElse(Duration.toNanos(duration), () => 0n)
+    })),
+  }
+  return { clock, waits }
+}
 
 function described(error: unknown) {
   if (error instanceof PublicationFailed) return `${error.stage}: ${error.message}`
@@ -237,14 +256,9 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         identity.answers.push(...answers)
         identity.page = page
         identity.asked.splice(0)
-        const virtualTime = TestClock.layer()
-        provide virtualTime {
-          const fiber = try Effect.forkChild(exit(identityApp(clientId)))
-          while (fiber.pollUnsafe() === undefined) try TestClock.adjust(Duration.millis(100))
-          const ended = try Fiber.join(fiber)
-          const verdict = Exit.isSuccess(ended) ? ended.value : described(Cause.squash(ended.cause))
-          return { verdict, waitedQuarterMinutes: Math.floor((try Clock.currentTimeMillis) / 15_000), asked: [...identity.asked] }
-        }
+        const paced = retryClock(try Effect.fiberId)
+        const verdict = provideService(identityApp(clientId), Clock.Clock, paced.clock) catch (error) => described(error)
+        return { verdict, waits: [...paced.waits], asked: [...identity.asked] }
       }
       const spent = { status: 429 }
       const exhausted = { status: 403, headers: { "x-ratelimit-remaining": "0" } }
@@ -298,11 +312,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       honest: { matches: true, environment: "Production", dnsTlsHeaders: true },
       tampered: { matches: false, served: true },
       identityChecks: {
-        publicOnly: { verdict: "IdentityPublicOnly", waitedQuarterMinutes: 6, asked: ["api", "api", "api", "api", "page"] },
-        pageMissing: { verdict: "identity app: The Slop Identity GitHub App lookup was rate limited (HTTP 403) and its public page answered HTTP 404.", waitedQuarterMinutes: 6, asked: ["api", "api", "api", "api", "page"] },
-        undiscoverable: { verdict: "identity app: the Slop Identity GitHub App is not publicly discoverable (HTTP 403)", waitedQuarterMinutes: 6, asked: ["api", "api", "api", "api"] },
-        recovered: { verdict: "IdentityVerified", waitedQuarterMinutes: 1, asked: ["api", "api"] },
-        drifted: { verdict: "identity app: the public Slop Identity GitHub App contract drifted", waitedQuarterMinutes: 0, asked: ["api"] },
+        publicOnly: { verdict: "IdentityPublicOnly", waits: [15_000, 30_000, 45_000], asked: ["api", "api", "api", "api", "page"] },
+        pageMissing: { verdict: "identity app: The Slop Identity GitHub App lookup was rate limited (HTTP 403) and its public page answered HTTP 404.", waits: [15_000, 30_000, 45_000], asked: ["api", "api", "api", "api", "page"] },
+        undiscoverable: { verdict: "identity app: the Slop Identity GitHub App is not publicly discoverable (HTTP 403)", waits: [15_000, 30_000, 45_000], asked: ["api", "api", "api", "api"] },
+        recovered: { verdict: "IdentityVerified", waits: [15_000], asked: ["api", "api"] },
+        drifted: { verdict: "identity app: the public Slop Identity GitHub App contract drifted", waits: [], asked: ["api"] },
       },
     }))
   }))

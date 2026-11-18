@@ -6,8 +6,8 @@ missing saved value means no consent. Legacy `src/ProjectProposalPage.tsx`
 started it checked; that default is superseded. The saved value is a field of
 every immutable revision of the [project registry](./projects.md): creation
 records it from the new-project form, and only an owner revision
-(`editConsent`, or `publishOwnerRevision` when one save carries the consent
-with other changes), at the expected revision under a current authority read on
+(`publishOwnerRevision`, alone or with other changes of the same save), at
+the expected revision under a current authority read on
 an unrestricted project whose acting account is not banned
 ([composition](./projectComposition.md)), changes it. The
 [Slopbot closure decision](../slopbot/closure.md) consumes the saved value of

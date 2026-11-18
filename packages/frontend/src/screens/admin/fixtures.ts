@@ -117,6 +117,7 @@ export const feeReport: FeeReport = {
   totals: [{ network: "base", token: "0x4200000000000000000000000000000000000006", targetToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", conversions: 2, amountIn: "1000000000000000000", amountOut: "3150250000" }],
   last24Hours: [],
   buyback: { recent: [], totals: [] },
+  claims: { recent: [], totals: [], last24Hours: [] },
 };
 
 export const assessment: Assessment = {

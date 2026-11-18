@@ -1,4 +1,4 @@
-// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"
+// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account or a moderator files one open project appeal"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"
 import { Alert, Button, Field, Input, Select, Status, Textarea } from "@repo/ui";
 import { Lock } from "lucide-react";
 import { type FormEvent, useId, useRef, useState } from "react";

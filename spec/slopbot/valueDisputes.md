@@ -145,7 +145,8 @@ pure def sometimesUncertainEscalated(d: Dispute): bool = d.escalation == Incompl
 escalates; only the disputer or a current maintainer may answer, and only an
 unescalated, confident draft can be accepted. An answer while the disputer
 has an active participation ban escalates with that reason, with or without
-a draft, as for an appeal (`applyAppealCommand` in `review.ts` serves both).
+a draft, as for an appeal (`applyAppealCommand` in `review.ts` serves both);
+an answer from anyone else is refused before the ban is read.
 `/slopbot uphold|deny <key>`
 from a moderator decides an escalated dispute; a moderator cannot decide
 their own dispute. Unresolved disputes escalate after seven days. The
@@ -157,8 +158,9 @@ pure def mayAnswer(d: Dispute, by: int, check: DisputerCheck): bool =
 pure def answerable(d: Dispute): bool = unresolved(d) and not(escalated(d)) and d.draft != NoDraft
 pure def canReject(d: Dispute, by: int, check: DisputerCheck): bool = answerable(d) and mayAnswer(d, by, check)
 pure def reject(d: Dispute, by: int, check: DisputerCheck): Dispute = escalatedWith(DraftRejected, d)
-pure def canEscalateBanAtAnswer(d: Dispute): bool = unresolved(d) and not(escalated(d)) and d.ban == Banned
-pure def escalateBanAtAnswer(d: Dispute): Dispute = escalatedWith(ParticipationBan, d)
+pure def canEscalateBanAtAnswer(d: Dispute, by: int, check: DisputerCheck): bool =
+  unresolved(d) and not(escalated(d)) and d.ban == Banned and mayAnswer(d, by, check)
+pure def escalateBanAtAnswer(d: Dispute, by: int, check: DisputerCheck): Dispute = escalatedWith(ParticipationBan, d)
 pure def sometimesBanEscalatedBeforeDraft(d: Dispute): bool = d.escalation == ParticipationBan and d.draft == NoDraft
 pure def canAccept(d: Dispute, by: int, check: DisputerCheck): bool = answerable(d) and mayAnswer(d, by, check) and
   d.ban == NotBanned and d.draftConfidence >= F::closeConfidence

@@ -53,10 +53,10 @@ pure def pinValid(pin: Pin): bool = pin.version > 0 and pin.deployment > 0 and p
 pure def queryAt(index: int): QueryName = if (index == 0) LocksQuery else if (index == 1) GasQuery else AttemptsQuery
 pure def rowLimit(query: QueryName): int = if (query == LocksQuery) 4 else if (query == GasQuery) 500 else 100
 pure def limitsThrough(reads: int): int = if (reads <= 0) 0 else if (reads == 1) 4 else if (reads == 2) 504 else 604
-pure def canStartDiagnostic(d: Diagnostic, run: DiagnosticRun): bool = d.phase == Idle
-pure def startDiagnostic(d: Diagnostic, run: DiagnosticRun): Diagnostic =
-  if (run.mainRef and run.runnerTemp and pinValid(run.pin)) { ...d, kind: run.kind, phase: Pinned, pin: run.pin }
-  else { ...d, kind: run.kind, phase: Refused }
+pure def canStartDiagnostic(d: Diagnostic, request: DiagnosticRun): bool = d.phase == Idle
+pure def startDiagnostic(d: Diagnostic, request: DiagnosticRun): Diagnostic =
+  if (request.mainRef and request.runnerTemp and pinValid(request.pin)) { ...d, kind: request.kind, phase: Pinned, pin: request.pin }
+  else { ...d, kind: request.kind, phase: Refused }
 pure def canCheckBinding(d: Diagnostic, bindingMatches: bool): bool = d.phase == Pinned and d.kind == Inspection
 pure def checkBinding(d: Diagnostic, bindingMatches: bool): Diagnostic =
   { ...d, phase: if (bindingMatches) Reading else Refused }
@@ -105,7 +105,7 @@ These sets bound simulation only.
 
 ```quint
 pure val pinSample: Pin = { version: 10, deployment: 20, source: 7 }
-pure val runValues = Set({ kind: Inspection, mainRef: true, runnerTemp: true, pin: pinSample },
+pure val requestValues = Set({ kind: Inspection, mainRef: true, runnerTemp: true, pin: pinSample },
   { kind: RpcProbe, mainRef: true, runnerTemp: true, pin: pinSample },
   { kind: Inspection, mainRef: false, runnerTemp: true, pin: pinSample })
 pure val bindingMatchesValues = Set(true, false)

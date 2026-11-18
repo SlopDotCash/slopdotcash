@@ -224,7 +224,11 @@ per configured moderator under an idempotent key and adds the
 penalty with moderator review (`penalty?.moderator_review === 1`,
 `review.ts` lines 1107, 1258 and 1994). A close whose revision a maintainer
 reopened records no penalty, or has its penalty reversed as a late reopen
-before the notice, so it notifies no one and adds no label. The notice is
+before the notice, so it notifies no one and adds no label. An upheld
+appeal reverses the penalty too (`reversePenalty(db, node, "appeal_upheld",
+covered)`, `review.ts` lines 3188 and 3218), and `activePenalty` reads only
+a penalty that is not reversed (`penalties.ts` lines 124-138), so a notice
+or label still owed after an upheld appeal is never sent. The notice is
 retried from the committed close even after GitHub already shows the item
 closed. Moderators are the PRD section 9 GitHub actors 18633264 and
 202660855.
@@ -233,6 +237,7 @@ closed. Moderators are the PRD section 9 GitHub actors 18633264 and
 pure val slopModerators: Set[int] = Set(18633264, 202660855)
 pure def moderatorPenaltyRecorded(c: CloseAttempt): bool =
   closedBySlopbot(c) and F::moderatorReview(c.candidate.triage.verdict.category) and not(c.maintainerReopened)
+    and not(c.appealUpheld)
 pure def canNotifyModerator(c: CloseAttempt, recipient: int): bool =
   moderatorPenaltyRecorded(c) and slopModerators.contains(recipient) and not(c.moderatorNotices.contains(recipient))
 pure def notifyModerator(c: CloseAttempt, recipient: int): CloseAttempt =
@@ -245,7 +250,8 @@ pure def alwaysNoticesToModerators(c: CloseAttempt): bool = c.moderatorNotices.s
 pure def sometimesEveryModeratorNotified(c: CloseAttempt): bool = slopModerators.subseteq(c.moderatorNotices) and c.moderatorLabel
 pure val fair_notifyModerator = "weak"
 pure def leadsToEveryModeratorNotified(c: CloseAttempt, later: CloseAttempt): bool =
-  moderatorPenaltyRecorded(c) implies (slopModerators.subseteq(later.moderatorNotices) or later.maintainerReopened)
+  moderatorPenaltyRecorded(c) implies (slopModerators.subseteq(later.moderatorNotices) or later.maintainerReopened
+    or later.appealUpheld)
 pure def sometimesReopenedScamCloseNotifiesNoOne(c: CloseAttempt): bool =
   closedBySlopbot(c) and c.maintainerReopened and c.moderatorNotices.size() == 0 and not(c.moderatorLabel)
 ```

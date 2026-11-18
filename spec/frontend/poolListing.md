@@ -100,31 +100,34 @@ the entries of its tier (`tier`) and hidden when it has none; with no entry
 at all it says "No projects yet.". Whether the project is active and whether
 its security program is open are read once, from its card policy (`active`,
 and `bountyOpen`, development `securityBounty?.status === "open"`); the
-entry adds its placement, its tier and its pool.
+entry adds its registry tier ([projects](../backend/projects.md), `Tier`;
+development `listingTier`), which also says whether it is placed (a Retired
+project is not), and its pool.
 
 ```quint
-type HomeTier = Featured | Community
-type HomeEntry = { policy: V::CardPolicy, placed: bool, tier: HomeTier, pool: P::PoolFacts }
+import projects as BP from "../backend/projects"
+type HomeEntry = { policy: V::CardPolicy, tier: BP::Tier, pool: P::PoolFacts }
 pure val noProjectsText = "No projects yet."
-pure def onHomeGrid(entry: HomeEntry): bool = entry.placed and V::listedForDiscovery(entry.policy)
+pure def placed(entry: HomeEntry): bool = entry.tier != BP::Retired
+pure def onHomeGrid(entry: HomeEntry): bool = placed(entry) and V::listedForDiscovery(entry.policy)
   and not(V::cardNamesBounty(entry.policy))
-pure def inHomeSection(entry: HomeEntry, tier: HomeTier): bool = onHomeGrid(entry) and entry.tier == tier
+pure def inHomeSection(entry: HomeEntry, tier: BP::Tier): bool = onHomeGrid(entry) and entry.tier == tier
 pure def lawFundingNeverRemovesAHomeCard(entry: HomeEntry, other: P::PoolFacts): bool =
   onHomeGrid(entry) == onHomeGrid({ ...entry, pool: other })
 pure def lawEachCardIsInOneSection(entry: HomeEntry): bool =
-  onHomeGrid(entry) implies (inHomeSection(entry, Featured) iff not(inHomeSection(entry, Community)))
+  onHomeGrid(entry) implies (inHomeSection(entry, BP::Featured) iff not(inHomeSection(entry, BP::Community)))
 pure def lawBountyCardsLeaveTheGrid(entry: HomeEntry): bool =
   V::cardNamesBounty(entry.policy) implies not(onHomeGrid(entry))
-pure def lawUnplacedProjectsLeaveTheGrid(entry: HomeEntry): bool = not(entry.placed) implies not(onHomeGrid(entry))
+pure def lawUnplacedProjectsLeaveTheGrid(entry: HomeEntry): bool = not(placed(entry)) implies not(onHomeGrid(entry))
 pure val entryValues = Set(
   { policy: { reward: V::MonthlyPoolReward, monthlyCapPositive: true, bounty: V::NoBounty, bountyOpen: false, active: true },
-    placed: true, tier: Featured, pool: P::fundedPool },
+    tier: BP::Featured, pool: P::fundedPool },
   { policy: { reward: V::MonthlyPoolReward, monthlyCapPositive: true, bounty: V::NoBounty, bountyOpen: false, active: true },
-    placed: true, tier: Community, pool: { ...P::fundedPool, freeAtStart: List(15) } },
+    tier: BP::Community, pool: { ...P::fundedPool, freeAtStart: List(15) } },
   { policy: { reward: V::MonthlyPoolReward, monthlyCapPositive: false, bounty: V::SeparateBounty, bountyOpen: true, active: true },
-    placed: true, tier: Community, pool: P::fundedPool },
+    tier: BP::Community, pool: P::fundedPool },
   { policy: { reward: V::ExternalPrizeShare, monthlyCapPositive: false, bounty: V::NoBounty, bountyOpen: false, active: true },
-    placed: false, tier: Community, pool: { ...P::fundedPool, monthlyPool: false } })
+    tier: BP::Retired, pool: { ...P::fundedPool, monthlyPool: false } })
 pure val otherValues = P::poolValues
 ```
 

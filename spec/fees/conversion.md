@@ -55,7 +55,7 @@ type Row = { id: int, token: int, kind: SendKind, live: bool, state: RowState, r
   amountIn: int, valueMicro: int, balanceBefore: int, minimumOutput: int, nonce: int, gasLimit: int,
   deadline: int, attempts: List[Attempt], output: int, createdAt: int }
 type Reservation = { id: int, runId: int, nonce: int, maximum: int, state: GasState, row: int, tx: int,
-  settled: bool, actual: int, settledDay: int, blockhashSlot: int }
+  settled: bool, actual: int, settledDay: int, blockhashSlot: int, imported: bool }
 type Holding = { token: int, asset: HoldingKind, balance: int, feeIncome: int, topUps: int, sold: int, usdcOut: int,
   vault: int, vaultObserved: int, accrued: int, claimed: int }
 type Lease = { holder: int, expiresAt: int }
@@ -187,7 +187,10 @@ pinned block; it falls when anyone claims, and it counts only while the fee
 wallet holds and is proposed for none of the vault's roles (owner,
 registrar, upgrade authority, identity authority, pending identity or
 upgrade authority). An observation of a vault whose token has an open claim
-is not used. Only a finalized claim moves accrued fees into the wallet.
+is not used. Only a finalized claim moves accrued fees into the wallet, and
+the accrued amount and the open claims of a token together never exceed the
+vault's last observed accrual: each run claims at most the `accruedFees` it
+read.
 
 ```quint
 type FinalizedTransfer = { receipt: int, token: int, amount: int, toFeeWallet: bool, sameAsset: bool, finalized: bool }
@@ -237,7 +240,8 @@ pure def alwaysTopUpsNeverSold(f: Fee): bool = f.holdings.every(h =>
   (if (h.asset == NativeAsset) h.balance == h.feeIncome + h.topUps - h.sold else h.topUps == 0 and h.sold + h.balance <= h.feeIncome)
   and h.sold >= 0 and h.sold + openAmount(f, h.token) <= h.feeIncome and h.balance >= openAmount(f, h.token)
   and h.topUps >= 0 and h.balance >= 0)
-pure def alwaysAccrualFromVault(f: Fee): bool = f.holdings.every(h => h.accrued >= 0 and h.claimed >= 0 and h.vaultObserved >= 0)
+pure def alwaysAccrualFromVault(f: Fee): bool = f.holdings.every(h => h.accrued >= 0 and h.claimed >= 0 and h.vaultObserved >= 0
+  and h.accrued + openClaims(f, h.token) <= h.vaultObserved)
 pure def sometimesBalanceObserved(f: Fee): bool = f.holdings.some(h => h.asset == ProjectToken and h.feeIncome > 0 and f.receipts.length() == 0)
 pure def sometimesAccrualFell(f: Fee): bool = f.holdings.some(h => h.vault > 0 and h.vaultObserved < h.claimed)
 pure def sometimesTopUpRetained(f: Fee): bool = f.holdings.some(h => h.topUps > 0 and h.feeIncome > 0 and spendable(f, h.token) < h.balance)
@@ -346,7 +350,12 @@ sequence, and a nonce held by a reservation of another send is never
 issued twice; only a nonce whose send expired unlanded, and that no
 canonical receipt has settled since, may be reused. A
 claim starts only when the run has no other reservation or intent. A Solana signature records the slot of the
-blockhash it was signed against; that slot never changes.
+blockhash it was signed against; that slot never changes. Every reservation
+the journal makes itself stays within the per-transaction ceiling, and while
+no send overran, the day's liability of those reservations stays within the
+daily ceiling; an imported historical send (below) is charged at its own
+worst case with neither check, and it still counts in the liability every
+later reservation is checked against.
 
 A swap goes only to the network's pinned router: the KyberSwap router
 `0x6131b5fae19ea4f9d964eac0408e4408b66337b5` on Base, Ethereum and
@@ -357,14 +366,22 @@ the input to that router (`approve(router, amountIn)`, with no value), and
 otherwise the swap itself (`evm.ts` `prepare`, `boundedApproval`). A native
 input needs no allowance, and the adapter reports it as the input.
 
+Every signature, a conversion, an approval, a claim or a replacement, is
+refused when its final prepared worst-case native fee (the reservation's
+maximum, with the Base allowance), priced in USDC, times ten exceeds the
+send's value, or when that fee cannot be priced; an approval is measured
+against its conversion's value (`evm.ts` `signIntent`). On Solana the
+priced cost must also be positive (`solana.ts` "Final Solana native cost
+cannot be priced"). The quote's gas value only decides dust.
+
 ```quint
 type EvmFees = { maxFee: int, priority: int }
 type RouteInspection = Inspected | Unresolved
 type SignedSend = { kind: SendKind, tx: int, nonce: int, gasLimit: int, fees: EvmFees, inspection: RouteInspection,
   outputToFeeWallet: bool, minimumOutput: int, deadline: int, blockhashSlot: int, toPinnedRouter: bool, approvedAmount: int,
-  allowance: int }
+  allowance: int, pricedFeeMicro: int }
 pure val noGas: Reservation = { id: 0, runId: 0, nonce: -1, maximum: 0, state: Abandoned, row: 0, tx: 0, settled: true, actual: 0,
-  settledDay: 0, blockhashSlot: 0 }
+  settledDay: 0, blockhashSlot: 0, imported: false }
 pure val noRow: Row = { id: 0, token: 0, kind: Conversion, live: false, state: Failed, reason: NoReason, runId: 0, wallet: 0, amountIn: 0,
   valueMicro: 0, balanceBefore: 0, minimumOutput: 0, nonce: -1, gasLimit: 0, deadline: 0, attempts: List(), output: 0, createdAt: 0 }
 pure def bucketHolds(gas: List[Reservation], g: Reservation): bool =
@@ -394,8 +411,10 @@ pure def canReserveGas(f: Fee, runId: int, nonce: int, maximum: int, by: R::Send
       <= R::dailyCeilingOf(f.network)
 pure def reserveGas(f: Fee, runId: int, nonce: int, maximum: int, by: R::Sender): Fee =
   { ...f, gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: nonce, maximum: maximum, state: Reserved,
-    row: 0, tx: 0, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0 }) }
+    row: 0, tx: 0, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0, imported: false }) }
 pure def txUsed(f: Fee, tx: int): bool = f.gas.some(g => g.tx == tx)
+pure def pricedWithin(f: Fee, pricedFeeMicro: int, valueMicro: int): bool =
+  (if (f.network == R::Solana) pricedFeeMicro > 0 else pricedFeeMicro >= 0) and pricedFeeMicro * 10 <= valueMicro
 pure def canSign(f: Fee, runId: int, send: SignedSend, by: R::Sender): bool =
   val intent = pendingIntent(f, runId)
   val held = ownReservation(f, runId)
@@ -410,7 +429,7 @@ pure def canSign(f: Fee, runId: int, send: SignedSend, by: R::Sender): bool =
     and (send.kind == Approval implies send.approvedAmount == intent.amountIn and send.allowance < intent.amountIn)
     and ((send.kind == Conversion and f.network != R::Solana) implies send.allowance >= intent.amountIn)
     and (if (f.network == R::Solana) send.blockhashSlot > 0 else send.blockhashSlot == 0)
-    and intent.valueMicro <= remaining(f)
+    and intent.valueMicro <= remaining(f) and pricedWithin(f, send.pricedFeeMicro, intent.valueMicro)
 pure def sign(f: Fee, runId: int, send: SignedSend, by: R::Sender): Fee =
   val intent = pendingIntent(f, runId)
   val held = ownReservation(f, runId)
@@ -434,8 +453,10 @@ pure def canBroadcastFail(f: Fee, runId: int, id: int, by: R::Sender): bool =
   by == R::Worker and leaseHeld(f, runId) and f.rows.some(r => r.id == id and r.state == Submitted)
 pure def broadcastFail(f: Fee, runId: int, id: int, by: R::Sender): Fee =
   { ...f, rows: f.rows.listMap(r => if (r.id == id) { ...r, state: Unknown, reason: BroadcastUnknown } else r) }
-pure def alwaysLiabilityWithinDay(f: Fee): bool = not(f.overrun) implies liability(f) <= R::dailyCeilingOf(f.network)
-pure def alwaysReservationsWithinTransaction(f: Fee): bool = f.gas.every(g => g.maximum > 0 and g.maximum <= R::transactionCeilingOf(f.network)
+pure def journaledGas(f: Fee): List[Reservation] = f.gas.select(g => not(g.imported))
+pure def alwaysLiabilityWithinDay(f: Fee): bool = not(f.overrun) implies liabilityOf(journaledGas(f), day(f)) <= R::dailyCeilingOf(f.network)
+pure def alwaysReservationsWithinTransaction(f: Fee): bool = f.gas.every(g => g.maximum > 0
+  and (not(g.imported) implies g.maximum <= R::transactionCeilingOf(f.network)) and (g.imported implies g.state == Signed)
   and g.actual >= 0 and (g.state == Reserved implies g.row == 0 and not(g.settled) and g.blockhashSlot == 0)
   and (g.settled implies g.state == Signed)
   and (g.state == Signed implies (if (f.network == R::Solana) g.blockhashSlot > 0 else g.blockhashSlot == 0)))
@@ -449,6 +470,68 @@ pure def sometimesUnknown(f: Fee): bool = f.rows.some(r => r.state == Unknown)
 pure def sometimesRunEnded(f: Fee): bool = f.rows.some(r => r.reason == RunEndedBeforeSigning)
 pure def sometimesSharedNonceSequence(f: Fee): bool = f.gas.some(g => g.state == Signed and g.nonce == 1)
   and f.rows.some(r => r.token == 1 and r.nonce == 0) and f.rows.some(r => r.token == 2 and r.nonce == 1)
+```
+
+### A recorded send without a reservation is imported at its own worst case
+
+A live send an earlier Worker version signed before the native-gas journal
+existed has no reservation. Before anything else on an EVM network, each
+reconciliation imports every such send under the run's lease, keeping the
+recorded row, its nonce and its transaction, with a signed, unsettled
+reservation of its own worst case: `gas * maxFeePerGas` plus the Base
+allowance, read from the recorded bytes or the node's transaction. The
+import checks neither the per-transaction nor the daily ceiling: the
+liability already exists (`evm.ts` `reconcileNativeGas`, `native-gas.ts`
+`unaccounted`, `importRecorded`). A recorded claim keeps its amount out of
+the accrued balance as a new claim would. On Solana a historical send
+without a reservation stops signing instead ("Historical Solana sends need
+verified native-cost reconciliation before signing"), so nothing is
+imported there. Only one transaction of a nonce can land, so a recorded
+send is imported only while no unsettled signed send of the journal holds
+its nonce. An imported send is then reconciled like any
+other. Development also imports the worst case of a recorded send whose row
+already settled, to charge its receipt's fee; a settled row is loaded as it
+is, and only an open one is imported here. The journal store brings each
+such open row in through this event, the row and its reservation together,
+so a loaded journal never holds an open send without a reservation.
+
+```quint
+type RecordedSend = { token: int, kind: SendKind, tx: int, nonce: int, gasLimit: int, fees: EvmFees, amountIn: int, valueMicro: int,
+  minimumOutput: int, deadline: int }
+pure def recordedMaximum(f: Fee, recorded: RecordedSend): int = recorded.gasLimit * recorded.fees.maxFee + additionalReserve(f.network)
+pure def canImportRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sender): bool =
+  val h = holding(f, recorded.token)
+  by == R::Worker and leaseHeld(f, runId) and f.network != R::Solana and validToken(f, recorded.token)
+    and openRows(f, recorded.token) == 0 and pendingIntent(f, runId).id == 0 and ownReservation(f, runId).id == 0
+    and recorded.tx > 0 and not(txUsed(f, recorded.tx)) and not(f.rows.some(r => landedIn(r, recorded.tx)))
+    and not(f.gas.some(g => g.state == Signed and not(g.settled) and g.nonce == recorded.nonce)) and recorded.nonce >= 0 and recorded.gasLimit > 0 and recorded.fees.maxFee > 0 and recorded.fees.priority >= 0
+    and recorded.fees.priority <= recorded.fees.maxFee and recorded.amountIn > 0 and recorded.valueMicro >= 0
+    and (recorded.kind == Conversion implies evaluated(f, recorded.token) and recorded.amountIn <= spendable(f, recorded.token)
+      and recorded.minimumOutput > 0 and dayValue(f) + recorded.valueMicro <= dayCap)
+    and (recorded.kind == Claim implies h.vault > 0 and recorded.amountIn <= h.accrued)
+pure def importRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sender): Fee =
+  val id = f.rows.length() + 1
+  val h = holding(f, recorded.token)
+  { ...f, rows: f.rows.append({ ...noRow, id: id, token: recorded.token, kind: recorded.kind, live: true, state: Submitted, runId: runId,
+      wallet: wallet(f), amountIn: recorded.amountIn, valueMicro: recorded.valueMicro,
+      minimumOutput: if (recorded.kind == Conversion) recorded.minimumOutput else 0, nonce: recorded.nonce, gasLimit: recorded.gasLimit,
+      deadline: recorded.deadline, createdAt: f.clock,
+      attempts: List({ tx: recorded.tx, maxFee: recorded.fees.maxFee, priority: recorded.fees.priority, at: f.clock }) }),
+    gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: recorded.nonce, maximum: recordedMaximum(f, recorded),
+      state: Signed, row: id, tx: recorded.tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0, imported: true }),
+    holdings: if (recorded.kind == Claim) withHolding(recorded.token, { ...h, accrued: h.accrued - recorded.amountIn }, f) else f.holdings }
+pure def sometimesImportedAboveCeiling(f: Fee): bool = f.gas.some(g => g.imported and g.maximum > R::transactionCeilingOf(f.network))
+pure def sometimesImportedSettled(f: Fee): bool = f.gas.some(g => g.imported and g.settled)
+pure val recordedValues = Set(
+  { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 },
+  { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 100000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 },
+  { token: 1, kind: Approval, tx: 12, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 0, deadline: 9000000000 },
+  { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 60000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 })
+pure val weight_importRecorded = 4
 ```
 
 ## Story: Reconcile every send from finalized evidence before another starts
@@ -652,7 +735,7 @@ pure def canReplace(f: Fee, runId: int, id: int, tx: int, networkFee: NetworkFee
     and networkFee.observedAt >= latest.at + replacementWaitMs and networkFee.observedAt <= f.clock
     and f.clock - latest.at >= replacementWaitMs and latest.maxFee < networkFee.maxFeeNeeded
     and (r.kind == Conversion implies f.clock + replacementDeadlineMarginMs < r.deadline)
-    and r.valueMicro > 0 and networkFee.pricedFeeMicro >= 0 and networkFee.pricedFeeMicro * 10 <= r.valueMicro
+    and r.valueMicro > 0 and pricedWithin(f, networkFee.pricedFeeMicro, r.valueMicro)
     and tx > 0 and not(txUsed(f, tx)) and stepped.ok
     and liabilityOf(f.gas.append({ ...noGas, id: f.gas.length() + 1, nonce: r.nonce,
       maximum: r.gasLimit * stepped.maxFee + additionalReserve(f.network), state: Signed, settled: false }), day(f)) <= R::dailyCeilingOf(f.network)
@@ -662,7 +745,7 @@ pure def replace(f: Fee, runId: int, id: int, tx: int, networkFee: NetworkFeeObs
   { ...f, rows: f.rows.listMap(x => if (x.id == id) { ...x, state: Submitted, reason: NoReason,
       attempts: x.attempts.append({ tx: tx, maxFee: stepped.maxFee, priority: stepped.priorityFee, at: f.clock }) } else x),
     gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: r.nonce, maximum: r.gasLimit * stepped.maxFee + additionalReserve(f.network),
-      state: Signed, row: id, tx: tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0 }) }
+      state: Signed, row: id, tx: tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0, imported: false }) }
 pure def alwaysAttemptsKeepContent(f: Fee): bool = f.rows.every(r => r.attempts.every(a =>
   a.maxFee >= firstAttempt(r).maxFee and a.maxFee <= firstAttempt(r).maxFee * 3 and a.priority <= a.maxFee))
 pure def stepReplacementNeedsActivation(before: Fee, via: str, after: Fee): bool =
@@ -678,7 +761,8 @@ pure def sometimesRetriedThenConverted(f: Fee): bool = f.rows.some(r => r.kind =
 A claim runs only in a recovery scan of a live network. It names a
 registered reviewed vault and its deployment, pays the token that vault
 accrues to this network's fee wallet, and needs a value of at least 5 USDC
-and ten times its gas cost. It claims at most the accrued amount observed
+and ten times its gas cost, and its final priced native fee times ten must
+not exceed that value. It claims at most the accrued amount observed
 from that vault, and only while the fee wallet holds and is proposed for
 none of the vault's roles at the pinned block (`verifiedVault`, which throws
 "The fee wallet holds or is proposed for a vault role").
@@ -688,11 +772,12 @@ outside the Worker.
 
 ```quint
 type VaultClaim = { vault: int, deployment: int, recipient: int, amount: int, valueMicro: int, gasValue: int,
-  tx: int, nonce: int, gasLimit: int, fees: EvmFees, blockhashSlot: int, roleFree: bool }
+  tx: int, nonce: int, gasLimit: int, fees: EvmFees, blockhashSlot: int, roleFree: bool, pricedFeeMicro: int }
 pure def claimAdmitted(f: Fee, c: VaultClaim): bool =
   val v = vaultOf(f, c.vault)
   v.vault > 0 and v.deployment == c.deployment and c.recipient == wallet(f) and holding(f, v.token).vault == c.vault and c.roleFree
     and c.amount > 0 and c.amount <= holding(f, v.token).accrued and c.valueMicro >= 5000000 and c.valueMicro >= c.gasValue * 10
+    and pricedWithin(f, c.pricedFeeMicro, c.valueMicro)
 pure def canClaim(f: Fee, runId: int, vaultClaim: VaultClaim, by: R::Sender): bool =
   val maximum = worstCase(f, vaultClaim.gasLimit, vaultClaim.fees)
   val token = vaultOf(f, vaultClaim.vault).token
@@ -716,7 +801,8 @@ pure def claim(f: Fee, runId: int, vaultClaim: VaultClaim, by: R::Sender): Fee =
       amountIn: vaultClaim.amount, valueMicro: vaultClaim.valueMicro, nonce: vaultClaim.nonce, gasLimit: vaultClaim.gasLimit, createdAt: f.clock,
       attempts: List({ tx: vaultClaim.tx, maxFee: vaultClaim.fees.maxFee, priority: vaultClaim.fees.priority, at: f.clock }) }),
     gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: vaultClaim.nonce, maximum: worstCase(f, vaultClaim.gasLimit, vaultClaim.fees),
-      state: Signed, row: id, tx: vaultClaim.tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: vaultClaim.blockhashSlot }) }
+      state: Signed, row: id, tx: vaultClaim.tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: vaultClaim.blockhashSlot,
+      imported: false }) }
 pure def sometimesClaimFinalized(f: Fee): bool = f.holdings.some(h => h.claimed > 0)
 ```
 
@@ -782,15 +868,17 @@ pure val quoteValues = Set(
   { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: -1 },
   { token: 2, route: Found, amountIn: 500000000, output: 2000000000, minimumOutput: 1980000000, gasValue: 1000, impactBps: 50 })
 pure val sendValues = Set(
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000 },
-  { kind: Conversion, tx: 14, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000 },
-  { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 500000000, allowance: 0 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Unresolved, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 5000000, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: false, approvedAmount: 0, allowance: 500000000 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 0 })
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 14, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 500000000, allowance: 0, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Unresolved, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 5000000, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: false, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 0, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: -1 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 50000000 })
 pure val receiptValues = Set({ tx: 11, succeeded: true, output: 450000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 },
   { tx: 11, succeeded: true, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 500000000 },
   { tx: 11, succeeded: false, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 },
@@ -817,11 +905,15 @@ pure val proofValues = Set(
     coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 } })
 pure val vaultClaimValues = Set(
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
-    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true },
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 1000 },
   { vault: 7, deployment: 71, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
-    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true },
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 1000 },
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
-    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: false })
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: false, pricedFeeMicro: 1000 },
+  { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: -1 },
+  { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 100000000 })
 pure val weight_evaluate = 8
 pure val weight_reserveGas = 8
 pure val weight_sign = 10

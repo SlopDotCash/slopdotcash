@@ -34,7 +34,10 @@ in development's code. It needs a deployed producer revision and the
 active installation row. Every source must be a public repository in
 contributor scope. The cutoff is the value consumer's configured start, or
 1 November 2026 UTC when the consumer has no valid settings
-(`subscriptionCutoff`), so no work belongs to neither route. A single
+(`subscriptionCutoff`), so no work belongs to neither route. It is read
+from the configuration again for every import: the configured start may
+move to another date on or after 1 November 2026, and it returns to
+1 November 2026 whenever the settings become invalid. A single
 import's one source is a closed pull request whose merge time, else close
 time, is before the cutoff. A joint import's sources are distinct; when
 any of them is not such a source, the import still passes when its evidence
@@ -99,7 +102,7 @@ pure def admissible(s: Imports, request: ImportRequest): bool =
     and historicalWork(s, request) and request.assessmentKey > 0
 pure def acceptable(s: Imports, request: ImportRequest): bool =
   admissible(s, request) and not(s.keys.contains(request.assessmentKey))
-pure def canRecordCutoff(s: Imports, cutoff: int): bool = s.cutoff == VR::apiStart and cutoff > VR::apiStart
+pure def canRecordCutoff(s: Imports, cutoff: int): bool = cutoff >= VR::apiStart and cutoff != s.cutoff
 pure def recordCutoff(s: Imports, cutoff: int): Imports = { ...s, cutoff: cutoff }
 pure def canApplyInstallation(s: Imports, change: I::InstallEvent): bool = I::canDeliver(s.install, change)
 pure def applyInstallation(s: Imports, change: I::InstallEvent): Imports = { ...s, install: I::deliver(s.install, change) }
@@ -132,7 +135,6 @@ pure def alwaysCutoffNotBeforeApiStart(s: Imports): bool = s.cutoff >= VR::apiSt
 pure def stepImportsAreAppendOnly(before: Imports, after: Imports): bool =
   before.records.every(r => after.records.includes(r))
     and before.keys.subseteq(after.keys) and after.refusals >= before.refusals
-    and (before.cutoff > VR::apiStart implies after.cutoff == before.cutoff)
 pure def sometimesImported(s: Imports): bool = s.records.length() > 0
 pure def sometimesClaudeImported(s: Imports): bool = s.records.some(r => claudeProducer(r.producer))
 pure def sometimesReplayed(s: Imports): bool = s.records.length() > 0 and s.last == Replayed
@@ -141,6 +143,8 @@ pure val contextKey = 12
 pure def sometimesContextSourceImported(s: Imports): bool = s.keys.contains(contextKey)
 pure def sometimesImportedAfterConfiguredStart(s: Imports): bool =
   s.cutoff > VR::apiStart and s.records.some(r => r.key == 13)
+pure def sometimesCutoffReturnedToApiStart(s: Imports): bool =
+  s.cutoff == VR::apiStart and s.records.some(r => r.key == 13)
 pure val historicalSource: ImportSource = { repository: 1, project: 1, pull: 1,
   registry: { lookup: RS::CurrentPath, registeredId: 1, observedId: 1, rowActive: true, manifestActive: true,
     retirement: RS::NotRetired, restriction: RS::Clear, flags: RS::NotFlagged },
@@ -165,7 +169,7 @@ pure val requestValues = Set(baseRequest, { ...baseRequest, assessmentKey: 2, pr
   { ...baseRequest, assessmentKey: 14, mode: Joint, sources: List(historicalSource, { ...laterContext, claimed: true }) },
   { ...baseRequest, assessmentKey: 15, mode: Joint, sources: List(historicalSource, laterContext), limitations: 1 },
   { ...baseRequest, assessmentKey: 13, sources: List({ ...historicalSource, occurredAt: 1793491300 }) })
-pure val cutoffValues = Set(1793491200, 1793577600)
+pure val cutoffValues = Set(1793491200, 1793577600, 1793664000)
 pure val changeValues = Set({ delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true },
   { delivery: 2, kind: I::Suspend, sourceTime: 2, hasAccount: true, validTime: true })
 pure val pValues = Set(chatgpt, claude, api)

@@ -22,8 +22,10 @@ sender `by` is the signed-in account (positive), the server (`0`), the
 wallet adapter (`-1`) or the browser's provider discovery (`-2`). Every
 reply carries the request it answers. Each review names its surface: the
 Account wallets section (`WalletsPage`) or the payout consent dialog opened
-for an authorized claim (`PayoutDialog`), whose `savedWallet` is the claim's
-address (development `src/PayoutConsent.tsx` and `src/Earnings.tsx` at
+for an authorized claim (`PayoutDialog`). A dialog review carries the
+claim's address (`claimWallet`) and connects only that wallet, whatever the
+account's saved wallet is; Account wallets carries none (development
+`src/PayoutConsent.tsx` `claim.address` and `src/Earnings.tsx` at
 `67fd54fd4`).
 
 ## Story: Choose a trusted wallet and connect it
@@ -45,14 +47,14 @@ type Phase = Closed | Choosing | Connecting | Connected | Replacing | Preparing 
 type Surface = WalletsPage | PayoutDialog
 type Consent = { actor: int, lifetime: int, request: int, phase: Phase, chain: W::WalletChain, surface: Surface,
   announced: List[int], conflicted: List[int], legacy: List[int], selected: int,
-  walletAccount: str, savedWallet: str, preparedFor: str, prepared: str, intent: int, signature: SG::WalletSignature }
+  walletAccount: str, savedWallet: str, claimWallet: str, preparedFor: str, prepared: str, intent: int, signature: SG::WalletSignature }
 pure val server = 0
 pure val adapter = -1
 pure val discovery = -2
 pure val noSignature: SG::WalletSignature = { wallet: "", signer: "", intent: 0 }
 pure val initial: Consent = { actor: 0, lifetime: 0, request: 0, phase: Closed, chain: W::Base, surface: WalletsPage,
   announced: List(), conflicted: List(), legacy: List(), selected: 0,
-  walletAccount: "", savedWallet: "", preparedFor: "", prepared: "", intent: 0, signature: noSignature }
+  walletAccount: "", savedWallet: "", claimWallet: "", preparedFor: "", prepared: "", intent: 0, signature: noSignature }
 pure def trusted(c: Consent, provider: int): bool = provider > 0 and not(c.conflicted.includes(provider))
   and (c.announced.includes(provider) or c.legacy.includes(provider))
 pure def closedFor(actor: int, savedWallet: str, c: Consent): Consent = { ...initial, actor: actor, lifetime: c.lifetime + 1,
@@ -73,19 +75,20 @@ pure def announce(c: Consent, provider: int, sameMetadata: bool, by: int): Conse
 pure def canObserveLegacy(c: Consent, provider: int, by: int): bool = by == discovery and provider > 0
   and not(c.announced.includes(provider)) and not(c.legacy.includes(provider))
 pure def observeLegacy(c: Consent, provider: int, by: int): Consent = { ...c, legacy: c.legacy.append(provider) }
-pure def canOpenReview(c: Consent, chain: W::WalletChain, surface: Surface, by: int): bool = c.actor > 0 and by == c.actor
-  and (c.phase == Closed or c.phase == Accepted or c.phase == KeptSaved or c.phase == Refused)
-  and (surface == PayoutDialog implies c.savedWallet != "")
-pure def openReview(c: Consent, chain: W::WalletChain, surface: Surface, by: int): Consent =
-  { ...c, phase: Choosing, chain: chain, surface: surface, selected: 0, walletAccount: "", preparedFor: "", prepared: "", intent: 0,
-    signature: noSignature }
+pure def canOpenReview(c: Consent, chain: W::WalletChain, surface: Surface, claimWallet: str, by: int): bool = c.actor > 0
+  and by == c.actor and (c.phase == Closed or c.phase == Accepted or c.phase == KeptSaved or c.phase == Refused)
+  and ((surface == PayoutDialog) iff (claimWallet != ""))
+pure def openReview(c: Consent, chain: W::WalletChain, surface: Surface, claimWallet: str, by: int): Consent =
+  { ...c, phase: Choosing, chain: chain, surface: surface, claimWallet: claimWallet, selected: 0, walletAccount: "",
+    preparedFor: "", prepared: "", intent: 0, signature: noSignature }
 pure def canConnect(c: Consent, provider: int, by: int): bool = by == c.actor and c.actor > 0 and c.phase == Choosing
   and trusted(c, provider) and c.request < 9007199254740991
 pure def connect(c: Consent, provider: int, by: int): Consent = { ...c, phase: Connecting, selected: provider, request: c.request + 1 }
 pure def canConnectReply(c: Consent, request: int, walletAddress: str, by: int): bool = by == adapter and request == c.request
   and c.phase == Connecting and walletAddress != ""
 pure def connectedPhase(c: Consent, walletAddress: str): Phase =
-  if (c.savedWallet != "" and c.savedWallet != walletAddress) (if (c.surface == PayoutDialog) Refused else Replacing)
+  if (c.surface == PayoutDialog) (if (walletAddress == c.claimWallet) Connected else Refused)
+  else if (c.savedWallet != "" and c.savedWallet != walletAddress) Replacing
   else Connected
 pure def connectReply(c: Consent, request: int, walletAddress: str, by: int): Consent =
   if (not(trusted(c, c.selected))) { ...c, phase: Refused }
@@ -201,13 +204,13 @@ pure def alwaysSignedOutClosed(c: Consent): bool = c.actor == 0 implies c.phase 
 pure def activePhase(phase: Phase): bool = phase == Connected or phase == Preparing or phase == Prepared or phase == Signing
   or signedPhase(phase)
 pure def alwaysDialogConnectsOnlyTheClaim(c: Consent): bool = c.surface == PayoutDialog implies
-  (c.savedWallet != "" and ((activePhase(c.phase) or c.phase == Replacing) implies c.walletAccount == c.savedWallet))
+  (c.claimWallet != "" and ((activePhase(c.phase) or c.phase == Replacing) implies c.walletAccount == c.claimWallet))
 pure def stepSavedWalletOnlyFromAcceptedPost(before: Consent, via: str, after: Consent): bool =
   (after.savedWallet != before.savedWallet and after.actor == before.actor) implies via == "postReply"
 pure def sometimesAccepted(c: Consent): bool = c.phase == Accepted and c.savedWallet != ""
 pure def sometimesKeptSaved(c: Consent): bool = c.phase == KeptSaved
 pure def sometimesDialogRefusesAnotherWallet(c: Consent): bool = c.surface == PayoutDialog and c.phase == Refused
-  and c.walletAccount != "" and c.walletAccount != c.savedWallet
+  and c.walletAccount != "" and c.walletAccount != c.claimWallet
 pure def sometimesEvmSignatureLeftToTheServer(c: Consent): bool = c.phase == Signed and c.chain != W::Solana
   and c.signature.signer != c.walletAccount
 pure def sometimesSignInAgain(c: Consent): bool = c.phase == SignInAgain
@@ -218,6 +221,7 @@ pure def sometimesBytesMismatchRefused(c: Consent): bool = c.phase == Refused an
 pure val accountValues = Set(1, 2)
 pure val byValues = Set(1, server, adapter, discovery)
 pure val savedWalletValues = Set("", "w1")
+pure val claimWalletValues = Set("", "w1")
 pure val providerValues = Set(1, 2)
 pure val requestValues = Set(2, 3, 4, 5, 6)
 pure val walletAddressValues = Set("w1", "w2")

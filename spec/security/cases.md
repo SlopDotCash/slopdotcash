@@ -133,23 +133,30 @@ pure def sometimesReceivedBeforeAnyRevision(c: PrivateCase): bool = c.submission
 
 While a link is claimed, its reporter or a current security maintainer may
 ask for a receipt check (`check-receipt`, `allowedActions` and
-`automaticAction` in `backend/security/handler.ts`). The check reads the
-complete list of the program repository's GitHub private reports (the
-reporter's own, or all of them for a maintainer, which also imports every
-report that has no case yet through the receipt above). A report of this
-advisory whose GitHub author is the claimant verifies the claim with the
-GitHub-verified source, GitHub's creation time as the receipt time and the
-terms in force then. When the complete list has no such report, the claim is
-rejected (`receipt-mismatch` event, `link-rejected`). An unreadable list
-writes nothing (503 `receipt_check_unavailable`), and an advisory already
-held by a verified case or GitHub's copy of a report saved on Slop leaves the
-claim as it is; the shell sends no event for either. A maintainer may still
-verify or reject the link by hand.
+`automaticAction` in `backend/security/handler.ts`); the shell checks the
+caller with `mayRequestReceiptCheck` before it reads GitHub. The check reads
+the complete list of the program repository's GitHub private reports
+(`reconcileProgram`: the reporter's own, or all of them for a maintainer,
+which also imports every report that has no case yet through the receipt
+above). The answer is GitHub's, not the caller's: the shell sends
+`settleClaim` only from that complete list read, as the GitHub receipt
+service, never from a request. A report of this advisory whose GitHub author
+is the claimant verifies the claim with the GitHub-verified source, GitHub's
+creation time as the receipt time and the terms in force then. When the
+complete list has no such report, the claim is rejected (`receipt-mismatch`
+event, `link-rejected`). An unreadable list writes nothing (503
+`receipt_check_unavailable`), and an advisory already held by a verified case
+or GitHub's copy of a report saved on Slop leaves the claim as it is; the
+shell sends no event for either. A maintainer may still verify or reject the
+link by hand.
 
 ```quint
-pure def canCheckReceipt(c: PrivateCase, by: int, checkedEpoch: int, listed: bool, terms: T::ReceiptTerms): bool =
-  c.submission == Claimed and (by == c.reporter or technicalNow(c, by, checkedEpoch)) and (listed implies T::validReceipt(terms))
-pure def checkReceipt(c: PrivateCase, by: int, checkedEpoch: int, listed: bool, terms: T::ReceiptTerms): PrivateCase =
+pure val githubReceiptService = -1
+pure def mayRequestReceiptCheck(c: PrivateCase, actor: int, checkedEpoch: int): bool =
+  c.submission == Claimed and (actor == c.reporter or technicalNow(c, actor, checkedEpoch))
+pure def canSettleClaim(c: PrivateCase, by: int, listed: bool, terms: T::ReceiptTerms): bool =
+  c.submission == Claimed and by == githubReceiptService and (listed implies T::validReceipt(terms))
+pure def settleClaim(c: PrivateCase, by: int, listed: bool, terms: T::ReceiptTerms): PrivateCase =
   if (listed) { ...c, submission: Verified, source: GithubVerified, terms: terms, revision: c.revision + 1, reportVersion: 1,
     award: if (terms.paidTerms) Pending else NotApplicable }
   else { ...c, submission: LinkRejected, revision: c.revision + 1 }
@@ -415,14 +422,15 @@ pure def sometimesSecondAppeal(c: PrivateCase): bool = c.appeal == AppealOpen an
 ### Simulation samples cover roles, revocation, bans and every decision shape
 
 These input sets bound simulation only. Actors 2 and 3 are technical, 4 and 7
-are moderators, 5 is financial and 6 a triager candidate.
+are moderators, 5 is financial and 6 a triager candidate; -1 is the GitHub
+receipt service.
 
 ```quint
 pure val staff: Authority = { epoch: 1, technical: List(2, 3), financial: List(5), moderators: List(4, 7), banned: List(),
   relatedParties: List(), programRestricted: false }
 pure val snapshotValues = Set(staff, { ...staff, epoch: 2, technical: List(3) }, { ...staff, epoch: 2, relatedParties: List(1) },
   { ...staff, epoch: 3, banned: List(1) }, { ...staff, epoch: 3, programRestricted: true })
-pure val byValues = Set(1, 2, 3, 4, 5, 6, 7)
+pure val byValues = Set(-1, 1, 2, 3, 4, 5, 6, 7)
 pure val actorValues = Set(1, 6)
 pure val checkedEpochValues = Set(1, 2, 3)
 pure val sourceValues = Set(SlopReceived, GithubVerified)

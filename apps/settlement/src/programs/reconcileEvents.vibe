@@ -22,13 +22,15 @@ export interface LedgerAccess {
   readonly api?: string
 }
 
-const productionDatabase = "1b453124-2709-45af-8389-151a8105c461"
+const registryConfig = "apps/operations/wrangler/notify.production.jsonc"
 const trustedRepository = "SlopDotCash/slopdotcash"
 const trustedWorkflow = "SlopDotCash/slopdotcash/.github/workflows/payment-event-reconciliation.yml@refs/heads/main"
 const reportName = "payment-event-reconciliation.json"
 const answerLimitBytes = 16 * 1024 * 1024
 const commit = /^[0-9a-f]{40}$/u
 const cloudflareAccount = /^[a-f0-9]{32}$/u
+const databaseName = /^[a-z0-9][a-z0-9-]*$/u
+const databaseUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
 const readStatement = /^\s*SELECT\b/iu
 const canonicalInsert = /^\s*INSERT INTO (?:payment_events|payment_obligations|payment_outbox|notifications)\b/iu
 const canonicalUpdates: ReadonlySet<string> = new Set([
@@ -134,6 +136,25 @@ effect function trustedCheckout() {
   return checkout
 }
 
+schema DatabaseBinding { binding: string; database_name?: string; database_id?: string }
+
+schema ReviewedConfig { d1_databases: ReadonlyArray<DatabaseBinding> }
+
+effect function registryDatabase() {
+  const refused = new ReconciliationRefused({ message: "Reviewed configuration must bind exactly one registry SLOP_DB" })
+  const root = try gitOutput(["rev-parse", "--show-toplevel"])
+  if (root === undefined || root === "") throw refused
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const text = fs.readFileString(path.join(root, registryConfig)) catch () => ""
+  const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  const config = Schema.decodeUnknownEffect(ReviewedConfig)(parsed) catch () => undefined
+  const registry = (config?.d1_databases ?? []).filter((entry) => entry.binding === "SLOP_DB")
+  const [entry] = registry
+  if (registry.length !== 1 || entry === undefined || !databaseName.test(entry.database_name ?? "") || !databaseUuid.test(entry.database_id ?? "")) throw refused
+  return entry.database_id ?? ""
+}
+
 function httpsUrl(text: unknown) {
   return typeof text === "string" && URL.canParse(text) && new URL(text).protocol === "https:" ? text : undefined
 }
@@ -154,6 +175,7 @@ effect function writeReport(text: string) {
 
 effect function reconciled(stage: Ref.Ref<ReconciliationStage>, refusals: Ref.Ref<number | undefined>) {
   const checkout = try trustedCheckout()
+  const databaseId = try registryDatabase()
   try Ref.set(stage, "reviewed-packet")
   const bytes = try setting("SLOP_PAYMENT_RECONCILIATION_PACKET")
   const packet = try readReconciliationPacket(bytes, try setting("SLOP_PAYMENT_RECONCILIATION_SHA256"))
@@ -164,7 +186,7 @@ effect function reconciled(stage: Ref.Ref<ReconciliationStage>, refusals: Ref.Re
     throw new ReconciliationRefused({ message: "Protected reconciliation configuration required" })
   const apply = (try setting("SLOP_PAYMENT_RECONCILIATION_APPLY")) === "true"
   try Ref.set(stage, "canonical-reconciliation")
-  provide reconciliationServices({ accountId, databaseId: productionDatabase, token, apply, refusals }) {
+  provide reconciliationServices({ accountId, databaseId, token, apply, refusals }) {
     const result: Reconciled = try reconcileReviewedPaymentEvents(packet, Redacted.make([rpcUrl]), apply)
     return {
       checkedAt: try isoNow(),

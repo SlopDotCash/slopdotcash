@@ -4,9 +4,12 @@ This library formalizes PRD section 7's 13 November 2026 line-weight decision.
 Recipients are immutable actor IDs associated with unique accepted non-merge
 commits. The source adapter must exclude synchronization merges and already
 credited work, verify retained copies, and obtain complete line evidence.
-The returned allocation contains whole Points. Ties use increasing actor ID:
-the caller numbers an allocation's recipients by their GitHub node ID in
-code-unit order (`shareImplementationPoints` sorts the node IDs that way).
+The returned allocation contains whole Points. Ties use increasing actor ID.
+An actor number in the Points model is the rank of the actor's GitHub node ID
+in code-unit order among the node IDs of the journal scope the adapter
+interns, so the smaller number is the node ID that sorts first, as
+`shareImplementationPoints` sorts them; numbering actors any other way is
+outside this model.
 
 ## Story: Divide one work unit's fixed value between its implementation authors
 

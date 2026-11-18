@@ -274,7 +274,7 @@ function transferMessage(check: TransferCheck, operation: "deposit" | "withdraw"
   const label = networkLabel(network)
   switch (check) {
     case "pending": return { answer: "StillPending", message: fromWallet ? fundingMessages.waitingWallet : fundingMessages.waiting }
-    case "received": return { answer: "IncludedRead", message: receivedNotice(operation, label, hash, false) }
+    case "received": return { answer: "IncludedRead", message: receivedNotice(operation, label, hash) }
     case "finalized": return { answer: "FinalRead", message: `${operation === "deposit" ? "Deposit" : "Withdrawal"} verified on the finalized chain. ${hash}` }
     case "approvalConfirmed": return { answer: "FinalRead", message: fundingMessages.approval }
     case "failed": return { answer: "Reverted", message: fundingMessages.failed }

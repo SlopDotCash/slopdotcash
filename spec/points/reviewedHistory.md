@@ -50,8 +50,6 @@ pure def mixedBound(p: MixedProof): bool =
 pure def pathRole(p: MixedProof): PathRole = if (p.pathCommit == p.squashOutput) SquashRole else SubmittedRole
 pure def canBindMixed(b: Binding, p: MixedProof): bool = not(b.validated) and mixedBound(p)
 pure def bindMixed(b: Binding, p: MixedProof): Binding = { ...b, proof: p, role: pathRole(p) }
-pure def canValidate(b: Binding): bool = not(b.validated)
-pure def validate(b: Binding): Binding = { ...b, validated: true }
 pure def alwaysRoleBound(b: Binding): bool =
   (b.role != NoRole implies mixedBound(b.proof)) and
   (b.role == SquashRole implies b.proof.pathCommit == b.proof.squashOutput) and
@@ -75,7 +73,9 @@ snapshot makes inside the project and the audited window. Every appended
 revision lies in the project and the window `[from, through)`, is never
 payout recognition and keeps its key's occurrence time, and the digest of
 the resulting journal must equal the reviewed candidate's. Any difference
-refuses the whole packet.
+refuses the whole packet: a reviewed source is validated, and the journal
+appends a recipient correction or a duplicate retirement, only with a packet
+that applies.
 
 ```quint
 type PacketRun = { baselineMatches: bool, reviewedAt: int, baselineAt: int, now: int, valueKeysExact: bool,
@@ -83,12 +83,15 @@ type PacketRun = { baselineMatches: bool, reviewedAt: int, baselineAt: int, now:
 pure def packetApplies(r: PacketRun): bool =
   r.baselineMatches and r.now >= r.reviewedAt and r.now >= r.baselineAt and r.valueKeysExact and r.deltaInScope and
   r.occurrencesKept and r.candidateMatches
+pure def canValidate(b: Binding, packetRun: PacketRun): bool = not(b.validated) and packetApplies(packetRun)
+pure def validate(b: Binding, packetRun: PacketRun): Binding = { ...b, validated: true }
 pure def lawChangedBaselineRefused(r: PacketRun): bool = not(r.baselineMatches) implies not(packetApplies(r))
 pure def lawChangedCandidateRefused(r: PacketRun): bool = not(r.candidateMatches) implies not(packetApplies(r))
 pure val readyRun: PacketRun = { baselineMatches: true, reviewedAt: 2432150, baselineAt: 2432140, now: 2432160,
   valueKeysExact: true, deltaInScope: true, occurrencesKept: true, candidateMatches: true }
 pure val rValues = Set(readyRun, { ...readyRun, baselineMatches: false }, { ...readyRun, now: 2432100 },
   { ...readyRun, candidateMatches: false })
+pure val packetRunValues = rValues
 ```
 
 ### An owner recipient correction redistributes an unchanged October pool by the reviewed weights
@@ -108,22 +111,26 @@ reason.
 ```quint
 type RecipientCorrection = { uniqueUnit: bool, dossierBound: bool, claimsMatchProof: bool, octoberPool: bool,
   poolUnchanged: bool, oneIdentity: bool, bannedByOccurrence: bool, pool: int, recipients: List[A::Recipient],
-  resultMatchesReview: bool }
+  reviewedShares: List[A::PointShare] }
 pure def positiveWeights(recipients: List[A::Recipient]): bool = recipients.every(r => r.lines > 0)
+pure def correctedShares(c: RecipientCorrection): List[A::PointShare] = A::allocatePoints(c.pool, c.recipients)
 pure def recipientCorrectionApplies(c: RecipientCorrection): bool =
   c.uniqueUnit and c.dossierBound and c.claimsMatchProof and c.octoberPool and c.poolUnchanged and c.oneIdentity and
   not(c.bannedByOccurrence) and c.pool > 0 and c.pool <= P::maxSafe and A::validRecipients(c.recipients) and
-  positiveWeights(c.recipients) and c.resultMatchesReview
-pure def correctedShares(c: RecipientCorrection): List[A::PointShare] = A::allocatePoints(c.pool, c.recipients)
+  positiveWeights(c.recipients) and correctedShares(c) == c.reviewedShares
 pure def lawChangedPoolRefused(correction: RecipientCorrection): bool =
   not(correction.poolUnchanged) implies not(recipientCorrectionApplies(correction))
 pure def lawBannedRecipientRefused(correction: RecipientCorrection): bool =
   correction.bannedByOccurrence implies not(recipientCorrectionApplies(correction))
 pure val readyCorrection: RecipientCorrection = { uniqueUnit: true, dossierBound: true, claimsMatchProof: true, octoberPool: true,
   poolUnchanged: true, oneIdentity: true, bannedByOccurrence: false, pool: 30,
-  recipients: List({ actor: 1, lines: 1 }, { actor: 2, lines: 2 }), resultMatchesReview: true }
+  recipients: List({ actor: 1, lines: 1 }, { actor: 2, lines: 2 }),
+  reviewedShares: List({ actor: 1, points: 10 }, { actor: 2, points: 20 }) }
+pure def lawUnreviewedResultRefused(correction: RecipientCorrection): bool =
+  correctedShares(correction) != correction.reviewedShares implies not(recipientCorrectionApplies(correction))
 pure val correctionValues = Set(readyCorrection, { ...readyCorrection, poolUnchanged: false },
-  { ...readyCorrection, bannedByOccurrence: true }, { ...readyCorrection, recipients: List({ actor: 1, lines: 0 }) })
+  { ...readyCorrection, bannedByOccurrence: true }, { ...readyCorrection, recipients: List({ actor: 1, lines: 0 }) },
+  { ...readyCorrection, reviewedShares: List({ actor: 1, points: 15 }, { actor: 2, points: 15 }) })
 ```
 
 ### A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers
@@ -132,7 +139,10 @@ The retired source and each earlier source must be complete and audited,
 each earlier source accepted no later than the retired one. The retirement
 zeroes the source's October pool, unchanged since review, with the decision
 `owner_duplicate_<dossier digest>`, only when every claimed commit path is
-covered exactly once and nothing else is covered:
+covered exactly once, by an earlier source or an accepted squash of the
+dossier, and every accepted squash covers a claim. The runner supplies each
+verified record below, and the retirement applies only when every one of them
+meets its condition:
 
 - an accepted promotion keeps the submitted content: its merge has two
   parents, the second is the source head and the first is not, and the
@@ -180,11 +190,13 @@ type NativeCover = { inSource: bool, owner: int, ownerAt: int, ownerRetiring: bo
 pure def nativeCovers(c: NativeCover, retiredAt: int): bool =
   c.inSource and c.owner > 0 and (not(c.ownerRetiring) or (c.ownerAt < retiredAt and c.ownerValidated)) and
   c.commitFirstAccepted == c.owner and c.retainedFirstAccepted == c.owner and c.sameAuthor and c.sameParents
-type EarlierBasis = { coversCommits: bool, rewarded: bool, validatedEarlierRetirement: bool, reviewedBotFollowups: bool,
-  reviewedHistoricalAward: bool, allBot: bool }
+type EarlierBasis = { source: int, acceptedAt: int, complete: bool, coversCommits: bool, rewarded: bool,
+  validatedEarlierRetirement: bool, reviewedBotFollowups: bool, reviewedHistoricalAward: bool, allBot: bool }
 pure def earlierJustified(e: EarlierBasis): bool =
   not(e.coversCommits) or e.rewarded or e.validatedEarlierRetirement or e.reviewedBotFollowups or
   e.reviewedHistoricalAward or e.allBot
+pure def earlierAccepted(e: EarlierBasis, retired: int, retiredAt: int): bool =
+  e.source > 0 and e.source != retired and e.complete and e.acceptedAt >= 0 and e.acceptedAt <= retiredAt and earlierJustified(e)
 type AcceptanceSource = { source: int, acceptedAt: int, nodeRank: int }
 pure def laterAcceptance(a: AcceptanceSource, b: AcceptanceSource): bool =
   a.acceptedAt > b.acceptedAt or (a.acceptedAt == b.acceptedAt and a.nodeRank > b.nodeRank)
@@ -193,17 +205,27 @@ pure def completionSource(sources: List[AcceptanceSource]): int =
   sources.foldl(noAcceptance, (acc, a) => if (laterAcceptance(a, acc)) a else acc).source
 pure def jointCompletes(sources: List[AcceptanceSource], awardSource: int): bool =
   sources.length() > 0 and completionSource(sources) == awardSource
-type ClaimCover = { coverings: int, ownerRetiring: bool, sameCounts: bool, jointUnit: bool, jointAssessed: bool,
-  jointCompletes: bool, botUnit: bool, botSquash: bool, ownerRewarded: bool }
+type ClaimCover = { owner: int, coverings: int, ownerRetiring: bool, sameCounts: bool, jointUnit: bool, jointAssessed: bool,
+  jointSources: List[AcceptanceSource], awardSource: int, botUnit: bool, botSquash: bool, ownerRewarded: bool }
 pure def claimRetained(c: ClaimCover): bool =
   c.coverings == 1 and not(c.ownerRetiring) and c.sameCounts and
-  (not(c.jointUnit) or (c.jointAssessed and c.jointCompletes)) and
+  (not(c.jointUnit) or (c.jointAssessed and jointCompletes(c.jointSources, c.awardSource))) and
   (c.botUnit or c.botSquash or c.ownerRewarded)
-type Retirement = { poolUnchanged: bool, octoberPool: bool, sourcesComplete: bool, earlierNotLater: bool,
-  promotionKept: bool, everyEarlierJustified: bool, everyClaimRetained: bool, coverageExact: bool, dossierBound: bool }
+type Retirement = { source: int, occurredAt: int, sourceComplete: bool, poolUnchanged: bool, octoberPool: bool,
+  dossierBound: bool, claimedPaths: int, promotion: AcceptedPromotion, unchanged: List[UnchangedPromotion],
+  squashes: List[AcceptedSquash], covers: List[NativeCover], earlier: List[EarlierBasis], claims: List[ClaimCover] }
+pure def coveringSource(r: Retirement, owner: int): bool =
+  owner != r.source and (r.earlier.some(e => e.source == owner) or r.squashes.some(s => s.source == owner))
 pure def retirementApplies(r: Retirement): bool =
-  r.poolUnchanged and r.octoberPool and r.sourcesComplete and r.earlierNotLater and r.promotionKept and
-  r.everyEarlierJustified and r.everyClaimRetained and r.coverageExact and r.dossierBound
+  r.source > 0 and r.sourceComplete and r.poolUnchanged and r.octoberPool and r.dossierBound and
+  r.unchanged.length() <= 1 and r.unchanged.every(u => unchangedPromotion(u)) and
+  ((r.squashes.length() > 0 or r.covers.length() > 0) implies promotionKeepsContent(r.promotion)) and
+  r.squashes.every(s => squashCovers(s, r.source, r.occurredAt)) and
+  r.covers.every(c => nativeCovers(c, r.occurredAt)) and
+  r.earlier.every(e => earlierAccepted(e, r.source, r.occurredAt)) and
+  r.claims.length() > 0 and r.claims.length() == r.claimedPaths and
+  r.claims.every(c => claimRetained(c) and coveringSource(r, c.owner)) and
+  r.squashes.every(s => r.claims.some(c => c.owner == s.source))
 pure def lawPromotionMustKeepContent(a: AcceptedPromotion): bool = a.headTree != a.mergeTree implies not(promotionKeepsContent(a))
 pure def lawChangedPromotionIsNotUnchanged(u: UnchangedPromotion): bool =
   (u.changedLines > 0 or u.headTree != u.baseTree) implies not(unchangedPromotion(u))
@@ -233,13 +255,26 @@ pure val nativeCover: NativeCover = { inSource: true, owner: 2, ownerAt: 2432110
   commitFirstAccepted: 2, retainedFirstAccepted: 2, sameAuthor: true, sameParents: true }
 pure val coverValues = Set(nativeCover, { ...nativeCover, ownerRetiring: true }, { ...nativeCover, ownerRetiring: true, ownerValidated: true },
   { ...nativeCover, sameAuthor: false })
-pure val earlier: EarlierBasis = { coversCommits: true, rewarded: false, validatedEarlierRetirement: false,
-  reviewedBotFollowups: false, reviewedHistoricalAward: false, allBot: false }
+pure val earlier: EarlierBasis = { source: 2, acceptedAt: 2432110, complete: true, coversCommits: true, rewarded: false,
+  validatedEarlierRetirement: false, reviewedBotFollowups: false, reviewedHistoricalAward: false, allBot: false }
 pure val eValues = Set(earlier, { ...earlier, rewarded: true }, { ...earlier, allBot: true }, { ...earlier, coversCommits: false })
 pure val firstValues = Set({ source: 1, acceptedAt: 2432110, nodeRank: 1 }, { source: 2, acceptedAt: 2432110, nodeRank: 2 })
 pure val secondValues = Set({ source: 2, acceptedAt: 2432110, nodeRank: 2 }, { source: 3, acceptedAt: 2432111, nodeRank: 0 })
-pure val claimCover: ClaimCover = { coverings: 1, ownerRetiring: false, sameCounts: true, jointUnit: false, jointAssessed: false,
-  jointCompletes: false, botUnit: false, botSquash: false, ownerRewarded: true }
+pure val claimCover: ClaimCover = { owner: 2, coverings: 1, ownerRetiring: false, sameCounts: true, jointUnit: false,
+  jointAssessed: false, jointSources: List(), awardSource: 0, botUnit: false, botSquash: false, ownerRewarded: true }
 pure val claimValues = Set(claimCover, { ...claimCover, coverings: 2 }, { ...claimCover, ownerRewarded: false, botUnit: true },
-  { ...claimCover, jointUnit: true, jointAssessed: true, jointCompletes: false })
+  { ...claimCover, jointUnit: true, jointAssessed: true, jointSources: List({ source: 2, acceptedAt: 2432110, nodeRank: 1 },
+    { source: 3, acceptedAt: 2432110, nodeRank: 2 }), awardSource: 2 })
+pure val readyRetirement: Retirement = { source: 1, occurredAt: 2432120, sourceComplete: true, poolUnchanged: true,
+  octoberPool: true, dossierBound: true, claimedPaths: 1, promotion: promotion, unchanged: List(), squashes: List(squash),
+  covers: List(), earlier: List({ ...earlier, rewarded: true }), claims: List(claimCover) }
+pure def lawUncoveredClaimRefused(retirement: Retirement): bool =
+  retirement.claims.length() != retirement.claimedPaths implies not(retirementApplies(retirement))
+pure def lawSquashNeedsKeptPromotion(retirement: Retirement): bool =
+  (retirement.squashes.length() > 0 and not(promotionKeepsContent(retirement.promotion))) implies
+    not(retirementApplies(retirement))
+pure val retirementValues = Set(readyRetirement, { ...readyRetirement, claimedPaths: 2 },
+  { ...readyRetirement, promotion: { ...promotion, mergeTree: 6 } },
+  { ...readyRetirement, claims: List({ ...claimCover, owner: 1 }) },
+  { ...readyRetirement, earlier: List({ ...earlier, acceptedAt: 2432130, rewarded: true }) })
 ```

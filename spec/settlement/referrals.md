@@ -10,24 +10,17 @@ The funding line is the passed governance proposal's finalized transfer of
 exactly 2,000,000 program tokens, the whole-root growth limit; each project
 has a lifetime cap of 250,000 program tokens. Both limits are defined here
 once and used by accrual, publication and the distributor. The funding
-evidence names the proposal, its outcome and the finalized transaction, and
-its amount is in base units of the 18-decimal program token: exactly
-2,000,000 × 10^18 (development `workers/referral-accrual` `REFERRAL_POOL_BASE`,
-with `REFERRAL_TOKEN_DECIMALS` 18; the project cap is likewise
-`REFERRAL_PROJECT_CAP_BASE`, 250,000 × 10^18, never above the pool). The root watcher must be operated by
+evidence names the proposal, its outcome and the finalized transaction. The root watcher must be operated by
 someone other than the root poster. The owner can return the program to off
 at any time; that stops accrual and posting and preserves history.
 
 ```quint
-import money as M from "./money"
 type ReferralMode = Off | DryRun | Posting
 type ProposalOutcome = ProposalPassed | ProposalFailed | ProposalPending
-type FundingEvidence = { amount: M::Amount, proposal: str, outcome: ProposalOutcome, transaction: str, finalizedBlock: int }
+type FundingEvidence = { amount: int, proposal: str, outcome: ProposalOutcome, transaction: str, finalizedBlock: int }
 type WatcherEvidence = { operator: str, heartbeatBlock: int }
 pure val referralPoolTokens = 2000000
 pure val referralProjectTokens = 250000
-pure val referralTokenUnit: M::Amount = List(0, 0, 0, 0, 0, 0, 1)
-pure val referralPoolBase: M::Amount = M::multiplyAmounts(referralTokenUnit, M::smallAmount(referralPoolTokens))
 type Referral = { mode: ReferralMode, reactivationApproved: bool, tokenExists: bool,
   fundingFinalized: bool, watcherOperating: bool, poster: str, watcher: str, activations: int }
 pure val initial: Referral = { mode: Off, reactivationApproved: true, tokenExists: true,
@@ -35,7 +28,7 @@ pure val initial: Referral = { mode: Off, reactivationApproved: true, tokenExist
 pure def canDryRun(r: Referral, by: str): bool = r.mode == Off and r.reactivationApproved and by == "owner"
 pure def dryRun(r: Referral, by: str): Referral = { ...r, mode: DryRun }
 pure def canRecordFunding(r: Referral, funding: FundingEvidence, by: str): bool =
-  by == "owner" and r.mode != Posting and not(r.fundingFinalized) and M::equalAmounts(funding.amount, referralPoolBase) and funding.proposal != ""
+  by == "owner" and r.mode != Posting and not(r.fundingFinalized) and funding.amount == referralPoolTokens and funding.proposal != ""
     and funding.outcome == ProposalPassed and funding.transaction != "" and funding.finalizedBlock > 0
 pure def recordFunding(r: Referral, funding: FundingEvidence, by: str): Referral = { ...r, fundingFinalized: true }
 pure def canStartWatcher(r: Referral, watcher: WatcherEvidence, by: str): bool =
@@ -47,10 +40,10 @@ pure def activate(r: Referral, by: str): Referral = { ...r, mode: Posting, activ
 pure def canDeactivate(r: Referral, by: str): bool = r.mode != Off and by == "owner"
 pure def deactivate(r: Referral, by: str): Referral = { ...r, mode: Off }
 pure val byValues = Set("owner", "wrong")
-pure val fundingValues = Set({ amount: List(0, 0, 0, 0, 0, 0, 0, 0, 2), proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 5 },
-  { amount: List(0, 0, 0, 0, 0, 0, 0, 0, 2), proposal: "p1", outcome: ProposalPending, transaction: "t", finalizedBlock: 5 },
-  { amount: List(0, 0, 2), proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 5 },
-  { amount: List(0, 0, 0, 0, 0, 0, 0, 0, 2), proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 0 })
+pure val fundingValues = Set({ amount: 2000000, proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 5 },
+  { amount: 2000000, proposal: "p1", outcome: ProposalPending, transaction: "t", finalizedBlock: 5 },
+  { amount: 3, proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 5 },
+  { amount: 2000000, proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 0 })
 pure val watcherValues = Set({ operator: "watcher", heartbeatBlock: 3 }, { operator: "poster", heartbeatBlock: 3 })
 ```
 

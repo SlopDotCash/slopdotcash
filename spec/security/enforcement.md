@@ -41,13 +41,15 @@ type Revocation = { grant: int, administrator: int, decision: int, reason: int, 
 type RecordAction = RecordQuarantine | RecordBan | RecordAppeal | RecordReinstate | RecordDeny
   | RecordAccountAppeal | RecordAccountDenial | RecordAccountReinstatement
 type Issuer = ByModerator | ByVettingService | ByContributorFlags | ByAppellant
-type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan, assessments: List[int] }
+type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan, assessments: List[int],
+  accounts: List[int] }
+type AccountBan = { account: int, moderator: int }
 type Recipient = ListingAccount | StewardAccount | IndependentModerators
 type Notice = { entry: int, to: Recipient }
 type Enforcement = { projectId: int, repositories: List[int], original: Set[int], frozen: Set[int], identities: int -> int,
   creator: int, steward: int, revision: int, administrators: Set[int], moderators: Set[int],
   restriction: Restriction, epoch: int, restrictedBy: Set[int], appeal: Appeal, appellants: Set[int],
-  revisionPending: bool, findings: Set[int], reviewedFindings: Set[int], accountBans: List[int],
+  revisionPending: bool, findings: Set[int], reviewedFindings: Set[int], accountBans: List[int], liveBans: List[AccountBan],
   seq: int, assessmentIds: Set[int], latest: int -> Assessment, recorded: List[Assessment], unverified: Set[int],
   pinReads: List[PinRead], flags: List[Flag], withdrawn: Set[int], resolved: List[int], clockDay: int,
   grants: List[Grant], activeGrant: int -> int, exempt: Set[int], revocations: List[Revocation],
@@ -59,7 +61,7 @@ pure val noGrant: Grant = { id: 0, repository: 0, identity: 0, revision: 0, mani
 pure val initial: Enforcement = { projectId: 1, repositories: List(1), original: Set(1), frozen: Set(), identities: Map(),
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
   restriction: Clear, epoch: 0, restrictedBy: Set(), appeal: NoAppeal, appellants: Set(),
-  revisionPending: false, findings: Set(), reviewedFindings: Set(), accountBans: List(),
+  revisionPending: false, findings: Set(), reviewedFindings: Set(), accountBans: List(), liveBans: List(),
   seq: 0, assessmentIds: Set(), latest: Map(), recorded: List(), unverified: Set(),
   pinReads: List(), flags: List(), withdrawn: Set(), resolved: List(), clockDay: 0,
   grants: List(), activeGrant: Map(), exempt: Set(), revocations: List(),
@@ -248,10 +250,12 @@ pure def withResult(o: A::Outcome, e: Enforcement): Enforcement =
 pure def newlyResolved(e: Enforcement): List[int] =
   e.flags.select(f => not(e.resolved.includes(f.receipt)) and
     e.repositories.every(r => latestOf(e, r).state == AClean and latestOf(e, r).snapshot.includes(f.receipt))).listMap(f => f.receipt)
-pure def entry(e: Enforcement, kind: RecordAction, issuer: Issuer, actor: int): List[JournalEntry] =
-  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: RevisionNotNeeded, assessments: List() })
+pure def accountsEntry(e: Enforcement, kind: RecordAction, issuer: Issuer, actor: int, accounts: List[int]): List[JournalEntry] =
+  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: RevisionNotNeeded, assessments: List(),
+    accounts: accounts })
+pure def entry(e: Enforcement, kind: RecordAction, issuer: Issuer, actor: int): List[JournalEntry] = accountsEntry(e, kind, issuer, actor, List())
 pure def restrictionEntry(e: Enforcement, issuer: Issuer, actor: int, kind: RecordAction, plan: RevisionPlan): List[JournalEntry] =
-  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: plan, assessments: List() })
+  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: plan, assessments: List(), accounts: List() })
 pure def owners(e: Enforcement): List[Notice] =
   e.notices.append({ entry: e.journal.length() + 1, to: ListingAccount }).append({ entry: e.journal.length() + 1, to: StewardAccount })
 pure def canRecordResult(e: Enforcement, by: int, scanOutcome: A::Outcome, plan: RevisionPlan): bool =
@@ -600,7 +604,8 @@ pure def allFreshAtPin(e: Enforcement, pins: List[PinRead]): bool = e.repositori
 pure def coversActiveFlagsAt(e: Enforcement, repository: int, pins: List[PinRead]): bool =
   e.flags.every(f => activeFlag(e, f) implies decidingAt(e, repository, pins).snapshot.includes(f.receipt))
 pure def provenance(e: Enforcement, pins: List[PinRead]): List[int] = e.repositories.listMap(r => decidingAt(e, r, pins).id)
-pure val noEntry: JournalEntry = { seq: 0, kind: RecordDeny, issuer: ByModerator, actor: 0, result: RevisionNotNeeded, assessments: List() }
+pure val noEntry: JournalEntry = { seq: 0, kind: RecordDeny, issuer: ByModerator, actor: 0, result: RevisionNotNeeded, assessments: List(),
+  accounts: List() }
 pure def provenanceOf(e: Enforcement): List[int] = e.journal.nthOr(e.journal.length() - 1, noEntry).assessments
 pure def allFresh(e: Enforcement): bool = e.repositories.every(r => freshClean(e, r))
 pure def canReinstateFlagPause(e: Enforcement, by: int, pins: List[PinRead]): bool =
@@ -609,7 +614,7 @@ pure def canReinstateFlagPause(e: Enforcement, by: int, pins: List[PinRead]): bo
 pure def reinstateFlagPause(e: Enforcement, by: int, pins: List[PinRead]): Enforcement =
   { ...e, restriction: Clear, restrictedBy: Set(), appeal: if (e.appeal == AppealRequested) AppealGranted else NoAppeal,
     appellants: Set(), journal: e.journal.append({ seq: e.journal.length() + 1, kind: RecordReinstate, issuer: ByVettingService,
-      actor: 0, result: RevisionNotNeeded, assessments: provenance(e, pins) }), notices: owners(e) }
+      actor: 0, result: RevisionNotNeeded, assessments: provenance(e, pins), accounts: List() }), notices: owners(e) }
 pure def stepScanReinstatementNamesEveryRepository(before: Enforcement, via: str, after: Enforcement): bool =
   via == "reinstateFlagPause" implies
     (provenanceOf(after).length() == before.repositories.length() and
@@ -638,7 +643,11 @@ Current stewardship and the original application never select accounts. A
 decision that closes an open project appeal needs a moderator who neither
 placed the restriction nor filed the appeal. Account bans are recorded for
 [participation restrictions](../backend/access.md); project reinstatement never lifts
-them.
+them. The decision names the accounts it bans, re-banning an account closes
+that account's open appeal, and each account it re-bans with an open appeal
+needs a moderator who is not that account and did not ban it
+(`reBanned` and `accountModeratorIndependent` in
+`backend/projects/verified-enforcement.ts`).
 
 ```quint
 pure def independent(e: Enforcement, by: int): bool =
@@ -658,11 +667,13 @@ pure def ban(e: Enforcement, by: int, fence: Fence, plan: RevisionPlan): Enforce
     journal: restrictionEntry(e, ByModerator, by, RecordBan, plan), notices: owners(e) }
 pure def canDecideMalice(e: Enforcement, by: int, fence: Fence, accounts: List[int]): bool =
   e.moderators.contains(by) and fenced(e, fence) and e.restriction == ServiceBan and accounts.every(a => a > 0) and
-  (e.appeal == AppealRequested implies independent(e, by))
+  (e.appeal == AppealRequested implies independent(e, by)) and
+  accountsIndependent(e, by, accounts.select(a => accountAppealOpenFor(e, a)))
 pure def decideMalice(e: Enforcement, by: int, fence: Fence, accounts: List[int]): Enforcement =
   { ...e, restriction: ModeratorBan, restrictedBy: e.restrictedBy.union(Set(by)),
     appeal: if (e.appeal == AppealRequested) AppealDenied else e.appeal,
-    accountBans: e.accountBans.concat(accounts), journal: entry(e, RecordBan, ByModerator, by), notices: owners(e) }
+    accountBans: e.accountBans.concat(accounts), liveBans: e.liveBans.concat(accounts.listMap(a => { account: a, moderator: by })),
+    journal: accountsEntry(e, RecordBan, ByModerator, by, accounts), notices: owners(e) }
 pure val accountsValues = Set(List(), List(1), List(2), List(0))
 pure def canSettlePendingRevision(e: Enforcement, by: int): bool = e.administrators.contains(by) and e.revisionPending
 pure def settlePendingRevision(e: Enforcement, by: int): Enforcement = { ...e, revisionPending: false }
@@ -670,20 +681,23 @@ pure def withRevisionLanded(landed: bool, e: Enforcement): Enforcement =
   if (landed and e.restriction != Clear) { ...e, revisionPending: false } else e
 ```
 
-### The steward, the listing account, a banned account or a moderator files one open project appeal
+### The steward, the listing account or a moderator files one open project appeal
 
-The steward, the listing account, an account this project's decision banned
-(`banned-account`) or a moderator may file the project appeal
+The steward, the listing account or a moderator may file the project appeal
 (`requestReinstatement`). Filing records the request and notifies the
 moderators who did not place the restriction. It neither lifts the
-restriction nor grants project access. An account appeal filed while the
-project is clear, and the account reinstatement decision, belong to
-[participation restrictions](../backend/access.md).
+restriction nor grants project access. Any other account this project's
+decision banned files with the `banned-account` role, in any project state,
+so its request is its own account appeal (below), never the project appeal
+(`requestReinstatement` in `backend/projects/handler.ts`;
+`selectProjectAppeals` leaves `banned-account` rows out). A banned steward or
+listing account files an account appeal too while the project is clear or a
+project appeal is open, or whenever it asks for the account scope.
 
 ```quint
 pure def canRequestAppeal(e: Enforcement, by: int): bool =
   by > 0 and e.revision > 0 and e.restriction != Clear and e.appeal != AppealRequested and
-  (by == e.steward or by == e.creator or e.accountBans.includes(by) or e.moderators.contains(by))
+  (by == e.steward or by == e.creator or e.moderators.contains(by))
 pure def requestAppeal(e: Enforcement, by: int): Enforcement =
   { ...e, appeal: AppealRequested, appellants: e.appellants.union(Set(by)),
     journal: entry(e, RecordAppeal, ByAppellant, by),
@@ -699,42 +713,82 @@ pure def denyAppeal(e: Enforcement, by: int, fence: Fence): Enforcement =
 The access machine's account decisions are rows of the same
 `project_enforcements` sequence (`ENFORCEMENT_ACTIONS` in
 `backend/projects/enforcement.ts`, migration `0072`): a banned account's own
-appeal, filed while the project is clear or while a project appeal is open
-(`request_reinstatement` with the `banned-account` role), a moderator's
-denial of it, and a moderator's reinstatement of selected accounts
-(`reinstate_accounts`). Each takes the next sequence number of the project
-journal, so a moderator's preview of the project goes stale, and changes no
-restriction, project appeal, flag, clearance or recorded account ban
-(`foldEnforcementStatus`). A moderator decision confirms the sequence its
-preview showed. The appeal notifies the listing account, the steward and the
-moderators; the denial notifies the listing account and the steward; an
-account reinstatement notifies neither (`notifyProjectEnforcement` in
-`backend/notifications/events.ts`). Which bans an account appeal and a
-reinstatement concern, Slopbot's triage of the appeal and the independence
-of the deciding moderator from each ban are the rules of
+appeal (`request_reinstatement` with the `banned-account` role), a
+moderator's denial of the open account appeals, and a moderator's
+reinstatement of selected accounts (`reinstate_accounts`). Each takes the
+next sequence number of the project journal, so a moderator's preview of the
+project goes stale, and changes no restriction, project appeal, flag,
+clearance or recorded account ban (`foldEnforcementStatus`). A moderator
+decision confirms the sequence its preview showed. The appeal notifies the
+listing account, the steward and the moderators; the denial notifies the
+listing account and the steward; an account reinstatement notifies neither
+(`notifyProjectEnforcement` in `backend/notifications/events.ts`).
+
+Each account's appeal is its own (`openAccountAppealSource` and
+`findAccountBoundary` in `backend/projects/verified-enforcement.ts`). An
+account with an active ban from this project, one no reinstatement has
+released since it was banned, may file its appeal in any project state,
+unless its own appeal is already open (409 `appeal_open`); a released
+account may not (403 `forbidden`). The appeal stays open until a
+reinstatement or a ban names that account, or a denial closes it. A
+moderator denies the open account appeals only in a restricted project with
+no open project appeal and no confirmed-malice decision waiting: a denial in
+a clear project has nothing to decide (409 `no_open_appeal`), a denial
+beside an open project appeal is the project denial and leaves account
+appeals open, and a vetting-service ban needs its malice decision first (409
+`malicious_decision_required`). A moderator reinstates one or more selected
+accounts, each with an active ban (409 `account_not_banned`), while a
+project appeal is open or, without one, while each selected account's own
+appeal is open (409 `no_open_appeal`); the reinstatement releases every
+active ban of those accounts and leaves the project appeal for its own
+decision. A denial or reinstatement needs a moderator who is none of the
+accounts it decides and banned none of them (403
+`independent_review_required`). Slopbot's triage of the appeal and the bans
+of other projects are the rules of
 [participation restrictions](../backend/access.md).
 
 ```quint
-pure def accountAppealOpen(e: Enforcement): bool = e.journal.foldl(false, (open, j) =>
-  if (j.kind == RecordAccountAppeal) true
-  else if (j.kind == RecordAccountDenial or j.kind == RecordAccountReinstatement) false else open)
-pure def canJournalAccountEntry(e: Enforcement, by: int, fence: Fence, accountAction: RecordAction): bool =
-  by > 0 and e.revision > 0 and
-  (if (accountAction == RecordAccountAppeal) e.accountBans.includes(by) and (e.restriction == Clear or e.appeal == AppealRequested)
-   else (accountAction == RecordAccountDenial or accountAction == RecordAccountReinstatement) and fenced(e, fence)
-     and e.moderators.contains(by) and accountAppealOpen(e) and not(e.accountBans.includes(by)))
-pure def journalAccountEntry(e: Enforcement, by: int, fence: Fence, accountAction: RecordAction): Enforcement =
-  { ...e, journal: entry(e, accountAction, if (accountAction == RecordAccountAppeal) ByAppellant else ByModerator, by),
-    notices: if (accountAction == RecordAccountAppeal) owners(e).append({ entry: e.journal.length() + 1, to: IndependentModerators })
-      else if (accountAction == RecordAccountDenial) owners(e) else e.notices }
+pure def activeAccountBan(e: Enforcement, account: int): bool = e.liveBans.some(b => b.account == account)
+pure def accountAppealOpenFor(e: Enforcement, account: int): bool = e.journal.foldl(false, (open, j) =>
+  if (j.kind == RecordAccountAppeal and j.actor == account) true
+  else if (j.kind == RecordAccountDenial or
+    ((j.kind == RecordAccountReinstatement or j.kind == RecordBan) and j.accounts.includes(account))) false
+  else open)
+pure def openAccountAppeals(e: Enforcement): List[int] =
+  e.liveBans.select(b => accountAppealOpenFor(e, b.account)).listMap(b => b.account)
+pure def accountsIndependent(e: Enforcement, by: int, accounts: List[int]): bool =
+  not(accounts.includes(by)) and not(e.liveBans.some(b => accounts.includes(b.account) and b.moderator == by))
+pure def canJournalAccountAppeal(e: Enforcement, by: int): bool =
+  by > 0 and e.revision > 0 and activeAccountBan(e, by) and not(accountAppealOpenFor(e, by))
+pure def journalAccountAppeal(e: Enforcement, by: int): Enforcement =
+  { ...e, journal: entry(e, RecordAccountAppeal, ByAppellant, by),
+    notices: owners(e).append({ entry: e.journal.length() + 1, to: IndependentModerators }) }
+pure def canJournalAccountDenial(e: Enforcement, by: int, fence: Fence): bool =
+  fenced(e, fence) and e.moderators.contains(by) and e.restriction != Clear and e.restriction != ServiceBan and
+  e.appeal != AppealRequested and openAccountAppeals(e).length() > 0 and accountsIndependent(e, by, openAccountAppeals(e))
+pure def journalAccountDenial(e: Enforcement, by: int, fence: Fence): Enforcement =
+  { ...e, journal: entry(e, RecordAccountDenial, ByModerator, by), notices: owners(e) }
+pure def canJournalAccountReinstatement(e: Enforcement, by: int, fence: Fence, accounts: List[int]): bool =
+  fenced(e, fence) and e.moderators.contains(by) and accounts.length() > 0 and accounts.every(a => activeAccountBan(e, a)) and
+  ((e.restriction != Clear and e.appeal == AppealRequested) or accounts.every(a => accountAppealOpenFor(e, a))) and
+  accountsIndependent(e, by, accounts)
+pure def journalAccountReinstatement(e: Enforcement, by: int, fence: Fence, accounts: List[int]): Enforcement =
+  { ...e, liveBans: e.liveBans.select(b => not(accounts.includes(b.account))),
+    journal: accountsEntry(e, RecordAccountReinstatement, ByModerator, by, accounts) }
+pure def alwaysLiveBansRecorded(e: Enforcement): bool =
+  e.liveBans.every(b => e.accountBans.includes(b.account) and e.moderators.contains(b.moderator))
 pure def stepAccountEntriesKeepRestriction(before: Enforcement, via: str, after: Enforcement): bool =
-  via == "journalAccountEntry" implies (after.restriction == before.restriction and after.appeal == before.appeal
+  (via == "journalAccountAppeal" or via == "journalAccountDenial" or via == "journalAccountReinstatement") implies
+    (after.restriction == before.restriction and after.appeal == before.appeal
     and after.epoch == before.epoch and after.revisionPending == before.revisionPending and after.flags == before.flags
     and after.accountBans == before.accountBans and after.resolved == before.resolved and after.recorded == before.recorded
+    and after.liveBans.every(b => before.liveBans.includes(b))
+    and (via != "journalAccountReinstatement" implies after.liveBans == before.liveBans)
     and after.journal.length() == before.journal.length() + 1)
 pure def sometimesAccountReinstatementJournaled(e: Enforcement): bool =
   e.journal.some(j => j.kind == RecordAccountReinstatement) and e.journal.some(j => j.kind == RecordAccountAppeal)
-pure val accountActionValues = Set(RecordAccountAppeal, RecordAccountDenial, RecordAccountReinstatement, RecordAppeal)
+pure def sometimesReleasedAccountCannotAppeal(e: Enforcement): bool =
+  e.accountBans.includes(2) and not(activeAccountBan(e, 2)) and e.revision > 0 and not(canJournalAccountAppeal(e, 2))
 ```
 
 ### An independent moderator reinstates only after fresh clean scans of every repository
@@ -869,7 +923,8 @@ pure def sometimesSingleFlagResolved(e: Enforcement): bool = e.resolved.length()
 pure def sometimesRevisionPending(e: Enforcement): bool = e.revisionPending
 pure def sometimesCleared(e: Enforcement): bool = mayContribute(e) and latestOf(e, 1).state == AClean
 pure def sometimesBannedAccountAppealed(e: Enforcement): bool =
-  e.appeal == AppealRequested and e.appellants.exists(a => e.accountBans.includes(a) and a != e.steward and a != e.creator)
+  e.restriction != Clear and e.appeal != AppealRequested and
+  e.accountBans.some(a => accountAppealOpenFor(e, a) and a != e.steward and a != e.creator)
 pure def sometimesFlagPauseLiftedPastPendingInvestigation(e: Enforcement): bool =
   latestOf(e, 1).state == APending and
   e.journal.some(j => j.kind == RecordReinstate and j.issuer == ByVettingService and j.assessments.length() > 0 and

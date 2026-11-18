@@ -125,7 +125,9 @@ const ports = Layer.mergeAll(
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
+    pausedProjects: () => effect { return [] },
     fence: () => effect { return sql`1` },
+    appendVaultRegistration: () => Effect.die(new Error("The payments journey registers no vaults")),
   }),
 )
 

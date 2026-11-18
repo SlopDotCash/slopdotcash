@@ -1,4 +1,6 @@
-// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "The home grid orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
+// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
+import { toAmount } from "@repo/settlement/kernels/amounts";
+import type { PoolFacts } from "../../../gen/frontend__projections.ts";
 import type { LifetimeTotal } from "./standings.ts";
 import type { ListedProject, Shown } from "./listing.ts";
 
@@ -8,12 +10,33 @@ export const copied = () => Promise.resolve();
 
 export const refused = () => Promise.reject(new Error("The browser refused the copy."));
 
+export const pointsOnly: PoolFacts = {
+  read: "PoolCurrent",
+  monthlyPool: true,
+  period: 202612,
+  amount: toAmount(0n),
+  priorAmount: toAmount(0n),
+  priorPending: false,
+  freeNow: toAmount(0n),
+  monthStartRead: false,
+  freeAtStart: toAmount(0n),
+  withdrawnSince: false,
+  pledgeSupport: false,
+  pledged: toAmount(0n),
+};
+
+export const funded = (amountMinor: bigint): PoolFacts => ({ ...pointsOnly, amount: toAmount(amountMinor), freeNow: toAmount(amountMinor), monthStartRead: true, freeAtStart: toAmount(amountMinor) });
+
+export const withdrawn = (amountMinor: bigint): PoolFacts => ({ ...funded(amountMinor), freeNow: toAmount(0n), withdrawnSince: true });
+
+export const unread = (amountMinor: bigint): PoolFacts => ({ ...funded(amountMinor), read: "PoolFailed" });
+
 const base = {
   status: "active",
   listingTier: "featured",
   description: "Agent-built open source with paid monthly pools.",
   repositories: [{ id: "SlopDotCash/slopdotcash" }],
-  pool: "PointsOnly",
+  funding: pointsOnly,
 } as const;
 
 export const pool: ListedProject = {
@@ -21,7 +44,7 @@ export const pool: ListedProject = {
   id: "slopdotcash",
   slug: "slopdotcash",
   name: "Slop",
-  pool: "PoolFunded",
+  funding: funded(5_000_000_000n),
   reward: { kind: "monthly-pool", monthlyCapMinor: 5_000_000_000n, monthlyCapDisplay: "5,000 USDC", chain: "base" },
   rewardAsset: { kind: "stablecoin", network: "base", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
   escrow: { deployments: [{ network: "base" }] },
@@ -50,7 +73,7 @@ export const tokenPool: ListedProject = {
   id: "token-pool",
   slug: "token-pool",
   name: "Token Pool",
-  pool: "PoolFunded",
+  funding: funded(25_000_000_000_000n),
   reward: { kind: "monthly-pool", monthlyCapMinor: 25_000_000_000_000n, monthlyCapDisplay: "25,000,000 SLOP", chain: "solana" },
   rewardAsset: { kind: "token", network: "solana", address: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVpump", symbol: "SLOP", decimals: 6 },
   escrow: { deployments: [{ network: "solana-mainnet" }] },

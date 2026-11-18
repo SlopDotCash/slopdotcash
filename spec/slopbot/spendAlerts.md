@@ -142,7 +142,9 @@ a spending denial and a later call (higher ID) of the same job succeeded
 model and the same failure text was accepted in the last 21,600 seconds
 (`RepeatWithin6h`). A suppressed notice is never sent later. One scheduled
 run claims at most 200 suppressed notices and sends at most one email; the
-shell's loop keeps those bounds.
+shell's loop keeps those bounds. Every notice names the new failed call row
+it was queued for: a trigger on the insert of a failed `slopbot_costs` row
+queues it under that row's ID (migrations `0085` and `0122`).
 
 ```quint
 pure val settleSeconds = 120
@@ -161,6 +163,9 @@ pure def alwaysSuppressedNeverSent(s: Spend): bool =
   s.failures.every(n => n.suppressed != NoSuppression implies (n.receipt == NoReceipt and n.claimed))
 pure def alwaysBudgetDenialNeverServedByFallback(s: Spend): bool =
   s.failures.every(n => costOf(s, n.call).failure == BudgetExhausted implies n.suppressed != ServedByFallback)
+pure def alwaysNoticesNameNewRows(s: Spend): bool =
+  s.failures.every(n => n.call > 0 and n.call <= s.costs.length() and not(costOf(s, n.call).historical)
+    and costOf(s, n.call).failure != NotFailed)
 pure def sometimesServedByFallback(s: Spend): bool = s.failures.some(n => n.suppressed == ServedByFallback)
 pure def sometimesRepeatSuppressed(s: Spend): bool = s.failures.some(n => n.suppressed == RepeatWithin6h)
 ```

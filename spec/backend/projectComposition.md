@@ -66,8 +66,9 @@ pure def alwaysAdministratorsAgree(c: Registry): bool =
   c.security.administrators.forall(a => c.project.administrators.includes(a))
 pure def stepOnlyReinstatementUnretires(before: Registry, via: str, after: Registry): bool =
   (before.project.retirement != P::NotRetired and after.project.retirement == P::NotRetired) implies
-    (via == "reinstate" and before.project.retirement == P::RestrictionRetired and after.project.tier == P::Community and
-     after.project.status == P::Paused)
+    ((via == "reinstate" and before.project.retirement == P::RestrictionRetired and after.project.tier == P::Community and
+      after.project.status == P::Paused) or
+     (via == "adminRevise" and P::ownerRetired(before.project) and before.security.restriction == E::Clear))
 ```
 
 ### Account bans and registry conflicts refuse new projects and owner writes
@@ -188,9 +189,12 @@ refused while any restriction holds (`project_restricted`), and for a banned
 acting account or steward. An owner revision that appends repositories
 checks each against the registry (`appendReads`: no other project lists it
 and no restriction binds it) and records them on the security side in the
-same batch, unassessed. An administrator exception is refused while a
-restriction holds unless the restriction already retired the project, whose
-revision then stays paused and retired. Removal is refused too while the
+same batch, unassessed. While a restriction holds, a pending restriction
+revision or a flag pause included, an administrator exception is accepted
+only when it keeps the project paused and retired (`enforcedManifest`): it
+lands a pending restriction revision, and a project a moderator restriction
+had not yet retired is retired by that restriction. With no restriction, an
+administrator exception may list an owner-removed or delisted project again. Removal is refused too while the
 project's own restriction is in force, a pending restriction revision
 included: 409 `project_restricted`, "The project is <state>; request
 reinstatement before removing it", checked after the authority recheck and
@@ -205,12 +209,12 @@ change never leaves the project collectable without clearance.
 pure def clearanceOf(e: E::Enforcement): P::Clearance = if (E::cleared(e)) P::ClearanceRetained else P::ClearanceMissing
 pure def canActivate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding, observed: RegistryObservation): bool =
   P::canActivate(c.project, by, check) and E::mayContribute(c.security) and unbanned(by, c.project.steward, account) and
-  not(c.security.accountBans.includes(by)) and observed == observation(c)
+  not(E::activeAccountBan(c.security, by)) and observed == observation(c)
 pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding, observed: RegistryObservation): Registry =
   val p = P::activate(c.project, by, check)
   { ...c, project: p, security: sync(p, c.security) }
 pure def ownerWriteAllowed(c: Registry, by: int, account: AccountStanding): bool =
-  c.security.restriction == E::Clear and unbanned(by, c.project.steward, account) and not(c.security.accountBans.includes(by))
+  c.security.restriction == E::Clear and unbanned(by, c.project.steward, account) and not(E::activeAccountBan(c.security, by))
 pure def appendsFree(c: Registry, change: P::OwnerChange, appendReads: List[RegistryRead]): bool =
   change.appends.every(a => E::canAppendRepository(c.security, a.facts.repository) and
     appendReads.some(r => repositoryFree(a.facts.repository, r)))
@@ -238,17 +242,6 @@ pure def publishUpdate(c: Registry, by: int, change: P::OwnerChange, account: Ac
   appendReads: List[RegistryRead]): Registry =
   val p = P::publishUpdate(c.project, by, change)
   { project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
-pure def canAppendRepository(c: Registry, by: int, appendEvidence: P::Append, account: AccountStanding, registry: RegistryRead): bool =
-  P::canAppendRepository(c.project, by, appendEvidence) and ownerWriteAllowed(c, by, account) and
-  E::canAppendRepository(c.security, appendEvidence.facts.repository) and repositoryFree(appendEvidence.facts.repository, registry)
-pure def appendRepository(c: Registry, by: int, appendEvidence: P::Append, account: AccountStanding, registry: RegistryRead): Registry =
-  val p = P::appendRepository(c.project, by, appendEvidence)
-  { ...c, project: p, security: sync(p, E::appendRepository(c.security, appendEvidence.facts.repository)) }
-pure def canEditConsent(c: Registry, by: int, edit: P::ConsentEdit, account: AccountStanding): bool =
-  P::canEditConsent(c.project, by, edit) and ownerWriteAllowed(c, by, account)
-pure def editConsent(c: Registry, by: int, edit: P::ConsentEdit, account: AccountStanding): Registry =
-  val p = P::editConsent(c.project, by, edit)
-  { ...c, project: p, security: sync(p, c.security) }
 pure def canRemove(c: Registry, by: int, removal: P::Removal): bool =
   P::canRemove(c.project, by, removal) and c.security.restriction == E::Clear
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
@@ -256,12 +249,14 @@ pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
   { ...c, project: p, security: E::withRevisionLanded(p.tier == P::Retired, sync(p, c.security)) }
 pure def canAdminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion]): bool =
   P::canAdminRevise(c.project, by, exception) and
-  (c.security.restriction == E::Clear or c.project.retirement == P::RestrictionRetired) and
+  (c.security.restriction == E::Clear or (exception.status == P::Paused and exception.tier == P::Retired)) and
   exception.clearance == clearanceOf(c.security) and exclusionsMayBecome(c, exclusions) and
   (exclusions != c.exclusions implies exception.financial)
 pure def adminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion]): Registry =
-  val p = P::adminRevise(c.project, by, exception)
-  { project: p, security: sync(p, c.security), exclusions: exclusions }
+  val replaced = P::adminRevise(c.project, by, exception)
+  val restricted = c.security.restriction != E::Clear and c.security.restriction != E::FlagQuarantine
+  val p = if (restricted and c.project.retirement == P::NotRetired) { ...replaced, retirement: P::RestrictionRetired } else replaced
+  { project: p, security: E::withRevisionLanded(restricted, sync(p, c.security)), exclusions: exclusions }
 pure def canPlace(c: Registry, by: int, tier: P::Tier): bool = P::canPlace(c.project, by, tier) and c.security.restriction == E::Clear
 pure def place(c: Registry, by: int, tier: P::Tier): Registry =
   val p = P::place(c.project, by, tier)
@@ -493,7 +488,7 @@ does not stay paused.
 pure def readyToActivate(c: Registry): bool =
   c.project.revision > 0 and c.project.status == P::Paused and c.project.retirement == P::NotRetired and
   c.project.fieldsComplete and c.project.participation == P::OpenParticipation and E::mayContribute(c.security) and
-  not(c.security.accountBans.includes(c.project.creator))
+  c.project.license.terms != P::UnknownTerms and not(E::activeAccountBan(c.security, c.project.creator))
 pure def leadsToActivation(c: Registry, later: Registry): bool =
   readyToActivate(c) implies (later.project.status == P::Active or not(readyToActivate(later)))
 pure val fair_activate = "weak"
@@ -544,10 +539,8 @@ pure val appendReadsValues = Set(List(), List({ repository: 2, listedBy: 0, rest
 pure val registrationValues = Set(P::registration1, { ...P::registration1, purpose: P::BountyVault },
   { ...P::registration1, expectedRevision: 3 }, { ...P::registration1, finalized: false })
 pure val weight_publishUpdate = 4
-pure val appendEvidenceValues = Set({ ...P::append1, expectedRevision: 1 }, P::append1)
-pure val editValues = Set({ authority: P::owner1, expectedRevision: 2, checked: true })
 pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 }, { authority: P::owner1, expectedRevision: 3 })
-pure val requestValues = Set({ ...E::goodGrant, kind: E::OwnerApproved, branch: E::IntegrationBranch })
+pure val requestValues = Set(E::goodGrant, { ...E::goodGrant, id: 12 })
 pure val fenceValues = E::fenceValues
 pure val rowValues = Set({ projectId: 1, repository: 1 })
 pure val pinsValues = tuples(0.to(2), 0.to(2), 0.to(2))
@@ -587,7 +580,6 @@ pure val weight_reinstate = 6
 pure val weight_reinstateFlagPause = 6
 pure val weight_quarantine = 4
 pure val weight_ban = 3
-pure val weight_appendRepository = 4
 pure val weight_grantExemption = 4
 pure val weight_adminRevise = 3
 pure val weight_remove = 3

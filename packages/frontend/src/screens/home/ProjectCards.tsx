@@ -1,4 +1,4 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "Home shows one grid of the open Featured and Community projects that are listed this month, leaving bounty cards to the security bounties section"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"
 import { ProjectCard } from "@repo/ui";
 import { cardLine, cardNotes, imageOf, type ListedProject, projectHref } from "./listing.ts";
 

@@ -37,6 +37,11 @@ comparisons for the chosen purpose. External authorization and creation
 verification establish authenticated current steward or repository administrator,
 project eligibility, reviewed factory or Solana program, and exact deployment
 identity. A pending or merely included creation exposes no registered snapshot.
+The append is the backend registry's
+[vault registration](../backend/projects.md) by the vault setup service, which
+refuses with `vault_authority_required`, `project_restricted`,
+`vault_already_registered` or `vault_policy_changed`; a repeat of the recorded
+deployment is answered from the stored record and appends nothing.
 
 ```quint
 import money as M from "./money"
@@ -60,7 +65,7 @@ type Observation = { exists: bool, identity: Identity, purpose: Purpose, block: 
 type DeploymentRow = { registration: Registration, observation: Observation }
 type RequestRow = { id: int, purpose: Purpose, source: Source, phase: RequestPhase, result: RequestResult, http: int,
   capture: int, expected: int, network: str, tx: str, registration: Registration, incoming: Observation,
-  genesisRoot: str, genesisConfirmed: bool, genesisProbes: int, repeatOf: int }
+  genesisRoot: str, genesisConfirmed: bool, genesisProbes: int, actor: int, repeatOf: int, saveAttempted: bool }
 type MonthStart = { network: str, vault: str, period: int, free: M::Amount, withdrawn: M::Amount, blockTime: int }
 type Snapshots = { revision: Revision, history: List[Revision], ordinary: DeploymentRow, privateBounty: DeploymentRow,
   requests: List[RequestRow], monthStarts: List[MonthStart], pledges: List[P::StoredPledge], openPledged: P::StoredTotal,
@@ -79,7 +84,7 @@ pure val noObservation: Observation = { exists: false, identity: noIdentity, pur
 pure val noDeployment: DeploymentRow = { registration: noRegistration, observation: noObservation }
 pure val noRequest: RequestRow = { id: 0, purpose: Ordinary, source: RegistrationRequest, phase: RequestDone,
   result: NoResult, http: 0, capture: 0, expected: 0, network: "", tx: "", registration: noRegistration,
-  incoming: noObservation, genesisRoot: "", genesisConfirmed: false, genesisProbes: 0, repeatOf: 0 }
+  incoming: noObservation, genesisRoot: "", genesisConfirmed: false, genesisProbes: 0, actor: 0, repeatOf: 0, saveAttempted: false }
 pure val initial: Snapshots = { revision: firstRevision, history: List(firstRevision),
   ordinary: noDeployment, privateBounty: noDeployment, requests: List(), monthStarts: List(), pledges: List(),
   openPledged: P::noStoredTotal, savedCreations: List() }
@@ -113,16 +118,16 @@ pure def canAppendRegistryRevision(s: Snapshots, ordinaryPolicy: int, privatePol
 pure def appendRegistryRevision(s: Snapshots, ordinaryPolicy: int, privatePolicy: int, authorized: bool): Snapshots =
   nextRevision({ number: s.revision.number + 1, ordinaryPolicy: ordinaryPolicy, privatePolicy: privatePolicy }, s)
 pure def firstReadPhase(identity: Identity): RequestPhase = if (identity.chain == Evm) ReadyTotals else ReadyChainCheck
-pure def canBeginRegistration(s: Snapshots, requestId: int, tx: str, network: str, authorized: bool): bool =
-  requestId > 0 and requestRow(s, requestId).id == 0 and tx != "" and network != "" and authorized
+pure def canBeginRegistration(s: Snapshots, requestId: int, tx: str, network: str, actor: int, authorized: bool): bool =
+  requestId > 0 and requestRow(s, requestId).id == 0 and tx != "" and network != "" and actor > 0 and authorized
 pure def beginRegistration(s: Snapshots, requestId: int, purpose: Purpose, tx: str, network: str, expected: int,
-  authorized: bool): Snapshots =
+  actor: int, authorized: bool): Snapshots =
   val binding = deployment(s, purpose).registration
   val existing = registered(binding) and binding.tx == tx and binding.identity.network == network
   val phase = if (existing) firstReadPhase(binding.identity) else if (registered(binding)) RequestDone else ReadyRegistration
   { ...s, requests: s.requests.append({ ...noRequest, id: requestId, purpose: purpose, phase: phase,
     result: if (phase == RequestDone) RegistrationConflict else NoResult, http: if (phase == RequestDone) 409 else 0,
-    capture: s.revision.number, expected: expected, tx: tx, network: network,
+    capture: s.revision.number, expected: expected, tx: tx, network: network, actor: actor,
     registration: if (existing) binding else noRegistration }) }
 pure def canCheckCreation(s: Snapshots, requestId: int): bool = requestRow(s, requestId).phase == ReadyRegistration
 pure def checkCreation(s: Snapshots, requestId: int, creation: Creation): Snapshots =
@@ -155,22 +160,25 @@ pure def commitRegistration(s: Snapshots, requestId: int, saved: bool): Snapshot
 
 ### A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old
 
-An owner's register request whose creation is not finalized yet is answered
-pending and saved with the account that made it (development
+Every register request records the account that made it. An owner's
+register request whose creation is not finalized yet is answered pending and
+saved with that account (development
 `backend/projects/handler.ts` `ownerVault`, migration `0132`,
 `saved_vault_creations`; operator decision of 17 November 2026). One
-statement saves it only while fewer than three saved requests of the project
+statement, run once by the request that got the pending answer and never
+again, saves it only while fewer than three saved requests of the project
 wait: a creation already saved for the same network and transaction is left
 as it is, unless it expired, when it waits again with no attempts and the
-newer request; a failed save never changes the pending answer. A repeated
-request is never saved again. Behind later project API requests the server
+newer request and its account; a save that stores nothing or fails never
+changes the pending answer. A repeated request is never saved again. Behind later project API requests the server
 takes a due waiting request: one older than two days (172,800 seconds)
 expires without being repeated; otherwise it is claimed, its attempts counted
 and its next check set 2 minutes later for the first 15 attempts and 10
 minutes later after them, and it is begun again as the account that saved it,
 with that account's authorization checked again now. Without that
 authorization the repeat is refused before any chain read and the request
-keeps waiting. A refusal of the creation itself (`vault_creation_failed`,
+keeps waiting. Only the answer of the latest repeat decides: a refusal of the
+creation itself (`vault_creation_failed`,
 `vault_creation_invalid`: `RegistrationRefused` here) or a registered vault of
 another transaction for the purpose (`vault_already_registered`) ends it
 refused; any other refusal, and another pending answer, keep it waiting. Once
@@ -184,14 +192,14 @@ most once a minute per isolate, and logs a failure by its error name only.
 ```quint
 type SavedState = SavedWaiting | SavedRegistered | SavedRefused | SavedExpired
 type SavedCreation = { id: int, purpose: Purpose, network: str, tx: str, expected: int, actor: int, state: SavedState,
-  attempts: int, nextAt: int, createdAt: int }
+  attempts: int, nextAt: int, createdAt: int, lastRepeat: int }
 pure val savedLimit = 3
 pure val savedExpirySeconds = 172800
 pure val savedFastAttempts = 15
 pure val savedRetrySeconds = 120
 pure val savedSlowRetrySeconds = 600
 pure val noSavedCreation: SavedCreation = { id: 0, purpose: Ordinary, network: "", tx: "", expected: 0, actor: 0,
-  state: SavedExpired, attempts: 0, nextAt: 0, createdAt: 0 }
+  state: SavedExpired, attempts: 0, nextAt: 0, createdAt: 0, lastRepeat: 0 }
 pure def savedCreation(s: Snapshots, savedId: int): SavedCreation = s.savedCreations.select(v => v.id == savedId).nthOr(0, noSavedCreation)
 pure def savedFor(s: Snapshots, network: str, tx: str): SavedCreation =
   s.savedCreations.select(v => v.network == network and v.tx == tx).nthOr(0, noSavedCreation)
@@ -202,18 +210,22 @@ pure def namesRegistration(s: Snapshots, v: SavedCreation): bool =
   val binding = deployment(s, v.purpose).registration
   registered(binding) and binding.tx == v.tx and binding.identity.network == v.network
 pure def savedDue(v: SavedCreation, now: int): bool = v.id > 0 and v.state == SavedWaiting and v.nextAt <= now
-pure def canSaveCreation(s: Snapshots, requestId: int, savedId: int, actor: int, now: int): bool =
+pure def canSaveCreation(s: Snapshots, requestId: int, savedId: int, now: int): bool =
+  val r = requestRow(s, requestId)
+  r.id > 0 and r.source == RegistrationRequest and r.repeatOf == 0 and not(r.saveAttempted) and r.phase == RequestDone
+    and r.result == CreationPending and r.tx != "" and r.network != "" and r.actor > 0 and now > 0
+    and savedId > 0 and savedCreation(s, savedId).id == 0
+pure def saveCreation(s: Snapshots, requestId: int, savedId: int, now: int): Snapshots =
   val r = requestRow(s, requestId)
   val existing = savedFor(s, r.network, r.tx)
-  r.id > 0 and r.source == RegistrationRequest and r.repeatOf == 0 and r.phase == RequestDone and r.result == CreationPending
-    and r.tx != "" and r.network != "" and actor > 0 and now > 0 and waitingCount(s) < savedLimit
-    and (if (existing.id > 0) existing.state == SavedExpired else savedId > 0 and savedCreation(s, savedId).id == 0)
-pure def saveCreation(s: Snapshots, requestId: int, savedId: int, actor: int, now: int): Snapshots =
-  val r = requestRow(s, requestId)
-  val existing = savedFor(s, r.network, r.tx)
+  val stores = waitingCount(s) < savedLimit and (existing.id == 0 or existing.state == SavedExpired)
+  val attempted = updateRequest({ ...r, saveAttempted: true }, s)
   val waiting = { id: if (existing.id > 0) existing.id else savedId, purpose: r.purpose, network: r.network, tx: r.tx,
-    expected: r.expected, actor: actor, state: SavedWaiting, attempts: 0, nextAt: now + savedRetrySeconds, createdAt: now }
-  if (existing.id > 0) replaceSaved(waiting, s) else { ...s, savedCreations: s.savedCreations.append(waiting) }
+    expected: r.expected, actor: r.actor, state: SavedWaiting, attempts: 0, nextAt: now + savedRetrySeconds, createdAt: now,
+    lastRepeat: 0 }
+  if (not(stores)) attempted
+  else if (existing.id > 0) replaceSaved(waiting, attempted)
+  else { ...attempted, savedCreations: attempted.savedCreations.append(waiting) }
 pure def canExpireSaved(s: Snapshots, savedId: int, now: int): bool =
   val v = savedCreation(s, savedId)
   savedDue(v, now) and now - v.createdAt > savedExpirySeconds
@@ -224,8 +236,9 @@ pure def canRepeatSaved(s: Snapshots, savedId: int, requestId: int, now: int, au
 pure def repeatSaved(s: Snapshots, savedId: int, requestId: int, now: int, authorized: bool): Snapshots =
   val v = savedCreation(s, savedId)
   val claimed = replaceSaved({ ...v, attempts: v.attempts + 1,
-    nextAt: now + (if (v.attempts < savedFastAttempts) savedRetrySeconds else savedSlowRetrySeconds) }, s)
-  val begun = beginRegistration(claimed, requestId, v.purpose, v.tx, v.network, v.expected, authorized)
+    nextAt: now + (if (v.attempts < savedFastAttempts) savedRetrySeconds else savedSlowRetrySeconds),
+    lastRepeat: if (authorized) requestId else 0 }, s)
+  val begun = beginRegistration(claimed, requestId, v.purpose, v.tx, v.network, v.expected, v.actor, authorized)
   if (authorized) updateRequest({ ...requestRow(begun, requestId), repeatOf: savedId }, begun) else claimed
 pure def canCloseRegisteredCreation(s: Snapshots, savedId: int): bool =
   val v = savedCreation(s, savedId)
@@ -236,7 +249,8 @@ pure def canEndSavedRefused(s: Snapshots, savedId: int, requestId: int): bool =
   val v = savedCreation(s, savedId)
   val r = requestRow(s, requestId)
   val binding = deployment(s, v.purpose).registration
-  v.id > 0 and v.state == SavedWaiting and r.repeatOf == savedId and r.phase == RequestDone and not(namesRegistration(s, v))
+  v.id > 0 and v.state == SavedWaiting and r.repeatOf == savedId and requestId == v.lastRepeat and r.phase == RequestDone
+    and not(namesRegistration(s, v))
     and (r.result == RegistrationRefused or (r.result == RegistrationConflict and registered(binding) and binding.tx != v.tx))
 pure def endSavedRefused(s: Snapshots, savedId: int, requestId: int): Snapshots =
   replaceSaved({ ...savedCreation(s, savedId), state: SavedRefused }, s)
@@ -249,6 +263,9 @@ pure def alwaysSavedRegisteredIsRegistered(s: Snapshots): bool =
   s.savedCreations.every(v => v.state == SavedRegistered implies namesRegistration(s, v))
 pure def alwaysRepeatsNameASavedCreation(s: Snapshots): bool =
   s.requests.every(r => r.repeatOf > 0 implies (r.source == RegistrationRequest and savedCreation(s, r.repeatOf).id > 0))
+pure def stepRepeatsActAsTheSaver(before: Snapshots, after: Snapshots): bool =
+  after.requests.every(r => (r.repeatOf > 0 and requestRow(before, r.id).id == 0)
+    implies (r.actor > 0 and r.actor == savedCreation(before, r.repeatOf).actor))
 pure def stepSavedTerminal(before: Snapshots, after: Snapshots): bool =
   before.savedCreations.every(o => after.savedCreations.some(n => n.id == o.id and n.network == o.network and n.tx == o.tx
     and ((o.state == SavedRegistered or o.state == SavedRefused) implies n == o)
@@ -261,8 +278,8 @@ pure def sometimesServerFinishes(s: Snapshots): bool =
 pure def sometimesSavedRefused(s: Snapshots): bool = s.savedCreations.some(v => v.state == SavedRefused)
 pure def sometimesExpiredWaitsAgain(s: Snapshots): bool =
   s.savedCreations.some(v => v.state == SavedWaiting and v.attempts == 0 and s.requests.some(r => r.repeatOf == v.id))
-pure val savedIdValues = Set(1, 2)
-pure val actorValues = Set(7)
+pure val savedIdValues = Set(1, 2, 3)
+pure val actorValues = Set(0, 7, 8)
 pure val weight_saveCreation = 10
 pure val weight_repeatSaved = 10
 pure val weight_closeRegisteredCreation = 10

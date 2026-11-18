@@ -399,7 +399,7 @@ other accounts' recent requests for the same address to the
 the private mail service (`mailService`) records verification delivery and
 issues the unsubscribe capability of each mail it sends. A verification, a
 consent save and an unsubscribe hand the committed enrollment to the notice
-outbox in the same write, and closure cancels the account's waiting mail
+outbox in the same write, and closure suppresses the account's waiting mail
 there, so the outbox never queues or keeps mail on consent the account no
 longer has.
 
@@ -469,8 +469,8 @@ pure def saveNotice(s: Accounts, by: int, key: int, kind: N::Kind, githubId: int
   { ...s, inbox: N::save(s.inbox, key, kind, githubId) }
 pure def alwaysOutboxSeesCurrentConsent(s: Accounts): bool =
   s.members.every(m => mailView(N::enrollmentOf(s.inbox, m.githubId)) == mailView(m.email))
-pure def sometimesClosureCancelledMail(s: Accounts): bool =
-  N::anyCancelled(s.inbox) and s.members.some(m => m.membership == Closed)
+pure def sometimesClosureSuppressedMail(s: Accounts): bool =
+  N::anySuppressed(s.inbox) and s.members.some(m => m.membership == Closed)
 pure def stepEmailHistoryRetained(before: Accounts, after: Accounts): bool = before.members.every(m =>
   E::historyRetained(m.email, memberByActor(after, m.actor).email)) and before.lastEmailId <= after.lastEmailId
     and before.lastVersion <= after.lastVersion and before.lastUnsubscribe <= after.lastUnsubscribe

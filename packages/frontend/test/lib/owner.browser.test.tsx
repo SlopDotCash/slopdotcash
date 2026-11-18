@@ -18,7 +18,7 @@ import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
 import { type Answer, type OwnerVaultPage, type Saved, ownerVaultPage } from "../../src/wallets/owner/ownerVault.vibe";
-import { provisionalMessages, provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe";
+import { provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe";
 
 const account = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 const owner = account.address.toLowerCase();
@@ -339,7 +339,6 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       const again = yield* Effect.match(reloaded.deposit(connection, "2"), { onFailure: (error) => error._tag, onSuccess: ({ state }) => state.phase });
       yield* reloaded.followCreation(connection, creation);
       const received = yield* reloaded.followDeposit(connection, 2_000_000n);
-      const shown = provisionalMessages.received(tokenVault.network, sent.hash);
       chain.finalize();
       yield* reloaded.followCreation(connection, creation);
       const counted = yield* reloaded.followDeposit(connection, 2_000_000n);
@@ -349,7 +348,6 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
         resumed: [resumed.phase, resumed.transaction],
         again,
         received: [received.phase, received.view, received.counted],
-        shown: shown === `Deposit received in a Base block. The vault is recorded once Base finalizes its creation, usually within 20 minutes, and the deposit counts after that; you can leave this page. ${sent.hash}`,
         counted: [counted.phase, counted.view, counted.registered, counted.counted],
         cleared: sessionStorage.getItem(provisionalKey),
         sends: chain.seen.filter((method) => method === "eth_sendTransaction").length,
@@ -361,7 +359,6 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       resumed: ["Submitted", 1],
       again: "DepositStopped",
       received: ["IncludedEvent", "Received", false],
-      shown: true,
       counted: ["Verified", "DepositVerified", true, true],
       cleared: null,
       sends: 1,

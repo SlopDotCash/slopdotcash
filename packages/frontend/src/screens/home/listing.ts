@@ -1,9 +1,9 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "Home shows one grid of the open Featured and Community projects that are listed this month, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "The home grid orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
 import { toAmount } from "@repo/settlement/kernels/amounts";
 import { type HomeCard, homeBefore, homeGroup } from "../../../gen/frontend__poolListing.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { projectImage } from "../../../gen/frontend__presentation.ts";
-import type { PoolDisplay } from "../../../gen/frontend__projections.ts";
+import { type PoolFacts, poolDisplay } from "../../../gen/frontend__projections.ts";
 import { listedForDiscovery } from "../../../gen/frontend__views.ts";
 import { formatRewardMinor, type PoolCommitment } from "../../kernels/assetText.ts";
 import { type CardProject, cardPolicy, hasBountyOverview, hasProjectCardBounty, projectRewardSummaries, type RewardSummary, type SecurityBounty } from "../../kernels/rewardSummary.ts";
@@ -26,7 +26,7 @@ export interface ListedProject extends CardProject {
   readonly description: string;
   readonly image?: string;
   readonly repositories: ReadonlyArray<ListedRepository>;
-  readonly pool: PoolDisplay;
+  readonly funding: PoolFacts;
   readonly reward: CardProject["reward"] & {
     readonly monthlyCapDisplay: string;
     readonly chain?: string;
@@ -86,7 +86,7 @@ function lineOf(summary: RewardSummary | undefined, project: ListedProject): Car
     case "security-bounty":
       return { amount: `${summary.amount} / ${eligibilityWord(summary)}`, state: project.securityBounty ? bountyFundingLabel(project.securityBounty) : undefined };
     case "monthly-pool":
-      return project.pool === "PoolFunded" ? { amount: `${summary.amount}${summary.token ? ` ${summary.token.symbol}` : ""}/mo` } : { amount: "Points only" };
+      return poolDisplay(project.funding) === "PoolFunded" ? { amount: `${summary.amount}${summary.token ? ` ${summary.token.symbol}` : ""}/mo` } : { amount: "Points only" };
     case "external-prize":
       return { amount: `${compactPrizeLabel(summary.amount ?? "External")} + points`, state: "External prize" };
     case "points-only":
@@ -122,17 +122,27 @@ export function homeProjects<P extends ListedProject>(projects: ReadonlyArray<P>
   return projects.filter((project) => project.listingTier !== "retired" && listedForDiscovery(cardPolicy(project)) && !hasProjectCardBounty(project));
 }
 
+export const homeTiers = ["featured", "community"] as const;
+
+export type HomeTier = (typeof homeTiers)[number];
+
 /** @throws {RangeError} */
 function homeCard(project: ListedProject, index: number): HomeCard {
-  const amount = toAmount(project.reward.kind === "monthly-pool" && project.pool === "PoolFunded" ? project.reward.monthlyCapMinor : 0n);
+  const amount = poolDisplay(project.funding) === "PoolFunded" ? project.funding.amount : toAmount(0n);
   const stablecoin = project.rewardAsset === undefined || project.rewardAsset.kind === "stablecoin";
   return { group: homeGroup(cardPolicy(project).reward, amount, stablecoin), amount, featured: project.listingTier === "featured", index };
 }
 
-/** The home grid's order over the projects as shown this month. @throws {RangeError} */
+/** Home's order over the projects as shown this month. @throws {RangeError} */
 export function homeProjectOrder<P extends ListedProject>(projects: ReadonlyArray<P>): P[] {
   return projects
     .map((project, index) => ({ project, card: homeCard(project, index) }))
     .sort((left, right) => (homeBefore(left.card, right.card) ? -1 : homeBefore(right.card, left.card) ? 1 : 0))
     .map(({ project }) => project);
+}
+
+/** Home's Featured then Community sections, each in the home order computed once over every home project; an empty tier has no section. @throws {RangeError} */
+export function homeSections<P extends ListedProject>(projects: ReadonlyArray<P>): ReadonlyArray<{ readonly tier: HomeTier; readonly projects: P[] }> {
+  const shown = homeProjectOrder(homeProjects(projects));
+  return homeTiers.map((tier) => ({ tier, projects: shown.filter((project) => project.listingTier === tier) })).filter((section) => section.projects.length > 0);
 }

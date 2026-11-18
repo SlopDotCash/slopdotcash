@@ -97,6 +97,10 @@ export function OwnerCommitment({ runtime, account, network, vault, family, gith
   const [review, setReview] = useState<CommitmentShown>();
   const [result, setResult] = useState<Checked>();
   const [cleared, setCleared] = useState(0);
+  const cardAct: typeof act = (work, then) => {
+    setResult(undefined);
+    return act(work, then);
+  };
   const unreadable = useSettled(runtime, `unreadable-commitment:${cleared}`, () => unreadableCommitment());
   const state = monthly.state;
   if (state === undefined) return null;
@@ -124,7 +128,7 @@ export function OwnerCommitment({ runtime, account, network, vault, family, gith
       {slotUnreadable ? (
         <>
           <Alert variant="destructive">{monthlyMessages.unreadable}</Alert>
-          <Button variant="secondary" className="self-start" disabled={busy} onClick={() => act(clearUnreadableCommitment(), () => setCleared((count) => count + 1))}>
+          <Button variant="secondary" className="self-start" disabled={busy} onClick={() => cardAct(clearUnreadableCommitment(), () => setCleared((count) => count + 1))}>
             Checked wallet activity · clear saved record
           </Button>
         </>
@@ -136,7 +140,7 @@ export function OwnerCommitment({ runtime, account, network, vault, family, gith
         disabled={busy || slotUnreadable}
         wallets={offers.filter((offer) => offer.family === family).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
         onConnect={(offer) =>
-          act(connectOwner(Number(offer.id)), (connection) => {
+          cardAct(connectOwner(Number(offer.id)), (connection) => {
             setWallet(connection);
             setReview(undefined);
           })
@@ -151,13 +155,13 @@ export function OwnerCommitment({ runtime, account, network, vault, family, gith
           explorerUrl={transactionUrl(network, hash || undefined)}
           canCheck={wallet !== undefined}
           busy={busy}
-          onCheck={() => wallet && act(checkCommitment(wallet), checked)}
-          onEnterHash={hash === "" ? (candidate) => wallet && act(enterCommitmentHash(wallet, candidate), checked) : undefined}
-          onConfirmUnsent={flow.phase === "Unclear" ? () => act(confirmCommitmentUnsent(), () => setReview(undefined)) : undefined}
+          onCheck={() => wallet && cardAct(checkCommitment(wallet), checked)}
+          onEnterHash={hash === "" ? (candidate) => wallet && cardAct(enterCommitmentHash(wallet, candidate), checked) : undefined}
+          onConfirmUnsent={flow.phase === "Unclear" ? () => cardAct(confirmCommitmentUnsent(), () => setReview(undefined)) : undefined}
         />
       ) : wallet && githubUserId !== undefined && !slotUnreadable ? (
         <>
-          <Button variant="secondary" className="self-start" loading={busy} onClick={() => act(reviewCommitment(wallet, githubUserId), setReview)}>
+          <Button variant="secondary" className="self-start" loading={busy} onClick={() => cardAct(reviewCommitment(wallet, githubUserId), setReview)}>
             Review
           </Button>
           {review ? (
@@ -178,7 +182,7 @@ export function OwnerCommitment({ runtime, account, network, vault, family, gith
                 <dd className="font-mono tabular-nums text-foreground">{units(review.freeBalance, review.decimals)}</dd>
               </dl>
               <Identifier preview={knownAssetSymbol({ network, assetAddress: review.asset, assetDecimals: review.decimals }) ?? `Token ${short(review.asset)}`} label="token address" value={review.asset} />
-              <Button className="self-start" loading={busy} onClick={() => act(sendCommitment(wallet, review), () => setReview(undefined))}>
+              <Button className="self-start" loading={busy} onClick={() => cardAct(sendCommitment(wallet, review), () => setReview(undefined))}>
                 Reserve in wallet
               </Button>
             </section>

@@ -29,6 +29,7 @@ const roles = { ADMIN_GITHUB_IDS: `${moderatorA},${moderatorB},${administrator}`
 
 interface AccessScript {
   permission: string
+  missing: ReadonlyArray<number>
 }
 
 service World {
@@ -45,6 +46,7 @@ function owner() {
 
 function repositoryAnswer(url: URL, access: AccessScript) {
   const id = Number(url.searchParams.get("repositoryId"))
+  if (access.missing.includes(id)) return { installation: "missing" }
   const path = url.searchParams.get("repository") ?? ""
   return { installation: "installed", installationId: 77, permission: url.searchParams.get("login") === `member-${stewardId}` ? access.permission : "read", roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }
 }
@@ -72,7 +74,7 @@ const Built = Layer.effect(World, effect {
     github.world.addRepo({ id: pairFirstId, nodeId: `R_${pairFirstId}`, owner: `member-${pairSteward}`, name: "reinstate-one", defaultBranch: "main", license: { spdx: "MIT" } })
     github.world.addRepo({ id: pairSecondId, nodeId: `R_${pairSecondId}`, owner: `member-${pairSteward}`, name: "reinstate-two", defaultBranch: "main", license: { spdx: "MIT" } })
   }))
-  const access: AccessScript = { permission: "admin" }
+  const access: AccessScript = { permission: "admin", missing: [] }
   const beforeAuthority: Array<() => Promise<unknown>> = []
   const answer = (request: Request) => new Response(JSON.stringify(repositoryAnswer(new URL(request.url), access)), { headers: { "content-type": "application/json" } })
   const net = internet({ github: github.handler, rpc: { [rpcUrl]: async (request) => rpcAnswer(await request.json() as never) } })
@@ -223,6 +225,14 @@ effect function seedObligation(projectId: string) {
 function project(answer: Answer) {
   const record = field(answer.body, "project")
   return [field(record, "revision"), field(field(record, "manifest"), "status"), field(field(record, "manifest"), "listingTier")]
+}
+
+function nextActionOf(answer: Answer) {
+  return field(field(answer.body, "setup"), "nextAction")
+}
+
+function installationOf(answer: Answer) {
+  return field(field(field(answer.body, "setup"), "checks"), "installation")
 }
 
 function refused(answer: Answer) {
@@ -395,6 +405,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const appendedEntry = { id: extra, displayName: extra, githubUrl: `https://github.com/${extra}`, description: "Additional research tooling.", integrationBranch: "main", githubId: String(appendedId), nodeId: `R_${appendedId}`, countsFrom: nextMonthStart(try Clock.currentTimeMillis) }
     const combined = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
     const appended = try revise(steward, id, { manifest: { ...latest, repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
+    world.access.missing = [appendedId]
+    const uninstalled = try area.request(`/api/v1/project-setup/${id}/check`, { json: {}, as: steward })
+    world.access.missing = []
     world.access.permission = "read"
     const revoked = try revise(steward, id, { manifest: { ...latest, headline: "Revoked headline." }, expectedRevision: 5 })
     world.access.permission = "admin"
@@ -427,8 +440,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       asset,
       combined: refused(combined),
       appended: [appended.status, ...project(appended)],
+      uninstalled: [uninstalled.status, nextActionOf(uninstalled), installationOf(uninstalled)],
       revoked: outcome(revoked),
-      setup: [setup.status, setupOf(setup)],
+      setup: [setup.status, setupOf(setup), installationOf(setup)],
       pendingUpdate: (field(pendingUpdate.body, "applications") as ReadonlyArray<unknown>).map((entry) => [field(entry, "id"), field(entry, "publishable")]),
       updated: [updated.status, ...project(updated)],
       updateStatus,
@@ -445,7 +459,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       strangerCreate: [403, "authority_required"],
       unbranched: [422, "invalid_repository", `member-${stewardId}/extra has no branch named release.`],
       invalid: [422, "invalid_manifest", "project.links.repository is not an allowed HTTPS URL"],
-      activated: [200, ["ready", "none", "Contributors can find this project and its skills.", 2, "active"], { state: "cleared", exempt: true, exemptionKind: "owner-approved-admission", message: "Owner-approved admission exemption. No passed scan is claimed." }],
+      activated: [200, ["ready", "none", "Contributors can find this project and its skills.", 2, "active"], { state: "cleared", exempt: true, exemptionKind: "owner-approved-admission", message: "Owner-approved exemption" }],
       forged: [400, "invalid_request", "Request body has unexpected fields"],
       staleRevision: [409, "stale_revision"],
       unchanged: [422, "no_change"],
@@ -455,8 +469,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       asset: [{ decimals: 18, symbol: "SLOP", status: "active" }],
       combined: [422, "invalid_manifest", "Publish one change at a time: content and policy edits, each added repository and the automatic-closure setting are separate revisions."],
       appended: [200, 5, "paused", "community"],
+      uninstalled: [200, { kind: "install_slopbot", message: `Not installed on member-${stewardId}/extra. On GitHub, choose "Only select repositories" and pick member-${stewardId}/extra.`, href: "https://github.com/apps/slopdotcash/installations/new" }, { state: "missing", message: `Not installed on member-${stewardId}/extra.` }],
       revoked: [403, "authority_required"],
-      setup: [200, ["retry", "retry_scan", "The scan service is unavailable. Check again later.", null, "paused"]],
+      setup: [200, ["retry", "retry_scan", "The scan service is unavailable. Check again later.", null, "paused"], { state: "installed", message: `Installed on member-${stewardId}/tool and member-${stewardId}/extra.` }],
       pendingUpdate: [["app_update00001", true]],
       updated: [200, 6, "paused", "community"],
       updateStatus: [{ status: "approved" }],
@@ -526,7 +541,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('Only public registrations with complete referral attribution are listed, in registry order, and a retired row carrying a referrer is not (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order")', () => effect {
+  it.effect('Every registered project with complete referral attribution is listed in registry order, retired rows included (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
     const area = try Area
     const projectsPath = "/api/v1/referrals/projects"
     const empty = try area.request(projectsPath)
@@ -546,6 +561,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       schema: "slop-referred-projects-v1",
       projects: [
         { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
         { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
         { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
       ],

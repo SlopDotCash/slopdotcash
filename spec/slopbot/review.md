@@ -256,6 +256,7 @@ pure def alwaysAdmittedReview(r: Review): bool =
       and r.scope != RS::Unregistered)
 pure def alwaysSkippedNeverCalls(r: Review): bool =
   r.status == Skipped implies (not(r.bound) and (r.calls.length() == 0 or r.attempts > 0))
+pure def alwaysCallsFollowAnAttempt(r: Review): bool = r.calls.length() > 0 implies r.attempts > 0
 pure def stepCallsAreAppendOnly(before: Review, after: Review): bool =
   before.calls.every(c => after.calls.includes(c)) and after.calls.length() >= before.calls.length()
     and after.attempts >= before.attempts

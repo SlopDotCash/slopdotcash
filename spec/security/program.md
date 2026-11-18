@@ -96,6 +96,8 @@ pure def observeFunding(p: Program, snapshot: FundingSnapshot, nowMs: int, offer
       and offer.asset != "" and nowMs - snapshot.observedAt <= 1800000 and M::positiveAmount(snapshot.free)) VerifiedAvailable else Pledged }
 pure def canObserveProjectRevision(p: Program, projectRevision: int): bool = projectRevision > p.projectRevision
 pure def observeProjectRevision(p: Program, projectRevision: int): Program = { ...p, projectRevision: projectRevision }
+pure def sometimesFundsForOtherAssetRefused(p: Program): bool =
+  p.funding == VerifiedAvailable and p.fundingAsset == "usdc" and not(fundedEnough(p, eurcPrefundedOffer))
 ```
 
 ### Receipt terms come only from the open published revision
@@ -147,11 +149,13 @@ pure val byValues = Set(7, 18633264)
 pure val projectValues = Set("umia", "slopdotcash")
 pure val standardOffer: Offer = { status: Open, policy: T::AfterApproval, eligibility: T::InScopeSecurity, gross: List(100),
   split: T::StandardSplit, asset: "usdc", excludedFindings: List(3, 300) }
+pure val eurcPrefundedOffer: Offer = { ...standardOffer, policy: T::Prefunded, asset: "eurc" }
 pure val offerValues = Set(standardOffer, { ...standardOffer, policy: T::Prefunded }, { ...standardOffer, status: Paused },
   { ...standardOffer, status: Closed }, { ...standardOffer, split: T::FullAward, gross: List(101) }, { ...standardOffer, gross: List(101) },
-  { ...standardOffer, excludedFindings: List(2) })
+  { ...standardOffer, excludedFindings: List(2) }, eurcPrefundedOffer)
 pure val snapshotValues = Set({ finalized: true, observedAt: 1, asset: "usdc", free: List(500) },
-  { finalized: false, observedAt: 2, asset: "usdc", free: List(500) }, { finalized: true, observedAt: 3, asset: "usdc", free: List(0) })
+  { finalized: false, observedAt: 2, asset: "usdc", free: List(500) }, { finalized: true, observedAt: 3, asset: "usdc", free: List(0) },
+  { finalized: true, observedAt: 4, asset: "eurc", free: List(500) })
 pure val nowMsValues = Set(1, 2, 1800002)
 pure val projectRevisionValues = Set(2, 3)
 pure val receivedAtValues = Set(0, 1, 3)

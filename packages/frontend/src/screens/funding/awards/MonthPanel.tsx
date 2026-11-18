@@ -1,6 +1,6 @@
 // spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
 import { ordinaryFeeBase } from "@repo/settlement/kernels/fees";
-import type { MonthlyAllocation, MonthlyAwardState, MonthlyOwnerView, MonthlyRun } from "@repo/settlement/client";
+import type { MonthlyAllocation, MonthlyOwnerView, MonthlyRun } from "@repo/settlement/client";
 import { Button, Field, Input, Label, ListItem, Metric, MetricGrid, Status, Switch, Textarea } from "@repo/ui";
 import { ArrowRight, Check } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
@@ -45,11 +45,6 @@ export type MonthPanelProps = {
 };
 
 type Draft = { readonly value: string; readonly base: string; readonly reason: string };
-
-const awardReasons: Partial<Readonly<Record<MonthlyAwardState, string>>> = {
-  excluded: "Account banned",
-  conflict: "Another award holds this source",
-};
 
 function Time({ seconds }: { seconds: number }) {
   const iso = isoOf(seconds);
@@ -247,12 +242,7 @@ function FinalAwards({ view, run, state, busy = false, onReserve, commitment }: 
               key={award.githubUserId}
               title={award.login}
               detail={<AwardAmounts gross={amount(award.grossBase)} net={amount(award.netBase)} fee={amount(award.feeBase)} />}
-              trailing={
-                <span className="flex flex-col items-end gap-0.5">
-                  <Status presentation={awardPresentation(award.state)} />
-                  {awardReasons[award.state] ? <span className="text-xs text-muted-foreground">{awardReasons[award.state]}</span> : null}
-                </span>
-              }
+              trailing={<Status presentation={awardPresentation(award.state)} />}
               actions={
                 reservable && award.state === "awaiting-reservation" ? (
                   <Button variant="secondary" aria-label={`Reserve award for ${award.login}`} disabled={busy} onClick={() => onReserve(award.githubUserId)}>

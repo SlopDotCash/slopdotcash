@@ -196,7 +196,7 @@ pure val keyDebit: J::AwardKey = { project: "slopdotcash", actor: 2, category: J
 pure def revisionOf(id: int, key: J::AwardKey, amount: int): J::Revision =
   { ...J::noRevision, id: id, key: key, amount: amount, occurredAt: 2432305, recordedAt: 2432306,
     rule: if (key.category == J::Penalty) J::PenaltyTable else J::ValueV1, sourceDigest: "d",
-    tableVersion: if (key.category == J::Penalty) 1 else 0 }
+    tableVersion: if (key.category == J::Penalty) 1 else 0, debit: if (key.category == J::Penalty) 0 - amount else 0 }
 pure val ledgerOne: J::Ledger = { ...J::initial, now: 2432306, nextId: 4,
   revisions: List(revisionOf(1, keyOne, 30), revisionOf(2, keyTwo, 90), revisionOf(3, keyDebit, -30)),
   frozen: List({ project: "slopdotcash", period: 24323 }) }

@@ -6,7 +6,7 @@ export { HomePage, type HomePageProps, type HomeReads, HomeView } from "./HomePa
 export { HomeStandings } from "./HomeStandings.tsx";
 export { type LifetimeTotal, topStandings } from "./standings.ts";
 export { InstallPanel } from "./InstallPanel.tsx";
-export { type CardLine, cardLine, homeProjectOrder, homeProjects, imageOf, type ListedProject, offerHref, projectHref, reviewBudgetLabel, type Shown } from "./listing.ts";
+export { type CardLine, cardLine, homeProjectOrder, homeProjects, homeSections, imageOf, type ListedProject, offerHref, projectHref, reviewBudgetLabel, type Shown } from "./listing.ts";
 export { type MergeLine, ProjectGrid } from "./ProjectCards.tsx";
 export { copyText } from "./prompt.vibe";
 export { SecurityOffers } from "./SecurityOffers.tsx";

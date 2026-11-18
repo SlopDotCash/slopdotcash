@@ -200,7 +200,10 @@ decides it directly. A grant is the reinstatement decision above. A denial
 every open account appeal of the project at once and keeps the bans; it
 needs a restricted project (409 `no_open_appeal` while the project is clear)
 and a moderator who banned none of those accounts and is none of them (403
-`independent_review_required`).
+`independent_review_required`). While the project's latest record is the
+vetting service's ban awaiting a moderator decision, a denial is refused (409
+`malicious_decision_required`): the confirmed-malicious result is decided
+first, by banning or reinstating.
 
 ```quint
 pure def canAppeal(a: Access, by: int, project: int): bool =
@@ -214,6 +217,7 @@ pure def openAppealsOf(a: Access, project: int): List[BanAppeal] =
   a.appeals.select(p => p.project == project and p.status == AppealOpen)
 pure def canDenyAppeal(a: Access, by: int, project: int, decision: int): bool =
   isModerator(a, by) and project > 0 and freshDecision(a, decision) and projectRestricted(a, project)
+    and latestRecord(a, project).role == ModeratorRole
     and openAppealsOf(a, project).length() > 0 and openAppealsOf(a, project).every(p => independentOf(a, by, project, p.target))
 pure def denyAppeal(a: Access, by: int, project: int, decision: int): Access =
   { ...a, decisions: a.decisions.append(decision),
@@ -233,6 +237,8 @@ pure def lawEveryBannedAccountCanAppealOrHasOpenAppeal(a: Access, actor: int, pr
     implies (canAppeal(a, actor, project) or openAppeal(a, project, actor))
 pure def lawDenialNeedsRestrictedProject(a: Access, by: int, project: int, decision: int): bool =
   not(projectRestricted(a, project)) implies not(canDenyAppeal(a, by, project, decision))
+pure def lawDenialWaitsForMaliceDecision(a: Access, by: int, project: int, decision: int): bool =
+  latestRecord(a, project).role == VettingRole implies not(canDenyAppeal(a, by, project, decision))
 ```
 
 ### A ban blocks new awards while funded awards stay payable
@@ -302,7 +308,7 @@ pure val awardIdValues = Set(1, 2)
 pure val recipientValues = Set(7, 8)
 pure val weight_appeal = 6
 pure val weight_reinstateAccounts = 6
-pure val weight_decideProjectBan = 8
+pure val weight_decideProjectBan = 6
 pure val weight_recordVettingBan = 4
 pure val sampleVetted: Access = recordVettingBan(initial, vettingService, 1, 1)
 pure val sampleConfirmed: Access = decideProjectBan(sampleVetted, 18633264, 1, 2, List())

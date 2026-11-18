@@ -1,4 +1,4 @@
-// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"
+// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account or a moderator files one open project appeal"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"
 import type { StatusProps } from "@repo/ui";
 import type { Enforcement } from "./projects.ts";
 

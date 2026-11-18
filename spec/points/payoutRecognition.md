@@ -13,8 +13,11 @@ month (`payout:<YYYY-MM>:<actor>`). Ordinary finalized monthly vault
 payments are a second source (`scripts/vault-payout-points.ts`, the public
 `PublicVaultPayment` projection of each recipient's finalized ordinary
 payments). The [Points journal](./journal.md) appends the recognition once
-per project, month and numeric GitHub ID, whichever source supplies it
-first.
+per project, month and actor, whichever source supplies it first. Development
+keys that check on the numeric GitHub ID decoded from any node-ID spelling;
+an actor number here is the interned rank of a node ID
+([allocation](./allocation.md)), so resolving every spelling of one numeric
+ID to one actor is the adapter's obligation.
 
 ## Story: Recognize a verified payout once per recipient, project and cycle
 
