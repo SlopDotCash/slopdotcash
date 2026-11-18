@@ -220,7 +220,13 @@ export default {async fetch(request,env){
   const wrong = await scheduled("wrong-genesis");
   assert.equal(wrong.status, 503);
   await wrong.text();
-  assert.deepEqual(methods.splice(0), ["getGenesisHash", "getGenesisHash"]);
+  // Each step checks the genesis itself: the vault read, the payment scan
+  // and, last, the deposit record. None reads further on the wrong chain.
+  assert.deepEqual(methods.splice(0), [
+    "getGenesisHash",
+    "getGenesisHash",
+    "getGenesisHash",
+  ]);
   assert.deepEqual(await scanState(), initial);
 
   observedGenesis = genesisHash;
@@ -234,6 +240,9 @@ export default {async fetch(request,env){
   assert.deepEqual(methods.splice(0), [
     "getGenesisHash",
     "getAccountInfo",
+    "getGenesisHash",
+    "getSignaturesForAddress",
+    // The deposit record, last: its own genesis check and history read.
     "getGenesisHash",
     "getSignaturesForAddress",
   ]);
@@ -289,7 +298,11 @@ export default {async fetch(request,env){
   const staged = await scanState();
   observedGenesis = ESCROW_NETWORKS["solana-mainnet"].genesisHash;
   await (await scheduled("wrong-genesis-with-staged-page")).text();
-  assert.deepEqual(methods.splice(0), ["getGenesisHash", "getGenesisHash"]);
+  assert.deepEqual(methods.splice(0), [
+    "getGenesisHash",
+    "getGenesisHash",
+    "getGenesisHash",
+  ]);
   assert.deepEqual(await scanState(), staged);
   observedGenesis = genesisHash;
   await db

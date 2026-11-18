@@ -268,10 +268,14 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
           },
         }),
       );
-      // The preview server has no payments backend. A project page with a
+      // The preview server has no payments backend, and the pages server
+      // refuses payments reads from the test origin. A project page with a
       // vault on record reads its recorded deposits ("Funded by"); that list
       // is empty unless a spec routes its own records (page routes win).
-      if (testInfo.config.metadata.server === "preview")
+      if (
+        testInfo.config.metadata.server === "preview" ||
+        testInfo.config.metadata.server === "pages"
+      )
         await context.route(
           /\/api\/v1\/payments\/projects\/[a-z0-9-]+\/deposits$/u,
           (route) => {
