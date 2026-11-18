@@ -169,6 +169,58 @@ export function isPublicVaultPayment(
     Number.isFinite(Date.parse(p.indexedAt))
   );
 }
+/**
+ * Public projection of one finalized deposit into an ordinary project vault
+ * (operator decision, 18 November 2026). `githubLogin` is set only when one
+ * public Slop account currently has the depositing address registered.
+ */
+export interface PublicVaultDeposit extends PaymentAsset {
+  id: string;
+  projectId: string;
+  chain: PaymentChain;
+  vault: string;
+  depositor: string;
+  githubLogin: string | null;
+  amountBase: string;
+  transactionId: string;
+  /** The block time of the deposit. */
+  depositedAt: string;
+}
+export interface PublicVaultDeposits {
+  projectId: string;
+  /** Newest first; at most one page. */
+  deposits: PublicVaultDeposit[];
+  /** Every recorded deposit of the project, including those not listed. */
+  total: number;
+  servedAt: string;
+}
+export function isPublicVaultDeposit(
+  value: unknown,
+): value is PublicVaultDeposit {
+  if (!value || typeof value !== "object") return false;
+  const d = value as PublicVaultDeposit;
+  return (
+    typeof d.id === "string" &&
+    typeof d.projectId === "string" &&
+    typeof d.network === "string" &&
+    isEscrowChain(d.chain) &&
+    typeof d.vault === "string" &&
+    typeof d.depositor === "string" &&
+    /^[0-9A-Za-z]{32,44}$/u.test(d.depositor) &&
+    (d.githubLogin === null ||
+      (typeof d.githubLogin === "string" &&
+        /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(d.githubLogin))) &&
+    typeof d.assetAddress === "string" &&
+    Number.isSafeInteger(d.assetDecimals) &&
+    d.assetDecimals >= 0 &&
+    d.assetDecimals <= 36 &&
+    isBaseUnits(d.amountBase) &&
+    typeof d.transactionId === "string" &&
+    transactionUrl(d.network, d.transactionId) !== null &&
+    typeof d.depositedAt === "string" &&
+    Number.isFinite(Date.parse(d.depositedAt))
+  );
+}
 export { isBaseUnits } from "../escrow-policy.mjs";
 export type PayoutPolicy = "ordinary" | "security-bounty";
 /** The 2% payout fee is deducted from the gross award, in base units of the award asset.

@@ -278,6 +278,47 @@ export function poolFundingStatus(
   return withdrawnSince ? { state: "withdrawn", period } : points;
 }
 
+/**
+ * How many whole months of this month's amount the free funds of the
+ * project's recorded vaults on paying networks cover (operator decision,
+ * 18 November 2026). Anyone may deposit, but only the owner sets the monthly
+ * amount, so extra money covers more months. Null when the project has no
+ * monthly amount this month or no such vault has a free balance on record.
+ * It is a reading of today's balance, not a promise: the owner can withdraw
+ * free funds.
+ */
+export function monthsCovered(
+  project: ProjectDefinition,
+  vaults:
+    | readonly Pick<VaultFreeBalance, "network" | "vault" | "freeBalance">[]
+    | undefined,
+  now: Date,
+): number | null {
+  if (project.reward.kind !== "monthly-pool") return null;
+  const cap = BigInt(resolveRewardCapMinor(project, utcMonth(now)));
+  if (cap === 0n) return null;
+  const recorded = payingVaultKeys(project);
+  const read = (vaults ?? []).filter(
+    (vault) =>
+      vault.freeBalance !== null &&
+      BASE_UNITS.test(vault.freeBalance) &&
+      recorded.has(vaultKey(vault.network, vault.vault)),
+  );
+  if (read.length === 0) return null;
+  const free = read.reduce(
+    (sum, vault) => sum + BigInt(vault.freeBalance as string),
+    0n,
+  );
+  const months = free / cap;
+  return months > 1200n ? 1200 : Number(months);
+}
+
+/** "Covers 3 months", "Covers 1 month", or that a month is not covered. */
+export function monthsCoveredLabel(months: number): string {
+  if (months === 0) return "Covers less than one month";
+  return `Covers ${months} ${months === 1 ? "month" : "months"}`;
+}
+
 /** True when this month's amount is backed by the vault. */
 export function poolFunded(
   project: ProjectDefinition,

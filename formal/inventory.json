@@ -402,7 +402,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "9506b0c028bbc28780b7c2e5b0502599014c32b1cf0797ebd8b78ebca9fbcf68",
+      "sha256": "554632b03ba589882d68fabd466d516e86425bd442702397237bf29fa2e0a2fb",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -418,11 +418,12 @@
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
-        "formal/models/ui/ui_payout_consent_lifetime.qnt"
+        "formal/models/ui/ui_payout_consent_lifetime.qnt",
+        "formal/models/ui/ui_public_vault_funding.qnt"
       ],
       "candidateLines": [
-        111, 216, 295, 354, 359, 406, 428, 434, 457, 479, 657, 678, 692, 816,
-        872, 910, 919, 934, 1073, 1136, 1144, 1167, 1254, 1255, 1309
+        112, 217, 296, 355, 360, 407, 429, 435, 458, 467, 490, 512, 690, 711,
+        725, 849, 905, 943, 952, 967, 1106, 1169, 1177, 1200, 1287, 1288, 1342
       ],
       "review": "mapped-abstraction"
     },
@@ -549,6 +550,13 @@
       "sha256": "6069040046c7333dcb6bc292df1c33214cc150c24d8149814595f5a234dccb90",
       "models": ["formal/models/rewards/monthly_month_pledge.qnt"],
       "candidateLines": [94],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/payments/vault-deposits.ts",
+      "sha256": "a6fee68202978a95cb16698d74ac4e8c2f3bf08ef392fb32b308ea00f91fa37b",
+      "models": ["formal/models/payments/vault_deposit_evm_record.qnt"],
+      "candidateLines": [2, 36, 61, 66, 78, 110],
       "review": "mapped-abstraction"
     },
     {
@@ -3602,6 +3610,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0138_vault_deposits.sql",
+      "sha256": "9851062416f8a8dd45fa1c4abb1981072af178f3a1667da61e79d51143e958ee",
+      "models": ["formal/models/payments/vault_deposit_evm_record.qnt"],
+      "candidateLines": [4, 8, 29, 31, 39],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "cf9927f26d487b688d157a03c6d8278c55d21d98e44e1d37c7dbfbb898ad1ac7",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -5515,18 +5530,19 @@
     },
     {
       "path": "src/EscrowFunding.tsx",
-      "sha256": "516a7a28c2120f0a44923ce9bf2ea7979554ec7883f6593afbb864b725a27f83",
+      "sha256": "cfb83755ef2b43232384d5d9d82b5c18ad481fe5c5e61d8799579ff738136a18",
       "models": [
         "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_public_vault_funding.qnt",
         "formal/models/ui/ui_resources.qnt",
         "formal/models/ui/ui_vault_month_lock.qnt"
       ],
       "candidateLines": [
-        2, 147, 148, 149, 151, 157, 161, 172, 198, 203, 207, 208, 209, 210, 211,
-        214, 215, 219, 231, 233, 242, 251, 252, 254, 255, 256, 258, 259, 262,
-        267, 269, 270, 271, 273, 276, 278, 279, 288, 290, 295, 298, 303, 306,
-        310, 311, 323, 352, 354, 355, 356, 365, 367, 373, 375, 377, 380, 386,
-        400, 408, 419, 430, 437
+        2, 150, 151, 152, 154, 160, 164, 175, 201, 206, 210, 211, 212, 213, 214,
+        217, 218, 222, 234, 236, 245, 254, 255, 257, 258, 259, 261, 262, 265,
+        270, 272, 273, 274, 276, 279, 281, 282, 291, 293, 298, 301, 306, 309,
+        313, 314, 326, 355, 357, 358, 359, 368, 370, 376, 378, 380, 383, 389,
+        403, 411, 418, 422, 437, 448, 455, 477
       ],
       "review": "mapped-abstraction"
     },
@@ -6010,18 +6026,28 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "c19846e8368dc72a8592aec897379fc3cfeb94e205d948024664ded8745aa6f1",
+      "sha256": "a828d02e0b5411bbb320088404017d6011aa53410609ae17b82050442e1a1b84",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        182, 315, 348, 349, 351, 352, 383, 385, 395, 543, 544, 546, 547, 554,
-        577, 580, 603, 605, 677
+        184, 317, 350, 351, 353, 354, 385, 387, 397, 545, 546, 548, 549, 556,
+        584, 587, 615, 620, 692
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
+    },
+    {
+      "path": "src/PublicVaultFunding.tsx",
+      "sha256": "993484b9d48d41152d79fc53ffe15b52f9006dc10b42df0e116cf56ad90ef75b",
+      "models": ["formal/models/ui/ui_public_vault_funding.qnt"],
+      "candidateLines": [
+        2, 14, 52, 62, 93, 102, 105, 134, 139, 142, 143, 148, 149, 152, 155,
+        157, 161
+      ],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/ReferralClaims.tsx",
@@ -6158,10 +6184,11 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "8f92729c32984e3b427e157521f445744a5b6deb8ffc1b44a67dadea853167c3",
+      "sha256": "da964ffc6b573317ca26ea7252ac5f099fe4db23677dd8574da1983e25851e8a",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui/ui_public_vault_funding.qnt",
         "formal/models/ui/ui_transaction.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
@@ -6171,12 +6198,12 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 36, 45, 53, 80, 82, 145, 154, 163, 169, 179, 182, 183, 185, 186, 187,
-        188, 210, 213, 221, 223, 233, 293, 315, 377, 425, 426, 429, 438, 440,
-        442, 448, 449, 450, 455, 456, 461, 465, 466, 476, 482, 493, 494, 495,
-        502, 503, 505, 510, 515, 521, 522, 523, 532, 539, 540, 573, 581, 591,
-        596, 604, 618, 624, 625, 626, 627, 631, 633, 671, 685, 712, 728, 733,
-        736, 743, 746, 753, 754, 760, 904
+        2, 37, 46, 54, 81, 83, 153, 162, 171, 177, 187, 190, 191, 196, 197, 199,
+        200, 201, 202, 203, 225, 228, 236, 238, 248, 310, 334, 396, 444, 445,
+        448, 457, 459, 461, 467, 468, 469, 474, 475, 480, 484, 485, 495, 501,
+        512, 513, 514, 521, 522, 524, 529, 534, 540, 541, 542, 551, 558, 559,
+        592, 600, 610, 615, 623, 637, 643, 644, 645, 646, 650, 652, 690, 719,
+        746, 762, 767, 770, 777, 780, 787, 788, 794, 929
       ],
       "review": "mapped-abstraction"
     },
@@ -6769,13 +6796,13 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "sha256": "fb6e3ea7cc734492f18a0351ce5d373959b1cc2a504aebe3155a930a01dbd13a",
+      "sha256": "c481ede9ddb5d23039ebfe5463beed0849891d6613bf6ad12b360f54cb5b1f2a",
       "models": [
         "formal/models/fees/ordinary_fee.qnt",
         "formal/models/rewards/escrow_balances.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt"
       ],
-      "candidateLines": [35, 55, 56, 57, 79, 96, 131, 139, 251],
+      "candidateLines": [35, 55, 56, 57, 79, 96, 131, 139, 173, 303],
       "review": "mapped-abstraction"
     },
     {
@@ -6848,16 +6875,17 @@
     },
     {
       "path": "src/lib/pending-attempt.ts",
-      "sha256": "5a7a4fd958aedbbb8d1c926051decfd60d206e38f7e9997447ca1d7ff5a1e0a0",
+      "sha256": "c56d3fd44850aaf70b23d72c16e5cd02dca781ded08b394a612103f74382590b",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
+        "formal/models/ui/ui_public_vault_funding.qnt",
         "formal/models/ui/ui_referral_claim_lifetime.qnt",
         "formal/models/ui/ui_referral_read_ownership.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt"
       ],
-      "candidateLines": [43, 67],
+      "candidateLines": [55, 79],
       "review": "mapped-abstraction"
     },
     {
@@ -6899,13 +6927,13 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "644260f6c5f4fa9f72b74dae3478a1926c97babca953ec83c076dea4813fcc99",
+      "sha256": "4a94ba49e61628c6c355b5afa1431b4a0a3d544bca1ba061cbff55e521b89827",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 287, 370, 400, 402
+        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 328, 411, 441, 443
       ],
       "review": "mapped-abstraction"
     },
@@ -8477,16 +8505,16 @@
     },
     {
       "path": "workers/payment-executor/index.ts",
-      "sha256": "da7ef9cf45e794b09d66d7819271961db068afbaa04ea33097311c4418f6e6fe",
+      "sha256": "0472b30ba7898c332087040b0bf58a7539aa668f1ae4c2531bd22aa64311924b",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/payments/stored_binding_broadcast_authority.qnt"
       ],
       "candidateLines": [
-        112, 119, 136, 147, 155, 163, 164, 173, 182, 183, 186, 203, 208, 217,
-        236, 244, 273, 292, 309, 324, 335, 339, 367, 398, 402, 479, 484, 485,
-        487, 489, 493, 516, 536, 553, 563, 603, 609, 684, 688, 831
+        116, 123, 140, 151, 159, 167, 168, 177, 186, 187, 190, 207, 212, 221,
+        240, 248, 277, 296, 313, 328, 339, 343, 371, 402, 406, 483, 488, 489,
+        491, 493, 497, 520, 540, 557, 567, 607, 613, 688, 692, 837
       ],
       "review": "mapped-abstraction"
     },
@@ -8600,8 +8628,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/payments/deposits.ts",
+      "sha256": "d957929bddced70e9ed19fccf89a24b6518da94c58c178101d3ed88593560d0a",
+      "models": [
+        "formal/models/payments/vault_deposit_evm_record.qnt",
+        "formal/models/payments/vault_deposit_solana_record.qnt"
+      ],
+      "candidateLines": [
+        2, 62, 96, 97, 101, 102, 105, 106, 123, 193, 212, 268, 289, 307, 329,
+        336, 341, 368, 382, 400
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/payments/index.ts",
-      "sha256": "e26d0379b6b9b30cf79e60035b971d35a7d9927b40e3ceced444077ebe495108",
+      "sha256": "44bc8615ec1ae9045f8f7817ddab53fc08729b965d01eba2d17b4fd711ee3dd7",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -8612,9 +8653,9 @@
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        72, 108, 125, 128, 134, 135, 139, 166, 176, 180, 182, 186, 188, 199,
-        200, 202, 204, 206, 212, 215, 218, 222, 234, 235, 237, 238, 243, 293,
-        340, 351, 372, 380, 383, 414, 493, 591, 592, 665, 710, 711
+        73, 109, 126, 129, 135, 136, 140, 167, 177, 181, 183, 187, 189, 200,
+        201, 203, 205, 207, 213, 216, 219, 223, 235, 236, 238, 239, 244, 294,
+        341, 352, 373, 381, 384, 415, 494, 592, 593, 666, 711, 712, 785
       ],
       "review": "mapped-abstraction"
     },
@@ -14414,6 +14455,33 @@
       ]
     },
     {
+      "path": "formal/models/payments/vault_deposit_evm_record.qnt",
+      "sha256": "7ae755f487510d746af6daaa2411a29ca916807779fb1f64d7c77a9f591d14f7",
+      "sources": [
+        "backend/payments/vault-deposits.ts",
+        "migrations/0138_vault_deposits.sql",
+        "workers/payments/deposits.ts"
+      ],
+      "scenarios": [
+        "bountyVaultIsNeverReadTest",
+        "failedPageKeepsCursorTest",
+        "historyFromCreationTest",
+        "olderRunCannotRewindTest",
+        "wrongChainCannotReadTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/vault_deposit_solana_record.qnt",
+      "sha256": "29c3a5e1a73925672cddee91360b35c07a08716be7c608efba74977abbaec90f",
+      "sources": ["workers/payments/deposits.ts"],
+      "scenarios": [
+        "failedReadKeepsPlaceTest",
+        "newestFirstAcrossRunsTest",
+        "nothingNewTest",
+        "overtakenRunStopsTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/vault_initial_snapshot.qnt",
       "sha256": "8234ea0fd2b4572f31970900d423a59385200f6e53e9eeea963941f213cb9c41",
       "sources": [
@@ -19138,6 +19206,27 @@
         "pausedTest",
         "retainedTest",
         "retryTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_public_vault_funding.qnt",
+      "sha256": "41e958da90b395f4b9b5c9aadeaa660949f6611447b0279b268e88e5d4bb7170",
+      "sources": [
+        "backend/payments/handler.ts",
+        "src/EscrowFunding.tsx",
+        "src/PublicVaultFunding.tsx",
+        "src/VaultActions.tsx",
+        "src/lib/pending-attempt.ts"
+      ],
+      "scenarios": [
+        "failedFundersReadNeedsRetryTest",
+        "failedFundersReadStaysFailedTest",
+        "noSnapshotOffersNothingTest",
+        "ownerIsOfferedOnlyADepositTest",
+        "pausedProjectOffersNothingTest",
+        "savedWithdrawalIsCheckedNotRepeatedTest",
+        "settledWithdrawalReturnsToDepositTest",
+        "visitorDepositsTest"
       ]
     },
     {
