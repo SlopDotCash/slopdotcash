@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8462c513cee8e7e4cc46ff608aa6d392d5bca3619a0ec4996a12bd2099e748d6",
+  "inventorySha256": "9b573e420a6ea65e1970dd925b371fc4e6e94e45c7dec38086f55a581dfc3a96",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2580,6 +2580,35 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/run-reviewed-historical-points.ts",
+      "line": 572,
+      "name": "PublicationPhase",
+      "kind": "string-union",
+      "values": [
+        "accepted squash verification",
+        "apply authority recheck",
+        "enforcement checkpoint read",
+        "financial protection verification",
+        "historical Points reconstruction",
+        "historical census verification",
+        "import preparation",
+        "main source verification",
+        "owner authority verification",
+        "private packet read",
+        "project and repository verification",
+        "protected import and readback",
+        "public Points read",
+        "published checkpoint verification",
+        "recipient and account restriction verification",
+        "reviewed packet validation",
+        "trusted invocation",
+        "value record verification"
+      ],
+      "models": ["formal/models/points/source_import.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/value-file-recovery.ts",
       "line": 108,
       "name": "mode",
@@ -4636,7 +4665,7 @@
     },
     {
       "path": "workers/slopbot/value-inference.ts",
-      "line": 171,
+      "line": 172,
       "name": "reason",
       "kind": "string-union",
       "values": ["attempts", "attempts-pending", "budget"],

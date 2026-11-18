@@ -4944,9 +4944,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "8710713ef53476494445f148f0defa5859850345abd1653f58c2b013347babff",
+      "sha256": "e56a362b6ebbbb62df6d7e84f59c5269c606c35687a343704aaa1d35ab78848c",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 545, 565, 643, 733],
+      "candidateLines": [3, 545, 565, 668, 769],
       "review": "mapped-abstraction"
     },
     {
@@ -7469,10 +7469,10 @@
     },
     {
       "path": "src/lib/value-assessment.ts",
-      "sha256": "281541b8071182b010501fbe9b59cbd54a3075e177bf786bc2d76727cd209747",
+      "sha256": "49a447d7777436a656cf44d651c167d56a8eadf047955dcb55d0c0917c114043",
       "models": ["formal/models/slopbot/bot_work_partition.qnt"],
       "candidateLines": [
-        26, 49, 59, 133, 144, 168, 173, 179, 184, 240, 263, 265
+        26, 49, 59, 148, 159, 160, 186, 188, 192, 198, 203, 261, 290, 292
       ],
       "review": "mapped-abstraction"
     },
@@ -9223,7 +9223,7 @@
     },
     {
       "path": "workers/slopbot/value-inference.ts",
-      "sha256": "dca3d158a5764f369346f2fad56d27a34e93e06fdd35bb4e6c1f826a329b9d75",
+      "sha256": "160a6803460efd8861e43f2debf395af8d9277c0e09f050251824f322c5774a5",
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_inference_retention.qnt",
@@ -9232,7 +9232,7 @@
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [72, 90, 110, 171, 250, 252],
+      "candidateLines": [72, 90, 110, 172, 251, 253],
       "review": "mapped-abstraction"
     },
     {
@@ -9410,9 +9410,9 @@
     },
     {
       "path": "workers/slopbot/value-review.ts",
-      "sha256": "d155661e845a268ab0d3f0cda6996f7ba181f550a29bee99e72fc5e4a215a5e8",
+      "sha256": "0acf112863502b9dfd6baad420809af60a5bb277c2bcfa63508eecf7c879550b",
       "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
-      "candidateLines": [107],
+      "candidateLines": [100],
       "review": "mapped-abstraction"
     },
     {
@@ -14784,7 +14784,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "3cf51d70543fe34d611378740b53653a01f33f6c61be022dead9769ee63e895b",
+      "sha256": "a6acc1592fa73aa16b68f36a8a063cc0087324a309827432c4ffb2161ba3aa2e",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -14809,6 +14809,8 @@
         "mixedPathsRoutedByCommitTest",
         "mixedSourcesMustAgreeTest",
         "partialRefusedTest",
+        "privateErrorIsNotAPhaseTest",
+        "refusalReportsFixedPhaseWithoutGrantingPublicationTest",
         "validatedMixedEvidenceCannotChangeTest"
       ]
     },
