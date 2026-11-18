@@ -4107,7 +4107,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "4fe2dd685d5e1639707c0aa41b894f24818800faa081d4b2b38ad68648777c83",
+      "sha256": "d2cceb6c018d7df82d5605112fcef9f5a20c057ffe608db99dedd7129f9271a2",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
@@ -4124,11 +4124,11 @@
         792, 882, 915, 924, 933, 952, 1042, 1238, 1473, 1535, 1543, 1601, 1654,
         1657, 1850, 1859, 1864, 1871, 1954, 1955, 2121, 2122, 2205, 2238, 2266,
         2268, 2272, 2282, 2284, 2296, 2306, 2316, 2341, 2344, 2345, 2348, 2350,
-        2375, 2427, 2638, 2641, 2890, 3010, 3131, 3144, 3155, 3156, 3343, 3344,
-        3535, 3551, 3563, 3570, 3596, 3606, 3610, 3614, 3618, 3673, 3692, 3719,
-        3736, 3770, 3771, 3773, 3789, 3806, 3807, 3808, 3817, 3822, 4002, 4360,
-        4382, 4391, 4441, 4476, 4482, 4489, 4558, 4644, 4802, 5057, 5067, 5069,
-        5082, 5113, 5115, 5116, 5120, 5124, 5180, 5234, 5285, 5288, 5324
+        2375, 2427, 2638, 2641, 2933, 3053, 3174, 3187, 3198, 3199, 3386, 3387,
+        3578, 3594, 3606, 3613, 3639, 3649, 3653, 3657, 3661, 3716, 3735, 3762,
+        3779, 3813, 3814, 3816, 3832, 3849, 3850, 3851, 3860, 3865, 4045, 4403,
+        4425, 4434, 4484, 4519, 4525, 4532, 4601, 4687, 4845, 5100, 5110, 5112,
+        5125, 5156, 5158, 5159, 5163, 5167, 5223, 5277, 5328, 5331, 5367
       ],
       "review": "mapped-abstraction"
     },
@@ -14437,7 +14437,7 @@
     },
     {
       "path": "formal/models/points/github_census.qnt",
-      "sha256": "0fd9f48ead1f892db6ea92777ee5693c9c65110d805fde0d15489829eef51bbf",
+      "sha256": "30a3d7e7dd4ed35712d54b610737d4584d6f81940a1c7a2f9541d51e1de2fe63",
       "sources": [
         "scripts/generate-leaderboard.ts",
         "scripts/generate-profiles.ts",
@@ -14448,7 +14448,10 @@
         "completeCensusTest",
         "completeCountStillRequiresTerminalPageTest",
         "overlappingPagesCannotInventCountTest",
-        "repeatedCursorRefusedTest"
+        "repeatedCursorRefusedTest",
+        "splitCountRetryRebuildsCensusTest",
+        "splitRetryDiscardsPartialPagesTest",
+        "splitRetryRefusesSecondMismatchTest"
       ]
     },
     {
