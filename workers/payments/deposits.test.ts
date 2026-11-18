@@ -252,16 +252,22 @@ const PROJECT = "Proj111111111111111111111111111111111111111";
 const DEPOSITOR = "Fund111111111111111111111111111111111111111";
 const tag = (name: string) =>
   sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8);
-const depositData = (name: string, amount: bigint) => {
-  const bytes = new Uint8Array(16);
+/** `extra` bytes after the amount, or fewer bytes than the amount needs. */
+const depositData = (name: string, amount: bigint, extra = 0) => {
+  const bytes = new Uint8Array(16 + Math.max(extra, 0));
   bytes.set(tag(name));
   new DataView(bytes.buffer).setBigUint64(8, amount, true);
-  return encodeBase58Bytes(bytes);
+  return encodeBase58Bytes(bytes.slice(0, 16 + extra));
 };
-const instruction = (name: string, amount: bigint, project = PROJECT) => ({
+const instruction = (
+  name: string,
+  amount: bigint,
+  project = PROJECT,
+  extra = 0,
+) => ({
   programId: PROGRAM,
   accounts: [DEPOSITOR, project, "Mint", "Source", "Vault", "Token"],
-  data: depositData(name, amount),
+  data: depositData(name, amount, extra),
 });
 const transaction = (
   instructions: unknown[],
@@ -312,6 +318,14 @@ test("Solana deposits are read from the vault program's own instructions", () =>
       PROJECT,
     ),
   ).toEqual([]);
+  // Data too short to hold the amount is not a deposit the program accepts.
+  expect(() =>
+    solanaDeposits(
+      transaction([instruction("deposit", 9n, PROJECT, -1)]),
+      PROGRAM,
+      PROJECT,
+    ),
+  ).toThrow("Unexpected deposit instruction");
 });
 
 const solana: DepositScanDeployment & { genesisHash: string } = {
@@ -425,6 +439,34 @@ test("Solana history is read newest first across runs until the covered position
       chain.calls.filter((call) => call === "getTransaction"),
     ).toHaveLength(2);
     expect(cursor(sqlite).position).toBe(signature(62));
+  } finally {
+    globalThis.fetch = originalFetch;
+    sqlite.close();
+  }
+});
+
+test("a deposit with bytes after its amount is recorded and the read moves on", async () => {
+  const { db, sqlite } = sqliteD1();
+  const originalFetch = globalThis.fetch;
+  const chain = solanaChain(6);
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    // The program matches the 8-byte tag, reads the u64 after it and ignores
+    // the rest, so this deposit of 5 succeeded on chain.
+    if (body.method === "getTransaction" && body.params[0] === signature(5))
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: transaction([instruction("deposit_native", 5n, PROJECT, 1)]),
+      });
+    return chain.fetcher(url as string, init);
+  }) as typeof fetch;
+  try {
+    expect(await scanSolanaDeposits(db, solana, "https://rpc.invalid")).toBe(3);
+    expect(cursor(sqlite).position).toBe(signature(6));
+    expect(
+      sqlite.query("SELECT amount FROM vault_deposits ORDER BY amount").all(),
+    ).toEqual([{ amount: "3" }, { amount: "5" }, { amount: "6" }]);
   } finally {
     globalThis.fetch = originalFetch;
     sqlite.close();

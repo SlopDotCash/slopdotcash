@@ -8612,14 +8612,14 @@
     },
     {
       "path": "workers/payments/deposits.ts",
-      "sha256": "d957929bddced70e9ed19fccf89a24b6518da94c58c178101d3ed88593560d0a",
+      "sha256": "e54598e94083ac40663536d83943a5fa35a09b29346848392f0bf24aee6a8b59",
       "models": [
         "formal/models/payments/vault_deposit_evm_record.qnt",
         "formal/models/payments/vault_deposit_solana_record.qnt"
       ],
       "candidateLines": [
-        2, 62, 96, 97, 101, 102, 105, 106, 123, 193, 212, 268, 289, 307, 329,
-        336, 341, 368, 382, 400
+        2, 62, 96, 97, 101, 102, 105, 106, 123, 193, 212, 270, 291, 309, 331,
+        338, 343, 370, 384, 402
       ],
       "review": "mapped-abstraction"
     },
