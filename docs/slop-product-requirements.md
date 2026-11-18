@@ -120,6 +120,14 @@ Settings, Payouts, and Inbox are separate pages reached from the account menu. D
 
 Keep current-session sign-out and backend session validation, expiry, revocation, account closure, and appeal records. Do not restore the session list, Connections card, or Security card. Keep recovery, closure, and account-appeal controls out of Settings. Do not add a payout-wallet shortcut to contributor profiles. The Activity email switch has no outer button border.
 
+The configured production owner receives a seven-day site session after a
+fresh GitHub sign-in (owner decision, 17 November 2026). The numeric GitHub
+identity must also be a current platform administrator at sign-in. Other
+accounts receive one-hour site sessions. Each privileged action still checks
+current authority. Existing sessions keep their recorded expiration.
+The short-lived GitHub authorization and one-use identity assertion retain
+their existing expiration.
+
 Account closure ends all sessions and makes the account private. Explicit reopening is permitted. Preserve wallet records, identity reservations, obligations, settlement history, and private cases.
 
 ### Public membership and optional X connection

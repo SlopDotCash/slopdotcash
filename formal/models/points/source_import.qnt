@@ -14,6 +14,28 @@
 // @source src/lib/payments/escrow-cycle.ts
 // Complete validated input precedes publication; disclosure is not a verified payment.
 module source_import {
+  // The protected runner emits only its source-selected phase after a refusal.
+  // The phases abstract the point of failure and grant no publication authority.
+  pure val publicationFailurePhases = Set(
+    "trusted invocation",
+    "main source verification",
+    "private packet read",
+    "reviewed packet validation",
+    "enforcement checkpoint read",
+    "project and repository verification",
+    "owner authority verification",
+    "historical census verification",
+    "accepted squash verification",
+    "financial protection verification",
+    "value record verification",
+    "public Points read",
+    "recipient and account restriction verification",
+    "published checkpoint verification",
+    "historical Points reconstruction",
+    "import preparation",
+    "apply authority recheck",
+    "protected import and readback",
+  )
   // An identity represents the agreed immutable source ID, repository, URL,
   // submitted head, occurrence, and PR actor. Live observations must supply
   // the same accepted output for both views of that source.
@@ -52,9 +74,13 @@ module source_import {
     p.pathCommit == p.squashOutput or p.submitted.contains(p.pathCommit),
   }
   pure def pathRole(p: MixedProof): int = if (p.pathCommit == p.squashOutput) 2 else 1
-  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int}
+  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str}
   var s:S
-  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0}
+  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:""}
+  action reportRefusal(phase: str): bool = all {
+    publicationFailurePhases.contains(phase),
+    s' = s.with("failurePhase", phase),
+  }
   action bindMixed(p: MixedProof): bool = all {
     not(s.valid),
     mixedBound(p),
@@ -74,6 +100,7 @@ module source_import {
     bindMixed(mixed.with("submitted",Set(10,20))),
     bindMixed(mixed.with("pathCommit",30)),
     bindMixed(mixed.with("context",false)),
+    { nondet phase = publicationFailurePhases.oneOf() reportRefusal(phase) },
     s'=s,
   }
   val invariant=all {
@@ -83,10 +110,15 @@ module source_import {
     s.role != 0 implies mixedBound(s.mixedProof),
     s.role == 1 implies s.mixedProof.pathCommit != s.mixedProof.squashOutput,
     s.role == 2 implies s.mixedProof.pathCommit == s.mixedProof.squashOutput,
+    s.failurePhase == "" or publicationFailurePhases.contains(s.failurePhase),
   }
   run partialRefusedTest=init.then(part(1)).then(publish.fail())
   run disclosedNotVerifiedTest=init.then(part(1)).then(part(2)).then(validate).then(publish).then(disclose).expect(s.disclosed and not(s.verifiedPaid) and invariant)
   run conflictingImportTest=init.then(appendSameIdentity(2).fail())
+  run refusalReportsFixedPhaseWithoutGrantingPublicationTest = init
+    .then(reportRefusal("private packet read")).expect(s.failurePhase == "private packet read" and invariant)
+    .then(publish.fail())
+  run privateErrorIsNotAPhaseTest = init.then(reportRefusal("opaque input").fail())
   run mixedPathsRoutedByCommitTest = init.then(bindMixed(mixed)).expect(s.role == 2 and invariant)
     .then(bindMixed(mixed.with("pathCommit",10))).expect(s.role == 1 and invariant)
   run mixedSourcesMustAgreeTest = init.then(bindMixed(mixed.with("squashIdentity",2)).fail())

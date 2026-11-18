@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { shareImplementationPoints } from "../src/lib/implementation-allocation";
 import {
@@ -2997,6 +3001,63 @@ for (const fault of [
       ).toThrow();
   });
 }
+
+test("historical publication refusal reports a fixed phase without exposing private input", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "historical-points-phase-"));
+  const script = fileURLToPath(
+    new URL("./run-reviewed-historical-points.ts", import.meta.url),
+  );
+  const privateInput = "private-fixture-content";
+  try {
+    await writeFile(
+      join(directory, "git"),
+      `#!/bin/sh
+if [ "$1" = "ls-remote" ] && [ -n "$REJECT_SOURCE" ]; then
+  printf '%s\\n' "$REJECT_SOURCE" >&2
+  exit 1
+fi
+printf '%s\\n' "$GITHUB_SHA"
+`,
+      { mode: 0o700 },
+    );
+    for (const [phase, overrides] of [
+      ["trusted invocation", { GITHUB_REF: "refs/heads/development" }],
+      ["main source verification", { REJECT_SOURCE: privateInput }],
+      [
+        "private packet read",
+        {
+          HISTORICAL_POINTS_OBJECT_MANIFEST: privateInput,
+          PRIVATE_PACKET_TRANSPORT: "invalid-fixture-transport",
+        },
+      ],
+      ["reviewed packet validation", {}],
+    ] as const) {
+      const result = Bun.spawnSync(
+        [process.execPath, "--no-env-file", script],
+        {
+          env: {
+            PATH: directory,
+            GITHUB_ACTIONS: "true",
+            GITHUB_EVENT_NAME: "workflow_dispatch",
+            GITHUB_REF: "refs/heads/main",
+            GITHUB_SHA: "a".repeat(40),
+            HISTORICAL_POINTS_APPLY: "true",
+            HISTORICAL_POINTS_PACKET_1: privateInput,
+            REVIEWED_PACKET_SHA256: "b".repeat(64),
+            ...overrides,
+          },
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString().trim()).toBe(
+        `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner`,
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test("historical publication installs the canonical merge runtime before verification", async () => {
   const workflow = await Bun.file(
