@@ -498,7 +498,8 @@ lemma ReplaceMonth(e: Escrow, after: Escrow, i: int, nm: Month)
   ensures (nm.version2 == e.vault.months[i].version2 && nm.digest == e.vault.months[i].digest
     && nm.root == e.vault.months[i].root && nm.wholeGross == e.vault.months[i].wholeGross
     && nm.total == e.vault.months[i].total && nm.leaves == e.vault.months[i].leaves
-    && nm.released >= e.vault.months[i].released && nm.committedGross >= e.vault.months[i].committedGross)
+    && nm.released >= e.vault.months[i].released && nm.committedGross >= e.vault.months[i].committedGross
+    && nm.admittedAt == e.vault.months[i].admittedAt)
     ==> stepMonthsRetained(e, after)
 {
   var ms := e.vault.months;
