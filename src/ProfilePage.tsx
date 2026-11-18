@@ -191,32 +191,18 @@ export function ProfilePage({
             <ul className="project-bars">
               {matches
                 .slice()
-                .sort((left, right) => right.leader.score - left.leader.score)
-                .map(({ leader, view }) => {
-                  const totalWeight = view.leaders.reduce(
-                    (total, entry) => total + entry.adjustedWeight,
-                    0,
-                  );
-                  const share =
-                    totalWeight > 0 ? leader.adjustedWeight / totalWeight : 0;
-                  return (
-                    <li key={view.project.id}>
-                      <Link href={`/projects/${view.project.slug}`}>
-                        <span className="project-bar-label">
-                          <strong>{view.project.name}</strong>
-                          <small title="Accepted-work points">
-                            {formatPointsFromThirds(leader.scoreThirds)} pts
-                          </small>
-                        </span>
-                        <span className="project-bar-track" aria-hidden="true">
-                          <span
-                            style={{ width: `${Math.max(2, share * 100)}%` }}
-                          />
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
+                .sort((left, right) =>
+                  left.view.project.name.localeCompare(right.view.project.name),
+                )
+                .map(({ view }) => (
+                  <li key={view.project.id}>
+                    <Link href={`/projects/${view.project.slug}`}>
+                      <span className="project-bar-label">
+                        <strong>{view.project.name}</strong>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
             </ul>
           </section>
         ) : null}

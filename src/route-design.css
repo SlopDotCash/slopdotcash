@@ -480,13 +480,6 @@
   font-size: clamp(1.75rem, 4.5vw, 3.5rem);
   overflow-wrap: anywhere;
 }
-.profile-page .profile-totals {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
-}
-.profile-page .profile-totals > div > strong {
-  white-space: nowrap;
-  font-size: clamp(1.2rem, 2.5vw, 1.8rem);
-}
 .profile-page .profile-section {
   padding-block: 2rem;
 }

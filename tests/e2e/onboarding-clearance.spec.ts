@@ -149,10 +149,10 @@ test("history navigation never carries another project's clearance into agent se
   ).toBeVisible();
   // Finish home snapshot reads before the deliberate clearance/history race.
   // holdClearance is still false while the home page settles.
+  // The homepage lists projects once its pool funding read answers.
   const [summary] = await Promise.all([
     page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/data/points-summary.json",
+      (response) => new URL(response.url()).pathname === "/api/v1/pool-funding",
     ),
     page
       .getByRole("banner")
