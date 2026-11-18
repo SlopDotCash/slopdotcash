@@ -597,6 +597,321 @@ lemma PendingNonneg(e: Escrow)
 }
 
 
+// ---- Committed-leaf origins ------------------------------------------------------
+
+lemma OriginsView(e: Escrow)
+  ensures alwaysCommittedLeavesTraced(e) == (!((exists m :: m in e.vault.months && !((m.committedGross == originGross(e.vault.origins, m.period))))) && !((exists o :: o in e.vault.origins && !((((((hasMonth(e.vault.months, o.period) && leafProves(monthFor(e.vault.months, o.period), o.leaf)) && contracts__ledger_hasSource(e.vault.awards, o.leaf.source)) && (contracts__ledger_awardFor(e.vault.awards, o.leaf.source).actor == o.leaf.actor)) && (contracts__ledger_awardFor(e.vault.awards, o.leaf.source).gross == o.leaf.gross)) && (|ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), e.vault.origins)| == 1))))))
+{
+}
+
+lemma OriginGrossAppend(os: seq<LeafOrigin>, o: LeafOrigin, period: int)
+  ensures originGross(os + [o], period) == originGross(os, period) + (if o.period == period then o.leaf.gross else 0)
+{
+  ProofLib.FoldLeftAppend((t: int, x: LeafOrigin) => (if (x.period == period) then (t + x.leaf.gross) else t), 0, os, o);
+}
+
+lemma OriginGrossNone(os: seq<LeafOrigin>, period: int)
+  requires forall o :: o in os ==> o.period != period
+  ensures originGross(os, period) == 0
+{
+  forall i | 0 <= i < |os|
+    ensures os[i].period != period
+  {
+    assert os[i] in os;
+  }
+  OriginFoldFixed((t: int, x: LeafOrigin) => (if (x.period == period) then (t + x.leaf.gross) else t), period, 0, os);
+}
+
+lemma OriginFoldFixed(f: (int, LeafOrigin) -> int, period: int, init: int, os: seq<LeafOrigin>)
+  requires forall t, x :: f(t, x) == (if (x.period == period) then (t + x.leaf.gross) else t)
+  requires forall i :: 0 <= i < |os| ==> os[i].period != period
+  ensures Std.Collections.Seq.FoldLeft(f, init, os) == init
+  decreases |os|
+{
+  if |os| > 0 {
+    OriginFoldFixed(f, period, init, os[1..]);
+  }
+}
+
+// Awards that keep every award of a list, both with one award per source, keep each source's award.
+lemma AwardsSuperset(xs: seq<contracts__ledger_Award>, ys: seq<contracts__ledger_Award>)
+  requires contracts__ledger_uniqueSources(xs) && contracts__ledger_uniqueSources(ys)
+  requires forall a :: a in xs ==> a in ys
+  ensures forall s :: contracts__ledger_hasSource(xs, s) ==> (contracts__ledger_hasSource(ys, s)
+    && contracts__ledger_awardFor(ys, s) == contracts__ledger_awardFor(xs, s))
+{
+  forall s | contracts__ledger_hasSource(xs, s)
+    ensures contracts__ledger_hasSource(ys, s) && contracts__ledger_awardFor(ys, s) == contracts__ledger_awardFor(xs, s)
+  {
+    var a :| a in xs && a.source == s;
+    var k :| 0 <= k < |xs| && xs[k] == a;
+    AwardForAt(xs, k);
+    assert a in ys;
+    var j :| 0 <= j < |ys| && ys[j] == a;
+    AwardForAt(ys, j);
+  }
+}
+
+// Awards changed in place, keeping each one's source, actor and gross, keep each source's actor and gross.
+lemma AwardsPointwise(xs: seq<contracts__ledger_Award>, ys: seq<contracts__ledger_Award>)
+  requires contracts__ledger_uniqueSources(xs) && contracts__ledger_uniqueSources(ys)
+  requires |xs| == |ys| && forall k :: 0 <= k < |xs| ==> ys[k].source == xs[k].source && ys[k].actor == xs[k].actor && ys[k].gross == xs[k].gross
+  ensures forall s :: contracts__ledger_hasSource(xs, s) ==> (contracts__ledger_hasSource(ys, s)
+    && contracts__ledger_awardFor(ys, s).actor == contracts__ledger_awardFor(xs, s).actor
+    && contracts__ledger_awardFor(ys, s).gross == contracts__ledger_awardFor(xs, s).gross)
+{
+  forall s | contracts__ledger_hasSource(xs, s)
+    ensures contracts__ledger_hasSource(ys, s)
+      && contracts__ledger_awardFor(ys, s).actor == contracts__ledger_awardFor(xs, s).actor
+      && contracts__ledger_awardFor(ys, s).gross == contracts__ledger_awardFor(xs, s).gross
+  {
+    var a :| a in xs && a.source == s;
+    var k :| 0 <= k < |xs| && xs[k] == a;
+    AwardForAt(xs, k);
+    assert ys[k] in ys;
+    AwardForAt(ys, k);
+  }
+}
+
+lemma AwardForAppendSelf(xs: seq<contracts__ledger_Award>, n: contracts__ledger_Award)
+  ensures contracts__ledger_awardFor(xs + [n], n.source) == n && contracts__ledger_hasSource(xs + [n], n.source)
+{
+  ProofLib.FoldLeftAppend((found: contracts__ledger_Award, a: contracts__ledger_Award) => (if (a.source == n.source) then a else found), contracts__ledger_noAward, xs, n);
+  assert n in xs + [n];
+}
+
+// Appending a month for a new period keeps every other period's month.
+lemma MonthForAppendOther(ms: seq<Month>, nm: Month, p: int)
+  requires p != nm.period
+  ensures monthFor(ms + [nm], p) == monthFor(ms, p) && hasMonth(ms + [nm], p) == hasMonth(ms, p)
+{
+  ProofLib.FoldLeftAppend((found: Month, m: Month) => (if (m.period == p) then m else found), noMonth, ms, nm);
+  if hasMonth(ms + [nm], p) {
+    var m :| m in ms + [nm] && m.period == p;
+    assert m in ms;
+  }
+  if hasMonth(ms, p) {
+    var m :| m in ms && m.period == p;
+    assert m in ms + [nm];
+  }
+}
+
+// Replacing the month of one period keeps which periods have months, and every other period's month.
+lemma MonthForReplaced(e: Escrow, after: Escrow, i: int, nm: Month, p: int)
+  requires alwaysMonthsWellFormed(e) && alwaysMonthsWellFormed(after)
+  requires 0 <= i < |e.vault.months| && e.vault.months[i].period == nm.period
+  requires after.vault.months == withMonth(e.vault.months, nm)
+  ensures hasMonth(after.vault.months, p) == hasMonth(e.vault.months, p)
+  ensures hasMonth(e.vault.months, p) ==> monthFor(after.vault.months, p) == (if p == nm.period then nm else monthFor(e.vault.months, p))
+{
+  var ms := e.vault.months;
+  var ys := after.vault.months;
+  assert |ys| == |ms|;
+  forall k | 0 <= k < |ys|
+    ensures ys[k].period == ms[k].period
+    ensures ys[k] == (if ms[k].period == nm.period then nm else ms[k])
+  {
+  }
+  if hasMonth(ms, p) {
+    var k := MonthForIndex(e, p);
+    assert ys[k] in ys;
+    var j := MonthForIndex(after, p);
+    if j != k {
+      MonthPeriodUnique(e, j, k);
+    }
+  } else if hasMonth(ys, p) {
+    var m :| m in ys && m.period == p;
+    var k :| 0 <= k < |ys| && ys[k] == m;
+    assert ms[k] in ms;
+  }
+}
+
+// A transition that keeps the origins, keeps or adds months (new ones untouched), keeps each logged
+// month's proof fields and committed gross, and keeps each award's actor and gross keeps the trace.
+lemma TracedFrame(e: Escrow, after: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  requires after.vault.origins == e.vault.origins
+  requires forall m :: m in after.vault.months ==> m.committedGross == originGross(e.vault.origins, m.period)
+  requires forall o :: o in e.vault.origins ==> (hasMonth(after.vault.months, o.period)
+    && leafProves(monthFor(after.vault.months, o.period), o.leaf))
+  requires forall s :: contracts__ledger_hasSource(e.vault.awards, s) ==> (contracts__ledger_hasSource(after.vault.awards, s)
+    && contracts__ledger_awardFor(after.vault.awards, s).actor == contracts__ledger_awardFor(e.vault.awards, s).actor
+    && contracts__ledger_awardFor(after.vault.awards, s).gross == contracts__ledger_awardFor(e.vault.awards, s).gross)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  OriginsView(e);
+  OriginsView(after);
+}
+
+// A transition that keeps the months and the origins, and each award's actor and gross, keeps the trace.
+lemma TracedSameMonths(e: Escrow, after: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  requires after.vault.months == e.vault.months && after.vault.origins == e.vault.origins
+  requires forall s :: contracts__ledger_hasSource(e.vault.awards, s) ==> (contracts__ledger_hasSource(after.vault.awards, s)
+    && contracts__ledger_awardFor(after.vault.awards, s).actor == contracts__ledger_awardFor(e.vault.awards, s).actor
+    && contracts__ledger_awardFor(after.vault.awards, s).gross == contracts__ledger_awardFor(e.vault.awards, s).gross)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  OriginsView(e);
+  TracedFrame(e, after);
+}
+
+// Appending a month for a period without one, with nothing committed, keeps the trace.
+lemma TracedAppendMonth(e: Escrow, after: Escrow, nm: Month)
+  requires alwaysCommittedLeavesTraced(e)
+  requires !hasMonth(e.vault.months, nm.period) && nm.committedGross == 0
+  requires after.vault.months == e.vault.months + [nm] && after.vault.origins == e.vault.origins
+  requires forall s :: contracts__ledger_hasSource(e.vault.awards, s) ==> (contracts__ledger_hasSource(after.vault.awards, s)
+    && contracts__ledger_awardFor(after.vault.awards, s).actor == contracts__ledger_awardFor(e.vault.awards, s).actor
+    && contracts__ledger_awardFor(after.vault.awards, s).gross == contracts__ledger_awardFor(e.vault.awards, s).gross)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  OriginsView(e);
+  forall o | o in e.vault.origins
+    ensures o.period != nm.period
+  {
+  }
+  OriginGrossNone(e.vault.origins, nm.period);
+  forall o | o in e.vault.origins
+    ensures hasMonth(after.vault.months, o.period) && leafProves(monthFor(after.vault.months, o.period), o.leaf)
+  {
+    MonthForAppendOther(e.vault.months, nm, o.period);
+  }
+  forall m | m in after.vault.months
+    ensures m.committedGross == originGross(e.vault.origins, m.period)
+  {
+    if m != nm {
+      assert m in e.vault.months;
+    }
+  }
+  TracedFrame(e, after);
+}
+
+// Replacing one period's month, keeping its proof fields and committed gross, keeps the trace.
+lemma TracedReplaceMonth(e: Escrow, after: Escrow, i: int, nm: Month)
+  requires alwaysCommittedLeavesTraced(e) && alwaysMonthsWellFormed(e) && alwaysMonthsWellFormed(after)
+  requires 0 <= i < |e.vault.months| && e.vault.months[i].period == nm.period
+  requires after.vault.months == withMonth(e.vault.months, nm) && after.vault.origins == e.vault.origins
+  requires nm.version2 == e.vault.months[i].version2 && nm.leaves == e.vault.months[i].leaves
+    && nm.count == e.vault.months[i].count && nm.total == e.vault.months[i].total
+    && nm.committedGross == e.vault.months[i].committedGross
+  requires after.vault.awards == e.vault.awards
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  OriginsView(e);
+  var ms := e.vault.months;
+  var ys := after.vault.months;
+  assert |ys| == |ms|;
+  forall o | o in e.vault.origins
+    ensures hasMonth(ys, o.period) && leafProves(monthFor(ys, o.period), o.leaf)
+  {
+    MonthForReplaced(e, after, i, nm, o.period);
+    if o.period == nm.period {
+      var k := MonthForIndex(e, o.period);
+      if k != i {
+        MonthPeriodUnique(e, i, k);
+      }
+    }
+  }
+  forall m | m in ys
+    ensures m.committedGross == originGross(e.vault.origins, m.period)
+  {
+    var k :| 0 <= k < |ys| && ys[k] == m;
+    assert ms[k] in ms;
+    assert ys[k] == (if ms[k].period == nm.period then nm else ms[k]);
+    if ms[k].period == nm.period && k != i {
+      MonthPeriodUnique(e, i, k);
+    }
+  }
+  TracedFrame(e, after);
+}
+
+// Committing a proved leaf logs it with its period: the trace holds after it.
+lemma CommitLeafTraced(e: Escrow, period: int, leaf: contracts__ledger_Leaf, after: Escrow, i: int, nm: Month)
+  requires inv(e) && canCommitMonthlyLeaf(e, period, leaf) && after == commitMonthlyLeaf(e, period, leaf)
+  requires 0 <= i < |e.vault.months| && e.vault.months[i].period == period
+  requires monthFor(e.vault.months, period) == e.vault.months[i]
+  requires nm == e.vault.months[i].(remaining := (e.vault.months[i].remaining - leaf.gross), committedGross := (e.vault.months[i].committedGross + leaf.gross))
+  requires after.vault.months == withMonth(e.vault.months, nm)
+  requires alwaysMonthsWellFormed(after) && alwaysAwardsWellFormed(after)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  OriginsView(e);
+  OriginsView(after);
+  var ms := e.vault.months;
+  var ys := after.vault.months;
+  var os := e.vault.origins;
+  var o := LeafOrigin(period, leaf);
+  var n := contracts__ledger_newAward(leaf.source, leaf.actor, leaf.gross, settlement__money_ordinaryFee(leaf.gross), e.now);
+  assert after.vault.origins == os + [o];
+  assert after.vault.awards == e.vault.awards + [n];
+  assert n.source == leaf.source && n.actor == leaf.actor && n.gross == leaf.gross;
+  assert !contracts__ledger_hasSource(e.vault.awards, leaf.source);
+  forall x | x in os
+    ensures x.leaf.source != leaf.source
+  {
+  }
+  forall a | a in e.vault.awards
+    ensures a in after.vault.awards
+  {
+  }
+  AwardsSuperset(e.vault.awards, after.vault.awards);
+  AwardForAppendSelf(e.vault.awards, n);
+  assert |ys| == |ms|;
+  forall k | 0 <= k < |ys|
+    ensures ys[k] == (if ms[k].period == period then nm else ms[k])
+  {
+  }
+  forall m | m in ys
+    ensures m.committedGross == originGross(os + [o], m.period)
+  {
+    var k :| 0 <= k < |ys| && ys[k] == m;
+    assert ms[k] in ms;
+    OriginGrossAppend(os, o, ms[k].period);
+    if ms[k].period == period && k != i {
+      MonthPeriodUnique(e, i, k);
+    }
+  }
+  forall x | x in os + [o]
+    ensures hasMonth(ys, x.period) && leafProves(monthFor(ys, x.period), x.leaf)
+    ensures contracts__ledger_hasSource(after.vault.awards, x.leaf.source)
+    ensures contracts__ledger_awardFor(after.vault.awards, x.leaf.source).actor == x.leaf.actor
+    ensures contracts__ledger_awardFor(after.vault.awards, x.leaf.source).gross == x.leaf.gross
+    ensures |ProofLib.Filter((y: LeafOrigin) => (y.leaf.source == x.leaf.source), os + [o])| == 1
+  {
+    MonthForReplaced(e, after, i, nm, x.period);
+    ProofLib.FilterAppend((y: LeafOrigin) => (y.leaf.source == x.leaf.source), os, o);
+    if x in os {
+      if x.period == period {
+        var k := MonthForIndex(e, x.period);
+        if k != i {
+          MonthPeriodUnique(e, i, k);
+        }
+      }
+    } else {
+      assert x == o;
+      forall j | 0 <= j < |os|
+        ensures !(os[j].leaf.source == x.leaf.source)
+      {
+        assert os[j] in os;
+      }
+      ProofLib.FilterNone((y: LeafOrigin) => (y.leaf.source == x.leaf.source), os);
+    }
+  }
+}
+
+lemma Initial_alwaysCommittedLeavesTraced()
+  ensures alwaysCommittedLeavesTraced(initial)
+{
+  assert initial.vault.months == [] && initial.vault.origins == [];
+  OriginsView(initial);
+}
+
 lemma KeysAppend(e: Escrow, after: Escrow, k: VaultKey)
   requires alwaysOneVaultPerKey(e)
   requires after.vaultKeys == e.vaultKeys + [k] && k !in e.vaultKeys
@@ -949,6 +1264,8 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   ensures alwaysAdmittedInWindow(commitMonthly(e, period, entries, signer))
   ensures stepFreeRisesOnlyByDepositOrRelease(e, "commitMonthly", commitMonthly(e, period, entries, signer))
   ensures stepSourceSequenceCountsOrdinaryAwards(e, commitMonthly(e, period, entries, signer))
+  ensures alwaysCommittedLeavesTraced(commitMonthly(e, period, entries, signer))
+  ensures stepOriginsRetained(e, commitMonthly(e, period, entries, signer))
 {
   var after := commitMonthly(e, period, entries, signer);
   var newEntries := freshEntries(e.vault, entries);
@@ -1006,6 +1323,8 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   assert after.vault.free == e.vault.free - contracts__ledger_leafTotal(newEntries);
   assert after.vault.sourceSequence == e.vault.sourceSequence + |newEntries|;
   assert |after.vault.awards| == |e.vault.awards| + |newEntries|;
+  AwardsSuperset(e.vault.awards, after.vault.awards);
+  TracedAppendMonth(e, after, nm);
 }
 
 // ---- Month pledges -------------------------------------------------------------
@@ -2402,6 +2721,8 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   if inv(e) && canCommitAward(e, source, actor, gross, by_) {
     var after := commitAward(e, source, actor, gross, by_);
     RecordAward(e, after, contracts__ledger_newAward(source, actor, gross, contracts__ledger_awardFee(e.vault.key.purpose, gross), e.now));
+    AwardsSuperset(e.vault.awards, after.vault.awards);
+    TracedSameMonths(e, after);
   }
 }
 
@@ -2443,6 +2764,8 @@ lemma commitBountyAward_ensures(e: Escrow, source: int, actor: int, gross: int, 
   if inv(e) && canCommitBountyAward(e, source, actor, gross, by_) {
     var after := commitBountyAward(e, source, actor, gross, by_);
     RecordAward(e, after, contracts__ledger_newAward(source, actor, gross, contracts__ledger_awardFee(e.vault.key.purpose, gross), e.now));
+    AwardsSuperset(e.vault.awards, after.vault.awards);
+    TracedSameMonths(e, after);
   }
 }
 
@@ -2493,6 +2816,7 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
     RecordAward(e, after, contracts__ledger_newAward(leaf.source, leaf.actor, leaf.gross, settlement__money_ordinaryFee(leaf.gross), e.now));
     assert m.released == 0;
     ReplaceMonth(e, after, i, m.(remaining := (m.remaining - leaf.gross), committedGross := (m.committedGross + leaf.gross)));
+    CommitLeafTraced(e, period, leaf, after, i, m.(remaining := (m.remaining - leaf.gross), committedGross := (m.committedGross + leaf.gross)));
   }
 }
 
@@ -2543,6 +2867,7 @@ lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: i
     SameAwards(e, after);
     AwardsFrame(e, after);
     ReplaceMonth(e, after, i, m.(remaining := 0, released := releasedGross));
+    TracedReplaceMonth(e, after, i, m.(remaining := 0, released := releasedGross));
   }
 }
 
@@ -2587,6 +2912,7 @@ lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, s
     AwardsFrame(e, after);
     ClosePledgeFrame(e.vault, period);
     AppendMonth(e, after, Month(period, true, reservation.digest, reservation.root, reservation.wholeGross, reservation.remainingGross, reservation.remainingGross, reservation.count, 0, 0, e.now, capFor(e.vault, period), reservation.leaves));
+    TracedAppendMonth(e, after, Month(period, true, reservation.digest, reservation.root, reservation.wholeGross, reservation.remainingGross, reservation.remainingGross, reservation.count, 0, 0, e.now, capFor(e.vault, period), reservation.leaves));
     ClosePledgeCovers(e, period);
     PledgedMonthAfterClose(e, period, after);
   }
@@ -2739,6 +3065,10 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
 
   if inv(e) && canPay(e, source, expectedVersion, transferOk) {
     PayFacts(e, source, expectedVersion, transferOk);
+    var after := pay(e, source, expectedVersion, transferOk);
+    assert |after.vault.awards| == |e.vault.awards|;
+    AwardsPointwise(e.vault.awards, after.vault.awards);
+    TracedSameMonths(e, after);
   }
 }
 
@@ -2846,4 +3176,5 @@ lemma initialHolds_ensures()
   Initial_alwaysPledgesCovered();
   Initial_alwaysPledgedMonthUnadmitted();
   Initial_alwaysBindingsWellFormed();
+  Initial_alwaysCommittedLeavesTraced();
 }
