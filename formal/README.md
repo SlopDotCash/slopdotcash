@@ -9,6 +9,12 @@ Start at [the product specification](../spec/index.md) and
 - `model-map.json` preserves every legacy model's digest, source entries,
   actions and named scenarios, and maps it to an active domain.
 - `spec-catalog.json` inventories the active stories, formal rules and imports.
+  `node formal/catalog.ts` writes it from the spec tree; `pnpm formal:check`
+  refuses a catalog that differs from what it writes.
+- `legacy-reconciliation.json` reconciles every legacy action (but `init` and
+  `step`) and named scenario with the successor rule that carries it, the
+  reason the successor abstracts it, or the open gap in the spec that should
+  own it. `formal/check.ts` checks that each named definition exists.
 - `legacy-validation.json` records direct Quint typechecks and seeded named
   scenarios on the retained models. `validation/main-model-delta.json` records
   six later additions and changes, retained under `reference/slop-main-delta/`.
@@ -19,7 +25,9 @@ Start at [the product specification](../spec/index.md) and
 The original files under `reference/slop-main/formal/` are immutable migration
 evidence. The active Vibestack model is the root `spec/` tree. A legacy model's
 mapping does not establish its transition-level equivalence to a new model.
-Keep that distinction in the evidence until the comparison has been reviewed.
+`legacy-reconciliation.json` records the reviewed comparison per transition
+and scenario; a rule entry names the carrying definitions, and an entry still
+marked as a gap is open work.
 
 Cryptography, external authority, provider judgments, database atomicity,
 filesystem locking, chain finality, UI behavior and delivered mail remain
