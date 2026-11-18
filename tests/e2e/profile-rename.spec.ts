@@ -161,10 +161,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
       .getByRole("banner")
       .getByRole("link", { name: "Slop home", exact: true })
       .click();
-    await page
-      .getByRole("region", { name: "Top sloperators", exact: true })
-      .getByRole("table")
-      .waitFor({ state: "visible" });
+    await page.locator("#projects").waitFor({ state: "visible" });
     await page.waitForLoadState("networkidle");
     await page.goBack({ waitUntil: "networkidle" });
   }
@@ -269,10 +266,7 @@ test("sign-out rejects a delayed session read from profile navigation", async ({
       .getByRole("banner")
       .getByRole("link", { name: "Slop home", exact: true })
       .click();
-    await page
-      .getByRole("region", { name: "Top sloperators", exact: true })
-      .getByRole("table")
-      .waitFor({ state: "visible" });
+    await page.locator("#projects").waitFor({ state: "visible" });
     await page.goBack({ waitUntil: "domcontentloaded" });
     await expect.poll(() => sessionReads).toBe(2);
     await account.click();
@@ -355,10 +349,7 @@ test("warm reassigned handles wait for fresh identity before wallet and history 
       .getByRole("banner")
       .getByRole("link", { name: "Slop home", exact: true })
       .click();
-    await page
-      .getByRole("region", { name: "Top sloperators", exact: true })
-      .getByRole("table")
-      .waitFor({ state: "visible" });
+    await page.locator("#projects").waitFor({ state: "visible" });
     await page.waitForLoadState("networkidle");
     actorReads.length = 0;
     walletRequests.length = 0;

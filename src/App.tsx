@@ -23,7 +23,6 @@ import {
   useState,
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
-import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
   hasProjectCardBounty,
@@ -1001,12 +1000,6 @@ function HomePage() {
           </section>
         ) : null}
         <CommunityProjects projects={community} />
-      </section>
-      <section
-        className="section shell home-leaderboard-section"
-        id="leaderboard"
-      >
-        <HomeStandings />
       </section>
     </main>
   );
