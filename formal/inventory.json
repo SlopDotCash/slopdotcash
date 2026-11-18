@@ -155,7 +155,7 @@
     },
     {
       "path": ".github/workflows/value-intake-diagnostic.yml",
-      "sha256": "9c8267bc7c975017ddbe1702e9927ae21d1e9c041226aebc1848acdf5b1b612a",
+      "sha256": "8d9f0ffcce3f308c0272b8184e558698b767f8c42483b074f70503e3851dd20f",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1252,14 +1252,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/slopbot/value-import-observation.ts",
+      "sha256": "a53504c44f7cb0d6f53e98072d4aa82162e5c4b85d34ec626b56ac677f351ee6",
+      "models": ["formal/models/slopbot/historical_subscription_intake.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/slopbot/value-import.ts",
-      "sha256": "56e23e7700c4a530ac6b01996539fe5974d1acfff18ae8598b1ec33b885e53c4",
+      "sha256": "e5422c4b4ad0adab441a194fd793f2f15204c4a75eb7ebcb1a1d3088bbb3ab9e",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
       "candidateLines": [
-        24, 26, 97, 101, 110, 115, 118, 121, 122, 123, 124, 140
+        30, 32, 136, 141, 150, 155, 158, 161, 162, 164, 165, 181
       ],
       "review": "mapped-abstraction"
     },
@@ -4244,9 +4251,9 @@
     },
     {
       "path": "scripts/inspect-value-intake.ts",
-      "sha256": "ad36e272cc02d0b00a58cd59a55d1c2a80866ea0e5dccbcc9c91921b663a0bf5",
+      "sha256": "c2107b0885e93065c65bcc25c449c573eaf6c80a073e3b942c609b3a4a2f8459",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [20, 66, 132, 133, 134, 247, 309, 315, 388],
+      "candidateLines": [24, 70, 156, 157, 158, 281, 347, 353, 437],
       "review": "mapped-abstraction"
     },
     {
@@ -16598,8 +16605,9 @@
     },
     {
       "path": "formal/models/slopbot/historical_subscription_intake.qnt",
-      "sha256": "cbc8d18d11f2c13246d83dfb9c2d6aefc5345bfa20b248e82f172258b4ee6f22",
+      "sha256": "d459527ff68c5ea77c12fa2cd18f36f38297bde023a4a190be21801ecadb77cc",
       "sources": [
+        "backend/slopbot/value-import-observation.ts",
         "backend/slopbot/value-import.ts",
         "migrations/0038_slopbot_value_journal.sql",
         "migrations/0042_slopbot_value_no_replace.sql",

@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { handleHistoricalValueImport } from "./value-import";
+import { INTAKE_CORRELATION_HEADER } from "./value-import-observation";
 
 const receipt = { recordDigest: "a".repeat(64), sequence: 7 };
 function request(accept?: string, body = "{}") {
@@ -182,4 +183,143 @@ test("canceling a stream retains the publisher promise without a false receipt",
   complete(receipt);
   await pending;
   expect((await reader.read()).done).toBe(true);
+});
+
+const correlation = "a1".repeat(32);
+function observedRequest(body: string, accept?: string, nonce = correlation) {
+  const input = request(accept, body);
+  input.headers.set(INTAKE_CORRELATION_HEADER, nonce);
+  return input;
+}
+
+test("opt-in Pages milestones preserve streaming frames and the exact publisher input", async () => {
+  const messages: { phase: string }[] = [];
+  const log = spyOn(console, "log").mockImplementation((message) => {
+    messages.push(JSON.parse(message));
+  });
+  const body = '{"private":"fixture-body-☃"}';
+  try {
+    const response = await handleHistoricalValueImport(
+      observedRequest(body, "application/x-ndjson"),
+      dependencies(async (input) => {
+        expect(input).toEqual(JSON.parse(body));
+        expect(messages.map((entry) => entry.phase)).toEqual([
+          "owner-admitted",
+          "body-eof",
+          "parsed",
+          "heartbeat-queued",
+          "rpc-dispatch",
+        ]);
+        return receipt;
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    ).toEqual([{ status: "pending" }, { status: 200, body: receipt }]);
+    expect(messages).toEqual(
+      [
+        "owner-admitted",
+        "body-eof",
+        "parsed",
+        "heartbeat-queued",
+        "rpc-dispatch",
+        "terminal",
+      ].map((phase) => ({
+        event: "historical-intake-pages-milestone",
+        correlation,
+        phase,
+        elapsedMs: expect.any(Number),
+        bodyBytes:
+          phase === "body-eof" ? new TextEncoder().encode(body).length : null,
+        terminalStatus: phase === "terminal" ? 200 : null,
+      })),
+    );
+    expect(JSON.stringify(messages)).not.toContain("fixture-body");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test("unauthorized and malformed nonces emit nothing; approved invalid JSON emits attributed 400 only", async () => {
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  let rpcCalls = 0;
+  const deps = dependencies(async () => {
+    rpcCalls++;
+    return receipt;
+  });
+  try {
+    const refused = await handleHistoricalValueImport(observedRequest("{}"), {
+      ...deps,
+      sessionActor: async () => null,
+    });
+    expect(refused.status).toBe(401);
+    expect(log).not.toHaveBeenCalled();
+    const invalid = await handleHistoricalValueImport(
+      observedRequest("{}", undefined, "fake-secret"),
+      deps,
+    );
+    expect(invalid.status).toBe(200);
+    expect(log).not.toHaveBeenCalled();
+
+    const badBody = "fixture-invalid-json";
+    const parseRefused = await handleHistoricalValueImport(
+      observedRequest(badBody, "application/x-ndjson"),
+      deps,
+    );
+    expect(parseRefused.status).toBe(400);
+    expect(await parseRefused.json()).toEqual({ error: "invalid_request" });
+    expect(rpcCalls).toBe(1);
+    const entries = log.mock.calls.map(([message]) => JSON.parse(message));
+    expect(entries.map((entry) => entry.phase)).toEqual([
+      "owner-admitted",
+      "body-eof",
+      "terminal",
+    ]);
+    expect(entries[1].bodyBytes).toBe(badBody.length);
+    expect(entries[2].terminalStatus).toBe(400);
+    expect(JSON.stringify(entries)).not.toContain(badBody);
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test("RPC refusal keeps the fixed 409 and a failed diagnostics sink leaves the receipt intact", async () => {
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const warning = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const refusal = await handleHistoricalValueImport(
+      observedRequest("{}"),
+      dependencies(async () => {
+        throw Error("private publisher failure");
+      }),
+    );
+    expect(refusal.status).toBe(409);
+    expect(await refusal.json()).toEqual({ error: "assessment_not_published" });
+    const entries = log.mock.calls.map(([message]) => JSON.parse(message));
+    expect(entries.map((entry) => entry.phase)).toEqual([
+      "owner-admitted",
+      "body-eof",
+      "parsed",
+      "rpc-dispatch",
+      "terminal",
+    ]);
+    expect(entries.at(-1).terminalStatus).toBe(409);
+    expect(JSON.stringify(entries)).not.toContain("private publisher failure");
+    log.mockImplementation(() => {
+      throw Error("private sink failure");
+    });
+    const success = await handleHistoricalValueImport(
+      observedRequest("{}"),
+      dependencies(),
+    );
+    expect(success.status).toBe(200);
+    expect(await success.json()).toEqual(receipt);
+  } finally {
+    warning.mockRestore();
+    log.mockRestore();
+  }
 });

@@ -2,6 +2,10 @@ name: Inspect historical value intake
 on:
   workflow_dispatch:
     inputs:
+      correlation:
+        description: Optional 64 lowercase hex nonce for one live Pages intake
+        type: string
+        default: ""
       history_from:
         description: Optional UTC start for retained sanitized failures (paired bounds, at most 15 minutes within the last 24 hours)
         type: string
@@ -26,11 +30,17 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: "1.3.14"
+      - name: Refuse mixed live correlation and retained-history modes
+        if: inputs.correlation != '' && (inputs.history_from != '' || inputs.history_to != '')
+        run: |
+          echo "::error::A correlation selects live Pages diagnostics only."
+          exit 1
       - name: Read bounded sanitized intake observations
         if: inputs.history_from == '' && inputs.history_to == ''
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOP_INTAKE_CORRELATION: ${{ inputs.correlation }}
         run: bun --no-env-file scripts/inspect-value-intake.ts
       - name: Read bounded retained sanitized failures
         if: inputs.history_from != '' || inputs.history_to != ''
