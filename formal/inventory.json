@@ -72,9 +72,9 @@
     },
     {
       "path": ".github/workflows/monthly-rewards.yml",
-      "sha256": "6cf66c1c7a7312ff4e367d8c9f3e85765a87b6138e550a238213b5810be700aa",
+      "sha256": "b0de4f910063e268543ba858cc76d11a99c6b04a40138253702b7deee3f46bef",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [52, 58, 61, 150],
+      "candidateLines": [52, 58, 61, 153],
       "review": "mapped-abstraction"
     },
     {

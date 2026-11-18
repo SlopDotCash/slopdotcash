@@ -65,7 +65,10 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # A complete ledger collection now takes about three hours (18 Nov 2026:
+    # 2h48m reached 86% of commit attributions). Use the hosted maximum so
+    # the first-of-month close is not cut short by its own limit.
+    timeout-minutes: 360
     env:
       # Ledger generation must use the same registry tier as this proposal.
       VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
