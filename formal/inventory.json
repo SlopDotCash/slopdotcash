@@ -161,6 +161,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/value-intake-quota.yml",
+      "sha256": "30f0b536a90703fbc4499ac398403c57365f5fbe76e3c9572c597160ec53871c",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Main-only protected observation of a registered GitHub App quota. Runs the exact checked code and uploads a sanitized observation. No durable application, registry, assessment, or settlement transition."
+    },
+    {
       "path": ".github/workflows/vetting-controller.yml",
       "sha256": "48fbd7948eac50446fb35f1391b33a24a63dab5a244f2cbb307ae4db2996f87b",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -4228,6 +4236,14 @@
         407, 437, 441, 562
       ],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-slopbot-app-quota.ts",
+      "sha256": "786823584d469d5be5a04b20c556ebc75e2714e615a026f12e7c1309f62ed98c",
+      "models": [],
+      "candidateLines": [32, 139, 141, 304, 308],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Reads one immutable project and its public GitHub repository through a short-lived installation grant. Computes a sanitized current quota observation within one invocation. Owns no persisted credential, application state, assessment, Points, money, or retry cursor."
     },
     {
       "path": "scripts/inspect-slopbot-runtime.ts",
