@@ -34,12 +34,14 @@ type Binding = { actor: int, destination: str, version: int, claim: int, activat
 type Month = { period: int, version2: bool, digest: str, root: str, wholeGross: int, total: int, remaining: int,
   count: int, committedGross: int, released: int, admittedAt: int, cap: int, leaves: List[L::Leaf] }
 type Pledge = { period: int, amount: int, open: bool }
+type LeafOrigin = { period: int, leaf: L::Leaf }
 type Reservation = { digest: str, root: str, wholeGross: int, remainingGross: int, count: int, leaves: List[L::Leaf] }
 type Vault = { key: VaultKey, native: bool, feeRecipient: str, bindingDelay: int, implementation: int,
   free: int, pendingMonthly: int, reservedPrincipal: int, reservedFees: int, deposited: int, paid: int, payoutFees: int,
   grossWithdrawn: int, withdrawalFees: int, accruedFees: int, claimedFees: int, ownerRefunded: int,
   balance: int, unsolicited: int, monthlyCap: int, monthlyEnabled: bool, sourceSequence: int,
-  awards: List[L::Award], bindings: List[Binding], months: List[Month], pledges: List[Pledge], pledged: int }
+  awards: List[L::Award], bindings: List[Binding], months: List[Month], pledges: List[Pledge], pledged: int,
+  origins: List[LeafOrigin] }
 type Escrow = { initialized: bool, now: int, factoryImplementation: int, vaultImplementation: int,
   upgradeAuthority: str, pendingUpgradeAuthority: str, registrar: str, feeRecipient: str, bindingDelay: int,
   identityAuthority: str, pendingIdentityAuthority: str, identityEffectiveAt: int,
@@ -51,7 +53,7 @@ pure val emptyVault: Vault = { key: emptyKey, native: false, feeRecipient: "", b
   free: 0, pendingMonthly: 0, reservedPrincipal: 0, reservedFees: 0, deposited: 0, paid: 0, payoutFees: 0,
   grossWithdrawn: 0, withdrawalFees: 0, accruedFees: 0, claimedFees: 0, ownerRefunded: 0,
   balance: 0, unsolicited: 0, monthlyCap: 0, monthlyEnabled: false, sourceSequence: 0,
-  awards: List(), bindings: List(), months: List(), pledges: List(), pledged: 0 }
+  awards: List(), bindings: List(), months: List(), pledges: List(), pledged: 0, origins: List() }
 pure val initial: Escrow = { initialized: false, now: 1796342399, factoryImplementation: 0, vaultImplementation: 0,
   upgradeAuthority: "", pendingUpgradeAuthority: "", registrar: "", feeRecipient: "", bindingDelay: 0,
   identityAuthority: "", pendingIdentityAuthority: "", identityEffectiveAt: 0,
@@ -460,7 +462,8 @@ pure def commitMonthlyLeaf(e: Escrow, period: int, leaf: L::Leaf): Escrow =
   val m = monthFor(e.vault.months, period)
   val v = recorded(e.vault, leaf.source, leaf.actor, leaf.gross, M::ordinaryFee(leaf.gross), e.now)
   { ...e, vault: { ...v, pendingMonthly: v.pendingMonthly - leaf.gross,
-    months: withMonth(v.months, { ...m, remaining: m.remaining - leaf.gross, committedGross: m.committedGross + leaf.gross }) } }
+    months: withMonth(v.months, { ...m, remaining: m.remaining - leaf.gross, committedGross: m.committedGross + leaf.gross }),
+    origins: v.origins.append({ period: period, leaf: leaf }) } }
 pure def sometimesLeafCommitted(e: Escrow): bool = e.vault.months.some(m => m.version2 and m.committedGross > 0)
 pure def sometimesLeafPendingInNextWindow(e: Escrow): bool =
   e.vault.months.some(m => m.version2 and m.remaining > 0 and L::closesAt(m.period) <= e.now)
@@ -513,6 +516,63 @@ pure def stepMonthsRetained(before: Escrow, after: Escrow): bool = before.vault.
   after.vault.months.some(o => o.period == m.period and o.version2 == m.version2 and o.digest == m.digest and o.root == m.root
     and o.wholeGross == m.wholeGross and o.total == m.total and o.leaves == m.leaves and o.released >= m.released
     and o.committedGross >= m.committedGross and o.admittedAt == m.admittedAt))
+```
+
+### Each committed leaf's award traces to a leaf of its own period, and a period's committed gross is exactly the gross of those awards
+
+`ProjectEscrow` keeps no period on an award, and `commitMonthlyLeaf` emits
+only `AwardCommitted`, so `origins` is a model-only log: each committed leaf
+appends its period and leaf, and nothing else changes it. Every logged leaf
+is proved by its period's stored root, count and total, and its source has
+the award of that leaf's actor and gross, logged once. A period's committed
+gross is the sum of the gross of its logged leaves, so it equals the gross
+of the awards materialized from them. A legacy allocation commits its new
+awards at admission and keeps its committed gross at zero, so it logs
+nothing.
+
+```quint
+pure def originGross(os: List[LeafOrigin], period: int): int =
+  os.foldl(0, (t, o) => if (o.period == period) t + o.leaf.gross else t)
+pure def alwaysCommittedLeavesTraced(e: Escrow): bool =
+  e.vault.months.every(m => m.committedGross == originGross(e.vault.origins, m.period))
+    and e.vault.origins.every(o => hasMonth(e.vault.months, o.period)
+      and leafProves(monthFor(e.vault.months, o.period), o.leaf)
+      and L::hasSource(e.vault.awards, o.leaf.source)
+      and L::awardFor(e.vault.awards, o.leaf.source).actor == o.leaf.actor
+      and L::awardFor(e.vault.awards, o.leaf.source).gross == o.leaf.gross
+      and e.vault.origins.select(x => x.leaf.source == o.leaf.source).length() == 1)
+pure def stepOriginsRetained(before: Escrow, after: Escrow): bool =
+  before.vault.origins.every(o => after.vault.origins.includes(o))
+```
+
+### A proved leaf whose source another award consumed never settles, and a touched period never releases
+
+A leaf is stranded when it is proved, fits its period's remainder, and its
+source already has an award that did not come from this leaf of this period:
+the same source in another period's root, a legacy entry or an earlier
+award. The allocation builder can sign a root at the current source
+sequence that still lists a source the owner committed by hand, since
+`reserveMonthly` checks the sequence, not the leaves. `commitMonthlyLeaf`
+refuses a stranded leaf because the award ID exists, and once any leaf of
+the period has committed, `releaseMonthlyReserve` refuses the period, so a
+stranded leaf's gross stays in the pending reserve for good.
+
+```quint
+pure def evmStrandedLeaf(e: Escrow, period: int, leaf: L::Leaf): bool =
+  val m = monthFor(e.vault.months, period)
+  leafProves(m, leaf) and leaf.gross <= m.remaining and L::hasSource(e.vault.awards, leaf.source)
+    and not(e.vault.origins.some(o => o.period == period and o.leaf.source == leaf.source))
+pure def lawStrandedLeafNeverCommits(e: Escrow, period: int, leaf: L::Leaf): bool =
+  evmStrandedLeaf(e, period, leaf) implies not(canCommitMonthlyLeaf(e, period, leaf))
+pure def lawTouchedMonthNeverReleases(e: Escrow, period: int, expectedRemaining: int, releasedGross: int,
+  signer: str, by: str): bool =
+  val m = monthFor(e.vault.months, period)
+  (m.committedGross > 0 and m.released >= 0 and m.committedGross + m.released + m.remaining == m.total)
+    implies not(canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by))
+pure def sometimesEvmStrandedLeaf(e: Escrow): bool =
+  e.vault.months.some(m => m.leaves.some(l => evmStrandedLeaf(e, m.period, l)))
+pure def sometimesEvmStrandedLeafLocked(e: Escrow): bool =
+  e.vault.months.some(m => m.committedGross > 0 and m.leaves.some(l => evmStrandedLeaf(e, m.period, l)))
 ```
 
 ## Story: Pledge free funds to future months irrevocably
@@ -746,6 +806,8 @@ pure val reservationValues = Set(
     leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }) },
   { digest: "d", root: "r", wholeGross: 60, remainingGross: 60, count: 1, leaves: List({ actor: 1, gross: 50, source: 12 }) },
   { digest: "d", root: "r", wholeGross: 54, remainingGross: 4, count: 1, leaves: List({ actor: 2, gross: 4, source: 13 }) },
+  { digest: "d", root: "r", wholeGross: 54, remainingGross: 54, count: 2,
+    leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }) },
   { digest: "d", root: "r", wholeGross: 4, remainingGross: 0, count: 0, leaves: List() },
   { digest: "", root: "r", wholeGross: 54, remainingGross: 54, count: 2,
     leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }) })
