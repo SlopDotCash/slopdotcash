@@ -19,6 +19,7 @@ import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { intakePaused } from "./lib/intake-cap.mjs";
+import { maintainerShareCardLine } from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
@@ -617,6 +618,10 @@ export function SponsorsPage({
                     <ReviewBudget reviewBudget={project.reward.reviewBudget} />
                   </small>
                 ) : null}
+                {(() => {
+                  const share = maintainerShareCardLine(project, now);
+                  return share ? <small>{share}</small> : null;
+                })()}
               </li>
             );
           })}

@@ -31,6 +31,7 @@ import {
   penaltyProjectOf,
   SCORE_CAPS,
 } from "./leaderboard";
+import { maintainerShareBasisPoints } from "./maintainer-share.mjs";
 import {
   type PayoutExclusionRelationship,
   payoutExclusionFor,
@@ -732,16 +733,29 @@ export function createProjectView(
       project.escrow && cycleId >= project.escrow.effectiveCycle
         ? project.escrow
         : undefined;
-    const projected = allocateIntegerTotal(monthlyCapMinor, leaders);
+    // A published maintainer share leaves the monthly amount before the
+    // points split, so a contributor's projection never includes it. A month
+    // with no decided outside pull request pays no share; the projection is
+    // then lower than the proposal, never higher.
+    const sharePoints = BigInt(maintainerShareBasisPoints(project, cycleId));
+    const afterShare = (amount: bigint) =>
+      amount - (amount * sharePoints) / 10_000n;
+    const projected = allocateIntegerTotal(
+      afterShare(monthlyCapMinor),
+      leaders,
+    );
     const projectedCents = allocateIntegerTotal(
-      monthlyCapMinor / 10_000n,
+      afterShare(monthlyCapMinor) / 10_000n,
       leaders,
     );
     // A cap-based simulation is informational. Only the funding-backed
     // projection may flow into a reward proposal.
-    const simulated = allocateIntegerTotal(BigInt(capMinor), leaders);
+    const simulated = allocateIntegerTotal(
+      afterShare(BigInt(capMinor)),
+      leaders,
+    );
     const simulatedCents = allocateIntegerTotal(
-      BigInt(capMinor) / 10_000n,
+      afterShare(BigInt(capMinor)) / 10_000n,
       leaders,
     );
     for (const entry of leaders) {
