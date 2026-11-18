@@ -149,9 +149,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
     .getByRole("listitem")
     .filter({ has: page.locator('a[href^="/cycles/"]') });
   await expect(history).toBeVisible();
-  await expect(page.locator(".profile-totals strong").last()).toHaveText(
-    /^[\d,]+$/u,
-  );
+  await expect(page.locator(".profile-totals")).toHaveCount(0);
   const initial = { ...reads, wallet: walletRequests.length };
   expect(initial.ledger).toBeGreaterThan(0);
   expect(initial.shards).toBe(16);
@@ -187,9 +185,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
     failedRefresh.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
   await expect(history).toBeVisible();
-  await expect(page.locator(".profile-totals strong").last()).toHaveText(
-    /^[\d,]+$/u,
-  );
+  await expect(page.locator(".profile-totals")).toHaveCount(0);
   expect(reads.ledger).toBeGreaterThan(warm.ledger);
   expect(reads.index).toBeGreaterThan(warm.index);
   expect(reads.shards).toBeGreaterThan(warm.shards);
@@ -965,12 +961,11 @@ for (const staleMembership of [false, true]) {
       await expect(
         page.getByRole("heading", { name: archived.login, exact: true }),
       ).toBeVisible();
+      // Profiles show no Points total (operator decision, 18 November 2026).
       await expect(
-        page
-          .getByText("Total", { exact: true })
-          .locator("..")
-          .locator("strong"),
-      ).toHaveText("5");
+        page.getByRole("region", { name: "Slop Points", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Total", { exact: true })).toHaveCount(0);
       await expect(
         page
           .getByRole("listitem")
@@ -1161,12 +1156,11 @@ for (const scenario of [
             "Closed cycles and ledger events outside those cycles",
           ),
         ).toHaveCount(0);
+        // Profiles show no Points total (operator decision, 18 November 2026).
         await expect(
-          page
-            .getByText("Total", { exact: true })
-            .locator("..")
-            .locator("strong"),
-        ).toHaveText(scenario === "absent member" ? "0" : "5");
+          page.getByRole("region", { name: "Slop Points", exact: true }),
+        ).toBeVisible();
+        await expect(page.getByText("Total", { exact: true })).toHaveCount(0);
         expect(walletRequests).toEqual([
           "/api/v1/wallet-claims/actors/2/current",
         ]);

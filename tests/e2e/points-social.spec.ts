@@ -137,10 +137,9 @@ test("social membership preserves past points and discloses public connections w
   await expect(
     accountPanel.getByText("@social-member", { exact: true }),
   ).toBeVisible();
-  await expect(accountButton).toContainText("15 pts");
-  await expect(accountPanel.getByText("15 pts", { exact: true })).toHaveCount(
-    0,
-  );
+  // The account menu shows no Points total (operator decision, 18 November 2026).
+  await expect(accountButton).not.toContainText("pts");
+  await expect(accountPanel).not.toContainText("pts");
   await expect(
     accountPanel.getByRole("link", { name: "View profile" }),
   ).toHaveAttribute("href", "/contributors/social-member");
@@ -219,17 +218,13 @@ test("social membership preserves past points and discloses public connections w
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
-  await expect(community.getByText("15 pts", { exact: true })).toBeVisible();
+  await expect(community).not.toContainText("pts");
   await community
     .getByRole("link", { name: "social-member", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("region", { name: "Slop Points", exact: true })
-      .getByText("Total", { exact: true })
-      .locator("..")
-      .locator("strong"),
-  ).toHaveText("15");
+    page.getByRole("region", { name: "Slop Points", exact: true }),
+  ).not.toContainText("Total");
   await expect(
     page.getByRole("link", { name: "X · @social_member", exact: true }),
   ).toBeVisible();

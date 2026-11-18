@@ -1836,9 +1836,10 @@ test("shows an explicit error for invalid data and retries", async ({
     }
     await route.fallback();
   });
-  await page.goto("/points", { waitUntil: "networkidle" });
+  // /points is a directory without the snapshot; a project page reads it.
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(page.locator(".standings tbody tr")).toHaveCount(0);
+  await expect(page.locator("#contributors tbody tr")).toHaveCount(0);
   await expectAccessible(page);
   const failedAttempts = attempts;
   expect(failedAttempts).toBeGreaterThan(1);

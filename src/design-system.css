@@ -395,13 +395,6 @@ label {
   width: 38px;
   height: 38px;
 }
-
-.account-points {
-  font-family: var(--brand-font-data);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
 .account-chevron {
   width: 16px;
   height: 16px;
@@ -1066,11 +1059,6 @@ label {
   .wordmark {
     font-size: 19px;
   }
-
-  .account-points {
-    display: none;
-  }
-
   .points-person img {
     display: none;
   }
