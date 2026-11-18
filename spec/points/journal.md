@@ -773,9 +773,9 @@ pure def involves(r: Revision, actor: int): bool =
   if (r.key.category == MergedWork) r.shares.some(x => x.actor == actor) else r.key.actor == actor
 pure def valueMonth(r: Revision): int = if (r.decision.valued) P::periodOf(r.occurredAt) else -1
 pure def groupUnit(r: Revision): int = if (r.key.category == Review and not(r.provisional)) r.key.source else r.key.workUnit
-pure def sameGroup(a: Revision, b: Revision): bool =
-  a.key.project == b.key.project and a.key.category == b.key.category and valueMonth(a) == valueMonth(b) and
-  groupUnit(a) == groupUnit(b)
+pure def sameGroup(o: Revision, r: Revision): bool =
+  o.key.project == r.key.project and o.key.category == r.key.category and valueMonth(o) == valueMonth(r) and
+  groupUnit(o) == groupUnit(r)
 pure def firstIdOf(l: Ledger, k: AwardKey): int = l.revisions.foldl(0, (acc, x) => if (acc == 0 and x.key == k) x.id else acc)
 pure def suppressedReview(l: Ledger, r: Revision, actor: int): bool =
   r.key.category == Review and l.revisions.some(o => o.key.category == Evaluated and o.key.actor == actor and o.amount > 0 and

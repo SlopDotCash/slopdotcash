@@ -57,7 +57,6 @@ import identity as I from "./identity"
 import email as E from "./email"
 import xConnection as X from "./xConnection"
 import notifications as N from "../operations/notifications"
-import participation as PT from "../points/participation"
 type Membership = Open | Closed
 type Member = { actor: int, githubId: int, login: str, membership: Membership, public: bool,
   joinedAt: int, closedAt: int, xLink: X::XLink, telegramLinked: bool, email: E::Enrollment }
@@ -470,7 +469,7 @@ pure def saveNotice(s: Accounts, by: int, key: int, kind: N::Kind, githubId: int
 pure def alwaysOutboxSeesCurrentConsent(s: Accounts): bool =
   s.members.every(m => mailView(N::enrollmentOf(s.inbox, m.githubId)) == mailView(m.email))
 pure def sometimesClosureSuppressedMail(s: Accounts): bool =
-  N::anySuppressed(s.inbox) and s.members.some(m => m.membership == Closed)
+  s.members.some(m => m.membership == Closed and s.inbox.notices.some(n => n.recipient == m.githubId and n.state == N::Suppressed))
 pure def stepEmailHistoryRetained(before: Accounts, after: Accounts): bool = before.members.every(m =>
   E::historyRetained(m.email, memberByActor(after, m.actor).email)) and before.lastEmailId <= after.lastEmailId
     and before.lastVersion <= after.lastVersion and before.lastUnsubscribe <= after.lastUnsubscribe

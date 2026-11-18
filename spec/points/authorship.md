@@ -154,9 +154,12 @@ pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int): b
   a.phase == Gathering and additions >= 0 and deletions >= 0 and not(hasLines(a.lines))
 pure def recordLines(a: CommitAttribution, additions: int, deletions: int): CommitAttribution =
   { ...a, lines: CompleteLines({ additions: additions, deletions: deletions }) }
-pure def contributes(a: CommitAttribution): bool = match a.acceptance {
-  | AcceptedCommit(x) => not(x.earlierSource) and (not(x.merge) or x.resolutions == 1)
-  | _ => false }
+pure def contributes(a: CommitAttribution): bool = {
+  val acceptance = a.acceptance
+  match acceptance {
+    | AcceptedCommit(x) => not(x.earlierSource) and (not(x.merge) or x.resolutions == 1)
+    | _ => false }
+}
 pure def canAttribute(a: CommitAttribution): bool = a.phase == Gathering and contributes(a) and recipientFor(a) > 0
 pure def attribute(a: CommitAttribution): CommitAttribution = { ...a, phase: Attributed, recipient: recipientFor(a) }
 pure def canCreditCommit(a: CommitAttribution): bool = a.phase == Attributed and hasLines(a.lines)

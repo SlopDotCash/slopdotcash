@@ -4196,10 +4196,12 @@
           "status": "rule",
           "spec": "spec/backend/projects.md",
           "defs": [
-            "canRecordFunding",
-            "recordFunding"
+            "canRegisterVault",
+            "registerVault",
+            "alwaysOrdinaryVaultFunds",
+            "adminRevise"
           ],
-          "note": "Finalized vault funding is observed separately by the platform job, appends no revision and never gates creation or activation."
+          "note": "Funding is no longer a separate observation: it is a fact of the current revision, and only an ordinary vault registration (registerVault, which makes the project funded) or an administrator exception (adminRevise), each an appended revision, changes it; funding never gates creation or activation."
         },
         "install": {
           "status": "abstraction",
@@ -4258,7 +4260,7 @@
             "canActivate",
             "activate"
           ],
-          "note": "Activation requires authority, installation, clearance, no restriction and skill fields but no funding; P::canActivate has no funding guard and recordFunding is independent."
+          "note": "Activation requires authority, installation, clearance, no restriction and skill fields but no funding; P::canActivate has no funding guard."
         }
       }
     },
@@ -4669,10 +4671,12 @@
           "status": "rule",
           "spec": "spec/backend/projects.md",
           "defs": [
-            "canRecordFunding",
-            "recordFunding"
+            "canRegisterVault",
+            "registerVault",
+            "alwaysOrdinaryVaultFunds",
+            "adminRevise"
           ],
-          "note": "Funding is recorded independently and never gates the setup check or activation."
+          "note": "Funding never gates the setup check or activation; it is a fact of the current revision that only an ordinary vault registration (registerVault) or an administrator exception (adminRevise), each an appended revision, changes."
         },
         "identityReply": {
           "status": "rule",
@@ -12038,7 +12042,7 @@
           "spec": "spec/backend/projects.md",
           "defs": [
             "authorized",
-            "canAppendRepository"
+            "appendable"
           ],
           "note": "Authority on the appended repository is an AuthorityRead input that must be verified with an installation."
         },
@@ -12064,20 +12068,23 @@
           "status": "rule",
           "spec": "spec/backend/projectComposition.md",
           "defs": [
-            "canAppendRepository",
-            "appendRepository"
+            "canPublishOwnerRevision",
+            "publishOwnerRevision",
+            "appendsFree",
+            "withAppends"
           ],
-          "note": "An accepted append pauses the project and leaves the new repository unassessed; refusals change nothing. The successor takes one appended repository, not a whole submitted list."
+          "note": "An owner revision whose change lists appends (publishOwnerRevision with appendsFree) pauses the project and adds each new repository to enforcement unassessed (withAppends); refusals change nothing. The successor carries appends inside an owner revision, each listed once, not a whole submitted repository list."
         },
         "submitAppend": {
           "status": "rule",
           "spec": "spec/backend/projectComposition.md",
           "defs": [
-            "canAppendRepository",
-            "appendRepository",
+            "canPublishOwnerRevision",
+            "publishOwnerRevision",
+            "appendsFree",
             "repositoryFree"
           ],
-          "note": "The new repository must be free in the registry, public, not archived or a fork, and authorized through Slopbot."
+          "note": "Each appended repository must be free in the registry (appendsFree, repositoryFree), public, not archived or a fork, and authorized through Slopbot (P::appendable)."
         },
         "submitRemove": {
           "status": "rule",
@@ -12105,7 +12112,7 @@
         },
         "submitUnchanged": {
           "status": "abstraction",
-          "note": "Whole-list resubmission is not an interface in the successor; appendRepository takes one new repository and refuses an already-listed one, so there is no no_change outcome to report."
+          "note": "Whole-list resubmission is not an interface in the successor; an owner revision lists only new repositories to append and appendable refuses an already-listed one, so there is no no_change outcome to report."
         }
       },
       "scenarios": {
@@ -12113,7 +12120,8 @@
           "status": "rule",
           "spec": "spec/backend/projects.md",
           "defs": [
-            "appendRepository",
+            "publishOwnerRevision",
+            "lawAppendedRepositoryPausesAndStartsNextMonth",
             "repositoryEligible",
             "sometimesAppendedRepositoryDeferred"
           ],
@@ -12131,7 +12139,7 @@
           "status": "rule",
           "spec": "spec/backend/projects.md",
           "defs": [
-            "canAppendRepository",
+            "appendable",
             "authorized"
           ],
           "note": "Without verified authority on the appended repository the append is refused."
@@ -12140,7 +12148,7 @@
           "status": "rule",
           "spec": "spec/backend/projectComposition.md",
           "defs": [
-            "canAppendRepository",
+            "appendsFree",
             "repositoryFree"
           ],
           "note": "A repository listed by this or another project is refused."
@@ -12149,7 +12157,7 @@
           "status": "rule",
           "spec": "spec/backend/projects.md",
           "defs": [
-            "appendRepository",
+            "publishOwnerRevision",
             "advanceMonth"
           ],
           "note": "After the month advances, the start is the new month+1; the successor derives the start from the server month rather than validating a supplied one."
@@ -12176,7 +12184,8 @@
           "spec": "spec/backend/projectComposition.md",
           "defs": [
             "canActivate",
-            "appendRepository"
+            "publishOwnerRevision",
+            "withAppends"
           ],
           "note": "The appended repository is unassessed, so mayContribute fails and activation is refused."
         },
@@ -12184,7 +12193,7 @@
           "status": "rule",
           "spec": "spec/backend/projects.md",
           "defs": [
-            "canAppendRepository"
+            "appendable"
           ],
           "note": "A fork, archived or non-public repository is refused and the project stays as it was."
         },
@@ -31887,10 +31896,11 @@
           "spec": "spec/points/authorship.md",
           "defs": [
             "creditedElsewhere",
-            "lawEarlierSourceContributesZero",
+            "observeAcceptance",
+            "contributes",
             "sometimesCreditedElsewhere"
           ],
-          "note": "A commit already in another accepted work unit contributes zero."
+          "note": "A commit already in another accepted work unit is accepted with earlierSource set (observeAcceptance via creditedElsewhere), so contributes refuses it and it earns no new credit."
         },
         "heldSourceKeepsPriorPointsTest": {
           "status": "rule",
@@ -32292,7 +32302,7 @@
           "spec": "spec/points/corrections.md",
           "defs": [
             "classify",
-            "lawReplayPreservesRevocation"
+            "lawReplayAppendsNothing"
           ],
           "note": "An already applied digest is Replayed and appends nothing."
         }
@@ -32400,7 +32410,7 @@
           "defs": [
             "commit",
             "sometimesApplied",
-            "lawReplayPreservesRevocation"
+            "lawReplayAppendsNothing"
           ],
           "note": "A phantom carrier share is removed by one appended reallocation and replay appends nothing; amount moves to verified recipients rather than becoming zero."
         },
@@ -34739,9 +34749,9 @@
           "spec": "spec/operations/release.md",
           "defs": [
             "canRetainSnapshot",
-            "alwaysRetainedOnlyManualProduction"
+            "alwaysRetainedOnlyManual"
           ],
-          "note": "Retained snapshot only on manual production and still passes every gate."
+          "note": "A retained snapshot is chosen only by a manual run outside a checkpoint resume and still passes every gate; the successor lets a run retain the last verified snapshot its own environment published, so the legacy production-only restriction is no longer carried."
         },
         "retainedSnapshotNeedsManualTest": {
           "status": "rule",
@@ -42644,10 +42654,9 @@
           "spec": "spec/slopbot/historicalImport.md",
           "defs": [
             "acceptable",
-            "lawApiProducerNeverImported",
-            "lawCodexNeedsSol"
+            "lawApiProducerNeverImported"
           ],
-          "note": "An invalid or non-subscription producer envelope is refused and nothing is written."
+          "note": "An invalid or non-subscription producer envelope is refused and nothing is written. The legacy Codex-needs-Sol restriction is not carried: development accepts only its ChatGPT and Claude subscription channels and has no Codex channel (historicalImport.md)."
         },
         "jointMigrationPreventsSingleForkTest": {
           "status": "rule",
@@ -43341,10 +43350,10 @@
           "spec": "spec/points/authorship.md",
           "defs": [
             "contributes",
-            "lawMergeCommitsContributeZero",
+            "lawUnresolvedMergeHolds",
             "canAttribute"
           ],
-          "note": "An unclaimed branch-sync merge contributes zero while ordinary commits are still attributed."
+          "note": "An unclaimed branch-sync merge (no single conflict resolution) does not contribute and its lines hold, while ordinary commits are still attributed."
         }
       }
     },
@@ -71769,10 +71778,11 @@
           "status": "rule",
           "spec": "spec/backend/projectComposition.md",
           "defs": [
-            "canAppendRepository",
-            "appendRepository"
+            "canPublishOwnerRevision",
+            "publishOwnerRevision",
+            "withAppends"
           ],
-          "note": "Appending a repository pauses the project (RepositoryAppended to Paused) and adds an unassessed repository to enforcement."
+          "note": "Appending a repository through an owner revision pauses the project (RepositoryAppended to Paused) and adds an unassessed repository to enforcement (withAppends, E::appendRepository)."
         },
         "completeClean": {
           "status": "rule",

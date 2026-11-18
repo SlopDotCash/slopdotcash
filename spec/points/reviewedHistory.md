@@ -198,8 +198,8 @@ pure def earlierJustified(e: EarlierBasis): bool =
 pure def earlierAccepted(e: EarlierBasis, retired: int, retiredAt: int): bool =
   e.source > 0 and e.source != retired and e.complete and e.acceptedAt >= 0 and e.acceptedAt <= retiredAt and earlierJustified(e)
 type AcceptanceSource = { source: int, acceptedAt: int, nodeRank: int }
-pure def laterAcceptance(a: AcceptanceSource, b: AcceptanceSource): bool =
-  a.acceptedAt > b.acceptedAt or (a.acceptedAt == b.acceptedAt and a.nodeRank > b.nodeRank)
+pure def laterAcceptance(first: AcceptanceSource, second: AcceptanceSource): bool =
+  first.acceptedAt > second.acceptedAt or (first.acceptedAt == second.acceptedAt and first.nodeRank > second.nodeRank)
 pure val noAcceptance: AcceptanceSource = { source: 0, acceptedAt: -1, nodeRank: -1 }
 pure def completionSource(sources: List[AcceptanceSource]): int =
   sources.foldl(noAcceptance, (acc, a) => if (laterAcceptance(a, acc)) a else acc).source
@@ -214,18 +214,18 @@ pure def claimRetained(c: ClaimCover): bool =
 type Retirement = { source: int, occurredAt: int, sourceComplete: bool, poolUnchanged: bool, octoberPool: bool,
   dossierBound: bool, claimedPaths: int, promotion: AcceptedPromotion, unchanged: List[UnchangedPromotion],
   squashes: List[AcceptedSquash], covers: List[NativeCover], earlier: List[EarlierBasis], claims: List[ClaimCover] }
-pure def coveringSource(r: Retirement, owner: int): bool =
-  owner != r.source and (r.earlier.some(e => e.source == owner) or r.squashes.some(s => s.source == owner))
-pure def retirementApplies(r: Retirement): bool =
-  r.source > 0 and r.sourceComplete and r.poolUnchanged and r.octoberPool and r.dossierBound and
-  r.unchanged.length() <= 1 and r.unchanged.every(u => unchangedPromotion(u)) and
-  ((r.squashes.length() > 0 or r.covers.length() > 0) implies promotionKeepsContent(r.promotion)) and
-  r.squashes.every(s => squashCovers(s, r.source, r.occurredAt)) and
-  r.covers.every(c => nativeCovers(c, r.occurredAt)) and
-  r.earlier.every(e => earlierAccepted(e, r.source, r.occurredAt)) and
-  r.claims.length() > 0 and r.claims.length() == r.claimedPaths and
-  r.claims.every(c => claimRetained(c) and coveringSource(r, c.owner)) and
-  r.squashes.every(s => r.claims.some(c => c.owner == s.source))
+pure def coveringSource(retirement: Retirement, owner: int): bool =
+  owner != retirement.source and (retirement.earlier.some(e => e.source == owner) or retirement.squashes.some(s => s.source == owner))
+pure def retirementApplies(retirement: Retirement): bool =
+  retirement.source > 0 and retirement.sourceComplete and retirement.poolUnchanged and retirement.octoberPool and retirement.dossierBound and
+  retirement.unchanged.length() <= 1 and retirement.unchanged.every(u => unchangedPromotion(u)) and
+  ((retirement.squashes.length() > 0 or retirement.covers.length() > 0) implies promotionKeepsContent(retirement.promotion)) and
+  retirement.squashes.every(s => squashCovers(s, retirement.source, retirement.occurredAt)) and
+  retirement.covers.every(c => nativeCovers(c, retirement.occurredAt)) and
+  retirement.earlier.every(e => earlierAccepted(e, retirement.source, retirement.occurredAt)) and
+  retirement.claims.length() > 0 and retirement.claims.length() == retirement.claimedPaths and
+  retirement.claims.every(c => claimRetained(c) and coveringSource(retirement, c.owner)) and
+  retirement.squashes.every(s => retirement.claims.some(c => c.owner == s.source))
 pure def lawPromotionMustKeepContent(a: AcceptedPromotion): bool = a.headTree != a.mergeTree implies not(promotionKeepsContent(a))
 pure def lawChangedPromotionIsNotUnchanged(u: UnchangedPromotion): bool =
   (u.changedLines > 0 or u.headTree != u.baseTree) implies not(unchangedPromotion(u))

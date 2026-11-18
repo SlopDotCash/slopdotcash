@@ -7770,8 +7770,7 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/fees/conversion.md"
-      ],
-      "noSuccessor": "No candidate successor names its actions (upgrade) or cites its source (migrations/0076_fee_conversion_pending.sql, migrations/0078_fee_conversion_transaction_size.sql, migrations/0082_fee_claim_journal.sql, migrations/0087_fee_send_replacements.sql, migrations/0088_fee_approval_journal.sql); it models D1 schema migrations, which are carried byte for byte under migrations/. The mapping stays by domain until a transition-level comparison is reviewed."
+      ]
     },
     {
       "sourcePath": "formal/models/fees/fee_value_caps.qnt",
@@ -12595,8 +12594,7 @@
       "candidateSuccessorSpecs": [
         "spec/operations/release.md",
         "spec/governance.md"
-      ],
-      "noSuccessor": "No candidate successor names its actions (initialize, prepare, render, write, finish, failBuild) or cites its source (scripts/generate-sitemap.ts, scripts/render-social-images.mjs, scripts/sync-brand-tokens.mjs); it models the old CI and release scripts. The mapping stays by domain until a transition-level comparison is reviewed."
+      ]
     },
     {
       "sourcePath": "formal/models/release/trusted_base_gate.qnt",
