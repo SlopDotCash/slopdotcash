@@ -6038,15 +6038,15 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "aad6585dd76cfeaac5e00fb62f8c02ad044fc0ff0b4ac4b47e2e33c48f688a82",
+      "sha256": "833e3e95b1c4e4a43893aa04469aca9806eff444094e34c7983ad8b2e30b1186",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        184, 317, 350, 351, 353, 354, 385, 387, 397, 545, 546, 548, 549, 556,
-        584, 587, 615, 620, 692
+        187, 335, 368, 369, 371, 372, 403, 405, 415, 563, 564, 566, 567, 574,
+        602, 605, 633, 638, 710
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
