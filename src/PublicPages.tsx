@@ -695,7 +695,7 @@ export function SponsorsPage({
         <h2>Public records</h2>
         <ul>
           <li>
-            <Link href="/#leaderboard">Live leaderboard</Link>
+            <Link href="/points?period=lifetime">Live leaderboard</Link>
           </li>
           <li>
             <Link href="/cycles">Cycle archive</Link>

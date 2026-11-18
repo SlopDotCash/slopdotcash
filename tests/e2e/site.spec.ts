@@ -570,37 +570,12 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     await expect(
       page.getByRole("link", { name: agent, exact: true }),
     ).toHaveAttribute("target", "_blank");
-  const leaderboard = page.getByRole("region", {
-    name: "Top sloperators",
-    exact: true,
-  });
+  // The homepage carries no points leaderboard (operator decision,
+  // 18 November 2026); the full table stays at /points.
   await expect(
-    leaderboard.getByRole("columnheader", { name: "Points", exact: true }),
-  ).toHaveAttribute("aria-sort", "descending");
-  // The home leaderboard has no filter controls; a shared link still selects history.
-  await expect(leaderboard.getByRole("group", { name: "Period" })).toHaveCount(
-    0,
-  );
-  await expect(leaderboard.getByLabel("Project")).toHaveCount(0);
-  await page.goto("/?period=lifetime#leaderboard");
-  await expect(leaderboard.getByRole("table")).toBeVisible();
-  const pointValues = await leaderboard
-    .locator("tbody tr td:nth-child(3)")
-    .allTextContents();
-  const totals = pointValues.map((value) =>
-    Number.parseInt(value.replaceAll(",", ""), 10),
-  );
-  expect(totals.length).toBeGreaterThan(0);
-  expect(totals).toEqual([...totals].sort((a, b) => b - a));
-  const firstLogin = await leaderboard
-    .getByRole("table")
-    .getByRole("link")
-    .first()
-    .innerText();
-  await expect(leaderboard.getByLabel("Find a contributor")).toHaveCount(0);
-  await expect(
-    leaderboard.getByRole("link", { name: firstLogin, exact: true }),
-  ).toBeVisible();
+    page.getByRole("region", { name: "Top sloperators", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator("#leaderboard")).toHaveCount(0);
   // Sizer phrases reserve caret space invisibly; reduced motion hides the live caret.
   await expect(
     page.locator(".hero-typewriter > .hero-typewriter-caret"),
@@ -608,22 +583,6 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
   await expect(
     page.locator("#projects").getByRole("link", { name: "Add a project" }),
   ).toHaveAttribute("href", "/projects/new");
-  await page.goto("/#leaderboard", { waitUntil: "networkidle" });
-  await expect(page).toHaveURL(/\/#leaderboard$/u);
-  await expect
-    .poll(() =>
-      page.locator("#leaderboard").evaluate((element) => {
-        const bounds = element.getBoundingClientRect();
-        return bounds.top >= -1 && bounds.top < window.innerHeight;
-      }),
-    )
-    .toBe(true);
-
-  expect(
-    await page
-      .locator("#leaderboard")
-      .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
-  ).toBe(true);
 });
 
 test("shows agent setup and keeps contribution records available", async ({
@@ -2149,9 +2108,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/$/);
   // Let the home records finish loading so going back aborts no request.
-  await expect(page.locator("#leaderboard").getByRole("table")).toBeVisible({
-    timeout: 60_000,
-  });
+  await expect(page.locator("#projects")).toBeVisible({ timeout: 60_000 });
   await page.waitForLoadState("networkidle");
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
@@ -2241,7 +2198,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
   for (const [path, id] of [
     ["/how-it-works#faq", "faq"],
-    ["/#leaderboard", "leaderboard"],
+    ["/#projects", "projects"],
   ] as const) {
     await page.goto(path);
     await expect(page.locator(`#${id}`)).toBeInViewport();

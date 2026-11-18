@@ -643,10 +643,6 @@ p {
   padding-block: 0 96px;
 }
 
-.home-leaderboard-section {
-  scroll-margin-top: 64px;
-}
-
 .home-section-heading {
   grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
 }
@@ -2125,17 +2121,8 @@ small {
   overflow-wrap: anywhere;
   margin-top: 0;
 }
-.home-leaderboard-section > .points-panel {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
 .points-panel p {
   max-width: 72ch;
-}
-.home-leaderboard-section > .points-panel + .points-panel {
-  margin-top: 3rem;
 }
 .points-meta {
   font-size: 0.875rem;
