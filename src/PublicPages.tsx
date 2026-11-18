@@ -19,7 +19,10 @@ import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { intakePaused } from "./lib/intake-cap.mjs";
-import { maintainerShareCardLine } from "./lib/maintainer-share.mjs";
+import {
+  MAINTAINER_SHARE_LIMITS,
+  maintainerShareCardLine,
+} from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
@@ -243,6 +246,21 @@ export function HowItWorksPage() {
                   <span>On chain · 2% fee</span>
                 </li>
               </ol>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Can maintainers be paid?</h3>
+            <div>
+              <p>
+                Yes, when a project sets a maintainer share. The owner can set
+                aside up to {MAINTAINER_SHARE_LIMITS.max / 100}% of the monthly
+                amount for the people who merge or close pull requests from
+                outside contributors. It is split by how many each decided, and
+                a close counts the same as a merge. Owners set it on the
+                project&apos;s manage page, and a change starts with the next
+                UTC month. In a month with no such decision, the whole amount
+                stays with contributors.
+              </p>
             </div>
           </article>
           <article className="faq-answer">
