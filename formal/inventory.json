@@ -163,10 +163,9 @@
     {
       "path": ".github/workflows/value-intake-quota.yml",
       "sha256": "30f0b536a90703fbc4499ac398403c57365f5fbe76e3c9572c597160ec53871c",
-      "models": [],
+      "models": ["formal/models/release/slopbot_app_quota_witness.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
-      "statelessReason": "Main-only protected observation of a registered GitHub App quota. Runs the exact checked code and uploads a sanitized observation. No durable application, registry, assessment, or settlement transition."
+      "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
@@ -4240,10 +4239,9 @@
     {
       "path": "scripts/inspect-slopbot-app-quota.ts",
       "sha256": "786823584d469d5be5a04b20c556ebc75e2714e615a026f12e7c1309f62ed98c",
-      "models": [],
+      "models": ["formal/models/release/slopbot_app_quota_witness.qnt"],
       "candidateLines": [32, 139, 141, 304, 308],
-      "review": "reviewed-no-independent-state",
-      "statelessReason": "Reads one immutable project and its public GitHub repository through a short-lived installation grant. Computes a sanitized current quota observation within one invocation. Owns no persisted credential, application state, assessment, Points, money, or retry cursor."
+      "review": "mapped-abstraction"
     },
     {
       "path": "scripts/inspect-slopbot-runtime.ts",
@@ -15276,6 +15274,23 @@
         "exactPrivateQualificationTest",
         "keyRotationRequiresSeparateAuthorityTest",
         "publicationIsNotVerificationTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/slopbot_app_quota_witness.qnt",
+      "sha256": "648d665dcd11cb3ef8c16987a5a024030c5f3aab60f0633c6ddc69c102ea5b41",
+      "sources": [
+        ".github/workflows/value-intake-quota.yml",
+        "scripts/inspect-slopbot-app-quota.ts"
+      ],
+      "scenarios": [
+        "cancellationMayLeaveGrantUntilExpiryTest",
+        "invalidQuotaStillRevokesWithoutReceiptTest",
+        "lostMintResponseExpiresWithoutReceiptTest",
+        "nonMainCannotMintTest",
+        "revokeRefusalCannotPublishTest",
+        "unexpectedPermissionsStillRevokeTest",
+        "verifiedGrantRevokesBeforeReceiptTest"
       ]
     },
     {
