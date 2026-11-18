@@ -12,7 +12,7 @@ test.use({ video: "on" });
 const pointsStale = (page: Page) =>
   page
     .locator("p.data-stale")
-    .filter({ hasText: /^\s*Points stale · /u })
+    .filter({ hasText: /^\s*Data last updated · /u })
     .filter({ hasNot: page.getByRole("button", { name: "Try again" }) });
 
 test("malformed project-session responses show a recoverable error", async ({
