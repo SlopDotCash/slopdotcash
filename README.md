@@ -60,6 +60,10 @@ flowchart LR
 
 ## Add your open-source project
 
+Choose **Maintainer** on [slop.cash](https://slop.cash/?audience=maintainer), or
+give your agent the [maintainer skill](https://slop.cash/maintain/SKILL.md), to
+add, resume or maintain a project through the existing GitHub and Slop workflows.
+
 Sign in with GitHub and create your project at
 [`slop.cash/projects/new`](https://slop.cash/projects/new). The form checks your
 GitHub authority, creates a paused project, and queues its first security scan.
@@ -273,6 +277,19 @@ gh workflow run deploy.yml --ref development -f use_published_data=true
 ```
 
 This option is available only for a manual `main` or `development` release.
+
+A manual release may also leave out the state-model and LemmaScript proof
+stages, which pull requests run for the files they change and a nightly run
+checks in full:
+
+```bash
+gh workflow run deploy.yml --ref main -f use_published_data=true -f skip_proofs=true
+```
+
+Add `-f skip_browser_tests=true` to run the browser smoke lane instead of the
+complete browser lanes. Every other check and all deployment verification
+still run. A release that skipped the proofs or the browser lanes is not
+evidence that they passed.
 Each environment reuses only its own last publication. It validates the
 published data and preserves its original collection timestamps and history.
 It skips fresh leaderboard/profile collection and the merge-collector install.
@@ -369,6 +386,19 @@ files never select the source.
 and CI. The former checks source records; the latter checks types, lint and
 the local integration suites. Live chain verification and browser checks remain
 separate.
+
+`bun run audit:dependencies` runs the full Bun registry audit after a frozen
+install and prints its complete report. The locked Picomatch 2.3.2 and 4.0.5
+copies carry local backports for [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+The backports use Picomatch's literal fallback for repeated extglobs unless
+the parser can use its existing safe reduction or the alternatives are
+prefix-free ASCII literals. This also applies with `maxExtglobRecursion: false`.
+Bun reports the original npm versions. The release gate accepts that exact
+finding only if the lock identities, patch files, installed package bytes and
+consumer resolutions match the reviewed backports. Other findings, unreadable
+reports and mismatched bytes fail the gate. Remove the matching patch and its
+local audit proof in the same reviewed update that removes the affected copy
+or installs a registry version listed as fixed.
 
 Edit shared contributor and reviewer rules in the canonical generic
 project-skill templates. The contributor template's `scripts/` directory is the

@@ -6,6 +6,7 @@ import type { ContributionField } from "./project-schema.mjs";
 
 import type { RewardAsset } from "./reward-asset.mjs";
 import type { SecurityBountyTerms } from "./security-bounty.mjs";
+import type { ReadyLabelSettings } from "./slopbot-ready.mjs";
 
 export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
@@ -33,6 +34,8 @@ export interface ProjectReviewBudgetPolicy {
 }
 
 export interface ProjectRewardPolicy {
+  /** Owner opts to advertise the stated pool as a promise without vault funding. */
+  readonly honorSystem?: true;
   /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
   readonly cycleCaps?: readonly {
     readonly cycleId: string;
@@ -212,7 +215,16 @@ export interface ProjectDefinition {
   /** Maintainer-authored fields that generate the project skills (SKL-03). */
   readonly contribution?: Readonly<Record<ContributionField, string>>;
   /** Explicit owner consent, recorded by immutable revision; absent is false. */
-  readonly slopbot?: { readonly automaticClosure: boolean };
+  readonly slopbot?: {
+    readonly automaticClosure: boolean;
+    /** The slopbot:ready label (PRD section 5); absent means off. */
+    readonly readyLabel?: ReadyLabelSettings;
+    /**
+     * Pause new contributors when this many outside pull requests are open
+     * (PRD section 5); absent means off.
+     */
+    readonly intakeCap?: number;
+  };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {

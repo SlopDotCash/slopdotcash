@@ -52,6 +52,10 @@ test("production accepts the provisioned Solana mint RPC and public GitHub read 
   ];
   expect(() => validate(provisioned)).not.toThrow();
   expect(() => validate(required)).not.toThrow();
+  // The operator's reserved-awards feed token (PRD section 9) is optional:
+  // a release passes whether or not the secret exists.
+  expect(() => validate([...provisioned, "OPERATOR_FEED_TOKEN"])).not.toThrow();
+  expect(() => validate([...required, "OPERATOR_FEED_TOKEN"])).not.toThrow();
   expect(() => validate([...provisioned, "UNREVIEWED_SECRET"])).toThrow(
     "Pages secret inventory",
   );

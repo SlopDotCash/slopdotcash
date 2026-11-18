@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { handleReservedAwardsFeed } from "../../../backend/payments/reserved-awards-feed";
 import { FundingVaultNotFoundError } from "../../../backend/payments/solana-funding";
 import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
 import {
@@ -32,6 +33,8 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { handleMergeActivityApi } from "../../../backend/projects/merge-activity";
+import { handlePoolFundingApi } from "../../../backend/projects/pool-funding";
 import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
@@ -41,6 +44,7 @@ import {
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
+import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
@@ -59,6 +63,7 @@ import {
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
+import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
 import {
@@ -399,6 +404,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     waitUntil,
     intake: privateIntake(env),
     repositoryAccess,
+    routineDecisions: {
+      mode: routineMode(env.SECURITY_ROUTINE_DECISIONS),
+      adminGithubIds,
+    },
   });
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(request);
@@ -474,8 +483,30 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralClaims !== null) return referralClaims;
+  const referralCode = await handleReferralCode(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (referralCode !== null) return referralCode;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
+  const mergeActivity = await handleMergeActivityApi(request, { db });
+  if (mergeActivity !== null) return mergeActivity;
+  const poolFunding = await handlePoolFundingApi(request, { db, tier });
+  if (poolFunding !== null) return poolFunding;
+  // Null without the exact operator token: the request then falls through
+  // to the ordinary not-found answer below.
+  const reservedAwards = await handleReservedAwardsFeed(request, {
+    db,
+    token: env.OPERATOR_FEED_TOKEN,
+    tier,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    now,
+  });
+  if (reservedAwards !== null) return reservedAwards;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
@@ -532,7 +563,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           verifyProjectAuthority(
             project.manifest,
             actor,
-            env.SLOP_GITHUB_READ_TOKEN,
+            repositoryAccess,
             level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
@@ -612,6 +643,11 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       ...stagingOrigins,
       rateLimitSecret: env.TRACE_AUTH_SECRET,
       identity: env.SLOP_IDENTITY,
+      ownerSessionGithubId:
+        env.OWNER_SESSION_GITHUB_ID &&
+        adminGithubIds.has(env.OWNER_SESSION_GITHUB_ID)
+          ? env.OWNER_SESSION_GITHUB_ID
+          : undefined,
       disputes: {
         moderators: moderatorGithubIds,
         waitUntil,
@@ -638,6 +674,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
+      waitUntil,
     });
   if (pathname.startsWith("/api/v1/slopbot/"))
     return handleSlopbotApi(request, db);

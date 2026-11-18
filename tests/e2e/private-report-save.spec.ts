@@ -106,13 +106,11 @@ for (const failFirst of [false, true]) {
           waitUntil: "networkidle",
         });
         const card = page.locator(`[aria-labelledby="submission-${id}"]`);
-        await card.getByText("Read private report", { exact: true }).click();
+        await card.getByText("Report", { exact: true }).click();
         await expect(card.locator("pre.security-report-text")).toHaveText(
           original.description,
         );
-        await card
-          .getByText("Add evidence or correct report", { exact: true })
-          .click();
+        await card.getByText("Edit report", { exact: true }).click();
         const form = card.locator("form");
         const summary = form.getByRole("textbox", {
           name: "Summary",
@@ -139,7 +137,7 @@ for (const failFirst of [false, true]) {
         });
         await restoreText();
         const save = form.getByRole("button", {
-          name: "Save and screen again",
+          name: "Save",
           exact: true,
         });
         await cwe.focus();
@@ -198,7 +196,9 @@ for (const failFirst of [false, true]) {
           correction.description,
         );
         await expect(form).toHaveCount(0);
-        await expect(card).toContainText("Waiting for screening.");
+        await expect(card.locator(".private-report-summary")).toHaveText(
+          "Queued",
+        );
         expect(requests.at(-1)).toEqual({
           expectedRevision: 2,
           report: correction,

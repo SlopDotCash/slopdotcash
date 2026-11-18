@@ -1,9 +1,10 @@
+import { Check, Clock, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { NoWalletFound, WalletConnection } from "./Presentation";
+import { NoWalletFound, StatusBadge, WalletConnection } from "./Presentation";
 
 export type DirectEvmTransaction = {
   from: string;
@@ -54,9 +55,7 @@ function readJournal(key: string, payer: string): Journal {
             entry.requestId,
           )))
     )
-      throw new Error(
-        "The saved wallet request cannot be read. Check wallet activity before continuing.",
-      );
+      throw new Error("Saved request unreadable. Check wallet activity.");
   }
   return entries;
 }
@@ -86,7 +85,10 @@ export function DirectBountyPayment({
   const [storageReady, setStorageReady] = useState(false);
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [recovered, setRecovered] = useState<Record<string, string>>({});
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{
+    tone: "plain" | "success" | "warning";
+    text: string;
+  } | null>(null);
   const mounted = useRef(true);
   const sending = useRef(false);
   useEffect(() => {
@@ -191,9 +193,7 @@ export function DirectBountyPayment({
         "Complete earlier wallet transactions before this queued payment.",
       );
     if (BigInt(nonce) > BigInt(transaction.nonce))
-      throw new Error(
-        "This nonce is pending or used. Refresh the case to verify or recover it.",
-      );
+      throw new Error("Nonce already used. Refresh the case.");
     return request;
   };
   const uncertain = transactions.some(
@@ -213,7 +213,7 @@ export function DirectBountyPayment({
     void run(async () => {
       try {
         if (!storageReady || uncertain || mismatched || !wallet) return;
-        setNotice("");
+        setNotice(null);
         for (const transaction of unsent) {
           await checkIdentity();
           const request = await checkWallet(transaction);
@@ -294,15 +294,11 @@ export function DirectBountyPayment({
             throw new Error(
               cause instanceof Error && cause.message.startsWith("Submitted ")
                 ? cause.message
-                : "The wallet result is uncertain. Check wallet activity and enter its hash; do not send again.",
+                : "Result unknown. Paste the hash; don't resend.",
             );
           }
         }
-        setNotice(
-          cancellation
-            ? "Cancellation submitted. Verify it after finality."
-            : "Transfers submitted. Verify them after finality.",
-        );
+        setNotice({ tone: "warning", text: "Submitted" });
       } finally {
         sending.current = false;
       }
@@ -364,9 +360,10 @@ export function DirectBountyPayment({
         });
       } catch (cause) {
         if (knownHashes.length)
-          setNotice(
-            `Could not save. Keep ${knownHashes.length === 1 ? "this hash" : "these hashes"}: ${knownHashes.join(", ")}.`,
-          );
+          setNotice({
+            tone: "plain",
+            text: `Could not save. Keep ${knownHashes.length === 1 ? "this hash" : "these hashes"}: ${knownHashes.join(", ")}.`,
+          });
         throw cause;
       }
       const currentHashes = transactions.flatMap((transaction) => {
@@ -381,7 +378,7 @@ export function DirectBountyPayment({
           "Enter the matching transaction hash from your wallet.",
         );
       await verify(currentHashes);
-      setNotice("Finalized evidence verified.");
+      setNotice({ tone: "success", text: "Verified" });
     });
   return (
     <section
@@ -403,7 +400,7 @@ export function DirectBountyPayment({
         return entry ? (
           <div key={transaction.nonce}>
             <label>
-              Transaction hash from your wallet
+              Transaction hash
               <input
                 value={
                   recovered[transaction.nonce] ??
@@ -449,16 +446,30 @@ export function DirectBountyPayment({
       </div>
       {uncertain ? (
         <p role="status">
-          Wallet result uncertain. Enter its transaction hash to continue.
+          <StatusBadge tone="warning" icon={<TriangleAlert />}>
+            Unknown result: paste hash
+          </StatusBadge>
         </p>
       ) : null}
       {mismatched ? (
         <p className="form-error" role="alert">
-          The saved payment differs from this request. Check wallet activity
-          before continuing.
+          Payment mismatch. Check wallet activity.
         </p>
       ) : null}
-      {notice ? <p role="status">{notice}</p> : null}
+      {notice ? (
+        <p role="status">
+          {notice.tone === "plain" ? (
+            notice.text
+          ) : (
+            <StatusBadge
+              tone={notice.tone}
+              icon={notice.tone === "success" ? <Check /> : <Clock />}
+            >
+              {notice.text}
+            </StatusBadge>
+          )}
+        </p>
+      ) : null}
       {error ? (
         <p className="form-error" role="alert">
           {error}

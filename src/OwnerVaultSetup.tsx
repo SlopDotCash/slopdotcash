@@ -20,6 +20,7 @@ import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { autoRegisterTurn } from "./lib/vault-auto-register";
 import {
   checkedVaultSetupReview,
   isVaultCreationId,
@@ -31,6 +32,7 @@ import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";
 import { NetworkName, WalletConnection } from "./Presentation";
+import { VaultActions } from "./VaultActions";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 type Pending = PendingAttempt & {
@@ -88,12 +90,45 @@ function restore(key: string): Pending | null {
  * every 10 seconds at first, then every 30, for about an hour, paused while the
  * tab is hidden. "Check vault registration" stays for an entered hash.
  */
+/**
+ * A creation this page just sent, or whose deposit it just verified, is asked
+ * about early: inclusion alone lets the owner fund the vault.
+ */
+const AUTO_REGISTER_SOON_MS = 4_000;
 const AUTO_REGISTER_FAST_MS = 10_000;
 const AUTO_REGISTER_SLOW_MS = 30_000;
 const AUTO_REGISTER_FAST_ATTEMPTS = 6;
 const AUTO_REGISTER_ATTEMPTS = 120;
 /** A check that keeps failing is not a wait; stop asking and leave the button. */
 const AUTO_REGISTER_ERRORS = 3;
+/**
+ * The server's answer for a creation that is in a canonical block but not final:
+ * the deployment it verified against the review. It is shown, never stored, and
+ * must name this request's network, owner, token and creation transaction.
+ */
+function provisionalDeployment(
+  value: unknown,
+  submitted: Pending,
+): EscrowDeployment | null {
+  const deployment = value as EscrowDeployment | null | undefined;
+  if (
+    !deployment ||
+    typeof deployment !== "object" ||
+    submitted.review.family !== "evm" ||
+    deployment.network !== submitted.input.network ||
+    typeof deployment.vault !== "string" ||
+    !/^0x[0-9a-fA-F]{40}$/.test(deployment.vault) ||
+    typeof deployment.owner !== "string" ||
+    deployment.owner.toLowerCase() !== submitted.review.owner.toLowerCase() ||
+    typeof deployment.asset !== "string" ||
+    deployment.asset.toLowerCase() !== submitted.review.asset.toLowerCase() ||
+    typeof deployment.deploymentTransaction !== "string" ||
+    deployment.deploymentTransaction.toLowerCase() !==
+      submitted.hash?.toLowerCase()
+  )
+    return null;
+  return deployment;
+}
 
 export function OwnerVaultSetup({
   project,
@@ -148,6 +183,12 @@ export function OwnerVaultSetup({
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const [reload, setReload] = useState(0);
+  // The included, not yet registered vault the owner may already fund.
+  const [provisional, setProvisional] = useState<EscrowDeployment | null>(null);
+  const fundingWallet = useRef<Connection | null>(null);
+  const [fundingBusy, setFundingBusy] = useState(false);
+  // The creation hash whose next automatic check should run early.
+  const [askSoon, setAskSoon] = useState<string | null>(null);
   const solana =
     ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
@@ -401,6 +442,7 @@ export function OwnerVaultSetup({
             storedPending.current = submitted;
             if (current()) {
               setPending(submitted);
+              setAskSoon(hash);
               setNotice(
                 "Creation sent. Check registration once it is finalized.",
               );
@@ -469,9 +511,20 @@ export function OwnerVaultSetup({
         ...submitted.input,
         step: "register",
         transactionId: hash,
+      }).catch((caught: unknown) => {
+        // A refused creation has no vault to fund. An unread network keeps the form.
+        if (
+          current() &&
+          ["vault_creation_failed", "vault_creation_invalid"].includes(
+            String((caught as { code?: string })?.code),
+          )
+        )
+          setProvisional(null);
+        throw caught;
       })) as unknown as {
         status: string;
         deployment?: EscrowDeployment;
+        provisional?: unknown;
         project?: ProjectDefinition;
         notice?: string;
         revision?: number;
@@ -482,12 +535,27 @@ export function OwnerVaultSetup({
           "The saved vault request changed. Reload before continuing.",
         );
       if (result.status === "pending") {
-        if (!automatic)
+        const included = provisionalDeployment(result.provisional, submitted);
+        // The block that carried the creation was replaced: the vault is not
+        // on chain now, so its funding form goes away until it is included again.
+        const dropped = provisional !== null && included === null;
+        const appeared = provisional === null && included !== null;
+        setProvisional(included);
+        if (dropped)
+          setNotice(
+            "The block that held the vault creation was replaced. Wait for the creation to be included again before you deposit.",
+          );
+        else if (included && (appeared || !automatic)) {
+          const chain = networkLabel(included.network);
+          setNotice(
+            `The vault is on ${chain} but its creation is not finalized yet. You can fund it below now. A deposit counts once ${chain} finalizes it.`,
+          );
+        } else if (!automatic)
           setNotice(
             "The creation is not finalized yet. Wait, then check again.",
           );
         // The check works again: withdraw the error an earlier one showed.
-        else if (autoErrored.current) setError(null);
+        if (automatic && autoErrored.current) setError(null);
         autoErrored.current = false;
         return;
       }
@@ -501,7 +569,9 @@ export function OwnerVaultSetup({
         throw new Error("Registration could not be verified. Check again.");
       await onRegistered(
         result.project,
-        wallet,
+        // Keep the wallet that funded the vault before registration, so its
+        // pending deposit is still checked without another connection.
+        fundingWallet.current ?? wallet,
         result.notice,
         Number(result.revision),
       );
@@ -525,6 +595,7 @@ export function OwnerVaultSetup({
           setAutoRegister((state) => ({
             hash: checked,
             attempts: AUTO_REGISTER_ATTEMPTS,
+            hiddenAsks: state.hiddenAsks,
             errors: 0,
             ticks: state.ticks + 1,
           }));
@@ -539,12 +610,16 @@ export function OwnerVaultSetup({
   const [autoRegister, setAutoRegister] = useState({
     hash: "",
     attempts: 0,
+    hiddenAsks: 0,
     errors: 0,
     ticks: 0,
   });
+  // A wallet request in the funding form finishes before the page can switch
+  // to the registered vault, so the check waits for it.
   const autoHash =
     pending?.hash &&
     !busy &&
+    !fundingBusy &&
     !saved.error &&
     recoveryHash.trim() === pending.hash
       ? pending.hash
@@ -552,22 +627,34 @@ export function OwnerVaultSetup({
   const autoAttempts =
     autoRegister.hash === autoHash ? autoRegister.attempts : 0;
   const autoErrors = autoRegister.hash === autoHash ? autoRegister.errors : 0;
+  const autoHidden =
+    autoRegister.hash === autoHash ? autoRegister.hiddenAsks : 0;
   const autoTicks = autoRegister.ticks;
   useEffect(() => {
     if (autoHash === null || autoAttempts >= AUTO_REGISTER_ATTEMPTS) return;
     const timer = window.setTimeout(
       () => {
-        const done = (attempts: number, errors: number) => {
+        const done = (
+          attempts: number,
+          errors: number,
+          hiddenAsks = autoHidden,
+        ) => {
           if (mounted.current)
             setAutoRegister({
               hash: autoHash,
               attempts,
+              hiddenAsks,
               errors,
               ticks: autoTicks + 1,
             });
         };
-        // A hidden tab asks nothing and uses no attempt; the next tick retries.
-        if (document.visibilityState === "hidden") {
+        // A background tab keeps asking within its own limit, so switching
+        // tabs does not leave the vault unrecorded; past it the tick waits.
+        const turn = autoRegisterTurn(
+          { attempts: autoAttempts, hiddenAsks: autoHidden },
+          document.visibilityState === "hidden",
+        );
+        if (!turn.ask) {
           done(autoAttempts, autoErrors);
           return;
         }
@@ -576,9 +663,10 @@ export function OwnerVaultSetup({
         const current = () => mounted.current && action.current === token;
         void latestRegister
           .current(current, true)
-          .then(() => done(autoAttempts + 1, 0))
+          .then(() => done(turn.next.attempts, 0, turn.next.hiddenAsks))
           .catch((caught) => {
-            if (!current()) return done(autoAttempts + 1, autoErrors);
+            if (!current())
+              return done(turn.next.attempts, autoErrors, turn.next.hiddenAsks);
             // Show why the check fails. A failed creation is final, and so are
             // repeated failures; one failure is asked again and a later
             // success withdraws the message.
@@ -591,17 +679,28 @@ export function OwnerVaultSetup({
             done(
               failed || errors >= AUTO_REGISTER_ERRORS
                 ? AUTO_REGISTER_ATTEMPTS
-                : autoAttempts + 1,
+                : turn.next.attempts,
               errors,
+              turn.next.hiddenAsks,
             );
           });
       },
-      autoAttempts < AUTO_REGISTER_FAST_ATTEMPTS
-        ? AUTO_REGISTER_FAST_MS
-        : AUTO_REGISTER_SLOW_MS,
+      autoAttempts === 0 && autoHidden === 0 && askSoon === autoHash
+        ? AUTO_REGISTER_SOON_MS
+        : autoAttempts + autoHidden < AUTO_REGISTER_FAST_ATTEMPTS
+          ? AUTO_REGISTER_FAST_MS
+          : AUTO_REGISTER_SLOW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [autoHash, autoAttempts, autoErrors, autoTicks, setError]);
+  }, [
+    autoHash,
+    autoAttempts,
+    autoErrors,
+    autoHidden,
+    autoTicks,
+    askSoon,
+    setError,
+  ]);
   const active = pending ?? review;
   return (
     <section
@@ -858,13 +957,14 @@ export function OwnerVaultSetup({
                   onChange={(e) => {
                     action.current += 1;
                     setRecoveryHash(e.target.value);
+                    setProvisional(null);
                   }}
                 />
               </label>
               <button
                 className="button"
                 type="button"
-                disabled={busy}
+                disabled={busy || fundingBusy}
                 onClick={() => void register()}
               >
                 Check vault registration
@@ -901,6 +1001,43 @@ export function OwnerVaultSetup({
             >
               Change review
             </button>
+          ) : null}
+          {pending?.hash &&
+          provisional &&
+          provisional.deploymentTransaction.toLowerCase() ===
+            pending.hash.toLowerCase() ? (
+            <VaultActions
+              key={`${provisional.network}:${provisional.vault}`}
+              projectId={project.id}
+              deployment={provisional}
+              connectedWallet={
+                wallet && sameWallet(wallet.address, provisional.owner)
+                  ? wallet
+                  : undefined
+              }
+              provisional
+              onWallet={(connection) => {
+                fundingWallet.current = connection;
+              }}
+              onBusy={(running) => {
+                // A registration answer still in flight must not switch the
+                // page under a wallet prompt; the next check asks again.
+                if (running) action.current += 1;
+                setFundingBusy(running);
+              }}
+              onFinalized={() => {
+                // A final deposit means the creation before it is final too:
+                // ask for registration soon instead of at the next timer.
+                setAskSoon(pending.hash);
+                setAutoRegister((state) => ({
+                  ...state,
+                  attempts: 0,
+                  hiddenAsks: 0,
+                  errors: 0,
+                  ticks: state.ticks + 1,
+                }));
+              }}
+            />
           ) : null}
         </>
       ) : null}

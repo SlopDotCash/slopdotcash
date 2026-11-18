@@ -398,6 +398,51 @@ test("exact remote artifact bytes remain verified after transport cleanup", asyn
   expect(fixture.response.body?.locked).toBe(false);
 });
 
+test("remote verification checks both role skills and their discovery aliases", async () => {
+  const paths = [
+    "contribute/SKILL.md",
+    "maintain/SKILL.md",
+    ".well-known/agent-skills/slop-contributor/SKILL.md",
+    ".well-known/agent-skills/slop-maintainer/SKILL.md",
+  ];
+  const artifacts = paths.map((path) => ({
+    path,
+    contents: Buffer.from(`# ${path}\n`),
+  }));
+  const requested: string[] = [];
+  const result = await verifyRemoteArtifacts({
+    artifacts,
+    cacheKey: "role-skills",
+    fetchImpl: async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const path = url.pathname.slice(1);
+      requested.push(path);
+      const artifact = artifacts.find((entry) => entry.path === path);
+      if (!artifact) throw new Error(`Unexpected artifact: ${path}`);
+      return new Response(artifact.contents, {
+        headers: { "content-type": "text/markdown; charset=utf-8" },
+      });
+    },
+  });
+  expect(requested).toEqual(paths);
+  expect(result.map((entry: { path: string }) => entry.path)).toEqual(paths);
+});
+
+test("remote verification rejects changed maintainer skill bytes", async () => {
+  await expect(
+    verifyRemoteArtifacts({
+      artifacts: [
+        { path: "maintain/SKILL.md", contents: Buffer.from("review") },
+      ],
+      cacheKey: "role-skills",
+      fetchImpl: async () =>
+        new Response("remove", {
+          headers: { "content-type": "text/markdown" },
+        }),
+    }),
+  ).rejects.toThrow("does not match the verified dist artifact");
+});
+
 test("short exact artifact body is refused after releasing the reader", async () => {
   const fixture = responseFixture({
     chunks: [new TextEncoder().encode("a")],

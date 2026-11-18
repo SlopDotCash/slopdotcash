@@ -11,7 +11,13 @@ import {
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import { cycleIndexFixture } from "../fixtures";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  failPoolFundingRead,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -51,6 +57,7 @@ async function fixtures(page: Page, paymentRead = () => {}) {
       ),
     }),
   );
+  await servePublicProjectReads(page);
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
@@ -188,9 +195,13 @@ test("point rankings and ties do not depend on payment availability", async ({
 });
 
 test("history navigation keeps contributor standings scoped to the current project", async ({
+  diagnostics,
   page,
 }, info) => {
   await fixtures(page);
+  // The test follows Eliza's home card; its fixture pool has no vault, so
+  // keep it listed as a failed funding read does.
+  await failPoolFundingRead(page, diagnostics);
   await page.goto(`${site}/projects/slopdotcash?project=eliza&period=lifetime`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",

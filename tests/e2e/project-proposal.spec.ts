@@ -209,7 +209,7 @@ const CREATED_SETUP = {
   state: "waiting",
   nextAction: {
     kind: "wait_for_scan",
-    message: "The security scan is queued. Nothing is needed from you.",
+    message: "Scan queued.",
     href: null,
   },
   checks: {
@@ -219,11 +219,11 @@ const CREATED_SETUP = {
     },
     installation: {
       state: "installed",
-      message: "Slopbot is installed on example/open-protein.",
+      message: "Installed.",
     },
     scan: {
       state: "queued",
-      message: "The security scan is queued. Nothing is needed from you.",
+      message: "Scan queued.",
     },
   },
   funding: { mode: "none" },
@@ -273,8 +273,8 @@ async function prepareCreationReview(page: Page) {
     .getByLabel("Short description")
     .fill("Reproducible protein-folding benchmarks.");
   await page.getByLabel("Goal").fill("Make protein research reproducible.");
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
 }
 
@@ -497,9 +497,9 @@ for (const integrationBranch of ["release/2026+10", "개발/다음"]) {
       .getByLabel("Short description")
       .fill("Reproducible protein-folding benchmarks.");
     await page.getByLabel("Goal").fill("Make protein research reproducible.");
-    await page.getByRole("button", { name: "Next: Rewards" }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await expect(page.getByLabel("Points only")).toBeVisible();
-    await page.getByRole("button", { name: "Next: Review" }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await expect(
       page.getByRole("article", { name: "Listing preview" }),
     ).toContainText(integrationBranch);
@@ -606,7 +606,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.getByLabel("Project name")).toHaveValue("open-protein");
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(/\S/u);
   const closure = page.getByRole("checkbox", {
-    name: /Allow Slopbot to close/u,
+    name: /Slopbot may close/u,
   });
   await expect(closure).toBeChecked();
   await closure.uncheck();
@@ -647,7 +647,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     "src",
     /^https:\/\/avatars\.githubusercontent\.com\/example(?:\?|$)/u,
   );
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByLabel("Short description")).toBeFocused();
   await expect(page.locator("#field-headline-error")).toBeVisible();
   await expect(page.locator("#field-goal-error")).toBeVisible();
@@ -663,23 +663,29 @@ test("drafts a project through the setup steps and creates it without an admin",
     .fill("Accepted pull requests with verified tests.");
   const requiredTests = page.getByLabel("Required tests", { exact: true });
   await requiredTests.fill("x".repeat(2001));
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(requiredTests).toHaveAttribute("aria-invalid", "true");
   await requiredTests.fill("Run the project's existing test suite.");
   await expect(requiredTests).not.toHaveAttribute("aria-invalid", "true");
   await expect(requiredTests).toBeVisible();
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   // Funding is optional; asset and vault details follow the choice.
   await expect(page.getByLabel("Points only")).toBeChecked();
   await expect(page.getByRole("group", { name: "Network" })).toHaveCount(0);
   await page.getByLabel("Monthly rewards").check();
+  const honorSystem = page.getByRole("checkbox", {
+    name: "Promise this amount on the honor system",
+    exact: true,
+  });
+  await expect(honorSystem).not.toBeChecked();
+  await expect(honorSystem).toBeDisabled();
   await page
     .getByRole("group", { name: "Network", exact: true })
     .getByRole("radio", { name: "Solana", exact: true })
     .check();
   await expect(page.getByLabel(/USD$/u)).toHaveCount(0);
   await steps.getByRole("button", { name: "Review", exact: true }).click();
-  await expect(page.getByLabel("Monthly amount (USDC)")).toBeFocused();
+  await expect(page.getByLabel("Amount / month")).toBeFocused();
   await expect(page.locator("#field-monthlyPool-error")).toBeVisible();
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
@@ -688,7 +694,29 @@ test("drafts a project through the setup steps and creates it without an admin",
     path: test.info().outputPath("inline-required-amount.png"),
     fullPage: true,
   });
-  await page.getByLabel("Monthly amount (USDC)").fill("2500");
+  await page.getByLabel("Amount / month").fill("2500");
+  await expect(honorSystem).toBeEnabled();
+  await honorSystem.check();
+  expect((await readProposalDraft(page)).honorSystem).toBe("true");
+  // A transient invalid amount must not prevent withdrawing the promise.
+  await page.getByLabel("Amount / month").fill("0");
+  await expect(honorSystem).toBeChecked();
+  await expect(honorSystem).toBeEnabled();
+  await honorSystem.uncheck();
+  await expect(honorSystem).toBeDisabled();
+  await page.getByLabel("Amount / month").fill("2500");
+  await honorSystem.check();
+  expect(await readProposalDraft(page)).toMatchObject({
+    honorSystem: "true",
+    monthlyPool: "2500",
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(honorSystem).toBeChecked();
+  await page.getByLabel("Points only", { exact: true }).check();
+  await expect(honorSystem).toHaveCount(0);
+  await page.getByLabel("Monthly rewards", { exact: true }).check();
+  await expect(honorSystem).not.toBeChecked();
+  await honorSystem.check();
   // A different account may have signed in in another tab during setup.
   // Review must identify the current actor before enabling creation.
   currentSession = {
@@ -696,7 +724,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     githubId: "4343",
     githubLogin: "other-maintainer",
   };
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator(".setup-actor")).toHaveText("@other-maintainer");
   currentSession = {
     ...currentSession,
@@ -704,16 +732,26 @@ test("drafts a project through the setup steps and creates it without an admin",
     githubLogin: "example-maintainer",
   };
   await steps.getByRole("button", { name: "Rewards", exact: true }).click();
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
 
   const preview = page.getByRole("article", { name: "Listing preview" });
   await expect(preview).toContainText("Open Protein");
-  await expect(preview).toContainText("example/open-protein · development");
-  await expect(preview).toContainText("2,500 USDC on Solana · pledge");
-  await expect(preview).toContainText(
-    "2% of ordinary awards and unused-fund withdrawals.",
+  await expect(preview.getByTitle("Repository", { exact: true })).toHaveText(
+    "example/open-protein",
   );
+  await expect(preview.getByTitle("Branch", { exact: true })).toHaveText(
+    "development",
+  );
+  await expect(preview).toContainText(
+    "2,500 USDC/mo Solana Honor system (not vaulted or guaranteed)",
+  );
+  await expect(
+    preview
+      .locator("dl > div")
+      .filter({ has: page.locator("dt", { hasText: /^Fee$/u }) })
+      .locator("dd"),
+  ).toHaveText("2%");
   await expect(preview).not.toContainText("$");
   await expect(preview).toContainText("MIT");
   await expect(preview).toContainText("@example-referrer");
@@ -721,6 +759,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     preview.getByRole("button", { name: "Clear referral" }),
   ).toBeVisible();
   const contributorSkill = page.getByLabel("Contributor skill SKILL.md");
+  await page.getByText("Preview skill", { exact: true }).click();
   await page.getByRole("radio", { name: "Contributor", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(
@@ -749,9 +788,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     page.getByRole("heading", { name: "Project created" }),
   ).toBeFocused();
   await expect(
-    page.getByRole("heading", {
-      name: "Setup status: Waiting for the security scan",
-    }),
+    page.getByRole("heading", { name: /^Setup\s*Scanning$/u }),
   ).toBeVisible();
   const setupPanel = page.locator(".project-setup-status");
   for (const [label, status] of [
@@ -817,6 +854,7 @@ test("drafts a project through the setup steps and creates it without an admin",
       committedMinor: "0",
       paymentMode: "disabled",
       fundingState: "pledged",
+      honorSystem: true,
     },
     terms: {
       repositoryLicense: {
@@ -837,7 +875,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   expect(posted?.image).toBeUndefined();
 
   // A completed setup offers the next action instead of the old wizard.
-  await page.getByRole("button", { name: "Add another project" }).click();
+  await page.getByRole("button", { name: "Add another", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Project created" }),
   ).toHaveCount(0);
@@ -849,8 +887,8 @@ test("drafts a project through the setup steps and creates it without an admin",
     .getByLabel("Short description")
     .fill("Reproducible protein-folding benchmarks.");
   await page.getByLabel("Goal").fill("Make protein research reproducible.");
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(handoff).toBeVisible();
   let completeCreation!: () => void;
   const pendingCreation = new Promise<void>((resolve) => {
@@ -898,7 +936,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await patchProposalDraft(page, { integrationBranch: "retired-branch" });
   await page.reload();
   await expect(branch).toHaveValue("");
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(branch).toHaveAttribute("aria-invalid", "true");
   await branch.selectOption("development");
   await expect(page.getByLabel("Project name")).toHaveValue("Open Protein");
@@ -1004,16 +1042,16 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({
   await page
     .getByLabel("Acceptance criteria")
     .fill("Accepted pull requests with verified tests.");
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Monthly rewards").check();
   await page
     .getByRole("group", { name: "Network", exact: true })
     .getByRole("radio", { name: "Robinhood Chain", exact: true })
     .check();
-  await page.getByLabel("Monthly amount (USDG)").fill("1000");
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByLabel("Amount / month").fill("1000");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   const preview = page.getByRole("article", { name: "Listing preview" });
-  await expect(preview).toContainText("1,000 USDG on Robinhood Chain · pledge");
+  await expect(preview).toContainText("1,000 USDG/mo Robinhood Chain Pledge");
   let manifest: Record<string, unknown> | null = null;
   await routeCreation(page, (body) => {
     manifest = body.manifest;
@@ -1055,7 +1093,7 @@ test("native rewards keep ETH and SOL units through review and creation", async 
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await enterRepository(page, "example/open-protein");
   await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Monthly rewards").check();
 
   for (const id of ["base", "ethereum", "robinhood", "solana"] as const) {
@@ -1078,11 +1116,11 @@ test("native rewards keep ETH and SOL units through review and creation", async 
       })
       .check();
     await expect(page.getByLabel("Token address")).toHaveCount(0);
-    const amount = page.getByLabel(`Monthly amount (${network.native.symbol})`);
+    const amount = page.getByLabel("Amount / month");
     await amount.fill(
       id === "solana" ? "0.0000000001" : "0.0000000000000000001",
     );
-    await page.getByRole("button", { name: "Next: Review" }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await expect(amount).toHaveAttribute("aria-invalid", "true");
     const value = id === "solana" ? "1.000000001" : "1.000000000000000001";
     await amount.fill(value);
@@ -1090,10 +1128,10 @@ test("native rewards keep ETH and SOL units through review and creation", async 
       path: test.info().outputPath(`native-${id}.png`),
       fullPage: true,
     });
-    await page.getByRole("button", { name: "Next: Review" }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     const preview = page.getByRole("article", { name: "Listing preview" });
     await expect(preview).toContainText(
-      `${value} ${network.native.symbol} on ${network.name} · pledge`,
+      `${value} ${network.native.symbol}/mo ${network.name} Pledge`,
     );
     await expect(preview).not.toContainText("$");
     if (id !== "solana") {
@@ -1155,19 +1193,19 @@ test("a saved native reward with an unknown network stays editable until correct
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await enterRepository(page, "example/open-protein");
   await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Monthly rewards").check();
   await page
     .getByRole("group", { name: "Asset", exact: true })
     .getByRole("radio", { name: "ETH", exact: true })
     .check();
-  await page.getByLabel("Monthly amount (ETH)").fill("1");
+  await page.getByLabel("Amount / month").fill("1");
   await patchProposalDraft(page, { settlementChain: "retired-network" });
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", { name: "Add a project", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator("#field-settlementChain-error")).toBeVisible();
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
@@ -1182,18 +1220,18 @@ test("a saved native reward with an unknown network stays editable until correct
     fullPage: true,
   });
   await networks.getByRole("radio", { name: "Base", exact: true }).check();
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
-  ).toContainText("1 ETH on Base");
+  ).toContainText("1 ETH/mo Base");
   await page
     .getByRole("navigation", { name: "Setup steps" })
     .getByRole("button", { name: "Rewards", exact: true })
     .click();
   await page.getByLabel("Private bounty", { exact: true }).check();
-  await page.getByRole("button", { name: "Next: Review" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   const bountyPreview = page.getByRole("article", { name: "Listing preview" });
-  await expect(bountyPreview).toContainText("1 ETH per accepted finding");
+  await expect(bountyPreview).toContainText("1 ETH / finding");
   await expect(bountyPreview).not.toContainText("critical finding");
   await expectAccessible(page);
   await page.screenshot({
@@ -1358,7 +1396,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(picker).toHaveValue("example/open-protein");
   await expect(picker).toBeFocused();
   await expectAccessible(page);
-  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByLabel("Points only")).toBeChecked();
   await expectAccessible(page);
 });
@@ -1452,8 +1490,8 @@ for (const [name, expectedId] of [
       .getByLabel("Short description")
       .fill("Reproducible protein-folding benchmarks.");
     await page.getByLabel("Goal").fill("Make protein research reproducible.");
-    await page.getByRole("button", { name: "Next: Rewards" }).click();
-    await page.getByRole("button", { name: "Next: Review" }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await page.getByRole("button", { name: "Create project" }).click();
     await expect(
       page.getByRole("heading", { name: "Project created" }),
@@ -1656,7 +1694,7 @@ test("a saved application change publishes after a retry and reports its setup",
   await expect(
     pending
       .getByRole("article", { name: "Pending application: New Lab" })
-      .getByRole("button", { name: "Create this project", exact: true }),
+      .getByRole("button", { name: "Create", exact: true }),
   ).toBeVisible();
   // Decided applications are not offered again.
   await expect(
@@ -1665,9 +1703,7 @@ test("a saved application change publishes after a retry and reports its setup",
   expect(listReads).toBe(2);
   expect(diagnostics.count(listFailed)).toBe(1);
 
-  await change
-    .getByRole("button", { name: "Publish this change", exact: true })
-    .click();
+  await change.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(change.getByRole("alert")).toContainText(
     "Install Slopbot on example/open-protein first.",
   );
@@ -1685,8 +1721,13 @@ test("a saved application change publishes after a retry and reports its setup",
   await expect(
     change.getByRole("button", { name: "Retry", exact: true }),
   ).toHaveCount(0);
-  await expect(change).toContainText(
-    "The security scan is queued. Nothing is needed from you.",
+  const manage = change.getByRole("link", {
+    name: "Open Protein",
+    exact: true,
+  });
+  await expect(manage).toHaveAttribute("href", "/projects/open-protein/manage");
+  await expect(change.locator(".project-setup-status h2")).toHaveText(
+    /^Setup\s*Scanning$/u,
   );
   expect(publishes).toEqual([
     { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },

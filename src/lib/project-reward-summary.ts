@@ -61,6 +61,7 @@ export function hasProjectCardBounty(project: {
 
 export function projectRewardSummaries(
   project: ProjectDefinition,
+  exact = false,
 ): ProjectRewardSummary[] {
   const summaries: ProjectRewardSummary[] = [];
   const { reward, rewardAsset: asset, securityBounty: bounty } = project;
@@ -81,7 +82,7 @@ export function projectRewardSummaries(
       asset && asset.kind !== "stablecoin"
         ? {
             kind: "monthly-pool",
-            amount: compactWhole(amount),
+            amount: exact ? amount : compactWhole(amount),
             token: {
               symbol: formatAssetSymbol(asset.symbol, asset.kind),
               url:

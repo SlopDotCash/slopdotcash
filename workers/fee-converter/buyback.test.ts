@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { decodeFunctionData, encodeFunctionData, type Hex } from "viem";
+import {
+  decodeFunctionData,
+  encodeFunctionData,
+  encodeFunctionResult,
+  type Hex,
+  zeroAddress,
+  zeroHash,
+} from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import orders from "../../tests/fixtures/dln-orders.json";
 import { sqliteD1 } from "../../tests/sqlite-d1";
@@ -10,6 +17,7 @@ import {
   type BuyQuote,
   createBuyback,
   type FillState,
+  type FinalizedRpcObservation,
   type OutcomeEvidence,
 } from "./buyback";
 import {
@@ -31,7 +39,11 @@ import {
   runNetwork,
   type SendStatus,
 } from "./core";
-import { checkedDlnOrder, DLN_SOURCE_ABI } from "./debridge";
+import {
+  checkedDlnOrder,
+  DLN_DESTINATION_ABI,
+  DLN_SOURCE_ABI,
+} from "./debridge";
 import { checkedSolanaDlnOrder, dlnGiveOrderWallet } from "./debridge-solana";
 import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
@@ -97,6 +109,133 @@ const CONVERTER_ENV = {
     },
   }),
 };
+const CURRENT_POLICY_ENV = {
+  BUYBACK_MIN_BRIDGE_MICRO: "25000000",
+  BUYBACK_MAX_BRIDGE_COST_BPS: "1000",
+  BUYBACK_MIN_BUY_MICRO: "25000000",
+  BUYBACK_MIN_BURN_MICRO: "5000000",
+};
+
+test("only live Robinhood recovery reports finalized DLN RPC readiness", async () => {
+  const endpoint = "https://private-rpc.invalid/redacted";
+  const block = {
+    number: "0x10",
+    hash: `0x${"ab".repeat(32)}`,
+    timestamp: "0x1",
+    transactions: [],
+  };
+  const callData = encodeFunctionData({
+    abi: DLN_DESTINATION_ABI,
+    functionName: "takeOrders",
+    args: [zeroHash],
+  });
+  const order = encodeFunctionResult({
+    abi: DLN_DESTINATION_ABI,
+    functionName: "takeOrders",
+    result: [0, zeroAddress, 0, 0n],
+  });
+  const cases = [
+    { name: "finalized", methods: ["chain", "finalized", "call", "canonical"] },
+    { name: "wrong-chain", methods: ["chain"] },
+    { name: "latest-only", methods: ["chain", "finalized", "call"] },
+    {
+      name: "changed-block",
+      methods: ["chain", "finalized", "call", "canonical"],
+    },
+    { name: "receipts", methods: [] },
+    { name: "dry_run", methods: [] },
+    { name: "off", methods: [] },
+  ];
+  for (const { name, methods } of cases) {
+    const { db, sqlite } = sqliteD1();
+    const key = generatePrivateKey();
+    const actual: string[] = [];
+    const doFetch = (async (input, init) => {
+      if (String(input) !== endpoint)
+        throw new Error("Unexpected provider in the RPC test");
+      const request = JSON.parse(String(init?.body));
+      const reply = (result: unknown) =>
+        Response.json({ jsonrpc: "2.0", id: request.id, result });
+      if (request.method === "eth_chainId") {
+        actual.push("chain");
+        return reply(name === "wrong-chain" ? "0x1" : "0x1237");
+      }
+      if (request.method === "eth_getBlockByNumber") {
+        if (request.params[0] === "finalized") {
+          actual.push("finalized");
+          return reply(block);
+        }
+        if (request.params[0] === block.number) {
+          actual.push("canonical");
+          return reply(
+            name === "changed-block" ? { ...block, hash: zeroHash } : block,
+          );
+        }
+      }
+      if (request.method === "eth_call") {
+        actual.push("call");
+        if (
+          request.params[0].to.toLowerCase() !== DLN.destination ||
+          request.params[0].data !== callData ||
+          request.params[1] !== block.number
+        )
+          throw new Error(
+            "The RPC did not pin the DLN view to the finalized block",
+          );
+        if (name === "latest-only")
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: {
+              code: -32000,
+              message: `No historical state at ${endpoint}`,
+            },
+          });
+        return reply(order);
+      }
+      actual.push(request.method);
+      throw new Error("Unexpected method in the RPC test");
+    }) as typeof fetch;
+    try {
+      const [result] = await runOnce(
+        {
+          FEE_DB: db,
+          ...CONVERTER_ENV,
+          ...BUYBACK_ENV,
+          FEE_CONVERTER_NETWORKS: "robinhood",
+          FEE_CONVERTER_ALLOWLIST: "",
+          FEE_WALLET_ROBINHOOD: privateKeyToAccount(key).address.toLowerCase(),
+          FEE_WALLET_KEY_ROBINHOOD: key,
+          RPC_URL_ROBINHOOD: endpoint,
+          BUYBACK_MODE: name === "off" || name === "dry_run" ? name : "live",
+        },
+        () => new Date(NOW),
+        { fetch: doFetch },
+        name === "receipts" ? "receipts" : "recovery",
+      );
+      expect(actual).toEqual(methods);
+      expect(result?.status).toBe("not_converted");
+      const expected: FinalizedRpcObservation | undefined =
+        name === "finalized"
+          ? {
+              status: "verified",
+              chainId: 4663,
+              blockNumber: "16",
+              blockHash: block.hash,
+            }
+          : methods.length
+            ? { status: "unavailable" }
+            : undefined;
+      expect(result?.buyback?.finalizedRpc).toEqual(expected);
+      expect(result?.buyback?.errors ?? 0).toBe(0);
+      expect(
+        sqlite.query("SELECT COUNT(*) AS n FROM fee_conversions").get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      sqlite.close();
+    }
+  }
+});
 
 interface FakeChain extends ChainClient {
   balances: Map<string, bigint>;
@@ -108,7 +247,13 @@ interface FakeChain extends ChainClient {
   needsApproval: boolean;
   refunds: Map<string, OutcomeEvidence>;
   fills: Map<string, FillState>;
-  buyQuote: (token: string, amount: bigint) => BuyQuote | { noRoute: string };
+  bridgeQuotes: bigint[];
+  buyQuotes: { token: string; amount: bigint }[];
+  burnQuotes: bigint[];
+  buyQuote: (
+    token: string,
+    amount: bigint,
+  ) => BuyQuote | { noRoute: string } | { belowMinimumValueMicro: bigint };
   burnQuote: (amount: bigint) => BurnQuote | { blocked: string };
   accruedFees: Map<string, { asset: string; amount: bigint }>;
   claims: string[];
@@ -149,6 +294,9 @@ function fakeChain(): FakeChain {
     needsApproval: false,
     refunds: new Map(),
     fills: new Map(),
+    bridgeQuotes: [],
+    buyQuotes: [],
+    burnQuotes: [],
     accruedFees: new Map(),
     claims: [],
     statusFor: () => ({ kind: "pending" }),
@@ -224,6 +372,7 @@ function fakeChain(): FakeChain {
     buyback: {
       bridge: {
         async quote(amount) {
+          chain.bridgeQuotes.push(amount);
           return chain.bridgeQuote(amount);
         },
         async prepare(quote) {
@@ -241,6 +390,7 @@ function fakeChain(): FakeChain {
           return chain.fills.get(order.orderId) ?? { state: "open" };
         },
         async quoteBuy(token, amount) {
+          chain.buyQuotes.push({ token, amount });
           return chain.buyQuote(token, amount);
         },
         async prepareBuy(_token, quote) {
@@ -250,6 +400,7 @@ function fakeChain(): FakeChain {
           };
         },
         async quoteBurn(amount) {
+          chain.burnQuotes.push(amount);
           return chain.burnQuote(amount);
         },
         async prepareBurn(amount) {
@@ -850,6 +1001,250 @@ const arrived = (block = 9): FillState => ({
   evidence: { block, blockHash: `0x${"cd".repeat(32)}` },
 });
 
+describe("available buyback funds at the reviewed minimum", () => {
+  test.each([
+    {
+      income: 49_999_998n,
+      balance: 50_000_000n,
+      cap: 1_000_000_000n,
+      quoted: 0n,
+    },
+    {
+      income: 50_000_000n,
+      balance: 24_999_999n,
+      cap: 1_000_000_000n,
+      quoted: 0n,
+    },
+    { income: 50_000_000n, balance: 50_000_000n, cap: 24_999_999n, quoted: 0n },
+    { income: 0n, balance: 1_000_000_000n, cap: 1_000_000_000n, quoted: 0n },
+    {
+      income: 50_000_000n,
+      balance: 25_000_000n,
+      cap: 1_000_000_000n,
+      quoted: 25_000_000n,
+    },
+    {
+      income: 100_000_000n,
+      balance: 40_000_000n,
+      cap: 30_000_000n,
+      quoted: 30_000_000n,
+    },
+  ])(
+    "bridge quotes use the fee share, wallet and cap: case %#",
+    async ({ income, balance, cap, quoted }) => {
+      const h = harness({
+        env: { ...CURRENT_POLICY_ENV, BUYBACK_RUN_CAP_MICRO: cap.toString() },
+      });
+      if (income > 0n) usdcFees(h, income);
+      h.chain.balances.set(USDC, balance);
+      await h.run();
+      expect(h.chain.bridgeQuotes).toEqual(quoted === 0n ? [] : [quoted]);
+      if (quoted === 0n) expect(h.chain.signed).toHaveLength(0);
+    },
+  );
+
+  test.each([0n, 1n])(
+    "the 25 USDC bridge applies the 10 percent total cost boundary: case %#",
+    async (over) => {
+      const h = harness({ env: CURRENT_POLICY_ENV });
+      usdcFees(h, 50_000_000n);
+      h.chain.balances.set(USDC, 50_000_000n);
+      h.chain.bridgeQuote = (amount) => ({
+        amountIn: amount,
+        takeToken: ROBINHOOD_USDG,
+        takeAmount: amount - 2_500_000n - over,
+        nativeFee: 0n,
+        costMicro: 2_500_000n + over,
+        receiver: WALLET,
+        summary: {},
+      });
+      await h.run();
+      expect(h.chain.bridgeQuotes).toEqual([25_000_000n]);
+      expect(h.rows("kind = 'bridge'")[0]).toMatchObject(
+        over === 0n
+          ? { state: "submitted", amount_in: "25000000" }
+          : { state: "skipped", reason: "bridge cost above the cap" },
+      );
+      expect(h.chain.signed).toHaveLength(over === 0n ? 1 : 0);
+    },
+  );
+
+  test("an in-transit order still reconciles and a proven refund releases its share", async () => {
+    const h = harness({ env: CURRENT_POLICY_ENV });
+    const normal = h.chain.bridgeQuote;
+    h.chain.bridgeQuote = (amount) => ({
+      ...(normal(amount) as BridgeQuote),
+      costMicro: 100_000n,
+    });
+    const terms = await deposited(h, 50_000_000n);
+    usdcFees(h, 50_000_000n);
+    await h.run();
+    expect(h.chain.bridgeQuotes).toEqual([25_000_000n]);
+    h.chain.refunds.set(terms.orderId, {
+      block: 77,
+      blockHash: `0x${"ab".repeat(32)}`,
+    });
+    const result = await h.run();
+    expect(result.buyback?.refunded).toBe(1);
+    expect(h.chain.bridgeQuotes).toEqual([25_000_000n, 50_000_000n]);
+    await h.run();
+    expect(h.chain.bridgeQuotes).toHaveLength(2);
+    expect(
+      h.sqlite.query("SELECT COUNT(*) AS n FROM fee_bridge_outcomes").get(),
+    ).toEqual({ n: 1 });
+  });
+
+  test.each([
+    {
+      income: 49_999_998n,
+      balance: 50_000_000n,
+      cap: 1_000_000_000n,
+      quoted: 0n,
+    },
+    {
+      income: 50_000_000n,
+      balance: 24_999_999n,
+      cap: 1_000_000_000n,
+      quoted: 0n,
+    },
+    { income: 50_000_000n, balance: 50_000_000n, cap: 24_999_999n, quoted: 0n },
+    { income: 0n, balance: 1_000_000_000n, cap: 1_000_000_000n, quoted: 0n },
+    {
+      income: 50_000_000n,
+      balance: 25_000_000n,
+      cap: 1_000_000_000n,
+      quoted: 25_000_000n,
+    },
+    {
+      income: 100_000_000n,
+      balance: 40_000_000n,
+      cap: 30_000_000n,
+      quoted: 30_000_000n,
+    },
+  ])(
+    "USDG purchase quotes use the fee share, wallet and cap: case %#",
+    async ({ income, balance, cap, quoted }) => {
+      const h = harness({
+        env: { ...CURRENT_POLICY_ENV, BUYBACK_RUN_CAP_MICRO: cap.toString() },
+      });
+      if (income > 0n)
+        h.earn({
+          network: "robinhood",
+          kind: "claim",
+          token: ROBINHOOD_USDG,
+          target: ROBINHOOD_USDG,
+          amountOut: income,
+        });
+      h.chain.balances.set(ROBINHOOD_USDG, balance);
+      await h.run("robinhood");
+      expect(h.chain.buyQuotes).toEqual(
+        quoted === 0n ? [] : [{ token: ROBINHOOD_USDG, amount: quoted }],
+      );
+      if (quoted === 0n) expect(h.chain.signed).toHaveLength(0);
+    },
+  );
+
+  test("committed purchases lower eligibility while an owed burn continues", async () => {
+    const h = harness({ env: CURRENT_POLICY_ENV });
+    h.earn({
+      network: "robinhood",
+      kind: "claim",
+      token: ROBINHOOD_USDG,
+      target: ROBINHOOD_USDG,
+      amountOut: 50_000_000n,
+    });
+    h.chain.balances.set(ROBINHOOD_USDG, 1_000_000_000n);
+    await h.run("robinhood");
+    await h.run("robinhood");
+    expect(h.chain.buyQuotes).toEqual([
+      { token: ROBINHOOD_USDG, amount: 25_000_000n },
+    ]);
+    h.finalize((row) => BigInt(row.amountIn) * SLOP_PER_MICRO);
+    h.chain.balances.set(SLOP_TOKEN, 25_000_000n * SLOP_PER_MICRO);
+    h.earn({
+      network: "robinhood",
+      kind: "claim",
+      token: ROBINHOOD_USDG,
+      target: ROBINHOOD_USDG,
+      amountOut: 49_999_998n,
+    });
+    await h.run("robinhood");
+    expect(h.chain.buyQuotes).toHaveLength(1);
+    expect(h.chain.burnQuotes).toEqual([12_500_000n * SLOP_PER_MICRO]);
+    expect(h.chain.signed.filter((row) => row.kind === "burn")).toHaveLength(1);
+    h.earn({
+      network: "robinhood",
+      kind: "claim",
+      token: ROBINHOOD_USDG,
+      target: ROBINHOOD_USDG,
+      amountOut: 2n,
+    });
+    await h.run("robinhood");
+    expect(h.chain.buyQuotes).toEqual([
+      { token: ROBINHOOD_USDG, amount: 25_000_000n },
+      { token: ROBINHOOD_USDG, amount: 25_000_000n },
+    ]);
+  });
+
+  test("a remaining run budget below the minimum avoids the next asset's quote", async () => {
+    const h = harness({
+      env: { ...CURRENT_POLICY_ENV, BUYBACK_RUN_CAP_MICRO: "74999999" },
+    });
+    for (const token of [ROBINHOOD_USDG, TOKEN]) {
+      h.earn({
+        network: "robinhood",
+        kind: "claim",
+        token,
+        target: token,
+        amountOut: 100_000_000n,
+      });
+      h.chain.balances.set(token, 100_000_000n);
+    }
+    await h.run("robinhood");
+    expect(h.chain.buyQuotes).toEqual([
+      { token: ROBINHOOD_USDG, amount: 50_000_000n },
+    ]);
+    expect(h.rows(`kind = 'buyback' AND token = '${TOKEN}'`)[0]).toMatchObject({
+      state: "pending",
+      reason: "below the minimum purchase value",
+    });
+  });
+
+  test.each([false, true])(
+    "an asset valued below the minimum waits, including after rescaling: case %#",
+    async (rescale) => {
+      const h = harness({
+        env: { ...CURRENT_POLICY_ENV, BUYBACK_RUN_CAP_MICRO: "30000000" },
+      });
+      h.earn({
+        network: "robinhood",
+        kind: "claim",
+        token: TOKEN,
+        target: TOKEN,
+        amountOut: 200_000_000n,
+      });
+      h.chain.balances.set(TOKEN, 200_000_000n);
+      const normal = h.chain.buyQuote;
+      h.chain.buyQuote = (token, amount) =>
+        rescale && h.chain.buyQuotes.length === 1
+          ? { ...(normal(token, amount) as BuyQuote), valueMicro: 120_000_000n }
+          : { belowMinimumValueMicro: 24_999_999n };
+      const result = await h.run("robinhood");
+      expect(result.buyback?.errors).toBe(0);
+      expect(h.chain.buyQuotes.map((row) => row.amount)).toEqual(
+        rescale ? [100_000_000n, 24_500_000n] : [100_000_000n],
+      );
+      expect(h.rows("kind = 'buyback'")[0]).toMatchObject({
+        state: "pending",
+        reason: "below the minimum purchase value",
+        quote_value_micro: 24_999_999,
+        amount_in: rescale ? "24500000" : "100000000",
+      });
+      expect(h.chain.signed).toHaveLength(0);
+    },
+  );
+});
+
 describe("purchase and burn on Robinhood Chain", () => {
   test("a journaled purchase consumes the run cap even if broadcast and its status write fail", async () => {
     const h = harness({
@@ -1103,8 +1498,8 @@ describe("purchase and burn on Robinhood Chain", () => {
     await capped.run("robinhood");
     const [scaled] = capped.rows("kind = 'buyback'");
     expect(scaled.state).toBe("submitted");
-    // Scaled toward 98% of the remaining cap, never above it.
-    expect(BigInt(scaled.amount_in as string)).toBe(98_000_000n);
+    // USDG is bounded by its exact value before the first quote.
+    expect(BigInt(scaled.amount_in as string)).toBe(100_000_000n);
     for (const h of [small, thin, unpriced, loose])
       expect(h.chain.signed).toHaveLength(0);
   });
@@ -1347,6 +1742,10 @@ describe("configuration", () => {
       ).limits as BuybackLimits;
       expect(active.shareBps).toBe(5_000n);
       expect(active.burnBps).toBe(5_000n);
+      expect(active.minBridgeMicro).toBe(25_000_000n);
+      expect(active.maxBridgeCostBps).toBe(1_000n);
+      expect(active.minBuyMicro).toBe(25_000_000n);
+      expect(active.minBurnMicro).toBe(5_000_000n);
       expect(active.maxBridgeNativeFee).toEqual({
         base: 10n ** 15n,
         ethereum: 10n ** 15n,

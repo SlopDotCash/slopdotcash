@@ -47,8 +47,15 @@ export type PagesEnv = {
   X_CLIENT_ID?: string;
   X_CLIENT_SECRET?: string;
   OPERATOR_GITHUB_IDS?: string;
+  /**
+   * Bearer token of the private reserved-awards feed for one operator
+   * service (PRD section 9). Unset keeps that route closed.
+   */
+  OPERATOR_FEED_TOKEN?: string;
   /** GitHub numeric actor IDs allowed to handle project exceptions. */
   ADMIN_GITHUB_IDS?: string;
+  /** One current admin eligible for the seven-day owner site session. */
+  OWNER_SESSION_GITHUB_ID?: string;
   /**
    * GitHub numeric actor IDs with the project moderation role: Quarantine,
    * Ban and reinstatement (PRD ADM-06). Unset keeps those actions closed.
@@ -92,6 +99,13 @@ export type PagesEnv = {
   SURPLUS_API_KEY?: string;
   /** Local browser tests only: a loopback analysis provider fixture origin. */
   SLOP_ANALYSIS_API_ORIGIN?: string;
+  /**
+   * Routine decisions on undecided private reports (PRD section 8, operator
+   * decision of 17 November 2026): exactly `dry_run` or `live`; anything
+   * else, including unset, is off. `wrangler.toml` sets production and
+   * `wrangler.staging.toml` sets staging.
+   */
+  SECURITY_ROUTINE_DECISIONS?: string;
   /** Notification Worker; absent where no notifier is deployed. */
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
   /**

@@ -7,13 +7,16 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fail } from "../backend/http";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import type { RepositoryControl } from "../backend/projects/contracts";
 import {
+  finishSavedVaultCreations,
   handleProjectApi,
   type ProjectApiDependencies,
   refreshProjectSetup,
+  savedVaultCreationSweep,
 } from "../backend/projects/handler";
 import type { ScanRequest } from "../backend/projects/setup";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
@@ -899,6 +902,164 @@ test("owner revisions publish presentation, require admission and apply money pr
   expect(budget.body.error).toBe("financial_change_restricted");
 });
 
+test("an owner explicitly publishes and removes an honor-system promise in immutable revisions", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  const reward = initial.reward as ProjectDefinition["reward"];
+  const created = await call("POST", "projects", OWNER, {
+    manifest: { ...initial, reward: { ...reward, honorSystem: true } },
+  });
+  expect(created.status).toBe(201);
+  const promised = await persistence.getProject("open-registry");
+  if (!promised) throw new Error("project expected");
+  expect(promised.manifest.reward).toEqual({ ...reward, honorSystem: true });
+  expect(promised.manifest.reward.paymentMode).toBe("disabled");
+  expect(promised.manifest.reward.committedMinor).toBe("0");
+  const raised = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        monthlyCapMinor: "2000000000",
+        monthlyCapDisplay: "$2,000",
+      },
+    },
+  });
+  expect(raised.status).toBe(200);
+  const changed = await persistence.getProject("open-registry");
+  if (!changed) throw new Error("project expected");
+  expect(changed.manifest.reward).toMatchObject({
+    honorSystem: true,
+    monthlyCapMinor: "2000000000",
+    paymentMode: "disabled",
+    committedMinor: "0",
+    cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "1000000000" }],
+  });
+  const { honorSystem: _promise, ...withoutPromise } = changed.manifest.reward;
+  const removed = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: changed.revision,
+    manifest: { ...changed.manifest, reward: withoutPromise },
+  });
+  expect(removed.status).toBe(200);
+  expect(
+    (await persistence.getProject("open-registry"))?.manifest.reward,
+  ).toEqual(withoutPromise);
+  const publicProject = await call("GET", "projects/open-registry", OWNER);
+  expect(
+    (publicProject.body.project as ProjectDefinition).reward.honorSystem,
+  ).toBeUndefined();
+  const history = (await persistence.listRevisions()).filter(
+    (entry) => entry.projectId === promised.id,
+  );
+  expect(
+    history.find((entry) => entry.revision === promised.revision)?.manifest,
+  ).toEqual(promised.manifest);
+  expect(
+    history.find((entry) => entry.revision === changed.revision)?.manifest,
+  ).toEqual(changed.manifest);
+});
+
+test("honor-system changes require current authority and cannot rewrite reward history", async () => {
+  const { persistence, call, create, state } = registry();
+  await create("open-registry", "example/open-registry");
+  const original = await persistence.getProject("open-registry");
+  if (!original) throw new Error("project expected");
+  const manifest = {
+    ...original.manifest,
+    reward: { ...original.manifest.reward, honorSystem: true as const },
+  };
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  const denied = await call("PUT", "projects/open-registry", OWNER, {
+    manifest,
+    expectedRevision: original.revision,
+  });
+  expect(denied.status).toBe(403);
+  expect(denied.body.error).toBe("authority_required");
+  expect((await persistence.getProject(original.id))?.revision).toBe(
+    original.revision,
+  );
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  };
+  const published = await call("PUT", "projects/open-registry", OWNER, {
+    manifest,
+    expectedRevision: original.revision,
+  });
+  expect(published.status).toBe(200);
+  const promised = await persistence.getProject(original.id);
+  if (!promised) throw new Error("project expected");
+  expect(promised.manifest.reward).toEqual(manifest.reward);
+  const stale = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: original.manifest,
+    expectedRevision: original.revision,
+  });
+  expect(stale.status).toBe(409);
+  expect(stale.body.error).toBe("stale_revision");
+  const historical = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "500000000" }],
+      },
+    },
+  });
+  expect(historical.status).toBe(422);
+  expect(historical.body.error).toBe("financial_change_restricted");
+  const alteredPolicy = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        honorSystem: undefined,
+        rewardStartAt: NOW,
+      },
+    },
+  });
+  expect(alteredPolicy.status).toBe(422);
+  expect(alteredPolicy.body.error).toBe("financial_change_restricted");
+  expect((await persistence.getProject(original.id))?.manifest).toEqual(
+    promised.manifest,
+  );
+});
+
+test("honor-system opt-in rejects false and a points-only pool before publication", async () => {
+  const { persistence, call } = registry();
+  const manifest = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+  );
+  const reward = manifest.reward as ProjectDefinition["reward"];
+  for (const changedReward of [
+    { ...reward, honorSystem: false },
+    {
+      ...reward,
+      honorSystem: true,
+      monthlyCapMinor: "0",
+      monthlyCapDisplay: "$0",
+    },
+  ]) {
+    const invalid = await call("POST", "projects", OWNER, {
+      manifest: { ...manifest, reward: changedReward },
+    });
+    expect(invalid.status).toBe(422);
+    expect(invalid.body.error).toBe("invalid_manifest");
+    expect(invalid.body.message).toContain("honorSystem");
+  }
+  expect(await persistence.listProjects()).toEqual([]);
+});
+
 test("an owner revision cannot record a vault; a reviewed admin revision can", async () => {
   const { persistence, call, create } = registry();
   await create("open-registry", "example/open-registry");
@@ -1490,6 +1651,203 @@ test("an intervening revision refuses removal without overwriting the newer proj
     manifest: { listingTier: "community", headline: "Newer maintainer edit." },
   });
   expect(await t.persistence.listRevisions()).toHaveLength(2);
+});
+
+test("removal waits for reinstatement instead of reporting a quarantine's own retired revision as removed", async () => {
+  const t = registry();
+  const MOD_2 = "900000005";
+  t.deps.adminGithubIds = new Set([ADMIN, MOD_2]);
+  t.deps.moderatorGithubIds = new Set([ADMIN, MOD_2]);
+  await t.create("remove-quarantined", "example/remove-quarantined");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-quarantined");
+  if (!listed) throw new Error("Project missing");
+  expect(listed).toMatchObject({
+    status: "active",
+    manifest: { listingTier: "community" },
+  });
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        ADMIN,
+        {
+          action: "quarantine",
+          reason: "Investigating a contributor report",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: listed.revision,
+          expectedSequence: 1,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const quarantined = await t.persistence.getProject("remove-quarantined");
+  if (!quarantined) throw new Error("Project missing");
+  expect(quarantined.manifest).toMatchObject({
+    status: "paused",
+    listingTier: "retired",
+  });
+  // That revision is the quarantine's, not a removal: reinstatement lists
+  // the project again. Neither the current head nor an editor loaded before
+  // the quarantine is told that the project was removed.
+  for (const expectedRevision of [quarantined.revision, listed.revision]) {
+    const removed = await t.call(
+      "POST",
+      "projects/remove-quarantined/remove",
+      OTHER,
+      { expectedRevision },
+    );
+    expect(removed.status).toBe(409);
+    expect(removed.body).toMatchObject({ error: "project_restricted" });
+  }
+  expect((await t.persistence.getProject(listed.id))?.revision).toBe(
+    quarantined.revision,
+  );
+  // The owner appeals; after a fresh clean scan another moderator reinstates.
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        projectId: "remove-quarantined",
+        reason: "The report is mistaken",
+        evidenceReference: "private-appeal-fixture",
+      })
+    ).status,
+  ).toBe(200);
+  t.state.clearance = {
+    ...CLEARED,
+    assessment: CLEARED.assessment && {
+      ...CLEARED.assessment,
+      revision: quarantined.revision,
+    },
+  };
+  t.sqlite
+    .prepare(
+      `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean', 'fixture', ?, ?, ?, ?)`,
+    )
+    .run(
+      CLEARED.assessment?.id ?? "",
+      listed.id,
+      quarantined.revision,
+      quarantined.manifestSha256,
+      "e".repeat(64),
+      "a".repeat(40),
+      "d".repeat(64),
+      ADMIN,
+      "admin",
+      NOW,
+      "Reinstatement scan",
+      JSON.stringify({ disposition: "clean" }),
+      "f".repeat(64),
+      "0".repeat(64),
+      NOW,
+    );
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        MOD_2,
+        {
+          action: "reinstate",
+          reason: "The report did not hold up",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: quarantined.revision,
+          expectedSequence: 3,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const reinstated = await t.persistence.getProject(listed.id);
+  if (!reinstated) throw new Error("Project missing");
+  expect(reinstated.manifest.listingTier).toBe("community");
+  // A removal now appends its own revision, and that revision holds.
+  expect(
+    (
+      await t.call("POST", "projects/remove-quarantined/remove", OTHER, {
+        expectedRevision: reinstated.revision,
+      })
+    ).status,
+  ).toBe(200);
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: reinstated.revision + 1,
+    status: "paused",
+    manifest: { listingTier: "retired" },
+  });
+  expect((await t.call("GET", "projects/remove-quarantined", "")).status).toBe(
+    404,
+  );
+});
+
+test("a Ban recorded while a removal is in flight refuses it at the guarded write", async () => {
+  const t = registry();
+  await t.create("remove-ban-race", "example/remove-ban-race");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-ban-race/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-ban-race");
+  if (!listed) throw new Error("Project missing");
+  expect(listed.status).toBe("active");
+  // A confirmed malicious scan records its Ban after the removal read a clear
+  // restriction. The Ban's paused, retired revision is still pending, so a
+  // removal revision written now would become the one reinstatement undoes.
+  const generation = t.persistence.enforcementGeneration.bind(t.persistence);
+  let banned = false;
+  t.persistence.enforcementGeneration = async () => {
+    if (!banned) {
+      banned = true;
+      expect(
+        await t.persistence.appendEnforcement(
+          {
+            id: "enf_remove_ban_race_scan",
+            projectId: listed.id,
+            sequence: 1,
+            action: "ban",
+            stateAfter: "banned",
+            appealAfter: "none",
+            reason: "Synthetic confirmed malicious scan",
+            evidenceReference: "private-case-fixture",
+            repositoryGithubId: "987654321",
+            repositoryKeys: ["example/remove-ban-race"],
+            actor: null,
+            actorRole: "vetting-service",
+            decisionSource: "standing-rule",
+            systemIssuer: {
+              kind: "vetting-service",
+              keySha256: "a".repeat(64),
+              assessmentId: "vet_fixture",
+              policyVersion: "fixture",
+              rule: "confirmed-malicious",
+            },
+            beforeRevision: listed.revision,
+            beforeManifestSha256: listed.manifestSha256,
+            afterRevision: null,
+            afterManifestSha256: null,
+            result: "revision_pending",
+            createdAt: NOW,
+          },
+          null,
+          [],
+        ),
+      ).toBe("recorded");
+    }
+    return generation();
+  };
+  const removed = await t.call(
+    "POST",
+    "projects/remove-ban-race/remove",
+    OTHER,
+    { expectedRevision: listed.revision },
+  );
+  expect(banned).toBe(true);
+  expect(removed.status).toBe(409);
+  expect(removed.body).toMatchObject({ error: "project_restricted" });
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: listed.revision,
+    manifest: { listingTier: "community" },
+  });
 });
 
 function storeCancellableApplication(
@@ -3180,7 +3538,7 @@ test.each(["vault verification", "owner update"])(
       register: async () => {
         start();
         await verified;
-        return TEST_VAULT;
+        return { deployment: TEST_VAULT, evidence: "finalized" };
       },
     };
     const prepared = await t.persistence.getProject(target.id);
@@ -3303,7 +3661,7 @@ test("only the steward or a repository admin can register the project vault", as
     },
     register: async (_project, actor) => {
       registered.push(actor.githubId);
-      return TEST_VAULT;
+      return { deployment: TEST_VAULT, evidence: "finalized" };
     },
   };
   const register = (actor: string) =>
@@ -3384,7 +3742,10 @@ test("an EVM vault creation hash registers in any letter case", async () => {
     // Like the chain verifier, the deployment records the hash it was given.
     register: async (_project, _actor, _input, transactionId) => {
       verified.push(transactionId);
-      return { ...TEST_VAULT, deploymentTransaction: transactionId };
+      return {
+        deployment: { ...TEST_VAULT, deploymentTransaction: transactionId },
+        evidence: "finalized",
+      };
     },
   };
   const register = (transactionId: string) =>
@@ -4386,4 +4747,197 @@ test("an appended name another project takes during the write is a registry conf
   expect(response.status).toBe(409);
   expect(response.body.error).toBe("registry_conflict");
   expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+// A vault creation that is not final when its owner leaves the page is saved
+// and finished by the server as the same owner (PRD section 6).
+async function savedCreationFixture() {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const chain = {
+    answer: "absent" as "absent" | "included" | "finalized" | "failed",
+  };
+  const asked: string[] = [];
+  t.deps.vaultSetup = {
+    observe: async () => {},
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async (_project, actor) => {
+      asked.push(actor.githubId);
+      if (chain.answer === "failed")
+        fail(409, "vault_creation_failed", "The vault creation failed.");
+      return chain.answer === "absent"
+        ? null
+        : { deployment: TEST_VAULT, evidence: chain.answer };
+    },
+  };
+  const register = () =>
+    t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    });
+  const later = (minutes: number) => {
+    t.state.now = new Date(
+      Date.parse(t.state.now) + minutes * 60_000,
+    ).toISOString();
+  };
+  const finish = () =>
+    finishSavedVaultCreations(
+      new Request("https://slop.cash/api/v1/projects"),
+      t.deps,
+    );
+  const vaults = async () =>
+    (await t.persistence.getProject("vault-target"))?.manifest.escrow
+      ?.deployments ?? [];
+  return { t, chain, asked, register, later, finish, vaults };
+}
+
+test.each(["absent", "included"] as const)(
+  "the server finishes a creation that was %s when the owner left",
+  async (seen) => {
+    const f = await savedCreationFixture();
+    f.chain.answer = seen;
+    const first = await f.register();
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe("pending");
+    // Nothing is due yet, so nothing is asked again.
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toEqual([OWNER]);
+    // Still not final at the first check: the creation keeps waiting.
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+    expect(await f.vaults()).toEqual([]);
+    f.chain.answer = "finalized";
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
+    // The same owner is named, and the vault is on the project record.
+    expect(f.asked).toEqual([OWNER, OWNER, OWNER]);
+    expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+    expect((await f.t.persistence.getProject("vault-target"))?.revision).toBe(
+      3,
+    );
+    // A finished creation is never asked about again.
+    f.later(60);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toHaveLength(3);
+  },
+);
+
+test("the server does not finish a creation for an owner who lost access", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a failed creation is not asked about again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "failed";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  f.chain.answer = "finalized";
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("the owner's own registration closes the saved creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  expect((await f.register()).body.status).toBe("registered");
+  const asks = f.asked.length;
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(f.asked).toHaveLength(asks);
+});
+
+test("a saved creation is given up after two days", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  expect(f.asked).toEqual([OWNER]);
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a later request to the project API finishes a due creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  const background: Promise<unknown>[] = [];
+  f.t.deps.waitUntil = (work) => void background.push(work);
+  savedVaultCreationSweep.nextAt = 0;
+  expect((await f.t.call("GET", "project-setup", OWNER)).status).toBe(200);
+  await Promise.all(background);
+  expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+});
+
+test("at most three creations wait for one project", async () => {
+  const f = await savedCreationFixture();
+  const ask = (transactionId: string) =>
+    f.t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId,
+    });
+  for (const digit of ["1", "2", "3", "4"])
+    expect((await ask(`0x${digit.repeat(64)}`)).body.status).toBe("pending");
+  f.later(3);
+  // Only three were kept, so only three are asked about again.
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 3, ended: 0 });
+});
+
+test("an expired creation waits again when its owner asks again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
 });

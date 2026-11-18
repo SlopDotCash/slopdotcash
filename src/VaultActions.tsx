@@ -6,6 +6,10 @@ import {
   type EscrowDeployment,
 } from "./lib/escrow-policy.mjs";
 import {
+  assertWithdrawalOutsideLocks,
+  pledgedFundsRefusal,
+} from "./lib/evm-month-lock";
+import {
   checkVaultAction,
   checkVaultBatch,
   reviewVaultAction,
@@ -39,6 +43,7 @@ import {
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
+import { receivedNotice } from "./lib/vault-auto-register";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 import { PendingWalletCheck } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
@@ -116,15 +121,37 @@ export function VaultActions({
   connectedWallet,
   payoutPolicy = "ordinary",
   canDeposit = true,
+  provisional = false,
   onFinalized,
+  onWallet,
+  onBusy,
+  promised,
 }: {
+  /**
+   * What this month promises contributors and the vault must keep, with the
+   * month's name. Our page refuses a withdrawal below it (operator decision,
+   * 15 November 2026); a vault without month locks does not. A vault with
+   * month locks refuses it in its contract.
+   */
+  promised?: { minor: string; display: string; month: string };
   projectId: string;
   deployment: EscrowDeployment;
   connectedWallet?: VaultConnection;
   payoutPolicy?: PayoutPolicy;
   canDeposit?: boolean;
+  /**
+   * The vault's creation is in a block that is not final and the vault is not
+   * registered yet. Its owner may deposit now; the vault is read at the latest
+   * block and a deposit still counts only from finalized evidence.
+   */
+  provisional?: boolean;
   onFinalized: () => void;
+  /** The wallet this form uses, so a later form for the same vault can keep it. */
+  onWallet?: (wallet: VaultConnection | null) => void;
+  /** True while an owner action, such as a wallet request, is running. */
+  onBusy?: (busy: boolean) => void;
 }) {
+  const evidence = provisional ? "latest" : "finalized";
   const family = ESCROW_NETWORKS[deployment.network].family;
   const solana = family === "solana";
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
@@ -174,6 +201,19 @@ export function VaultActions({
       errorMessage(caught, "The wallet request failed."),
     );
   };
+  const reportWallet = useRef(onWallet);
+  const reportBusy = useRef(onBusy);
+  useLayoutEffect(() => {
+    reportWallet.current = onWallet;
+    reportBusy.current = onBusy;
+  });
+  useEffect(() => {
+    reportWallet.current?.(wallet);
+  }, [wallet]);
+  useEffect(() => {
+    reportBusy.current?.(busy);
+    return () => reportBusy.current?.(false);
+  }, [busy]);
   const connect = (provider: PayoutWallet) =>
     run(async () => {
       const connection = await provider.connect();
@@ -181,6 +221,12 @@ export function VaultActions({
       if (pending && !sameWallet(connection.address, pending.wallet))
         throw new Error(
           `Reconnect the wallet that submitted this action: ${pending.wallet}`,
+        );
+      // The owner's own later transaction cannot be mined before the creation
+      // it follows, so only the owner funds a vault that is not registered yet.
+      if (provisional && !sameWallet(connection.address, deployment.owner))
+        throw new Error(
+          "Connect the wallet that created this vault. Other wallets can deposit once it is registered.",
         );
       if (
         !canDeposit &&
@@ -216,7 +262,30 @@ export function VaultActions({
             operation,
             amount,
             payoutPolicy,
+            evidence,
           );
+      // A vault with month locks enforces them itself; the page's own guard
+      // is for vaults without them (operator decision, 15 November 2026).
+      const locksEnforced =
+        !solana &&
+        operation === "withdraw" &&
+        (await assertWithdrawalOutsideLocks(
+          deployment,
+          wallet,
+          result.freeBalance,
+          result.gross,
+        ));
+      if (
+        operation === "withdraw" &&
+        !locksEnforced &&
+        promised &&
+        result.freeBalance !== null &&
+        BigInt(result.freeBalance) - BigInt(result.gross) <
+          BigInt(promised.minor)
+      )
+        throw new Error(
+          `This would leave the vault below the ${promised.display} contributors were shown for ${promised.month}. Withdraw only funds above that amount.`,
+        );
       if (mounted.current) setReview(result);
     });
   const send = (step: Step) =>
@@ -290,6 +359,7 @@ export function VaultActions({
             amount,
             beforeSend,
             payoutPolicy,
+            evidence,
           );
         } else {
           hash = await sendVaultAction(
@@ -300,6 +370,7 @@ export function VaultActions({
             step,
             beforeSend,
             payoutPolicy,
+            evidence,
           );
         }
         // A batch returns the wallet's reference, not a transaction hash.
@@ -343,7 +414,8 @@ export function VaultActions({
           throw new Error(
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
           );
-        throw caught;
+        // An upgraded vault refuses a withdrawal of locked funds.
+        throw (!solana && pledgedFundsRefusal(caught)) || caught;
       }
     });
   const checking = useRef(false);
@@ -371,6 +443,7 @@ export function VaultActions({
         | "not-sent"
         | "received"
         | "failed"
+        | "no-vault"
         | "approval-confirmed"
         | "finalized";
       if (pending.step === "batch") {
@@ -438,7 +511,12 @@ export function VaultActions({
         // Included in a canonical block but not final: say it arrived, keep
         // the saved request and keep checking. It counts only once final.
         const network = networkLabel(deployment.network);
-        const receivedNotice = `${pending.operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block. It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
+        const received = receivedNotice(
+          pending.operation,
+          network,
+          hash,
+          provisional,
+        );
         const waitingNotice =
           fromWallet || pending.batchId
             ? "Submitted. Waiting for finalized chain evidence."
@@ -449,7 +527,7 @@ export function VaultActions({
           autoErrored.current = false;
           if (result === "received") {
             receivedShown.current = true;
-            setNotice(receivedNotice);
+            setNotice(received);
           } else if (receivedShown.current) {
             // The block that carried it was replaced; it is pending again.
             receivedShown.current = false;
@@ -481,7 +559,7 @@ export function VaultActions({
           setPending(candidate);
         }
         receivedShown.current = result === "received";
-        setNotice(result === "received" ? receivedNotice : waitingNotice);
+        setNotice(result === "received" ? received : waitingNotice);
         return;
       }
       receivedShown.current = false;
@@ -493,6 +571,10 @@ export function VaultActions({
       if (result === "failed")
         setNotice(
           "The transaction failed. Review the amount and wallet, then retry.",
+        );
+      else if (result === "no-vault")
+        setNotice(
+          "The vault was not on chain in the block that confirmed this transaction, so no tokens moved. Review the deposit again once the vault is confirmed.",
         );
       else if (result === "not-sent")
         setNotice(
@@ -513,6 +595,7 @@ export function VaultActions({
           "deposit",
           pending.amount,
           payoutPolicy,
+          evidence,
         ).catch(() => null);
         if (mounted.current && next && storedPending.current === null)
           setReview(next);
@@ -683,7 +766,9 @@ export function VaultActions({
               <legend>Action</legend>
               {(isOwner
                 ? canDeposit
-                  ? (["deposit", "withdraw"] as const)
+                  ? provisional
+                    ? (["deposit"] as const)
+                    : (["deposit", "withdraw"] as const)
                   : (["withdraw"] as const)
                 : canDeposit
                   ? (["deposit"] as const)

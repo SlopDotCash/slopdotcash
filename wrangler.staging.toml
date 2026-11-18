@@ -22,6 +22,9 @@ PAYMENT_NETWORKS = '["base-sepolia","ethereum-sepolia","robinhood-testnet","sola
 # Automatic private-report intake (PRD section 8; owner activation of 26
 # October 2026). Routes stay closed unless every intake App secret is set.
 SLOP_PRIVATE_INTAKE_MODE = "on"
+# Routine decisions on undecided private reports (PRD section 8; operator
+# decision of 17 November 2026): off on staging.
+SECURITY_ROUTINE_DECISIONS = "off"
 
 [[d1_databases]]
 binding = "SLOP_DB"

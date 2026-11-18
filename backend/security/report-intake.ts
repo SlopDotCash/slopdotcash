@@ -10,6 +10,7 @@ import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
+  analysisScope,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
   priorCaseSummaries,
   runAppealTriage,
@@ -39,6 +40,7 @@ import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
+import { routineOwnerRanking } from "./routine-decisions";
 import {
   COLUMNS,
   type IntakeState,
@@ -626,13 +628,7 @@ async function screenStoredReport(
         : null;
       const input: SecurityAnalysisInput = {
         report: analysisReport(await reportVersion(deps, row)),
-        scope: scope
-          ? {
-              includedAssets: scope.includedAssets,
-              severityRubric: scope.severityRubric,
-              lossDefinition: scope.lossDefinition,
-            }
-          : null,
+        scope: analysisScope(scope),
         priorCases: (
           await priorCaseSummaries(deps.db, submission.project_id, row.case_id)
         ).filter((entry) => entry.summary !== null),
@@ -730,13 +726,7 @@ export async function screenLegacyReport(
     proposal = await deps.analyzer.screen(
       {
         report: analysisReport(report),
-        scope: scope
-          ? {
-              includedAssets: scope.includedAssets,
-              severityRubric: scope.severityRubric,
-              lossDefinition: scope.lossDefinition,
-            }
-          : null,
+        scope: analysisScope(scope),
         priorCases: (await priorCaseSummaries(deps.db, projectId, null)).filter(
           (entry) => entry.summary !== null,
         ),
@@ -1057,6 +1047,25 @@ export async function listStoredSubmissions(
       )
       .all<SubmissionRow>()
   ).results;
+  // The owner's short ranked list (PRD section 8, operator decision of
+  // 17 November 2026): reports a routine pass acknowledged lead the list in
+  // rank order, including ones older than the recent window above.
+  const ranking = await routineOwnerRanking(deps, projects);
+  const rankOf = new Map(ranking.map((caseId, index) => [caseId, index]));
+  const missing = ranking.filter(
+    (caseId) => !candidates.some((row) => row.case_id === caseId),
+  );
+  if (missing.length > 0)
+    candidates.push(
+      ...(
+        await deps.db
+          .prepare(
+            `SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id WHERE s.reporter_github_id<>? AND i.case_id IN (${missing.map(() => "?").join(",")})`,
+          )
+          .bind(actor.githubId, ...missing)
+          .all<SubmissionRow>()
+      ).results,
+    );
   const storedBySubmission = new Map<string, StoredIntake>();
   for (const part of chunked([...own, ...candidates].map((row) => row.id))) {
     const loaded = await deps.db
@@ -1101,7 +1110,11 @@ export async function listStoredSubmissions(
       }),
     };
   };
-  const rows = await Promise.all(
+  const rows: {
+    createdAt: string;
+    rank?: number;
+    submission: Record<string, unknown>;
+  }[] = await Promise.all(
     own.map(async (row) => {
       const stored = storedBySubmission.get(row.id) ?? null;
       const settled =
@@ -1137,6 +1150,10 @@ export async function listStoredSubmissions(
       )
         rows.push({
           createdAt: candidate.created_at,
+          // Only a current security maintainer sees the ranked order.
+          ...(roles.has("security-maintainer") && rankOf.has(record.id)
+            ? { rank: rankOf.get(record.id) }
+            : {}),
           submission: decorateStoredSubmission(
             // A case authority's list applies the same time-based moves as
             // the reporter's own rows above: an interrupted forward becomes
@@ -1156,7 +1173,12 @@ export async function listStoredSubmissions(
       authorityUnavailable = true;
     }
   }
-  rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  rows.sort(
+    (a, b) =>
+      (a.rank ?? Number.MAX_SAFE_INTEGER) -
+        (b.rank ?? Number.MAX_SAFE_INTEGER) ||
+      b.createdAt.localeCompare(a.createdAt),
+  );
   return json(200, {
     recipientGithubId: actor.githubId,
     automatic: deps.intake?.mode === "on",

@@ -1,7 +1,13 @@
 // Model route (PRD BOT-09). The model gets no tools, secrets or network access;
 // it returns one schema-valid verdict about the item it was shown, nothing else.
 import Anthropic from "@anthropic-ai/sdk";
-import { type Usage, VERDICT_SCHEMA, validateVerdict } from "./contracts";
+import {
+  explainVerdict,
+  type Usage,
+  VERDICT_SCHEMA,
+  validateVerdict,
+} from "./contracts";
+import { rejectionDetail, unreadableDetail } from "./schema-mismatch";
 
 export type ModelEnv = {
   ORBIO_API_KEY?: string;
@@ -16,15 +22,12 @@ type Step = {
   priceKey: string;
 };
 
-// Owner decision (11 November 2026): any Orbio failure tries Surplus next,
-// including exhausted credits. Confirmation reuses this route as a second
+// Operator decision (16 November 2026): Surplus serves first and Orbio is the
+// backstop. Any Surplus failure tries the next step. A structured Surplus
+// spending denial skips the remaining Surplus steps, which share that budget,
+// and goes straight to Orbio. Confirmation reuses this route as a second
 // independent call at higher effort.
 export const TRIAGE_ROUTE: Step[] = [
-  {
-    provider: "orbio",
-    model: "anthropic/claude-sonnet-5.5",
-    priceKey: "orbio/anthropic/claude-sonnet-5.5",
-  },
   {
     provider: "surplus",
     model: "claude-sonnet-5.5",
@@ -34,6 +37,11 @@ export const TRIAGE_ROUTE: Step[] = [
     provider: "surplus",
     model: "gpt-6.1-terra",
     priceKey: "surplus/gpt-6.1-terra",
+  },
+  {
+    provider: "orbio",
+    model: "anthropic/claude-sonnet-5.5",
+    priceKey: "orbio/anthropic/claude-sonnet-5.5",
   },
 ];
 
@@ -45,6 +53,8 @@ export type CallRecord = {
   priceKey: string;
   outcome: "ok" | "failed";
   failure: string | null;
+  /** Which part of a refused reply failed, never reply text (0135). */
+  failureDetail?: string;
   usage: Usage;
   providerCostMicroUsd: number | null;
   providerRequestId: string | null;
@@ -70,6 +80,7 @@ export async function runRoute(
       name: "slopbot_verdict",
       schema: VERDICT_SCHEMA,
       validate: validateVerdict,
+      explain: explainVerdict,
     },
     mayCall,
   );
@@ -83,8 +94,8 @@ export const PROVIDER_BUDGET_EXHAUSTED = "provider budget exhausted";
 // The Anthropic wire reports budget exhaustion as invalid_request_error,
 // with structured budget detail rather than the OpenAI budget_exceeded code.
 // A long-running response may commit HTTP 200 before that denial is known.
-// Do not retry another model when the provider has denied spending.
-function budgetResetAt(error: unknown): string | null {
+// Do not retry another model on the same provider once it has denied spending.
+export function budgetResetAt(error: unknown): string | null {
   if (typeof error !== "object" || error === null) return null;
   const value = error as {
     status?: unknown;
@@ -120,6 +131,7 @@ export async function runStructuredRoute<T>(
     name: string;
     schema: Record<string, unknown>;
     validate(value: unknown): T | null;
+    explain?(value: unknown): string | null;
   },
   mayCall: () => Promise<boolean>,
 ): Promise<{
@@ -132,7 +144,12 @@ export async function runStructuredRoute<T>(
   failure?: unknown;
 }> {
   const calls: CallRecord[] = [];
+  // The reset time of a Surplus spending denial in this route, if any.
+  let deniedUntil: string | null = null;
   for (const [index, step] of route.entries()) {
+    // Every Surplus model shares the denied budget. Only another provider
+    // can still serve this request.
+    if (deniedUntil !== null && step.provider === "surplus") continue;
     // An absent credential makes this gateway unavailable, not a provider call.
     const key =
       step.provider === "orbio" ? env.ORBIO_API_KEY : env.SURPLUS_API_KEY;
@@ -172,6 +189,11 @@ export async function runStructuredRoute<T>(
         result.json === null ? null : output.validate(result.json);
       if (verdict === null) {
         record.failure = result.failure ?? "schema-invalid verdict";
+        if (result.failure === null)
+          record.failureDetail =
+            result.json === null
+              ? unreadableDetail(result.text)
+              : rejectionDetail(result.json, output.schema, output.explain);
         calls.push(record);
         continue;
       }
@@ -193,15 +215,12 @@ export async function runStructuredRoute<T>(
       }
       const resetAt = step.provider === "surplus" ? budgetResetAt(error) : null;
       if (resetAt !== null) {
+        // The denial is recorded as served nothing. A later Orbio step may
+        // still serve; if none does, the caller waits for this reset.
         record.failure = PROVIDER_BUDGET_EXHAUSTED;
         calls.push(record);
-        return {
-          verdict: null,
-          calls,
-          servedBy: null,
-          blocked: false,
-          budgetResetAt: resetAt,
-        };
+        deniedUntil = resetAt;
+        continue;
       }
       record.failure =
         typeof status === "number" && Number.isInteger(status)
@@ -210,11 +229,21 @@ export async function runStructuredRoute<T>(
       calls.push(record);
     }
   }
-  return { verdict: null, calls, servedBy: null, blocked: false };
+  return deniedUntil === null
+    ? { verdict: null, calls, servedBy: null, blocked: false }
+    : {
+        verdict: null,
+        calls,
+        servedBy: null,
+        blocked: false,
+        budgetResetAt: deniedUntil,
+      };
 }
 
 type CallResult = {
   json: unknown;
+  /** The reply's text block, kept only to describe why it was unreadable. */
+  text?: string;
   usage: Usage;
   servedModel: string | null;
   failure: string | null;
@@ -388,6 +417,7 @@ async function callModel(
   )?.text;
   return {
     json: parseJson(text),
+    text,
     usage,
     servedModel: response.model,
     failure: null,

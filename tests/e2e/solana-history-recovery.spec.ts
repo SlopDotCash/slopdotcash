@@ -300,7 +300,7 @@ async function setup(page: Page, fallback = false) {
   });
   await page.goto(`/security?case=${record.id}`);
   const recovery = page.locator(".direct-bounty-payment").filter({
-    hasText: "Sign expired request messages to check chain history.",
+    hasText: "Message signature only. Nothing is sent.",
   });
   const connect = () =>
     recovery
@@ -396,9 +396,7 @@ test("account change during a message prompt cannot submit cached proof under th
   flow.setActor("710000003");
   release();
   await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "Your account changed or signed out." }),
+    page.getByRole("alert").filter({ hasText: "Account switched." }),
   ).toBeVisible();
   expect(flow.posted).toHaveLength(0);
   // The account check runs again after signing, before any local cache write.

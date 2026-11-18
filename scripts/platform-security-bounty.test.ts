@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   assertSecurityBountyTerms,
+  programExclusions,
+  SECURITY_DEFAULT_EXCLUSIONS,
   SECURITY_FULL_AWARD_SPLIT,
   SECURITY_SPLIT,
   type SecurityBountyTerms,
   securityBountySplit,
+  securityExclusions,
 } from "../src/lib/security-bounty.mjs";
 import {
   carriedSecurityTerms,
@@ -206,5 +209,60 @@ describe("approved security bounty splits", () => {
         { projectId: "slopdotcash", repositories: PLATFORM, reward: REWARD },
       ).split,
     ).toEqual(SECURITY_FULL_AWARD_SPLIT);
+  });
+});
+
+describe("does-not-qualify lines", () => {
+  const validate = (excludedFindings: unknown) =>
+    assertSecurityBountyTerms(
+      platformProgram({
+        scope: { ...platformProgram().scope, excludedFindings },
+      }),
+      { projectId: "slopdotcash", repositories: PLATFORM, reward: REWARD },
+    );
+
+  test("terms without owner lines keep validating and list only the defaults", () => {
+    const terms = assertSecurityBountyTerms(platformProgram(), {
+      projectId: "slopdotcash",
+      repositories: PLATFORM,
+      reward: REWARD,
+    });
+    expect(terms.scope.excludedFindings).toBeUndefined();
+    expect(programExclusions(terms.scope)).toEqual([]);
+    expect(securityExclusions(terms.scope)).toEqual([
+      ...SECURITY_DEFAULT_EXCLUSIONS,
+    ]);
+    expect(validate([]).scope.excludedFindings).toEqual([]);
+  });
+
+  test("owner lines follow the ten defaults in order", () => {
+    const lines = ["Gas refund rounding", "Issues fixed in a later release"];
+    const terms = validate(lines);
+    expect(SECURITY_DEFAULT_EXCLUSIONS).toHaveLength(10);
+    expect(securityExclusions(terms.scope)).toEqual([
+      ...SECURITY_DEFAULT_EXCLUSIONS,
+      ...lines,
+    ]);
+    expect(
+      validate(Array.from({ length: 20 }, (_, i) => `Line ${i}`)).scope
+        .excludedFindings,
+    ).toHaveLength(20);
+    expect(
+      validate(["abc", "x".repeat(300)]).scope.excludedFindings,
+    ).toHaveLength(2);
+  });
+
+  test("refuses lines over the limits, untrimmed, multi-line or repeated", () => {
+    for (const bad of [
+      Array.from({ length: 21 }, (_, i) => `Line ${i}`),
+      ["ab"],
+      ["x".repeat(301)],
+      [" Leading space"],
+      ["Two\nlines"],
+      ["Same finding", "same FINDING"],
+      [42],
+      "One string",
+    ])
+      expect(() => validate(bad)).toThrow(/scope\.excludedFindings/u);
   });
 });

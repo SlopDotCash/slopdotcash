@@ -1,12 +1,15 @@
 import { githubAppJwt, githubHeaders } from "../../backend/github";
 import { bytesToHex, decodeBase64 } from "../../src/lib/byte-encoding";
 import { constantTimeEqual } from "../identity/crypto";
+import { isConfirmedMissingPublicReference } from "./value-reference-query";
 
 // GitHub App plumbing: webhook signatures, App JWT, installation tokens, and
 // the few REST calls Slopbot is allowed to make (BOT-01, slopbot-v2 permissions).
 
 const API = "https://api.github.com";
 const encoder = new TextEncoder();
+const defaultTransport = ((input: RequestInfo | URL, init?: RequestInit) =>
+  fetch(input, init)) as typeof fetch;
 
 export async function verifyWebhookSignature(
   secret: string,
@@ -42,27 +45,116 @@ export class GitHubError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly sourceReadRefusal?: GitHubSourceReadRefusal,
   ) {
     super(message);
   }
 }
 
+export type GitHubSourceReadRefusal = {
+  category:
+    | "primary-rate-limit"
+    | "secondary-rate-limit"
+    | "rate-limited"
+    | "access-denied"
+    | "unclassified";
+  remaining: number | null;
+  resetAt: number | null;
+  retryAfterSeconds: number | null;
+};
+
+type GitHubClientOptions = { observeSourceReadRefusal?: boolean };
+
+function integerHeader(headers: Headers, name: string) {
+  const value = headers.get(name);
+  if (value === null || !/^\d{1,16}$/u.test(value)) return null;
+  const integer = Number(value);
+  return Number.isSafeInteger(integer) ? integer : null;
+}
+
+/** Failure bodies can carry private text. Read only enough JSON to select a
+ * fixed category and bound the work even if GitHub stalls the response body. */
+async function sourceReadErrorMessage(response: Response) {
+  if (!response.headers.get("content-type")?.startsWith("application/json"))
+    return "";
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const read = async () => {
+      const decoder = new TextDecoder();
+      let text = "";
+      let bytes = 0;
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > 4096) return "";
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      const body: { message?: unknown } | null = JSON.parse(
+        text + decoder.decode(),
+      );
+      return typeof body?.message === "string" ? body.message : "";
+    };
+    return await Promise.race([
+      read(),
+      new Promise<string>((resolve) => {
+        timeout = setTimeout(() => resolve(""), 250);
+      }),
+    ]);
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+    void reader.cancel().catch(() => {});
+  }
+}
+
+async function sourceReadRefusal(
+  response: Response,
+): Promise<GitHubSourceReadRefusal> {
+  const remaining = integerHeader(response.headers, "x-ratelimit-remaining");
+  const resetAt = integerHeader(response.headers, "x-ratelimit-reset");
+  const retryAfterSeconds = integerHeader(response.headers, "retry-after");
+  const message = await sourceReadErrorMessage(response);
+  let category: GitHubSourceReadRefusal["category"] = "unclassified";
+  if (
+    response.status === 403 &&
+    /^Resource not accessible by integration(?:[.\s]|$)/iu.test(message)
+  )
+    category = "access-denied";
+  else if (
+    /^You have exceeded a secondary rate limit(?:[.\s]|$)/iu.test(message)
+  )
+    category = "secondary-rate-limit";
+  else if (remaining === 0) category = "primary-rate-limit";
+  else if (response.status === 429) category = "rate-limited";
+  return { category, remaining, resetAt, retryAfterSeconds };
+}
+
 export class GitHubClient {
   private constructor(
     private readonly token: string,
-    private readonly transport: typeof fetch = fetch,
+    private readonly transport: typeof fetch = defaultTransport,
+    private readonly options: GitHubClientOptions = {},
   ) {}
 
   /** Existing GitHub token for read-only source ingestion outside the Worker. */
-  static forToken(token: string, transport: typeof fetch = fetch) {
+  static forToken(
+    token: string,
+    transport: typeof fetch = defaultTransport,
+    options?: GitHubClientOptions,
+  ) {
     if (!token.trim()) throw new Error("GitHub source token is required");
-    return new GitHubClient(token, transport);
+    return new GitHubClient(token, transport, options);
   }
 
   static async forInstallation(
     appId: string,
     privateKey: string,
     installationId: number,
+    options?: GitHubClientOptions,
   ) {
     const jwt = await appJwt(appId, privateKey);
     const response = await fetch(
@@ -78,7 +170,7 @@ export class GitHubClient {
         "installation token request failed",
       );
     const body = (await response.json()) as { token: string };
-    return new GitHubClient(body.token);
+    return new GitHubClient(body.token, defaultTransport, options);
   }
 
   async request<T>(
@@ -118,9 +210,17 @@ export class GitHubClient {
       return { status: response.status, data: null };
     }
     if (!response.ok) {
+      const observation =
+        this.options.observeSourceReadRefusal &&
+        method === "GET" &&
+        path.startsWith("/repos/") &&
+        (response.status === 403 || response.status === 429)
+          ? await sourceReadRefusal(response).catch(() => undefined)
+          : undefined;
       throw new GitHubError(
         response.status,
         `${method} ${path} returned ${response.status}`,
+        observation,
       );
     }
     return { status: response.status, data: (await response.json()) as T };
@@ -139,7 +239,12 @@ export class GitHubClient {
       "/graphql",
       { query, variables },
     );
-    if (!response.data?.data || response.data.errors?.length)
+    if (!response.data?.data)
+      throw new Error("GitHub GraphQL evidence is incomplete");
+    if (
+      response.data.errors?.length &&
+      !isConfirmedMissingPublicReference(query, variables, response.data)
+    )
       throw new Error("GitHub GraphQL evidence is incomplete");
     return response.data.data;
   }

@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { expect, expectAccessibleReflow, test } from "./fixtures";
 import {
@@ -7,6 +7,22 @@ import {
   releaseHeldEditorSession,
 } from "./project-draft-fixture";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
+
+/** The confirming button of the open "Delist?" confirmation, not its opener. */
+function delistConfirmation(page: Page) {
+  return page
+    .locator(".admin-actions")
+    .filter({ hasText: "Delist?" })
+    .getByRole("button", { name: "Confirm delist", exact: true });
+}
+
+/** The Confirm button of the shown enforcement preview, once it names `action`. */
+function confirmButton(panel: Locator, action: string) {
+  return panel
+    .getByRole("group", { name: "Preview", exact: true })
+    .filter({ hasText: `${action} · record` })
+    .getByRole("button", { name: /^Confirm: /u });
+}
 
 function gate() {
   let release!: () => void;
@@ -135,10 +151,7 @@ async function editorFixture(
     name: "Short description",
     exact: true,
   });
-  const reason = page.getByRole("textbox", {
-    name: "Reason for revision (public)",
-    exact: true,
-  });
+  const reason = page.getByRole("textbox", { name: /^Reason\s*Public$/u });
   const draftKey = `slop:admin-project:${project.id}:1`;
   return {
     description,
@@ -192,6 +205,53 @@ async function savedDescription(page: Page, key: string) {
     return saved ? JSON.parse(saved.text).headline : null;
   }, key);
 }
+
+test("an invalid admin scope explains its range and recovers before saving", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page);
+  try {
+    await fixture.description.fill("A reviewed project description");
+    await fixture.reason.fill(
+      "Correct the project description with valid scope.",
+    );
+    const save = page.getByRole("button", {
+      name: "Save revision 2",
+      exact: true,
+    });
+    await expect(save).toBeEnabled();
+    const scope = page.getByRole("textbox", {
+      name: "Approved scope",
+      exact: true,
+    });
+    const approvedScope =
+      "Maintain the project's published integration branch.";
+    await scope.fill(approvedScope);
+    await expect(save).toBeEnabled();
+    await scope.fill("tiny");
+    await expect(scope).toHaveAttribute("aria-invalid", "true");
+    await expect(save).toBeDisabled();
+    await expect(scope).toHaveAccessibleDescription("6–2000 characters");
+    await expect(
+      page.getByText("6–2000 characters", { exact: true }),
+    ).toBeVisible();
+    await expectAccessibleReflow(page, "admin-scope-range-error");
+    await scope.fill(approvedScope);
+    await expect(scope).not.toHaveAttribute("aria-invalid", "true");
+    await expect(save).toBeEnabled();
+    await expect(
+      page.getByText("6–2000 characters", { exact: true }),
+    ).toHaveCount(0);
+    fixture.releaseSave();
+    await save.click();
+    await expect.poll(() => fixture.saves.length).toBe(1);
+    expect(fixture.saves[0].manifest.contribution?.approvedScope).toBe(
+      approvedScope,
+    );
+  } finally {
+    fixture.releaseSave();
+  }
+});
 
 test("committed clearance departure starts no private GET after preflight", async ({
   page,
@@ -247,10 +307,7 @@ for (const kind of ["save", "delist", "enforcement"] as const) {
           await page
             .getByRole("button", { name: "Delist", exact: true })
             .click();
-          button = page.getByRole("button", {
-            name: "Delist project",
-            exact: true,
-          });
+          button = delistConfirmation(page);
         } else {
           const base = `/api/v1/admin/projects/${fixture.project.id}`;
           await page.route(`**${base}/enforcement-preview`, (route) =>
@@ -275,15 +332,12 @@ for (const kind of ["save", "delist", "enforcement"] as const) {
             .getByRole("textbox", { name: "Reason", exact: true })
             .fill("Review this explicitly selected restriction");
           await panel
-            .getByLabel("Evidence link or case ID")
+            .getByLabel("Evidence", { exact: true })
             .fill("case-committed-admin-departure");
           await panel
-            .getByRole("button", { name: "Preview action", exact: true })
+            .getByRole("button", { name: "Preview", exact: true })
             .click();
-          button = panel.getByRole("button", {
-            name: "Confirm: Quarantine",
-            exact: true,
-          });
+          button = confirmButton(panel, "Quarantine");
           await expect(button).toBeVisible();
         }
       }
@@ -399,7 +453,7 @@ test("editing during admin save retains newer content and reports only the submi
     await (await response).finished();
     await page.waitForLoadState("networkidle");
     await expect(page.getByRole("alert")).toHaveText(
-      "Revision saved. Your newer edits are still here; copy them before reloading.",
+      "Saved. Newer edits are unsaved — copy them first.",
     );
     await expect(
       page.getByRole("button", { name: "Save revision 2", exact: true }),
@@ -532,10 +586,8 @@ test("editing a pending enforcement preview cannot confirm a different action", 
     await panel
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review a suspected malicious change");
-    await panel.getByLabel("Evidence link or case ID").fill("case-first");
-    await panel
-      .getByRole("button", { name: "Preview action", exact: true })
-      .click();
+    await panel.getByLabel("Evidence", { exact: true }).fill("case-first");
+    await panel.getByRole("button", { name: "Preview", exact: true }).click();
     await expect.poll(() => previews.length).toBe(1);
     await panel
       .getByRole("combobox", { name: "Action", exact: true })
@@ -543,24 +595,16 @@ test("editing a pending enforcement preview cannot confirm a different action", 
     await panel
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review a confirmed malicious change");
-    await panel.getByLabel("Evidence link or case ID").fill("case-second");
+    await panel.getByLabel("Evidence", { exact: true }).fill("case-second");
     heldPreview.release();
     await expect(panel.getByRole("alert")).toContainText(
       "The request changed.",
     );
-    await expect(
-      panel.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
-    ).toHaveCount(0);
+    await expect(confirmButton(panel, "Quarantine")).toHaveCount(0);
     expect(applied).toEqual([]);
-    await panel
-      .getByRole("button", { name: "Preview action", exact: true })
-      .click();
-    await expect(
-      panel.getByRole("button", { name: "Confirm: Ban project", exact: true }),
-    ).toBeVisible();
-    await panel
-      .getByRole("button", { name: "Confirm: Ban project", exact: true })
-      .click();
+    await panel.getByRole("button", { name: "Preview", exact: true }).click();
+    await expect(confirmButton(panel, "Ban project")).toBeVisible();
+    await confirmButton(panel, "Ban project").click();
     await expect.poll(() => applied.length).toBe(1);
     expect(applied[0]).toEqual(previews[1]);
     expect(applied[0]).toMatchObject({
@@ -607,25 +651,17 @@ test("a changed project revision invalidates its displayed enforcement preview",
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review a suspected malicious change");
     await panel
-      .getByLabel("Evidence link or case ID")
+      .getByLabel("Evidence", { exact: true })
       .fill("case-before-delist");
-    await panel
-      .getByRole("button", { name: "Preview action", exact: true })
-      .click();
-    await expect(
-      panel.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
-    ).toBeVisible();
+    await panel.getByRole("button", { name: "Preview", exact: true }).click();
+    await expect(confirmButton(panel, "Quarantine")).toBeVisible();
     fixture.releaseSave();
     await page.getByRole("button", { name: "Delist", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Delist project", exact: true })
-      .click();
+    await delistConfirmation(page).click();
     await expect.poll(() => fixture.record().revision).toBe(2);
+    await expect(confirmButton(panel, "Quarantine")).toHaveCount(0);
     await expect(
-      panel.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      panel.getByRole("button", { name: "Preview action", exact: true }),
+      panel.getByRole("button", { name: "Preview", exact: true }),
     ).toBeEnabled();
     expect(applied).toEqual([]);
   } finally {
@@ -659,27 +695,29 @@ test("changed enforcement input during actor preflight sends no preview", async 
     await panel
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("The first reason");
-    await panel.getByLabel("Evidence link or case ID").fill("case-preflight-1");
+    await panel
+      .getByLabel("Evidence", { exact: true })
+      .fill("case-preflight-1");
     const held = fixture.holdNextSession();
     releaseSession = held.release;
-    await panel
-      .getByRole("button", { name: "Preview action", exact: true })
-      .click();
+    await panel.getByRole("button", { name: "Preview", exact: true }).click();
     await expect.poll(held.started).toBe(true);
     await panel
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("The revised reason");
-    await panel.getByLabel("Evidence link or case ID").fill("case-preflight-2");
+    await panel
+      .getByLabel("Evidence", { exact: true })
+      .fill("case-preflight-2");
     held.release();
     await expect(panel.getByRole("alert")).toContainText(
       "The request changed.",
     );
     await expect(
-      panel.getByRole("button", { name: "Preview action", exact: true }),
+      panel.getByRole("button", { name: "Preview", exact: true }),
     ).toBeEnabled();
-    await expect(panel.getByRole("button", { name: /^Confirm:/u })).toHaveCount(
-      0,
-    );
+    await expect(
+      panel.getByRole("button", { name: /^Confirm: /u }),
+    ).toHaveCount(0);
     expect(previews).toEqual([]);
   } finally {
     releaseSession?.();
@@ -721,15 +759,10 @@ test("changed project props during confirmation preflight send no enforcement", 
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review this change");
     await panel
-      .getByLabel("Evidence link or case ID")
+      .getByLabel("Evidence", { exact: true })
       .fill("case-confirm-held");
-    await panel
-      .getByRole("button", { name: "Preview action", exact: true })
-      .click();
-    const confirm = panel.getByRole("button", {
-      name: "Confirm: Quarantine",
-      exact: true,
-    });
+    await panel.getByRole("button", { name: "Preview", exact: true }).click();
+    const confirm = confirmButton(panel, "Quarantine");
     await expect(confirm).toBeVisible();
     const held = fixture.holdNextSession();
     releaseSession = held.release;
@@ -737,22 +770,20 @@ test("changed project props during confirmation preflight send no enforcement", 
     await expect.poll(held.started).toBe(true);
     fixture.releaseSave();
     await page.getByRole("button", { name: "Delist", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Delist project", exact: true })
-      .click();
+    await delistConfirmation(page).click();
     await expect.poll(() => fixture.record().revision).toBe(2);
     await expect(confirm).toHaveCount(0);
     // While apply is still waiting, only a changed fingerprint can replace
     // the displayed preview with this disabled preview-request control.
     await expect(
-      panel.getByRole("button", { name: "Preview action", exact: true }),
+      panel.getByRole("button", { name: "Preview", exact: true }),
     ).toBeVisible();
     held.release();
     await expect(panel.getByRole("alert")).toContainText(
       "The request changed.",
     );
     await expect(
-      panel.getByRole("button", { name: "Preview action", exact: true }),
+      panel.getByRole("button", { name: "Preview", exact: true }),
     ).toBeEnabled();
     expect(applied).toEqual([]);
   } finally {
@@ -809,15 +840,10 @@ test("accepted enforcement with changed props retains the write without a stale 
       .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Request a new review");
     await panel
-      .getByLabel("Evidence link or case ID")
+      .getByLabel("Evidence", { exact: true })
       .fill("case-accepted-held");
-    await panel
-      .getByRole("button", { name: "Preview action", exact: true })
-      .click();
-    const confirm = panel.getByRole("button", {
-      name: "Confirm: Request reinstatement",
-      exact: true,
-    });
+    await panel.getByRole("button", { name: "Preview", exact: true }).click();
+    const confirm = confirmButton(panel, "Request reinstatement");
     await confirm.click();
     await expect.poll(() => accepted.length).toBe(1);
     expect(accepted[0]).toMatchObject({
@@ -827,13 +853,11 @@ test("accepted enforcement with changed props retains the write without a stale 
     });
     fixture.releaseSave();
     await page.getByRole("button", { name: "Delist", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Delist project", exact: true })
-      .click();
+    await delistConfirmation(page).click();
     await expect.poll(() => fixture.record().revision).toBe(2);
     await expect(confirm).toHaveCount(0);
     await expect(
-      panel.getByRole("button", { name: "Preview action", exact: true }),
+      panel.getByRole("button", { name: "Preview", exact: true }),
     ).toBeVisible();
     const reads = fixture.projectReads();
     const response = page.waitForResponse(
@@ -847,14 +871,9 @@ test("accepted enforcement with changed props retains the write without a stale 
     expect(accepted).toHaveLength(1);
     expect(fixture.record().enforcement.nextSequence).toBe(2);
     expect(fixture.projectReads()).toBe(reads);
+    await expect(page.getByText("Recorded.", { exact: true })).toHaveCount(0);
     await expect(
-      page.getByText(
-        `Request reinstatement recorded for ${fixture.project.name}.`,
-        { exact: true },
-      ),
-    ).toHaveCount(0);
-    await expect(
-      panel.getByRole("button", { name: "Preview action", exact: true }),
+      panel.getByRole("button", { name: "Preview", exact: true }),
     ).toBeEnabled();
   } finally {
     heldApply.release();

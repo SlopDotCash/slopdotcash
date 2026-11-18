@@ -1,3 +1,4 @@
+import { Clock, LoaderCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import {
@@ -5,7 +6,16 @@ import {
   type IncompleteAssessments as Queue,
 } from "./lib/incomplete-assessments";
 import { currentProjectSession } from "./lib/project-api";
-import { formatDateTime } from "./Presentation";
+import { formatDateTime, StatusBadge } from "./Presentation";
+
+/** A short distance to a retry time, such as "in 12m"; past times read "due". */
+function relativeTime(value: string): string {
+  const minutes = Math.round((Date.parse(value) - Date.now()) / 60_000);
+  if (minutes <= 0) return "due";
+  if (minutes < 60) return `in ${minutes}m`;
+  if (minutes < 1440) return `in ${Math.round(minutes / 60)}h`;
+  return `in ${Math.round(minutes / 1440)}d`;
+}
 
 /** An existing Inbox view, scoped to current project maintainers and admins. */
 export default function IncompleteAssessments({
@@ -130,16 +140,31 @@ export default function IncompleteAssessments({
                 </a>
                 <p className="inbox-meta">
                   {item.running ? (
-                    "Retrying"
+                    <span aria-label="Retrying" role="img" title="Retrying">
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="wallet-spin"
+                        size={14}
+                      />
+                    </span>
                   ) : item.retryAt ? (
                     <>
-                      Next retry{" "}
-                      <time dateTime={item.retryAt}>
-                        {formatDateTime(item.retryAt)}
+                      <span
+                        aria-label="Next retry"
+                        role="img"
+                        title="Next retry"
+                      >
+                        <Clock aria-hidden="true" size={14} />
+                      </span>{" "}
+                      <time
+                        dateTime={item.retryAt}
+                        title={formatDateTime(item.retryAt)}
+                      >
+                        {relativeTime(item.retryAt)}
                       </time>
                     </>
                   ) : (
-                    "Awaiting assessment"
+                    <StatusBadge>Queued</StatusBadge>
                   )}
                 </p>
               </li>

@@ -56,7 +56,7 @@ points and profiles still validate.
 | `GET /api/v1/project-account-bans` | public, edge cached | GitHub ID and earliest start time of each active account ban, for the score generator; no reason, evidence, project or login |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
 | `GET /api/v1/project-vaults/:id` | session, steward or repository admin | Lists served setup networks and the current revision |
-| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
+| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction. Before finality, a verified ordinary EVM token creation in a canonical block answers `pending` with a `provisional` deployment; nothing is registered |
 | `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` and repositories added on the manage page |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
@@ -79,6 +79,11 @@ Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private 
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
 changes only status and listing tier, and never invokes setup activation.
+While the project's own Quarantine or Ban is in force, removal returns 409
+`project_restricted`, checked before an already-removed retry and again in the
+guarded append. The restriction's paused, retired revision is not a removal,
+because reinstatement lists the project again from the revision the
+restriction opened on.
 Retired projects publish no skills and cannot reactivate through setup checks.
 The registry API keeps their manifests for historical validation; discovery
 readers exclude the retired tier. Cancellation competes atomically with both
@@ -92,13 +97,29 @@ serves these public artifacts from the current D1 revision:
 
 | Path | Content |
 |---|---|
-| `/.well-known/slop/projects.json` | Repository-to-project routing for every project that publishes skills |
+| `/.well-known/slop/projects.json` | Repository-to-project routing for every active, cleared project that publishes skills, except an active monthly pool that is not funded this month (see below) |
 | `/projects/:id/terms.json` | Steward, authority and terms of the current revision |
 | `/projects/:id/skill.md` (alias `SKILL.md`) | Generated contributor skill |
 | `/projects/:id/review-skill.md` (alias `review/SKILL.md`) | Generated reviewer skill |
 | `/projects/:id/[review-]{mission,codex,claude,claude-code,manual}.md` | Workflow and per-client install guides |
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
+
+Discovery reads the cached vault rows behind `GET /api/v1/pool-funding`
+(`readPoolFundingIndex` in `pool-funding.ts`) and applies `listedThisMonth`
+from `src/lib/pool-funding.ts`, the same rule the home page and /sponsors use
+(PRD section 7, operator decision of 16 November 2026). An open security
+program or a non-monthly reward stays listed. When the funding read fails,
+discovery lists every cleared project as before; the response is `no-store`,
+so the next request reads again. The per-project artifacts above keep serving
+by direct link.
+
+Discovery also reads the stored open pull request counts
+(`readIntakeCounts` in `merge-activity.ts`) and leaves out an active project
+that is over its owner's intake cap (`intakePaused` in
+`src/lib/intake-cap.mjs`; PRD section 5, operator decision of 17 November
+2026). A count that cannot be read, was never read or is older than three
+days pauses nothing.
 
 ## Self-service setup
 
@@ -501,8 +522,24 @@ Slop verifies that factory's current code and compatibility. On Solana it
 verifies the program bytes, upgrade authority and pinned Config. Registration
 verifies the exact finalized transaction, project
 digest, owner, asset, purpose, code and monthly setting before appending one
-revision. Retry returns the registered vault. An unknown send stays pending
+revision. Retry returns the registered vault. Before finality, an ordinary
+EVM token creation that passes the same checks at its own canonical block is
+answered as `pending` with a `provisional` deployment, so the owner can fund
+the vault while it is confirmed; no revision, deployment or snapshot is
+written, and a replaced block answers plain `pending` again
+(`PROVISIONAL_VAULT_ANSWER` in `vault-setup.ts` turns this answer off). An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
+A register request answered `pending` is kept in `saved_vault_creations` with
+the account that made it (operator decision, 17 November 2026). Behind later
+project API requests, at most once a minute per isolate, the server repeats
+each due request through this same route as that account, so current access,
+restrictions, policy and finalized evidence are checked again; the appended
+revision's reason says Slop finished the saved registration. Checks run every
+2 minutes for 15 checks, then every 10 minutes. A request ends when the vault
+registers, when the creation is refused (`vault_creation_failed`,
+`vault_creation_invalid`, `vault_already_registered`), or after two days; any
+other refusal is recorded in `last_code` and asked again. At most three
+requests wait per project, and saving never changes the owner's answer.
 An owner with one current confirmed wallet on the selected network can review
 an existing vault and recover registration without a connected browser wallet.
 This path offers no creation transaction when no existing vault is found.

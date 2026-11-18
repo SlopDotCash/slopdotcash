@@ -31,6 +31,7 @@ export class RetainedAttributionIncompleteError extends Error {
 export async function retainedCommitCreditSources(
   accepted: WorkUnitSource,
   sources: readonly WorkUnitSource[],
+  options: { acceptedSubset?: boolean } = {},
 ): Promise<Map<string, RetainedCommitCreditSource>> {
   const resolved = new Map<string, RetainedCommitCreditSource>();
   if (sources.some((source) => source.evidence.limitations.length))
@@ -44,6 +45,7 @@ export async function retainedCommitCreditSources(
     );
   const retained = await retainedCopyBindings(sources, {
     ordinaryCommitsOnly: true,
+    acceptedSubset: options.acceptedSubset === true,
   });
   if (retained.limitations.length)
     throw new RetainedAttributionIncompleteError(

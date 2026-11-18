@@ -1,19 +1,50 @@
 import { expect, test } from "bun:test";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { fixture, repository } from "../tests/value-binary-fixture";
+import { validateHistoricalDiscussion } from "./historical-discussion-evidence";
 import { loadValueInputs, type ValueInputProgress } from "./value-ingestion";
 
 function candidate(
-  failure: "proof" | "transport" | "identity",
+  failure: "proof" | "transport" | "identity" | "pull-number",
   baseRefName = "main",
   related = true,
+  useRepositoryAlias = false,
+  countedDiscussion = false,
 ) {
   const f = fixture({ textOnly: true, direct: true });
   const target = findRegisteredRepositoryById("SlopDotCash/asi");
   if (!target?.expectedNodeId) throw new Error("Missing registered fixture");
   const originalId = "PR_original";
-  const acceptedId = "PR_accepted";
+  const route = useRepositoryAlias
+    ? `${target.owner}/${target.name}`
+    : target.id;
+  const isOriginalPull = (number: number) =>
+    number === 1 || (number === 3 && failure === "pull-number");
+  const pullId = (number: number) =>
+    isOriginalPull(number) ? originalId : `PR_accepted_${number}`;
+  const carrierNumbers = useRepositoryAlias ? [2, 4] : [2];
   const reads: string[] = [];
+  const timeline = (number: number) => {
+    const referenceNumber = failure === "pull-number" && number === 4 ? 3 : 1;
+    return !isOriginalPull(number) && related
+      ? [
+          {
+            source: {
+              __typename: "PullRequest",
+              id: originalId,
+              number: referenceNumber,
+              url: `https://github.com/${route}/pull/${referenceNumber}`,
+              repository: { nameWithOwner: route, isPrivate: false },
+            },
+          },
+        ]
+      : [];
+  };
+  const page = <T>(nodes: T[]) => ({
+    nodes,
+    totalCount: nodes.length,
+    pageInfo: { hasNextPage: false, endCursor: null },
+  });
   const remap = <T>(value: T): T =>
     JSON.parse(
       JSON.stringify(value)
@@ -29,20 +60,20 @@ function candidate(
       const rawPath = path
         .replaceAll(`${target.owner}/${target.name}`, repository.id)
         .replaceAll(target.id, repository.id)
-        .replace(/\/(pulls|issues)\/2(?=\/|$)/gu, "/$1/1");
+        .replace(/\/(pulls|issues)\/[234](?=\/|$)/gu, "/$1/1");
       const result = await f.client.get<unknown>(rawPath);
       if (
         failure === "identity" &&
         path === `/repos/${target.owner}/${target.name}`
       )
         (result as { node_id: string }).node_id = "R_wrong";
-      const pullNumber = /\/pulls\/([12])$/u.exec(path)?.[1];
+      const pullNumber = /\/pulls\/([1234])$/u.exec(path)?.[1];
       if (pullNumber) {
         const pull = result as typeof f.pull;
         pull.number = Number(pullNumber);
-        pull.node_id = pullNumber === "1" ? originalId : acceptedId;
-        pull.html_url = `${repository.githubUrl}/pull/${pullNumber}`;
-        if (pullNumber === "1") {
+        pull.node_id = pullId(pull.number);
+        pull.html_url = `https://github.com/${route}/pull/${pullNumber}`;
+        if (isOriginalPull(pull.number)) {
           Object.assign(pull, {
             merged_at: null,
             merge_commit_sha: null,
@@ -50,7 +81,7 @@ function candidate(
           });
         }
       }
-      if (/\/pulls\/[12]\/commits\?/u.test(path))
+      if (/\/pulls\/[1234]\/commits\?/u.test(path))
         for (const commit of result as { author: unknown }[])
           commit.author = null;
       return remap(result) as T | null;
@@ -63,31 +94,46 @@ function candidate(
       return {
         repository: {
           pullRequest: {
-            id: number === 1 ? originalId : acceptedId,
-            timelineItems: {
-              nodes:
-                number === 2 && related
-                  ? [
-                      {
-                        source: {
-                          __typename: "PullRequest",
-                          id: originalId,
-                          number: 1,
-                          url: `https://github.com/${target.id}/pull/1`,
-                          repository: {
-                            nameWithOwner: target.id,
-                            isPrivate: false,
-                          },
-                        },
-                      },
-                    ]
-                  : [],
-              pageInfo: { hasNextPage: false, endCursor: null },
-            },
+            id: pullId(number),
+            timelineItems: page(timeline(number)),
           },
         },
       } as T;
     },
+    readReferenceDiscussion: countedDiscussion
+      ? async (
+          source: Parameters<typeof validateHistoricalDiscussion>[1],
+          pull: Parameters<typeof validateHistoricalDiscussion>[2],
+        ) => {
+          const verified = validateHistoricalDiscussion(
+            {
+              repository: {
+                id: target.expectedNodeId,
+                isPrivate: false,
+                nameWithOwner: source.repository,
+                pullRequest: {
+                  id: pull.node_id,
+                  number: pull.number,
+                  url: pull.html_url,
+                  state: "MERGED",
+                  headRefOid: pull.head.sha,
+                  mergedAt: pull.merged_at,
+                  updatedAt: pull.updated_at,
+                  body: pull.body,
+                  comments: page([]),
+                  reviewThreads: page([]),
+                  timelineItems: page(timeline(pull.number)),
+                },
+              },
+            },
+            source,
+            pull,
+          );
+          if (!verified) throw new Error("Fixture discussion was not verified");
+          reads.push("counted discussion");
+          return verified;
+        }
+      : undefined,
   };
   const transport = Object.assign(
     async () => {
@@ -101,21 +147,25 @@ function candidate(
       [],
       transport,
       undefined,
-      [
-        {
-          id: acceptedId,
-          number: 2,
-          baseRefName,
-          url: `https://github.com/${target.id}/pull/2`,
-          headRefOid: f.pull.head.sha,
-          mergedAt: f.pull.merged_at,
-          updatedAt: f.pull.updated_at,
-          commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
-        },
-      ],
+      carrierNumbers.map((number) => ({
+        id: pullId(number),
+        number,
+        baseRefName,
+        url: `https://github.com/${route}/pull/${number}`,
+        headRefOid: f.pull.head.sha,
+        mergedAt: f.pull.merged_at,
+        updatedAt: f.pull.updated_at,
+        commits: [
+          {
+            oid: number === 2 ? f.pull.head.sha : "d".repeat(40),
+            author: null,
+            parentCount: 1,
+          },
+        ],
+      })),
       onProgress,
     );
-  return { run, acceptedId, reads };
+  return { run, acceptedId: pullId(2), reads, route, canonical: target.id };
 }
 
 test("unproven retained work becomes a source-specific attribution hold", async () => {
@@ -129,6 +179,69 @@ test("unproven retained work becomes a source-specific attribution hold", async 
   ).toBeGreaterThan(0);
   expect(result.retainedCommitAuthors.size).toBe(0);
   expect(result.valueDecisions.size).toBe(0);
+});
+
+test.each([false, true])(
+  "counted discovery still requires the full retained-copy proof (repository alias: %s)",
+  async (alias) => {
+    const previous = candidate("proof", "main", true, alias);
+    const optimized = candidate("proof", "main", true, alias, true);
+    const before = await previous.run();
+    const after = await optimized.run();
+    expect(optimized.reads).toContain("counted discussion");
+    expect(after.retainedCommitAuthors).toEqual(before.retainedCommitAuthors);
+    expect(after.implementationAttributionHolds).toEqual(
+      before.implementationAttributionHolds,
+    );
+    expect(after.implementationAttributionHolds.has(optimized.acceptedId)).toBe(
+      true,
+    );
+    expect(
+      optimized.reads.filter((path) =>
+        /\/(?:files|commits)(?:\/|\?)/u.test(path),
+      ),
+    ).toEqual(
+      previous.reads.filter((path) =>
+        /\/(?:files|commits)(?:\/|\?)/u.test(path),
+      ),
+    );
+  },
+);
+
+test("two merged PRs can resolve the same retained original through a registered alias", async () => {
+  const { run, route, canonical, reads } = candidate(
+    "proof",
+    "main",
+    true,
+    true,
+  );
+  expect(route.toLowerCase()).not.toBe(canonical.toLowerCase());
+  const progress: ValueInputProgress[] = [];
+  const result = await run((entry) => progress.push(entry));
+  expect(progress).toContainEqual({
+    phase: "commit-attributions",
+    completed: 2,
+    total: 2,
+  });
+  expect(
+    reads.filter((path) =>
+      path.startsWith(`/repos/${canonical}/pulls/1/commits?`),
+    ),
+  ).toHaveLength(1);
+  expect(result.retainedCommitAuthors.size).toBe(0);
+});
+
+test("a registered alias cannot give a cached source a different PR number", async () => {
+  const { run } = candidate("pull-number", "main", true, true);
+  const progress: ValueInputProgress[] = [];
+  await expect(run((entry) => progress.push(entry))).rejects.toThrow(
+    "Joint source identity changed between records",
+  );
+  expect(progress).toContainEqual({
+    phase: "commit-attributions",
+    completed: 1,
+    total: 2,
+  });
 });
 
 test("transport failures do not become successful attribution holds", async () => {

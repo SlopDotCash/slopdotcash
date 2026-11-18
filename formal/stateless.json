@@ -12,7 +12,7 @@
   "contracts/evm/vendor/openzeppelin/contracts/utils/StorageSlot.sol": "Pure storage-pointer constructors, with no writes in their bodies. Reads and writes through returned pointers belong to proxy callers.",
   "contracts/vault-totals.ts": "Type-only interface for finalized vault counters. No emitted runtime state; actual atomic reads, identity and reconciliation belong to the EVM/Solana adapters.",
   "functions/[[path]].ts": "Re-exports the stateless response middleware; no independent transition.",
-  "functions/index.ts": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests.",
+  "functions/index.ts": "Transforms one successful HTML response by request host and path and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests.",
   "scripts/bash-command.ts": "Per-invocation platform/path discovery selects a Bash executable without launching it or retaining state; installer/executor callers own the process lifecycle.",
   "scripts/child-environment.mjs": "Per-invocation environment projection with explicit overrides. It neither launches a process nor changes the parent environment; process authority belongs to callers.",
   "scripts/closure-discussion-signals.ts": "Pure advisory string classifier over supplied discussion bodies/completeness. No state persists, and no moderation, scoring or payment action is performed.",
@@ -74,6 +74,7 @@
   "src/lib/project-capabilities.mjs": "Pure capability/reason projection from supplied registration, restriction, funding and retired facts. No authority-grant mutation; owning API gates are modeled separately.",
   "src/lib/project-contracts.ts": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions.",
   "src/lib/project-image.mjs": "Pure bounded data-URL and file-signature validation; no retained state, I/O or mutation.",
+  "src/lib/project-links.ts": "Pure normalization of owner-typed website and X input, link merging and vault-network naming from manifest values; no state, I/O or transition. The owner draft and revision publication are modeled at their callers (ui_project_policy, api_project_revision_receipt).",
   "src/lib/project-registry.ingested.mjs": "Static re-export of the build-time registry input, distinct from runtime registry; no independent state or effect.",
   "src/lib/project-repositories.mjs": "Pure functions over manifest values (month arithmetic, append-suffix comparison, repository lookups); no state, I/O or transition. The append rule is enforced in project-policy and modeled in project_repository_append.",
   "src/lib/project-reward-summary.ts": "Pure presentation projection of supplied registry reward/bounty fields; no storage or asynchronous work. Project lifecycle and payment state are not established by this display helper.",
@@ -124,5 +125,6 @@
   "workers/vetting-sandbox/wrangler.toml": "Literal private sandbox container binding and durable-object class migration; no branching runtime. Isolation/cleanup transitions are in vetting_execution_provenance/vetting_merge_isolation and operational release models; values alone do not prove sandboxing.",
   "wrangler.toml": "Static Pages bindings, environment constants and isolated preview declarations. No executable transition; API composition and service release models describe consumers. This configuration is not evidence of hosted binding availability.",
   "scripts/quint-verification-step.mjs": "Pure exact-source selector for the independently reviewed owner delayed-input verification entry point. Returns fixed step/proof-kind metadata only after the complete pinned model hash matches; no own transition, storage, I/O or runtime behavior.",
-  "scripts/formal-report.mjs": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
+  "scripts/formal-report.mjs": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO.",
+  "workers/slopbot/value-reference-query.ts": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit."
 }

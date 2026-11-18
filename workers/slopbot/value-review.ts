@@ -1,9 +1,9 @@
-import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   VALUE_ASSESSMENT_SCHEMA,
   VALUE_RUBRIC_VERSION,
   VALUE_SYSTEM_PROMPT,
   validateValueAssessment,
+  valueAssessmentProblem,
 } from "../../src/lib/value-assessment";
 import type { ModelEnv } from "./models";
 import { binarySourceLimitations } from "./value-binary";
@@ -12,6 +12,7 @@ import {
   runValueInference,
   type ValueInferenceBudget,
 } from "./value-inference";
+import { valueJsonDigest } from "./value-json-digest";
 import { valueModelSource } from "./value-model-source";
 import type { SubscriptionResult } from "./value-producer";
 
@@ -27,6 +28,10 @@ export async function assessValue(
 ) {
   if (evidence.indirectAcceptance)
     throw new Error("Indirect acceptance requires joint work-unit assessment");
+  if (evidence.nativeMergeAcceptance)
+    throw new Error(
+      "Native ancestor acceptance requires joint work-unit assessment",
+    );
   if (evidence.noChangePromotion)
     throw new Error("Unchanged promotions require joint work-unit assessment");
   if (
@@ -50,6 +55,7 @@ export async function assessValue(
       name: "slop_value_assessment",
       schema: VALUE_ASSESSMENT_SCHEMA,
       validate: (value) => validateEvidenceAssessment(value, evidence),
+      explain: (value) => explainEvidenceAssessment(value, evidence),
     },
     mayCall,
     budget,
@@ -72,15 +78,11 @@ export function valueSourceDigest(
   policy: { sha: string; text: string },
 ) {
   const { collectedAt: _collectedAt, ...sourceEvidence } = evidence;
-  return sha256Hex(JSON.stringify({ policy, evidence: sourceEvidence }));
+  return Promise.resolve(valueJsonDigest({ policy, evidence: sourceEvidence }));
 }
 
-export function validateEvidenceAssessment(
-  value: unknown,
-  evidence: ValueEvidence,
-) {
-  if (evidence.indirectAcceptance || evidence.noChangePromotion) return null;
-  return validateValueAssessment(value, {
+function evidenceContext(evidence: ValueEvidence) {
+  return {
     evidenceUrls: new Set(evidence.evidenceUrls),
     relatedPullRequestUrls: new Set(
       evidence.relatedPullRequests.map((pull) => pull.url),
@@ -99,7 +101,31 @@ export function validateEvidenceAssessment(
       Number.isFinite(
         Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? ""),
       ),
-  });
+  };
+}
+
+/** Why a value assessment is refused against its evidence, as a fixed phrase
+ * that never carries reply text, or null when it is accepted. */
+export function explainEvidenceAssessment(
+  value: unknown,
+  evidence: ValueEvidence,
+): string | null {
+  if (evidence.indirectAcceptance)
+    return "the evidence is an indirect acceptance, which no reply can pass";
+  if (evidence.noChangePromotion)
+    return "the evidence is a no-change promotion, which no reply can pass";
+  if (evidence.nativeMergeAcceptance)
+    return "the evidence is a native merge acceptance, which no reply can pass";
+  return valueAssessmentProblem(value, evidenceContext(evidence));
+}
+
+export function validateEvidenceAssessment(
+  value: unknown,
+  evidence: ValueEvidence,
+) {
+  return explainEvidenceAssessment(value, evidence) === null
+    ? validateValueAssessment(value, evidenceContext(evidence))
+    : null;
 }
 
 export type ValueAssessmentResult =
