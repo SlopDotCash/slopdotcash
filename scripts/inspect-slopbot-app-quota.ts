@@ -5,6 +5,8 @@ import { githubHeaders } from "../backend/github";
 import { appJwt } from "../workers/slopbot/github";
 
 const api = "https://api.github.com";
+// The production App identity is documented in workers/slopbot/README.md.
+const productionAppId = "5257625";
 const pageOnePath = "/installation/repositories?per_page=100&page=1";
 const query =
   "query SlopValueReferenceRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner} rateLimit{cost limit remaining resetAt}}";
@@ -39,7 +41,11 @@ type Repository = {
   full_name: string;
 };
 type Installation = { id: number; app_id: number };
-type Token = { token: string; expires_at: string };
+type Token = {
+  token: string;
+  expires_at: string;
+  permissions: Record<string, string>;
+};
 type InstallRepositories = { total_count: number; repositories: Repository[] };
 type GraphqlResponse = {
   errors?: unknown[];
@@ -68,7 +74,7 @@ function budget(value: CoreBudget | undefined) {
   };
 }
 
-async function read<T>(
+async function request(
   path: string,
   token: string,
   method = "GET",
@@ -77,7 +83,7 @@ async function read<T>(
 ) {
   const headers = new Headers(githubHeaders(token, "slopbot"));
   if (body !== undefined) headers.set("content-type", "application/json");
-  const response = await fetchImpl(api + path, {
+  return fetchImpl(api + path, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -85,6 +91,16 @@ async function read<T>(
     cache: "no-store",
     signal: AbortSignal.timeout(25_000),
   });
+}
+
+async function read<T>(
+  path: string,
+  token: string,
+  method = "GET",
+  body?: unknown,
+  fetchImpl = fetch,
+) {
+  const response = await request(path, token, method, body, fetchImpl);
   check(response.ok);
   return { response, value: (await response.json()) as T };
 }
@@ -103,7 +119,7 @@ export async function observe(
     /^[a-f0-9]{64}$/u.test(manifestSha256) &&
       /^[a-f0-9]{64}$/u.test(planSha256),
   );
-  check(/^[1-9][0-9]{0,15}$/u.test(appId));
+  check(appId === productionAppId);
 
   const registry = await fetchImpl(
     `https://slop.cash/api/v1/projects/${project}`,
@@ -160,119 +176,137 @@ export async function observe(
       `/app/installations/${installation.id}/access_tokens`,
       jwt,
       "POST",
+      { repository_ids: [repositoryId], permissions: { metadata: "read" } },
+      fetchImpl,
+    )
+  ).value;
+  check(typeof minted.token === "string" && minted.token.length > 0);
+  const token = minted.token;
+  try {
+    check(Date.parse(minted.expires_at) > Date.now() + 60_000);
+    check(
+      Object.keys(minted.permissions).length === 1 &&
+        minted.permissions.metadata === "read",
+    );
+    const snapshot = budget(
+      (await get<{ resources?: { core?: CoreBudget } }>("/rate_limit", token))
+        .value.resources?.core,
+    );
+    const { value: page } = await get<InstallRepositories>(pageOnePath, token);
+    check(
+      page.total_count === 1 &&
+        Array.isArray(page.repositories) &&
+        page.repositories.length === 1,
+    );
+    const matchRepository = (repository: Repository) =>
+      repository.id === repositoryId &&
+      repository.node_id === nodeId &&
+      repository.private === false &&
+      typeof repository.full_name === "string" &&
+      repository.full_name.toLowerCase() === cleanPath.toLowerCase();
+    check(page.repositories.filter(matchRepository).length === 1);
+    const { response, value: repository } = await get<Repository>(
+      `/repos/${cleanPath}`,
+      token,
+    );
+    check(matchRepository(repository));
+    check(response.headers.get("x-ratelimit-resource") === "core");
+    const header = (part: string) => {
+      const value = response.headers.get(`x-ratelimit-${part}`);
+      check(typeof value === "string" && /^[0-9]{1,16}$/u.test(value));
+      return Number(value);
+    };
+    const currentBudget = budget({
+      limit: header("limit"),
+      remaining: header("remaining"),
+      used: header("used"),
+      reset: header("reset"),
+    });
+    const resetDeltaSeconds = currentBudget.reset - snapshot.reset;
+    const usedDelta = currentBudget.used - snapshot.used;
+    const remainingDelta = snapshot.remaining - currentBudget.remaining;
+    check(
+      currentBudget.limit === snapshot.limit &&
+        Math.abs(resetDeltaSeconds) <= 1 &&
+        usedDelta >= 2 &&
+        usedDelta === remainingDelta,
+    );
+    const [owner, name] = cleanPath.split("/");
+    const data = (
+      await read<GraphqlResponse>(
+        "/graphql",
+        token,
+        "POST",
+        { query, variables: { owner, name } },
+        fetchImpl,
+      )
+    ).value;
+    check(
+      !data.errors?.length &&
+        data.data?.repository?.id === nodeId &&
+        data.data.repository.isPrivate === false,
+    );
+    check(
+      data.data.repository.nameWithOwner?.toLowerCase() ===
+        cleanPath.toLowerCase(),
+    );
+    const graph = data.data.rateLimit;
+    check(
+      integer(graph.cost) &&
+        integer(graph.limit) &&
+        integer(graph.remaining) &&
+        graph.remaining <= graph.limit,
+    );
+    const observedAt = Date.now();
+    check(Math.min(currentBudget.reset, snapshot.reset) * 1000 > observedAt);
+    check(Date.parse(graph.resetAt) > observedAt);
+    return {
+      schemaVersion: "protected-slopbot-app-quota:v1",
+      checkedAt: new Date(observedAt).toISOString(),
+      project,
+      manifestSha256,
+      planSha256,
+      appId,
+      installationId: installation.id,
+      repository: { path: cleanPath, databaseId: repositoryId, nodeId },
+      installationPageOne: {
+        path: pageOnePath,
+        pageCount: page.repositories.length,
+        totalCount: page.total_count,
+        matched: true,
+        checkedWithQuotaToken: true,
+      },
+      tokenExpiresAt: minted.expires_at,
+      temporaryTokenRevoked: true,
+      restCleanupAllowance: 1,
+      scopedTokenMetadataOnly: true,
+      coreResource: "core",
+      core: snapshot,
+      restProbe: currentBudget,
+      effectiveCore: currentBudget,
+      restBudgetConsistent: true,
+      resetDeltaSeconds,
+      usedDelta,
+      remainingDelta,
+      graphqlValid: true,
+      graphql: {
+        cost: graph.cost,
+        limit: graph.limit,
+        remaining: graph.remaining,
+        resetAt: graph.resetAt,
+      },
+      productionWrites: false,
+    };
+  } finally {
+    const revocation = await request(
+      "/installation/token",
+      token,
+      "DELETE",
       undefined,
       fetchImpl,
-    )
-  ).value;
-  check(
-    typeof minted.token === "string" &&
-      minted.token.length > 0 &&
-      Date.parse(minted.expires_at) > Date.now() + 60_000,
-  );
-  const token = minted.token;
-  const snapshot = budget(
-    (await get<{ resources?: { core?: CoreBudget } }>("/rate_limit", token))
-      .value.resources?.core,
-  );
-  const { value: page } = await get<InstallRepositories>(pageOnePath, token);
-  check(integer(page.total_count) && Array.isArray(page.repositories));
-  check(
-    page.repositories.length > 0 &&
-      page.repositories.length <= 100 &&
-      page.total_count >= page.repositories.length,
-  );
-  const matchRepository = (repository: Repository) =>
-    repository.id === repositoryId &&
-    repository.node_id === nodeId &&
-    repository.private === false &&
-    typeof repository.full_name === "string" &&
-    repository.full_name.toLowerCase() === cleanPath.toLowerCase();
-  check(page.repositories.filter(matchRepository).length === 1);
-  const { response, value: repository } = await get<Repository>(
-    `/repos/${cleanPath}`,
-    token,
-  );
-  check(matchRepository(repository));
-  const header = (part: string) => {
-    const value = response.headers.get(`x-ratelimit-${part}`);
-    check(typeof value === "string" && /^[0-9]{1,16}$/u.test(value));
-    return Number(value);
-  };
-  const currentBudget = budget({
-    limit: header("limit"),
-    remaining: header("remaining"),
-    used: header("used"),
-    reset: header("reset"),
-  });
-  const resetDeltaSeconds = currentBudget.reset - snapshot.reset;
-  const usedDelta = currentBudget.used - snapshot.used;
-  const remainingDelta = snapshot.remaining - currentBudget.remaining;
-  check(
-    currentBudget.limit === snapshot.limit &&
-      Math.abs(resetDeltaSeconds) <= 1 &&
-      usedDelta >= 2 &&
-      usedDelta === remainingDelta,
-  );
-  const [owner, name] = cleanPath.split("/");
-  const data = (
-    await read<GraphqlResponse>(
-      "/graphql",
-      token,
-      "POST",
-      { query, variables: { owner, name } },
-      fetchImpl,
-    )
-  ).value;
-  check(
-    !data.errors?.length &&
-      data.data?.repository?.id === nodeId &&
-      data.data.repository.isPrivate === false,
-  );
-  check(
-    data.data.repository.nameWithOwner?.toLowerCase() ===
-      cleanPath.toLowerCase(),
-  );
-  const graph = data.data.rateLimit;
-  check(
-    integer(graph.cost) &&
-      integer(graph.limit) &&
-      integer(graph.remaining) &&
-      graph.remaining <= graph.limit,
-  );
-  check(Number.isFinite(Date.parse(graph.resetAt)));
-  return {
-    schemaVersion: "protected-slopbot-app-quota:v1",
-    checkedAt: new Date().toISOString(),
-    project,
-    manifestSha256,
-    planSha256,
-    appId,
-    installationId: installation.id,
-    repository: { path: cleanPath, databaseId: repositoryId, nodeId },
-    installationPageOne: {
-      path: pageOnePath,
-      pageCount: page.repositories.length,
-      totalCount: page.total_count,
-      matched: true,
-      checkedWithQuotaToken: true,
-    },
-    tokenExpiresAt: minted.expires_at,
-    core: snapshot,
-    restProbe: currentBudget,
-    effectiveCore: currentBudget,
-    restBudgetConsistent: true,
-    resetDeltaSeconds,
-    usedDelta,
-    remainingDelta,
-    graphqlValid: true,
-    graphql: {
-      cost: graph.cost,
-      limit: graph.limit,
-      remaining: graph.remaining,
-      resetAt: graph.resetAt,
-    },
-    productionWrites: false,
-  };
+    );
+    check(revocation.status === 204);
+  }
 }
 
 if (import.meta.main) {

@@ -16,7 +16,7 @@ const env = {
   SLOP_QUOTA_PROJECT: "example",
   SLOP_QUOTA_MANIFEST_SHA256: sha,
   SLOP_QUOTA_PLAN_SHA256: "a".repeat(64),
-  SLOPBOT_APP_ID: "44",
+  SLOPBOT_APP_ID: "5257625",
   SLOPBOT_APP_PRIVATE_KEY: pem,
 };
 const repo = {
@@ -27,11 +27,13 @@ const repo = {
 };
 const reset = Math.floor(Date.now() / 1000) + 1800;
 const signer = async (id: string, key: string) => {
-  expect(id).toBe("44");
+  expect(id).toBe("5257625");
   expect(key.startsWith("-----BEGIN PRIVATE KEY-----")).toBe(true);
   return "fixture-jwt";
 };
 function fixture(refusal = "") {
+  const windowReset =
+    refusal === "stale-reset" ? Math.floor(Date.now() / 1000) - 1 : reset;
   const calls: string[] = [];
   const transport = Object.assign(
     async (input: string | URL | Request, config?: RequestInit) => {
@@ -47,21 +49,39 @@ function fixture(refusal = "") {
           expect(auth).toBe("Bearer fixture-jwt");
           return Response.json({
             id: 78,
-            app_id: refusal === "app-id" ? 45 : 44,
+            app_id: refusal === "app-id" ? 45 : 5257625,
           });
         case "/app/installations/78/access_tokens":
           expect(auth).toBe("Bearer fixture-jwt");
+          expect(JSON.parse(String(config?.body))).toEqual({
+            repository_ids: [12],
+            permissions: { metadata: "read" },
+          });
           return Response.json({
             token: "fixture-token",
+            permissions:
+              refusal === "grant"
+                ? { metadata: "read", contents: "write" }
+                : { metadata: "read" },
             expires_at: new Date(Date.now() + 3_000_000).toISOString(),
           });
       }
       expect(auth).toBe("Bearer fixture-token");
       switch (spec.pathname) {
+        case "/installation/token":
+          expect(config?.method).toBe("DELETE");
+          return new Response(null, {
+            status: refusal === "revocation" ? 503 : 204,
+          });
         case "/rate_limit":
           return Response.json({
             resources: {
-              core: { limit: 5000, remaining: 4999, used: 1, reset },
+              core: {
+                limit: 5000,
+                remaining: 4999,
+                used: 1,
+                reset: windowReset,
+              },
             },
           });
         case "/installation/repositories":
@@ -78,8 +98,10 @@ function fixture(refusal = "") {
               "x-ratelimit-limit": "5000",
               "x-ratelimit-remaining": "4997",
               "x-ratelimit-used": "3",
+              "x-ratelimit-resource":
+                refusal === "resource" ? "search" : "core",
               "x-ratelimit-reset": String(
-                reset + (refusal === "reset" ? 30 : 0),
+                windowReset + (refusal === "reset" ? 30 : 0),
               ),
             },
           });
@@ -115,7 +137,10 @@ test("returns only binding and same-token quota fields", async () => {
   expect(receipt.effectiveCore.remaining).toBe(4997);
   expect(receipt.installationPageOne.matched).toBe(true);
   expect(receipt.repository.databaseId).toBe(12);
-  expect(calls.length).toBe(7);
+  expect(calls.length).toBe(8);
+  expect(calls.at(-1)).toBe("/installation/token");
+  expect(receipt.temporaryTokenRevoked).toBe(true);
+  expect(receipt.restCleanupAllowance).toBe(1);
   expect(receipt.productionWrites).toBe(false);
   const bytes = JSON.stringify(receipt);
   expect(bytes).not.toContain("fixture-token");
@@ -123,11 +148,29 @@ test("returns only binding and same-token quota fields", async () => {
   expect(bytes).not.toContain("PRIVATE KEY");
 });
 
-for (const refusal of ["app-id", "repository", "reset", "graphql"]) {
+for (const refusal of [
+  "app-id",
+  "grant",
+  "repository",
+  "resource",
+  "reset",
+  "stale-reset",
+  "graphql",
+  "revocation",
+]) {
   test(`refuses inconsistent ${refusal}`, async () => {
-    const { transport } = fixture(refusal);
+    const { calls, transport } = fixture(refusal);
     await expect(observe(env, transport, signer)).rejects.toThrow(
       "quota witness refused",
     );
+    if (refusal !== "app-id") expect(calls.at(-1)).toBe("/installation/token");
   });
 }
+
+test("refuses an unexpected App configuration before any requests", async () => {
+  const { calls, transport } = fixture();
+  await expect(
+    observe({ ...env, SLOPBOT_APP_ID: "44" }, transport, signer),
+  ).rejects.toThrow("quota witness refused");
+  expect(calls).toEqual([]);
+});

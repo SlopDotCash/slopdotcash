@@ -4239,9 +4239,9 @@
     },
     {
       "path": "scripts/inspect-slopbot-app-quota.ts",
-      "sha256": "dc773de141a019740cc77a5654dad5647e4d384e7b9ca9b0732903fd45347e4f",
+      "sha256": "786823584d469d5be5a04b20c556ebc75e2714e615a026f12e7c1309f62ed98c",
       "models": [],
-      "candidateLines": [30, 123, 125],
+      "candidateLines": [32, 139, 141, 304, 308],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Reads one immutable project and its public GitHub repository through a short-lived installation grant. Computes a sanitized current quota observation within one invocation. Owns no persisted credential, application state, assessment, Points, money, or retry cursor."
     },
