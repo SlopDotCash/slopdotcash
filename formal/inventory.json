@@ -5361,7 +5361,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "00fb56e3183d9d08302063c354ce3a29b824ba4b6856b4dd0fd805c1b463f61d",
+      "sha256": "185f07740ab8ac5e7eeb8beaddcb0c83831fd3aea4bc6e10a6e9bbe185f63382",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5383,13 +5383,13 @@
       ],
       "candidateLines": [
         21, 23, 332, 342, 352, 363, 372, 373, 374, 375, 376, 378, 379, 440, 496,
-        497, 498, 501, 524, 590, 621, 658, 764, 832, 910, 911, 921, 931, 1158,
-        1173, 1191, 1237, 1241, 1246, 1248, 1251, 1318, 1321, 1323, 1327, 1328,
-        1333, 1350, 1354, 1362, 1363, 1366, 1368, 1376, 1407, 1453, 1456, 1471,
-        1472, 1522, 1525, 1529, 1530, 1531, 1532, 1538, 1541, 1561, 1563, 1580,
-        1585, 1647, 1648, 1653, 1654, 1659, 1665, 1706, 1707, 1710, 1711, 1714,
-        1715, 1736, 1737, 1743, 1748, 1750, 1754, 1755, 1794, 1817, 1827, 1858,
-        1860, 1885, 1886, 1902, 1903, 1914, 1916, 1929, 1932
+        497, 498, 501, 524, 590, 621, 658, 764, 832, 910, 911, 924, 934, 935,
+        1165, 1180, 1198, 1244, 1248, 1253, 1255, 1258, 1325, 1328, 1330, 1334,
+        1335, 1340, 1357, 1361, 1369, 1370, 1373, 1375, 1383, 1414, 1460, 1463,
+        1478, 1479, 1529, 1532, 1536, 1537, 1538, 1539, 1545, 1548, 1568, 1570,
+        1587, 1592, 1654, 1655, 1660, 1661, 1666, 1672, 1713, 1714, 1717, 1718,
+        1721, 1722, 1743, 1744, 1750, 1755, 1757, 1761, 1762, 1801, 1824, 1834,
+        1865, 1867, 1892, 1893, 1909, 1910, 1921, 1923, 1936, 1939
       ],
       "review": "mapped-abstraction"
     },
@@ -6885,13 +6885,13 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "b49378681b38c0980b5bdc030067d70c8f4438d374086d3bab3eef20c0a7df9f",
+      "sha256": "644260f6c5f4fa9f72b74dae3478a1926c97babca953ec83c076dea4813fcc99",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 287, 370, 399, 401
+        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 287, 370, 400, 402
       ],
       "review": "mapped-abstraction"
     },
@@ -18971,7 +18971,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_listing.qnt",
-      "sha256": "85e75f3cf38539e2fcec8a18211b5b1e4a25b57a7c175da5c55f80db28d3e301",
+      "sha256": "6ff7d101adda410e3430d5ff39fbb4c8c0a5a323fe958f5a215d999bb66634d4",
       "sources": [
         "backend/projects/pool-funding.ts",
         "backend/projects/skill-publication.ts",
@@ -18987,19 +18987,20 @@
         "emptyCommunityHasNoNextPageTest",
         "emptyCommunityHasNoPreviousPageTest",
         "externalPrizeStaysListedTest",
-        "failedFundingReadKeepsHomeCardTest",
+        "failedFundingReadListsHomeCardTest",
         "failedReadsListAsBeforeTest",
         "fundedPoolIsListedTest",
-        "fundingLossKeepsHomeCardTest",
+        "fundingLossRemovesHomeCardTest",
         "fundingReadsDoNotChangeCommunityPageTest",
         "fundingTheMonthListsItTest",
+        "homeWaitsForFundingReadTest",
         "honorSystemDoesNotQualifyForDiscoveryTest",
         "loadingListsAsBeforeTest",
         "pausedProjectKeepsItsListingTest",
         "registryEligibilityStillGatesHomeTest",
         "registryShrinkClampsRenderedPageTest",
         "securityProgramStaysListedTest",
-        "unfundedPoolStaysOnHomeTest"
+        "unfundedPoolLeavesHomeTest"
       ]
     },
     {

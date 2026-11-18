@@ -379,12 +379,13 @@ function displayedPoolReward(
 
 /** The project page line for a pool that is not funded this month. */
 export const NOT_LISTED_NOTICE =
-  "This project's pool is not funded this month. Accepted work still records points.";
+  "This project's pool is not funded this month, so it is not listed.";
 
 /**
- * Whether a project is listed this month (operator decision, 16 November
- * 2026). An active project whose monthly pool is not funded this month, by
- * `poolFunded`, is left out of /sponsors and agent discovery.
+ * Whether a project is listed this month (operator decisions, 16 and 18
+ * November 2026). An active project whose monthly pool is not funded this
+ * month, by `poolFunded`, is left out of the homepage, /sponsors and agent
+ * discovery. An honor-system promise does not count as funding.
  * A project with an open security program and every other reward kind stay
  * listed, and paused projects keep their existing listing. Its page still
  * opens by direct link and its skills keep serving. A null index means the
