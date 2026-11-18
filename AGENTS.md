@@ -311,7 +311,18 @@ provider, exact model, and client.
 
 Slopbot is required and always free, and runs only on registered repositories.
 It scores PRs by perceived size and value, credits useful reviews, and applies
-the published penalty table. Automatic closure is limited to verified
+the published penalty table. A project owner may turn on the refundable
+submission fee (`slopbot.submissionFee`; operator decision, 18 November 2026;
+PRD section 5). The review stays free: an outside contributor's pull request
+waits for its review until a deposit is recorded, with one comment and the
+label `slopbot:fee-needed`. A merge, or 14 days without a maintainer decision,
+makes the deposit due back; a pull request closed without a merge for 7 days
+keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned). Slopbot
+moves no money, never closes a pull request for an unpaid fee, and never
+blocks a maintainer's own review or merge; scoring does not read the fee.
+`SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `off`, `dry_run`
+or `live` and ships `off`; `live` needs its own reviewed change after the
+deposit contracts are deployed. Automatic closure is limited to verified
 Slop-skill participants, excluding maintainers: a slop.cash member whose own
 authenticated Slop run records a `pull_request_opened` event for that exact PR
 (PRD section 11). A copied marker is never proof. An uncertain finding goes to

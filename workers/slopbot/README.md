@@ -243,6 +243,63 @@ retry schedule. Only three completed non-free attempts permit terminal
 is returned. Completion, cost reconciliation and journal publication are
 separate facts; no reservation is refunded or expired by a timer.
 
+## Submission fee
+
+A project owner may turn on the refundable submission fee (operator decision,
+18 November 2026; PRD section 5, `src/lib/submission-fee-setting.mjs`).
+`submission-fee.ts` holds Slopbot's part; it moves no money and reads no chain.
+
+`SUBMISSION_FEE_MODE` in `wrangler.toml` is `off`, `dry_run` or `live` and
+ships `off`. Any other value is `off`. While no deposit contract address is
+published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
+
+- **Who is asked.** A pull request of a project open to contributor work,
+  whose setting is on, from an author the existing `authorExemption` rule
+  calls an outside contributor, opened after the setting was last turned on
+  (`feeSettingSince` reads the immutable project revisions). Bots, drafts,
+  closed pull requests and exempt authors never reach the gate. Nobody is
+  asked for a review the intake cap or the monthly cap would refuse.
+- **First sight (`live`).** One row in `submission_fee_items` with the
+  project's fee at that moment, one comment (marker `<!-- slopbot:fee -->`,
+  found by the App's own account, never by text), the label
+  `slopbot:fee-needed`, and the review is recorded as skipped with the reason
+  `fee-needed`. No model call. Slopbot's own state is in `slopbot_fee_gates`
+  (`recorded`, `asking`, `asked`, `paid`, `released`); the first ask holds a
+  ten-minute lease so two jobs never post two comments.
+- **Paid.** The submission-fee Worker sets `paid_at`. The five-minute schedule
+  (`dispatchFeeChecks`), or the review job that notices it first, queues a
+  `submission_fee` job. `refreshSubmissionFee` swaps the label for
+  `slopbot:fee-paid`, updates the comment and queues the review it held back.
+- **Outcome.** The same job sets `outcome` on a paid, undecided row only:
+  `refund_due` when the pull request is merged or still open 14 days after
+  `paid_at`; `kept_due` when it has been closed without a merge for 7 days,
+  counted from the later of the close and `paid_at`. A `closed` or `reopened`
+  event queues the check at once; otherwise a paid pull request is read again
+  within a day. The Worker sends what is due and writes `refunded` or `kept`.
+- **Taken back.** When the owner turns the setting off, or the author gains
+  write access, an unpaid ask is released: the label comes off, the comment
+  says so and the review runs.
+- **`dry_run`.** Inserts the item row and a `recorded` gate row with the
+  reason it would have skipped, writes nothing to GitHub and runs the review
+  as today.
+
+- **Payment withdrawn.** The Worker may clear `paid_at` again while no outcome
+  is set, when the deposit's block is reorganised away before it is final.
+  The next check puts `slopbot:fee-needed` and the asking comment back, and
+  later commits wait for the fee again.
+
+Slopbot never closes a pull request for an unpaid fee, an unpaid pull request
+never gets `slopbot:ready`, and a maintainer can review and merge without it.
+Value assessment and scoring never read the fee.
+
+The ways to pay in the comment come from `submissionFeeOptions` in
+`src/lib/submission-fee.mjs`, the same rule the Worker judges a deposit by:
+the stablecoin of each network with a published contract at the amount fixed
+for the pull request, and SLOP only while a rate from `submission_fee_rates`
+is in force. The SLOP amount in the comment is the one at the time of writing;
+the comment says it changes with the rate and points to the amount due now at
+`/api/v1/submission-fee/items/<repositoryId>/<pullNumber>`.
+
 ## Value assessment
 
 Value scoring is a separate pipeline from advisory/close review. Entry points:

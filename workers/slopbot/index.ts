@@ -39,6 +39,13 @@ import {
 } from "./review";
 import { dispatchSpendAlert } from "./spend-alerts";
 import {
+  dispatchFeeChecks,
+  feeCheckWanted,
+  feeJob,
+  feeReviewJob,
+  refreshSubmissionFee,
+} from "./submission-fee";
+import {
   consumePendingValueRequests,
   type ValueConsumerEnv,
 } from "./value-consumer";
@@ -77,6 +84,10 @@ const READY_ACTIONS: Record<string, ReadonlySet<string>> = {
   ]),
   pull_request_review: new Set(["submitted", "edited", "dismissed"]),
 };
+
+/** A merge, close or reopen can make a paid submission fee due back or kept
+ * (PRD section 5). The check re-reads everything; this only queues it. */
+const FEE_ACTIONS: ReadonlySet<string> = new Set(["closed", "reopened"]);
 
 const VALUE_ACTIONS: Record<string, ReadonlySet<string>> = {
   pull_request: new Set(["closed", "reopened", "edited", "synchronize"]),
@@ -507,6 +518,25 @@ export default {
         if (await readyLabelWanted(env.SLOPBOT_DB, ready))
           await env.SLOPBOT_QUEUE.send(ready);
       }
+      if (
+        event === "pull_request" &&
+        payload.action &&
+        FEE_ACTIONS.has(payload.action) &&
+        payload.installation &&
+        payload.repository &&
+        payload.repository.private === false &&
+        payload.pull_request !== undefined
+      ) {
+        const fee = feeJob({
+          deliveryId: `${deliveryId}:fee`,
+          installationId: payload.installation.id,
+          repositoryId: payload.repository.id,
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          number: payload.pull_request.number,
+        });
+        if (await feeCheckWanted(env, fee)) await env.SLOPBOT_QUEUE.send(fee);
+      }
       const job = jobFor(event, deliveryId, payload, env.SLOPBOT_APP_USER_ID);
       if (job !== null) {
         // Paused projects stay registered: their review is security-only.
@@ -570,6 +600,7 @@ export default {
       dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchReadyChecks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      dispatchFeeChecks(env, env.SLOPBOT_QUEUE),
       processPendingPointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
@@ -596,18 +627,28 @@ export default {
     for (const message of batch.messages) {
       try {
         const body = message.body;
-        const outcome =
-          body.kind === "review"
-            ? await reviewItem(env, body)
-            : body.kind === "ready_label"
-              ? await refreshReadyLabel(env, body)
-              : body.kind === "maintainer_hold"
-                ? await applyMaintainerHold(env, body)
-                : body.kind === "appeal_command"
-                  ? await applyAppealCommand(env, body)
-                  : body.kind === "appeal_due"
-                    ? await escalateDueAppeal(env, body)
-                    : await recordHumanSignal(env, body);
+        let outcome: string;
+        if (body.kind === "submission_fee") {
+          // A paid or released submission fee runs the review it held back.
+          const fee = await refreshSubmissionFee(env, body);
+          if (fee.review)
+            await env.SLOPBOT_QUEUE.send(
+              feeReviewJob(body, new Date().toISOString()),
+            );
+          outcome = fee.outcome;
+        } else
+          outcome =
+            body.kind === "review"
+              ? await reviewItem(env, body)
+              : body.kind === "ready_label"
+                ? await refreshReadyLabel(env, body)
+                : body.kind === "maintainer_hold"
+                  ? await applyMaintainerHold(env, body)
+                  : body.kind === "appeal_command"
+                    ? await applyAppealCommand(env, body)
+                    : body.kind === "appeal_due"
+                      ? await escalateDueAppeal(env, body)
+                      : await recordHumanSignal(env, body);
         console.log(
           JSON.stringify({
             delivery: message.body.deliveryId,
@@ -636,6 +677,28 @@ export default {
               JSON.stringify({
                 delivery: body.deliveryId,
                 readyLabel: String(error).slice(0, 300),
+              }),
+            );
+          }
+        // A review may find a fee that was paid moments ago; the fee check
+        // then swaps the label without waiting for the schedule.
+        if (body.kind === "review" && body.itemKind === "pull_request")
+          try {
+            const check = feeJob({
+              deliveryId: `${body.deliveryId}:fee`,
+              installationId: body.installationId,
+              repositoryId: body.repositoryId,
+              owner: body.owner,
+              repo: body.repo,
+              number: body.number,
+            });
+            if (await feeCheckWanted(env, check, true))
+              await env.SLOPBOT_QUEUE.send(check);
+          } catch (error) {
+            console.error(
+              JSON.stringify({
+                delivery: body.deliveryId,
+                submissionFee: String(error).slice(0, 300),
               }),
             );
           }

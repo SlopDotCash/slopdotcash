@@ -609,12 +609,28 @@ test("drafts a project through the setup steps and creates it without an admin",
     name: /Slopbot may close/u,
   });
   await expect(closure).toBeChecked();
+  // The submission fee starts on for a project that takes contributions
+  // (PRD section 5) and stays the owner's choice.
+  const submissionFee = page.getByRole("checkbox", {
+    name: "Ask outside contributors for a refundable submission fee",
+    exact: true,
+  });
+  await expect(submissionFee).toBeChecked();
+  await expect(page.locator("#submission-fee-hint")).toContainText(
+    "A merge sends the fee back",
+  );
+  await submissionFee.uncheck();
   await closure.uncheck();
   // Reload observes committed bytes, not the visible Saving state of the
   // queued draft write. Check the actual saved choice before navigating.
-  expect((await readProposalDraft(page)).automaticClosure).toBe("false");
+  expect(await readProposalDraft(page)).toMatchObject({
+    automaticClosure: "false",
+    submissionFee: "false",
+  });
   await page.reload();
   await expect(closure).not.toBeChecked();
+  await expect(submissionFee).not.toBeChecked();
+  await submissionFee.check();
   await expect(branch).toHaveValue("development");
   const avatar = page.locator(".project-image-upload img");
   await expect(avatar).toHaveAttribute(
@@ -871,7 +887,11 @@ test("drafts a project through the setup steps and creates it without an admin",
     ],
   });
   expect(posted?.reward).not.toHaveProperty("reviewBudget");
-  expect(posted?.slopbot).toBeUndefined();
+  // Closure consent was unticked; the submission fee stayed on.
+  expect(posted?.slopbot).toEqual({
+    automaticClosure: false,
+    submissionFee: { enabled: true },
+  });
   expect(posted?.image).toBeUndefined();
 
   // A completed setup offers the next action instead of the old wizard.
@@ -1067,6 +1087,12 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({
   await expect(
     page.getByRole("heading", { name: "Project created" }),
   ).toBeVisible();
+  // A new project that takes contributions starts with closure consent and
+  // the submission fee on, with no amount of its own (the platform default).
+  expect((manifest as { slopbot?: unknown } | null)?.slopbot).toEqual({
+    automaticClosure: true,
+    submissionFee: { enabled: true },
+  });
   // USDG remains the default Robinhood Chain asset.
   expect(manifest).toMatchObject({
     slopbot: { automaticClosure: true },
@@ -1233,6 +1259,25 @@ test("a saved native reward with an unknown network stays editable until correct
   const bountyPreview = page.getByRole("article", { name: "Listing preview" });
   await expect(bountyPreview).toContainText("1 ETH / finding");
   await expect(bountyPreview).not.toContainText("critical finding");
+  // A listing that is only a security program takes no contributions: it
+  // shows no submission fee, on the review or on the project step.
+  await expect(page.getByText("Submission fee", { exact: true })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole("navigation", { name: "Setup steps" })
+    .getByRole("button", { name: "Project", exact: true })
+    .click();
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Ask outside contributors for a refundable submission fee",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("navigation", { name: "Setup steps" })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("saved-native-network-recovered.png"),
