@@ -897,7 +897,10 @@ function HomePage() {
     window.history.pushState(window.history.state, "", destination);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
-  // Funding changes the displayed reward, never homepage discovery.
+  // An active monthly pool not funded this month is left off the homepage,
+  // as on /sponsors (operator decision, 18 November 2026). The list waits
+  // for the funding read so unfunded cards never flash in; a failed read
+  // lists every project as before.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -915,10 +918,14 @@ function HomePage() {
     "Merge activity unavailable",
   );
   const mergeIndex = merge.status === "ready" ? merge.index : null;
+  const fundingPending = funding.status === "loading";
   const listedProjects = homeProjectOrder(
     open
       .filter(
-        (project) => !intakePaused(project, mergeIndex?.get(project.id), now),
+        (project) =>
+          !fundingPending &&
+          listedThisMonth(project, fundingIndex, now) &&
+          !intakePaused(project, mergeIndex?.get(project.id), now),
       )
       .map((project) => {
         const {
@@ -966,7 +973,7 @@ function HomePage() {
             <Plus aria-hidden="true" /> Add a project
           </Link>
         </div>
-        {listedProjects.length === 0 ? (
+        {!fundingPending && listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
         ) : null}
         {featured.length > 0 ? (

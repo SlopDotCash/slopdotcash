@@ -1,7 +1,7 @@
 /**
- * Home discovery keeps active community projects visible as funding loads
- * and after it resolves. The owner can publish a monthly promise independently
- * of vault funding, but that promise never qualifies for the sponsor list.
+ * The homepage and /sponsors list an active monthly pool only when its vault
+ * funds this month (operator decision, 18 November 2026). The homepage waits
+ * for the funding read. An honor-system promise never qualifies.
  */
 
 import type { Locator, Page } from "@playwright/test";
@@ -92,7 +92,7 @@ async function serveRegistry(page: Page) {
   return eliza;
 }
 
-test("home keeps unfunded community projects and labels promises while sponsors list funded pools", async ({
+test("home and sponsors list only funded pools after the funding read", async ({
   page,
 }, info) => {
   await page.clock.setFixedTime(new Date(OBSERVED_AT));
@@ -160,67 +160,46 @@ test("home keeps unfunded community projects and labels promises while sponsors 
     name: "Community",
     exact: true,
   });
-  const promise = community.locator('a.project-row[href="/projects/asi"]');
   const funded = featured.locator('a[href="/projects/eliza"]');
-  const configured = featured.locator('a[href="/projects/slopdotcash"]');
-  const promiseAmount = promise.locator(".project-row-amount");
   const fundedAmount = funded.locator(".project-bounty");
-  const configuredAmount = configured.locator(".project-bounty");
   try {
-    for (const id of ["eliza", "slopdotcash"])
-      await expect(featured.locator(`a[href="/projects/${id}"]`)).toBeVisible();
-    for (const id of ["asi", "thenetwork"])
-      await expect(
-        community.locator(`a[href="/projects/${id}"]`),
-      ).toBeVisible();
-    await expect(promiseAmount.locator("strong")).toHaveText("$1,250");
-    await expectFundingTag(promiseAmount, "Promised", "warning");
-    await expectFundingWarning(promiseAmount, "Not vaulted");
-    await expectFundingTag(fundedAmount, "Promised", "warning");
-    await expectFundingWarning(fundedAmount, "Vault funding unverified");
+    // The homepage waits for the funding read before listing projects.
+    await expect(projects.locator("a.project-card, a.project-row")).toHaveCount(
+      0,
+    );
+    await expect(projects).not.toContainText("No projects yet.");
   } finally {
     releaseFunding();
   }
-  // A successful funding read updates amounts without removing community work.
+  // After the read, only funded pools and other reward kinds are listed.
+  await expect(funded).toBeVisible();
   await expectFundingTag(fundedAmount, "Vaulted", "success");
   await expect(fundedAmount.locator("strong")).toHaveText("$1k");
   await expect(fundedAmount.locator(".project-funding-warning")).toHaveCount(0);
-  await expectFundingTag(promiseAmount, "Promised", "warning");
-  await expectFundingWarning(promiseAmount, "Not vaulted");
-  await expect(configuredAmount.locator("strong")).toHaveText("$1,000");
-  await expectFundingTag(configuredAmount, "Configured", "neutral");
-  await expectFundingWarning(configuredAmount, "Not vaulted");
-  const points = community.locator(
-    'a.project-row[href="/projects/thenetwork"] .project-row-amount',
-  );
-  await expect(points).toHaveText("Points only");
-  await expect(points.locator(".project-funding-tag")).toHaveCount(0);
-  // Funding changes amounts, while registry placement and ordering remain intact.
   expect(
     await featured
       .locator("a.project-card")
       .evaluateAll((cards) => cards.map((card) => card.getAttribute("href"))),
-  ).toEqual(["/projects/eliza", "/projects/slopdotcash"]);
+  ).toEqual(["/projects/eliza"]);
+  // An external prize share stays listed; an unfunded budget, an
+  // honor-system promise and a points-only pool are not.
   expect(
     await community
       .locator("a.project-row")
       .evaluateAll((cards) => cards.map((card) => card.getAttribute("href"))),
-  ).toEqual(["/projects/asi", "/projects/delta-star", "/projects/thenetwork"]);
+  ).toEqual(["/projects/delta-star"]);
+  for (const id of ["asi", "slopdotcash", "thenetwork"])
+    await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
+  await expect(projects).not.toContainText("Points only");
   await expect(projects).not.toContainText("Last merge");
-  await expect(projects).not.toContainText("outside PRs waiting");
-  await expect(projects).not.toContainText("median merge");
   await expect(page.locator("main")).not.toContainText("Pledged");
-  // An external prize share stays listed.
-  await expect(
-    projects.locator('a[href="/projects/delta-star"]'),
-  ).toBeVisible();
   await page.screenshot({
-    path: info.outputPath("home-funded-and-community.png"),
+    path: info.outputPath("home-funded-only.png"),
     fullPage: true,
   });
-  await promise.focus();
-  await expect(promise).toBeFocused();
-  await expectAccessibleReflow(page, "home-funded-and-community");
+  await funded.focus();
+  await expect(funded).toBeFocused();
+  await expectAccessibleReflow(page, "home-funded-only");
 
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   const pools = page.getByRole("list", { name: "Project funding pools" });

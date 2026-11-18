@@ -108,9 +108,11 @@ test("a project at its intake cap is left out of the home page and sponsors, and
   await page.goto("/", { waitUntil: "networkidle" });
   const projects = page.locator("#projects");
   await expect(projects.locator('a[href="/projects/eliza"]')).toHaveCount(0);
-  // Every other project keeps its card.
-  for (const id of ["asi", "slopdotcash", "thenetwork", "delta-star"])
-    await expect(projects.locator(`a[href="/projects/${id}"]`)).toBeVisible();
+  // Every other listed project keeps its card; unfunded monthly pools are
+  // not listed on the home page at all.
+  await expect(
+    projects.locator('a[href="/projects/delta-star"]'),
+  ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("home-intake-paused.png"),
     fullPage: true,

@@ -8,15 +8,14 @@
 // @evidence src/lib/pool-funding.test.ts
 // @evidence backend/projects/discovery-funding.test.ts
 // @evidence tests/e2e/unfunded-listing.spec.ts
-// `listedThisMonth` keeps an active monthly pool on /sponsors and agent
-// discovery only while `poolFunded` holds (16 November 2026). Home cards
-// instead retain every project admitted by `homeProjects`, independent of
-// the funding read (owner decision, 17 November 2026). `homeEligible` abstracts
-// that registry/tier/card-kind predicate; it never grants contribution access.
-// An
-// open security program, any other reward kind and a paused project stay
-// listed. The pages never wait for the browser funding read: while it loads,
-// and when it fails, every project is listed as before. Discovery reads the same cached vault rows on the
+// `listedThisMonth` keeps an active monthly pool on the homepage, /sponsors
+// and agent discovery only while `poolFunded` holds (operator decisions, 16
+// and 18 November 2026). `homeEligible` abstracts the `homeProjects`
+// registry/tier/card-kind predicate; it never grants contribution access.
+// An open security program, any other reward kind and a paused project stay
+// listed. The homepage waits for the browser funding read and shows no project
+// cards while it loads; /sponsors does not wait. When the read fails, every
+// project is listed as before. Discovery reads the same cached vault rows on the
 // server; a failed read lists every cleared project, and the response is
 // no-store, so the next request reads again. The project page shows the
 // ordinary unfunded notice only after a successful read that leaves it out
@@ -39,7 +38,7 @@ module ui_project_listing {
   pure def currentPage(t: S): int = if (t.communityTotal == 0) 0 else if (t.requestedPage < pageCount(t.communityTotal)) t.requestedPage else pageCount(t.communityTotal) - 1
   pure def rule(t: S, known: bool): bool = not(known) or not(t.active) or not(t.monthly) or t.program or t.funded
   pure def shown(t: S): S =
-    t.with("homeShown", t.homeEligible)
+    t.with("homeShown", t.homeEligible and t.read != "loading" and rule(t, t.read == "ready"))
      .with("shownList", rule(t, t.read == "ready"))
      .with("discovered", rule(t, t.server == "ready"))
      .with("pageNotice", t.read == "ready" and not(rule(t, true)) and not(t.promise))
@@ -75,7 +74,10 @@ module ui_project_listing {
   }
   pure def hidden(t: S): bool = t.active and t.monthly and not(t.program) and not(t.funded)
   val invariant = all {
-    s.homeShown == s.homeEligible,
+    s.homeShown == (s.homeEligible and s.read != "loading" and rule(s, s.read == "ready")),
+    s.read == "loading" implies not(s.homeShown),
+    (s.read == "ready" and hidden(s)) implies not(s.homeShown),
+    (s.read == "failed" and s.homeEligible) implies s.homeShown,
     s.read == "loading" implies s.shownList,
     (s.read == "ready" and hidden(s)) implies (not(s.shownList) and (s.pageNotice == not(s.promise))),
     (s.server == "ready" and hidden(s)) implies not(s.discovered),
@@ -90,22 +92,23 @@ module ui_project_listing {
     pageNumbers(s.communityTotal).fold(Set(), (covered, page) => covered.union(pageRows(s.communityTotal, page))) == eligibleRows(s.communityTotal),
     pageNumbers(s.communityTotal).forall(a => pageNumbers(s.communityTotal).forall(b => a == b or pageRows(s.communityTotal, a).intersect(pageRows(s.communityTotal, b)).size() == 0)),
   }
-  run unfundedPoolStaysOnHomeTest = init.then(browserRead(true)).expect(s.homeShown and not(s.shownList) and not(s.discovered) and s.pageNotice and invariant)
-  run fundedPoolIsListedTest = init.then(project(true, true, false, true)).then(browserRead(true)).expect(s.shownList and s.discovered and not(s.pageNotice) and invariant)
+  run unfundedPoolLeavesHomeTest = init.then(browserRead(true)).expect(not(s.homeShown) and not(s.shownList) and not(s.discovered) and s.pageNotice and invariant)
+  run fundedPoolIsListedTest = init.then(project(true, true, false, true)).then(browserRead(true)).expect(s.homeShown and s.shownList and s.discovered and not(s.pageNotice) and invariant)
   run securityProgramStaysListedTest = init.then(project(true, true, true, false)).then(browserRead(true)).expect(s.shownList and s.discovered and invariant)
-  run externalPrizeStaysListedTest = init.then(project(true, false, false, false)).then(browserRead(true)).expect(s.shownList and s.discovered and invariant)
+  run externalPrizeStaysListedTest = init.then(project(true, false, false, false)).then(browserRead(true)).expect(s.homeShown and s.shownList and s.discovered and invariant)
   run pausedProjectKeepsItsListingTest = init.then(project(false, true, false, false)).then(browserRead(true)).expect(s.shownList and not(s.pageNotice) and invariant)
   run failedReadsListAsBeforeTest = init.then(browserRead(false)).then(serverRead(false)).expect(s.shownList and s.discovered and not(s.pageNotice) and invariant)
   run loadingListsAsBeforeTest = init.expect(s.shownList and not(s.pageNotice) and invariant)
   run fundingTheMonthListsItTest = init.then(browserRead(true)).then(project(true, true, false, true)).expect(s.shownList and s.discovered and invariant)
-  run fundingLossKeepsHomeCardTest = init.then(project(true, true, false, true)).then(browserRead(true)).then(project(true, true, false, false)).expect(s.homeShown and not(s.shownList) and not(s.discovered) and invariant)
-  run failedFundingReadKeepsHomeCardTest = init.then(browserRead(true)).then(browserRead(false)).expect(s.homeShown and invariant)
+  run fundingLossRemovesHomeCardTest = init.then(project(true, true, false, true)).then(browserRead(true)).then(project(true, true, false, false)).expect(not(s.homeShown) and not(s.shownList) and not(s.discovered) and invariant)
+  run failedFundingReadListsHomeCardTest = init.then(browserRead(true)).then(browserRead(false)).expect(s.homeShown and invariant)
+  run homeWaitsForFundingReadTest = init.then(project(true, true, false, true)).expect(not(s.homeShown) and s.shownList and invariant)
   run registryEligibilityStillGatesHomeTest = init.then(homeEligibility(false)).then(browserRead(true)).expect(not(s.homeShown) and invariant)
-  run honorSystemDoesNotQualifyForDiscoveryTest = init.then(showPromise(true)).then(browserRead(true)).expect(s.homeShown and not(s.shownList) and not(s.discovered) and not(s.pageNotice) and invariant)
+  run honorSystemDoesNotQualifyForDiscoveryTest = init.then(showPromise(true)).then(browserRead(true)).expect(not(s.homeShown) and not(s.shownList) and not(s.discovered) and not(s.pageNotice) and invariant)
   run emptyCommunityHasNoPreviousPageTest = init.expect(pageRows(s.communityTotal, currentPage(s)) == Set() and invariant).then(previousPage.fail())
   run emptyCommunityHasNoNextPageTest = init.then(nextPage.fail())
   run communityPagesCoverRowsOnceTest = init.then(communityRegistry(5)).then(nextPage).then(nextPage).expect(currentPage(s) == 2 and pageRows(s.communityTotal, currentPage(s)) == Set(4) and invariant).then(nextPage.fail())
   run registryShrinkClampsRenderedPageTest = init.then(communityRegistry(5)).then(nextPage).then(nextPage).then(communityRegistry(3)).expect(s.requestedPage == 2 and currentPage(s) == 1 and pageRows(s.communityTotal, currentPage(s)) == Set(2) and invariant).then(previousPage).expect(s.requestedPage == 0 and invariant)
   run emptiedRegistryKeepsNoVisibleRowsTest = init.then(communityRegistry(5)).then(nextPage).then(nextPage).then(communityRegistry(0)).expect(pageRows(s.communityTotal, currentPage(s)) == Set() and invariant).then(communityRegistry(1)).expect(currentPage(s) == 0 and pageRows(s.communityTotal, currentPage(s)) == Set(0) and invariant)
-  run fundingReadsDoNotChangeCommunityPageTest = init.then(communityRegistry(5)).then(nextPage).then(browserRead(true)).then(serverRead(false)).expect(currentPage(s) == 1 and pageRows(s.communityTotal, currentPage(s)) == Set(2, 3) and s.homeShown and invariant)
+  run fundingReadsDoNotChangeCommunityPageTest = init.then(communityRegistry(5)).then(nextPage).then(browserRead(true)).then(serverRead(false)).expect(currentPage(s) == 1 and pageRows(s.communityTotal, currentPage(s)) == Set(2, 3) and invariant)
 }
