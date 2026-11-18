@@ -23,7 +23,7 @@ alias only.
 - Slop never infers copyright ownership, legal capacity, assignment, wallet
   control, or payment authority.
 - Slop never holds keys, signs transactions, broadcasts payments, or claims
-  success before public evidence proves it, except for the three narrowly scoped
+  success before public evidence proves it, except for the four narrowly scoped
   kinds of key below. No other application-service exception exists.
   - The escrow identity attester key (PAY-05, approved by the repository owner
     on 14 October 2026). It only attests the authenticated GitHub actor for a
@@ -112,6 +112,20 @@ alias only.
     0.0002 ETH per transaction and 0.002 ETH per UTC day (owner decision,
     25 October 2026). Pause above either ceiling; retain uncertain attempts.
     These limits do not authorize funding or activation.
+  - The submission-fee resolver key (PRD section 6, "Submission fee
+    deposits", operator decision of 18 November 2026). It calls only
+    `resolve` and `resolveMany` on the `SubmissionDeposits` contracts on Base
+    and Robinhood Chain. For each open deposit it can choose only between the
+    two outcomes fixed when the deposit was made: a refund to the payer, or
+    "kept" to the deposit's own destination (the fee wallet for a stablecoin,
+    the burn address for SLOP). It cannot send a deposit anywhere else, holds
+    no tokens, and is never the contract owner. A stolen key can refund or
+    keep open deposits wrongly; it cannot take them. `workers/submission-fee`
+    sends only for finalized deposits, keeps a fee only for the deposit that
+    paid a pull request whose row says kept, records each signed transaction
+    before broadcasting it, and stays inside its native-fee ceilings.
+    `SUBMISSION_FEE_MODE` ships off; `dry_run` loads no key. Going live needs
+    its own reviewed change after the contracts are deployed.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
