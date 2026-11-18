@@ -11,6 +11,7 @@
 // @source scripts/qualify-solana-rpc-pair.ts
 // @source scripts/check-retained-release-data.ts
 // @source scripts/restore-collected-data.py
+// @source scripts/github-app-token-refresh.ts
 // @source scripts/read-local-leaderboard.ts
 // @evidence scripts/check-retained-release-data.test.ts
 // @evidence scripts/restore-collected-data.test.ts

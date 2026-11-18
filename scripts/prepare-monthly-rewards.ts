@@ -29,6 +29,7 @@ import {
   type ProjectDefinition,
 } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { installGitHubAppTokenRefresh } from "./github-app-token-refresh";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
 import {
   collectMaintainerDecisions,
@@ -384,6 +385,8 @@ if (import.meta.main) {
     const { sqlPath, ...options } = parseArguments(process.argv.slice(2));
     const createdAt = new Date().toISOString();
     const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "";
+    // The collector App token is minted before a three-hour ledger step.
+    installGitHubAppTokenRefresh(process.env);
     const result = await prepareMonthlyBases({
       ...options,
       generatedAt: createdAt,
