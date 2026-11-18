@@ -155,7 +155,7 @@
     },
     {
       "path": ".github/workflows/value-intake-diagnostic.yml",
-      "sha256": "9c8267bc7c975017ddbe1702e9927ae21d1e9c041226aebc1848acdf5b1b612a",
+      "sha256": "8d9f0ffcce3f308c0272b8184e558698b767f8c42483b074f70503e3851dd20f",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1252,14 +1252,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/slopbot/value-import-observation.ts",
+      "sha256": "a53504c44f7cb0d6f53e98072d4aa82162e5c4b85d34ec626b56ac677f351ee6",
+      "models": ["formal/models/slopbot/historical_subscription_intake.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/slopbot/value-import.ts",
-      "sha256": "56e23e7700c4a530ac6b01996539fe5974d1acfff18ae8598b1ec33b885e53c4",
+      "sha256": "e5422c4b4ad0adab441a194fd793f2f15204c4a75eb7ebcb1a1d3088bbb3ab9e",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
       "candidateLines": [
-        24, 26, 97, 101, 110, 115, 118, 121, 122, 123, 124, 140
+        30, 32, 136, 141, 150, 155, 158, 161, 162, 164, 165, 181
       ],
       "review": "mapped-abstraction"
     },
@@ -4107,7 +4114,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "4fe2dd685d5e1639707c0aa41b894f24818800faa081d4b2b38ad68648777c83",
+      "sha256": "d2cceb6c018d7df82d5605112fcef9f5a20c057ffe608db99dedd7129f9271a2",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
@@ -4124,11 +4131,11 @@
         792, 882, 915, 924, 933, 952, 1042, 1238, 1473, 1535, 1543, 1601, 1654,
         1657, 1850, 1859, 1864, 1871, 1954, 1955, 2121, 2122, 2205, 2238, 2266,
         2268, 2272, 2282, 2284, 2296, 2306, 2316, 2341, 2344, 2345, 2348, 2350,
-        2375, 2427, 2638, 2641, 2890, 3010, 3131, 3144, 3155, 3156, 3343, 3344,
-        3535, 3551, 3563, 3570, 3596, 3606, 3610, 3614, 3618, 3673, 3692, 3719,
-        3736, 3770, 3771, 3773, 3789, 3806, 3807, 3808, 3817, 3822, 4002, 4360,
-        4382, 4391, 4441, 4476, 4482, 4489, 4558, 4644, 4802, 5057, 5067, 5069,
-        5082, 5113, 5115, 5116, 5120, 5124, 5180, 5234, 5285, 5288, 5324
+        2375, 2427, 2638, 2641, 2933, 3053, 3174, 3187, 3198, 3199, 3386, 3387,
+        3578, 3594, 3606, 3613, 3639, 3649, 3653, 3657, 3661, 3716, 3735, 3762,
+        3779, 3813, 3814, 3816, 3832, 3849, 3850, 3851, 3860, 3865, 4045, 4403,
+        4425, 4434, 4484, 4519, 4525, 4532, 4601, 4687, 4845, 5100, 5110, 5112,
+        5125, 5156, 5158, 5159, 5163, 5167, 5223, 5277, 5328, 5331, 5367
       ],
       "review": "mapped-abstraction"
     },
@@ -4172,11 +4179,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "6c566a5b88d3c7cddf309c9489d90f7245d0e8a86ba9437bdf781a2d37ce8f80",
+      "sha256": "82c5ad993a8aec6048fc1c1e26007d0b2914253f7aa7628b09b25f9eb01cd5b2",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 218, 220, 255, 276, 286, 291, 295, 299,
-        313, 322, 344, 354, 363, 371
+        35, 53, 86, 107, 109, 127, 165, 220, 222, 257, 279, 289, 294, 298, 302,
+        306, 309, 310, 320, 329, 351, 361, 370, 378
       ],
       "review": "mapped-abstraction"
     },
@@ -4244,9 +4251,9 @@
     },
     {
       "path": "scripts/inspect-value-intake.ts",
-      "sha256": "ad36e272cc02d0b00a58cd59a55d1c2a80866ea0e5dccbcc9c91921b663a0bf5",
+      "sha256": "c2107b0885e93065c65bcc25c449c573eaf6c80a073e3b942c609b3a4a2f8459",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [20, 66, 132, 133, 134, 247, 309, 315, 388],
+      "candidateLines": [24, 70, 156, 157, 158, 281, 347, 353, 437],
       "review": "mapped-abstraction"
     },
     {
@@ -8792,14 +8799,15 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "e40641d523e39c9a55a26fb79517ad3f431599399d0f81dbc9adada87685faf9",
+      "sha256": "d348fa259dc9e867be3008d0e13950f540511293cdb4ed80a95b7718e18deab3",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "candidateLines": [
-        46, 80, 91, 108, 117, 118, 119, 121, 125, 126, 129, 172, 175, 228, 229,
-        260
+        46, 82, 103, 119, 123, 132, 169, 180, 197, 206, 207, 208, 210, 217, 221,
+        222, 226, 269, 272, 325, 326, 357
       ],
       "review": "mapped-abstraction"
     },
@@ -9182,9 +9190,9 @@
     },
     {
       "path": "workers/slopbot/value-import-diagnostics.ts",
-      "sha256": "6f1d12a768600a1dc983712615462e87859d771df82c59366c7f25149f65ea41",
+      "sha256": "f1c285b86165ed5ef2ab9ebfa52a2005dd9b5b66e2509fdc8c68a98df2be7c19",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
-      "candidateLines": [136],
+      "candidateLines": [73, 76, 87, 88, 186],
       "review": "mapped-abstraction"
     },
     {
@@ -9199,12 +9207,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "9e6d64b76e3f697ee6e249c419d139dad45539f435cb77eb0dd7098b763242e6",
+      "sha256": "82fed066d046a5ea233752e08273d7bcbb36cec45fbbc55647fdc079785a368d",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [200],
+      "candidateLines": [201],
       "review": "mapped-abstraction"
     },
     {
@@ -14437,7 +14445,7 @@
     },
     {
       "path": "formal/models/points/github_census.qnt",
-      "sha256": "0fd9f48ead1f892db6ea92777ee5693c9c65110d805fde0d15489829eef51bbf",
+      "sha256": "30a3d7e7dd4ed35712d54b610737d4584d6f81940a1c7a2f9541d51e1de2fe63",
       "sources": [
         "scripts/generate-leaderboard.ts",
         "scripts/generate-profiles.ts",
@@ -14448,12 +14456,15 @@
         "completeCensusTest",
         "completeCountStillRequiresTerminalPageTest",
         "overlappingPagesCannotInventCountTest",
-        "repeatedCursorRefusedTest"
+        "repeatedCursorRefusedTest",
+        "splitCountRetryRebuildsCensusTest",
+        "splitRetryDiscardsPartialPagesTest",
+        "splitRetryRefusesSecondMismatchTest"
       ]
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "3f0b7659156d276320dde6054dc172f2b7f4ffc4421ce24b44968ac178964120",
+      "sha256": "048daf119ad7458ed921fbbc56bd70d0bf6df4fea952352b24eed45ef02d1bd0",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -14464,6 +14475,8 @@
         "authorizationDoesNotRetryTest",
         "commitFileErrorRecoversTest",
         "commitFileErrorRetriesOnceTest",
+        "commitFileGatewayRetriesAreIndependentTest",
+        "commitFileGatewayRetriesStayBoundedTest",
         "commitPullServerErrorRecoversTest",
         "commitPullServerErrorsStayBoundedTest",
         "commitPullServerRetryPreservesQuotaCountTest",
@@ -14480,6 +14493,7 @@
         "secondaryLimitMessageResumesTest",
         "serverRetryRespectsCheckpointTest",
         "timedOutCheckpointCannotPublishTest",
+        "unrelatedGatewayErrorNeverRetriesTest",
         "unrelatedServerErrorNeverRetriesTest",
         "unrelatedValidationErrorNeverRetriesTest",
         "writeDoesNotRetryTest"
@@ -15926,8 +15940,9 @@
     },
     {
       "path": "formal/models/slopbot/bot_historical_import.qnt",
-      "sha256": "47bbd2b340d5467810db24bd213a1065e2d03abc38625e949ccae5c2a8513f5a",
+      "sha256": "49bde8792504a47828fd257d7fc9974a0ee98ac01746985db0d2706f8d006f95",
       "sources": [
+        "workers/slopbot/github.ts",
         "workers/slopbot/value-import-diagnostics.ts",
         "workers/slopbot/value-import-service.ts",
         "workers/slopbot/value-import.ts",
@@ -16593,8 +16608,9 @@
     },
     {
       "path": "formal/models/slopbot/historical_subscription_intake.qnt",
-      "sha256": "cbc8d18d11f2c13246d83dfb9c2d6aefc5345bfa20b248e82f172258b4ee6f22",
+      "sha256": "d459527ff68c5ea77c12fa2cd18f36f38297bde023a4a190be21801ecadb77cc",
       "sources": [
+        "backend/slopbot/value-import-observation.ts",
         "backend/slopbot/value-import.ts",
         "migrations/0038_slopbot_value_journal.sql",
         "migrations/0042_slopbot_value_no_replace.sql",

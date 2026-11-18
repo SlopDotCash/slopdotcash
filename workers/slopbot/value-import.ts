@@ -146,6 +146,7 @@ export async function importSubscriptionAssessment(
       env.SLOPBOT_APP_ID,
       env.SLOPBOT_APP_PRIVATE_KEY,
       Number(input.installationId),
+      { observeSourceReadRefusal: true },
     ),
   );
   const capture = valueFileRecoveryCapture(github);
