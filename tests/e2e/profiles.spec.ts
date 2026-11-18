@@ -88,9 +88,7 @@ test("profiles preserve legacy coverage and a valid census", async ({
     "href",
     "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Amerged&type=pullrequests",
   );
-  await expect(
-    page.getByText("Total", { exact: true }).locator("..").locator("strong"),
-  ).toHaveText("0");
+  await expect(page.getByText("Total", { exact: true })).toHaveCount(0);
   await expect(
     profile.getByRole("link", { name: "GitHub · @profile-only-contributor" }),
   ).toHaveAttribute("href", "https://github.com/profile-only-contributor");

@@ -1,7 +1,6 @@
 import {
   ArrowDown,
   BookOpen,
-  ChartNoAxesColumnIncreasing,
   ChevronDown,
   Download,
   Eye,
@@ -9,6 +8,7 @@ import {
   LogIn,
   RotateCcw,
   UserRound,
+  Users,
   Wrench,
 } from "lucide-react";
 import {
@@ -58,7 +58,6 @@ import {
   type PointsMember,
   pointMembers,
 } from "./lib/points";
-import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import {
   notifyProjectSessionChanged,
@@ -361,7 +360,7 @@ const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
 export function PointsNav() {
-  const { state, me, session, setMe, requestPoints, refresh } = usePoints();
+  const { me, session, setMe, requestPoints } = usePoints();
   const [open, setOpen] = useState(false);
   const [failedImage, setFailedImage] = useState("");
   const { busy, error, run } = useAction();
@@ -391,12 +390,6 @@ export function PointsNav() {
       window.removeEventListener("popstate", close);
     };
   }, [open]);
-  const total =
-    state.status === "ready" && me
-      ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
-        me.welcome +
-        (me.socialPoints ?? 0)
-      : null;
   const signedIn = me !== null;
   useEffect(() => {
     if (signedIn) requestPoints();
@@ -471,9 +464,6 @@ export function PointsNav() {
             onError={() => setFailedImage(avatar)}
           />
         )}
-        {total !== null ? (
-          <span className="account-points">{total.toLocaleString()} pts</span>
-        ) : null}
         <ChevronDown aria-hidden="true" className="account-chevron" />
       </button>
       {open ? (
@@ -483,18 +473,6 @@ export function PointsNav() {
           aria-label="Your account details"
         >
           <strong>@{me.actor.login}</strong>
-          {total === null ? (
-            <p role="status">
-              {state.status === "error"
-                ? "Points unavailable"
-                : "Loading points…"}
-            </p>
-          ) : null}
-          {state.status === "error" ? (
-            <button type="button" onClick={refresh}>
-              Retry points
-            </button>
-          ) : null}
           <a
             href={`/contributors/${encodeURIComponent(me.actor.login)}`}
             onClick={navigate}
@@ -609,9 +587,6 @@ export function useProfileMembership(login: string, enabled = true) {
   };
 }
 
-/** The profile shows points earned over this many recent days beside the total. */
-const RECENT_POINTS_DAYS = 30;
-
 export function ProfilePoints({
   actorId,
   login,
@@ -666,15 +641,6 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
-  // A known actor with no Points record and no membership has none.
-  const pointsKnown =
-    state.status === "ready" &&
-    (m || identity || recorded || (actorId && joinStatus === "absent"));
-  const pointsUnavailable = pointsKnown
-    ? null
-    : state.status === "loading"
-      ? "Loading…"
-      : "Unavailable";
   if (
     notFoundWhenUnrecorded &&
     state.status === "ready" &&
@@ -689,7 +655,6 @@ export function ProfilePoints({
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
-        awards={m?.awards}
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}
@@ -712,32 +677,6 @@ export function ProfilePoints({
                   : "Membership could not load."}
               </p>
             ) : null}
-          </>
-        }
-        summary={
-          <>
-            <div>
-              <strong>
-                {pointsUnavailable ??
-                  recentPoints(
-                    m?.awards ?? [],
-                    new Date(),
-                    RECENT_POINTS_DAYS,
-                  ).toLocaleString()}
-              </strong>
-              <span>{RECENT_POINTS_DAYS} days</span>
-            </div>
-            <div>
-              <strong>
-                {pointsUnavailable ??
-                  (
-                    (m?.total ?? 0) +
-                    (identity?.welcome ?? 0) +
-                    (identity?.socialPoints ?? 0)
-                  ).toLocaleString()}
-              </strong>
-              <span>Total</span>
-            </div>
           </>
         }
       >
@@ -1135,46 +1074,21 @@ const REVIEW_POINT_TIERS: readonly (readonly [string, number])[] = [
   ["Specialist", 240],
 ];
 function readPointsView() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    people:
-      params.get("view") === "people" || window.location.hash === "#people",
-    query: params.get("q") ?? "",
-  };
+  return { query: new URLSearchParams(window.location.search).get("q") ?? "" };
 }
 export function PointsPage() {
-  const [view, setView] = useState(readPointsView);
-  const [peopleVisited, setPeopleVisited] = useState(() => view.people);
+  const [query, setQuery] = useState(() => readPointsView().query);
   useEffect(() => {
-    const restore = () => setView(readPointsView());
+    const restore = () => setQuery(readPointsView().query);
     window.addEventListener("popstate", restore);
-    window.addEventListener("hashchange", restore);
-    return () => {
-      window.removeEventListener("popstate", restore);
-      window.removeEventListener("hashchange", restore);
-    };
+    return () => window.removeEventListener("popstate", restore);
   }, []);
-  useEffect(() => {
-    if (view.people) setPeopleVisited(true);
-  }, [view.people]);
-  const renderHeader = (periodControls?: ReactNode) => (
-    <RoutePageHeader
-      icon={<ChartNoAxesColumnIncreasing />}
-      title="Leaderboard"
-      actions={periodControls}
-    />
-  );
+  // A directory of contributors, never a ranking (operator decision,
+  // 18 November 2026). Points stay where they explain a payout.
   return (
     <main className="shell route-main points-page standings-page">
-      {view.people ? renderHeader() : null}
-      <div hidden={view.people}>
-        <ContributorStandings renderHeader={renderHeader} />
-      </div>
-      {peopleVisited ? (
-        <div hidden={!view.people}>
-          <People query={view.query} />
-        </div>
-      ) : null}
+      <RoutePageHeader icon={<Users />} title="Contributors" />
+      <People query={query} />
       <Disclosure className="points-panel" id="rules" summary="Rules">
         <ContributionPointTiers />
         <p>
@@ -1524,7 +1438,7 @@ const PEOPLE_PAGE_SIZE = 24;
  * People without score stay discoverable without receiving a rank.
  */
 function People({ query }: { query: string }) {
-  const { state, me } = usePoints();
+  const { me } = usePoints();
   const census = useProfiles();
   const [members, setMembers] = useState<MemberState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -1641,19 +1555,11 @@ function People({ query }: { query: string }) {
                 (current + 1) * PEOPLE_PAGE_SIZE,
               )
               .map((p) => {
-                const earned =
-                  state.status === "ready"
-                    ? (state.members.find((m) => m.actor.id === p.id)?.total ??
-                      0)
-                    : null;
                 const steward = PROJECTS.filter(
                   (project) =>
                     project.authority.state === "verified" &&
                     project.steward.github.nodeId === p.id,
                 );
-                const participation = p.member
-                  ? p.member.welcome + p.member.socialPoints
-                  : 0;
                 return (
                   <li key={p.id}>
                     <a href={`/contributors/${encodeURIComponent(p.login)}`}>
@@ -1673,21 +1579,6 @@ function People({ query }: { query: string }) {
                           ? " PR count unavailable"
                           : " merged PRs"}
                       </span>
-                    </span>
-                    <span
-                      title={earned === null ? "Points unavailable" : undefined}
-                    >
-                      {earned === null ? (
-                        <>
-                          —
-                          <span className="visually-hidden">
-                            {" "}
-                            Points unavailable
-                          </span>
-                        </>
-                      ) : (
-                        `${(earned + participation).toLocaleString()} pts`
-                      )}
                     </span>
                     {steward.length ? (
                       <StatusBadge icon={<Wrench />} title="Project maintainer">
