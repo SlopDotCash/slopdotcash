@@ -4537,14 +4537,14 @@
     },
     {
       "path": "scripts/prepare-monthly-rewards.ts",
-      "sha256": "da1dd4920403ca2e6ea75c03083e48b271ec4b0c5271d02cd57508ad411cf703",
+      "sha256": "85144006d3eb6c34bcff72b537043a93a00c160220de575b64ba1a16a84aa2b0",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [
-        15, 109, 110, 111, 205, 216, 300, 315, 339, 343, 346, 347, 351, 395, 400
+        15, 109, 110, 111, 205, 216, 300, 315, 341, 345, 348, 349, 353, 397, 402
       ],
       "review": "mapped-abstraction"
     },

@@ -698,6 +698,13 @@ test("a busy month's decision record is stored exactly through statements within
   expect(
     Math.max(...statements.map((line) => Buffer.byteLength(line))),
   ).toBeLessThanOrEqual(100_000);
+  // SQLite orders group_concat's input only by an ORDER BY inside the
+  // aggregate; the order of a subquery it reads from is not promised.
+  expect(
+    statements.find((line) =>
+      line.startsWith("INSERT INTO monthly_maintainer_shares("),
+    ),
+  ).toContain("group_concat(part,'' ORDER BY sequence)");
 
   const { sqlite } = sqliteD1(
     readdirSync("migrations")
@@ -725,7 +732,14 @@ test("a busy month's decision record is stored exactly through statements within
     expect(
       sqlite.query("SELECT COUNT(*) n FROM monthly_reward_bases").get(),
     ).toEqual({ n: 0 });
-    apply(statements);
+    // Parts written in reverse and scanned in reverse still join in order.
+    sqlite.exec("PRAGMA reverse_unordered_selects=ON");
+    const parts = statements.filter((line) => line.includes("_parts("));
+    apply([
+      ...statements.slice(0, first),
+      ...parts.toReversed(),
+      ...statements.slice(first + parts.length),
+    ]);
     apply(statements);
     expect(
       sqlite

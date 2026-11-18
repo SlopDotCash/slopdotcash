@@ -332,7 +332,9 @@ export function monthlyBasesSql(
       const stored = `EXISTS(SELECT 1 FROM monthly_reward_bases WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)})`;
       // A busy month's decision record is larger than one statement D1
       // accepts, so its exact text is staged in parts. A missing part leaves
-      // the record NULL and fails the import.
+      // the record NULL and fails the import. The order belongs inside
+      // group_concat: SQLite does not promise the order of its input
+      // otherwise.
       const month = `project_id=${quote(base.projectId)} AND period=${quote(base.period)}`;
       const parts = recordParts(share.decisions);
       statements.push(
@@ -343,7 +345,7 @@ export function monthlyBasesSql(
           `INSERT INTO monthly_maintainer_share_parts(project_id,period,sequence,part) VALUES(${quote(base.projectId)},${quote(base.period)},${sequence},${quote(part)});`,
         );
       statements.push(
-        `INSERT INTO monthly_maintainer_shares(project_id,period,basis_points,pool_base,decisions,decisions_sha256,created_at) SELECT ${[base.projectId, base.period].map(quote).join(",")},${share.basisPoints},${quote(share.poolBase)},(SELECT CASE WHEN COUNT(*)=${parts.length} THEN group_concat(part,'') END FROM (SELECT part FROM monthly_maintainer_share_parts WHERE ${month} ORDER BY sequence)),${[share.decisionsSha256, createdAt].map(quote).join(",")} WHERE ${stored} ON CONFLICT(project_id,period) DO NOTHING;`,
+        `INSERT INTO monthly_maintainer_shares(project_id,period,basis_points,pool_base,decisions,decisions_sha256,created_at) SELECT ${[base.projectId, base.period].map(quote).join(",")},${share.basisPoints},${quote(share.poolBase)},(SELECT CASE WHEN COUNT(*)=${parts.length} THEN group_concat(part,'' ORDER BY sequence) END FROM monthly_maintainer_share_parts WHERE ${month}),${[share.decisionsSha256, createdAt].map(quote).join(",")} WHERE ${stored} ON CONFLICT(project_id,period) DO NOTHING;`,
         `DELETE FROM monthly_maintainer_share_parts WHERE ${month};`,
       );
       for (const row of share.rows)
