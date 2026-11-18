@@ -9,8 +9,8 @@ import {
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { runE2ePhase } from "../../../scripts/run-e2e-phase.mjs";
-import { createRunnerCancellation } from "../../../scripts/runner-cancellation.mjs";
+import { runE2ePhase } from "../../../../scripts/run-e2e-phase.mjs";
+import { createRunnerCancellation } from "../../../../scripts/runner-cancellation.mjs";
 
 const exec = promisify(execFile);
 
