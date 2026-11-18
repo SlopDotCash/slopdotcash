@@ -265,7 +265,7 @@ export function DataNotice({
     return (
       <p className="data-notice data-stale" role="status">
         <span className="pr-dot pr-bar-open" aria-hidden="true" />
-        Points stale · {formatDateTime(state.snapshot.generatedAt)}
+        Data last updated · {formatDateTime(state.snapshot.generatedAt)}
         <button aria-label="Retry" onClick={retry} title="Retry" type="button">
           <RotateCcw aria-hidden="true" size={15} />
         </button>
@@ -277,7 +277,7 @@ export function DataNotice({
     return (
       <p className="data-notice data-stale" role="status">
         <span className="pr-dot pr-bar-open" aria-hidden="true" />
-        Points stale · {formatDateTime(state.snapshot.generatedAt)}
+        Data last updated · {formatDateTime(state.snapshot.generatedAt)}
       </p>
     );
   }

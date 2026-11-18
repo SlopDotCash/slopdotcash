@@ -1849,7 +1849,7 @@ test("shows an explicit error for invalid data and retries", async ({
   // The frozen fixture is older than eight hours: a retained snapshot shows
   // its stale label instead of passing as current (owner decision D2).
   await expect(
-    page.getByRole("status").filter({ hasText: "Points stale ·" }),
+    page.getByRole("status").filter({ hasText: "Data last updated ·" }),
   ).toBeVisible();
   // Clearing the error starts loading; wait for the loaded snapshot before
   // checking that the retry made exactly one additional request.

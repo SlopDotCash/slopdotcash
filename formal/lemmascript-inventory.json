@@ -7945,7 +7945,7 @@
 {"name":"PenaltyPointTable","kind":"FunctionDeclaration","line":52,"sha256":"e49afb7ecde23a7f697f5bc26bef87bc27ab38e0c189bd6d4c2659ef5e2631af","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"<ArrowFunction@69>","kind":"ArrowFunction","line":69,"sha256":"e641e1384ee216b217d9d48d0cfc195a4f2051d9a92eebf7c541e45b05c18570","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}
 ]},
-{"path":"src/Presentation.tsx","sha256":"31742a71a256f5e0e03f4e607276786c4d5474a9d560ff01bb193920d1c7ad16","language":"tsx","disposition":"callables-inventoried","functions":[
+{"path":"src/Presentation.tsx","sha256":"92f5a57309dfa98f8ed9b3d9a1def0f7e713ac68fa8709512f4fd20ae164f7fa","language":"tsx","disposition":"callables-inventoried","functions":[
 {"name":"Disclosure","kind":"FunctionDeclaration","line":38,"sha256":"50493dbcab510eef05dc60670991e146b16e9cb62131372634b9dd132bedb953","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx","library-semantics-review"]},
 {"name":"<ArrowFunction@56>","kind":"ArrowFunction","line":56,"sha256":"2501dbce1bbd129c089c32d2790c572b9caa8c970b204a067564cde650469b43","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"reveal","kind":"ArrowFunction","line":57,"sha256":"2f98d9ec8579b0365ddf68d9880c0bd77ee372b1a4dfa73961c83f595e943168","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
@@ -7958,7 +7958,7 @@
 {"name":"StatusBadge","kind":"FunctionDeclaration","line":182,"sha256":"93ef1396085129c67e0500198546160f3fb9ef3a47e6a710c9b4b1065209cbeb","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"MetricGrid","kind":"FunctionDeclaration","line":206,"sha256":"93cd8273fe56272b8b2d1e6f74788531cb9d4cd56cf7780acf1dc4205366dddd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"MetricTile","kind":"FunctionDeclaration","line":217,"sha256":"179830332e9e041bec4d2acaa18ff0dc0ca7157d356ddedfd65036d9dd0e3ed3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"DataNotice","kind":"FunctionDeclaration","line":242,"sha256":"02117745881d95ba5621b73032a91fefd8aeeaa9103e06df6338f897728b72c5","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"DataNotice","kind":"FunctionDeclaration","line":242,"sha256":"d37513ca1e041a86fa39fc2393ee80edc9da1ed9466c4ab5c00bc1904e38f615","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"stale","kind":"FunctionDeclaration","line":287,"sha256":"6b3a1f522a5ecb6256d7de8c450ae5bb2740aa7def119b8a292c33abe8a76576","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
 {"name":"formatDateTime","kind":"FunctionDeclaration","line":296,"sha256":"d3924837333635f01728f15f350d1097fef5f4d3a0441c46efa6a4ac32353d4e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"formatNullableUtc","kind":"FunctionDeclaration","line":309,"sha256":"d0515d791ab01996ea5710b28b2181ae85b555d444969f29dc9e06eeb8956040","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
