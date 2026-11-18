@@ -2207,6 +2207,20 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
 });
 
+test("how it works answers the maintainer pay question", async ({ page }) => {
+  await page.goto("/how-it-works#faq");
+  const answer = page.locator("#faq").locator("article", {
+    has: page.getByRole("heading", { name: "Can maintainers be paid?" }),
+  });
+  await expect(answer).toContainText("when a project sets a maintainer share");
+  await expect(answer).toContainText("up to 30% of the monthly amount");
+  await expect(answer).toContainText("a close counts the same as a merge");
+  await expect(answer).toContainText("starts with the next UTC month");
+  await expect(answer).toContainText(
+    "the whole amount stays with contributors",
+  );
+});
+
 test("how it works answers the referral and buyback questions", async ({
   page,
 }) => {
