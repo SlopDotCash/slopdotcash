@@ -307,11 +307,13 @@ jobs:
       # quota (1,000 REST requests an hour), and a full collection needs
       # more than that, so it stalled behind releases, scans and checks. A
       # dedicated read-only GitHub App has its own, larger quota. It reads
-      # only public data. Without the App, or if minting fails, the steps
-      # below use GITHUB_TOKEN as before.
+      # only public data. Only production (main) collects with it, so staging
+      # collections on development never spend its quota. Without the App, or
+      # if minting fails, the steps below use GITHUB_TOKEN as before.
       - name: Mint collector token
         id: collector-token
         if: >-
+          github.ref == 'refs/heads/main' &&
           github.event_name != 'pull_request' &&
           inputs.use_published_data != true &&
           vars.COLLECTOR_APP_CLIENT_ID != ''
