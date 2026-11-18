@@ -52,6 +52,43 @@ test("structured historical stages survive both projections without raw payloads
   ).toHaveLength(20);
 });
 
+test("tail preserves safe GitHub source refusal metadata through both projections", () => {
+  const refusal = {
+    event: "historical-intake-failure",
+    stage: "source-evidence",
+    sourceCount: 16,
+    sourceIndex: 0,
+    errorName: "Error",
+    httpStatus: 403,
+    messageSha256: messageHash(secret),
+    sourceReadRefusal: {
+      category: "secondary-rate-limit",
+      remaining: 4800,
+      resetAt: null,
+      retryAfterSeconds: 60,
+    },
+  };
+  const result = sanitizeIntakeTail({
+    logs: [
+      {
+        message: [
+          JSON.stringify(refusal),
+          {
+            ...refusal,
+            sourceReadRefusal: {
+              ...refusal.sourceReadRefusal,
+              headers: { authorization: secret },
+            },
+          },
+        ],
+      },
+    ],
+  });
+  expect(result?.historicalIntakeFailures).toEqual([refusal]);
+  expect(sanitizeIntakeTail(result)).toEqual(result);
+  expect(JSON.stringify(result)).not.toContain(secret);
+});
+
 test("tail sanitizer emits fixed labels and numeric HTTP state only", () => {
   const result = sanitizeIntakeTail({
     scriptName: secret,

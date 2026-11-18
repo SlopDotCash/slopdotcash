@@ -1,3 +1,5 @@
+import { GitHubError, type GitHubSourceReadRefusal } from "./github";
+
 /** PRD 9/11: fixed internal import observations, never evidence or error text. */
 export const HISTORICAL_INTAKE_STAGES = [
   "envelope",
@@ -55,17 +57,64 @@ export type HistoricalIntakeFailure = HistoricalIntakeProgress & {
   errorName: string;
   httpStatus: number | null;
   messageSha256: string | null;
+  sourceReadRefusal?: GitHubSourceReadRefusal;
 };
 const stages = new Set<string>(HISTORICAL_INTAKE_STAGES);
+const sourceReadCategories = new Set([
+  "primary-rate-limit",
+  "secondary-rate-limit",
+  "rate-limited",
+  "access-denied",
+  "unclassified",
+]);
+
+function projectSourceReadRefusal(
+  value: unknown,
+  status: unknown,
+): GitHubSourceReadRefusal | null {
+  if (
+    (status !== 403 && status !== 429) ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return null;
+  const v = value as GitHubSourceReadRefusal;
+  if (
+    Object.keys(v).sort().join() !==
+      "category,remaining,resetAt,retryAfterSeconds" ||
+    !sourceReadCategories.has(v.category) ||
+    (v.category === "access-denied" && status !== 403) ||
+    (v.category === "rate-limited" && status !== 429) ||
+    (v.category === "primary-rate-limit" && v.remaining !== 0) ||
+    [v.remaining, v.resetAt, v.retryAfterSeconds].some(
+      (field) => field !== null && !(Number.isSafeInteger(field) && field >= 0),
+    )
+  )
+    return null;
+  return {
+    category: v.category,
+    remaining: v.remaining,
+    resetAt: v.resetAt,
+    retryAfterSeconds: v.retryAfterSeconds,
+  };
+}
+
 /** Reject extra fields even when an injected transport was already sanitized. */
 export function projectHistoricalIntakeFailure(
   value: unknown,
 ): HistoricalIntakeFailure | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
+  const hasSourceReadRefusal = "sourceReadRefusal" in v;
+  const sourceReadRefusal = hasSourceReadRefusal
+    ? projectSourceReadRefusal(v.sourceReadRefusal, v.httpStatus)
+    : null;
   if (
     Object.keys(v).sort().join() !==
-      "errorName,event,httpStatus,messageSha256,sourceCount,sourceIndex,stage" ||
+      "errorName,event,httpStatus,messageSha256,sourceCount,sourceIndex" +
+        (hasSourceReadRefusal ? ",sourceReadRefusal,stage" : ",stage") ||
+    (hasSourceReadRefusal && !sourceReadRefusal) ||
     v.event !== "historical-intake-failure" ||
     typeof v.stage !== "string" ||
     !stages.has(v.stage) ||
@@ -107,6 +156,7 @@ export function projectHistoricalIntakeFailure(
     errorName: v.errorName,
     httpStatus: v.httpStatus as number | null,
     messageSha256: v.messageSha256 as string | null,
+    ...(sourceReadRefusal ? { sourceReadRefusal } : {}),
   };
 }
 export async function historicalIntakeFailure(
@@ -135,6 +185,9 @@ export async function historicalIntakeFailure(
     httpStatus:
       typeof e.status === "number" && statuses.has(e.status) ? e.status : null,
     messageSha256,
+    ...(error instanceof GitHubError && error.sourceReadRefusal
+      ? { sourceReadRefusal: error.sourceReadRefusal }
+      : {}),
   });
 }
 /** Logging failure cannot replace the original rejection or alter publication. */
