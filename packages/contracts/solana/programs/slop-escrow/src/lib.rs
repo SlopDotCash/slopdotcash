@@ -2302,6 +2302,57 @@ mod tests {
         assert_eq!(months_ahead(202610, now).unwrap(), -1);
         assert!(months_ahead(202613, now).is_err());
     }
+    // The attester's whole-reserve release signature covers every field the program
+    // checks, so it cannot be replayed for another month, amount or deployment, and no
+    // signed allocation root can stand in for it.
+    #[test]
+    fn release_attestation_binds_every_field_and_differs_from_an_allocation() {
+        let program = Pubkey::new_from_array([1; 32]);
+        let project = Pubkey::new_from_array([2; 32]);
+        let other = Pubkey::new_from_array([3; 32]);
+        let (root, network) = ([7u8; 32], [9u8; 32]);
+        let base = monthly_release_message(&program, &project, 202611, &root, 30, 20, 10, &network);
+        assert!(base.starts_with(MONTHLY_RELEASE_PREFIX));
+        let variants = [
+            monthly_release_message(&other, &project, 202611, &root, 30, 20, 10, &network),
+            monthly_release_message(&program, &other, 202611, &root, 30, 20, 10, &network),
+            monthly_release_message(&program, &project, 202612, &root, 30, 20, 10, &network),
+            monthly_release_message(&program, &project, 202611, &[8; 32], 30, 20, 10, &network),
+            monthly_release_message(&program, &project, 202611, &root, 31, 20, 10, &network),
+            monthly_release_message(&program, &project, 202611, &root, 30, 21, 10, &network),
+            monthly_release_message(&program, &project, 202611, &root, 30, 20, 11, &network),
+            monthly_release_message(&program, &project, 202611, &root, 30, 10, 20, &network),
+            monthly_release_message(&program, &project, 202611, &root, 30, 20, 10, &[0; 32]),
+        ];
+        for variant in &variants {
+            assert_eq!(variant.len(), base.len());
+            assert_ne!(variant, &base);
+        }
+        // An allocation attestation has another prefix and another length.
+        let allocation = monthly_message(&program, &project, 202611, &root, 30, 20, &network);
+        assert!(!allocation.starts_with(MONTHLY_RELEASE_PREFIX));
+        assert!(!base.starts_with(MONTHLY_MESSAGE_PREFIX));
+        assert_ne!(allocation.len(), base.len());
+    }
+    // A pledge window counts calendar months across a year boundary, from the current
+    // UTC month (offset 0) to eleven months ahead, at both ends of the current month.
+    #[test]
+    fn pledge_window_crosses_the_year_boundary() {
+        let december = month_start(2026, 12);
+        assert_eq!(months_ahead(202612, december).unwrap(), 0);
+        assert_eq!(months_ahead(202711, december).unwrap(), 11);
+        assert_eq!(months_ahead(202712, december).unwrap(), 12);
+        assert_eq!(months_ahead(202611, december).unwrap(), -1);
+        let last_second = month_start(2027, 1) - 1;
+        assert_eq!(months_ahead(202612, last_second).unwrap(), 0);
+        assert_eq!(months_ahead(202711, last_second).unwrap(), 11);
+        assert_eq!(months_ahead(202701, last_second + 1).unwrap(), 0);
+        assert_eq!(months_ahead(202612, last_second + 1).unwrap(), -1);
+        assert_eq!(months_ahead(202712, last_second + 1).unwrap(), 11);
+        for invalid in [202600, 202713, 199912] {
+            assert!(months_ahead(invalid, december).is_err());
+        }
+    }
     #[test]
     fn fee_is_two_percent_per_award_or_withdrawal() {
         // PRD section 18: 850 USDC gives a 17 USDC fee and 833 USDC refund.

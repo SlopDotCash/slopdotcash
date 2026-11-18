@@ -13,8 +13,18 @@ export ANCHOR_PROVIDER_URL="http://127.0.0.1:$rpc_port"
 export ANCHOR_WALLET="$PWD/.local/payer.json"
 validator_pid=""
 validator_receipt=""
+# A native solana-test-validator 2.1.21 on PATH runs directly; otherwise the
+# pinned container image of ../../../scripts/local-solana-validator.mjs runs.
+validator=container
+if [[ "$(solana-test-validator --version 2>/dev/null)" == "solana-test-validator 2.1.21 "* ]]; then
+  validator=native
+fi
+printf 'Local validator: %s\n' "$validator"
 receipt_state() {
   node -e 'try { process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).state ?? ""); } catch {}' "$validator_receipt"
+}
+rpc_healthy() {
+  node -e 'fetch(process.argv[1], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getHealth" }), signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((b) => process.exit(b.result === "ok" ? 0 : 1), () => process.exit(1))' "$ANCHOR_PROVIDER_URL"
 }
 stop_validator() {
   if [[ -z "$validator_pid" ]]; then return 0; fi
@@ -22,6 +32,7 @@ stop_validator() {
   kill -TERM "$validator_pid" 2>/dev/null || true
   wait "$validator_pid" 2>/dev/null || status=$?
   validator_pid=""
+  if [[ "$validator" == native ]]; then printf '{"state":"stopped"}\n' >"$validator_receipt"; fi
   if [[ "$(receipt_state)" != "stopped" ]]; then
     printf '%s\n' "The owned validator did not confirm cleanup: $validator_receipt" >&2
     return 1
@@ -61,13 +72,19 @@ start_validator() {
   done
   # A new receipt per stage cannot reuse the first validator's stopped state.
   validator_receipt=$(mktemp "$PWD/.local/validator-receipt.XXXXXX")
-  SLOP_SOLANA_CONTAINER_RECEIPT="$validator_receipt" node ../../scripts/local-solana-validator.mjs "${mounts[@]}" -- --reset --quiet --ledger "$PWD/.local/ledger" --rpc-port "$rpc_port" --faucet-port "$faucet_port" --dynamic-port-range "$dynamic_ports" "${arguments[@]}" >.local/validator.log 2>&1 &
+  local validator_arguments=(--reset --quiet --ledger "$PWD/.local/ledger" --rpc-port "$rpc_port" --faucet-port "$faucet_port" --dynamic-port-range "$dynamic_ports" "${arguments[@]}")
+  if [[ "$validator" == native ]]; then
+    solana-test-validator "${validator_arguments[@]}" >.local/validator.log 2>&1 &
+  else
+    SLOP_SOLANA_CONTAINER_RECEIPT="$validator_receipt" node ../../../scripts/local-solana-validator.mjs "${mounts[@]}" -- "${validator_arguments[@]}" >.local/validator.log 2>&1 &
+  fi
   validator_pid=$!
   for attempt in $(seq 1 120); do
     if ! kill -0 "$validator_pid" 2>/dev/null; then
       cat .local/validator.log >&2
       return 1
     fi
+    if [[ "$validator" == native ]] && rpc_healthy; then printf '{"state":"ready"}\n' >"$validator_receipt"; fi
     if [[ "$(receipt_state)" == "ready" ]]; then break; fi
     sleep 1
   done
@@ -90,31 +107,20 @@ fi
 start_validator
 bash scripts/run-test-stage.sh production-delay node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
 stop_validator
-# Reuse the same production build for the funded lifecycle suite. The validator also
-# preloads Projects of the earlier 316- and 332-byte layouts for the migrate_project checks,
-# month pledges a live validator cannot create (the recordable month and a lapsed one), and
-# states no live validator reaches: a funded month past its admission window, an earlier month
-# that already committed sources, and a vault holding less than its counters owe.
-read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
-read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"
-read -ra token_accounts <<<"$(node integration/token-2022-preload.mjs)"
-read -ra pledge_accounts <<<"$(node integration/pledge-preload.mjs)"
-start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}" "${token_accounts[@]}" "${pledge_accounts[@]}"
-bun build adapter.ts --target=node --outfile=.local/adapter.mjs
-bun build monthly-reserve.ts --target=node --outfile=.local/monthly-reserve.mjs
-bun build ../../workers/payment-executor/monthly-release.ts --target=node --outfile=.local/monthly-release-service.mjs
-bun build funding.ts --target=node --outfile=.local/funding.mjs
-bun build commitment.ts --target=node --outfile=.local/commitment.mjs
-bun build owner-instructions.ts transactions.ts --target=node --outdir=.local --entry-naming='[name].mjs'
-bun build owner-creation.ts --target=node --outfile=.local/owner-creation.mjs
-bun build ../../workers/payment-executor/solana.ts --target=node --outfile=.local/executor.mjs
-bun build ../../workers/payment-executor/solana-monthly.ts --target=node --outfile=.local/monthly-executor.mjs
-bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../../backend/payments/handler.ts ../../backend/payments/vault-snapshots.ts --target=node --outdir=.local --entry-naming='[name].mjs'
-bun build ../../workers/payment-executor/core.ts --target=node --outfile=.local/executor-core.mjs
-bun build ../../workers/payments/index.ts --target=node --outfile=.local/payments-worker.mjs
-bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/dispatch.mjs
-# TAP emits failures immediately; spec retains custom error fields for receipt collection.
-bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit \
-  --test-reporter=tap --test-reporter=spec \
-  --test-reporter-destination=stdout --test-reporter-destination=stderr \
-  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs integration/native.e2e.mjs integration/pledge.e2e.mjs
+# The lifecycle suites drive the program through the off-chain TypeScript client
+# (adapter.ts, funding.ts, owner-creation.ts, commitment.ts, owner-instructions.ts,
+# monthly-reserve.ts) and the payment services. Neither is on this branch: they
+# return with the business logic, together with the validator stage that preloads
+# integration/legacy-project.mjs, monthly-preload.mjs, token-2022-preload.mjs and
+# pledge-preload.mjs for them.
+skip_suite() {
+  printf 'SKIP integration/%s: needs %s, not on this branch\n' "$1" "$2"
+}
+skip_suite escrow.e2e.mjs 'adapter.ts, monthly-reserve.ts and workers/payment-executor (monthly-release.ts, solana-monthly.ts)'
+skip_suite executor.e2e.mjs 'adapter.ts, workers/payment-executor, workers/payments and backend/payments'
+skip_suite keeper.e2e.mjs 'adapter.ts, scripts/payment-keeper, functions/api, src/lib payments and workers/payment-executor'
+skip_suite native.e2e.mjs 'adapter.ts, funding.ts, owner-creation.ts and workers/payment-executor/solana.ts'
+skip_suite owner-instructions.e2e.mjs 'funding.ts, owner-creation.ts and owner-instructions.ts'
+skip_suite owner-plan.e2e.mjs 'commitment.ts, funding.ts and backend/payments/handler.ts'
+skip_suite pledge.e2e.mjs 'adapter.ts'
+skip_suite token-2022.e2e.mjs 'adapter.ts and funding.ts'

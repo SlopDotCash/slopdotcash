@@ -1,8 +1,7 @@
 # Solana protected payout escrow
 
 Copied from SlopDotCash/slopdotcash (`development`, `5268ca066`). The TypeScript
-adapter, scripts other than `scripts/build-local.sh`, end-to-end harness and
-Workers named below remain in that repository;
+adapter and the Workers named below remain in that repository;
 [the package README](../README.md) lists what runs here.
 
 This Anchor program holds native SOL, classic SPL Token mints and the approved metadata-only
@@ -433,68 +432,38 @@ closes.
 
 ## Local build and end-to-end tests
 
-Validator workflows require a local Docker or Podman engine and the reviewed
-Agave 2.1.21 image. From the source repository's root, prepare its exact digest:
+`npm run build` builds the SBF binary and its IDL with Anchor 0.32.1 and
+platform tools v1.52 (see [the package README](../README.md) for the
+`~/.cache/solana` constraint).
 
-```sh
-validator_image="$(node --input-type=module -e 'import { SOLANA_TEST_IMAGE } from "./scripts/local-solana-validator.mjs"; console.log(SOLANA_TEST_IMAGE)')"
-docker pull --platform linux/amd64 "$validator_image"
-```
+`npm run test:e2e` builds the deployable program, without the
+`short-delay-for-tests` feature, loads it as upgradeable with the local payer
+as upgrade authority, and runs `integration/production-delay.e2e.mjs` against a
+fresh validator. It proves that only the upgrade authority creates the Config,
+through the unsigned `scripts/config-plan.mjs` transaction, exactly once, and
+that `initialize` rejects 3,599 seconds and accepts 3,600 seconds. It uses
+local test funds only.
 
-For Podman, use `podman pull` and set `SLOP_SOLANA_CONTAINER_RUNTIME=podman`
-when running the workflow. Keep the connection local. The shared launcher
-checks the actual image/binary and publishes only its RPC and WebSocket ports
-on `127.0.0.1`; it does not fall back to a host validator or pull an image.
-On macOS, the selected temporary directory and declared fixture files must
-already be shared with the engine's VM. The launcher mounts those inputs read
-only and does not change VM sharing. Native Solana CLI and Anchor tools are
-still needed for program preparation and client commands. Per-instance
-receipts distinguish ready, stopped and unconfirmed cleanup; retain a failed
-receipt before retrying. See the source repository's `formal/models/contracts/solana_container_lifecycle.qnt`.
+The validator is `solana-test-validator` 2.1.21 when that exact version is on
+`PATH`; otherwise it is the pinned Agave 2.1.21 container of
+`scripts/local-solana-validator.mjs` at the repository root, which needs a local
+Docker or Podman engine with that image already pulled
+(`SLOP_SOLANA_CONTAINER_RUNTIME=podman` selects Podman). The script prints which
+one it uses. The Solana CLI is needed in both cases for the airdrop.
 
-Run `npm run build` here to build the actual SBF binary and its IDL.
-Run `npm run test:e2e` to load that binary into an isolated local validator and
-execute the SPL payment, durable executor, and unsigned owner-plan workflows.
-The validator loads the program with `--upgradeable-program`, with the local
-payer as upgrade authority, so ProgramData exists. The first suite proves that
-`initialize_config` rejects a signer that is not the upgrade authority, creates
-the Config through the unsigned `config-plan.mjs` transaction, and proves that
-a second call fails. Every later suite creates or checks the Config first
-(`integration/deployment.mjs`) and uses its fixture identity authority and fee
-recipient. The suites also cover a permissionless deposit by a third party
-that the owner then withdraws, 18-decimal and 0-decimal mints through deposit,
-commit, pay and withdraw, the 2% withdrawal fee rounded up per withdrawal,
-`initialize` rejected when the identity authority or fee recipient differs from
-the Config, unsafe Token-2022 mint authorities rejected at `initialize`, and
-`readVaultTotals` against the on-chain counters. The Token-2022 suite loads synthetic
-metadata-only mint bytes into the isolated validator and covers deposit, reservation,
-payment, withdrawal and fee claims, including wrong-program and duplicate-payment
-rejection. It uses local test funds only.
-These use real token accounts, transactions, finalized receipts and balance
-checks. They cover the canonical lifecycle, delayed wallet registration, wallet
-rotation that freezes payment to the earlier wallet, project-scoped bindings,
-immediate binding and owner veto with its cap, reserve protection, split withdrawals,
-frozen destination rollback, duplicate payment and forged award rejection, wrong
-destination, unauthorized binding, a third-party payment mixed with unrelated
-token transfers, and a foreign project that mentions this project's account.
-Fixture keys and tokens have no mainnet value. CI runs these end-to-end
-workflows; a successful build alone is not payment evidence.
-If a test stage fails, the runner reads the known failed signatures while its
-local validator is still alive. `.local/failure-evidence/` retains bounded
-status and receipt metadata, health, slots and heights; CI uploads only those
-JSON reports. It excludes keys, transaction bytes, account data and raw logs.
-The original test exit status remains unchanged. An absent receipt or a later
-successful run does not establish the cause of an earlier failure.
-`cargo check --locked` verifies the host program build but does not prove SBF or
-validator execution. Use Anchor 0.32.1 and the platform tools pinned in the scripts.
-The end-to-end suite waits the award commitment delay out in seconds, so `test-e2e.sh`
-builds with the `short-delay-for-tests` Cargo feature, which lowers the on-chain
-delay floor from one hour to one second. `deploy-testnet.sh` never sets it;
-a reviewed deployment digest must come from a build without it. Before that,
-`test-e2e.sh` builds the deployable program without the feature, loads it into
-the validator and runs `integration/production-delay.e2e.mjs`, which proves that
-`initialize` rejects 3,599 seconds and accepts 3,600 seconds. `cargo test` checks
-the same bounds on the host build.
+The other suites in `integration/` drive the program through the off-chain
+TypeScript client (`adapter.ts`, `funding.ts`, `owner-creation.ts`,
+`commitment.ts`, `owner-instructions.ts`, `monthly-reserve.ts`) and the payment
+services (`workers/payment-executor`, `workers/payments`, `backend/payments`,
+`scripts/payment-keeper`). Those are not on this branch, so `test-e2e.sh` prints
+`SKIP` with what each suite needs instead of running it: `escrow`, `executor`,
+`keeper`, `native`, `owner-instructions`, `owner-plan`, `pledge` and
+`token-2022`. They return with that business logic.
+
+If a test stage fails, `.local/failure-evidence/` retains bounded status and
+receipt metadata, without keys, transaction bytes, account data or raw logs.
+`cargo test` checks the delay bounds on the host build; neither it nor
+`cargo check --locked` proves SBF or validator execution.
 
 ## Public test deployment
 

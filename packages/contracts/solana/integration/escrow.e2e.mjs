@@ -3412,6 +3412,45 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
   assert.deepEqual(await accounts(), beforeHeld);
 });
 
+// The owner's release_monthly_reserve of month `n`, attested by `signer` over the
+// month's root and total and the claimed unsettled and released gross.
+const releaseReserve = (
+  n,
+  tree,
+  unsettled,
+  released,
+  signer = authority,
+  owner = payer,
+) => {
+  const u64 = (x) => bn(x).toArrayLike(Buffer, "le", 8);
+  return program.methods
+    .releaseMonthlyReserve(n, bn(unsettled), bn(released))
+    .accountsStrict({
+      owner: owner.publicKey,
+      project,
+      month: monthAt(n),
+      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+    })
+    .preInstructions([
+      Ed25519Program.createInstructionWithPrivateKey({
+        privateKey: signer.secretKey,
+        message: Buffer.concat([
+          Buffer.from("slop-monthly-release-v1"),
+          key(program.programId),
+          key(project),
+          Buffer.from(new Uint32Array([n]).buffer),
+          Buffer.from(tree.root, "hex"),
+          u64(tree.total),
+          u64(unsettled),
+          u64(released),
+          Buffer.from(network),
+        ]),
+      }),
+    ])
+    .signers(owner === payer ? [] : [owner])
+    .rpc();
+};
+
 // Aggregate and per-leaf releases cannot consume the same gross. A per-leaf
 // release keeps later honest leaves payable and prevents any aggregate release.
 test("monthly release paths cannot double-release an uncommittable leaf", async () => {
@@ -3425,34 +3464,8 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
   const admit = monthlyAdmission(stranger, period, n);
   const { leaf } = await admit(entries, await chainTime(), tree);
   const read = () => program.account.project.fetch(project);
-  const u64 = (x) => bn(x).toArrayLike(Buffer, "le", 8);
-  const release = (unsettled, released, signer = authority, owner = payer) =>
-    program.methods
-      .releaseMonthlyReserve(n, bn(unsettled), bn(released))
-      .accountsStrict({
-        owner: owner.publicKey,
-        project,
-        month: monthAt(n),
-        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-      })
-      .preInstructions([
-        Ed25519Program.createInstructionWithPrivateKey({
-          privateKey: signer.secretKey,
-          message: Buffer.concat([
-            Buffer.from("slop-monthly-release-v1"),
-            key(program.programId),
-            key(project),
-            Buffer.from(new Uint32Array([n]).buffer),
-            Buffer.from(tree.root, "hex"),
-            u64(tree.total),
-            u64(unsettled),
-            u64(released),
-            Buffer.from(network),
-          ]),
-        }),
-      ])
-      .signers(owner === payer ? [] : [owner])
-      .rpc();
+  const release = (unsettled, released, signer, owner) =>
+    releaseReserve(n, tree, unsettled, released, signer, owner);
   const before = await read();
   const total = Number(tree.total);
   const released = Number(c.grossMicro);
@@ -3497,6 +3510,83 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
   assert.equal(award.gross.toString(), a.grossMicro);
   assert.equal(award.actorId.toString(), a.githubUserId);
   await commit("after-double-release-control", 999, 1);
+});
+
+// One committed leaf makes a month ineligible for aggregate release, whatever unsettled
+// gross the owner claims. A wholly released month never releases again and settles no leaf.
+test("whole-reserve release refuses a touched month and releases an untouched one once", async () => {
+  const { stranger, period, n } = await monthlyPeriod();
+  const entries = entriesOf(["reserve-touched-a", "reserve-touched-b"], 741);
+  const tree = allocationTree(
+    entries.map((e) => [e.githubUserId, e.grossMicro, e.sourceDigest]),
+  );
+  const total = Number(tree.total);
+  const first = Number(entries[0].grossMicro);
+  assert.equal(total, 30_000_000);
+  assert.equal(first, 20_000_000);
+  const read = () => program.account.project.fetch(project);
+  const readMonth = () => program.account.monthlyAllocation.fetch(monthAt(n));
+
+  await freshProject("monthly-reserve-touched", 100_000_000n);
+  const touchedMonth = await monthlyAdmission(stranger, period, n)(
+    entries,
+    await chainTime(),
+    tree,
+  );
+  await touchedMonth.leaf(0, "commit");
+  const touched = await read();
+  assert.equal(touched.monthlyOutstanding.toNumber(), total - first);
+  // The stale whole total, the remaining unsettled gross and any part of it all refuse.
+  await assert.rejects(
+    releaseReserve(n, tree, total, total),
+    /MonthlyReserveChanged/,
+  );
+  await assert.rejects(
+    releaseReserve(n, tree, total - first, total - first),
+    /MonthlyReserveChanged/,
+  );
+  await assert.rejects(
+    releaseReserve(n, tree, total - first, 1),
+    /MonthlyReserveChanged/,
+  );
+  assert.deepEqual(await read(), touched);
+  // The untouched leaf still commits, and a settled month has nothing to release.
+  await touchedMonth.leaf(1, "commit");
+  await assert.rejects(releaseReserve(n, tree, 0, 0), /MonthlyReserveChanged/);
+  assert.equal((await read()).monthlyOutstanding.toString(), "0");
+
+  await freshProject("monthly-reserve-once", 100_000_000n);
+  const untouched = await monthlyAdmission(stranger, period, n)(
+    entries,
+    await chainTime(),
+    tree,
+  );
+  const admitted = await read();
+  assert.equal(admitted.reserved.toNumber(), total);
+  await releaseReserve(n, tree, total, total);
+  const released = await read();
+  assert.equal(released.reserved.toString(), "0");
+  assert.equal(released.monthlyOutstanding.toString(), "0");
+  const month = await readMonth();
+  assert.equal(month.committed.toNumber(), total);
+  assert.equal(month.released.toNumber(), total);
+  // A repeated release refuses with either the original or the now-zero unsettled gross.
+  await assert.rejects(
+    releaseReserve(n, tree, total, total),
+    /MonthlyReserveChanged/,
+  );
+  await assert.rejects(releaseReserve(n, tree, 0, 0), /MonthlyReserveChanged/);
+  // No leaf of the released month settles afterwards.
+  for (const index of [0, 1]) {
+    await assert.rejects(
+      untouched.leaf(index, "commit"),
+      /MonthlyCapExceeded/,
+    );
+  }
+  assert.deepEqual(await read(), released);
+  assert.deepEqual(await readMonth(), month);
+  // The whole deposit is free again for the owner's direct commits.
+  await commit("after-whole-reserve-release", 999, 100_000_000);
 });
 
 // The vault totals fail closed when the vault token account holds less than the

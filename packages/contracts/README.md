@@ -16,6 +16,7 @@ the TypeScript adapters, Workers and scripts that drive them.
 |---|---|
 | `pnpm --filter @repo/contracts build` | `forge build`, and `cargo check --locked` of the program |
 | `pnpm --filter @repo/contracts test` | every Foundry suite, invariants included; the SMTChecker runs below; `cargo test --locked` |
+| `npm run test:e2e` in `solana/` | the contract-only validator suite; see [solana/README.md](solana/README.md#local-build-and-end-to-end-tests) |
 
 They need Foundry 1.7.1 (it installs solc 0.8.30), a Rust toolchain with
 `cargo`, and `z3` on `PATH` (4.12.5 is the version checked). Cargo builds

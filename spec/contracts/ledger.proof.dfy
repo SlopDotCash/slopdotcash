@@ -121,3 +121,105 @@ lemma lawPayMovesOneAward_ensures(awards: seq<Award>, source: int, recipient: st
     MarkPaidKeepsUnique(awards, source, recipient, version);
   }
 }
+
+// The monthly window laws. A month start is the number of days from the civil
+// epoch to the first of that month, counted from 1 March of a shifted year, so
+// it grows with every following month, including across a year boundary.
+
+// For a nonnegative numerator the generated quotient is Dafny's division.
+lemma QuotientNonnegative(a: int, b: int)
+  requires a >= 0 && b > 0
+  ensures quotient_contracts__ledger(a, b) == a / b && remainder_contracts__ledger(a, b) == a % b
+{
+}
+
+// A period whose year is positive is itself nonnegative.
+lemma PeriodNonnegative(period: int)
+  requires quotient_contracts__ledger(period, 100) >= 1
+  ensures period >= 0
+{
+  if period < 0 {
+    assert MathAbs(period) == -period;
+  }
+}
+
+// The month start, written over the shifted year and the month counted from March.
+lemma MonthStartOf(period: int)
+  requires period >= 0 && period / 100 >= 1 && 1 <= period % 100 <= 12
+  ensures var y := if period % 100 <= 2 then period / 100 - 1 else period / 100;
+    var k := if period % 100 > 2 then period % 100 - 3 else period % 100 + 9;
+    monthStart(period) == 86400 * ((y / 400) * 146097 + (y % 400) * 365 + (y % 400) / 4 - (y % 400) / 100 + (153 * k + 2) / 5 - 719468)
+{
+  QuotientNonnegative(period, 100);
+  var y := if period % 100 <= 2 then period / 100 - 1 else period / 100;
+  var k := if period % 100 > 2 then period % 100 - 3 else period % 100 + 9;
+  QuotientNonnegative(y, 400);
+  assert y - (y / 400) * 400 == y % 400;
+  QuotientNonnegative(y % 400, 4);
+  QuotientNonnegative(y % 400, 100);
+  QuotientNonnegative(153 * k + 2, 5);
+}
+
+// Each shifted year adds at least 365 days: a year divisible by 100 is also
+// divisible by 4, and the 400-year era boundary adds the remaining days.
+lemma YearAddsDays(y: int)
+  requires y >= 1
+  ensures (y / 400) * 146097 + (y % 400) * 365 + (y % 400) / 4 - (y % 400) / 100
+    >= ((y - 1) / 400) * 146097 + ((y - 1) % 400) * 365 + ((y - 1) % 400) / 4 - ((y - 1) % 400) / 100 + 365
+{
+  if y % 400 == 0 {
+    assert (y - 1) / 400 == y / 400 - 1;
+    assert (y - 1) % 400 == 399;
+  } else {
+    var r := y % 400;
+    assert (y - 1) / 400 == y / 400;
+    assert (y - 1) % 400 == r - 1;
+    if r % 100 == 0 {
+      assert r % 4 == 0;
+      assert (r - 1) / 4 == r / 4 - 1;
+      assert (r - 1) / 100 == r / 100 - 1;
+    } else {
+      assert (r - 1) / 100 == r / 100;
+      assert (r - 1) / 4 <= r / 4;
+    }
+  }
+}
+
+// The next period has a positive year and a month from 1 to 12 again.
+lemma NextPeriodShape(period: int)
+  requires period >= 0 && period / 100 >= 1 && 1 <= period % 100 <= 12
+  ensures nextPeriod(period) >= 0 && nextPeriod(period) / 100 >= 1 && 1 <= nextPeriod(period) % 100 <= 12
+  ensures period % 100 == 12 ==> nextPeriod(period) / 100 == period / 100 + 1 && nextPeriod(period) % 100 == 1
+  ensures period % 100 < 12 ==> nextPeriod(period) / 100 == period / 100 && nextPeriod(period) % 100 == period % 100 + 1
+{
+  QuotientNonnegative(period, 100);
+}
+
+// Each month starts after the one before it.
+lemma MonthStartGrows(period: int)
+  requires period >= 0 && period / 100 >= 1 && 1 <= period % 100 <= 12
+  ensures monthStart(period) < monthStart(nextPeriod(period))
+{
+  NextPeriodShape(period);
+  MonthStartOf(period);
+  MonthStartOf(nextPeriod(period));
+  if period % 100 == 2 {
+    YearAddsDays(period / 100);
+  }
+}
+
+lemma lawWindowNonEmpty_ensures(period: int)
+  ensures (lawWindowNonEmpty(period) == true)
+{
+  if validPeriod(period) {
+    PeriodNonnegative(period);
+    QuotientNonnegative(period, 100);
+    NextPeriodShape(period);
+    MonthStartGrows(nextPeriod(period));
+  }
+}
+
+lemma lawNextWindowFollows_ensures(period: int)
+  ensures (lawNextWindowFollows(period) == true)
+{
+}

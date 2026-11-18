@@ -365,6 +365,17 @@ test("a month pledge holds funds through every owner route until the month commi
     commitMonthly(project, open, 3_000_001, open),
     /PledgedFunds/,
   );
+  // With monthly on and a cap below the pledge, the cap binds an unnamed pledge and the
+  // named open pledge, not the cap plus the pledge, is the limit.
+  await setMonthly(project, 1, true);
+  await assert.rejects(
+    commitMonthly(project, open, 1_500_000, "omit"),
+    /MonthlyCapExceeded/,
+  );
+  await assert.rejects(
+    commitMonthly(project, open, 2_000_001, open),
+    /MonthlyCapExceeded/,
+  );
   await setMonthly(project, 1, false);
   const committed = await eventsOf(
     await commitMonthly(project, open, 1_500_000, open),
