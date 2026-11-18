@@ -1,4 +1,4 @@
-// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/frontend/reportDetails.md, "Private report IDs scope both heading references"
+// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/frontend/reportDetails.md, "Private report IDs scope both heading references"
 import type { IntakeReadiness, SubmissionView } from "@repo/security/client";
 import type { DetailHeadings } from "../../../flows/security/details.vibe";
 import type { ReportDraft } from "../../../flows/security/private.vibe";
@@ -49,6 +49,12 @@ export const fullAward: ProgramTerms = { ...terms, split: { researcherBasisPoint
 
 export const paused: ProgramTerms = { ...terms, status: "paused" };
 
+export const funded: ProgramTerms = { ...terms, capacity: { ...terms.capacity, awards: null }, funding: { state: "verified-available", evidence: "Vault 0x8ba1…ba72 held 25,000 USDC at block 22,418,906.", verifiedAt: "2026-11-15T12:00:00.000Z" } };
+
+export const ownerExclusions = ["Price feed staleness within the documented heartbeat", "Rounding dust below one cent"];
+
+export const withOwnerExclusions: ProgramTerms = { ...terms, scope: { ...terms.scope, excludedDependencies: ["OpenZeppelin contracts"], excludedFindings: ownerExclusions } };
+
 const ready: IntakeReadiness = {
   projectId: "acme-vault",
   repository: "acme/vault",
@@ -69,6 +75,7 @@ export const readiness = {
   ready: { status: "checked", projectId: "acme-vault", value: ready, stale: false, rechecking: false },
   stale: { status: "checked", projectId: "acme-vault", value: { ...ready, stale: true }, stale: true, rechecking: false },
   disabled: { status: "checked", projectId: "acme-vault", value: { ...ready, state: "disabled", storedIntake: false, handoffUrl: null }, stale: false, rechecking: false },
+  closed: { status: "checked", projectId: "acme-vault", value: { ...ready, paidParticipation: "closed" }, stale: false, rechecking: false },
   failed: { status: "error", projectId: "acme-vault", message: "Private reporting status is unavailable." },
 } satisfies Record<string, ReadinessShown>;
 

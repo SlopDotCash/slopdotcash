@@ -64,6 +64,8 @@ export const inboxPage: NotificationsPage = {
 
 export const emptyInbox: NotificationsPage = { recipientGithubId: "7", nextCursor: null, notifications: [], unread: 0 };
 
+export const queueReadAt = Date.parse(at);
+
 export const queue: IncompleteAssessments = {
   recipientGithubId: "7",
   items: [

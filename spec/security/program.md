@@ -32,12 +32,14 @@ type VerifiedOwner = { actor: int, project: str, projectRevision: int }
 type Offer = { status: ProgramStatus, policy: T::FundingPolicy, eligibility: T::Eligibility, gross: M::Amount,
   split: T::AwardSplit, asset: str, excludedFindings: List[int] }
 type Program = { project: str, projectRevision: int, offer: Offer, revision: int, publishedAt: int,
-  revisions: List[int], splitApprovals: List[int], funding: FundingState, fundingObservedAt: int }
+  revisions: List[int], splitApprovals: List[int], funding: FundingState, fundingObservedAt: int, fundingAsset: str,
+  administrators: Set[int] }
 pure val platformProject = "slopdotcash"
 pure val noOffer: Offer = { status: Unpublished, policy: T::AfterApproval, eligibility: T::InScopeSecurity, gross: M::zero,
   split: T::StandardSplit, asset: "", excludedFindings: List() }
 pure val initial: Program = { project: "", projectRevision: 1, offer: noOffer, revision: 0, publishedAt: 0,
-  revisions: List(), splitApprovals: List(), funding: Pledged, fundingObservedAt: 0 }
+  revisions: List(), splitApprovals: List(), funding: Pledged, fundingObservedAt: 0, fundingAsset: "",
+  administrators: Set(18633264) }
 pure def canBindProject(p: Program, project: str): bool = p.project == "" and project != ""
 pure def bindProject(p: Program, project: str): Program = { ...p, project: project }
 pure def ownerMatches(p: Program, owner: VerifiedOwner, by: int): bool =
@@ -48,7 +50,7 @@ pure def offerShapeValid(p: Program, offer: Offer, revision: int): bool = offer.
   and (if (offer.split == T::StandardSplit) M::privateSplitPossible(offer.gross)
     else p.project == platformProject and offer.policy == T::AfterApproval and p.splitApprovals.includes(revision))
 pure def fundedEnough(p: Program, offer: Offer): bool =
-  offer.status != Open or offer.policy == T::AfterApproval or p.funding == VerifiedAvailable
+  offer.status != Open or offer.policy == T::AfterApproval or (p.funding == VerifiedAvailable and p.fundingAsset == offer.asset)
 pure def canPublish(p: Program, by: int, owner: VerifiedOwner, offer: Offer, nowMs: int): bool =
   ownerMatches(p, owner, by) and nowMs > 0 and nowMs >= p.publishedAt
     and offerShapeValid(p, offer, p.revision + 1) and fundedEnough(p, offer)
@@ -58,13 +60,16 @@ pure def publish(p: Program, by: int, owner: VerifiedOwner, offer: Offer, nowMs:
 
 ### Administrators approve a split exception for one exact future revision
 
-The administrator list is operator configuration verified by the shell. The
-approval is an audited record bound to the platform project and to the next
-program revision; it grants nothing to any other project or revision.
+The administrator list is operator configuration (`ADMIN_GITHUB_IDS`,
+`deps.adminGithubIds` in `backend/projects/handler.ts`), held in the program
+state as a configuration snapshot that no transition changes, as the
+enforcement and case machines hold theirs; an owner route refuses any split
+change by an account outside it. The approval is an audited record bound to
+the platform project and to the next program revision; it grants nothing to
+any other project or revision.
 
 ```quint
-pure val administrators = Set(18633264)
-pure def canApproveFullSplit(p: Program, by: int): bool = administrators.contains(by) and p.project == platformProject
+pure def canApproveFullSplit(p: Program, by: int): bool = p.administrators.contains(by) and p.project == platformProject
   and not(p.splitApprovals.includes(p.revision + 1))
 pure def approveFullSplit(p: Program, by: int): Program = { ...p, splitApprovals: p.splitApprovals.append(p.revision + 1) }
 ```
@@ -73,17 +78,22 @@ pure def approveFullSplit(p: Program, by: int): Program = { ...p, splitApprovals
 
 The server sets funding evidence; an owner cannot supply it. A finalized
 snapshot of the reviewed bounty vault no older than 30 minutes with a
-positive free balance in the program asset shows verified funds. A missing,
-stale or empty observation shows a pledge. A pledge is never treated as
-money. A later observation never rewrites a published revision.
+positive free balance in the asset of the terms being published shows
+verified funds for that asset. A missing, stale or empty observation shows a
+pledge. A pledge is never treated as money. Development reads the funds of
+the next terms' vault when the owner publishes (`securityProgramFunds(next.id,
+after)` in `backend/projects/handler.ts`), so a draft whose own vault holds
+fresh finalized free funds opens prefunded directly, and the publish guard
+reads only an observation made for the published asset. A later observation
+never rewrites a published revision.
 
 ```quint
 type FundingSnapshot = { finalized: bool, observedAt: int, asset: str, free: M::Amount }
-pure def canObserveFunding(p: Program, snapshot: FundingSnapshot, nowMs: int): bool =
+pure def canObserveFunding(p: Program, snapshot: FundingSnapshot, nowMs: int, offer: Offer): bool =
   nowMs >= snapshot.observedAt and snapshot.observedAt >= p.fundingObservedAt and M::validAmount(snapshot.free)
-pure def observeFunding(p: Program, snapshot: FundingSnapshot, nowMs: int): Program =
-  { ...p, fundingObservedAt: snapshot.observedAt, funding: if (snapshot.finalized and snapshot.asset == p.offer.asset
-      and p.offer.asset != "" and nowMs - snapshot.observedAt <= 1800000 and M::positiveAmount(snapshot.free)) VerifiedAvailable else Pledged }
+pure def observeFunding(p: Program, snapshot: FundingSnapshot, nowMs: int, offer: Offer): Program =
+  { ...p, fundingObservedAt: snapshot.observedAt, fundingAsset: offer.asset, funding: if (snapshot.finalized and snapshot.asset == offer.asset
+      and offer.asset != "" and nowMs - snapshot.observedAt <= 1800000 and M::positiveAmount(snapshot.free)) VerifiedAvailable else Pledged }
 pure def canObserveProjectRevision(p: Program, projectRevision: int): bool = projectRevision > p.projectRevision
 pure def observeProjectRevision(p: Program, projectRevision: int): Program = { ...p, projectRevision: projectRevision }
 ```
@@ -93,15 +103,20 @@ pure def observeProjectRevision(p: Program, projectRevision: int): Program = { .
 A report freezes the offer in force at its receipt time. Only an open
 program issues paid terms. Pending approval, paused, closed and unpublished
 programs issue unpaid receipts with the project revision; a later revision
-cannot grant an award to an earlier report.
+cannot grant an award to an earlier report. A published revision in force at
+receipt is a scope, so its owner exclusion lines are frozen with paid and
+unpaid terms alike; an unpublished program gives none.
 
 ```quint
 pure def receiptTerms(p: Program, receivedAt: int): T::ReceiptTerms =
+  val unpaid = T::unpaidTerms(p.projectRevision, receivedAt)
   if (p.offer.status == Open and p.revision > 0 and p.publishedAt <= receivedAt)
-    { revision: p.revision, publishedAt: p.publishedAt, receivedAt: receivedAt, paidTerms: true, fundingPolicy: p.offer.policy,
+    { revision: p.revision, publishedAt: p.publishedAt, receivedAt: receivedAt, paidTerms: true, scoped: true, fundingPolicy: p.offer.policy,
       eligibility: p.offer.eligibility, offeredGross: p.offer.gross, split: p.offer.split, asset: p.offer.asset,
       excludedFindings: p.offer.excludedFindings }
-  else T::unpaidTerms(p.projectRevision, receivedAt)
+  else if (p.offer.status != Unpublished and p.revision > 0 and p.publishedAt <= receivedAt)
+    { ...unpaid, scoped: true, excludedFindings: p.offer.excludedFindings }
+  else unpaid
 pure def alwaysFullAwardPlatformOnly(p: Program): bool = p.offer.split == T::FullAward and p.offer.status != Unpublished implies
   p.project == platformProject and p.offer.policy == T::AfterApproval and p.splitApprovals.includes(p.revision)
 pure def alwaysPublishedOfferExact(p: Program): bool = p.offer.status != Unpublished implies p.revision > 0
@@ -117,6 +132,10 @@ pure def sometimesOpenPledge(p: Program): bool = p.offer.status == Open and p.of
 pure def sometimesOpenPrefunded(p: Program): bool = p.offer.status == Open and p.offer.policy == T::Prefunded
 pure def sometimesPaused(p: Program): bool = p.offer.status == Paused
 pure def sometimesClosedAfterOpen(p: Program): bool = p.offer.status == Closed and p.revisions.length() > 1
+pure def sometimesDraftOpenedPrefunded(p: Program): bool = p.offer.status == Open and p.offer.policy == T::Prefunded
+  and p.revisions == List(1)
+pure def stepAdministratorsConfigured(before: Program, after: Program): bool =
+  after.administrators.subseteq(before.administrators) and before.administrators.subseteq(after.administrators)
 ```
 
 ### Simulation samples cover both projects, both splits and stale funds

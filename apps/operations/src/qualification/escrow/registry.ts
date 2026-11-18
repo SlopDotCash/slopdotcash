@@ -1,4 +1,5 @@
 // spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"
+import { REVIEWED_FACTORIES, REVIEWED_SOLANA_PROGRAMS, type ReviewedFactory, type ReviewedSolanaProgram } from "@repo/platform/chain/reviewed";
 
 export interface ReviewedEvm {
   readonly network: "Base" | "Robinhood" | "Ethereum";
@@ -25,19 +26,37 @@ export interface Registry {
   readonly solana: ReadonlyArray<ReviewedSolana>;
 }
 
-const reviewedEvm = (network: ReviewedEvm["network"]): ReviewedEvm => ({
-  network,
-  sourceCommit: "7fdedd3507c3f79217ccc896ace0e0b7472ca092",
-  factory: "0xe51abf8c6dbb3ca6e9ad09f2dc6ef141d7364aab",
-  proxyCodeSha256: "afb62459ccdd87d344b8bfa367c8dc49586323316bb8a51f1dfbe753336c0509",
-  vaultImplementation: "0x90c46e3e5be35b1048cd69403d1402feed1240d8",
-  vaultImplementationCodeSha256: "155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc",
-  factoryImplementation: "0x9f27aec70559d8f4ca1a62398e673a25b1ce3e2f",
-  factoryImplementationCodeSha256: "976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd",
-  authority: "0x2ad20afa352ec70e43a6d0e7794cf305c9cbe35d",
-});
+const evmNetworks: Readonly<Record<string, ReviewedEvm["network"]>> = { "base-mainnet": "Base", "robinhood-mainnet": "Robinhood", ethereum: "Ethereum" };
 
-export const reviewedRegistry: Registry = { evm: [reviewedEvm("Base"), reviewedEvm("Robinhood"), reviewedEvm("Ethereum")], solana: [] };
+const reviewedCodeRegionLength: Readonly<Record<string, number>> = { f250228d87493c024737de9dea4290ed0d28ed777eaddf17b874d493b77274a6: 731_040 };
+
+const evmOf = (entry: ReviewedFactory): ReadonlyArray<ReviewedEvm> => {
+  const network = Object.hasOwn(evmNetworks, entry.network) ? evmNetworks[entry.network] : undefined;
+  return network === undefined || entry.codeSha256 !== entry.factoryCodeSha256 ? [] : [{
+    network,
+    sourceCommit: entry.sourceCommit,
+    factory: entry.factory,
+    proxyCodeSha256: entry.factoryCodeSha256,
+    vaultImplementation: entry.upgrade.vaultImplementation,
+    vaultImplementationCodeSha256: entry.upgrade.vaultImplementationCodeSha256,
+    factoryImplementation: entry.upgrade.factoryImplementation,
+    factoryImplementationCodeSha256: entry.upgrade.factoryImplementationCodeSha256,
+    authority: entry.upgrade.authority,
+  }];
+};
+
+const solanaOf = (entry: ReviewedSolanaProgram): ReadonlyArray<ReviewedSolana> => {
+  const programLength = Object.hasOwn(reviewedCodeRegionLength, entry.codeSha256) ? reviewedCodeRegionLength[entry.codeSha256] : undefined;
+  return entry.network !== "solana-mainnet" || programLength === undefined ? [] : [{
+    network: "Solana",
+    program: entry.programId,
+    programSha256: entry.codeSha256,
+    programLength,
+    authority: entry.upgradeAuthority,
+  }];
+};
+
+export const reviewedRegistry: Registry = { evm: REVIEWED_FACTORIES.flatMap(evmOf), solana: REVIEWED_SOLANA_PROGRAMS.flatMap(solanaOf) };
 
 /** @throws {never} */
 export function reviewedEvmOf(registry: Registry, network: string): ReviewedEvm | undefined {
@@ -51,5 +70,5 @@ export function reviewedSolanaOf(registry: Registry, network: string): ReviewedS
 
 /** @throws {never} */
 export function approvalKeys(registry: Registry): { readonly evm: ReadonlyArray<string>; readonly solana: ReadonlyArray<string> } {
-  return { evm: registry.evm.map((entry) => entry.authority.toLowerCase()), solana: registry.solana.map((entry) => entry.authority) };
+  return { evm: registry.evm.map((entry) => entry.authority.toLowerCase()), solana: [] };
 }

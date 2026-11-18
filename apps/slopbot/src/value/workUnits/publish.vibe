@@ -1,8 +1,9 @@
-// spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"
+// spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
 import type { Statement } from "@repo/platform/d1"
 import { GitHub } from "@repo/platform/github"
+import type { CommitPages } from "../../import/commitPages.vibe"
 import type { AcceptanceFailure } from "../evidence/acceptance.vibe"
-import type { Evidence, RegisteredRepository } from "../evidence/types.vibe"
+import { type Evidence, type RegisteredRepository, findRepository } from "../evidence/types.vibe"
 import type { Recovered } from "../proofs/blob.vibe"
 import type { Claim } from "../requests/store.vibe"
 import { groupFacts, prepareWorkUnitEvidence } from "./prepare.vibe"
@@ -32,6 +33,7 @@ export interface CurrentSource {
   readonly group: ReadonlyArray<WorkUnitSource>
   readonly repositories: ReadonlyArray<RegisteredRepository>
   readonly recovered?: Recovered
+  readonly commitPages?: CommitPages
 }
 
 export service PublicationChecks {
@@ -54,6 +56,29 @@ export interface JointPublication {
   readonly revisionReason: string | null
   readonly claim?: Claim
   readonly recovered?: Recovered
+  readonly commitPages?: CommitPages
+}
+
+interface SourceTarget {
+  readonly path: string
+  readonly repositoryId: number
+  readonly number: number
+}
+
+function currentPathIn(repositories: ReadonlyArray<RegisteredRepository>, path: string) {
+  const target = repositories.find((repository) => findRepository([repository], path) !== undefined)
+  if (target === undefined) return undefined
+  return "current" in target && typeof target.current === "string" ? target.current : target.id
+}
+
+function sourceTargets(repositories: ReadonlyArray<RegisteredRepository>, sources: ReadonlyArray<Evidence>) {
+  const targets: SourceTarget[] = []
+  for (const source of sources) {
+    const path = currentPathIn(repositories, source.repository)
+    if (path === undefined) return undefined
+    targets.push({ path: path.toLowerCase(), repositoryId: source.repositoryDatabaseId, number: source.pull.number })
+  }
+  return targets
 }
 
 function sameDigests(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
@@ -64,7 +89,7 @@ function evidenceOf(sources: ReadonlyArray<WorkUnitSource>) {
   return sources.map(({ evidence }) => evidence)
 }
 
-export effect function verifyCurrentWorkUnitSource(supplied: WorkUnitEvidence, sourceDigest: string, repositories: ReadonlyArray<RegisteredRepository>, recovered?: Recovered) {
+export effect function verifyCurrentWorkUnitSource(supplied: WorkUnitEvidence, sourceDigest: string, repositories: ReadonlyArray<RegisteredRepository>, recovered?: Recovered, commitPages?: CommitPages) {
   const checks = try PublicationChecks
   const original = try prepareWorkUnitEvidence(supplied.sources, repositories)
   if (original.limitations.length > 0 || original.sourceDigest !== supplied.sourceDigest || original.sourceDigest !== sourceDigest)
@@ -72,7 +97,7 @@ export effect function verifyCurrentWorkUnitSource(supplied: WorkUnitEvidence, s
   for (const [index, source] of original.sources.entries()) {
     const digest = original.sourceDigests[index]?.digest
     if (digest === undefined) throw new WorkUnitRefused({ reason: "Joint assessment does not bind the supplied source group" })
-    try checks.current({ source, sourceDigest: digest, group: original.sources, repositories, ...(recovered === undefined ? {} : { recovered }) })
+    try checks.current({ source, sourceDigest: digest, group: original.sources, repositories, ...(recovered === undefined ? {} : { recovered }), ...(commitPages === undefined ? {} : { commitPages }) })
   }
   const current = try prepareWorkUnitEvidence(original.sources, repositories)
   if (current.limitations.length > 0 || current.sourceDigest !== sourceDigest)
@@ -86,13 +111,17 @@ export effect function publishWorkUnitAssessment(publication: JointPublication) 
   if (claim === undefined && !(try checks.subscribed(publication.provenance)))
     throw new WorkUnitRefused({ reason: "API joint publication requires its processing claim" })
   const sources = evidenceOf(evidence.sources)
-  if (job.itemKind !== "pull_request" || !sources.some((source) =>
-    source.repositoryDatabaseId === job.repositoryId && source.repository.toLowerCase() === `${job.owner}/${job.repo}`.toLowerCase() && source.pull.number === job.number))
+  if (job.itemKind !== "pull_request" || !sources.some((source) => source.repositoryDatabaseId === job.repositoryId && source.pull.number === job.number))
     throw new WorkUnitRefused({ reason: "Joint publication job does not match a source member" })
   const registration = try checks.registration(job, sources, claim)
   if (registration === undefined) throw new WorkUnitRefused({ reason: "Repository is not active in the Slop project registry" })
+  const targets = sourceTargets(registration.repositories, sources)
+  if (targets === undefined) throw new WorkUnitRefused({ reason: "Value source is absent from the verified registry" })
+  const jobPath = `${job.owner}/${job.repo}`.toLowerCase()
+  if (!targets.some((target) => target.repositoryId === job.repositoryId && target.path === jobPath && target.number === job.number))
+    throw new WorkUnitRefused({ reason: "Joint publication job does not match a source member" })
   try checks.admitted(job, sources)
-  const current = try verifyCurrentWorkUnitSource(evidence, publication.result.sourceDigest, registration.repositories, publication.recovered)
+  const current = try verifyCurrentWorkUnitSource(evidence, publication.result.sourceDigest, registration.repositories, publication.recovered, publication.commitPages)
   const prepared = try prepareWorkUnitRecord({
     supplied: current,
     result: publication.result,

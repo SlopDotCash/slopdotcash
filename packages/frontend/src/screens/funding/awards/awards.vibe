@@ -41,8 +41,8 @@ export interface CommitmentShown {
 }
 
 export interface Checked {
-  readonly finalized: boolean
-  readonly message: string
+  readonly status: ChainStatus
+  readonly hash: string
 }
 
 interface Shown {
@@ -69,9 +69,6 @@ export const awardMessages = {
   reconnect: "Reconnect the submitting wallet: ",
   changed: "The prepared award changed. Review it again.",
   enterHash: "Enter the transaction from your wallet.",
-  pending: "The commitment is not finalized yet. Check again later.",
-  failed: "The transaction failed. The award was not reserved. Review again before retrying.",
-  cleared: "Local request cleared after your wallet check.",
 } as const
 
 export const clockSpacingMs = 60_000
@@ -150,17 +147,16 @@ export effect function saveAllocation(githubUserId: string, grossBase: string, c
   const { monthly } = try AwardsDesk
   try monthly.editDraft(cut, reason)
   const saved = try monthly.save(githubUserId, grossBase, reason)
-  if (saved.view === undefined) throw stopped(saved.message === "" ? monthlyNotice(saved.state.notice) : saved.message)
+  if (saved.view === undefined) throw stopped(saved.message ? saved.message : monthlyNotice(saved.state.notice))
   try accept(saved.view)
-  return saved.message
+  return githubUserId
 }
 
 export effect function finalizeAwards() {
   const { monthly } = try AwardsDesk
   const done = try monthly.finalize()
   if ("message" in done) throw stopped(done.message === "" ? monthlyNotice(done.state.notice) : done.message)
-  try accept(done.view)
-  return monthlyNotice(done.state.notice)
+  return try accept(done.view)
 }
 
 export effect function setAutomatic(automatic: boolean) {
@@ -322,8 +318,7 @@ export effect function checkCommitment(connection: Connection) {
   }
   const result = resultOf(status)
   try monthly.check("Commitment", () => Effect.succeed(result))
-  const message = status === "finalized" ? `Award reserved on the finalized chain: ${hash}. Not yet paid.` : status === "failed" ? awardMessages.failed : awardMessages.pending
-  return { finalized: status === "finalized", message } satisfies Checked
+  return { status, hash } satisfies Checked
 }
 
 export effect function enterCommitmentHash(connection: Connection, candidate: string) {

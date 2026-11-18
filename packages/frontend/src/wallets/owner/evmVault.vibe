@@ -1,4 +1,4 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
 import { IMPLEMENTATION_SLOT, U256_MAX, addressWord, bytes32, decodeUint, escrowGetter, evmAddress } from "@repo/settlement/chain/evm/abi"
 import { vaultKey, vaultsCall } from "@repo/settlement/chain/evm/factories"
 import { sha256Hex } from "@repo/platform/crypto"
@@ -12,6 +12,7 @@ import { type EvmConnection, evmChainId, evmRequest, requireSelected, sendTransa
 import { type Call, type Operation, type Step, type VaultCallTerms, type VaultReview, allowanceData, balanceOfData, batchCalls, batchPlan, callPlan, codeBytes, hexQuantity, quantityValue, samePlannedCall, transferCall, wordValue } from "./evmCalls.ts"
 import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, expectedOf, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
 import { type DeploymentCheck, deploymentCheck, settled } from "./ownerDecisions.ts"
+import { pledgedFundsRefusal } from "./pledgeRefusals.ts"
 import type { EvmBatchPlan, EvmCallPlan, OwnerPlan } from "./ownerPlans.schema.ts"
 
 module texts {
@@ -240,7 +241,11 @@ export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVaul
   if (step !== "send" && native) throw refused(evmVaultMessages.noApprovalNative)
   const call: Call = try callOf(vault, operation, step, review.gross)
   const transaction = { from: connection.address, ...call }
-  try evmRequest(connection, "eth_estimateGas", [transaction])
+  evmRequest(connection, "eth_estimateGas", [transaction]) catch effect (error) => {
+    const locked = pledgedFundsRefusal(error)
+    if (locked !== undefined) throw refused(locked)
+    throw error
+  }
   try requireVaultWallet(connection, vault)
   return try sendTransaction(connection, vault.chainId, transaction, beforePrompt(callPlan(connection.address, vault.chainId, call)))
 }
@@ -248,7 +253,7 @@ export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVaul
 export effect function sendBatch<E, R>(connection: EvmConnection, vault: EvmVault, amount: string, evidence: Evidence, beforePrompt: (plan: EvmBatchPlan) => void!E!R) {
   const review = try reviewTransfer(connection, vault, "deposit", amount, evidence)
   if (!review.batch) throw new VaultBatchUnavailable({ message: evmVaultMessages.batchUnavailable })
-  const calls = try Effect.try({ try: () => batchCalls(termsOf(vault), review.gross, review.resetAllowance), catch: () => refused(decimalRefusal("OutOfRange", 0)) })
+  const calls = try Effect.try({ try: () => batchCalls(termsOf(vault), review.gross, review), catch: () => refused(decimalRefusal("OutOfRange", 0)) })
   const [first] = calls
   if (first !== undefined) try evmRequest(connection, "eth_estimateGas", [{ from: connection.address, ...first }])
   try requireVaultWallet(connection, vault)

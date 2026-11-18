@@ -47,6 +47,24 @@ export const frozenMonth: MonthlyOwnerView = {
   },
 };
 
+export const underfundedMonth: MonthlyOwnerView = {
+  ...frozenMonth,
+  run: {
+    trigger: "owner",
+    frozenAt: "2026-12-02T09:30:00.000Z",
+    snapshotSha256: "e".repeat(64),
+    totalGrossBase: "1000000000",
+    network: "base-mainnet",
+    vault: "0x5e1f0000000000000000000000000000000000aa",
+    funded: false,
+    awards: [
+      { githubUserId: "101", login: "octocat", grossBase: "600000000", feeBase: "12000000", netBase: "588000000", state: "underfunded" },
+      { githubUserId: "102", login: "hubot", grossBase: "300000000", feeBase: "6000000", netBase: "294000000", state: "excluded" },
+      { githubUserId: "103", login: "monalisa", grossBase: "100000000", feeBase: "2000000", netBase: "98000000", state: "conflict" },
+    ],
+  },
+};
+
 export const managing: OwnerMonthly = {
   ...initial,
   owner: 101,

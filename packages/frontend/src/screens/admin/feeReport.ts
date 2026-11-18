@@ -6,11 +6,19 @@ import { chainOf, networkName } from "./projects.ts";
 
 export type FeeReport = FeeConversionsReport;
 
+export interface ConversionTotal {
+  readonly token: string;
+  readonly tokenPreview: string;
+  readonly amountIn: string;
+  readonly converted: string;
+  readonly conversions: number;
+}
+
 export interface NetworkConversions {
   readonly network: string;
   readonly name: string;
   readonly target: "USDC" | "Not converted";
-  readonly lines: ReadonlyArray<string>;
+  readonly totals: ReadonlyArray<ConversionTotal>;
   readonly none: boolean;
 }
 
@@ -44,15 +52,20 @@ export function convertedAmount(network: string, targetToken: string, amount: st
   return reviewed ? `${formatBaseUnits({ value: BigInt(amount), decimals: stablecoin.decimals })} ${stablecoin.symbol}` : `${amount} base units of ${tokenLabel(targetToken)}`;
 }
 
+/** A long address as its first six and last four characters. @throws {never} */
+export function shortAddress(address: string): string {
+  return address.length > 13 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
 /** @throws {never} */
-function totalLine(total: FeeConversionTotal): string {
-  return `${total.conversions} ${total.conversions === 1 ? "conversion" : "conversions"}: ${total.amountIn} base units of ${tokenLabel(total.token)} to ${convertedAmount(total.network, total.targetToken, total.amountOut)}`;
+function totalOf(total: FeeConversionTotal): ConversionTotal {
+  return { token: total.token, tokenPreview: shortAddress(total.token), amountIn: total.amountIn, converted: convertedAmount(total.network, total.targetToken, total.amountOut), conversions: total.conversions };
 }
 
 /** Each network's target and its finalized live conversion totals; Robinhood Chain keeps what it receives and is never pending. @throws {never} */
 export function networkConversions(report: FeeReport): ReadonlyArray<NetworkConversions> {
   return report.routes.map((route) => {
-    const lines = report.totals.filter((total) => total.network === route.network).map(totalLine);
-    return { network: route.network, name: networkName(route.network), target: route.status === "usdc" ? "USDC" : "Not converted", lines, none: lines.length === 0 && route.status === "usdc" };
+    const totals = report.totals.filter((total) => total.network === route.network).map(totalOf);
+    return { network: route.network, name: networkName(route.network), target: route.status === "usdc" ? "USDC" : "Not converted", totals, none: totals.length === 0 && route.status === "usdc" };
   });
 }

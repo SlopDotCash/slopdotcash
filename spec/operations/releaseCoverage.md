@@ -4,10 +4,11 @@ PRD sections 9 and 12 at main `21663f12cd276dfc7b4c913e3b9fbe34c153f99a`
 allow two independent options for an explicit manual release to main or
 development. `skip_proofs` omits the state-model run and static proof run.
 `skip_browser_tests` requires the browser smoke lane against the built bundle.
-Both default to false. They are distinct from the two data options of a
-manual main release: `use_published_data` retains the last published
-snapshot, and `discussion_resume_run` resumes public PR discussion reads from
-a recent trusted main release attempt; the two exclude each other. The exact
+Both default to false. They are distinct from the two data options:
+`use_published_data`, for a manual main or development release, retains the
+last snapshot that environment published, and `discussion_resume_run`, for a
+manual main release only, resumes public PR discussion reads from a recent
+trusted main release attempt; the two exclude each other. The exact
 source is `scripts/ci-scope.mjs`,
 `.github/workflows/{deploy,formal,lemmascript}.yml` and
 `formal/models/release/ci_coverage.qnt`. Current Vibestack checked model and
@@ -36,7 +37,8 @@ pure def deploying(request: Requests): bool = releaseTarget(request) and
   (request.kind == DeployingPush or request.kind == ManualDispatch)
 pure def explicitManual(request: Requests): bool = deploying(request) and request.kind == ManualDispatch
 pure def dataOptionsAllowed(request: Requests): bool =
-  ((request.resumeDiscussions or request.usePublishedData) implies explicitManual(request) and request.target == Main)
+  (request.resumeDiscussions implies explicitManual(request) and request.target == Main)
+    and (request.usePublishedData implies explicitManual(request))
     and not(request.resumeDiscussions and request.usePublishedData)
 pure def coverage(request: Requests): ReleaseChecks =
   val allowed = deploying(request) and dataOptionsAllowed(request)
@@ -79,8 +81,8 @@ pure def lawResumeOnlyManualMain(request: Requests): bool =
     explicitManual(request) and request.target == Main and not(request.usePublishedData)
 pure def lawPushNeverTakesDataOptions(request: Requests): bool =
   (request.kind == DeployingPush and (request.resumeDiscussions or request.usePublishedData)) implies not(coverage(request).eligible)
-pure def lawPublishedDataOnlyManualMain(request: Requests): bool =
-  (coverage(request).eligible and request.usePublishedData) implies explicitManual(request) and request.target == Main
+pure def lawPublishedDataOnlyManual(request: Requests): bool =
+  (coverage(request).eligible and request.usePublishedData) implies explicitManual(request)
 pure def lawResumeKeepsChecks(request: Requests): bool =
   coverage({ ...request, resumeDiscussions: false }).eligible implies
     (coverage({ ...request, resumeDiscussions: true }).eligible implies
@@ -164,6 +166,7 @@ pure val requestValues = Set(defaultReleaseRequest,
   { ...defaultReleaseRequest, kind: ManualDispatch, resumeDiscussions: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, usePublishedData: true, skipProofs: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, resumeDiscussions: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, usePublishedData: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, resumeDiscussions: true, usePublishedData: true },
   { ...defaultReleaseRequest, resumeDiscussions: true })
 pure val responsesValues = Set(List(), List({ matchesLive: true, revalidated: true }),

@@ -1,5 +1,5 @@
 import { assert, layer } from "@effect/vitest"
-import { type FlagProject, type World, commit, flagWorld, pending, project, read, rows, signed, signingKeySha256, started, strangerKey, template } from "./support/admission/harness.ts"
+import { type FlagProject, type World, commit, complete, flagWorld, pending, project, read, rows, signed, signingKeySha256, started, strangerKey, template } from "./support/admission/harness.ts"
 
 service Admission { readonly world: World }
 
@@ -206,6 +206,23 @@ const StartedFlagged = Layer.effect(Flagged, effect {
 
 const scanReinstatement = "a scan reinstatement needs the latest completed assessment to be clean"
 
+function issuer(assessmentId: string, assessmentIds?: ReadonlyArray<string>) {
+  return { kind: "vetting-service", keySha256: signingKeySha256, assessmentId, ...(assessmentIds === undefined ? {} : { assessmentIds }), policyVersion: "slop-scan-policy-v2", rule: "clean-fresh-scan-after-flags" }
+}
+
+function olderAppReinstatement(world: World, fixture: FlagProject, assessmentId: string): Promise<string> {
+  const [first] = fixture.repositories
+  return world.db.prepare(`INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+    VALUES(?,?,2,'reinstate','clear','none','A clean fresh security scan lifted a pause that contributor flags alone placed',?,?,?,NULL,NULL,?,'vetting-service','standing-rule',1,?,NULL,NULL,'no_revision_needed',?)`)
+    .bind(`enf_older_app_${fixture.id}`, fixture.id, assessmentId, String(first.githubId), JSON.stringify(fixture.repositories.map((listed) => listed.path.toLowerCase())), JSON.stringify(issuer(assessmentId)), "a".repeat(64), new Date().toISOString())
+    .run().then(() => "inserted", (error: unknown) => error instanceof Error && error.message.includes(scanReinstatement) ? "refused" : String(error))
+}
+
+function refreshOf(answer: { readonly status: number; readonly body: unknown }) {
+  const body = answer.body as { readonly queued?: ReadonlyArray<string>; readonly reinstated?: ReadonlyArray<string>; readonly skipped?: ReadonlyArray<unknown> }
+  return { status: answer.status, queued: [...(body.queued ?? [])].sort(), reinstated: [...(body.reinstated ?? [])].sort(), skipped: body.skipped ?? [] }
+}
+
 layer(StartedFlagged, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('A flag pause lifts only when storage finds the deciding clean scan of every repository named in the reinstatement (spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/vettingComposition.md, "A reused clean scan never lifts a flag pause"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision")', () => effect {
     const { world, scans } = try Flagged
@@ -213,10 +230,7 @@ layer(StartedFlagged, { excludeTestServices: true, timeout: "180 seconds" })((it
     const [pairOne = "", pairTwo = ""] = scans.get(pair.id) ?? []
     const [studiedOne = "", studiedTwo = ""] = scans.get(studied.id) ?? []
     const [movedOne = "", movedTwoOld = ""] = scans.get(moved.id) ?? []
-    const issuer = (assessmentId: string, assessmentIds?: ReadonlyArray<string>) => ({ kind: "vetting-service", keySha256: signingKeySha256, assessmentId, ...(assessmentIds === undefined ? {} : { assessmentIds }), policyVersion: "slop-scan-policy-v2", rule: "clean-fresh-scan-after-flags" })
-    const olderApp = try promise(() => world.db.prepare(`INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
-      VALUES('enf_older_app_pair',?,2,'reinstate','clear','none','A clean fresh security scan lifted a pause that contributor flags alone placed',?,'5201','["slop-test/pair-one","slop-test/pair-two"]',NULL,NULL,?,'vetting-service','standing-rule',1,?,NULL,NULL,'no_revision_needed',?)`)
-      .bind(pair.id, pairTwo, JSON.stringify(issuer(pairTwo)), "a".repeat(64), new Date().toISOString()).run().then(() => "inserted", (error: unknown) => error instanceof Error && error.message.includes(scanReinstatement) ? "refused" : String(error)))
+    const olderApp = try promise(() => olderAppReinstatement(world, pair, pairTwo))
     const studiedBefore = try promise(() => rows(world, "SELECT id, state, result_sha256, completed_at FROM vetting_assessments WHERE id IN (?, ?) ORDER BY rowid", studiedOne, studiedTwo))
     const refreshed = try promise(() => signed(world, "POST", "/api/v1/vetting/refresh", "{}"))
     const reinstated = [...((refreshed.body as { readonly reinstated?: ReadonlyArray<string> }).reinstated ?? [])].sort()
@@ -238,6 +252,66 @@ layer(StartedFlagged, { excludeTestServices: true, timeout: "180 seconds" })((it
         { project_id: single.id, sequence: 2, state_after: "clear", appeal_after: "none", system_issuer: issuer(singleClean, [singleClean]) },
       ],
       studiedUnchanged: studiedBefore,
+    }))
+  })
+})
+
+const movedHead = "f".repeat(40)
+const pinPending: FlagProject = { id: "pin-pending", repositories: [{ path: "slop-test/pin-pending", githubId: 6101 }], scans: [{ repository: "slop-test/pin-pending", state: "clean" }, { repository: "slop-test/pin-pending", state: "pending" }] }
+const pinElsewhere: FlagProject = { id: "pin-elsewhere", repositories: [{ path: "slop-test/pin-elsewhere", githubId: 6201 }], scans: [{ repository: "slop-test/pin-elsewhere", state: "clean" }, { repository: "slop-test/pin-elsewhere", state: "incomplete", commit: "e".repeat(40) }] }
+const pinStudied: FlagProject = { id: "pin-studied", repositories: [{ path: "slop-test/pin-studied", githubId: 6301 }], scans: [{ repository: "slop-test/pin-studied", state: "clean" }, { repository: "slop-test/pin-studied", state: "incomplete" }] }
+const pinPair: FlagProject = {
+  id: "pin-pair",
+  repositories: [{ path: "slop-test/pin-pair-one", githubId: 6401 }, { path: "slop-test/pin-pair-two", githubId: 6402 }],
+  scans: [{ repository: "slop-test/pin-pair-one", state: "clean" }, { repository: "slop-test/pin-pair-two", state: "clean", commit: movedHead }, { repository: "slop-test/pin-pair-two", state: "incomplete" }],
+}
+const pinOutage: FlagProject = { id: "pin-outage", repositories: [{ path: "slop-test/pin-outage", githubId: 6501 }], scans: [{ repository: "slop-test/pin-outage", state: "clean" }] }
+const pinUnretained: FlagProject = { id: "pin-unretained", repositories: [{ path: "slop-test/pin-unretained", githubId: 6601 }], scans: [{ repository: "slop-test/pin-unretained", state: "clean", retained: false }, { repository: "slop-test/pin-unretained", state: "pending" }] }
+const pinned = [pinPending, pinElsewhere, pinStudied, pinPair, pinOutage, pinUnretained]
+
+service Pinned { readonly world: World; readonly scans: ReadonlyMap<string, ReadonlyArray<string>> }
+
+const StartedPinned = Layer.effect(Pinned, effect {
+  return try acquireRelease(promise(() => flagWorld(pinned)), (running) => promise(() => running.world.mf.dispose()))
+})
+
+layer(StartedPinned, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A flag pause lifts on the deciding clean scan at each live pin (spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/vettingComposition.md, "A reused clean scan never lifts a flag pause"; spec/security/enforcement.md, "Reachable outcomes"; spec/security/enforcement.md, "Retained evidence is checked when clearance relies on it")', () => effect {
+    const { world, scans } = try Pinned
+    const [pendingClean = ""] = scans.get(pinPending.id) ?? []
+    const [elsewhereClean = ""] = scans.get(pinElsewhere.id) ?? []
+    const [pairOne = "", pairTwo = ""] = scans.get(pinPair.id) ?? []
+    world.heads.set("slop-test/pin-pair-two", movedHead)
+    world.outage.add("slop-test/pin-outage")
+    const olderApp = try promise(() => olderAppReinstatement(world, pinPair, pairTwo))
+    const first = refreshOf(try promise(() => signed(world, "POST", "/api/v1/vetting/refresh", "{}")))
+    const [queuedStudy] = try promise(() => rows(world, "SELECT id FROM vetting_assessments WHERE project_id = ? AND state = 'pending'", pinStudied.id))
+    const studiedFresh = String(queuedStudy?.id ?? "")
+    try promise(() => complete(world, studiedFresh))
+    const second = refreshOf(try promise(() => signed(world, "POST", "/api/v1/vetting/refresh", "{}")))
+    const records = try promise(() => rows(world, "SELECT project_id, sequence, state_after, system_issuer FROM project_enforcements WHERE action = 'reinstate' ORDER BY project_id"))
+    const paused = try promise(() => rows(world, "SELECT e.project_id FROM project_enforcements e WHERE e.sequence = (SELECT MAX(x.sequence) FROM project_enforcements x WHERE x.project_id = e.project_id) AND e.state_after = 'quarantined' ORDER BY e.project_id"))
+    const overview = try promise(() => read(world, "/api/v1/admin/vetting", "801"))
+    const projects = (overview.body as { readonly projects?: ReadonlyArray<{ readonly id: string; readonly clearance: unknown }> }).projects ?? []
+    try Effect.try(() => assert.deepStrictEqual({
+      olderApp,
+      first,
+      second,
+      records: records.map((record) => ({ ...record, system_issuer: JSON.parse(String(record.system_issuer)) as unknown })),
+      paused: paused.map((row) => row.project_id),
+      replayed: [overview.status, projects.map((each) => [each.id, each.clearance !== null]).sort()],
+    }, {
+      olderApp: "refused",
+      first: { status: 200, queued: [studiedFresh], reinstated: [elsewhereClean, pairTwo, pendingClean].sort(), skipped: [{ projectId: pinOutage.id, reason: "pin_unavailable" }] },
+      second: { status: 200, queued: [], reinstated: [studiedFresh], skipped: [{ projectId: pinOutage.id, reason: "pin_unavailable" }] },
+      records: [
+        { project_id: pinElsewhere.id, sequence: 2, state_after: "clear", system_issuer: issuer(elsewhereClean, [elsewhereClean]) },
+        { project_id: pinPair.id, sequence: 2, state_after: "clear", system_issuer: issuer(pairTwo, [pairTwo, pairOne]) },
+        { project_id: pinPending.id, sequence: 2, state_after: "clear", system_issuer: issuer(pendingClean, [pendingClean]) },
+        { project_id: pinStudied.id, sequence: 2, state_after: "clear", system_issuer: issuer(studiedFresh, [studiedFresh]) },
+      ],
+      paused: [pinOutage.id, pinUnretained.id],
+      replayed: [200, pinned.map((fixture) => [fixture.id, true]).sort()],
     }))
   })
 })

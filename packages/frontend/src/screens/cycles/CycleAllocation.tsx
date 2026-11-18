@@ -1,9 +1,8 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/frontend/presentation.md, "Amounts display exactly in their asset's decimals with grouped whole digits and no trailing fraction zeros"
-import { Avatar, EmptyState, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
-import { formatRewardMinor, monthlyPoolLabel, monthlyPoolUnfunded } from "../../kernels/assetText.ts";
-import type { ExclusionRelationship, PoolContributor, PrizeContributor, ProjectCycleView } from "../../projections/projectView.ts";
+import { Avatar, EmptyState, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { formatRewardCapDisplay, formatRewardMinor, monthlyPoolUnfunded } from "../../kernels/assetText.ts";
+import { capFor, type ExclusionRelationship, type PoolContributor, type PrizeContributor, type ProjectCycleView } from "../../projections/projectView.ts";
 import { reviewerStandings } from "../../projections/standings.ts";
-import { reviewBudgetLabel } from "../home/listing.ts";
 import { formatDate, formatMonth, type ShownProject } from "../projects/index.ts";
 import { percentText } from "./labels.ts";
 
@@ -20,6 +19,36 @@ export type CycleAllocationProps = {
 
 const exclusionLabels: Readonly<Record<ExclusionRelationship, string>> = { owner: "owner", "funded-employee": "funded employee", "related-party": "related party" };
 
+export type FundedMeterProps = {
+  /** What is funded, when the meter stands alone. */
+  label?: string;
+  /** The funded amount and the cap, in base units; the bar is left out without a cap. */
+  fundedMinor: bigint;
+  capMinor?: bigint;
+  /** The funded amount and the cap as shown. */
+  funded: string;
+  cap: string;
+};
+
+/** A funded amount against its cap: a bar and the two amounts. */
+export function FundedMeter({ label, fundedMinor, capMinor, funded, cap }: FundedMeterProps) {
+  const share = capMinor !== undefined && capMinor > 0n ? Number(((fundedMinor > capMinor ? capMinor : fundedMinor) * 10_000n) / capMinor) : undefined;
+  return (
+    <span className="inline-flex items-center gap-2 text-sm">
+      {label ? <span>{label}</span> : null}
+      {share !== undefined ? (
+        <span aria-hidden className="flex h-2 w-24 overflow-hidden rounded-lg bg-secondary">
+          {share > 0 ? <span className="bg-primary" style={{ flexGrow: share }} /> : null}
+          {share < 10_000 ? <span style={{ flexGrow: 10_000 - share }} /> : null}
+        </span>
+      ) : null}
+      <span className="font-mono tabular-nums">
+        {funded} / {cap}
+      </span>
+    </span>
+  );
+}
+
 const linkClass = "flex items-center gap-3 text-foreground hover:underline";
 
 /** @throws {never} */
@@ -34,10 +63,18 @@ function weightShare(view: ProjectCycleView, weight: bigint): bigint {
 }
 
 function RewardValue({ view, leader, project, committedMinor }: { view: ProjectCycleView; leader: PoolContributor | PrizeContributor; project: ShownProject; committedMinor: bigint | undefined }) {
-  if (leader.payoutExclusion) return <>Excluded from payout ({exclusionLabels[leader.payoutExclusion]})</>;
+  if (leader.payoutExclusion) {
+    const why = exclusionLabels[leader.payoutExclusion];
+    return (
+      <span title={`Excluded from payout: ${why}`}>
+        <Status presentation={{ tone: "Neutral", icon: "Ban", label: "Excluded" }} />
+        <span className="sr-only"> from payout ({why})</span>
+      </span>
+    );
+  }
   if ("projectedSharePartsPerMillion" in leader) return <>{percentText(leader.projectedSharePartsPerMillion)} share</>;
   if (!unfunded(view, committedMinor)) return <>{formatRewardMinor(leader.simulatedMinor, project.rewardAsset)}</>;
-  return <>{percentText(weightShare(view, leader.weight))} of payment weight</>;
+  return <>{percentText(weightShare(view, leader.weight))}</>;
 }
 
 /** The month's contributors ranked from the live snapshot with their projected share; a projection, never an award. */
@@ -52,17 +89,28 @@ export function CycleAllocation({ view, updatedAt, project, committedMinor }: Cy
           {formatMonth(view.cycle.id)}
         </h2>
         <p className="text-sm text-muted-foreground">Updated {formatDate(updatedAt)}</p>
-        {budget ? <p>{reviewBudgetLabel(budget)}</p> : null}
+        {budget?.fundingState === "committed" ? (
+          <p>
+            <FundedMeter label="Reviews" fundedMinor={budget.committedMinor} funded={formatRewardMinor(budget.committedMinor)} cap={budget.monthlyCapDisplay} />
+          </p>
+        ) : null}
         {view.kind === "monthly-pool" && view.project.reward.kind === "monthly-pool" ? (
           <p>
-            {unfunded(view, committedMinor)
-              ? "Not funded yet."
-              : `Projected from accepted work · ${monthlyPoolLabel({ fundingState: view.project.reward.fundingState, committedMinor: committedMinor ?? 0n, monthlyCapDisplay: project.reward.monthlyCapDisplay }, project.rewardAsset)}.`}
+            {unfunded(view, committedMinor) ? (
+              <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Not funded yet" }} />
+            ) : (
+              <FundedMeter
+                fundedMinor={committedMinor ?? 0n}
+                capMinor={capFor(view.project.reward, view.cycle.id)}
+                funded={formatRewardMinor(committedMinor ?? 0n, project.rewardAsset)}
+                cap={formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)}
+              />
+            )}
           </p>
         ) : null}
       </div>
       {leaders.length === 0 ? (
-        <EmptyState title="No accepted work this month yet." />
+        <EmptyState title="No accepted work" />
       ) : (
         <Table label={`${project.name} leaderboard`}>
           <TableCaption visuallyHidden>{project.name} leaderboard</TableCaption>
@@ -85,16 +133,24 @@ export function CycleAllocation({ view, updatedAt, project, committedMinor }: Cy
                       <Avatar name={leader.actor.login} src={leader.actor.avatarUrl} />
                       <span className="flex flex-col">
                         <strong>{leader.actor.login}</strong>
-                        <small className="text-xs text-muted-foreground">
-                          {leader.acceptedOutcomeCount} accepted {leader.acceptedOutcomeCount === 1 ? "event" : "events"}
-                        </small>
+                        <small className="text-xs text-muted-foreground">{leader.acceptedOutcomeCount} accepted</small>
                       </span>
                     </a>
                   </TableCell>
                   <TableCell>
                     <strong className="font-mono tabular-nums">{leader.points.toLocaleString("en-US")}</strong>
-                    {reviewer ? <small className="block text-xs text-muted-foreground">Includes {reviewer.reviewPoints.toLocaleString("en-US")} review points</small> : null}
-                    {leader.penaltyPoints > 0 ? <small className="block text-xs text-muted-foreground">After a {leader.penaltyPoints.toLocaleString("en-US")} point Slopbot penalty</small> : null}
+                    {reviewer ? (
+                      <span className="block" title="Review points">
+                        <Status presentation={{ tone: "Neutral", icon: "Eye", label: reviewer.reviewPoints.toLocaleString("en-US") }} />
+                        <span className="sr-only"> review points</span>
+                      </span>
+                    ) : null}
+                    {leader.penaltyPoints > 0 ? (
+                      <span className="block" title="Slopbot penalty">
+                        <Status presentation={{ tone: "Negative", icon: "Alert", label: `−${leader.penaltyPoints.toLocaleString("en-US")}` }} />
+                        <span className="sr-only"> point Slopbot penalty</span>
+                      </span>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <strong className="font-mono tabular-nums">

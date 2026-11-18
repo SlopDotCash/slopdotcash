@@ -81,11 +81,15 @@ expired (`mayWrite` with the worker's token after the model call), so a
 worker whose lease was taken over writes nothing. An unregistered or restricted
 project or an unavailable installation escalates without a model call.
 Provider calls are journaled before the draft; a failed, blocked or
-budget-deferred triage escalates as unavailable. A worker that loses its
-calls' cost record before recording them releases its lease without
-escalating and the call is retained as an unknown cost, so a later lease
-retries. After a draft, the dispute always escalates because the original
-work was not independently retrieved.
+budget-deferred triage escalates as unavailable. Any other error under the
+lease escalates as unavailable too ("Slopbot triage is unavailable;
+independent review is required"), whether it comes before the calls start,
+after their costs are recorded or after a saved draft
+(`processPointsDispute`, lines 176-180). Only an error after the calls
+started and before their costs are recorded escalates nothing: that worker
+releases its lease and the call is retained as an unknown cost, so a later
+lease retries. After a draft, the dispute always escalates because the
+original work was not independently retrieved.
 
 ```quint
 type Availability = Available | Unregistered | Restricted | NoInstallation
@@ -120,7 +124,7 @@ pure def canDraft(d: Dispute, token: int, uphold: bool, confidenceHundredths: in
 pure def draft(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): Dispute =
   { ...d, callsInFlight: false, draft: if (uphold) DraftUphold else DraftDeny,
     draftConfidence: if (confidenceHundredths > cappedConfidence) cappedConfidence else confidenceHundredths }
-pure def canFailTriage(d: Dispute, token: int): bool = holds(d, token) and d.callsInFlight and d.draft == NoDraft
+pure def canFailTriage(d: Dispute, token: int): bool = holds(d, token) and needsTriage(d)
 pure def failTriage(d: Dispute, token: int): Dispute = escalatedWith(TriageUnavailable, { ...d, callsInFlight: false })
 pure def canEscalateDrafted(d: Dispute, token: int): bool = holds(d, token) and d.draft != NoDraft and d.escalation == NotEscalated
 pure def escalateDrafted(d: Dispute, token: int): Dispute = escalatedWith(ModeratorReviewRequired, d)
@@ -149,6 +153,8 @@ pure def stepUnknownCostsRetained(before: Dispute, after: Dispute): bool = after
 pure def stepTokensIncrease(before: Dispute, after: Dispute): bool = after.lastToken >= before.lastToken and after.now >= before.now
 pure def sometimesDraftedAndEscalated(d: Dispute): bool = d.draft != NoDraft and d.escalation == ModeratorReviewRequired
 pure def sometimesUnavailableEscalated(d: Dispute): bool = d.escalation == ProjectRestricted
+pure def sometimesErrorBeforeCallsEscalated(d: Dispute): bool =
+  d.escalation == TriageUnavailable and d.draft == NoDraft and d.unknownCostCalls == 0 and not(d.callsInFlight)
 pure def sometimesLostCostRetried(d: Dispute): bool = d.unknownCostCalls > 0 and d.claimToken > 0
 pure def sometimesLeaseTakenOver(d: Dispute): bool = d.lastToken >= 2 and d.claimToken == d.lastToken
 pure def sometimesTakenOverWhileOldCallInFlight(d: Dispute): bool =

@@ -35,14 +35,15 @@ export const commitmentMessages = {
   insufficient: "The vault has insufficient free funds for this award.",
   finalDiffers: "The finalized commitment differs from the approved award.",
   notRequest: "This transaction does not match the request.",
-  settingOwner: "Connect the vault owner's wallet to change automatic monthly payment.",
+  settingOwner: "Connect the vault owner's wallet.",
   settingAmount: "Set a monthly amount in project settings first.",
   settingInvalid: "The monthly payment setting could not be read.",
   solanaInvalid: "The monthly payment review response is invalid.",
   solanaWire: "The prepared transaction differs from the reviewed award.",
   solanaStatus: "The transaction status could not be verified.",
   assetPolicy: "The vault asset differs from the reviewed policy.",
-  planUnreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new action.",
+  planUnreadable: "Saved request unreadable. Check wallet activity.",
+  solanaUnverified: "Award not verified. Retry.",
 } as const
 
 const planLimitBytes = 65_536
@@ -164,7 +165,7 @@ export effect function checkEvmSetting(connection: EvmConnection, vault: EvmVaul
 
 effect function solanaAction(projectId: string, period: string, body: SolanaCommitmentAction, expectedActor: string) {
   const answer = call(monthlySolanaCommitment, { params: { id: projectId, period }, body }, { limitBytes: planLimitBytes, deadlineMs: planDeadlineMs, expectedActor }) catch effect (failure) => {
-    throw refused(failureMessage(failure, commitmentMessages.reverify))
+    throw refused(failureMessage(failure, commitmentMessages.solanaUnverified))
   }
   return answer
 }

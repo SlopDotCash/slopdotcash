@@ -173,6 +173,8 @@ const tokenOne = `0x${"1".repeat(40)}`
 const tokenTwo = `0x${"2".repeat(40)}`
 const slop = `0x${"5".repeat(40)}`
 const orderId = `0x${"b".repeat(64)}`
+const claimVault = `0x${"9".repeat(40)}`
+const claimQuote = JSON.stringify({ projectId: "feed", vault: claimVault, privateExtra: "PRIVATE-QUOTE" })
 
 function seeded(row: Seeded): Statement {
   const finalized = row.state === "finalized" ? row.at : null
@@ -318,7 +320,7 @@ interface TailSeen { readonly url: string; readonly protocols: unknown; readonly
 
 type Sockets = (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike
 
-function tailSockets(frames: ReadonlyArray<string>, ending: "close" | "error", seen: Array<TailSeen>): Sockets {
+function tailSockets(frames: ReadonlyArray<string>, ending: number | "error", seen: Array<TailSeen>): Sockets {
   return (url, protocols) => {
     const record: TailSeen = { url, protocols, sent: [] }
     seen.push(record)
@@ -334,7 +336,8 @@ function tailSockets(frames: ReadonlyArray<string>, ending: "close" | "error", s
       send: (data) => {
         record.sent.push(typeof data === "string" ? data : new TextDecoder().decode(data))
         for (const frame of frames) emit("message", { type: "message", data: frame })
-        emit(ending, ending === "close" ? { type: "close", code: 1000 } : { type: "error" })
+        if (ending === "error") emit("error", { type: "error" })
+        else emit("close", { type: "close", code: ending })
       },
     }
   }
@@ -456,7 +459,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     })
   }))
 
-  it.effect('Only an administrator reads the fee report over HTTP, with exact totals and no signed bytes (spec/fees/feeReport.md, "Story: Show administrators what the fee wallets did"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network\'s target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals")', () => effect {
+  it.effect('Only an administrator reads the fee report over HTTP, with exact totals, the claims block and no signed bytes or quote (spec/fees/feeReport.md, "Story: Show administrators what the fee wallets did"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network\'s target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals"; spec/fees/feeReport.md, "The claims block shows the latest 100 claim attempts, finalized live claim totals per network, fee wallet and token, and 24-hour claim state counts")', () => effect {
     const now = try Clock.currentTimeMillis
     const at = (hours: number) => isoAt(now - hours * 3_600_000)
     const usdc = circleUsdc.base
@@ -467,6 +470,9 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       { kind: "bridge", id: "bridge-00001", network: "base", mode: "live", token: usdc, target: robinhoodUsdg, amountIn: "500000000", route: "debridge", minimum: "499000000", quote: JSON.stringify({ orderId }), tx: `0x${"b1".repeat(32)}`, raw: "SIGNED-SECRET-FOUR", expires: null, amountOut: "500000000", state: "finalized", at: try at(1.5) },
       { kind: "buyback", id: "buyback-0001", network: "robinhood", mode: "live", token: robinhoodUsdg, target: slop, amountIn: "250000000", route: "kyberswap", minimum: "100", quote: "{}", tx: `0x${"d1".repeat(32)}`, raw: "SIGNED-SECRET-FIVE", expires: 1, amountOut: "1000", state: "finalized", at: try at(1.25) },
       { kind: "conversion", id: "conv-dry-0003", network: "ethereum", mode: "dry_run", token: tokenTwo, target: circleUsdc.ethereum, amountIn: "7", route: "kyberswap", minimum: "6", quote: "{}", tx: null, raw: null, expires: null, amountOut: null, state: "quoted", at: try at(1) },
+      { kind: "claim", id: "claim-live-0001", network: "base", mode: "live", token: tokenOne, target: tokenOne, amountIn: "1", route: null, minimum: null, quote: claimQuote, tx: `0x${"e1".repeat(32)}`, raw: "SIGNED-SECRET-SIX", expires: null, amountOut: "9000000000000000000000", state: "finalized", at: try at(30) },
+      { kind: "claim", id: "claim-sent-0002", network: "base", mode: "live", token: usdc, target: usdc, amountIn: "250", route: null, minimum: null, quote: claimQuote, tx: `0x${"e2".repeat(32)}`, raw: "SIGNED-SECRET-SEVEN", expires: null, amountOut: null, state: "submitted", at: try at(0.5) },
+      { kind: "claim", id: "claim-dry-0003", network: "solana", mode: "dry_run", token: tokenTwo, target: tokenTwo, amountIn: "4", route: null, minimum: null, quote: "{}", tx: null, raw: null, expires: null, amountOut: null, state: "quoted", at: try at(0.25) },
     ]
     try (try D1).batch(rows.map(seeded))
     try signedUp([admin, member])
@@ -484,14 +490,20 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       id: row.id, kind: row.kind, network: row.network, mode: row.mode, token: row.token, targetToken: row.target, amountIn: row.amountIn, amountOut: row.amountOut,
       minAmountOut: row.minimum, txId: row.tx, landedTxId: null, state: row.state, reason: null, createdAt: row.at, finalizedAt: row.at, orderId: order, outcome: null,
     })
-    const [old, , fresh, bridge, buyback, dry] = rows
-    if (old === undefined || fresh === undefined || bridge === undefined || buyback === undefined || dry === undefined) return try die(new Error("seed rows missing"))
+    const claimed = (row: Seeded, named: boolean) => ({
+      id: row.id, network: row.network, mode: row.mode, feeWallet: wallet, token: row.token, estimatedAmount: row.amountIn, amountClaimed: row.amountOut, txId: row.tx,
+      landedTxId: null, state: row.state, reason: null, createdAt: row.at, submittedAt: row.tx === null ? null : row.at, finalizedAt: row.state === "finalized" ? row.at : null,
+      projectId: named ? "feed" : null, vault: named ? claimVault : null,
+    })
+    const [old, , fresh, bridge, buyback, dry, claimLive, claimSent, claimDry] = rows
+    if (old === undefined || fresh === undefined || bridge === undefined || buyback === undefined || dry === undefined || claimLive === undefined || claimSent === undefined || claimDry === undefined) return try die(new Error("seed rows missing"))
     try same({
       posted: [posted.status, posted.body, posted.cache],
       anonymous: [anonymous.status, anonymous.body, anonymous.cache],
       forbidden: [forbidden.status, forbidden.body, forbidden.cache],
       report: [report.status, report.cache, report.body],
       secret: report.text.includes("SIGNED-SECRET"),
+      quote: report.text.includes("PRIVATE-QUOTE"),
     }, {
       posted: [405, { error: "method_not_allowed" }, "private, no-store"],
       anonymous: [401, { error: "unauthorized", message: "Sign in with GitHub" }, "private, no-store"],
@@ -514,8 +526,14 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
             { network: "robinhood", kind: "buyback", token: robinhoodUsdg, sends: 1, amountIn: "250000000", amountOut: "1000", inTransit: "0", refunded: "0" },
           ],
         },
+        claims: {
+          recent: [claimed(claimDry, false), claimed(claimSent, true), claimed(claimLive, true)],
+          totals: [{ network: "base", feeWallet: wallet, token: tokenOne, claims: 1, amountClaimed: "9000000000000000000000" }],
+          last24Hours: [{ network: "base", mode: "live", state: "submitted", count: 1 }, { network: "solana", mode: "dry_run", state: "quoted", count: 1 }],
+        },
       }],
       secret: false,
+      quote: false,
     })
   })
 
@@ -611,20 +629,22 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     const operationsFile = `${temp}/fee-worker-operations.json`
     const sockets: TailSeen[] = []
     const inspection = feeCloudflare({ bindings: bound }, db)
-    const diagnosed = try operated(inspection.fetch, temp, tailSockets(frames, "close", sockets))
+    const diagnosed = try operated(inspection.fetch, temp, tailSockets(frames, 1000, sockets))
     const operationsText = try fs.readFileString(operationsFile)
     const operationsMode = (try fs.stat(operationsFile)).mode & 0o777
     const changed = feeCloudflare({ bindings: bound, tagAt: (read) => read >= 3 ? "d".repeat(40) : checkedSource }, db)
-    const changedRun = try operated(changed.fetch, temp, tailSockets([], "close", []))
+    const changedRun = try operated(changed.fetch, temp, tailSockets([], 1000, []))
     const wrongDatabase = feeCloudflare({ bindings: bound.map((binding) => binding.name === "FEE_DB" ? { ...binding, id: "00000000-0000-4000-8000-000000000000" } : binding) }, db)
-    const wrongDatabaseRun = try operated(wrongDatabase.fetch, temp, tailSockets([], "close", []))
+    const wrongDatabaseRun = try operated(wrongDatabase.fetch, temp, tailSockets([], 1000, []))
     const badGas = feeCloudflare({ bindings: bound, gas: [{ network: "base", state: "spent", maximum_wei: "1", actual_wei: null }] }, db)
-    const badGasRun = try operated(badGas.fetch, temp, tailSockets([], "close", []))
+    const badGasRun = try operated(badGas.fetch, temp, tailSockets([], 1000, []))
     const kept = feeCloudflare({ bindings: bound, tailDeleted: false }, db)
-    const keptRun = try operated(kept.fetch, temp, tailSockets(frames, "close", []))
+    const keptRun = try operated(kept.fetch, temp, tailSockets(frames, 1000, []))
     const keptText = try fs.readFileString(operationsFile)
     const broken = feeCloudflare({ bindings: bound }, db)
     const brokenRun = try operated(broken.fetch, temp, tailSockets(frames, "error", []))
+    const goingAway = feeCloudflare({ bindings: bound }, db)
+    const goingAwayRun = try operated(goingAway.fetch, temp, tailSockets(frames, 1001, []))
     const routes = (traffic: FeeTraffic) => traffic.seen.map((seen) => seen.route)
     try same({
       output: withoutCheckedAt(diagnosed.passed),
@@ -639,6 +659,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       badGas: [badGasRun.failed, routes(badGas.traffic).filter((route) => tailRoutes.includes(route))],
       kept: [withoutCheckedAt(keptRun.failed), routes(kept.traffic).filter((route) => tailRoutes.includes(route)), keptText === `${JSON.stringify(keptRun.failed)}\n`, keptText.includes("PRIVATE")],
       broken: [withoutCheckedAt(brokenRun.failed), routes(broken.traffic).filter((route) => tailRoutes.includes(route))],
+      goingAway: withoutCheckedAt(goingAwayRun.passed),
     }, {
       output: { ...completed, tailSeconds: 90, observations, rawLogsRetained: false, deploymentId, sourceCommit: checkedSource, checkedSource, sourceMatchesCheckout: true },
       routes: [...pin, `GET ${scripts}/versions/${versionId}`, `GET ${scripts}/schedules`, queryRoute, queryRoute, queryRoute, ...tailRoutes, ...pin],
@@ -652,6 +673,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       badGas: [unavailable("attempts-query", "native-budget"), []],
       kept: [{ ...unavailable("tail-delete", "other"), ...completed }, tailRoutes, true, false],
       broken: [{ ...unavailable("tail-transport", "other"), ...completed }, tailRoutes],
+      goingAway: { ...completed, tailSeconds: 90, observations, rawLogsRetained: false, deploymentId, sourceCommit: checkedSource, checkedSource, sourceMatchesCheckout: true },
     })
 
     const probeFile = `${temp}/fee-solana-rpc-probe.json`

@@ -120,12 +120,22 @@ jobs:
           fi
           test "$BOOTSTRAP_STAGING_PROFILES" = "false"
 
+      - name: Require a manual development run for staging profile bootstrap
+        if: inputs.bootstrap_staging_profiles == true
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/development
+
       - name: Install locked release tooling
         uses: ./.github/actions/setup
         with:
           job: prepare
           verification: "false"
           publication: "true"
+
+      - name: Reject known production dependency vulnerabilities
+        run: pnpm audit --prod
 
       - name: Build every application
         run: pnpm all build --filter="./apps/*"
@@ -160,7 +170,29 @@ jobs:
         if: inputs.use_published_data != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node apps/points/dist/programs/main.js collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE/github"
+        run: |
+          set -euo pipefail
+          feed_status=0
+          for attempt in 1 2; do
+            feed_status=0
+            node apps/points/dist/programs/main.js collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE/github" || feed_status=$?
+            if [ "$feed_status" -ne 75 ]; then
+              break
+            fi
+            if [ "$attempt" -eq 1 ]; then
+              echo "::warning::Hosted value feed unavailable; retrying in 60 seconds."
+              sleep 60
+            fi
+          done
+          if [ "$feed_status" -eq 75 ]; then
+            echo "::warning::Hosted value feed still unavailable; keeping the last published leaderboard snapshot."
+            rm -rf "$BUNDLE/github"
+            mkdir -p "$BUNDLE/github"
+            node apps/points/dist/programs/main.js snapshot restore "$SLOP_DATA_ORIGIN/data/leaderboard.json" "$BUNDLE/github/leaderboard.json"
+            test -s "$BUNDLE/github/leaderboard.json"
+          elif [ "$feed_status" -ne 0 ]; then
+            exit "$feed_status"
+          fi
 
       - name: Load validated published data for a manual release
         if: inputs.use_published_data == true
@@ -196,21 +228,33 @@ jobs:
           set -euo pipefail
           registry="$RUNNER_TEMP/repository-registry.json"
           node apps/points/dist/programs/main.js registry "$BUNDLE/registry/snapshot.json" "$registry"
-          node apps/points/dist/programs/main.js evaluations check "$registry" --external slopdotcash
           cp "$BUNDLE/github/leaderboard.json" "$BUNDLE/site/data/leaderboard.json"
           node apps/points/dist/programs/main.js journal build "$registry" "$BUNDLE/site/data" "$BUNDLE/registry/snapshot.json" \
             --online --bootstrap --environment "$SLOP_RELEASE_ENVIRONMENT"
           if [ "${{ inputs.use_published_data == true }}" = true ]; then
             node apps/points/dist/programs/main.js profiles publish "$RUNNER_TEMP/published-profiles.json" "$BUNDLE/site/data/profiles.json" --current
-          elif [ "$BOOTSTRAP_STAGING_PROFILES" = true ]; then
-            node apps/points/dist/programs/main.js profiles collect data/profiles/seed.json "$BUNDLE/site/data/profiles.json"
+            exit 0
+          fi
+          previous="$RUNNER_TEMP/previous-profiles.json"
+          if [ "$BOOTSTRAP_STAGING_PROFILES" = true ]; then
+            cp data/profiles/seed.json "$previous"
+            echo "First staging publication: start from the reviewed profile census."
           else
             curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
               --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
               --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-              "$SLOP_DATA_ORIGIN/data/profiles.json" --output "$RUNNER_TEMP/previous-profiles.json"
-            node apps/points/dist/programs/main.js profiles collect "$RUNNER_TEMP/previous-profiles.json" "$BUNDLE/site/data/profiles.json"
+              "$SLOP_DATA_ORIGIN/data/profiles.json" --output "$previous"
           fi
+          for attempt in 1 2; do
+            if node apps/points/dist/programs/main.js profiles collect "$previous" "$BUNDLE/site/data/profiles.json"; then
+              break
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::Profile census failed twice; not publishing partial counts."
+              exit 1
+            fi
+            echo "::warning::Profile census did not reconcile; retrying once."
+          done
 
       - name: Assemble the release bundle
         run: |
@@ -419,6 +463,13 @@ jobs:
           test "$HAS_CLIENT" = true
           test "$HAS_KEYS" = true
           test "$HAS_APP" = true
+      - name: Rebuild the repository registry from the checked bundle
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" registry "$BUNDLE/registry/snapshot.json" "$RUNNER_TEMP/repository-registry.json"
+      - name: Admit evaluated contribution awards
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" evaluations check "$RUNNER_TEMP/repository-registry.json" staging
       - name: Publish and verify isolated staging
         id: publish
         env:
@@ -457,7 +508,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node "$BUNDLE/apps/operations/dist/programs/main.js" health renew staging release
+        run: node "$BUNDLE/apps/operations/dist/programs/main.js" health renew staging release || echo "::warning::Optional trace intake renewal failed; ordinary contribution remains available."
 
   production:
     name: Deploy trusted production bundle
@@ -566,9 +617,13 @@ jobs:
             exit 0
           fi
 
+      - name: Rebuild the repository registry from the checked bundle
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" registry "$BUNDLE/registry/snapshot.json" "$RUNNER_TEMP/repository-registry.json"
+
       - name: Refuse older retained production data
         if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
-        run: node "$BUNDLE/apps/points/dist/programs/main.js" retained-fresh "$BUNDLE/site"
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" retained-fresh "$BUNDLE/site" "$RUNNER_TEMP/repository-registry.json"
 
       - name: Require scoped Cloudflare credentials
         if: steps.release-input.outputs.superseded != 'true'
@@ -581,6 +636,13 @@ jobs:
             echo "::error::The selected release environment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID."
             exit 1
           fi
+
+      - name: Admit evaluated contribution awards
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" evaluations check "$RUNNER_TEMP/repository-registry.json" production
 
       - name: Check fee-converter RPC inheritance before publication
         if: steps.release-input.outputs.superseded != 'true' && vars.SLOP_FEE_CONVERTER_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
@@ -708,11 +770,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          registry="$RUNNER_TEMP/repository-registry.json"
-          node "$BUNDLE/apps/points/dist/programs/main.js" registry "$BUNDLE/registry/snapshot.json" "$registry"
-          node "$BUNDLE/apps/points/dist/programs/main.js" journal import "$BUNDLE/site/data" "$registry" --current-origin https://slop.cash
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" journal import "$BUNDLE/site/data" "$RUNNER_TEMP/repository-registry.json" --current-origin https://slop.cash
 
       - name: Report optional intake health
         if: steps.publish.outputs.deployment != ''
@@ -720,4 +778,4 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node "$BUNDLE/apps/operations/dist/programs/main.js" health renew production release
+        run: node "$BUNDLE/apps/operations/dist/programs/main.js" health renew production release || echo "::warning::Optional trace intake renewal failed; ordinary contribution remains available."

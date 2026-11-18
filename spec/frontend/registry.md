@@ -22,9 +22,10 @@ invalid, the browser reads the registry the build published at
 `/data/project-registry.json`, also bounded to 4 MiB, valid only with
 `schemaVersion` "1", a parseable `syncedAt` and a non-empty `projects` array,
 and installs it labelled stale with that `syncedAt`. When both fail it installs
-no projects and the error "Project data could not load.", and account pages
-stay available. A failed application chunk is a separate error, not a registry
-outage.
+no projects and the error "Projects unavailable", and account pages stay
+available. A failed application chunk is a separate error, not a registry
+outage: the boot screen says "Slop could not load." with Reload (development
+`src/main.tsx` at `67fd54fd4`).
 
 ```quint
 import navigation as N from "./navigation"
@@ -58,8 +59,9 @@ form. Every other page may show the last good registry. A page is blocked,
 with "Projects are unavailable", the reason and Try again, when its policy is
 not independent and the registry failed, or when it needs the current registry
 and has only a stale one ("This page needs current project data."). An
-unblocked page that uses the registry shows the banner "Projects may be
-outdated" with the sync time when the registry is stale.
+unblocked page that uses the registry shows the banner "Projects stale ·
+<sync time>" with an icon button "Try again" when the registry is stale
+(development `src/App.tsx` at `67fd54fd4`).
 
 ```quint
 type RegistryPolicy = RegistryIndependent | RegistryNeedsCurrent | RegistryCached

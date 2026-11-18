@@ -135,7 +135,7 @@ export function ProjectsSection({ runtime, actorId, selectedProject, section, on
         <div className="flex flex-col gap-4">
           <div className="relative">
             <Search aria-hidden className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input type="search" aria-label="Find a project" className="pl-11" placeholder="Find a project or repository" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <Input type="search" aria-label="Find a project" className="pl-11" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} />
           </div>
           <ProjectCounts projects={projects} />
         </div>

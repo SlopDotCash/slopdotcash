@@ -128,22 +128,32 @@ the one reader, and the computed hash equals the reported blob SHA. A
 blob the collector already verified is reused without spending the
 budget. A tree counts by the digest check above. Binary content counts
 only when both its Git blob SHA and its SHA-256 match the bytes. Text used
-to recover line counts must also contain no NUL byte.
+to recover line counts must also contain no NUL byte. The text of an added
+file whose patch GitHub omitted (`valuePatch` recovery in `value-patch.ts`)
+has its own reader: at most 16 reads and 2 MiB in all, with no limit per
+object below that, and a file the collector already verified is reused
+without spending it.
 
 ```quint
-type ObjectKind = BlobObject | TreeObject | BinaryObject
+type ObjectKind = BlobObject | TreeObject | BinaryObject | AddedPatchObject
 type ObjectRead = { objectKind: ObjectKind, claimedSha: str, computedSha: str, claimedSha256: str,
   computedSha256: str, reportedSize: int, bytesRead: int, readNumber: int, bytesSoFar: int, reused: bool }
 pure val blobReadLimit = 48
 pure val blobByteLimit = 524288
 pure val blobSessionByteLimit = 2097152
+pure val addedPatchReadLimit = 16
+pure val addedPatchSessionByteLimit = 2097152
 pure def withinBlobBudget(o: ObjectRead): bool =
   o.reused or (o.reportedSize >= 0 and o.reportedSize <= blobByteLimit and o.bytesRead == o.reportedSize and
     o.readNumber >= 1 and o.readNumber <= blobReadLimit and o.bytesSoFar <= blobSessionByteLimit)
+pure def withinAddedPatchBudget(o: ObjectRead): bool =
+  o.reused or (o.reportedSize >= 0 and o.bytesRead == o.reportedSize and o.readNumber >= 1 and
+    o.readNumber <= addedPatchReadLimit and o.bytesSoFar <= addedPatchSessionByteLimit)
 pure def objectVerified(o: ObjectRead): bool =
   o.claimedSha != "" and o.computedSha == o.claimedSha and
   (o.objectKind != BinaryObject or (o.claimedSha256 != "" and o.computedSha256 == o.claimedSha256)) and
-  (o.objectKind != BlobObject or withinBlobBudget(o))
+  (o.objectKind != BlobObject or withinBlobBudget(o)) and
+  (o.objectKind != AddedPatchObject or withinAddedPatchBudget(o))
 pure def lawMismatchedHashNeverCounts(sampleObject: ObjectRead): bool =
   sampleObject.computedSha != sampleObject.claimedSha implies not(objectVerified(sampleObject))
 pure def lawBinaryNeedsBothDigests(sampleObject: ObjectRead): bool =
@@ -152,13 +162,20 @@ pure def lawBinaryNeedsBothDigests(sampleObject: ObjectRead): bool =
 pure def lawBlobOverBudgetNeverCounts(sampleObject: ObjectRead): bool =
   (sampleObject.objectKind == BlobObject and not(sampleObject.reused) and sampleObject.readNumber > blobReadLimit)
     implies not(objectVerified(sampleObject))
+pure def lawAddedPatchOverBudgetNeverCounts(sampleObject: ObjectRead): bool =
+  (sampleObject.objectKind == AddedPatchObject and not(sampleObject.reused) and
+    (sampleObject.readNumber > addedPatchReadLimit or sampleObject.bytesSoFar > addedPatchSessionByteLimit))
+    implies not(objectVerified(sampleObject))
 pure val verifiedBlob: ObjectRead = { objectKind: BlobObject, claimedSha: "b1", computedSha: "b1", claimedSha256: "",
   computedSha256: "", reportedSize: 10, bytesRead: 10, readNumber: 1, bytesSoFar: 10, reused: false }
 pure val sampleObjectValues = Set(verifiedBlob, { ...verifiedBlob, computedSha: "b2" },
   { ...verifiedBlob, readNumber: 49 }, { ...verifiedBlob, reportedSize: 524289, bytesRead: 524289 },
   { ...verifiedBlob, readNumber: 49, reused: true },
   { ...verifiedBlob, objectKind: BinaryObject, claimedSha256: "s1", computedSha256: "s2" },
-  { ...verifiedBlob, objectKind: TreeObject })
+  { ...verifiedBlob, objectKind: TreeObject },
+  { ...verifiedBlob, objectKind: AddedPatchObject, reportedSize: 524289, bytesRead: 524289, bytesSoFar: 524289 },
+  { ...verifiedBlob, objectKind: AddedPatchObject, readNumber: 17 },
+  { ...verifiedBlob, objectKind: AddedPatchObject, bytesSoFar: 2097153 })
 ```
 
 ### Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals
@@ -298,4 +315,51 @@ pure val sampleCensusValues = Set(
   { issueCount: 1, countsStable: true, cursorsFresh: true, pulls: List({ ...smallPull, listedCommits: 2 }) },
   { issueCount: 1001, countsStable: true, cursorsFresh: true, pulls: List() },
   { issueCount: 1, countsStable: false, cursorsFresh: true, pulls: List(smallPull) })
+```
+
+### A counted discussion read binds the census source and never replaces the retained-copy proof
+
+Source `resolveRetainedAuthors` in `scripts/value-ingestion.ts` (lines
+712-750) and `collectValueReferenceEvidence` in `value-evidence.ts`. Before
+retained-copy attribution reads a merged pull request's references, the pull
+request read must still be the one the outcome census saw: the same node ID,
+number, URL, head SHA, merge time and update time. Otherwise the run fails
+with "Attribution source changed after the outcome census"; the check runs
+before a counted discussion read and again on the discovered pull request.
+A counted discussion answer, when the head is known, replaces only the REST
+reads of issue comments and review comments; reviews are still read, and
+the comment and review-comment counts must still equal GitHub's reported
+totals, or the discovery carries a limitation and the source is held. The
+retained-copy commit and file proof, the holds and the retained authors are
+the same whichever route read the discussion.
+
+```quint
+type DiscussionRoute = RestComments | CountedDiscussion
+type AttributionSource = { nodeId: str, number: int, url: str, head: str, mergedAt: int, updatedAt: int }
+type ReferenceDiscussion = { route: DiscussionRoute, census: AttributionSource, pull: AttributionSource,
+  comments: int, reportedComments: int, inline: int, reportedInline: int }
+type DiscussionVerdict = SourceChanged | DiscussionLimited | DiscussionComplete
+pure def attributionSourceUnchanged(census: AttributionSource, pull: AttributionSource): bool =
+  census.nodeId != "" and census.mergedAt > 0 and pull == census
+pure def discussionVerdict(d: ReferenceDiscussion): DiscussionVerdict =
+  if (not(attributionSourceUnchanged(d.census, d.pull))) SourceChanged
+  else if (d.comments != d.reportedComments or d.inline != d.reportedInline) DiscussionLimited
+  else DiscussionComplete
+pure def lawChangedSourceNeverCounts(sampleDiscussion: ReferenceDiscussion): bool =
+  sampleDiscussion.pull != sampleDiscussion.census implies discussionVerdict(sampleDiscussion) == SourceChanged
+pure def lawCountedRouteChangesNothingElse(sampleDiscussion: ReferenceDiscussion): bool =
+  discussionVerdict({ ...sampleDiscussion, route: CountedDiscussion }) ==
+    discussionVerdict({ ...sampleDiscussion, route: RestComments })
+pure def lawMissingCommentsAreALimitation(sampleDiscussion: ReferenceDiscussion): bool =
+  (attributionSourceUnchanged(sampleDiscussion.census, sampleDiscussion.pull) and
+    sampleDiscussion.comments != sampleDiscussion.reportedComments) implies
+    discussionVerdict(sampleDiscussion) == DiscussionLimited
+pure val censusSource: AttributionSource = { nodeId: "PR_1", number: 7, url: "https://github.com/o/r/pull/7",
+  head: "h1", mergedAt: 1793491300, updatedAt: 1793491400 }
+pure val countedDiscussion: ReferenceDiscussion = { route: CountedDiscussion, census: censusSource, pull: censusSource,
+  comments: 3, reportedComments: 3, inline: 1, reportedInline: 1 }
+pure val sampleDiscussionValues = Set(countedDiscussion, { ...countedDiscussion, route: RestComments },
+  { ...countedDiscussion, pull: { ...censusSource, updatedAt: 1793491500 } },
+  { ...countedDiscussion, pull: { ...censusSource, head: "h2" } },
+  { ...countedDiscussion, comments: 2 })
 ```

@@ -12,6 +12,7 @@ import { InstallationRow, installationOf } from "../installation/store.vibe"
 import { observe, unregistered } from "../scope/facts.vibe"
 import { type ContextSelection, validContextSelections } from "../value/evidence/context.vibe"
 import { assessmentKeyStored, storedAssessmentKey, valueAssessmentKey, workUnitAssessmentKey } from "../value/history/read.vibe"
+import { reached, withHistoricalIntakeDiagnostics } from "./diagnostics.vibe"
 
 export interface ImportVars {
   readonly SLOPBOT_PRODUCER_REVISION?: string
@@ -58,8 +59,10 @@ export interface AdmittedImport {
 
 export error PublicationFailed
 
+export type PublicationError = PublicationFailed | { readonly _tag: string }
+
 export service HistoricalPublication {
-  publish(admitted: AdmittedImport): typeof ImportReceipt.Type!PublicationFailed
+  publish(admitted: AdmittedImport): typeof ImportReceipt.Type!PublicationError
 }
 
 export error ImportRefused { reason: string }
@@ -224,10 +227,12 @@ effect function installationCovers(repositoryId: number, repositoryNodeId: strin
   }
 }
 
-effect function sourceFacts(selection: Selection, projects: Map<string, number>) {
+effect function sourceFacts(selection: Selection, projects: Map<string, number>, index: number, count: number) {
   const github = try GitHub
+  try reached("source-repository", index, count)
   const repository = try github.json(`/repos/${selection.repository}`, RepositoryFacts, { limitBytes: githubLimitBytes })
   const [owner = "", repo = ""] = selection.repository.split("/")
+  try reached("source-registry", index, count)
   const registered = repository.private ? { observation: unregistered, projectId: undefined } : try observe({ owner, repo, repositoryId: repository.id })
   const known = {
     repository: repository.id,
@@ -237,6 +242,7 @@ effect function sourceFacts(selection: Selection, projects: Map<string, number>)
     visibility: repository.private ? "PrivateRepo" as const : "PublicRepo" as const,
   }
   const identity = { ...selection, repositoryDatabaseId: repository.id, repositoryNodeId: repository.node_id, projectId: registered.projectId ?? "" }
+  try reached("source-installation", index, count)
   if (!(try installationCovers(repository.id, repository.node_id))) {
     return { source: { ...known, read: "PullUnreadable", occurredAt: 0 }, admitted: { ...identity, pullRequestNodeId: "" } } satisfies SourceFacts
   }
@@ -247,11 +253,14 @@ effect function sourceFacts(selection: Selection, projects: Map<string, number>)
   } satisfies SourceFacts
 }
 
-effect function installedFacts(installationId: number, selection: Selection, projects: Map<string, number>) {
+effect function installedFacts(installationId: number, selections: ReadonlyArray<Selection>, projects: Map<string, number>) {
+  try reached("github-client", null, selections.length)
   const scoped = (try GitHubApp).asInstallation(String(installationId))
+  const facts: SourceFacts[] = []
   provide scoped {
-    return try sourceFacts(selection, projects)
+    for (const [index, selection] of selections.entries()) facts.push(try sourceFacts(selection, projects, index, selections.length))
   }
+  return facts
 }
 
 effect function installationState(installationId: number) {
@@ -277,16 +286,18 @@ effect function admissionState(install: Installation, platformProject: number, k
 }
 
 export effect function publishSubscription(administratorGithubId: string, input: unknown, bundle: Uint8Array | undefined) {
+  try reached("envelope", null, null)
   const envelope = envelopeOf(input)
   if (envelope === undefined) throw new ImportRefused({ reason: "Invalid historical assessment envelope" })
+  const count = envelope.sources.length
   const joint = envelope.mode === "work-unit"
   if (bundle !== undefined && !joint) throw new ImportRefused({ reason: "Joint merge reconstruction is unavailable" })
   const settings = try ImportSettings
   const projects = new Map<string, number>()
   const platformProject = projectNumber(projects, settings.platformProjectId)
+  try reached("installation", null, count)
   const install = try installationState(envelope.installationId)
-  const facts: SourceFacts[] = []
-  for (const selection of envelope.sources) facts.push(active(install) ? try installedFacts(envelope.installationId, selection, projects) : unread(selection))
+  const facts = active(install) ? try installedFacts(envelope.installationId, envelope.sources, projects) : envelope.sources.map(unread)
   if (bundle !== undefined && new Set(facts.map((fact) => fact.admitted.repositoryNodeId)).size !== 1) throw new ImportRefused({ reason: "A Git bundle must bind one public repository" })
   const assessmentKey = try assessmentKeyOf(envelope, settings.producerRevision, facts)
   const verified = githubIdPattern.test(administratorGithubId) && (try (try Roles).has(administratorGithubId, "administrator"))
@@ -316,4 +327,8 @@ export effect function publishSubscription(administratorGithubId: string, input:
   })
   if ((try storedAssessmentKey(receipt.recordDigest)) !== assessmentKey) throw new ImportRefused({ reason: "Published record does not match the admitted assessment" })
   return receipt
+}
+
+export const publisherMethods = {
+  publishSubscription: (administratorGithubId: string, input: unknown, bundle?: Uint8Array) => withHistoricalIntakeDiagnostics(publishSubscription(administratorGithubId, input, bundle)),
 }

@@ -6,7 +6,7 @@ import type { SubmittedPaymentsProps } from "./SubmittedPayments.tsx";
 const onCheck = fn();
 
 export const meta: ComponentMeta<SubmittedPaymentsProps> = {
-  args: { solana: false, values: submittedHashes, busy: false, error: null, stale: false, notice: null, onValue: fn(), onCheck, onRefresh: fn() },
+  args: { solana: false, values: submittedHashes, busy: false, error: null, stale: false, onValue: fn(), onCheck, onRefresh: fn() },
   examples: { Unchecked: { values: [""] } },
   play: {
     // spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"

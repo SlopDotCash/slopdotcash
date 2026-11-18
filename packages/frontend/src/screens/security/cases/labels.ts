@@ -1,100 +1,117 @@
 // spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"
 import { formatSecurityAmount } from "@repo/security/client";
+import type { StatusProps } from "@repo/ui";
 import type { CaseTerms, SecurityCase } from "./case.schema.ts";
+
+export type Presentation = StatusProps["presentation"];
+
+export type Tone = Presentation["tone"];
 
 export type ReportFilter = "all" | "review" | "waiting" | "award" | "resolved";
 
 export const reportFilters: ReadonlyArray<readonly [ReportFilter, string]> = [
-  ["all", "All reports"],
-  ["review", "Needs your review"],
-  ["waiting", "Waiting for researcher"],
-  ["award", "Award and payment"],
-  ["resolved", "Paid or ineligible"],
+  ["all", "All"],
+  ["review", "Review"],
+  ["waiting", "Waiting"],
+  ["award", "Award"],
+  ["resolved", "Closed"],
 ];
 
-export const receiptLabels: Readonly<Record<string, string>> = {
-  received: "Received — waiting for the owner",
-  triaging: "Under review",
-  "needs-information": "The owner asked for more information",
+const receiptLabels: Readonly<Record<string, string>> = {
+  received: "Received",
+  triaging: "In review",
+  "needs-information": "Info needed",
   confirmed: "Confirmed",
-  duplicate: "Duplicate of an earlier report",
+  duplicate: "Duplicate",
   "out-of-scope": "Out of scope",
-  rejected: "Not accepted",
-  disputed: "Under appeal",
+  rejected: "Rejected",
+  disputed: "Appeal",
+};
+
+const receiptTones: Readonly<Record<string, Tone>> = {
+  "needs-information": "Caution",
+  confirmed: "Positive",
+  rejected: "Negative",
 };
 
 const awardLabels: Readonly<Record<string, string>> = {
-  "not-applicable": "No paid program was open when this report was received",
-  pending: "Award not decided yet",
-  ineligible: "No award",
+  "not-applicable": "No program",
+  pending: "Pending",
+  ineligible: "None",
   reserved: "Reserved",
-  "capacity-exhausted": "Waiting for the owner's award decision",
-  approved: "Approved and reserved",
+  "capacity-exhausted": "Pending",
+  approved: "Approved",
 };
 
 const paymentLabels: Readonly<Record<string, string>> = {
-  "not-applicable": "No approved award",
-  "rail-unavailable": "Approved, not paid yet",
-  "awaiting-owner-commitment": "Waiting for the vault owner",
-  "needs-wallet": "Wallet required",
-  uncertain: "Submission outcome not yet confirmed",
-  ready: "Ready for payment",
-  processing: "Payment in progress",
-  submitted: "Waiting for finality",
-  held: "Payment held",
+  "not-applicable": "No award",
+  "rail-unavailable": "Unpaid",
+  "awaiting-owner-commitment": "Owner",
+  "needs-wallet": "Wallet",
+  uncertain: "Unconfirmed",
+  ready: "Ready",
+  processing: "Sending",
+  submitted: "Finalizing",
+  held: "Held",
   paid: "Paid",
 };
 
-export const submissionLabels: Readonly<Record<string, string>> = {
-  claimed: "Confirming with GitHub",
-  verified: "Received by GitHub",
-  "link-rejected": "Not confirmed by GitHub",
+const submissionLabels: Readonly<Record<string, readonly [string, Tone]>> = {
+  claimed: ["Checking", "Caution"],
+  verified: ["Received", "Positive"],
+  "link-rejected": ["Unconfirmed", "Negative"],
 };
 
 const eventLabels: Readonly<Record<string, string>> = {
-  submit: "Reporter submitted privately; GitHub receipt verified",
-  "submit-direct": "Reporter linked their GitHub report; GitHub receipt verified",
-  claim: "Reporter linked the GitHub report",
-  record: "Maintainer recorded the GitHub report",
-  "verify-link": "Maintainer verified the GitHub report",
-  "reject-link": "Maintainer rejected the link",
-  receive: "GitHub receipt verified",
-  "receipt-mismatch": "GitHub did not confirm this link",
-  "assign-triager": "Triager assigned",
-  "revoke-triager": "Triager removed",
-  triage: "Triage state changed",
-  "next-action": "Next action set",
-  "request-information": "Owner asked for information",
-  "report-revised": "Reporter revised the report",
-  decide: "Finding decided",
+  submit: "Submitted",
+  "submit-direct": "Linked",
+  claim: "Linked",
+  record: "Recorded",
+  "verify-link": "Verified",
+  "reject-link": "Link rejected",
+  receive: "Receipt verified",
+  "receipt-mismatch": "Receipt mismatch",
+  "assign-triager": "Triager +",
+  "revoke-triager": "Triager −",
+  triage: "Triage",
+  "next-action": "Next action",
+  "request-information": "Info requested",
+  "report-revised": "Revised",
+  decide: "Decided",
   award: "Award decided",
-  remediation: "Remediation state changed",
-  disclosure: "Disclosure decision recorded",
-  recognition: "Recognition choice changed",
-  appeal: "Appeal sent",
+  remediation: "Remediation",
+  disclosure: "Disclosure",
+  recognition: "Recognition",
+  appeal: "Appealed",
   "decide-appeal": "Appeal decided",
   "approve-award": "Award approved",
-  "consent-payment": "Reporter accepted chain visibility",
-  "prepare-payment": "Unsigned payment prepared",
+  "consent-payment": "Visibility accepted",
+  "prepare-payment": "Payment prepared",
   "verify-payment": "Payment checked",
-  "recover-payment": "Payment wallet recovered",
-  "decide-related-party": "Related-party award reviewed",
-  "reserve-award": "Award reserved with raised capacity",
+  "recover-payment": "Wallet recovered",
+  "decide-related-party": "Related-party review",
+  "reserve-award": "Award reserved",
 };
+
+const reporterEvents = new Set(["submit", "submit-direct", "claim", "report-revised", "recognition", "appeal", "consent-payment"]);
+
+const githubEvents = new Set(["receive", "receipt-mismatch"]);
+
+export type Actor = "Reporter" | "GitHub" | "Program team";
 
 const responseKinds = new Set(["request-information", "decide", "award", "decide-appeal", "decide-related-party", "reject-link"]);
 
-export const relatedPartyLabels: Readonly<Record<string, string>> = {
-  "not-applicable": "No related-party review",
-  pending: "Waiting for an independent reviewer",
-  approved: "Approved by an independent reviewer",
-  refused: "Refused by an independent reviewer",
+const relatedPartyLabels: Readonly<Record<string, readonly [string, Tone]>> = {
+  "not-applicable": ["None", "Neutral"],
+  pending: ["Pending", "Caution"],
+  approved: ["Approved", "Positive"],
+  refused: ["Refused", "Negative"],
 };
 
-export const lossLabels: Readonly<Record<string, string>> = {
-  likely: "Likely path to loss of funds",
-  unlikely: "No path to loss of funds found",
-  unclear: "Loss of funds unclear",
+export const lossLabels: Readonly<Record<string, readonly [string, Tone]>> = {
+  likely: ["Likely", "Negative"],
+  unlikely: ["Unlikely", "Positive"],
+  unclear: ["Unclear", "Neutral"],
 };
 
 export const escalationLabels: Readonly<Record<string, string>> = {
@@ -102,11 +119,19 @@ export const escalationLabels: Readonly<Record<string, string>> = {
   "confidence-below-floor": "Slopbot's confidence is below 0.9",
 };
 
-export const receivedAtSourceLabels: Readonly<Record<string, string>> = {
-  "github-verified": " (verified from GitHub)",
-  "slop-received": " (received privately by Slop)",
-  "maintainer-attested": " (maintainer-attested)",
+const severityTones: Readonly<Record<string, Tone>> = {
+  critical: "Negative",
+  high: "Negative",
+  medium: "Caution",
+  low: "Notice",
 };
+
+export type RecoveryParty = "Reporter" | "Payer" | "Slop review";
+
+/** A short state in its tone, marked by a dot unless the state has an icon of its own. @throws {never} */
+export function badge(label: string, tone: Tone = "Neutral", icon: Presentation["icon"] = "Dot"): Presentation {
+  return { tone, icon, label };
+}
 
 /** An exact amount in the case's frozen asset. @throws {never} */
 export function money(minor: string, terms: Pick<CaseTerms, "currency" | "decimals" | "asset">): string {
@@ -119,29 +144,86 @@ export function caseTitle(record: Pick<SecurityCase, "id" | "advisory">): string
 }
 
 /** @throws {never} */
+export function receiptPresentation(state: string): Presentation {
+  return badge(receiptLabels[state] ?? state, receiptTones[state] ?? "Neutral");
+}
+
+/** How the case reached Slop: GitHub's receipt state, or Slop's own receipt. @throws {never} */
+export function submissionPresentation(record: Pick<SecurityCase, "submissionState" | "receivedAtSource">): Presentation {
+  if (record.receivedAtSource === "slop-received") return badge("Slop received", record.submissionState === "verified" ? "Positive" : "Caution", "Check");
+  const [label, tone] = submissionLabels[record.submissionState] ?? [record.submissionState, "Neutral"];
+  return badge(label, tone, tone === "Positive" ? "Check" : "Clock");
+}
+
+/** The case's first state in the list: the owner's answer once there is one, else the receipt. @throws {never} */
+export function listPresentation(record: SecurityCase): Presentation {
+  if (record.receiptState) return receiptPresentation(record.receiptState);
+  return badge(submissionLabels[record.submissionState]?.[0] ?? record.submissionState, "Neutral");
+}
+
+/** @throws {never} */
+export function relatedPartyPresentation(review: string): Presentation {
+  const [label, tone] = relatedPartyLabels[review] ?? [review, "Neutral"];
+  return badge(label, tone);
+}
+
+/** @throws {never} */
+export function severityPresentation(severity: string): Presentation {
+  return badge(severity, severityTones[severity] ?? "Neutral");
+}
+
+/** The gross award with its researcher and Slop parts, or null without one. @throws {never} */
+export function awardAmounts(record: SecurityCase): string | null {
+  if (record.award === null || record.terms === null) return null;
+  return `${money(record.award.grossMinor, record.terms)} (${money(record.award.researcherMinor, record.terms)} + ${money(record.award.slopMinor, record.terms)} Slop)`;
+}
+
+/** Why a selected award is not yet approved, or null once it is decided. @throws {never} */
+export function awardPending(record: SecurityCase): string | null {
+  if (record.award === null || record.awardState !== "pending") return null;
+  return record.relatedPartyReview === "pending" ? "In review" : record.paymentRail === "direct" ? "Awaiting approval" : "Unfunded";
+}
+
+/** @throws {never} */
 export function awardText(record: SecurityCase): string {
-  if (record.award === null || record.terms === null)
-    return record.paymentRail === "direct" && record.awardState === "approved" ? "Approved" : (awardLabels[record.awardState] ?? record.awardState);
-  const { terms, award } = record;
-  const amount = `${money(award.researcherMinor, terms)} to the researcher · ${money(award.slopMinor, terms)} to Slop · ${money(award.grossMinor, terms)} gross`;
-  if (record.awardState !== "pending") return amount;
-  const waiting =
-    record.relatedPartyReview === "pending" ? "Proposed; awaiting independent review" : record.paymentRail === "direct" ? "Selected; awaiting payment approval" : "Selected; awaiting verified funding";
-  return `${waiting} · ${amount}`;
+  const amount = awardAmounts(record);
+  if (amount === null) return record.paymentRail === "direct" && record.awardState === "approved" ? "Approved" : (awardLabels[record.awardState] ?? record.awardState);
+  const pending = awardPending(record);
+  return pending ? `${pending} · ${amount}` : amount;
+}
+
+/** The award as a list chip: its state, then the gross amount when one exists. @throws {never} */
+export function awardShort(record: SecurityCase): string {
+  if (record.award === null || record.terms === null) return awardText(record);
+  const gross = money(record.award.grossMinor, record.terms);
+  const pending = awardPending(record);
+  return pending ? `${pending} · ${gross}` : gross;
 }
 
 /** @throws {never} */
 export function paymentLabel(record: SecurityCase): string {
-  if (record.paymentRail === "direct" && record.settlement?.state === "awaiting-external-payment")
-    return (record.settlement.confirmedTransactionIds?.length ?? 0) > 0 ? "Partly paid" : "Ready for external payment";
-  if (record.paymentRail === "direct" && record.paymentState === "awaiting-owner-commitment") return "Waiting for the payer";
+  if (record.paymentRail === "direct" && record.settlement?.state === "awaiting-external-payment") {
+    const confirmed = record.settlement.confirmedTransactionIds?.length ?? 0;
+    return confirmed > 0 ? `${confirmed}/${confirmed + (record.settlement.remainingTransfers?.length ?? 0)} paid` : "Ready";
+  }
+  if (record.paymentRail === "direct" && record.paymentState === "awaiting-owner-commitment") return "Payer";
   return paymentLabels[record.paymentState] ?? record.paymentState;
 }
 
 /** @throws {never} */
-export function eventLabel(record: SecurityCase, kind: string): string {
-  if (kind === "submit" && record.receivedAtSource === "slop-received") return "Reporter submitted privately to Slop";
+export function payoutPresentation(record: SecurityCase): Presentation {
+  if (record.paymentState === "paid") return badge(paymentLabel(record), "Positive", "Check");
+  return badge(paymentLabel(record), record.paymentState === "held" ? "Caution" : "Neutral", record.paymentState === "held" ? "Pause" : "Dot");
+}
+
+/** @throws {never} */
+export function eventLabel(kind: string): string {
   return eventLabels[kind] ?? kind;
+}
+
+/** Who acted in a history event, read from its kind only. @throws {never} */
+export function eventActor(kind: string): Actor {
+  return reporterEvents.has(kind) ? "Reporter" : githubEvents.has(kind) ? "GitHub" : "Program team";
 }
 
 /** The owner's latest words to the reporter, from the case history. @throws {never} */
@@ -175,34 +257,37 @@ export function matchesReport(record: SecurityCase, filter: ReportFilter): boole
   }
 }
 
-/** @throws {never} */
-export function recoveryMessage(mode: string, payer: boolean, reporter: boolean): string {
+/** A filter option with the number of cases it shows; "All" carries none. @throws {never} */
+export function filterOption(filter: ReportFilter, label: string, cases: ReadonlyArray<SecurityCase>): string {
+  return filter === "all" ? label : `${label} ${cases.filter((record) => matchesReport(record, filter)).length}`;
+}
+
+/** The recovery step and who must take it. @throws {never} */
+export function recoveryStep(mode: string): readonly [RecoveryParty | null, string] {
   switch (mode) {
     case "wallet-required":
-      return reporter ? "Confirm your payout wallet in Settings." : "Waiting for the reporter's verified payout wallet.";
+      return ["Reporter", "Confirm wallet"];
     case "consent-required":
-      return reporter ? "Accept payment visibility for this payout wallet." : "Waiting for the reporter to accept payment visibility for this wallet.";
+      return ["Reporter", "Accept visibility"];
     case "fee-pending":
-      return payer ? "Pay and verify the unchanged fee first." : "Waiting for the payer to verify the unchanged fee.";
+      return ["Payer", "Verify fee"];
     case "retirement-required":
-      return payer ? "This wallet nonce was used. Verify its failed or cancelled transaction before preparing a replacement." : "Waiting for verification of the previous wallet transaction.";
+      return ["Payer", "Verify old transaction"];
     case "retirement-unproven":
-      return payer ? "Verify any payment already sent. This consumed wallet nonce needs manual review before a replacement." : "The previous wallet transaction needs review.";
     case "payer-review":
-      return "The payer wallet needs manual review before recovery. Existing payments can still be verified.";
     case "legacy-manual":
-      return "This older payment request requires manual review. Existing transfers can still be verified.";
+      return ["Slop review", "Manual review"];
     case "resume-original":
-      return payer ? "Resume the original verified payout wallet." : "Waiting for the payer to resume the original wallet.";
+      return ["Payer", "Resume wallet"];
     case "cancellation-required":
-      return payer ? "Cancel the old transfer before sending to this wallet." : "Waiting for the payer to cancel the old transfer.";
+      return ["Payer", "Cancel old transfer"];
     case "payment-found":
-      return payer ? "An existing payment was found. Verify it before continuing." : "Waiting for verification of an existing payment.";
+      return ["Payer", "Verify found payment"];
     case "signature-required":
     case "history-check":
-      return payer ? "Check the finalized history of the expired request." : "Waiting for the payer to check the expired request.";
+      return ["Payer", "Check expired request"];
     default:
-      return payer ? "Wait for the old transaction to expire, then check payment recovery." : "Waiting for the old transaction to expire.";
+      return [null, "Awaiting expiry"];
   }
 }
 

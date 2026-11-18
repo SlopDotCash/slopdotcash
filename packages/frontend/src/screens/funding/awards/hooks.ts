@@ -106,20 +106,18 @@ export function useFollowedMonth(runtime: AwardsRuntime, account: number, github
   return useSyncExternalStore(subscriberFor(runtime, entry, account, githubId), () => entry.shown, () => entry.shown);
 }
 
-/** One owner action at a time on the month: busy while it runs, then its error or notice. */
+/** One owner action at a time on the month: busy while it runs, then its error. */
 export function useAwardAction(runtime: AwardsRuntime) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const act = async <A, E>(work: Effect.Effect<A, E, AwardsServices>, then?: (value: A) => void): Promise<boolean> => {
     setBusy(true);
     setError("");
-    setNotice("");
     const done = await run(runtime, work);
     setBusy(false);
     if (done.ok) then?.(done.value);
     else setError(done.message);
     return done.ok;
   };
-  return { busy, error, notice, setNotice, act };
+  return { busy, error, act };
 }

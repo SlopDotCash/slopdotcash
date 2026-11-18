@@ -84,21 +84,18 @@ development's own model requires (`reviews > 0 implies admittedItem`). An
 item already admitted that month is always admitted again and starts
 normally, and a review admitted in this run is never refused in it. A new
 item that meets a full month finishes skipped with the
-reason `monthly-review-cap`, with no call. Development refuses a restarted
-review the same way, even one whose earlier attempt already made calls
-(`runReview` in `review.ts`, line 1440, admits before every run), when the restart lands
-in a new, full month. That review would be skipped with calls, which
-`alwaysSkippedNeverCalls` forbids, so the refusal here covers only a review
-with no calls, and a restarted review with calls in a full month stays
-queued. Whether such a review gets its own terminal status or
-`alwaysSkippedNeverCalls` is relaxed is the owner's pending decision.
+reason `monthly-review-cap`, with no call in this run. Development refuses a
+restarted review the same way, even one whose earlier attempt already made
+calls (`runReview` in `review.ts`, lines 1434-1446, admits before every run),
+when the restart lands in a new, full month: that review finishes skipped and
+keeps the calls of its earlier, admitted attempts.
 
 ```quint
 pure def canAdmitMonthly(r: Review, alreadyAdmitted: bool, usedThisMonth: int): bool =
   r.status == Queued and r.bound and usedThisMonth >= 0 and C::admitsReview(alreadyAdmitted, usedThisMonth)
 pure def admitMonthly(r: Review, alreadyAdmitted: bool, usedThisMonth: int): Review = { ...r, capAdmitted: true }
 pure def canRefuseMonthlyCap(r: Review, alreadyAdmitted: bool, usedThisMonth: int): bool =
-  r.status == Queued and r.bound and not(r.capAdmitted) and r.calls.length() == 0 and usedThisMonth >= 0
+  r.status == Queued and r.bound and not(r.capAdmitted) and usedThisMonth >= 0
     and not(C::admitsReview(alreadyAdmitted, usedThisMonth))
 pure def refuseMonthlyCap(r: Review, alreadyAdmitted: bool, usedThisMonth: int): Review =
   { ...r, status: Skipped, bound: false, capAdmitted: false }
@@ -110,13 +107,16 @@ pure def alwaysCallsNeedAdmission(r: Review): bool =
   (r.status == InFlight or r.status == Answered or r.status == Limited or r.status == Complete
     or r.status == BudgetBlocked or r.status == RetryableFailure) implies r.capAdmitted
 pure def sometimesMonthlyCapSkipped(r: Review): bool = r.status == Skipped and r.scope != RS::Unregistered
+pure def sometimesRestartSkippedByMonthlyCap(r: Review): bool = r.status == Skipped and r.calls.length() > 0
 pure val usedThisMonthValues = Set(0, 1999, 2000)
 ```
 
 ### Each provider step first rechecks the live registry
 
 Before each step of a route, including the first, the worker reads the live
-project registry. A step runs only while the derived scope is still the one
+project registry. A step whose provider has no key is skipped before that
+read (`runStructuredRoute` in `models.ts`, lines 143-147), so it never
+reaches the registry or a call. A step runs only while the derived scope is still the one
 the review was bound under. Otherwise no call is made, the calls already
 made are recorded, and the job fails so that the queue retries it. A
 registry read that fails behaves the same way.
@@ -138,12 +138,15 @@ cost and a zero customer charge. A provider-reported amount is known. A
 missing or fractional receipt keeps the cost unknown, and an unknown cost
 never becomes zero. The route is Surplus Sonnet, Surplus Terra, then
 Orbio Sonnet. A missing Surplus key skips both Surplus steps, and a
-missing Orbio key skips Orbio, without a call row. A failed call goes to
+missing Orbio key skips Orbio, without a call row and before the step's
+registry recheck. A failed call goes to
 the next step. A structured Surplus spending denial is recorded as a call
 that served nothing; it skips the remaining Surplus step, which shares the
 denied budget, and asks Orbio in the same attempt, and the review
-remembers its reset (`retryAt`) while it waits for Orbio; a reset not
-later than now is not remembered. A valid Orbio
+remembers its reset (`retryAt`) while it waits for Orbio. A Surplus answer
+is a spending denial only with a valid reset time; any valid reset is
+remembered, one already past included, and a later denial's reset replaces
+an earlier one. A valid Orbio
 answer is used normally and leaves no block. When Orbio fails or has no
 key, a remembered reset blocks the review until that reset, and without
 one the exhausted route is a retryable failure that the queue redelivers.
@@ -162,7 +165,7 @@ pure def nextProvider(p: Provider): Provider = if (p == SurplusSonnet) SurplusTe
 pure def routeEnd(retryAt: int): ReviewStatus = if (retryAt > 0) BudgetBlocked else RetryableFailure
 pure def blocksAfter(r: Review): int = r.blocks + (if (routeEnd(r.retryAt) == BudgetBlocked) 1 else 0)
 pure def validVerdict(v: Verdict): bool = v.confidence >= 0 and v.confidence <= 100 and v.limitations >= 0
-pure def canSkipMissingCredential(r: Review): bool = r.status == InFlight and r.rechecked
+pure def canSkipMissingCredential(r: Review): bool = r.status == InFlight and not(r.rechecked)
 pure def skipMissingCredential(r: Review): Review =
   if (r.provider == OrbioSonnet) { ...r, status: routeEnd(r.retryAt), blocks: blocksAfter(r), rechecked: false }
   else { ...r, provider: OrbioSonnet, rechecked: false }
@@ -171,6 +174,7 @@ pure def canRecordCall(r: Review, call: CallRecord, resetAt: int): bool =
     and call.customerCharge == 0 and call.amount >= 0 and validVerdict(call.verdict)
     and (call.outcome != CallOk or call.servedModel == expectedModel(call.provider))
     and (call.outcome == CallOk or call.verdict == noVerdict)
+    and ((call.outcome == CallBudgetDenied and call.provider != OrbioSonnet) implies resetAt > 0)
 pure def recordCall(r: Review, call: CallRecord, resetAt: int): Review =
   val calls = r.calls.append(call)
   val denied = call.outcome == CallBudgetDenied and call.provider != OrbioSonnet
@@ -178,7 +182,7 @@ pure def recordCall(r: Review, call: CallRecord, resetAt: int): Review =
   if (call.outcome == CallOk)
     (if (call.kind == Triage) { ...after, status: Answered, triage: call.verdict, retryAt: 0 }
      else { ...after, status: Answered, second: call.verdict, retryAt: 0 })
-  else if (denied) { ...after, provider: OrbioSonnet, retryAt: if (resetAt > r.now) resetAt else r.retryAt }
+  else if (denied) { ...after, provider: OrbioSonnet, retryAt: if (resetAt > 0) resetAt else r.retryAt }
   else if (r.provider == OrbioSonnet) { ...after, status: routeEnd(r.retryAt), blocks: blocksAfter(r) }
   else { ...after, provider: nextProvider(r.provider) }
 pure def stepEveryCallFollowsARecheck(before: Review, after: Review): bool =
@@ -250,7 +254,8 @@ pure def alwaysAdmittedReview(r: Review): bool =
   (r.status == InFlight or r.status == Answered or r.status == Limited or r.status == Complete
     or r.status == BudgetBlocked or r.status == RetryableFailure) implies (r.bound and r.attempts > 0
       and r.scope != RS::Unregistered)
-pure def alwaysSkippedNeverCalls(r: Review): bool = r.status == Skipped implies (not(r.bound) and r.calls.length() == 0)
+pure def alwaysSkippedNeverCalls(r: Review): bool =
+  r.status == Skipped implies (not(r.bound) and (r.calls.length() == 0 or r.attempts > 0))
 pure def stepCallsAreAppendOnly(before: Review, after: Review): bool =
   before.calls.every(c => after.calls.includes(c)) and after.calls.length() >= before.calls.length()
     and after.attempts >= before.attempts

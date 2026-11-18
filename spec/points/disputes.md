@@ -93,7 +93,8 @@ the worker's own token and is admitted only while that token is the current
 claim and its lease has not expired, so a worker whose lease was taken over
 writes nothing. An unregistered or restricted project or an unavailable
 installation escalates without a model call. Provider calls are journaled
-before the draft; a failed, blocked or budget-deferred triage escalates as
+before the draft; any failure before a call starts, and a failed, blocked or
+budget-deferred triage once its calls' costs are recorded, escalates as
 unavailable. A worker that loses its calls' cost record before recording them
 releases its lease without escalating, and the call is retained as an unknown
 cost, so a later lease retries. A draft is immutable: a later lease that finds
@@ -136,7 +137,7 @@ pure def draft(d: Dispute, by: int, token: int, uphold: bool, confidenceHundredt
   { ...d, callsInFlight: false, draft: if (uphold) A::DraftUphold else A::DraftDeny,
     draftConfidence: if (confidenceHundredths > cappedConfidence) cappedConfidence else confidenceHundredths }
 pure def canFailTriage(d: Dispute, by: int, token: int): bool =
-  by == slopbotWorker and holds(d, token) and d.callsInFlight and d.draft == A::NoDraft
+  by == slopbotWorker and holds(d, token) and d.draft == A::NoDraft
 pure def failTriage(d: Dispute, by: int, token: int): Dispute = escalatedWith(TriageUnavailable, { ...d, callsInFlight: false })
 pure def canEscalateDrafted(d: Dispute, by: int, token: int): bool =
   by == slopbotWorker and holds(d, token) and d.draft != A::NoDraft and d.escalation == NotEscalated
@@ -172,6 +173,7 @@ pure def stepDraftAndEscalationOnce(before: Dispute, after: Dispute): bool =
   (before.draft != A::NoDraft implies after.draft == before.draft and after.draftConfidence == before.draftConfidence) and
   (before.escalation != NotEscalated implies after.escalation == before.escalation)
 pure def stepUnknownCostsRetained(before: Dispute, after: Dispute): bool = after.unknownCostCalls >= before.unknownCostCalls
+pure def sometimesFailedBeforeAnyCall(d: Dispute): bool = d.escalation == TriageUnavailable and d.modelCalls == 0
 pure def stepTokensIncrease(before: Dispute, after: Dispute): bool = after.lastToken >= before.lastToken and after.now >= before.now
 pure def sometimesDraftedAndEscalated(d: Dispute): bool = d.draft != A::NoDraft and d.escalation == ModeratorReviewRequired
 pure def sometimesUnavailableEscalated(d: Dispute): bool = d.escalation == ProjectRestricted

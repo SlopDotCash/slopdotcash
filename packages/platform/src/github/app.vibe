@@ -1,4 +1,4 @@
-// spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"
+// spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"; spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"
 import { base64url, rs256Sign, utf8 } from "../crypto.vibe"
 import { type Exchange, GitHub, decoded, defaultTimeoutMs, exchanged, githubApi, githubJson, githubWith, manualRedirects, parsed } from "./client.vibe"
 import { type GitHubFailure, GitHubMalformed } from "./errors.vibe"
@@ -16,6 +16,10 @@ export interface Scope {
   readonly permissions?: Readonly<Record<string, "read" | "write">>
 }
 
+export interface InstallationLookup {
+  readonly followRenamed?: false
+}
+
 export interface AppOptions {
   readonly appId: string
   readonly privateKey: Redacted.Redacted<string>
@@ -27,7 +31,7 @@ export interface AppOptions {
 export service GitHubApp {
   appJwt(): string!!
   installationToken(installationId: string, scope?: Scope): Redacted.Redacted<string>!GitHubFailure
-  installationFor(owner: string, repository: string): string!GitHubFailure
+  installationFor(owner: string, repository: string, options?: InstallationLookup): string!GitHubFailure
   asInstallation(installationId: string, scope?: Scope): Layer.Layer<GitHub, never, HttpClient.HttpClient>
 }
 
@@ -86,10 +90,10 @@ export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, Ht
       return token
     }
 
-    effect function installationFor(owner: string, repository: string) {
+    effect function installationFor(owner: string, repository: string, options?: InstallationLookup) {
       const path = `/repos/${owner}/${repository}/installation`
       if (!repositoryPart.test(owner) || !repositoryPart.test(repository)) throw new GitHubMalformed({ path, issue: "an owner and repository name are one path segment each" })
-      const answer = try exchanged(exchange, { method: "GET", url: `${authority}${path}`, accept: githubJson, bearer: Redacted.make(try appJwt()) }, answerLimitBytes)
+      const answer = try exchanged(exchange, { method: "GET", url: `${authority}${path}`, accept: githubJson, bearer: Redacted.make(try appJwt()), followRenamed: options?.followRenamed }, answerLimitBytes)
       const installation = try decoded(Installation, try parsed(answer.bytes, path), path)
       if (!Number.isSafeInteger(installation.id) || installation.id <= 0) throw new GitHubMalformed({ path, issue: "GitHub answered an invalid installation id" })
       return String(installation.id)

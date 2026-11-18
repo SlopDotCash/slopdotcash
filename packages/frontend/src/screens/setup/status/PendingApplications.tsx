@@ -70,7 +70,7 @@ export function PendingApplication({ runtime, application, actorId, onAccountLos
           <>
             {application.publishable === false ? null : (
               <Button variant="secondary" size="sm" loading={publication.status === "submitting"} disabled={submitting} onClick={() => void act("publish")}>
-                {publication.status === "submitting" ? (isRevision ? "Publishing…" : "Creating…") : failedAt === "publish" ? "Retry" : isRevision ? "Publish this change" : "Create this project"}
+                {publication.status === "submitting" ? (isRevision ? "Publishing…" : "Creating…") : failedAt === "publish" ? "Retry" : isRevision ? "Publish" : "Create"}
               </Button>
             )}
             <ConfirmDialog

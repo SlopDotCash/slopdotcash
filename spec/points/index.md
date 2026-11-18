@@ -18,6 +18,7 @@ trace evidence remain separate and never change a payment share.
 - [Scoring policy versions](./scoringPolicy.md)
 - [Historical import and publication hold](./historicalImport.md)
 - [Historical correction import](./corrections.md)
+- [Reviewed historical Points packets](./reviewedHistory.md)
 - [Historical collector quota recovery](./quotaRecovery.md)
 - [Evaluation manifests](./evaluations.md)
 - [Points disputes](./disputes.md)

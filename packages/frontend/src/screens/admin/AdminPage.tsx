@@ -1,6 +1,6 @@
 // spec/frontend/navigation.md, "Administration sections and project selection are parameters of the one Administration page"; spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"
-import { Alert, NavTab, NavTabs, PageHeader } from "@repo/ui";
-import { Coins, FolderGit2, ShieldCheck } from "lucide-react";
+import { NavTab, NavTabs, PageHeader } from "@repo/ui";
+import { Coins, FolderGit2, Lock, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
 import { SignInPanel } from "../../app/SignInPanel.tsx";
@@ -42,7 +42,9 @@ export function AdminPage({ runtime }: PageProps) {
   if (!session.admin)
     return (
       <Frame>
-        <Alert variant="destructive">@{session.githubLogin} is not a Slop admin.</Alert>
+        <p role="alert" className="flex items-center gap-2 text-sm text-destructive">
+          <Lock aria-hidden className="size-4" /> Admins only
+        </p>
       </Frame>
     );
   const fees = view === "AdminFees";

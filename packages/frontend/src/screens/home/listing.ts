@@ -1,9 +1,12 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "Home shows one grid of the open Featured and Community projects that are listed this month, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "The home grid orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
+import { toAmount } from "@repo/settlement/kernels/amounts";
+import { type HomeCard, homeBefore, homeGroup } from "../../../gen/frontend__poolListing.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { projectImage } from "../../../gen/frontend__presentation.ts";
 import type { PoolDisplay } from "../../../gen/frontend__projections.ts";
+import { listedForDiscovery } from "../../../gen/frontend__views.ts";
 import { formatRewardMinor, type PoolCommitment } from "../../kernels/assetText.ts";
-import { type CardProject, hasBountyOverview, hasProjectCardBounty, projectRewardSummaries, type RewardSummary, type SecurityBounty } from "../../kernels/rewardSummary.ts";
+import { type CardProject, cardPolicy, hasBountyOverview, hasProjectCardBounty, projectRewardSummaries, type RewardSummary, type SecurityBounty } from "../../kernels/rewardSummary.ts";
 
 export interface Shown<T> {
   readonly status: ReadStatus;
@@ -112,4 +115,24 @@ export function cardNotes(project: ListedProject, merge: string | null): string[
 /** @throws {never} */
 export function openOffers(projects: ReadonlyArray<ListedProject>): ListedProject[] {
   return projects.filter((project) => project.status === "active" && project.securityBounty?.status === "open");
+}
+
+/** Every open Featured or Community project whose card does not advertise a security bounty, in registry order. @throws {never} */
+export function homeProjects<P extends ListedProject>(projects: ReadonlyArray<P>): P[] {
+  return projects.filter((project) => project.listingTier !== "retired" && listedForDiscovery(cardPolicy(project)) && !hasProjectCardBounty(project));
+}
+
+/** @throws {RangeError} */
+function homeCard(project: ListedProject, index: number): HomeCard {
+  const amount = toAmount(project.reward.kind === "monthly-pool" && project.pool === "PoolFunded" ? project.reward.monthlyCapMinor : 0n);
+  const stablecoin = project.rewardAsset === undefined || project.rewardAsset.kind === "stablecoin";
+  return { group: homeGroup(cardPolicy(project).reward, amount, stablecoin), amount, featured: project.listingTier === "featured", index };
+}
+
+/** The home grid's order over the projects as shown this month. @throws {RangeError} */
+export function homeProjectOrder<P extends ListedProject>(projects: ReadonlyArray<P>): P[] {
+  return projects
+    .map((project, index) => ({ project, card: homeCard(project, index) }))
+    .sort((left, right) => (homeBefore(left.card, right.card) ? -1 : homeBefore(right.card, left.card) ? 1 : 0))
+    .map(({ project }) => project);
 }

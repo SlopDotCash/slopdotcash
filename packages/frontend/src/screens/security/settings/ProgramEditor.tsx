@@ -1,4 +1,4 @@
-// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { isFullAwardSplit } from "@repo/security/client";
 import { Alert, Button, Disclosure, Field, Input, Select, Textarea } from "@repo/ui";
 import { Result, Schema } from "effect";
@@ -55,10 +55,10 @@ function TextGroup({ title, keys, form, busy, set, opened }: { title: string; ke
         <legend className="sr-only">{title}</legend>
         {textFields
           .filter(([key]) => keys.includes(key))
-          .map(([key, label, help]) => {
+          .map(([key, label]) => {
             const limits = textLimits(key);
             return (
-              <Field key={key} label={label} hint={help || undefined}>
+              <Field key={key} label={label}>
                 <Textarea rows={3} required={limits.required} minLength={limits.minLength} maxLength={limits.maxLength} value={form.text[key]} onChange={(event) => set(key, event.target.value)} />
               </Field>
             );

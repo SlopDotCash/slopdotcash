@@ -350,7 +350,7 @@ effect function tailRemoved(accountId: string, token: Redacted.Redacted<string>,
 }
 
 function tailEnded(error: Cause.TimeoutError | Socket.SocketError) {
-  return error._tag === "TimeoutError" || (error.reason._tag === "SocketCloseError" && error.reason.code === 1000)
+  return error._tag === "TimeoutError" || error.reason._tag === "SocketCloseError"
 }
 
 effect function tailObservations(url: string, worker: string) {

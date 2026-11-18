@@ -25,6 +25,11 @@ export const meta: ComponentMeta<InboxItemProps> = {
       await expect(onMark).toHaveBeenCalledWith([notices.caseNotice.eventKey]);
     },
     // spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
+    Read: async () => {
+      await expect(screen.queryByRole("img", { name: "Unread" })).toBeNull();
+      await expect(screen.queryByRole("button", { name: /^Mark as read:/u })).toBeNull();
+    },
+    // spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
     Appeal: async () => {
       await expect(screen.queryByRole("button", { name: /^Acknowledge:/u })).toBeNull();
       await expect(screen.getByRole("link", { name: /Open appeal on GitHub$/u })).toBeTruthy();

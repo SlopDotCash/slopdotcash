@@ -3,6 +3,7 @@ import { Button, WalletChooser, type WalletOption } from "@repo/ui";
 import { useState } from "react";
 import { useView } from "../../account/useView.ts";
 import type { SecurityCase } from "../cases/case.schema.ts";
+import type { PaymentHold } from "../cases/CaseDetail.tsx";
 import { act, useAction } from "./hooks.ts";
 import { ActionOutcome, type Outcome } from "./parts.tsx";
 import { type PaymentsRuntime, type RecoveryConnection, type SolanaPaymentForm, checkHistory, connectRecovery, watchOffers } from "./payments.vibe";
@@ -18,15 +19,15 @@ export type SolanaBountyRecoveryProps = Outcome & {
 };
 
 /** Signs only the expired request messages the case names, so the server can read the chain's history; it never sends a transaction. */
-export function SolanaBountyRecovery({ wallets, address, busy, error, stale, notice, onConnect, onCheck, onRefresh }: SolanaBountyRecoveryProps) {
+export function SolanaBountyRecovery({ wallets, address, busy, error, stale, onConnect, onCheck, onRefresh }: SolanaBountyRecoveryProps) {
   return (
     <section aria-label="Check expired payment" className="flex flex-col gap-4">
-      <p>Sign expired request messages to check chain history. This does not send a transaction.</p>
+      <p>Message signature only. Nothing is sent.</p>
       <WalletChooser legend="Original payer wallet" family="solana" wallets={wallets} address={address} addressLabel="Original payer wallet" disabled={busy} onConnect={onConnect} />
       <Button variant="secondary" className="self-start" disabled={busy || address === undefined} onClick={onCheck}>
         {busy ? "Checking…" : "Check expired payment"}
       </Button>
-      <ActionOutcome error={error} stale={stale} notice={notice} onRefresh={onRefresh} />
+      <ActionOutcome error={error} stale={stale} onRefresh={onRefresh} />
     </section>
   );
 }
@@ -36,13 +37,13 @@ export type SolanaBountyRecoverySectionProps = {
   record: SecurityCase;
   /** The case's Solana payment form, when one holds the expired attempt. */
   form?: SolanaPaymentForm;
-  onChanged: () => void;
+  hold: PaymentHold;
 };
 
-export function SolanaBountyRecoverySection({ runtime, record, form, onChanged }: SolanaBountyRecoverySectionProps) {
+export function SolanaBountyRecoverySection({ runtime, record, form, hold }: SolanaBountyRecoverySectionProps) {
   const offers = useView(runtime, watchOffers) ?? [];
   const [connected, setConnected] = useState<RecoveryConnection | null>(null);
-  const action = useAction();
+  const action = useAction(() => hold.hold(null));
   return (
     <SolanaBountyRecovery
       wallets={offers.filter((offer) => offer.family === "solana").map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
@@ -50,19 +51,11 @@ export function SolanaBountyRecoverySection({ runtime, record, form, onChanged }
       busy={action.busy}
       error={action.error}
       stale={action.stale}
-      notice={action.notice}
-      onConnect={(option) => action.run(() => act(runtime, connectRecovery(record, Number(option.id))), (connection) => {
-        setConnected(connection);
-        return null;
-      })}
+      onConnect={(option) => action.run(() => act(runtime, connectRecovery(record, Number(option.id))), setConnected)}
       onCheck={() => {
-        if (connected !== null)
-          action.run(() => act(runtime, checkHistory(record, connected, form)), () => {
-            onChanged();
-            return null;
-          });
+        if (connected !== null) action.run(() => act(runtime, checkHistory(record, connected, form)), hold.changed);
       }}
-      onRefresh={onChanged}
+      onRefresh={hold.changed}
     />
   );
 }

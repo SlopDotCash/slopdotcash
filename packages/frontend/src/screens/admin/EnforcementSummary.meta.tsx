@@ -9,14 +9,14 @@ export const meta: ComponentMeta<EnforcementSummaryProps> = {
   play: {
     // spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
     Default: async () => {
-      await expect(screen.getByText(/Confirmed malicious result\./)).toBeTruthy();
-      await expect(screen.getByText("Restriction active; revision 3 is still active and community. Delist to pause and retire it.")).toBeTruthy();
-      await expect(screen.getByText(/by the signed security vetting service/)).toBeTruthy();
+      await expect(screen.getByText("Confirmed malicious")).toBeTruthy();
+      await expect(screen.getByTitle("Revision 3 is still active, community. Delist to retire it.")).toBeTruthy();
+      await expect(screen.getByText("Scanner")).toBeTruthy();
     },
     // spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
     Clear: async () => {
-      await expect(screen.queryByText(/Enforcement history/)).toBeNull();
-      await expect(screen.queryByText(/Confirmed malicious result/)).toBeNull();
+      await expect(screen.queryByText("History")).toBeNull();
+      await expect(screen.queryByText("Confirmed malicious")).toBeNull();
     },
   },
 };

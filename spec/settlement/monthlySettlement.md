@@ -80,23 +80,28 @@ The observation is this vault's own free balance as of the finalized head
 the chain adapter last reported, stamped with that head's time, so a
 projection whose head is more than 30 minutes behind the coordinator's clock
 is stale and refused. Earlier periods' unreserved obligations of the same
-vault are a typed input from the coordinator. This composition's escrow
-models no month pledge, so it holds no other month's pledge back.
+vault are a typed input from the coordinator. Every other month's open
+pledge in the same vault is held back from the free balance, because the
+contract never lets one month take another month's pledge: the coordinator
+computes it from the stored pledges with [month pledges](./monthPledges.md)
+`otherOpenPledges` (zero for a vault without pledge support) and passes it
+as a typed input, to the obligations and to the underfunded notice alike
+(development `backend/payments/monthly.ts`, `heldBack`).
 
 ```quint
 pure def canObserveHead(s: MonthlySettlement, time: int): bool = time > s.headTime and time >= s.escrow.clock
 pure def observeHead(s: MonthlySettlement, time: int): MonthlySettlement = { ...s, headTime: time }
-pure def observation(s: MonthlySettlement, earlierUnreserved: M::Amount): MO::VaultObservation =
-  { observedAt: s.headTime, free: s.escrow.free, earlierUnreserved: earlierUnreserved, otherOpenPledges: M::zero }
-pure def canCreateObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): bool =
+pure def observation(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount): MO::VaultObservation =
+  { observedAt: s.headTime, free: s.escrow.free, earlierUnreserved: earlierUnreserved, otherOpenPledges: otherOpenPledges }
+pure def canCreateObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): bool =
   s.escrow.deployed and s.escrow.purpose == E::OrdinaryPurpose
-    and MO::canCreateObligations(s.month, observation(s, earlierUnreserved), bans)
-pure def createObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
-  { ...s, month: MO::createObligations(s.month, observation(s, earlierUnreserved), bans) }
-pure def canNoteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): bool =
-  s.escrow.deployed and MO::canNoteUnderfunded(s.month, observation(s, earlierUnreserved), bans)
-pure def noteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
-  { ...s, month: MO::noteUnderfunded(s.month, observation(s, earlierUnreserved), bans) }
+    and MO::canCreateObligations(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans)
+pure def createObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
+  { ...s, month: MO::createObligations(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans) }
+pure def canNoteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): bool =
+  s.escrow.deployed and MO::canNoteUnderfunded(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans)
+pure def noteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
+  { ...s, month: MO::noteUnderfunded(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans) }
 ```
 
 ### The owner may prepare one funded obligation by hand, and only while no pool gross is pending
@@ -309,6 +314,7 @@ pure val factValues = Set({ actor: 9, role: MO::ProjectOwner, banned: false, rev
 pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
 pure val earlierUnreservedValues = Set(List(0))
+pure val otherOpenPledgesValues = Set(List(0), List(3))
 pure val depositValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
   { vault: "vault", network: E::Base, token: "usdc", amount: List(8) })
 pure val evValues = Set(

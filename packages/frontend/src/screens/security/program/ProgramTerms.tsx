@@ -1,8 +1,11 @@
-// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/program.md, "Receipt terms come only from the open published revision"
-import { Disclosure, ExternalLink } from "@repo/ui";
+// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/program.md, "Receipt terms come only from the open published revision"
+import { CopyButton, cn, ExternalLink, focusRing, Status, target } from "@repo/ui";
 import { isFullAwardSplit } from "@repo/security/client";
-import type { ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
+import { type ReactNode, useState } from "react";
+import { NetworkName } from "../../funding/vault/index.ts";
 import { programShares } from "./amounts.ts";
+import { ProgramExclusions } from "./ProgramExclusions.tsx";
 import { SecurityOffer } from "./SecurityOffer.tsx";
 import { utc } from "./summary.ts";
 import type { ProgramTerms } from "./terms.schema.ts";
@@ -26,15 +29,28 @@ function critical(terms: ProgramTerms): boolean {
   return terms.eligibility === "critical-loss-of-funds";
 }
 
-/** The published award: the offer, its split and the facts it is paid under. */
+/** A closed section a person opens by click, keyboard or a link to its summary's fragment. */
+function TermsDetails({ id, summary, children }: { id: string; summary: string; children: ReactNode }) {
+  const [open, setOpen] = useState(() => location.hash === `#${id}`);
+  return (
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group flex flex-col gap-2">
+      <summary id={id} className={cn(focusRing, target, "inline-flex cursor-pointer list-none items-center gap-1 self-start rounded-sm text-lg font-semibold text-foreground hover:text-primary [&::-webkit-details-marker]:hidden")}>
+        <ChevronDown aria-hidden className="size-4 -rotate-90 group-open:rotate-0 motion-safe:transition-transform motion-safe:duration-fast" />
+        {summary}
+      </summary>
+      <section aria-labelledby={id} className={cn(sectionClass, "mt-2")}>
+        {children}
+      </section>
+    </details>
+  );
+}
+
+/** `#security-terms`: the published award, its split and the facts it is paid under. */
 export function AwardTerms({ terms }: { terms: ProgramTerms }) {
   const shares = programShares(terms);
   const full = isFullAwardSplit(terms.split);
   return (
-    <section id="security-terms" aria-labelledby="security-terms-heading" className={sectionClass}>
-      <h2 id="security-terms-heading" className="text-xl font-semibold">
-        Award terms
-      </h2>
+    <TermsDetails id="security-terms" summary="Terms">
       <SecurityOffer terms={terms} />
       {shares ? (
         <dl aria-label="Award split" className="grid grid-cols-2 gap-4">
@@ -53,28 +69,33 @@ export function AwardTerms({ terms }: { terms: ProgramTerms }) {
           {terms.amount.currency}
           {terms.amount.network ? ` on ${terms.amount.network}` : ""}
         </Fact>
-        <Fact term="Funding">{terms.funding.state === "pledged" ? "Pledged. Awards require owner approval." : `Verified available on ${utc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}</Fact>
-        <Fact term="Capacity">
-          {terms.capacity.awards === null
-            ? "No fixed award count; each first qualifying finding is reviewed separately"
-            : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
-          {terms.capacity.closesAt ? `; closes ${utc(terms.capacity.closesAt)}` : ""}. {terms.capacity.exhaustionRule}
+        <Fact term="Funding">
+          {terms.funding.state === "pledged" ? (
+            <Status presentation={{ tone: "Caution", icon: "Clock", label: "Pledged" }} />
+          ) : (
+            <>
+              <Status presentation={{ tone: "Positive", icon: "Check", label: `Verified ${utc(terms.funding.verifiedAt)}` }} /> {terms.funding.evidence}
+            </>
+          )}
         </Fact>
-        <Fact term="Other work">
-          {terms.rewardMode === "bounty-only" ? "Bounty only. Other work, including fixes, earns no monthly pool cash." : "Contribution rewards are separate; one outcome is never paid twice."}
+        <Fact term="Awards">
+          {terms.capacity.awards === null ? "No fixed count · owner decides" : terms.capacity.awards}
+          {terms.capacity.closesAt ? ` · closes ${utc(terms.capacity.closesAt)}` : ""}
         </Fact>
+        <Fact term="When funds run out">{terms.capacity.exhaustionRule}</Fact>
+        {terms.rewardMode === "bounty-only" ? (
+          <Fact term="Other work">
+            <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Bounty only" }} />
+          </Fact>
+        ) : null}
       </dl>
-      <p className="text-sm">
-        Awards are discretionary. The owner decides whether to award; fixed after-approval awards use the amount published at receipt.{" "}
-        {critical(terms) ? "Critical bugs and potential loss of funds are priorities, not an automatic payout." : "Findings must meet the published scope and acceptance criteria."} No other payout fee applies. The terms
-        in force when Slop receives your report apply to your case.
-      </p>
-    </section>
+      <p className="text-sm">Owner decides awards. Terms at receipt apply. No other payout fee.</p>
+    </TermsDetails>
   );
 }
 
-/** What a report may cover and how it may be shown safely. */
-export function ScopeTerms({ terms }: { terms: ProgramTerms }) {
+/** What a report may cover, what never qualifies, and how it may be shown safely. */
+export function ScopeTerms({ terms, onCopy }: { terms: ProgramTerms; onCopy?: (text: string) => Promise<void> }) {
   const { scope } = terms;
   return (
     <section id="security-scope" aria-labelledby="security-scope-heading" className={sectionClass}>
@@ -93,59 +114,58 @@ export function ScopeTerms({ terms }: { terms: ProgramTerms }) {
             ))}
           </ul>
         </Fact>
-        <Fact term="Deployments">
-          {scope.deployments.length === 0 ? (
-            "None listed"
-          ) : (
+        {scope.deployments.length === 0 ? null : (
+          <Fact term="Deployments">
             <ul className="flex flex-col gap-1">
               {scope.deployments.map((deployment) => (
-                <li key={`${deployment.network}:${deployment.address}`}>
-                  {deployment.network}: <code className="font-mono break-all">{deployment.address}</code>
+                <li key={`${deployment.network}:${deployment.address}`} className="flex flex-wrap items-center gap-2">
+                  <NetworkName network={deployment.network} />
+                  <code className="font-mono break-all">{deployment.address}</code>
+                  <CopyButton label={`${deployment.network} deployment address`} text={deployment.address} onCopy={onCopy} />
                   {deployment.codeIdentity ? ` (${deployment.codeIdentity})` : ""}
                 </li>
               ))}
             </ul>
-          )}
-        </Fact>
+          </Fact>
+        )}
         <Fact term="Included assets">{scope.includedAssets.join("; ")}</Fact>
-        <Fact term="Excluded dependencies">{scope.excludedDependencies.length === 0 ? "None listed" : scope.excludedDependencies.join("; ")}</Fact>
-        <Fact term="Testing permission">{scope.testingPermission}</Fact>
-        <Fact term="Severity rubric">{scope.severityRubric}</Fact>
-        <Fact term={critical(terms) ? "Loss of funds" : "Impact"}>{scope.lossDefinition}</Fact>
+        {scope.excludedDependencies.length === 0 ? null : <Fact term="Excluded dependencies">{scope.excludedDependencies.join("; ")}</Fact>}
       </dl>
-      <p className="text-sm">
-        Do not exploit a production system, move another person's funds, reveal keys or cause damage. A local fork or isolated test can show potential {critical(terms) ? "loss" : "impact"}.
-      </p>
+      <ProgramExclusions scope={scope} />
+      <dl className="flex flex-col gap-3 text-sm">
+        <Fact term="Testing">{scope.testingPermission}</Fact>
+        <Fact term="Severity">{scope.severityRubric}</Fact>
+        <Fact term={critical(terms) ? "Loss" : "Impact"}>{scope.lossDefinition}</Fact>
+      </dl>
+      <p className="text-sm">No live exploitation, third-party funds or secrets.</p>
     </section>
   );
 }
 
-/** Who decides findings, payments and disputes, and how disclosure works. */
+/** `#security-trust`: who decides findings, payments and disputes, the response targets and how disclosure works. */
 export function TrustTerms({ terms }: { terms: ProgramTerms }) {
+  const targets = terms.responseTargets;
   return (
-    <Disclosure summary="Response, disclosure and researcher terms">
-      <section aria-labelledby="security-trust" className={sectionClass}>
-        <h2 id="security-trust" className="text-xl font-semibold">
-          Decisions, disputes and disclosure
-        </h2>
-        <dl className="flex flex-col gap-3 text-sm text-foreground">
-          <Fact term="Findings and awards">{people(terms.approvers.technical)}</Fact>
-          <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
-          <Fact term="Disputes">
-            Contact {people(terms.approvers.dispute)}. {terms.dispute.process} A Slop moderator decides escalated appeals.
-          </Fact>
-          <Fact term="Response targets">
-            Acknowledge within {terms.responseTargets.acknowledgeHours} hours; first triage within {terms.responseTargets.triageBusinessDays} business days; updates every {terms.responseTargets.updateIntervalDays}{" "}
-            days. A missed target never publishes a report or approves an award.
-          </Fact>
-          <Fact term="Disclosure">{terms.disclosure}</Fact>
-          <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
-        </dl>
-        <p className="text-sm text-foreground">
-          Slop never publishes cases; rejected, duplicate, disputed and paid reports stay private, and you decide separately whether your name is public. Repository administrators and security managers can read the
-          advisory on GitHub. A public-chain payment shows its addresses, amount and time.
-        </p>
-      </section>
-    </Disclosure>
+    <TermsDetails id="security-trust" summary="Process">
+      <dl className="flex flex-col gap-3 text-sm text-foreground">
+        <Fact term="Reviewers">{people(terms.approvers.technical)}</Fact>
+        <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
+        <Fact term="Disputes">
+          {people(terms.approvers.dispute)} {terms.dispute.process}
+        </Fact>
+        <Fact term="Response targets">
+          <span className="flex flex-wrap gap-3">
+            <Status presentation={{ tone: "Neutral", icon: "Clock", label: `${targets.acknowledgeHours}h ack` }} />
+            <Status presentation={{ tone: "Neutral", icon: "Clock", label: `${targets.triageBusinessDays} business days triage` }} />
+            <Status presentation={{ tone: "Neutral", icon: "Clock", label: `${targets.updateIntervalDays}d updates` }} />
+          </span>
+        </Fact>
+      </dl>
+      <p className="text-sm text-foreground">{terms.disclosure}</p>
+      <p className="text-sm text-foreground">{terms.safeHarbor}</p>
+      <p>
+        <Status presentation={{ tone: "Neutral", icon: "Lock", label: "Cases stay private" }} />
+      </p>
+    </TermsDetails>
   );
 }

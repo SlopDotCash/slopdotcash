@@ -1,0 +1,145 @@
+// spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"
+import { GitHub, decoded } from "@repo/platform/github"
+
+const pageLimit = 2048
+const byteLimit = 32 * 1024 * 1024
+const textPoolMinimum = 1024
+const shaPattern = /^[a-f0-9]{40}$/u
+const pagePath = /^(\/repos\/[^/]+\/[^/]+)\/commits\/([a-f0-9]{40})\?per_page=100&page=[1-9][0-9]*$/u
+const repositoryPath = /^\/repos\/[^/]+\/[^/]+$/u
+const contentsPath = /^\/repositories\/([1-9][0-9]*)\/contents\/[^?]+\?ref=([a-f0-9]{40})$/u
+
+type Fields = Readonly<Record<string, unknown>>
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function lineCount(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+function validFile(value: unknown) {
+  const file = fieldsOf(value)
+  if (file === undefined) return false
+  const filename = file["filename"]
+  const status = file["status"]
+  const previous = file["previous_filename"]
+  const patch = file["patch"]
+  const blobUrl = file["blob_url"]
+  return typeof filename === "string" && filename.length > 0 && typeof status === "string" && status.length > 0
+    && lineCount(file["additions"]) && lineCount(file["deletions"])
+    && (previous === undefined || typeof previous === "string") && (patch === undefined || typeof patch === "string")
+    && (blobUrl === null || typeof blobUrl === "string")
+}
+
+function validPage(value: unknown, sha: string) {
+  const page = fieldsOf(value)
+  const stats = fieldsOf(page?.["stats"])
+  const parents = page?.["parents"]
+  const files = page?.["files"]
+  const htmlUrl = page?.["html_url"]
+  if (page === undefined || stats === undefined || page["sha"] !== sha || typeof htmlUrl !== "string" || htmlUrl.length === 0) return false
+  if (!Array.isArray(parents) || !parents.every((parent: unknown) => { const sha = fieldsOf(parent)?.["sha"]; return typeof sha === "string" && shaPattern.test(sha) })) return false
+  const additions = stats["additions"]
+  const deletions = stats["deletions"]
+  if (!lineCount(additions) || !lineCount(deletions) || typeof additions !== "number" || typeof deletions !== "number" || stats["total"] !== additions + deletions) return false
+  if (!Array.isArray(files) || files.length > 100 || !files.every(validFile)) return false
+  const listed: ReadonlyArray<unknown> = files
+  return new Set(listed.map((file) => fieldsOf(file)?.["filename"])).size === listed.length
+}
+
+function validContents(value: unknown) {
+  const file = fieldsOf(value)
+  return file !== undefined && file["type"] === "file" && file["encoding"] === "base64" && typeof file["content"] === "string"
+}
+
+export interface CommitPages {
+  readonly wrap: GitHub.Shape!!GitHub
+  readonly layer: Layer.Layer<GitHub, never, GitHub>
+}
+
+export function publicationCommitPages(): CommitPages {
+  const pages = new Map<string, string>()
+  const identities = new Map<string, string>()
+  const textPool = new Map<string, string>()
+  let pooledBytes = 0
+  let bytes = 0
+
+  function shareText(text: string) {
+    if (text.length < textPoolMinimum) return text
+    const existing = textPool.get(text)
+    if (existing !== undefined) return existing
+    const size = text.length * 2
+    if (size > byteLimit - pooledBytes) return text
+    textPool.set(text, text)
+    pooledBytes += size
+    return text
+  }
+
+  function sharedPage(value: unknown, sha: string): unknown {
+    const page = fieldsOf(value)
+    const files = page?.["files"]
+    if (page === undefined || !Array.isArray(files) || !validPage(value, sha)) return value
+    const listed: ReadonlyArray<unknown> = files
+    return {
+      ...page,
+      files: listed.map((file) => {
+        const fields = fieldsOf(file)
+        const patch = fields?.["patch"]
+        return fields !== undefined && typeof patch === "string" ? { ...fields, patch: shareText(patch) } : file
+      }),
+    }
+  }
+
+  function keep(key: string, value: unknown) {
+    if (pages.has(key) || pages.size >= pageLimit || bytes >= byteLimit) return
+    const serialized = JSON.stringify(value)
+    const size = new TextEncoder().encode(serialized).length
+    if (bytes + size > byteLimit) return
+    pages.set(key, serialized)
+    bytes += size
+  }
+
+  effect function identityRead(inner: GitHub.Shape, verified: Map<string, number>, path: string, options: Parameters<GitHub.Shape["json"]>[2]) {
+    verified.delete(path)
+    const live: unknown = try inner.json(path, Schema.Unknown, options)
+    const fields = fieldsOf(live)
+    const id = fields?.["id"]
+    const nodeId = fields?.["node_id"]
+    if (fields?.["private"] === false && typeof id === "number" && Number.isSafeInteger(id) && id > 0 && typeof nodeId === "string" && nodeId.length > 0) {
+      const identity = JSON.stringify([id, nodeId])
+      if (!identities.has(path)) identities.set(path, identity)
+      if (identities.get(path) === identity) verified.set(path, id)
+    }
+    return live
+  }
+
+  const wrap = effect {
+    const inner = try GitHub
+    const verified = new Map<string, number>()
+    const shape: GitHub.Shape = {
+      ...inner,
+      json: (path, schema, options) => effect {
+        const page = pagePath.exec(path)
+        const contents = page === null ? contentsPath.exec(path) : null
+        const key = contents === null ? path : JSON.stringify([path, options?.limitBytes ?? null])
+        const authorized = page !== null ? verified.has(page[1] ?? "") : contents !== null && [...verified.values()].includes(Number(contents[1]))
+        const saved = authorized ? pages.get(key) : undefined
+        if (saved !== undefined) {
+          const parsed: unknown = try orDie(Effect.try(() => JSON.parse(saved) as unknown))
+          const reused = page === null ? parsed : sharedPage(parsed, page[2] ?? "")
+          return try decoded(schema, reused, path)
+        }
+        const raw: unknown = repositoryPath.test(path) ? try identityRead(inner, verified, path, options) : try inner.json(path, Schema.Unknown, options)
+        const value = page === null ? raw : sharedPage(raw, page[2] ?? "")
+        if (authorized && page !== null && validPage(value, page[2] ?? "")) keep(key, value)
+        if (authorized && contents !== null && validContents(value)) keep(key, value)
+        return try decoded(schema, value, path)
+      },
+    }
+    return shape
+  }
+
+  return { wrap, layer: Layer.effect(GitHub, wrap) }
+}

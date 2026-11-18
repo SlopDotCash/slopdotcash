@@ -10,7 +10,7 @@ export const meta: ComponentMeta<RetryProps> = {
     // spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
     Default: async () => {
       await expect(screen.getByText("Every private security case goes to a moderator; Slopbot's confidence is below 0.9")).toBeTruthy();
-      await expect(screen.getByText("Slopbot draft. The appeal text can try to influence it; a moderator decides.")).toBeTruthy();
+      await expect(screen.getByText("Moderator decides")).toBeTruthy();
     },
   },
 };

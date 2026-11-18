@@ -5,7 +5,7 @@ export { AnalysisPanel } from "./AnalysisPanel.tsx";
 export { AppealTriage } from "./AppealTriage.tsx";
 export { type CaseList, type SecurityCase, caseListOf, caseOf } from "./case.schema.ts";
 export { CaseActions, type CaseActionsProps } from "./CaseActions.tsx";
-export { CaseDetail, type CaseDetailProps, CaseDetailView, type CaseDetailViewProps, type PaymentSlot } from "./CaseDetail.tsx";
+export { CaseDetail, type CaseDetailProps, CaseDetailView, type CaseDetailViewProps, type PaymentHold, type PaymentSlot } from "./CaseDetail.tsx";
 export { awardText, caseTitle, matchesReport, type ReportFilter } from "./labels.ts";
 export { type CasesRuntime, casesRuntime } from "./runtime.vibe";
 export { SecurityCasesPage } from "./SecurityCasesPage.tsx";

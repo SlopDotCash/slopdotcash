@@ -10,9 +10,12 @@ and the October replacement rule of `scripts/collect-implementation-corrections.
 and `src/lib/points-implementation-corrections.ts`.
 
 The collector binds a complete connected source and claim proof, allocation
-manifest digest, and expected current predecessor. Project-private financial
-protection and participation bans are rechecked in the same database
-operation as the append. The view contains no private award amount. Database
+manifest digest, and expected current predecessor. A recorded source that the
+historical search omitted is verified through a census supplement before
+preparation. Project-private financial protection is rechecked in the same
+database statement as the append; participation bans are read again
+immediately before the import, which is refused when they differ from those
+read for the plan. The view contains no private award amount. Database
 atomicity, evidence authenticity and the authenticated Git parent edges are
 adapter conformance. The machine is instantiated per accepted source.
 
@@ -23,9 +26,10 @@ machine and the journal require the new shares to sum to the unchanged pool.
 That the two writes happen together is composition obligation C11; nothing
 here composes them. `applied` tracks the digests of those canonical corrections.
 Publication consumes the resulting journal snapshot through the [publication
-model](./publication.md). A revocation is a maintainer decision recorded in
-the correction workflow and bound to the source and an applied manifest. The
-`by` sender is the trusted main workflow run or the repository owner.
+model](./publication.md). No correction is ever revoked: a later change is an
+ordinary appended journal revision, and replaying an applied manifest
+appends nothing. The `by` sender is the trusted main workflow run or the
+repository owner.
 
 ## Story: Reassign the existing pool while preserving funded history
 
@@ -36,29 +40,31 @@ import allocation as A from "./allocation"
 import periods as P from "./periods"
 type Actor = TrustedWorkflow | Owner | Contributor
 type CorrectionPhase = Open | Prepared | EvidenceHeld | AttributionHeld | OutOfScope | Protected | Banned | Stale | Applied | Replayed
+type Supplement = SearchOnly | SupplementPending | SupplementVerified | SupplementUnavailable | SupplementFailed
 type ManifestKind = OrdinaryReallocation | OctoberReplacement
 type WorkLine = { author: int, lines: int, origin: int, followup: bool, parentEdges: bool, ambiguous: bool }
-type JournalEntry = { source: int, occurredAt: int, shares: List[A::PointShare], revoked: bool }
+type JournalEntry = { source: int, occurredAt: int, shares: List[A::PointShare] }
 type Manifest = { digest: str, source: int, predecessor: int, connectedProof: bool, recipients: List[A::Recipient],
   kind: ManifestKind, work: List[WorkLine] }
 type Chunk = { index: int, digest: str }
 type Packet = { digest: str, expected: List[str], staged: List[Chunk], assembled: bool, reviewedDigest: str }
 type Correction = { phase: CorrectionPhase, project: str, source: int, occurredAt: int, pool: int,
-  history: List[JournalEntry], staged: Manifest, applied: List[str], frozen: bool, revoked: bool,
-  packet: Packet, appliedWork: List[WorkLine] }
+  history: List[JournalEntry], staged: Manifest, applied: List[str], frozen: bool,
+  packet: Packet, appliedWork: List[WorkLine], supplement: Supplement, supplementAffects: bool }
 pure val octoberAt = 2432110
 pure val original: JournalEntry = { source: 1, occurredAt: octoberAt,
-  shares: List({ actor: 3, points: 30 }), revoked: false }
+  shares: List({ actor: 3, points: 30 }) }
 pure val emptyManifest: Manifest = { digest: "", source: 0, predecessor: 0, connectedProof: false, recipients: List(),
   kind: OrdinaryReallocation, work: List() }
 pure val initial: Correction = { phase: Open, project: "eliza", source: 1, occurredAt: octoberAt, pool: 30,
-  history: List(original), staged: emptyManifest, applied: List(), frozen: false, revoked: false,
+  history: List(original), staged: emptyManifest, applied: List(), frozen: false,
   packet: { digest: "packet", expected: List("chunk-a", "chunk-b"), staged: List(), assembled: false, reviewedDigest: "" },
-  appliedWork: List() }
+  appliedWork: List(), supplement: SearchOnly, supplementAffects: false }
 pure def predecessorMatches(c: Correction, manifest: Manifest): bool =
   manifest.source == c.source and manifest.digest != "" and manifest.predecessor == c.history.length()
 pure def completeCorrection(c: Correction, manifest: Manifest): bool =
-  manifest.connectedProof and A::canWriteAllocation(c.pool, manifest.recipients, true, false)
+  manifest.connectedProof and not(c.supplementAffects and c.supplement == SupplementUnavailable) and
+  A::canWriteAllocation(c.pool, manifest.recipients, true, false)
     and (manifest.kind == OctoberReplacement implies
       manifest.work.length() > 0 and manifest.recipients == replacementRecipients(manifest.work))
 ```
@@ -107,12 +113,13 @@ carrier's share. A complete eligible proof is needed before the new shares can
 reach the atomic import. A frozen source refuses. A source is frozen only
 when monthly settlement freezes its project and occurrence month, through
 [periods](./periods.md). A previously applied digest
-is a replay, including after later revocation, and never appends again.
+is a replay and never appends again. A pending or failed census supplement
+refuses preparation.
 
 ```quint
 pure def classify(c: Correction, manifest: Manifest): CorrectionPhase =
   if (c.applied.includes(manifest.digest)) Replayed
-  else if (not(predecessorMatches(c, manifest)) or c.revoked) Stale
+  else if (not(predecessorMatches(c, manifest))) Stale
   else if (c.frozen) Protected
   else if (manifest.kind == OctoberReplacement and not(octoberScope(c))) OutOfScope
   else if (ambiguousClaim(manifest)) AttributionHeld
@@ -120,6 +127,7 @@ pure def classify(c: Correction, manifest: Manifest): CorrectionPhase =
   else Prepared
 pure def canPrepare(c: Correction, manifest: Manifest): bool = c.phase != Prepared
   and manifest.source == c.source and manifest.digest != "" and c.packet.assembled
+  and c.supplement != SupplementPending and c.supplement != SupplementFailed
 pure def prepare(c: Correction, manifest: Manifest): Correction =
   if (classify(c, manifest) == Prepared) { ...c, phase: Prepared, staged: manifest } else { ...c, phase: classify(c, manifest) }
 pure def canProtect(c: Correction, f: P::FreezeEvidence): bool =
@@ -130,9 +138,11 @@ pure def protect(c: Correction, f: P::FreezeEvidence): Correction = { ...c, froz
 ### The atomic import rechecks current protection, bans and the captured predecessor
 
 A protection, participation ban or predecessor change after preparation
-prevents the append; the protection and ban checks run in the same database
-operation as the append. A legitimate later revocation is itself
-append-only. Replaying the original manifest retains the revocation. A batch
+prevents the append. The protection check runs in the same database
+statement as the append; the participation bans are read again immediately
+before the import, and `recipientBanned` is that re-read (development
+refuses the import when the bans' digest differs from the plan's). A replayed
+applied manifest is `Replayed` and appends nothing. A batch
 whose receipt (`correctionBatchRecorded`) is already present is a replay and
 appends nothing. Existing approved, funded, scheduled and paid terms never
 change through this correction flow.
@@ -146,27 +156,20 @@ pure def commit(c: Correction, recipientBanned: bool, by: Actor): Correction =
   else { ...c, phase: Applied, staged: emptyManifest, applied: c.applied.append(c.staged.digest),
     appliedWork: c.staged.work,
     history: c.history.append({ source: c.source, occurredAt: c.occurredAt,
-      shares: A::allocatePoints(c.pool, c.staged.recipients), revoked: false }) }
-type Revocation = { source: int, manifestDigest: str, decision: str }
-pure def canRevoke(c: Correction, revocation: Revocation): bool = revocation.source == c.source and
-  revocation.decision != "" and c.applied.includes(revocation.manifestDigest) and not(c.revoked) and not(c.frozen)
-pure def revoke(c: Correction, revocation: Revocation): Correction = { ...c, revoked: true,
-  history: c.history.append({ source: c.source, occurredAt: c.occurredAt, shares: List(), revoked: true }) }
+      shares: A::allocatePoints(c.pool, c.staged.recipients) }) }
 pure def alwaysSourceHistory(c: Correction): bool = c.history.every(row => row.source == c.source
-  and row.occurredAt == c.occurredAt and (if (row.revoked) row.shares.length() == 0 else A::pointTotal(row.shares) == c.pool))
+  and row.occurredAt == c.occurredAt and A::pointTotal(row.shares) == c.pool)
 pure def alwaysOctoberOnlyInScope(c: Correction): bool = c.appliedWork.length() > 0 implies octoberScope(c)
 pure def stepNoHistoryGrowthAfterProtection(before: Correction, after: Correction): bool =
   before.frozen implies after.history == before.history
-pure def stepRevocationPermanent(before: Correction, after: Correction): bool =
-  before.revoked implies after.revoked and after.history == before.history
-pure def stepOnlyApplyOrRevocationAppends(before: Correction, via: str, after: Correction): bool =
-  (via != "commit" and via != "revoke") implies after.history == before.history and after.applied == before.applied
+pure def stepOnlyApplyAppends(before: Correction, via: str, after: Correction): bool =
+  via != "commit" implies after.history == before.history and after.applied == before.applied
 pure def sometimesApplied(c: Correction): bool = c.phase == Applied and c.history.length() > 1
 pure def sometimesProtected(c: Correction): bool = c.phase == Protected
 pure def sometimesBanned(c: Correction): bool = c.phase == Banned
 pure def sometimesStale(c: Correction): bool = c.phase == Stale
 pure def sometimesEvidenceHeld(c: Correction): bool = c.phase == EvidenceHeld
-pure def sometimesReplayAfterRevocation(c: Correction): bool = c.phase == Replayed and c.revoked
+pure def sometimesReplayed(c: Correction): bool = c.phase == Replayed and c.history.length() > 1
 pure def sometimesFollowupRedirected(c: Correction): bool =
   c.phase == Applied and c.appliedWork.some(w => w.followup and redirected(w) and w.origin != w.author)
 pure def sometimesTwoOriginSplit(c: Correction): bool =
@@ -211,7 +214,40 @@ pure def sometimesWrongReviewHolds(c: Correction): bool =
   c.phase == Prepared and c.packet.reviewedDigest != "" and c.packet.reviewedDigest != c.packet.digest
 ```
 
-### Directed witnesses check protection races, stale predecessors, October attribution and replay after revocation
+### A recorded source omitted from the historical search is verified through a census supplement
+
+The collector requires a supplement for every recorded source the
+historical search omitted, noting whether the earlier acceptance it may
+prove affects this source's allocation. A verified supplement removes the
+earlier acceptance's exact one-parent accepted commit from every later pool,
+which the collector's manifest then carries. An unavailable accepted object
+or merge identity holds only an allocation it affects, as incomplete
+evidence; an unaffected allocation proceeds. A failed supplement refuses
+preparation. The result is recorded once, before preparation
+(`historical_implementation_allocation` `requireSupplement`,
+`verifySupplement`, `prepare`).
+
+```quint
+pure def canRequireSupplement(c: Correction, affects: bool, by: Actor): bool =
+  by == TrustedWorkflow and c.phase == Open and c.supplement == SearchOnly
+pure def requireSupplement(c: Correction, affects: bool, by: Actor): Correction =
+  { ...c, supplement: SupplementPending, supplementAffects: affects }
+pure def canVerifySupplement(c: Correction, result: Supplement, by: Actor): bool =
+  by == TrustedWorkflow and c.phase == Open and c.supplement == SupplementPending and
+  (result == SupplementVerified or result == SupplementUnavailable or result == SupplementFailed)
+pure def verifySupplement(c: Correction, result: Supplement, by: Actor): Correction = { ...c, supplement: result }
+pure def alwaysUnsettledSupplementUnprepared(c: Correction): bool =
+  (c.supplement == SupplementPending or c.supplement == SupplementFailed) implies (c.phase == Open and c.applied.length() == 0)
+pure def alwaysSupplementShape(c: Correction): bool = c.supplement == SearchOnly implies not(c.supplementAffects)
+pure def alwaysOpenUnapplied(c: Correction): bool = c.phase == Open implies c.applied.length() == 0
+pure def sometimesSupplementHeld(c: Correction): bool =
+  c.phase == EvidenceHeld and c.supplementAffects and c.supplement == SupplementUnavailable
+pure def sometimesSupplementVerifiedApplied(c: Correction): bool = c.phase == Applied and c.supplement == SupplementVerified
+pure val affectsValues = Set(true, false)
+pure val resultValues = Set(SupplementVerified, SupplementUnavailable, SupplementFailed, SupplementPending)
+```
+
+### Directed witnesses check protection races, stale predecessors, October attribution and replay
 
 ```quint
 pure val readyManifest: Manifest = { digest: "manifest", source: 1, predecessor: 1, connectedProof: true,
@@ -243,19 +279,17 @@ pure val wValues = Set(ownWork, { ...ownWork, author: carrier, followup: true, p
 pure def lawProtectionRace(manifest: Manifest): bool = manifest == readyManifest implies
   commit(protect(prepare(initial, manifest), settledFreeze), false, TrustedWorkflow).phase == Protected
     and commit(protect(prepare(initial, manifest), settledFreeze), false, TrustedWorkflow).history == initial.history
-pure val readyRevocation: Revocation = { source: 1, manifestDigest: "manifest", decision: "maintainer" }
-pure val revocationValues = Set(readyRevocation, { ...readyRevocation, manifestDigest: "other" }, { ...readyRevocation, source: 2 })
 pure def lawStalePredecessor(manifest: Manifest): bool = manifest == readyManifest implies
-  commit(revoke(prepare(initial, manifest), readyRevocation), false, TrustedWorkflow).phase == Stale
+  prepare(initial, { ...manifest, digest: "moved", predecessor: 2 }).phase == Stale
 pure def lawReallocationPreservesPool(manifest: Manifest): bool =
   val corrected = commit(prepare(initial, manifest), false, TrustedWorkflow)
   manifest == readyManifest implies corrected.phase == Applied and corrected.pool == initial.pool
     and corrected.occurredAt == initial.occurredAt
     and A::pointTotal(A::allocatePoints(corrected.pool, manifest.recipients)) == initial.pool
-pure def lawReplayPreservesRevocation(manifest: Manifest): bool =
-  val revokedState = revoke(commit(prepare(initial, manifest), false, TrustedWorkflow), readyRevocation)
-  manifest == readyManifest implies prepare(revokedState, manifest).history == revokedState.history
-    and prepare(revokedState, manifest).phase == Replayed
+pure def lawReplayAppendsNothing(manifest: Manifest): bool =
+  val applied = commit(prepare(initial, manifest), false, TrustedWorkflow)
+  manifest == readyManifest implies prepare(applied, manifest).history == applied.history
+    and prepare(applied, manifest).phase == Replayed
 pure val cValues = Set(initial, { ...initial, project: "p" }, { ...initial, occurredAt: 2432210 }, { ...initial, packet: { ...initial.packet, assembled: true } })
 pure val indexValues = Set(0, 1, 2)
 pure val digestValues = Set("chunk-a", "chunk-b", "packet", "other")

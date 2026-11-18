@@ -4,9 +4,10 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { Caller, answered } from "@repo/platform/http"
 import { type FileAnswer, type FileMode, type Method, type StoredFile, answerFiles } from "../../gen/settlement__referralFiles.effect.vibe"
 import { claimCacheStale } from "../../gen/settlement__referralPublication.effect.vibe"
-import { type AccrualIndexEntry, Digest32, Instant, ReferralAccount, ReferralProgram, referralAccount, referralAccruals } from "../client/referrals.vibe"
+import { type AccrualIndexEntry, ReferralAccount, referralAccount, referralAccruals } from "../client/referrals.vibe"
 import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
 import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { type ClaimEpoch, type ClaimSnapshot, decodeSnapshot } from "./claimCache.vibe"
 import { activeEpochIndex, ageSeconds, claimsView, pendingWindowShown } from "./claimsView.ts"
 import type { Hex } from "viem"
 import { verifyProof } from "./merkle.ts"
@@ -55,32 +56,6 @@ schema FiledReferrers {
   readonly referrers: ReadonlyArray<FileReferrer>
 }
 
-const Seconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8_640_000_000_000 }))
-
-const ClaimEpoch = Schema.Struct({
-  epoch: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
-  period: Schema.String,
-  root: Digest32,
-  totalBase: Schema.String,
-  claimableAt: Seconds,
-  voided: Schema.Boolean,
-})
-type ClaimEpoch = typeof ClaimEpoch.Type
-
-const ClaimSnapshot = Schema.Struct({
-  program: ReferralProgram,
-  deploymentBlock: Schema.String,
-  block: Schema.Struct({ number: Schema.String, hash: Schema.String, timestamp: Seconds }),
-  observedAt: Instant,
-  paused: Schema.Boolean,
-  pauseAt: Schema.NullOr(Seconds),
-  latestPaused: Schema.Boolean,
-  ended: Schema.Boolean,
-  epochs: Schema.Array(ClaimEpoch),
-  claimed: Schema.Record(Schema.String, Schema.String),
-})
-type ClaimSnapshot = typeof ClaimSnapshot.Type
-
 error ClaimsFailed { reason: string }
 
 interface Filed {
@@ -109,7 +84,6 @@ const accrualTree = `${referralAccruals.path}/*` as const
 const hidden = { enabled: false } as const
 
 const decodeFiled = Schema.decodeUnknownEffect(Schema.fromJsonString(FiledReferrers))
-const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
 const verifiedAccount = Schema.decodeUnknownEffect(ReferralAccount)
 
 function methodOf(method: string): Method {

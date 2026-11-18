@@ -3,7 +3,7 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { type RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, update } from "@repo/platform/stored"
 import type { Event, Merges, Row, Summary } from "../../../gen/backend__mergeActivity.ts"
-import { type NotAState, apply, decodeEvent, decodeState, noRow, noSummary } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { type NotAState, apply, decodeEvent, decodeState, noRow, noSummary, registry, schedule } from "../../../gen/backend__mergeActivity.effect.vibe"
 import { hourMillis, hourOf } from "./github.vibe"
 
 export schema StoredRow {
@@ -109,19 +109,32 @@ effect function writeOf(key: Key, at: number, event: Event, after: Row, evidence
   }
 }
 
-effect function decide(key: Key, facts: Facts, event: Event, by: string, evidence: Evidence, current: Merges) {
-  const next = try apply(current, event, by)
+interface Step {
+  readonly event: Event
+  readonly by: string
+}
+
+effect function decide(key: Key, facts: Facts, steps: ReadonlyArray<Step>, evidence: Evidence, current: Merges) {
+  let state = current
   const writes: Statement[] = []
-  for (const write of next.out) {
-    if (write.table !== "MergeActivityRows" || write.repository !== current.repository) continue
-    const statement = try writeOf(key, facts.at, event, next.state.row, evidence)
-    if (statement !== undefined) writes.push(statement)
+  for (const { event, by } of steps) {
+    const next = try apply(state, event, by)
+    for (const write of next.out) {
+      if (write.table !== "MergeActivityRows" || write.repository !== state.repository) continue
+      const statement = try writeOf(key, facts.at, event, next.state.row, evidence)
+      if (statement !== undefined) writes.push(statement)
+    }
+    state = next.state
   }
-  return { value: next.state, writes }
+  return { value: state, writes }
 }
 
 export effect function send(key: Key, facts: Facts, event: Event, by: string, evidence: Evidence = noEvidence) {
-  return try update(aggregate(key, facts), (current) => decide(key, facts, event, by, evidence, current))
+  return try update(aggregate(key, facts), (current) => decide(key, facts, [{ event, by }], evidence, current))
+}
+
+export effect function unlist(key: Key, facts: Facts) {
+  return try update(aggregate(key, facts), (current) => decide(key, facts, [{ event: { type: "unlistPath" }, by: registry }, { event: { type: "prune" }, by: schedule }], noEvidence, current))
 }
 
 export effect function receive(key: Key, facts: Facts, input: unknown, by: string) {

@@ -24,29 +24,27 @@ export interface Action {
   readonly busy: boolean;
   readonly error: string | null;
   readonly stale: boolean;
-  readonly notice: string | null;
-  run<A>(work: () => Promise<Acted<A>>, done?: (value: A) => string | null): void;
-  fail(message: string): void;
+  run<A>(work: () => Promise<Acted<A>>, done?: (value: A) => void): void;
 }
 
-/** One control group's running action: a second start while one runs is ignored, as the old `sending` guard did. */
-export function useAction(): Action {
-  const [state, setState] = useState<{ busy: boolean; error: string | null; stale: boolean; notice: string | null }>({ busy: false, error: null, stale: false, notice: null });
+/** One control group's running action: a second start while one runs is ignored, as the old `sending` guard did. `onStart` runs when an action really starts. */
+export function useAction(onStart?: () => void): Action {
+  const [state, setState] = useState<{ busy: boolean; error: string | null; stale: boolean }>({ busy: false, error: null, stale: false });
   const [guard] = useState(() => ({ running: false }));
   return {
     ...state,
     run(work, done) {
       if (guard.running) return;
       guard.running = true;
-      setState({ busy: true, error: null, stale: false, notice: null });
+      onStart?.();
+      setState({ busy: true, error: null, stale: false });
       void work().then((result) => {
         guard.running = false;
-        if (result.ok) setState({ busy: false, error: null, stale: false, notice: done?.(result.value) ?? null });
-        else setState((prior) => ({ ...prior, busy: false, error: result.message, stale: result.stale }));
+        if (result.ok) {
+          setState({ busy: false, error: null, stale: false });
+          done?.(result.value);
+        } else setState({ busy: false, error: result.message, stale: result.stale });
       });
-    },
-    fail(message) {
-      setState((prior) => ({ ...prior, error: message, stale: false }));
     },
   };
 }

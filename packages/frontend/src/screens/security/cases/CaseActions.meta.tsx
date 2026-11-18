@@ -9,8 +9,8 @@ export const meta: ComponentMeta<CaseActionsProps> = {
   play: {
     // spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"
     Default: async () => {
-      await userEvent.click(screen.getByRole("button", { name: "Decide the finding" }));
-      await expect(screen.getByRole("button", { name: "Decide the finding" })).toHaveAttribute("aria-pressed", "true");
+      await userEvent.click(screen.getByRole("button", { name: "Decide" }));
+      await expect(screen.getByRole("button", { name: "Decide" })).toHaveAttribute("aria-pressed", "true");
       await expect(screen.getByRole("button", { name: "Record decision" })).toBeVisible();
     },
   },

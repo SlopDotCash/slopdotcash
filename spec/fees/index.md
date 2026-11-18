@@ -5,6 +5,7 @@ PRD sections 6 and 11 govern fee-only services and SLOP buyback. No fee operatio
 - [Fee-wallet Worker publication and modes](./runtime.md)
 - [Conversion and native holds](./conversion.md)
 - [Live Solana RPC pair rotation](./solanaRpcRotation.md)
+- [Read-only fee Worker diagnostics](./diagnostics.md)
 - [Direct private-award fee income](./directBountyIncome.md)
 - [Buyback bridge leg of one source network](./buyback.md)
 - [Buyback purchase pool and burn](./buybackPool.md)

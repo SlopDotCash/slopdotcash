@@ -5,7 +5,7 @@ import { preflightPasses } from "../../../gen/fees__runtime.effect.vibe"
 import { rotationAdmitted } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 import { readReviewed } from "../publish/config.vibe"
 import { type SecretValues, configsFor, feeSettingsOf, withSecretsFile } from "../publish/order.vibe"
-import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { Cloudflare, type CommandFailure } from "../wrangler/cloudflare.vibe"
 import { releaseMessage } from "../wrangler/outputs.vibe"
 import { RotationRefused } from "./qualify.vibe"
 import {
@@ -29,6 +29,7 @@ export interface Rotation<A, E, R> {
   readonly root: string
   readonly kind: RotationKind
   readonly secrets: SecretValues
+  readonly inputRefusal?: string
   readonly qualify: A!E!R
 }
 
@@ -36,6 +37,7 @@ export interface PinRequest {
   readonly root: string
   readonly kind: RotationKind
   readonly sha: string
+  readonly pinnedSource: string
   readonly expected: string
   readonly runnerTemp: string
 }
@@ -46,7 +48,9 @@ export interface Pin extends PinRequest {
   readonly database: string
 }
 
-export type Activation = "Requested" | "Unknown"
+export type Activation =
+  | { readonly activation: "Requested" }
+  | { readonly activation: "Unknown"; readonly command: CommandFailure }
 
 export type Confirmation =
   | { readonly outcome: "Confirmed" }
@@ -69,6 +73,7 @@ const expectedVersions: { readonly [K in RotationKind]: string } = { robinhood: 
 const titles: { readonly [K in RotationKind]: string } = { robinhood: "Robinhood RPC", solana: "Solana public-pair" }
 const eventKinds: ReadonlyMap<string, RefKind> = new Map([["workflow_dispatch", "WorkflowDispatch"], ["push", "BranchPush"], ["schedule", "ScheduledRef"], ["pull_request", "PullRequestRef"], ["pull_request_target", "PullRequestRef"]])
 const unbound = "Could not bind a candidate fee-converter version."
+const unreported: CommandFailure = { category: "command-failed", exitCode: null, providerCode: null }
 
 function refused(message: string) {
   return new RotationRefused({ message })
@@ -115,15 +120,13 @@ export effect function inheritedMessage() {
 }
 
 effect function reviewedConverter(root: string, before: WorkerVersion, kind: RotationKind) {
-  const found = configsFor(try readReviewed(root), "FeeConverter", "Production")
-  const [reviewed, ...others] = typeof found === "string" ? [] : found
-  if (reviewed === undefined || others.length > 0) throw refused("The reviewed production buyback configuration is unavailable.")
+  const reviewed = try reviewedConfig(root)
   const settings = feeSettingsOf(reviewed, secretNamesOf(before)) catch effect () => {
     throw refused("The reviewed production buyback configuration is unavailable.")
   }
   const live = kind === "solana" || (settings.converterMode === "Live" && settings.buybackMode === "Live" && settings.networks.includes("Robinhood"))
   if (!live || !preflightPasses("Production", { ...settings, source: 1 })) throw refused("The reviewed production buyback configuration is unavailable.")
-  const database = (reviewed.file.d1_databases ?? []).find((entry) => entry.binding === "FEE_DB")?.database_id ?? ""
+  const database = databaseOf(reviewed)
   if (kind === "solana") {
     const networks = (reviewed.file.vars?.FEE_CONVERTER_NETWORKS ?? "").split(",").map((name) => name.trim()).filter((name) => name !== "")
     const enabled = bindingOf(before, "FEE_CONVERTER_NETWORKS")
@@ -131,6 +134,17 @@ effect function reviewedConverter(root: string, before: WorkerVersion, kind: Rot
     if (bindingOf(before, "FEE_WALLET_KEY_SOLANA")?.type !== "secret_text") throw refused("The existing Solana fee key is unavailable.")
   }
   return database
+}
+
+effect function reviewedConfig(root: string) {
+  const found = configsFor(try readReviewed(root), "FeeConverter", "Production")
+  const [reviewed, ...others] = typeof found === "string" ? [] : found
+  if (reviewed === undefined || others.length > 0) throw refused("The reviewed production buyback configuration is unavailable.")
+  return reviewed
+}
+
+function databaseOf(reviewed: { readonly file: { readonly d1_databases?: ReadonlyArray<{ readonly binding: string; readonly database_id?: string }> } }) {
+  return (reviewed.file.d1_databases ?? []).find((entry) => entry.binding === "FEE_DB")?.database_id ?? ""
 }
 
 effect function rotationInputs(kind: RotationKind) {
@@ -166,16 +180,33 @@ effect function promotionConfig(pin: PinRequest) {
   return { workspace, promotion }
 }
 
-export effect function pinActive(request: PinRequest) {
+effect function releasePin(request: PinRequest) {
   const state = try workerState()
   try requireRotationBase(state, request.expected)
   const before = try inspectVersion(request.expected)
-  if (before.annotations?.["workers/tag"] !== request.sha || state.active.annotations?.["workers/message"] !== releaseMessage(request.sha)) {
+  if (before.annotations?.["workers/tag"] !== request.pinnedSource || state.active.annotations?.["workers/message"] !== releaseMessage(request.sha)) {
     throw refused("First publish this main revision without a rotation input.")
   }
   try normalizedBindings(before, undefined)
   const database = try reviewedConverter(request.root, before, request.kind)
   return { ...request, deploymentId: state.active.id, before, database } satisfies Pin
+}
+
+effect function solanaPin(request: PinRequest) {
+  const state = try workerState()
+  try requireRotationBase(state, request.expected)
+  const before = try inspectVersion(request.expected)
+  if (before.annotations?.["workers/tag"] !== request.pinnedSource) throw refused("Active fee source differs from the reviewed pin")
+  const database = databaseOf(try reviewedConfig(request.root))
+  const binding = bindingOf(before, "FEE_DB")
+  const bound = binding?.database_id ?? binding?.id
+  if (!uuid.test(database) || binding?.type !== "d1" || bound !== database) throw refused("Active fee database differs from the reviewed binding")
+  if (bindingOf(before, "FEE_WALLET_KEY_SOLANA")?.type !== "secret_text") throw refused("Existing Solana signer binding unavailable")
+  return { ...request, deploymentId: state.active.id, before, database } satisfies Pin
+}
+
+export effect function pinActive(request: PinRequest) {
+  return try (request.kind === "robinhood" ? releasePin(request) : solanaPin(request))
 }
 
 export effect function uploadCandidate(pin: Pin, secrets: SecretValues) {
@@ -205,8 +236,8 @@ export effect function activateCandidate(pin: Pin, candidate: string) {
     try requireLiveMain(pin.root, pin.sha)
     const deployed = cloudflare.wrangler("fee-converter rotation deploy", {
       args: ["versions", "deploy", "--config", promotion, "--name", feeConverterWorker, `--version-id=${candidate}`, "--percentage=100", `--message=${releaseMessage(pin.sha)}`, "--yes"],
-    }) catch () => undefined
-    const activation: Activation = deployed === undefined ? "Unknown" : "Requested"
+    }) catch (error) => error.command ?? unreported
+    const activation: Activation = typeof deployed === "string" ? { activation: "Requested" } : { activation: "Unknown", command: deployed }
     return activation
   })
 }
@@ -248,7 +279,7 @@ export effect function confirmActivation(pin: Pin, candidate: string, attempts: 
 effect function activated(pin: Pin, candidate: string) {
   try requireSameWorker(pin.before, try inspectVersion(candidate), pin.sha, pin.kind)
   try requireQuietJournal(pin.before, pin.database, pin.kind)
-  if ((try activateCandidate(pin, candidate)) === "Unknown") {
+  if ((try activateCandidate(pin, candidate)).activation === "Unknown") {
     const unknown: { readonly phase: EndPhase; readonly reason: string | undefined } = { phase: "Uncertain", reason: undefined }
     return unknown
   }
@@ -262,9 +293,10 @@ effect function activated(pin: Pin, candidate: string) {
 export effect function rotateFeeConverterRpc<A, E, R>(rotation: Rotation<A, E, R>) {
   const { kind, root } = rotation
   const inputs = try rotationInputs(kind)
-  try rotation.qualify
-  const pin = try pinActive({ root, kind, sha: inputs.sha, expected: inputs.expected, runnerTemp: inputs.runnerTemp })
+  if (rotation.inputRefusal !== undefined) throw refused(rotation.inputRefusal)
+  const pin = try releasePin({ root, kind, sha: inputs.sha, pinnedSource: inputs.sha, expected: inputs.expected, runnerTemp: inputs.runnerTemp })
   try requireQuietJournal(pin.before, pin.database, kind)
+  try rotation.qualify
   const candidate = try uploadCandidate(pin, rotation.secrets)
   const settled = activated(pin, candidate) catch (error) => ({ phase: "Refused" as const, reason: reasonOf(error) })
   return {

@@ -1,10 +1,10 @@
 // spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
 import { rotationVerdict } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
-import { type ContractProbe, RotationRefused, qualifyRobinhood } from "./qualify.vibe"
+import { type ContractProbe, RotationRefused, qualifyRobinhood, secureRpcUrl } from "./qualify.vibe"
 import { type EndPhase, type Rotation, type RotationEnd, inheritedMessage, reasonOf, rotateFeeConverterRpc } from "./rotate.vibe"
 
-export { Cloudflare, type ReadBound, ToolFailed, cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
+export { Cloudflare, type CommandCategory, type CommandFailure, type ReadBound, ToolFailed, cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
 export { releaseMessage } from "../wrangler/outputs.vibe"
 export { withSecretsFile } from "../publish/order.vibe"
 export { RotationRefused } from "./qualify.vibe"
@@ -44,7 +44,8 @@ export effect function rotateRobinhoodRpc(root: string, probe: ContractProbe) {
     const observed = try qualifyRobinhood(candidate, probe)
     try Console.log(JSON.stringify({ event: "robinhood_rpc_candidate_verified", ...observed }))
   }
-  return try rpcRotation({ root, kind: "robinhood", secrets: { RPC_URL_ROBINHOOD: candidate }, qualify })
+  const inputRefusal = secureRpcUrl(Redacted.value(candidate)) === undefined ? "The candidate must use TLS and be independent of the public reference." : undefined
+  return try rpcRotation({ root, kind: "robinhood", secrets: { RPC_URL_ROBINHOOD: candidate }, inputRefusal, qualify })
 }
 
 export effect function rpc(args: ReadonlyArray<string>) {

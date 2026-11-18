@@ -28,3 +28,9 @@ lemma lawFilterPreservesOrder_ensures(first: Registration, second: Registration)
   ProofLib.FilterCons(p, [second]);
   ProofLib.FilterNil(p, []);
 }
+
+lemma lawRetiredRowWithAttributionAppears_ensures(row: Registration)
+  ensures (lawRetiredRowWithAttributionAppears(row) == true)
+{
+  lawPublicRegistrationAppears_ensures(row);
+}

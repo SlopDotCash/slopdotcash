@@ -1,5 +1,5 @@
 import { webCrypto } from "@repo/platform/crypto";
-import { escrowAbi, evmAddress, factoryAbi } from "@repo/settlement/chain/evm/abi";
+import { PLEDGED_FUNDS_SELECTOR, escrowAbi, evmAddress, factoryAbi } from "@repo/settlement/chain/evm/abi";
 import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
 import { Effect, Layer, ManagedRuntime } from "effect";
@@ -7,14 +7,15 @@ import { type Hex, encodeAbiParameters, encodeFunctionData, encodeFunctionResult
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PoolFacts } from "../../gen/frontend__projections.ts";
+import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
 import { unreadLocks } from "../../src/kernels/poolFunding.ts";
 import { WalletChoice, walletChoiceServices } from "../../src/wallets/core/discovery.vibe";
 import { connectEvm } from "../../src/wallets/core/evm.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
-import { type Answer, type Saved, ownerVaultPage } from "../../src/wallets/owner/ownerVault.vibe";
-import { provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe";
+import { type Answer, type Saved, ownerVaultPage, vaultNotice } from "../../src/wallets/owner/ownerVault.vibe";
+import { provisionalMessages, provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe";
 
 const account = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 const owner = account.address.toLowerCase();
@@ -59,7 +60,7 @@ function addressOf(text: string) {
 
 const vaultKeys = [nativeVault, tokenVault].map((vault) => ({ vault, key: vaultKey({ owner: addressOf(owner), projectId: projectWord as never, asset: addressOf(vault.asset), purpose: "OrdinaryPurpose" }) }));
 
-function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean }) {
+function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown } }) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
   const seen: string[] = [];
@@ -110,7 +111,10 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
       if (method === "eth_chainId") return quantity(BigInt(chainId));
       if (method === "eth_call") return read(String(first?.to), String(first?.data));
       if (method === "eth_getBalance") return quantity(free);
-      if (method === "eth_estimateGas") return "0x5208";
+      if (method === "eth_estimateGas") {
+        if (options.estimateReverts !== undefined && String(first?.data).startsWith(options.estimateReverts.call)) throw options.estimateReverts.error;
+        return "0x5208";
+      }
       if (method === "wallet_getCapabilities") return options.atomic ? { [quantity(BigInt(chainId))]: { atomic: { status: "supported" } } } : {};
       if (method === "eth_sendTransaction") {
         if (options.send === "unclear") throw new Error("RPC timeout");
@@ -162,7 +166,7 @@ const connected = Effect.gen(function* () {
 });
 
 describe('Create and register the vault without asking the wallet twice (spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => {
-  it("the owner deposits into the registered vault once, the slot is saved before the prompt, an included transfer counts nothing and only the finalized exact deposit clears the slot", async () => {
+  it('the owner deposits into the registered vault once, the slot is saved before the prompt, an included transfer counts nothing, a tab-return recheck naming the same account keeps the request and its automatic check, and only the finalized exact deposit clears the slot (spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -176,16 +180,26 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
         sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", (plan) => Effect.tap(beforePrompt(plan), () => Effect.sync(() => { savedBeforePrompt = sessionStorage.getItem(keys.transfer); }))));
       const check = (saved: Saved) => Effect.map(checkTransfer(connection, nativeVault, "deposit", "send", 5n * 10n ** 18n, saved.plan, saved.attempt.hash), (status): Answer => (status === "finalized" ? "FinalRead" : status === "received" ? "IncludedRead" : status === "failed" || status === "noVault" ? "Reverted" : "StillPending")).pipe(Effect.orElseSucceed((): Answer => "ReadFailed"));
       const included = yield* page.ask("Transfer", "OwnerCheck", check);
+      const shown = vaultNotice(included.notice, { operation: "deposit", network: nativeVault.network, hash: sent });
       const keptWhileIncluded = sessionStorage.getItem(keys.transfer);
+      const recheck = yield* page.follow(actor);
       chain.finalize();
-      const final = yield* page.ask("Transfer", "OwnerCheck", check);
-      return { sent, savedBeforePrompt, included: [included.notice, included.transfer.phase], kept: keptWhileIncluded !== null, final: [final.notice, final.transfer.phase], after: sessionStorage.getItem(keys.transfer), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+      const final = yield* page.autoCheck("Transfer", 0, check);
+      return { sent, savedBeforePrompt, included: [included.notice, included.transfer.phase], shown, kept: keptWhileIncluded !== null, recheck: [recheck.transfer.phase, recheck.transfer.slot.hash === sent], final: [final.notice, final.transfer.phase], after: sessionStorage.getItem(keys.transfer), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
     }));
     expect(result.sent).toBe(chain.mined[0]?.hash);
     const savedRecord = JSON.parse(String(result.savedBeforePrompt));
     expect(savedRecord).toMatchObject({ account: actor, request: "transfer" });
     expect(JSON.parse(savedRecord.plan)).toEqual({ kind: "evmCall", from: owner, chainId: quantity(BigInt(chainId)), to: nativeVault.vault, data: chain.mined[0]?.input, value: quantity(5n * 10n ** 18n) });
-    expect(result).toMatchObject({ included: ["Received", "Sent"], kept: true, final: ["Counted", "Done"], after: null, sends: 1 });
+    expect(result).toMatchObject({
+      included: ["Received", "Sent"],
+      shown: `Deposit received in a Base block. It counts once Base finalizes that block, usually within 20 minutes; you can leave this page. ${result.sent}`,
+      kept: true,
+      recheck: ["Sent", true],
+      final: ["Counted", "Done"],
+      after: null,
+      sends: 1,
+    });
   });
 
   it("a reload after an unclear send recovers the saved request for the same account without asking the wallet again", async () => {
@@ -201,12 +215,29 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const unclear = yield* send(first);
       const reloaded = yield* ownerVaultPage(sessionSlots(), keys, true);
       const other = yield* reloaded.follow(actor + 1);
+      const none = yield* reloaded.follow(0);
       const same = yield* reloaded.follow(actor);
       const resend = yield* Effect.match(reloaded.review("Transfer", 0n, quietPool, unreadLocks), { onFailure: (error) => error._tag, onSuccess: (state) => state.transfer.phase });
       const unsent = yield* reloaded.confirmUnsent("Transfer");
-      return { unclear, otherPhase: other.transfer.phase, samePhase: same.transfer.phase, resend, afterConfirm: [unsent.transfer.phase, sessionStorage.getItem(keys.transfer)], sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+      return { unclear, otherPhase: other.transfer.phase, nonePhase: none.transfer.phase, samePhase: same.transfer.phase, resend, afterConfirm: [unsent.transfer.phase, sessionStorage.getItem(keys.transfer)], sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
     }));
-    expect(result).toEqual({ unclear: "VaultUncertain", otherPhase: "Idle", samePhase: "Unclear", resend: "VaultRefused", afterConfirm: ["Reviewed", null], sends: 1 });
+    expect(result).toEqual({ unclear: "VaultUncertain", otherPhase: "Idle", nonePhase: "Idle", samePhase: "Unclear", resend: "VaultRefused", afterConfirm: ["Reviewed", null], sends: 1 });
+  });
+
+  it(`a withdrawal whose gas estimate the vault refuses as locked funds says so in plain words, saves nothing and asks the wallet nothing (spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them")`, async () => {
+    const refusal = Object.assign(new Error("Internal JSON-RPC error."), { code: -32603, data: { code: 3, message: "execution reverted", data: PLEDGED_FUNDS_SELECTOR } });
+    const chain = fakeChain({ atomic: false, send: "mine", estimateReverts: { call: selector("withdrawUnused"), error: refusal } });
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("5e7f0a1b-2c3d-4e5f-8a6b-7c8d9e0f1a2b", chain.provider);
+      const connection = yield* connected;
+      const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* page.follow(actor);
+      yield* page.review("Transfer", 10n ** 18n, quietPool, unreadLocks);
+      const refused = yield* Effect.match(page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "withdraw", "send", "1", "finalized", beforePrompt)), { onFailure: (error) => error.message, onSuccess: () => "sent" });
+      return { refused, saved: sessionStorage.getItem(keys.transfer), phase: (yield* page.machine.get()).transfer.phase, prompts: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+    }));
+    expect(result).toEqual({ refused: lockedFundsText, saved: null, phase: "Reviewed", prompts: 0 });
   });
 });
 
@@ -241,6 +272,19 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
     }));
     expect(result).toEqual({ capability: true, phases: ["WalletReference", "WalletReference", "HashKnown", "HashKnown", "Verified"], sameReference: true, again: "BatchStopped", savedIntent: true, cleared: null, batches: 1 });
   });
+
+  it("a deposit whose allowance already covers the amount asks the wallet for the deposit alone, with no approval", async () => {
+    const chain = fakeChain({ atomic: true, send: "mine", approved: true });
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("4d6e9f0a-1b2c-4d3e-9f5a-6b7c8d9e0f1a", chain.provider);
+      const connection = yield* connected;
+      const review = yield* reviewTransfer(connection, tokenVault, "deposit", "2", "finalized");
+      const sent = yield* sendTransfer(connection, tokenVault, "deposit", "send", "2", "finalized", () => Effect.void);
+      return { approvalNeeded: review.approvalNeeded, batch: review.batch, sent: sent === chain.mined[0]?.hash, calls: chain.mined.map((entry) => [entry.to, entry.input.slice(0, 10)]), batches: chain.seen.filter((method) => method === "wallet_sendCalls").length };
+    }));
+    expect(result).toEqual({ approvalNeeded: false, batch: false, sent: true, calls: [[tokenVault.vault, selector("deposit")]], batches: 0 });
+  });
 });
 
 describe('Retain an uncertain deposit through replacement and finality (spec/frontend/provisionalVault.md, "Story: Retain an uncertain deposit through replacement and finality"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', () => {
@@ -261,6 +305,7 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       const again = yield* Effect.match(reloaded.deposit(connection, "2"), { onFailure: (error) => error._tag, onSuccess: ({ state }) => state.phase });
       yield* reloaded.followCreation(connection, creation);
       const received = yield* reloaded.followDeposit(connection, 2_000_000n);
+      const shown = provisionalMessages.received(tokenVault.network, sent.hash);
       chain.finalize();
       yield* reloaded.followCreation(connection, creation);
       const counted = yield* reloaded.followDeposit(connection, 2_000_000n);
@@ -270,6 +315,7 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
         resumed: [resumed.phase, resumed.transaction],
         again,
         received: [received.phase, received.view, received.counted],
+        shown: shown === `Deposit received in a Base block. The vault is recorded once Base finalizes its creation, usually within 20 minutes, and the deposit counts after that; you can leave this page. ${sent.hash}`,
         counted: [counted.phase, counted.view, counted.registered, counted.counted],
         cleared: sessionStorage.getItem(provisionalKey),
         sends: chain.seen.filter((method) => method === "eth_sendTransaction").length,
@@ -281,6 +327,7 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       resumed: ["Submitted", 1],
       again: "DepositStopped",
       received: ["IncludedEvent", "Received", false],
+      shown: true,
       counted: ["Verified", "DepositVerified", true, true],
       cleared: null,
       sends: 1,

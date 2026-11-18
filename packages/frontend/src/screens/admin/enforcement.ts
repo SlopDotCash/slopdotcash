@@ -16,7 +16,7 @@ const actionLabels: Readonly<Record<EnforcementAction, string>> = {
 };
 
 const resultLabels: Readonly<Record<string, string>> = {
-  revision_appended: "Appends the matching revision",
+  revision_appended: "Revision appended",
   revision_pending: "Revision pending",
   no_revision_needed: "No revision needed",
 };

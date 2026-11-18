@@ -4,13 +4,21 @@ import { CallerLive } from "@repo/backend/caller"
 import type { D1Database, D1PreparedStatement, ExecutionContext, Fetcher, SqlValue } from "@repo/platform/bindings"
 import { isoAt } from "@repo/platform/clock"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Abi, keccak } from "@repo/platform/chain/evm"
 import { d1 } from "@repo/platform/d1"
-import { database, migrate, startWorker } from "@repo/platform/testing"
+import { outbound } from "@repo/platform/http"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { serve } from "@repo/platform/testing/chains"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { area, pages } from "@repo/platform/worker"
+import { decodeFunctionData, encodeFunctionResult } from "viem"
 import { referralApi } from "../src/client/referrals.vibe"
+import { refreshClaimCache } from "../src/referrals/claimCache.vibe"
+import { ReferralProgram, decodeProgram } from "../src/referrals/config.vibe"
+import { type Deployment, ReferralDeployment, distributorAbi, tokenAbi } from "../src/referrals/distributor.vibe"
 import { buildTree } from "../src/referrals/merkle.ts"
 import { referralRoutes } from "../src/referrals/routes.vibe"
+import { reviewedVars } from "./support/referralVectors.ts"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -32,6 +40,19 @@ service Sites {
   readonly files: Env
   readonly claims: Env
   readonly failing: Env
+  readonly distributorRpc: string
+}
+
+schema CacheState {
+  readonly body: string | null
+  readonly observed_at: string | null
+  readonly error_at: string | null
+}
+
+interface RpcCall {
+  readonly id: unknown
+  readonly method: string
+  readonly params: ReadonlyArray<unknown>
 }
 
 const referrer = "900000100"
@@ -55,6 +76,55 @@ const unavailable = () => Promise.reject(new Error("D1_ERROR: the database is un
 const failingStatement: D1PreparedStatement = { bind: () => failingStatement, all: unavailable, run: unavailable }
 const failingDatabase: D1Database = { prepare: () => failingStatement, batch: unavailable, exec: unavailable }
 const unknownSession = `__Host-slop_points=${"referral-session-unknown-".padEnd(48, "x")}`
+const runtime = "0x6080604052348015600f57600080fd5b50"
+const finalizedNumber = 150n
+const chainHead = { timestamp: 0 }
+const callAbi: Abi = [...distributorAbi, ...tokenAbi]
+const views: Readonly<Record<string, unknown>> = {
+  token: program.token,
+  decimals: 18,
+  owner: `0x${"5".repeat(40)}`,
+  poster: `0x${"6".repeat(40)}`,
+  paused: false,
+  epochCap: 0n,
+  postSpacing: 0n,
+  totalClaimed: 0n,
+  lastUnpausedAt: 0n,
+  epochCount: 0n,
+  balanceOf: 0n,
+  currentRoot: [`0x${"0".repeat(64)}`, 0n, (1n << 256n) - 1n],
+}
+
+function quantity(value: bigint | number) {
+  return `0x${value.toString(16)}`
+}
+
+function blockHash(number: bigint) {
+  return `0x${number.toString(16).padStart(64, "0")}`
+}
+
+function viewResult(params: ReadonlyArray<unknown>) {
+  const [request] = params
+  const data = typeof request === "object" && request !== null && "data" in request ? String(request.data) : "0x"
+  const { functionName } = decodeFunctionData({ abi: callAbi, data: data as `0x${string}` })
+  return encodeFunctionResult({ abi: callAbi, functionName, result: views[functionName] as never })
+}
+
+function distributorAnswer(call: RpcCall): unknown {
+  switch (call.method) {
+    case "eth_chainId": return quantity(46630)
+    case "eth_getBlockByNumber": return { number: quantity(finalizedNumber), hash: blockHash(finalizedNumber), parentHash: blockHash(finalizedNumber - 1n), timestamp: quantity(chainHead.timestamp), transactions: [] }
+    case "eth_getCode": return runtime
+    case "eth_call": return viewResult(call.params)
+    case "eth_getLogs": return []
+    default: return null
+  }
+}
+
+const distributorChain: Handler = async (request) => {
+  const call = await request.json() as RpcCall
+  return new WebResponse(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: distributorAnswer(call) }), { headers: { "content-type": "application/json" } })
+}
 
 const site = pages({
   areas: [area({ name: "referrals", api: referralApi, routes: referralRoutes, provides: Layer.empty })],
@@ -68,7 +138,9 @@ const Started = Layer.effect(Sites, effect {
   const claimsApplied = try promise(() => migrate(mf, "CLAIMS_DB", migrationsDir))
   const failed = [...filesApplied, ...claimsApplied].filter((applied) => applied.error !== undefined)
   if (failed.length > 0) return try die(new Error(`migration ${failed[0]?.file} failed: ${failed[0]?.error}`))
+  const chain = try acquireRelease(promise(() => serve(distributorChain)), (served) => promise(() => served.close()))
   return {
+    distributorRpc: chain.url,
     files: { SLOP_DB: try promise(() => database(mf, "FILES_DB")), ASSETS: assets },
     claims: { SLOP_DB: try promise(() => database(mf, "CLAIMS_DB")), ASSETS: assets },
     failing: { SLOP_DB: failingDatabase, ASSETS: assets },
@@ -112,6 +184,23 @@ effect function file(env: Env, row: { readonly period: string; readonly epoch: n
 
 effect function cache(env: Env, body: string | null, observedAt: string | null, errorAt: string | null) {
   try seed(env, "INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, observed_at = excluded.observed_at, error_at = excluded.error_at", body, observedAt, errorAt)
+}
+
+effect function cacheState(env: Env) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT body, observed_at, error_at FROM referral_claim_cache WHERE id = 'program'").all())
+  return try orDie(Schema.decodeUnknownEffect(CacheState)(found.results[0]))
+}
+
+effect function refreshedAt(env: Env, rpc: string, timestamp: number) {
+  chainHead.timestamp = timestamp
+  const deployment = {
+    networkKey: "robinhood-testnet", network: "RobinhoodTestnet", chainId: 46630n, distributor: program.distributor as `0x${string}`, token: program.token as `0x${string}`,
+    poster: `0x${"6".repeat(40)}`, deploymentBlock: 1n, codeHash: keccak(runtime), urls: Redacted.make([rpc]),
+  } satisfies Deployment
+  const services = Layer.mergeAll(d1(env.SLOP_DB), outbound, Layer.succeed(ReferralDeployment, { deployment }), Layer.effect(ReferralProgram, effect { return { program: try decodeProgram(reviewedVars) } }))
+  provide services {
+    return refreshClaimCache() catch (error) => error._tag
+  }
 }
 
 effect function treeFor(cumulative: string) {
@@ -216,7 +305,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     })
   })
 
-  it.effect('The claims read answers only the signed-in account\'s cached view (spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded")', () => effect {
+  it.effect('The claims read answers only the signed-in account\'s cached view, and a refresh never stores a view the read refuses (spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded")', () => effect {
     const { claims } = try Sites
     const nowMillis = try Clock.currentTimeMillis
     const now = try isoAt(nowMillis)
@@ -321,6 +410,31 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       totalsDiffer: [500, internalError],
       pausedBelowLeaf: [200, { ...account, accruedBase: hundredTwenty, paused: true, claimableBase: "0", pendingBase: (100n * unit).toString(), claim: null }],
       wrongProof: [500, internalError],
+    })
+
+    const { distributorRpc } = try Sites
+    const lastValidBody = JSON.stringify(snapshot)
+    try cache(claims, lastValidBody, now, null)
+    const lastValid = try read(member)
+    const refused = try refreshedAt(claims, distributorRpc, 9_000_000_000_000)
+    const keptRow = try cacheState(claims)
+    const staleView = try read(member)
+    const stored = try refreshedAt(claims, distributorRpc, seconds)
+    const storedRow = try cacheState(claims)
+    const storedBlock = storedRow.body === null ? undefined : (try orDie(Effect.try(() => JSON.parse(storedRow.body ?? "") as { readonly block: unknown }))).block
+    const valid = { ...account, accruedBase: hundred, pendingBase: "0" }
+    try same({
+      lastValid,
+      refused,
+      kept: [keptRow.body === lastValidBody, keptRow.observed_at, keptRow.error_at !== null],
+      staleView,
+      stored: [stored, storedRow.error_at, storedBlock],
+    }, {
+      lastValid: [200, valid],
+      refused: "SchemaError",
+      kept: [true, now, true],
+      staleView: [200, { ...valid, status: "stale", claimableBase: null, pendingBase: null, claim: null }],
+      stored: [{ status: "refreshed", block: finalizedNumber.toString(), epochs: 0 }, null, { number: finalizedNumber.toString(), hash: blockHash(finalizedNumber), timestamp: seconds }],
     })
   })
 })

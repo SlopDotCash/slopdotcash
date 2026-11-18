@@ -1,0 +1,437 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
+import { sha256Hex } from "@repo/platform/crypto"
+import { ControlPlane, ControlRefused, type Method, controlPlane } from "@repo/operations/controlPlane"
+import { Cloudflare, ToolFailed, cloudflare, pinnedWrangler } from "@repo/operations/wrangler"
+import { type FlagNames, FlagsRefused, bucketBinding, databaseBinding, flagNames, flagsSchema, protectedWorkflow, queueBinding, runtimeVars } from "./plan.vibe"
+
+export error FlagsFailed { stage: string; report: string }
+
+schema Database { readonly uuid: string; readonly name: string }
+schema Bucket { readonly name: string; readonly creation_date: string }
+schema QueueEntry { readonly queue_id: string; readonly queue_name: string }
+schema Subdomain { readonly enabled: boolean; readonly previews_enabled: boolean }
+schema Managed { readonly enabled: boolean }
+schema CustomDomain { readonly domain?: string }
+schema Custom { readonly domains: ReadonlyArray<CustomDomain> }
+schema ConsumerSettings { readonly max_concurrency: number; readonly batch_size: number }
+schema Consumer { readonly consumer_id: string; readonly type: string; readonly script?: string; readonly script_name?: string; readonly settings: ConsumerSettings }
+schema QueueDetail { readonly queue_id: string; readonly queue_name: string; readonly consumers: ReadonlyArray<Consumer> }
+schema ActiveVersion { readonly version_id: string; readonly percentage: number }
+schema DeploymentStatus { readonly versions: ReadonlyArray<ActiveVersion> }
+schema VersionEntry { readonly id: string; readonly annotations?: Record<string, string> }
+schema PhaseRow { readonly phase: string; readonly result: string }
+schema Binding { readonly type: string; readonly name: string; readonly id?: string; readonly bucket_name?: string; readonly queue_name?: string; readonly text?: string }
+schema Settings { readonly bindings: ReadonlyArray<Binding> }
+
+const QueryResults = Schema.Array(Schema.Struct({ success: Schema.Boolean, results: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)) }))
+const bindingFields = ["type", "name", "id", "bucket_name", "queue_name", "text"] as const
+const uuidPattern = /^[a-f0-9-]{36}$/u
+const hex32 = /^[a-f0-9]{32}$/u
+const commandSeconds = 180
+const deploySeconds = 120
+const migrationSeconds = 300
+const bundlePath = "apps/security/dist/vettingFlags.js"
+
+export interface SafeFailure {
+  readonly kind: string
+  readonly reason: string | null
+  readonly status: number | null
+  readonly cloudflareCodes: ReadonlyArray<number>
+}
+
+export interface Owned {
+  readonly databases: Database[]
+  readonly queues: QueueEntry[]
+  readonly buckets: Bucket[]
+  worker: boolean
+}
+
+export interface FlagsReport {
+  readonly source: string
+  readonly run: string
+  readonly hosted: true
+  readonly productionTouched: false
+  readonly scans: false
+  readonly syntheticScanResults: true
+  readonly policyAttested: false
+  migrationHashes?: ReadonlyArray<{ readonly path: string; readonly sha256: string }>
+  results: Record<string, unknown>
+  failure?: SafeFailure & { readonly stage: string }
+  workerRecovery?: "confirmed-absent" | "verified-owned-deployment" | "unresolved"
+  workerRecoveryFailure?: SafeFailure
+  fixtureResources?: Owned
+  workerVersion?: string | null
+  cleanup?: { readonly complete: boolean; readonly failedOperations: number; readonly unresolvedCreations: ReadonlyArray<string> }
+  success?: boolean
+}
+
+export interface FlagsRun {
+  readonly run: string
+  readonly source: string
+}
+
+function refused(message: string) {
+  return new FlagsRefused({ message })
+}
+
+export function safeFailure(cause: Cause.Cause<unknown>): SafeFailure {
+  const error = Cause.squash(cause)
+  if (error instanceof ControlRefused) return { kind: error._tag, reason: error.step, status: error.status, cloudflareCodes: error.codes }
+  if (error instanceof ToolFailed) return { kind: error._tag, reason: error.step, status: error.command?.exitCode ?? null, cloudflareCodes: error.command?.providerCode == null ? [] : [error.command.providerCode] }
+  if (error instanceof FlagsRefused) return { kind: error._tag, reason: error.message, status: null, cloudflareCodes: [] }
+  const tag = typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : "Defect"
+  return { kind: tag, reason: null, status: null, cloudflareCodes: [] }
+}
+
+effect function decoded<S extends Schema.Top>(schema: S, value: unknown, step: string) {
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw refused(`${step}: the answer has an unexpected shape`)
+  }
+}
+
+effect function json(text: string, step: string) {
+  return Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw refused(`${step}: the answer is not JSON`)
+  }
+}
+
+effect function waited<A, E, R>(seconds: number, failure: string, probe: (A | undefined)!E!R) {
+  const deadline = (try Clock.currentTimeMillis) + seconds * 1000
+  for (;;) {
+    const found = try probe
+    if (found !== undefined) return found
+    if ((try Clock.currentTimeMillis) > deadline) throw refused(failure)
+    try sleep(Duration.seconds(1))
+  }
+}
+
+export effect function flagsQualification(input: FlagsRun & { readonly root: string; readonly workspace: string }) {
+  const control = try ControlPlane
+  const tools = try Cloudflare
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const { run, source } = input
+  const names: FlagNames = flagNames(run)
+  const owned: Owned = { databases: [], queues: [], buckets: [], worker: false }
+  const uncertain = new Set<string>()
+  const report: FlagsReport = { source, run, hosted: true, productionTouched: false, scans: false, syntheticScanResults: true, policyAttested: false, results: {} }
+  let stage = "prepare-resources"
+  let workerVersion: string | undefined = undefined
+  let consumerId: string | undefined = undefined
+  let deployed = false
+  let bindingsVerified = false
+  let success = false
+  let deliveries = 0
+
+  const api = (step: string, method: Method, path: string, body?: unknown) => control.call(step, method, path, body)
+
+  effect function requireAbsent(path: string) {
+    if ((try control.find("absence", path)) !== undefined) throw refused("Owned fixture still exists after deletion")
+  }
+
+  effect function query(text: string, params: ReadonlyArray<string> = []) {
+    const database = owned.databases[0]
+    if (database === undefined) throw refused("Database is not owned by this run")
+    const results = try decoded(QueryResults, try api("query", "POST", `d1/database/${database.uuid}/query`, { sql: text, params }), "query")
+    if (results.some((result) => !result.success)) throw refused("Qualification SQL failed")
+    return results.flatMap((result) => result.results)
+  }
+
+  effect function count(action: string) {
+    const [row] = try query("SELECT count(*) n FROM qualification_deliveries WHERE action=?", [action])
+    return Number(row?.n ?? 0)
+  }
+
+  effect function command(action: string) {
+    if (!bindingsVerified) throw refused("Qualification bindings are not verified")
+    const work = owned.queues[0]
+    if (work === undefined) throw refused("The work queue is not owned by this run")
+    deliveries += 1
+    const delivery = `${action}-${deliveries}`
+    try api("command", "POST", `queues/${work.queue_id}/messages`, { content_type: "json", body: { qualification: run, action, delivery } })
+    try waited(commandSeconds, "Qualification command was not completed", effect {
+      if ((try query("SELECT id FROM qualification_deliveries WHERE id=?", [`command:${delivery}`])).length === 1) return true
+      if ((try query("SELECT phase FROM qualification_results WHERE phase=?", [`failed-${action}`])).length > 0) throw refused("Qualification command was not completed")
+      return undefined
+    })
+  }
+
+  effect function waitFor(phase: string) {
+    return try waited(commandSeconds, "Qualification result did not complete", effect {
+      const rows = try decoded(Schema.Array(PhaseRow), try query("SELECT phase,result FROM qualification_results WHERE phase IN (?,?)", [phase, `failed-${phase}`]), "results")
+      if (rows.some((row) => row.phase === `failed-${phase}`)) throw refused("Qualification assertion failed")
+      const row = rows.find((candidate) => candidate.phase === phase)
+      return row === undefined ? undefined : try json(row.result, "results")
+    })
+  }
+
+  effect function replayed(action: string) {
+    try command(action)
+    const first = try waitFor(action)
+    try command(action)
+    const again = try waitFor(action)
+    if ((try count(action)) !== 2 || JSON.stringify(first) !== JSON.stringify(again)) throw refused(`The ${action} fixture replay differs`)
+    return { first, again }
+  }
+
+  effect function wrangler(step: string, args: ReadonlyArray<string>, seconds = deploySeconds) {
+    return try tools.wrangler(step, { args, cwd: input.workspace, seconds })
+  }
+
+  effect function assertVersion(expected: string | undefined) {
+    const status = try decoded(DeploymentStatus, try json(try wrangler("deployment status", ["deployments", "status", "--name", run, "--json"]), "deployment status"), "deployment status")
+    const versions = try decoded(Schema.Array(VersionEntry), try json(try wrangler("versions", ["versions", "list", "--name", run, "--json"]), "versions"), "versions")
+    const [active, ...others] = status.versions
+    const tagged = active !== undefined && versions.some((version) => version.id === active.version_id && version.annotations?.["workers/tag"] === source)
+    if (active === undefined || others.length > 0 || active.percentage !== 100 || !tagged || (expected !== undefined && active.version_id !== expected)) {
+      throw refused("Qualification deployment is not the reviewed source")
+    }
+    return active.version_id
+  }
+
+  effect function assertPrivateBindings() {
+    const actual = (try decoded(Settings, try api("settings", "GET", `workers/scripts/${run}/settings`), "settings")).bindings
+    const wanted: ReadonlyArray<Binding> = [
+      ...owned.databases.map((database) => ({ type: "d1", name: databaseBinding, id: database.uuid })),
+      ...owned.buckets.map((bucket) => ({ type: "r2_bucket", name: bucketBinding, bucket_name: bucket.name })),
+      { type: "queue", name: queueBinding, queue_name: names.queues[0] },
+      ...Object.entries(runtimeVars(run)).map(([name, text]) => ({ type: "plain_text", name, text })),
+    ]
+    const matched = wanted.every((binding) => actual.some((candidate) => bindingFields.every((field) => binding[field] === undefined || candidate[field] === binding[field])))
+    if (actual.length !== wanted.length || !matched) throw refused("Qualification bindings differ")
+    const urls = try decoded(Subdomain, try api("subdomain", "GET", `workers/scripts/${run}/subdomain`), "subdomain")
+    if (urls.enabled || urls.previews_enabled) throw refused("Qualification Worker has a public URL")
+    for (const bucket of owned.buckets) {
+      const managed = try decoded(Managed, try api("bucket domains", "GET", `r2/buckets/${bucket.name}/domains/managed`), "bucket domains")
+      const custom = try decoded(Custom, try api("bucket domains", "GET", `r2/buckets/${bucket.name}/domains/custom`), "bucket domains")
+      if (managed.enabled || custom.domains.length > 0) throw refused("Qualification bucket has public access")
+    }
+  }
+
+  effect function assertBindings() {
+    try assertPrivateBindings()
+    const work = owned.queues[0]
+    if (work === undefined) throw refused("The work queue is not owned by this run")
+    const queue = try decoded(QueueDetail, try api("queue", "GET", `queues/${work.queue_id}`), "queue")
+    const [consumer, ...others] = queue.consumers
+    const scripts = [consumer?.script, consumer?.script_name].filter((script) => script !== undefined)
+    if (
+      consumer === undefined || others.length > 0 || consumer.type !== "worker" || scripts.length === 0 || scripts.some((script) => script !== run)
+      || consumer.settings.max_concurrency !== 1 || consumer.settings.batch_size !== 1
+    ) throw refused("Qualification queue consumer differs")
+    if (!hex32.test(consumer.consumer_id)) throw refused("Qualification consumer identity is missing")
+    consumerId = consumer.consumer_id
+    bindingsVerified = true
+  }
+
+  effect function resolveWorkerCreation() {
+    if (!uncertain.has(run)) return
+    if ((try control.find("worker recovery", `workers/scripts/${run}/settings`)) === undefined) {
+      uncertain.delete(run)
+      report.workerRecovery = "confirmed-absent"
+      return
+    }
+    workerVersion = try assertVersion(undefined)
+    try assertPrivateBindings()
+    owned.worker = true
+    deployed = true
+    uncertain.delete(run)
+    report.workerRecovery = "verified-owned-deployment"
+  }
+
+  effect function attempted<A, E, R>(operation: A!E!R) {
+    return Exit.isSuccess(try exit(operation)) ? 0 : 1
+  }
+
+  effect function cleanup() {
+    let errors = 0
+    if (deployed && bindingsVerified) {
+      errors += try attempted(effect {
+        if (workerVersion === undefined) throw refused("Worker creation is unresolved")
+        try assertVersion(workerVersion)
+        try assertBindings()
+        try command("empty")
+        try waitFor("empty")
+      })
+    }
+    if (owned.worker) {
+      errors += try attempted(effect {
+        if (workerVersion === undefined) throw refused("Worker creation is unresolved")
+        try assertVersion(workerVersion)
+        try assertPrivateBindings()
+        const work = owned.queues[0]
+        if (work === undefined) throw refused("The work queue is not owned by this run")
+        const queue = try decoded(QueueDetail, try api("queue", "GET", `queues/${work.queue_id}`), "queue")
+        if (queue.consumers.length > 0) {
+          try assertBindings()
+          try api("remove consumer", "DELETE", `queues/${work.queue_id}/consumers/${consumerId ?? ""}`)
+        }
+        try api("remove worker", "DELETE", `workers/scripts/${run}`)
+        try requireAbsent(`workers/scripts/${run}/settings`)
+        owned.worker = false
+      })
+    }
+    for (const queue of owned.queues.toReversed()) {
+      errors += try attempted(effect {
+        const current = try decoded(QueueEntry, try api("queue", "GET", `queues/${queue.queue_id}`), "queue")
+        if (current.queue_name !== queue.queue_name || !names.queues.includes(current.queue_name)) throw refused("Queue ownership changed")
+        try api("remove queue", "DELETE", `queues/${queue.queue_id}`)
+        try requireAbsent(`queues/${queue.queue_id}`)
+      })
+    }
+    for (const database of owned.databases) {
+      errors += try attempted(effect {
+        const current = try decoded(Database, try api("database", "GET", `d1/database/${database.uuid}`), "database")
+        if (current.uuid !== database.uuid || current.name !== database.name || !names.databases.includes(current.name)) throw refused("Database ownership changed")
+        try api("remove database", "DELETE", `d1/database/${database.uuid}`)
+        try requireAbsent(`d1/database/${database.uuid}`)
+      })
+    }
+    for (const bucket of owned.buckets) {
+      errors += try attempted(effect {
+        const current = try decoded(Bucket, try api("bucket", "GET", `r2/buckets/${bucket.name}`), "bucket")
+        if (current.name !== bucket.name || current.creation_date !== bucket.creation_date || !names.buckets.includes(current.name)) throw refused("Bucket ownership changed")
+        try api("remove bucket", "DELETE", `r2/buckets/${bucket.name}`)
+        try requireAbsent(`r2/buckets/${bucket.name}`)
+      })
+    }
+    report.fixtureResources = owned
+    report.workerVersion = workerVersion ?? null
+    report.cleanup = { complete: errors === 0 && uncertain.size === 0, failedOperations: errors, unresolvedCreations: [...uncertain] }
+  }
+
+  effect function provision() {
+    if ((try control.find("worker", `workers/scripts/${run}/settings`)) !== undefined) throw refused("Qualification Worker already exists")
+    for (const name of names.databases) {
+      const existing = try decoded(Schema.Array(Database), try api("databases", "GET", `d1/database?name=${name}`), "databases")
+      if (existing.length > 0) throw refused("Qualification database already exists")
+      uncertain.add(name)
+      const created = try decoded(Database, try api("create database", "POST", "d1/database", { name }), "create database")
+      if (created.name !== name || !uuidPattern.test(created.uuid)) throw refused("Unexpected database identity")
+      owned.databases.push({ uuid: created.uuid, name: created.name })
+      uncertain.delete(name)
+    }
+    for (const name of names.buckets) {
+      if ((try control.find("bucket", `r2/buckets/${name}`)) !== undefined) throw refused("Qualification bucket already exists")
+      uncertain.add(name)
+      const created = try decoded(Bucket, try api("create bucket", "POST", "r2/buckets", { name }), "create bucket")
+      if (created.name !== name || created.creation_date === "") throw refused("Unexpected bucket identity")
+      owned.buckets.push({ name: created.name, creation_date: created.creation_date })
+      uncertain.delete(name)
+    }
+    for (const name of names.queues) {
+      const existing = try decoded(Schema.Array(QueueEntry), try api("queues", "GET", `queues?name=${name}`), "queues")
+      if (existing.some((queue) => queue.queue_name === name)) throw refused("Qualification queue already exists")
+      uncertain.add(name)
+      const created = try decoded(QueueEntry, try api("create queue", "POST", "queues", { queue_name: name }), "create queue")
+      if (created.queue_name !== name || !hex32.test(created.queue_id)) throw refused("Unexpected queue identity")
+      owned.queues.push({ queue_id: created.queue_id, queue_name: created.queue_name })
+      uncertain.delete(name)
+    }
+  }
+
+  effect function configured() {
+    const bundle = files.join(input.root, bundlePath)
+    if (!(try fs.exists(bundle))) throw refused(`The flag qualification Worker is not built (${bundlePath})`)
+    const source = files.join(input.root, "migrations")
+    const migrations = files.join(input.workspace, "migrations")
+    try fs.makeDirectory(migrations, { recursive: true })
+    try fs.writeFileString(files.join(migrations, "0000_qualification_schema.sql"), flagsSchema)
+    const listed = (try fs.readDirectory(source)).filter((name) => name.endsWith(".sql")).toSorted()
+    const hashes: Array<{ readonly path: string; readonly sha256: string }> = []
+    for (const name of listed) {
+      const text = try fs.readFileString(files.join(source, name))
+      hashes.push({ path: name, sha256: try sha256Hex(text) })
+      try fs.writeFileString(files.join(migrations, name), text)
+    }
+    report.migrationHashes = hashes
+    const [work, failed] = names.queues
+    const config = {
+      name: run,
+      main: bundle,
+      no_bundle: true,
+      compatibility_date: "2026-07-30",
+      workers_dev: false,
+      preview_urls: false,
+      account_id: control.accountId,
+      vars: runtimeVars(run),
+      d1_databases: owned.databases.map((database) => ({ binding: databaseBinding, database_name: database.name, database_id: database.uuid, migrations_dir: migrations })),
+      r2_buckets: owned.buckets.map((bucket) => ({ binding: bucketBinding, bucket_name: bucket.name })),
+      queues: {
+        producers: [{ binding: queueBinding, queue: work }],
+        consumers: [{ queue: work, max_batch_size: 1, max_batch_timeout: 0, max_retries: 2, retry_delay: 1, dead_letter_queue: failed, max_concurrency: 1 }],
+      },
+      observability: { enabled: false },
+      limits: { cpu_ms: 300000 },
+    }
+    const file = files.join(input.workspace, "wrangler.json")
+    try fs.writeFileString(file, JSON.stringify(config), { mode: 0o600 })
+    return file
+  }
+
+  effect function qualified() {
+    try provision()
+    const config = try configured()
+    for (const database of owned.databases) try wrangler("schema", ["d1", "migrations", "apply", database.name, "--remote", "--config", config], migrationSeconds)
+    stage = "deploy-worker"
+    uncertain.add(run)
+    try wrangler("deploy", ["deploy", "--config", config, "--tag", source, "--message", `Disposable recovery qualification ${run}`])
+    stage = "verify-worker"
+    owned.worker = true
+    deployed = true
+    workerVersion = try assertVersion(undefined)
+    uncertain.delete(run)
+    try assertBindings()
+    stage = "fixture-commands"
+    const flags = try replayed("flags")
+    report.results.flags = flags.first
+    report.results.replayedFlags = flags.again
+    report.results.acknowledgedFlagCommands = 2
+    const access = try replayed("access")
+    report.results.access = access.first
+    report.results.replayedAccess = access.again
+    report.results.acknowledgedAccessCommands = 2
+    success = true
+  }
+
+  const outcome = try exit(qualified())
+  if (Exit.isFailure(outcome)) {
+    report.failure = { stage, ...safeFailure(outcome.cause) }
+    const recovered = try exit(resolveWorkerCreation())
+    if (Exit.isFailure(recovered)) {
+      report.workerRecovery = "unresolved"
+      report.workerRecoveryFailure = safeFailure(recovered.cause)
+    }
+  }
+  try cleanup()
+  report.success = success && report.cleanup?.complete === true
+  return report
+}
+
+effect function reported(report: FlagsReport, workspace: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const directory = files.join((try Config.withDefault(Config.String("RUNNER_TEMP"), workspace)) || workspace, "vetting-flags-report")
+  try fs.makeDirectory(directory, { recursive: true })
+  const path = files.join(directory, "result.json")
+  try fs.writeFileString(path, `${JSON.stringify(report, null, 2)}\n`)
+  return path
+}
+
+export effect function hostedFlags(input: FlagsRun) {
+  const files = try Path.Path
+  const root = files.resolve(".")
+  return try scoped(effect {
+    const workspace = try (try FileSystem.FileSystem).makeTempDirectoryScoped({ prefix: `${input.run}-` })
+    provide controlPlane, cloudflare({ root, wrangler: pinnedWrangler(root) }) {
+      const report = try flagsQualification({ ...input, root, workspace })
+      const path = try reported(report, workspace)
+      if (report.success !== true) {
+        try Console.error("Scanner recovery qualification failed. Inspect safe result and owned-resource cleanup status; no private bytes or credentials are logged.")
+        throw new FlagsFailed({ stage: report.failure?.stage ?? "cleanup", report: path })
+      }
+      try Console.log("Hosted harmless qualification passed; safe result recorded. No operational policy is attested.")
+      return report
+    }
+  })
+}

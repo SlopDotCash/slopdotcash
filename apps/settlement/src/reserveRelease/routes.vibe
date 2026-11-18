@@ -1,0 +1,98 @@
+// spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { EvmRpc } from "@repo/platform/chain/evm"
+import { D1 } from "@repo/platform/d1"
+import { type Actor, Refused, handle } from "@repo/platform/http"
+import { Authority, Registry, RegistryManifests } from "@repo/ports/backend"
+import { type ReleaseAnswer, ReleaseReview, monthlyReserveRelease } from "../client/reserveRelease.vibe"
+import { postPaymentsProjectsByIdMonthlyByPeriodReserveRelease as rows } from "../client/refusals.vibe"
+import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { authorize, periodOf, refused, unchanged } from "../monthly/owner.vibe"
+import { servedDeploymentOf } from "../monthly/store.vibe"
+import { registryDeployments } from "../vault/deployments.vibe"
+import { type OwnerReleaseRequest, type ReleaseCheckRequest, type ReleaseOwner, ReleaseApprover, ReleaseRefused, checkRelease, prepareRelease } from "./release.vibe"
+
+export interface ReleaseCall {
+  readonly request: OwnerReleaseRequest | ReleaseCheckRequest
+  readonly owner: ReleaseOwner
+}
+
+export error ReleaseUnavailable { network: string }
+export error ReleaseHeld { reason: string }
+
+export service ReserveReleases {
+  release(call: ReleaseCall): ReleaseAnswer!(ReleaseUnavailable | ReleaseHeld)
+}
+
+effect function registeredDeployment(request: OwnerReleaseRequest, network: NetworkKey) {
+  const loaded = try registryDeployments([network], "ordinary")
+  const found = loaded.deployments.find((deployment) => deployment.projectId === request.projectId && deployment.network === network)
+  if (found === undefined || found.family !== "evm") throw new ReleaseRefused({ message: "Monthly deployment unavailable" })
+  return found
+}
+
+effect function released(call: ReleaseCall, network: NetworkKey) {
+  const { request, owner } = call
+  const deployment = try registeredDeployment(request, network)
+  if ("planId" in request) return try checkRelease(request, deployment)
+  return try prepareRelease(request, deployment, owner)
+}
+
+function tagOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "failure"
+}
+
+export function reserveReleaseJournal(networks: ReadonlyArray<NetworkKey>) {
+  return Layer.effect(ReserveReleases, effect {
+    const services = try Effect.context<D1 | Experimental.Crypto.Crypto | EvmRpc | ReleaseApprover | KeyValueStore.KeyValueStore | Registry | Authority | RegistryManifests>()
+    return {
+      release: (call) => effect {
+        const network = call.request.network
+        if (!isNetworkKey(network) || !networks.includes(network)) throw new ReleaseUnavailable({ network })
+        const answer: ReleaseAnswer = Effect.provide(released(call, network), services) catch effect (error) => {
+          try Effect.logError("monthly reserve release held", tagOf(error))
+          throw new ReleaseHeld({ reason: tagOf(error) })
+        }
+        return answer
+      },
+    } satisfies ReserveReleases.Shape
+  })
+}
+
+effect function reviewOf(body: Readonly<Record<string, unknown>>) {
+  const review = Schema.decodeUnknownEffect(ReleaseReview)(body, { onExcessProperty: "error" }) catch effect () => { throw refused(rows.invalidReleaseReview) }
+  if ("planId" in review && (!/^[a-f0-9]{64}$/u.test(review.planId) || review.transactionId.length > 130)) throw refused(rows.invalidReleaseReview)
+  return review
+}
+
+effect function releaseOf(call: ReleaseCall) {
+  return (try ReserveReleases).release(call) catch effect (error) => match (error) {
+    when ReleaseUnavailable: throw refused(rows.releaseUnavailable);
+    default: throw refused(rows.releaseHeld);
+  }
+}
+
+effect function releaseReserve(projectId: string, period: string, actor: Actor, review: ReleaseReview) {
+  const { project, manifest, facts } = try authorize(projectId, actor, "owner")
+  try periodOf(period)
+  const deployment = servedDeploymentOf(manifest, facts.served)
+  if (deployment === undefined || deployment.network !== review.network || project.manifestSha256 !== review.manifestSha256) throw refused(rows.projectChanged)
+  try unchanged(project)
+  const request: OwnerReleaseRequest = { projectId, period, network: deployment.network, manifestSha256: project.manifestSha256 }
+  const answer = try releaseOf({ request: "planId" in review ? { ...request, planId: review.planId, transactionId: review.transactionId } : request, owner: { githubId: actor.githubId } })
+  try unchanged(project)
+  return answer
+}
+
+effect function unavailable<A, E, R>(program: A!E!R) {
+  return program catch effect (error) => {
+    if (error instanceof Refused) throw error
+    try Effect.logError("payments API failure", tagOf(error))
+    throw refused(rows.paymentsUnavailable)
+  }
+}
+
+export const reserveReleaseRoutes = handle(monthlyReserveRelease, (input) => unavailable(effect {
+  const review = try reviewOf(input.body)
+  return try releaseReserve(input.params.id ?? "", input.params.period ?? "", input.actor, review)
+}))

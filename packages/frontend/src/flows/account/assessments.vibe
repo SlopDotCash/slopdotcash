@@ -17,7 +17,7 @@ export type AssessmentQueue =
   | { readonly kind: "suppressed"; readonly currentActor: string | null }
   | { readonly kind: "refresh"; readonly message: string }
   | { readonly kind: "retry"; readonly message: string }
-  | { readonly kind: "ready"; readonly queue: IncompleteAssessments }
+  | { readonly kind: "ready"; readonly queue: IncompleteAssessments; readonly at: number }
 
 const recipient = /^[1-9][0-9]{0,19}$/u
 const repository = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
@@ -53,5 +53,5 @@ export effect function loadAssessmentQueue(actor: string, cursor: string | null)
   if (!(try browser.acceptPrivate({ actorId: actorNumber(actor), epoch: lifetime.epoch }, read.items.length, true))) {
     return { kind: "suppressed", currentActor: current.githubId } satisfies AssessmentQueue
   }
-  return { kind: "ready", queue: read } satisfies AssessmentQueue
+  return { kind: "ready", queue: read, at: try Clock.currentTimeMillis } satisfies AssessmentQueue
 }

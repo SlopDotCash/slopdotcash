@@ -33,8 +33,13 @@ module stagedGitHub {
       return new Response(JSON.stringify({ message: "API rate limit exceeded for user synthetic" }), { status, headers: { "content-type": "application/json", ...headers } })
     })
   }
+
+  /** @throws {never} */
+  export function hangNext(fake: GitHubFake, match: string): void {
+    fake.alterNext(match, () => new Promise<Response>(() => undefined))
+  }
 }
-import { type StagedRecord, refuseNext, stagedHistory } from stagedGitHub
+import { type StagedRecord, hangNext, refuseNext, stagedHistory } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -134,7 +139,7 @@ effect function written(path: string, text: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer.provide(systemGit, NodeServices.layer)), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline")', () => scoped(effect {
+  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const { fake, token } = try seeded()
@@ -191,13 +196,17 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
       return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
     }
-    effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
+    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
       const run = effect {
         const facts = try runFacts()
         return try publishRelease({ environment, facts, bundle: from, receipts: receiptsPath, root, anchor })
       }
       const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
-      return try settled(Effect.provide(run, services))
+      return try exit(provideService(Effect.provide(run, services), FetchHttpClient.Fetch, fake.fetch))
+    }
+    effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
+      const ended = try published(environment, receiptsPath, overrides, anchor, from)
+      return Exit.isSuccess(ended) ? "ok" : described(Cause.squash(ended.cause))
     }
     effect function receipts(name: string, gates: ReadonlyArray<string>, manifestSha256: string) {
       const path = files.join(directory, name)
@@ -228,6 +237,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const missingReceipt = try publishing("Production", withoutUnit)
     const staleReceipt = try publishing("Production", otherArtifact)
     const outsideLock = try publishing("Production", complete, { GITHUB_JOB: "quality" })
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { rotate_robinhood_rpc_from: "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b", rotate_solana_rpc_from: "" } }))
+    const rotationEnded = try published("Production", complete, { GITHUB_EVENT_NAME: "workflow_dispatch" })
+    const rotationStopped = Exit.isFailure(rotationEnded) ? Cause.squash(rotationEnded.cause) : undefined
+    const rotation = rotationStopped instanceof ReleaseStopped ? `${rotationStopped.outcome}: ${rotationStopped.message}` : described(rotationStopped)
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
     const beforeCurrent = calls.splice(0)
     const current = try publishing("Production", complete)
     const currentCalls = calls.splice(0)
@@ -253,19 +267,19 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const newer = try git(root, ["commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "newer attempt"])
     const controller = ".github/workflows/vetting-controller.yml"
     const historyPage = "/deployments?environment=slop-staging"
-    effect function staged(records: ReadonlyArray<StagedRecord>, refusals: (nowSeconds: number) => void = () => undefined, headroomSeconds = 120) {
+    effect function staged(records: ReadonlyArray<StagedRecord>, refusals: (nowSeconds: number) => void = () => undefined, headroomSeconds: number | "unset" = 120) {
       const startedAt = try Clock.currentTimeMillis
       const nowSeconds = Math.floor(startedAt / 1_000)
       try Effect.try(() => stagedHistory(fake, repository, records))
       refusals(nowSeconds)
       const from = fake.requests.length
-      const until = String(nowSeconds + headroomSeconds)
+      const deadline: Readonly<Record<string, string>> = headroomSeconds === "unset" ? {} : { STAGING_ORDER_RETRY_UNTIL: String(nowSeconds + headroomSeconds) }
       const outcome = try publishing("Staging", stagingReceipts, {
         GITHUB_REF: "refs/heads/development",
         GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/development`,
         GITHUB_JOB: "staging",
         SLOP_GITHUB_ENVIRONMENT: "slop-staging",
-        STAGING_ORDER_RETRY_UNTIL: until,
+        ...deadline,
       }, initial, stagingBundle)
       const waitedMillis = (try Clock.currentTimeMillis) - startedAt
       const urls = fake.requests.slice(from).map((request) => request.url)
@@ -292,6 +306,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     })
     const forcePushed = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" }, { branch: { origin, name: "development", sha: divergent } }))
     try git(origin, ["branch", "-f", "development", tested])
+    const withoutJobDeadline = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1) }), "unset")
+    const retryAtDeadline = try staged(inOrder, () => {
+      refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
+      hangNext(fake, historyPage)
+    }, 3)
     const staging = {
       stagingManifested,
       stagedInOrder: stagedInOrder.step,
@@ -309,6 +328,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       beyondJob: beyondJob.step,
       quotaTwice: quotaTwice.step,
       forcePushed: forcePushed.step,
+      withoutJobDeadline: withoutJobDeadline.step,
+      retryAtDeadline: retryAtDeadline.step,
     }
 
     try written(files.join(origin, "apps/operations/src/notice.txt"), "newer\n")
@@ -323,7 +344,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const rewrittenCalls = calls.splice(0)
 
     try Effect.try(() => assert.deepStrictEqual({
-      withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, beforeCurrent,
+      withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
       current, currentCalls, advanced, advancedCalls, rewritten, rewrittenCalls,
       staging,
     }, {
@@ -338,6 +359,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       missingReceipt: "ReleaseRefused:check",
       staleReceipt: "ReleaseRefused:recordGates",
       outsideLock: "LockUnobserved",
+      rotation: "Refused: An RPC rotation run publishes no Worker or static site",
       beforeCurrent: [],
       current: "ReleaseStopped:PartiallyPublished",
       currentCalls: ["prepare"],
@@ -362,6 +384,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
         beyondJob: { outcome: "StagingHistoryRefused: GitHub staging quota reset is outside the staging order retry budget (retry at epoch seconds N)", reads: ["history"], calls: [], rereadSamePage: false },
         quotaTwice: { outcome: "StagingHistoryRefused: GitHub staging deployment history quota exhausted", reads: ["history", "history"], calls: [], rereadSamePage: true },
         forcePushed: { outcome: "ReleaseStopped:Refused", reads: ["history"], calls: [], rereadSamePage: false },
+        withoutJobDeadline: { outcome: "StagingHistoryRefused: GitHub staging quota reset is outside the staging order retry budget (retry at epoch seconds N)", reads: ["history"], calls: [], rereadSamePage: false },
+        retryAtDeadline: { outcome: "StagingHistoryRefused: Staging order retry exceeded its deadline", reads: ["history"], calls: [], rereadSamePage: false },
       },
     }))
   }))

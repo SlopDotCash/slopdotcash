@@ -32,6 +32,10 @@ current tools cannot hold that machine's run records inside this one).
 A package script, local working tree, pull request, feature branch, fork head
 or tag never publishes. Pull request runs never see publication credentials.
 Production uses the `slop-production` environment, which allows only `main`.
+Publication needs a tested source whose history contains development's last
+legacy commit `cc7cc3200e802917b92ca2e32682e2ef2f59aed6`, which the shell
+reads from git when the run is configured: an unanchored source is refused
+before any write, in either environment.
 
 ```quint
 import releaseCoverage as Coverage from "./releaseCoverage"
@@ -59,9 +63,10 @@ type Release = { phase: ReleasePhase, configured: bool, environment: Environment
   dataKind: DataKind, registryDigest: int, githubDigest: int, snapshotDigest: int, dataEnvironment: Environment, dataRecordedAt: int,
   checkpointRun: int, reusedPending: int, revalidated: int, deadlineReached: bool,
   manualRun: bool, skipProofs: bool, skipBrowserTests: bool, bootstrapData: bool, services: List[ServiceRow],
-  deployment: int, attempt: int, lock: PublicationLock, fee: F::Runtime, variables: ServiceVariables }
+  deployment: int, attempt: int, lock: PublicationLock, fee: F::Runtime, variables: ServiceVariables, anchored: bool }
 pure val noRef: RunRef = { kind: LocalTree, branch: "", repository: "", githubEnvironment: "" }
 pure val canonicalRepository = "SlopDotCash/slopdotcash"
+pure val legacyAnchor = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
 pure val freeLock: PublicationLock = { holder: NoWorkflow, holderRun: 0, waiting: List(), nextRival: 2, rivalsPublished: 0,
   otherHolds: 0, head: 1, lineage: List(1), roots: List(1), nextHead: 2, attempted: List(), ignored: List(), deployed: 0 }
 pure val initial: Release = { phase: Candidate, configured: false, environment: Production, ref: noRef, source: 0,
@@ -69,7 +74,8 @@ pure val initial: Release = { phase: Candidate, configured: false, environment: 
   githubDigest: 0, snapshotDigest: 0, dataEnvironment: Production, dataRecordedAt: 0,
   checkpointRun: 0, reusedPending: 0, revalidated: 0, deadlineReached: false, manualRun: false, skipProofs: false,
   skipBrowserTests: false, bootstrapData: false, services: List(), deployment: 0, attempt: 0,
-  lock: freeLock, fee: F::initial, variables: { notify: false, vettingBackup: false, vettingRetention: false, slopbot: false } }
+  lock: freeLock, fee: F::initial, variables: { notify: false, vettingBackup: false, vettingRetention: false, slopbot: false },
+  anchored: false }
 pure val selfRun = 1
 pure def liveHead(r: Release): int = r.lock.head
 pure def lockHeld(r: Release): bool = r.configured and r.lock.holder == ReleaseWorkflow and r.lock.holderRun == selfRun
@@ -81,9 +87,9 @@ pure def admissibleRef(environment: Environment, ref: RunRef): bool =
     and ref.branch == requiredBranch(environment) and ref.githubEnvironment == requiredGithubEnvironment(environment)
 pure def canConfigure(r: Release, environment: Environment, ref: RunRef, by: Actor): bool =
   r.phase == Candidate and not(r.configured) and by == TrustedWorkflow and admissibleRef(environment, ref)
-pure def configure(r: Release, environment: Environment, ref: RunRef, by: Actor): Release =
+pure def configure(r: Release, environment: Environment, ref: RunRef, anchored: bool, by: Actor): Release =
   { ...r, configured: true, environment: environment, ref: ref, manualRun: ref.kind == WorkflowDispatch,
-    source: r.lock.head,
+    source: r.lock.head, anchored: anchored, phase: if (anchored) r.phase else Refused,
     fee: if (environment == Production) r.fee else if (F::canChooseEnvironment(r.fee, F::Staging)) F::chooseEnvironment(r.fee, F::Staging) else r.fee }
 pure def canSetVariable(r: Release, service: Service, value: bool, by: Actor): bool = by == Owner
   and (service == FeeConverter implies F::canSetReleaseVariable(r.fee, value, F::Owner))
@@ -113,15 +119,17 @@ pure def coverageRequest(r: Release): Coverage::Requests = {
   skipProofs: r.skipProofs, skipBrowserTests: r.skipBrowserTests,
   resumeDiscussions: r.checkpointRun > 0, usePublishedData: r.dataKind == RetainedSnapshot }
 pure def alwaysOptionsOnlyManual(r: Release): bool = (r.skipProofs or r.skipBrowserTests) implies r.manualRun
+pure def alwaysPublicationAnchored(r: Release): bool = r.configured implies (r.anchored or r.phase == Refused)
+pure def sometimesUnanchoredRefused(r: Release): bool = r.phase == Refused and r.configured and not(r.anchored)
 ```
 
 ### Normal releases need verified registry and GitHub collections for this environment
 
 The storage adapter supplies digests only after validating complete
 collection, source counts, immutable identities and source-specific
-timestamps. An explicit manual production release may instead retain its own
-verified published snapshot with original history, timestamps and record
-counts (`use_published_data`). A snapshot from another environment or
+timestamps. An explicit manual release of either environment may instead
+retain the last verified snapshot its own environment published, with
+original history, timestamps and record counts (`use_published_data`). A snapshot from another environment or
 bootstrap data never qualifies.
 
 ```quint
@@ -133,7 +141,7 @@ pure def collectData(r: Release, environment: Environment, registryDigest: int, 
     githubDigest: githubDigest, dataEnvironment: environment, dataRecordedAt: recordedAt, snapshotDigest: 0, bootstrapData: false }
 pure def canRetainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, bootstrap: bool): bool =
   r.phase == Candidate and r.configured and environment == r.environment and digest > 0 and originalRecordedAt > 0
-    and r.manualRun and r.environment == Production and not(bootstrap)
+    and r.manualRun and not(bootstrap)
     and r.dataKind == NoData and r.checkpointRun == 0 and not(r.deadlineReached)
 pure def retainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, bootstrap: bool): Release =
   { ...r, dataKind: RetainedSnapshot, snapshotDigest: digest, dataEnvironment: environment, dataRecordedAt: originalRecordedAt,
@@ -142,12 +150,12 @@ pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.
   and (if (r.dataKind == FreshCollection) r.registryDigest > 0 and r.githubDigest > 0 and r.checkpointRun == 0
     else if (r.dataKind == ResumedCollection) r.registryDigest > 0 and r.githubDigest > 0 and r.checkpointRun > 0
       and r.reusedPending == 0 and r.manualRun and r.environment == Production
-    else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.manualRun and r.environment == Production
+    else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.manualRun
       and not(r.bootstrapData) and r.checkpointRun == 0)
 pure def stepPreservesDataTimestamps(before: Release, via: str, after: Release): bool =
   (via != "collectData" and via != "retainSnapshot") implies before.dataRecordedAt == after.dataRecordedAt
-pure def alwaysRetainedOnlyManualProduction(r: Release): bool =
-  r.dataKind == RetainedSnapshot implies r.manualRun and r.environment == Production and r.checkpointRun == 0
+pure def alwaysRetainedOnlyManual(r: Release): bool =
+  r.dataKind == RetainedSnapshot implies r.manualRun and r.checkpointRun == 0
 ```
 
 ### A fresh manual main release may resume discussion reads only through live revalidation
@@ -283,7 +291,10 @@ pure def sometimesWaitedBehindRival(r: Release): bool = lockHeld(r) and r.lock.r
 Under the lock, immediately before publication, the run compares the live
 branch head with its tested source through the branch's lineage. Production
 keeps main equivalence: a newer fast-forward owns publication, and this run
-stops without publishing as superseded. Staging may publish a checked
+stops without publishing as superseded. After this run published a Worker or
+service, a changed head is a partial publication failure, never a superseded
+no-op: "Partial publication: Worker/services from <sha> were published, but
+main changed to <head>. Pages was not published". Staging may publish a checked
 ancestor of a newer `development` tip, but refuses when any release attempt
 recorded in staging's deployment history is not an ancestor of, or equal to,
 its source: a newer attempted revision owns publication, and a failed
@@ -319,13 +330,18 @@ pure def rewriteBranch(r: Release): Release =
   { ...r, lock: { ...r.lock, head: r.lock.nextHead, lineage: List(r.lock.nextHead), roots: r.lock.roots.append(r.lock.nextHead),
     nextHead: r.lock.nextHead + 1 } }
 pure def released(r: Release): PublicationLock = if (lockHeld(r)) { ...r.lock, holder: NoWorkflow, holderRun: 0 } else r.lock
-pure def canAcquireLock(r: Release): bool = r.phase == Checked and r.configured and r.lock.holder == NoWorkflow
+pure def canAcquireLock(r: Release): bool = r.phase == Checked and r.configured and r.anchored and r.lock.holder == NoWorkflow
 pure def acquireLock(r: Release): Release = { ...r, lock: { ...r.lock, holder: ReleaseWorkflow, holderRun: selfRun } }
-pure def canSupersede(r: Release): bool = (r.phase == Checked or r.phase == Publishing) and lockHeld(r)
+pure def noServicePublished(r: Release): bool = r.services.every(s => s.phase != ServiceBound)
+pure def canSupersede(r: Release): bool = (r.phase == Checked or (r.phase == Publishing and noServicePublished(r))) and lockHeld(r)
   and r.lock.lineage.includes(r.checkedSource) and not(mayPublishSource(r))
 pure def supersede(r: Release): Release = { ...r, phase: Superseded, lock: released(r) }
 pure def canRefuseRewrite(r: Release): bool =
-  (r.phase == Checked or r.phase == Built or r.phase == Candidate or r.phase == Publishing) and r.configured and not(headAhead(r))
+  (r.phase == Checked or r.phase == Built or r.phase == Candidate or (r.phase == Publishing and noServicePublished(r)))
+    and r.configured and not(headAhead(r))
+pure def canFailMovedHead(r: Release): bool =
+  r.phase == Publishing and lockHeld(r) and not(noServicePublished(r)) and not(mayPublishSource(r))
+pure def failMovedHead(r: Release): Release = { ...r, phase: PartiallyPublished, lock: released(r) }
 pure def refuseRewrite(r: Release): Release = { ...r, phase: Refused, lock: released(r) }
 pure def alwaysLineage(r: Release): bool =
   r.lock.lineage.length() > 0 and r.lock.lineage.nthOr(r.lock.lineage.length() - 1, 0) == r.lock.head
@@ -341,6 +357,8 @@ pure def stepStagingNeverRollsBack(before: Release, after: Release): bool =
     (before.lock.deployed == 0 or ancestorOrEqual(after, before.lock.deployed, after.lock.deployed))
 pure def sometimesSuperseded(r: Release): bool = r.phase == Superseded
 pure def sometimesRewriteRefused(r: Release): bool = r.phase == Refused
+pure def sometimesPartialAfterMovedHead(r: Release): bool =
+  r.phase == PartiallyPublished and not(noServicePublished(r)) and r.services.every(s => s.phase != ServiceFailed)
 pure def sometimesStagingAncestorPublished(r: Release): bool =
   r.environment == Staging and published(r) and liveHead(r) != r.checkedSource
 pure def sometimesStagingRollbackRefused(r: Release): bool =
@@ -393,7 +411,7 @@ pure def serviceAt(r: Release, service: Service): ServiceRow =
 pure def setService(r: Release, service: Service, phase: ServicePhase): List[ServiceRow] =
   r.services.listMap(s => if (s.service == service and s.phase == ServicePending) { ...s, phase: phase } else s)
 pure def canBeginPublication(r: Release): bool =
-  r.phase == Checked and lockHeld(r) and mayPublishSource(r) and validData(r)
+  r.phase == Checked and lockHeld(r) and r.anchored and mayPublishSource(r) and validData(r)
 pure def beginPublication(r: Release): Release =
   { ...r, phase: Publishing, services: serviceRows(r), attempt: r.attempt + 1,
     lock: { ...r.lock, attempted: recordedAttempts(r, r.checkedSource) } }

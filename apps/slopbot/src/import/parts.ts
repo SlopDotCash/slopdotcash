@@ -24,3 +24,13 @@ export function utf8Text(bytes: Uint8Array): string | undefined {
     return undefined;
   }
 }
+
+/** @throws {never} */
+export function bundleStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes.slice());
+      controller.close();
+    },
+  });
+}

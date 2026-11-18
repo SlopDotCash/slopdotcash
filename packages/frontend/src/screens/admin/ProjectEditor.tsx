@@ -2,7 +2,7 @@
 import { contributionFields } from "@repo/contributor/render/fields";
 import { isChain } from "@repo/settlement/kernels/networks";
 import { Alert, Button, Checkbox, CompareChange, Field, Input, Label, Select, Textarea } from "@repo/ui";
-import { ArrowUpRight, Save, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowUpRight, CircleCheck, Globe, Save, ShieldCheck, Trash2, TriangleAlert, X } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 import { formatDateTime } from "../../app/format.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
@@ -12,8 +12,8 @@ import { contributionLabels } from "../setup/fields/contribution.ts";
 import { RewardAssetFields } from "../setup/fields/RewardAssetFields.tsx";
 import { useRun } from "../setup/proposal/run.ts";
 import { ActivationClearance } from "./ActivationClearance.tsx";
-import { type AssetDraft, builtManifest, changedFields, changeLabel, detailFields, draftText, initialDraft, type ManifestDraft, projectFieldsOf, skillErrors, withAsset, withProjectField } from "./editor.ts";
-import { act, openWithin, Waiting } from "./parts.tsx";
+import { type AssetDraft, builtManifest, changedFields, changeLabel, detailFields, draftText, editorMessages, initialDraft, type ManifestDraft, projectFieldsOf, skillBound, skillErrors, withAsset, withProjectField } from "./editor.ts";
+import { act, Chip, openWithin, Waiting } from "./parts.tsx";
 import { type AdminProject, adminHref } from "./projects.ts";
 
 export type ProjectEditorProps = {
@@ -68,20 +68,19 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
     inFlight.current = false;
     setBusy(false);
     if (!acted.ok) return acted.accessLost ? onAccessLost() : setError(acted.message);
-    if (draftText(latest.current) !== submitted) return setError(adminMessages.newerEdits);
+    if (draftText(latest.current) !== submitted) return setError(editorMessages.newerEdits);
     onSaved(adminMessages.saved);
   };
 
   const discard = async () => {
     const discarded = await runtime.runPromise(discardManifestDraft(project.id, project.revision));
     if (discarded) onCancel();
-    else setError(adminMessages.discardFailed);
+    else setError(editorMessages.discardFailed);
   };
 
   return (
     <form className="flex flex-col gap-6" onSubmit={(event) => void save(event)}>
       <h3 className="sr-only">Edit project</h3>
-      {draftError ? <p role="status">{adminMessages.draftUnavailable}</p> : null}
       <fieldset className={fieldset} disabled={fields === undefined}>
         <legend className={legend}>Project details</legend>
         {detailFields.map(([field, label, maxLength]) => (
@@ -118,22 +117,30 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
       <fieldset className={fieldset}>
         <legend className={legend}>Contribution fields</legend>
         <div className="grid gap-4 md:grid-cols-2">
-          {contributionFields.map((field) => (
-            <Field key={field} label={contributionLabels[field].label} error={errors[field] ?? undefined}>
-              <Textarea rows={field === "securityContact" ? 1 : 3} value={draft.skill[field]} onChange={(event) => update({ skill: { ...latest.current.skill, [field]: event.target.value } })} />
-            </Field>
-          ))}
+          {contributionFields.map((field) => {
+            const label = contributionLabels[field].label;
+            const bound = skillBound(field);
+            return (
+              <div key={field} className="flex flex-col gap-1">
+                <Field label={label} error={errors[field] ? <span title={bound.full}>{bound.short}</span> : undefined}>
+                  <Textarea aria-label={label} rows={field === "securityContact" ? 1 : 3} value={draft.skill[field]} onChange={(event) => update({ skill: { ...latest.current.skill, [field]: event.target.value } })} />
+                </Field>
+                {errors[field] ? null : (
+                  <small aria-hidden title={bound.full} className="text-xs text-muted-foreground">
+                    {draft.skill[field].trim().length} / 2000
+                  </small>
+                )}
+              </div>
+            );
+          })}
         </div>
       </fieldset>
       <fieldset className={fieldset}>
         <legend className={legend}>Reward asset</legend>
         {draft.assetSelected ? null : (
-          <p className="flex flex-wrap items-center gap-3 text-sm">
-            No reward asset.
-            <Button variant="secondary" size="sm" onClick={() => update({ assetSelected: true })}>
-              Use this reward asset
-            </Button>
-          </p>
+          <Button variant="secondary" size="sm" className="self-start" onClick={() => update({ assetSelected: true })}>
+            Set asset
+          </Button>
         )}
         <RewardAssetFields
           namePrefix="admin"
@@ -148,13 +155,15 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
           }}
         />
         {stored ? (
-          <p className="text-sm text-muted-foreground">
-            Stored: {stored.symbol}, {stored.decimals} decimals{stored.verifiedAt ? `, verified ${formatDateTime(stored.verifiedAt)}` : ""}.
+          <p>
+            <Chip tone="Positive" icon={<CircleCheck aria-hidden />} {...(stored.verifiedAt ? { title: `Verified ${formatDateTime(stored.verifiedAt)}` } : {})}>
+              {stored.symbol} · {stored.decimals} dp
+            </Chip>
           </p>
         ) : null}
       </fieldset>
       <fieldset className={fieldset}>
-        <legend className={legend}>Advanced settings · revision {project.revision}</legend>
+        <legend className={legend}>Advanced</legend>
         <Field label="Manifest JSON">
           <Textarea className="min-h-80 font-mono text-xs" spellCheck={false} value={draft.text} onChange={(event) => update({ text: event.target.value })} />
         </Field>
@@ -171,7 +180,16 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
           <CompareChange changes={changed.map((field) => ({ label: changeLabel(field), current: <ChangedValue value={project.raw[field]} empty="Not set" />, proposed: <ChangedValue value={built.manifest[field]} empty="Removed" /> }))} />
         )}
       </section>
-      <Field label="Reason for revision (public)">
+      <Field
+        label={
+          <span className="inline-flex items-center gap-2">
+            Reason
+            <Chip icon={<Globe aria-hidden />} title="Shown publicly">
+              Public
+            </Chip>
+          </span>
+        }
+      >
         <Input maxLength={1000} required value={draft.reason} onChange={(event) => update({ reason: event.target.value })} />
       </Field>
       {error ? <Alert variant="destructive">{error}</Alert> : null}
@@ -180,9 +198,16 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
           <Save aria-hidden />
           {busy ? "Saving…" : `Save revision ${project.revision + 1}`}
         </Button>
+        {draftError ? (
+          <span role="status" className="self-center">
+            <Chip tone="Caution" icon={<TriangleAlert aria-hidden />}>
+              Draft not stored
+            </Chip>
+          </span>
+        ) : null}
         <Button variant="secondary" disabled={busy} onClick={onCancel}>
           <X aria-hidden />
-          Close and keep draft
+          Close
         </Button>
         <Button variant="ghost" disabled={busy} onClick={() => void discard()}>
           <Trash2 aria-hidden />

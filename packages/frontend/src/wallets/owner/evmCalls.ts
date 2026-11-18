@@ -75,9 +75,18 @@ export function transferCall(terms: VaultCallTerms, operation: Operation, step: 
   return { to: terms.vault, data: depositCalldata(gross), value: terms.native ? hexQuantity(gross) : "0x0" };
 }
 
+export interface BatchApproval {
+  readonly resetAllowance: boolean;
+  readonly approvalNeeded: boolean;
+}
+
 /** @throws {RangeError} */
-export function batchCalls(terms: VaultCallTerms, gross: bigint, resetAllowance: boolean): ReadonlyArray<Call> {
-  return [...(resetAllowance ? [approveCall(terms, 0n)] : []), approveCall(terms, gross), { to: terms.vault, data: depositCalldata(gross), value: "0x0" }];
+export function batchCalls(terms: VaultCallTerms, gross: bigint, approval: BatchApproval): ReadonlyArray<Call> {
+  return [
+    ...(approval.resetAllowance ? [approveCall(terms, 0n)] : []),
+    ...(approval.approvalNeeded ? [approveCall(terms, gross)] : []),
+    { to: terms.vault, data: depositCalldata(gross), value: "0x0" },
+  ];
 }
 
 /** @throws {never} */

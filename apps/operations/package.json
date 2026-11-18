@@ -6,6 +6,7 @@
   "exports": {
     "./client": "./src/client/index.vibe",
     "./live": "./src/live.vibe",
+    "./notify": "./src/workers/notify.vibe",
     "./rpc": "./src/release/rpc/command.vibe"
   },
   "scripts": {

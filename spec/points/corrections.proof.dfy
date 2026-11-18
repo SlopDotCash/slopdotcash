@@ -115,3 +115,15 @@ lemma FilterTwoForCorrection<T>(p: T -> bool, a: T, b: T)
   ProofLib.FilterAppend(p, [], a);
   ProofLib.FilterAppend(p, [a], b);
 }
+
+lemma lawReplayAppendsNothing_ensures(manifest: Manifest)
+  ensures (lawReplayAppendsNothing(manifest) == true)
+{
+  if manifest == readyManifest {
+    ReadyManifestAllocates();
+    var committed := commit(prepare(initial, manifest), false, Actor.TrustedWorkflow);
+    assert committed.phase.Applied? && manifest.digest in committed.applied;
+    assert prepare(committed, manifest).phase.Replayed?;
+    assert prepare(committed, manifest).history == committed.history;
+  }
+}

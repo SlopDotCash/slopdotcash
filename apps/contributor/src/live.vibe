@@ -1,4 +1,4 @@
-// spec/contributor/traceServer.md, "The author's own pull_request_opened event is the only closure run evidence"
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "The author's own pull_request_opened event is the only closure run evidence"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
 import { publicationRoutes } from "./publication/routes.vibe"

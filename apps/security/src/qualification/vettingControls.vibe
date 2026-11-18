@@ -1,33 +1,32 @@
 // spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
 import { checkoutHead, variable } from "../programs/checkout.vibe"
+import { hostedFlags } from "./flags/hosted.vibe"
+import { flagsPlan, flagsRun, protectedFlagsRun, protectedRefusal } from "./flags/plan.vibe"
+
+export { flagsPlan, flagsRun }
 
 export error VettingControlsRefused { message: string }
 
-const usage = "usage: vetting-controls --scope flags [--mode plan]"
+const usage = "usage: vetting-controls --scope flags [--mode plan|execute]"
 
-export function flagsRun(runId: string | undefined, attempt: string | undefined) {
-  const run = `slop-vet-flags-${runId ?? "0"}-${attempt ?? "0"}`
-  return /^slop-vet-flags-[0-9]{1,20}-[0-9]{1,5}$/u.test(run) ? run : undefined
-}
-
-export function flagsPlan(source: string, run: string) {
-  const names = { worker: run, databases: [`${run}-source`], buckets: [`${run}-source`], queues: [`${run}-work`, `${run}-failed`] }
-  return {
-    mode: "plan",
-    source,
-    names,
-    resources: { d1: names.databases.length, r2: names.buckets.length, queues: 2, worker: 1 },
-    fixture: "two-flag-pause",
-    publicRoutes: false,
-    scans: false,
-    cleanup: "only exact resources created by this workflow run",
-  }
+function modeOf(args: ReadonlyArray<string>) {
+  const [scopeFlag, scope, modeFlag, mode, ...rest] = args
+  if (scopeFlag !== "--scope" || scope !== "flags" || rest.length > 0) return undefined
+  if (modeFlag === undefined) return "plan"
+  return modeFlag === "--mode" && (mode === "plan" || mode === "execute") ? mode : undefined
 }
 
 export effect function vettingControls(args: ReadonlyArray<string>) {
-  const valid = (args.length === 2 && args[0] === "--scope" && args[1] === "flags") || (args.length === 4 && args[0] === "--scope" && args[1] === "flags" && args[2] === "--mode" && args[3] === "plan")
-  if (!valid) throw new VettingControlsRefused({ message: usage })
+  const mode = modeOf(args)
+  if (mode === undefined) throw new VettingControlsRefused({ message: usage })
   const run = flagsRun(try variable("GITHUB_RUN_ID"), try variable("GITHUB_RUN_ATTEMPT"))
   if (run === undefined) throw new VettingControlsRefused({ message: "Invalid qualification run identity" })
-  try Console.log(JSON.stringify(flagsPlan(try checkoutHead(), run), null, 2))
+  if (mode === "plan") {
+    try Console.log(JSON.stringify(flagsPlan(try checkoutHead(), run), null, 2))
+    return
+  }
+  const source = protectedFlagsRun(run) catch effect () => {
+    throw new VettingControlsRefused({ message: protectedRefusal })
+  }
+  try hostedFlags({ run, source })
 }

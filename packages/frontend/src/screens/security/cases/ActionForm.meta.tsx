@@ -30,7 +30,7 @@ export const meta: ComponentMeta<ActionFormProps> = {
     // spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"
     Award: async () => {
       await expect(screen.getByLabelText("Gross award (USDC)")).toHaveValue("10000");
-      await expect(screen.getByText("Researcher 7,500 USDC · Slop 2,500 USDC")).toBeTruthy();
+      await expect(screen.getByText("75% researcher 7,500 USDC | 25% Slop 2,500 USDC")).toBeTruthy();
     },
     // spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"
     Refused: async () => {

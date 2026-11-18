@@ -12,10 +12,10 @@ export const meta: ComponentMeta<EmailLinkActionProps> = {
     Unsubscribe: { link: "unsubscribe" },
     SignIn: { step: "signIn" },
     Checking: { step: "checking" },
-    AccountChanged: { step: "recheck", error: "Your account changed. Reopen the email link for this account." },
+    AccountChanged: { step: "recheck", error: "Wrong account for this link" },
     Invalid: { step: "invalid" },
     Verified: { step: "done" },
-    WrongAccount: { error: "Sign in to the account that requested this link." },
+    WrongAccount: { error: "Wrong account for this link" },
   },
   play: {
     // spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"
@@ -27,7 +27,7 @@ export const meta: ComponentMeta<EmailLinkActionProps> = {
     // spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"
     SignIn: async () => {
       await expect(screen.queryByRole("button", { name: "Verify email" })).toBeNull();
-      await expect(screen.getByRole("link", { name: "Sign in to verify email" }).getAttribute("href")).toBe("/login?next=%2Finbox");
+      await expect(screen.getByRole("link").getAttribute("href")).toBe("/login?next=%2Finbox");
     },
   },
 };

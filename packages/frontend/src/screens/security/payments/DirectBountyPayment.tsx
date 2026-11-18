@@ -1,5 +1,5 @@
 // spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"
-import { Alert, Button, Field, Input, TokenAmount, TransactionStatus, WalletChooser, type WalletOption } from "@repo/ui";
+import { Alert, Button, Field, Input, Spinner, Status, TokenAmount, TransactionStatus, WalletChooser, type WalletOption } from "@repo/ui";
 import { Effect, Exit } from "effect";
 import { useState } from "react";
 import { type Slot, view } from "../../../../gen/frontend__directBountyPrompt.ts";
@@ -12,8 +12,9 @@ import type { EvmConnection } from "../../../wallets/core/evm.vibe";
 import { useView } from "../../account/useView.ts";
 import { useMounted } from "../program/hooks.ts";
 import type { SecurityCase } from "../cases/case.schema.ts";
+import type { PaymentHold } from "../cases/CaseDetail.tsx";
 import { act, useAction } from "./hooks.ts";
-import { ActionOutcome, type Outcome, type SendState, sendPresentations } from "./parts.tsx";
+import { ActionOutcome, type Outcome, type SendState, paymentNotices, sendPresentations } from "./parts.tsx";
 import { type PaymentsRuntime, checkDirect, connectDirect, departDirect, openCancellationPayment, openEvmPayment, sendDirect, watchOffers } from "./payments.vibe";
 
 export type DirectLeg = {
@@ -65,7 +66,7 @@ function sendState(leg: DirectLeg, confirmed: readonly string[]): SendState {
  * an uncertain result is never sent again and waits for its hash. A hash is only a candidate the case verifies.
  * @model spec/frontend/directBountyPrompt.md
  */
-export function DirectBountyPayment({ cancellation, network, legs, confirmed, unsent, uncertain, mismatched, wallets, address, busy, hashes, error, stale, notice, onConnect, onSend, onHash, onCheck, onRefresh }: DirectBountyPaymentProps) {
+export function DirectBountyPayment({ cancellation, network, legs, confirmed, unsent, uncertain, mismatched, wallets, address, busy, hashes, error, stale, onConnect, onSend, onHash, onCheck, onRefresh }: DirectBountyPaymentProps) {
   const checkable = legs.some((leg) => !leg.mismatched && isEvmHash(shownHash(leg, hashes[leg.slot]).trim()));
   return (
     <section aria-label={cancellation ? "Cancel superseded transfer" : "Pay from your wallet"} className="flex flex-col gap-4">
@@ -80,7 +81,7 @@ export function DirectBountyPayment({ cancellation, network, legs, confirmed, un
               {leg.amount ? <TokenAmount value={leg.amount} symbol={leg.symbol} label={`${leg.name} amount`} /> : null}
               <TransactionStatus presentation={sendPresentations[state]} hash={hash === "" ? undefined : hash} explorerUrl={hash === "" ? undefined : transactionUrl(network, hash)} />
               {leg.saved.identity !== "" || hash !== "" ? (
-                <Field label="Transaction hash from your wallet">
+                <Field label="Transaction hash">
                   <Input value={shownHash(leg, hashes[leg.slot])} spellCheck={false} disabled={busy} onChange={(event) => onHash(leg.slot, event.target.value)} />
                 </Field>
               ) : null}
@@ -100,9 +101,13 @@ export function DirectBountyPayment({ cancellation, network, legs, confirmed, un
           </Button>
         ) : null}
       </div>
-      {uncertain ? <p role="status">Wallet result uncertain. Enter its transaction hash to continue.</p> : null}
-      {mismatched ? <Alert variant="destructive">The saved payment differs from this request. Check wallet activity before continuing.</Alert> : null}
-      <ActionOutcome error={error} stale={stale} notice={notice} onRefresh={onRefresh} />
+      {uncertain ? (
+        <p role="status">
+          <Status presentation={{ tone: "Caution", icon: "Alert", label: "Unknown result: paste hash" }} />
+        </p>
+      ) : null}
+      {mismatched ? <Alert variant="destructive">Payment mismatch. Check wallet activity.</Alert> : null}
+      <ActionOutcome error={error} stale={stale} onRefresh={onRefresh} />
     </section>
   );
 }
@@ -113,20 +118,20 @@ export type DirectBountyPaymentSectionProps = {
   cancellation: boolean;
   /** Names and exact amounts of the legs, in request order. */
   legs: readonly Pick<DirectLeg, "name" | "amount" | "symbol">[];
-  onChanged: () => void;
+  hold: PaymentHold;
 };
 
 const unreadableView: DirectFormView = { legs: [], unsent: 0, uncertain: false, mismatched: true, warning: false };
 
 type Opened = Effect.Success<ReturnType<typeof openEvmPayment>> | Effect.Success<ReturnType<typeof openCancellationPayment>>;
 
-function OpenedPayment({ runtime, record, cancellation, legs, onChanged, opened }: DirectBountyPaymentSectionProps & { opened: Opened }) {
+function OpenedPayment({ runtime, record, cancellation, legs, hold, opened }: DirectBountyPaymentSectionProps & { opened: Opened }) {
   const { state } = useMachine(opened.runtime);
   const [release] = useState(() => (node: HTMLElement | null) => (node === null ? undefined : () => void act(runtime, departDirect(opened))));
   const offers = useView(runtime, watchOffers) ?? [];
   const [wallet, setWallet] = useState<EvmConnection | null>(null);
   const [hashes, setHashes] = useState<Partial<Record<Slot, string>>>({});
-  const action = useAction();
+  const action = useAction(() => hold.hold(null));
   const read = Effect.runSyncExit(opened.form.shown(opened.surface));
   const shown = Exit.isSuccess(read) ? read.value : unreadableView;
   const sending = state !== undefined && view(state, opened.surface).pending.identity !== "";
@@ -148,20 +153,16 @@ function OpenedPayment({ runtime, record, cancellation, legs, onChanged, opened 
         hashes={hashes}
         error={action.error}
         stale={action.stale}
-        notice={action.notice}
-        onConnect={(option) => action.run(() => act(runtime, connectDirect(opened, Number(option.id))), (connection) => {
-          setWallet(connection);
-          return null;
-        })}
+        onConnect={(option) => action.run(() => act(runtime, connectDirect(opened, Number(option.id))), setWallet)}
         onSend={() => {
-          if (wallet !== null) action.run(() => act(runtime, sendDirect(opened, wallet)), (message) => message);
+          if (wallet !== null) action.run(() => act(runtime, sendDirect(opened, wallet)), () => hold.hold(paymentNotices.submitted));
         }}
         onHash={(slot, value) => setHashes((prior) => ({ ...prior, [slot]: value }))}
-        onCheck={() => action.run(() => act(runtime, checkDirect(opened, inputs())), (message) => {
-          onChanged();
-          return message;
+        onCheck={() => action.run(() => act(runtime, checkDirect(opened, inputs())), () => {
+          hold.hold(paymentNotices.verified);
+          hold.changed();
         })}
-        onRefresh={onChanged}
+        onRefresh={hold.changed}
       />
     </div>
   );
@@ -171,12 +172,7 @@ function OpenedPayment({ runtime, record, cancellation, legs, onChanged, opened 
 export function DirectBountyPaymentSection(props: DirectBountyPaymentSectionProps) {
   const { runtime, record, cancellation } = props;
   const opened = useMounted(runtime, () => (cancellation ? openCancellationPayment(record) : openEvmPayment(record)));
-  if (opened.status === "running")
-    return (
-      <p aria-live="polite" className="text-muted-foreground">
-        Checking saved payment…
-      </p>
-    );
+  if (opened.status === "running") return <Spinner size="sm" label="Checking saved payment…" />;
   if (opened.status === "failed") return <Alert variant="destructive">{opened.message}</Alert>;
   return <OpenedPayment {...props} opened={opened.value} />;
 }

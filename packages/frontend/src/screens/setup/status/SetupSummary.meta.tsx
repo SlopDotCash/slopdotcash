@@ -24,12 +24,12 @@ export const meta: ComponentMeta<SetupSummaryProps> = {
     // spec/ui/status.md, "Setup checks never look ready unless they are"
     AuthorityUnavailable: async () => {
       await expect(screen.getAllByText("Ready")).toHaveLength(2);
-      await expect(screen.getByText("Unavailable")).toBeTruthy();
+      await expect(screen.getAllByText("Unavailable")).toHaveLength(2);
     },
     // spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"
     RequestScan: async () => {
       onCheck.mockClear();
-      await userEvent.click(screen.getByRole("button", { name: "Request a new scan" }));
+      await userEvent.click(screen.getByRole("button", { name: "Rescan" }));
       await expect(onCheck).toHaveBeenCalledWith(true);
     },
     // spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"

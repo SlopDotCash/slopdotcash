@@ -1,5 +1,6 @@
-// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"
+// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"
 import type { Statement } from "@repo/platform/d1"
+import { route } from "@repo/platform/route"
 import { Network, type ReadFailure } from "./backend.vibe"
 
 export schema VaultPurpose = "Ordinary" | "PrivateBounty"
@@ -31,8 +32,20 @@ export schema DirectLeg {
   readonly finalizedAt?: string
 }
 
+export schema DirectFeeAward {
+  readonly caseId: string
+  readonly network: Network
+  readonly asset: string
+  readonly feeBaseUnits: string
+  readonly feeRecipient: string | null
+  readonly feeTransferBaseUnits: string | null
+  readonly preparedAt: string
+  readonly verifiedAt: string
+}
+
 export service DirectBounty {
   legs(caseId: string): ReadonlyArray<DirectLeg>!ReadFailure
+  feeAwards(asset: { readonly network: Network; readonly asset: string }): ReadonlyArray<DirectFeeAward>!ReadFailure
 }
 
 export interface DirectRoute {
@@ -94,3 +107,156 @@ export service BindingAttempts {
   readiness(input: { readonly ledger: AttemptLedger; readonly obligationId: string }): Statement!!
   admit(input: AttemptAdmission): Statement!!
 }
+
+export schema PaymentChain = "base" | "solana" | "robinhood" | "ethereum"
+
+export schema PublicVaultPayment {
+  readonly id: string
+  readonly projectId: string
+  readonly network: string
+  readonly chain: PaymentChain
+  readonly contributionMonth: string | null
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly netBase: string
+  readonly transactionId: string
+  readonly indexedAt: string
+}
+
+export schema PublicVaultPaymentPage {
+  readonly payments: ReadonlyArray<PublicVaultPayment>
+  readonly through: number
+  readonly next: number | null
+  readonly total: number
+}
+
+export const actorVaultPayments = route({ method: "GET", path: "/api/v1/payments/actors/:id/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private" })
+
+export schema CycleFileReference {
+  readonly sha256: string
+  readonly url: string
+}
+
+export schema CycleMoneyLine {
+  readonly suggestedMinor: string
+  readonly approvedMinor: string
+  readonly paidMinor: string
+}
+
+export schema CycleMoneyLines {
+  readonly sharedPool: CycleMoneyLine
+  readonly reviewBudget: CycleMoneyLine
+}
+
+export schema FundingBasis {
+  readonly cycleId: string
+  readonly instrumentId: null
+  readonly fundingState: "committed" | "pledged"
+  readonly committedMinor: string
+  readonly monthlyCapMinor: string
+}
+
+export schema CycleReward {
+  readonly fundingBasis?: FundingBasis
+  readonly carriedMinor?: string
+  readonly reviewBudgetCapMinor?: string
+  readonly currency: "USDC" | null
+  readonly capMinor: string
+  readonly suggestedMinor: string
+  readonly approvedMinor: string
+  readonly paidMinor: string
+  readonly feeMinor: string
+  readonly sharePartsPerMillion: number | null
+  readonly lines?: CycleMoneyLines
+}
+
+export schema ReadmeWalletProof {
+  readonly address: string
+  readonly chain: "base" | "solana"
+  readonly observedAt: string
+  readonly sourceCommit: string
+  readonly sourceUrl: string
+}
+
+export schema ClaimWalletProof {
+  readonly address: string
+  readonly chain: "base" | "solana"
+  readonly observedAt: string
+  readonly sourceActorId: string
+  readonly sourceClaimId: string
+  readonly sourceRecordSha256: string
+  readonly sourceUrl: string
+}
+
+export schema IssueWalletProof {
+  readonly address: string
+  readonly chain: "base" | "solana"
+  readonly observedAt: string
+  readonly sourceActorId: string
+  readonly sourceBodySha256: string
+  readonly sourceIssueId: string
+  readonly sourceIssueNumber: number
+  readonly sourceUpdatedAt: string
+  readonly sourceUrl: string
+}
+
+export schema CycleWalletProof = ReadmeWalletProof | ClaimWalletProof | IssueWalletProof
+
+export schema CycleActor {
+  readonly id: string
+  readonly login: string
+}
+
+export schema CycleContributorState = "approved" | "excluded" | "held" | "held-below-minimum" | "proposed" | "unclaimed" | "external-share" | "paid"
+
+export schema CycleContributor {
+  readonly actor: CycleActor
+  readonly score: number
+  readonly scoreThirds?: number
+  readonly state: CycleContributorState
+  readonly suggestedMinor: string
+  readonly approvedMinor: string
+  readonly paidMinor: string
+  readonly sharePartsPerMillion: number | null
+  readonly wallet: CycleWalletProof | null
+  readonly lines?: CycleMoneyLines
+}
+
+export schema CycleFiles {
+  readonly sourceSnapshot: CycleFileReference
+  readonly proposal: CycleFileReference
+  readonly allocation: CycleFileReference | null
+  readonly executionPlan: CycleFileReference | null
+  readonly settlement: CycleFileReference | null
+  readonly windup: CycleFileReference | null
+}
+
+export schema CycleWindow {
+  readonly from: string
+  readonly to: string
+}
+
+export schema CycleState = "closed-no-awards" | "external-provisional" | "paid" | "payment-ready" | "review" | "settlement-planned" | "wound-up"
+
+export schema CycleIndexEntry {
+  readonly projectId: string
+  readonly cycleId: string
+  readonly kind: "external-prize-share" | "monthly-pool"
+  readonly state: CycleState
+  readonly generatedAt: string
+  readonly contributionWindow: CycleWindow
+  readonly reviewEndsAt: string | null
+  readonly approvedAt: string | null
+  readonly settledAt: string | null
+  readonly reward: CycleReward
+  readonly contributors: ReadonlyArray<CycleContributor>
+  readonly files: CycleFiles
+}
+
+export schema CycleIndex {
+  readonly schemaVersion: "1"
+  readonly generatedAt: string
+  readonly cycles: ReadonlyArray<CycleIndexEntry>
+}
+
+export const cycleIndexUrl = "/data/cycles/index.json"

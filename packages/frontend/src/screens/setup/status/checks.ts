@@ -1,21 +1,22 @@
 // spec/ui/status.md, "Setup checks never look ready unless they are"; spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
 import type { NextAction, ScanCheckState, SetupCheckState, SetupStatus } from "@repo/backend/client";
 import { isChain } from "@repo/settlement/kernels/networks";
+import type { StatusProps } from "@repo/ui";
 import type { SetupStatus as Readiness } from "../../../../gen/frontend__presentation.ts";
 import { type AssetKind, assetSymbol } from "../../../kernels/assetText.ts";
 import { rewardChains, rewardNetwork } from "../fields/rewardAsset.ts";
 import { baseUnits } from "../update/revision.ts";
 
-export const setupHeadings: Readonly<Record<SetupStatus["state"], string>> = {
-  ready: "Ready",
-  action_required: "Action needed",
-  waiting: "Waiting for the security scan",
-  retry: "Unavailable",
-  restricted: "Closed to contributors",
-};
+export const setupStates = {
+  ready: { tone: "Positive", icon: "Check", label: "Ready" },
+  action_required: { tone: "Caution", icon: "Alert", label: "Action needed" },
+  waiting: { tone: "Notice", icon: "Clock", label: "Scanning" },
+  retry: { tone: "Caution", icon: "Alert", label: "Unavailable" },
+  restricted: { tone: "Negative", icon: "Lock", label: "Closed" },
+} as const satisfies Record<SetupStatus["state"], StatusProps["presentation"]>;
 
 export const exemptionLabels = {
-  "existing-project": "Existing-project exemption",
+  "existing-project": "Exempt",
   "owner-approved-admission": "Owner-approved exemption",
 } as const satisfies Record<NonNullable<ScanCheckState["exemptionKind"]>, string>;
 
@@ -39,9 +40,10 @@ export function scanReadiness({ state }: ScanCheckState): Readiness {
   return state === "quarantined" || state === "banned" ? "SetupRefused" : "SetupUnavailable";
 }
 
-/** What the scan check found: the exemption by its own name, otherwise the check's message. @throws {never} */
-export function scanFinding(scan: ScanCheckState): string {
-  return scan.exempt === true ? (scan.exemptionKind === undefined ? scan.message : exemptionLabels[scan.exemptionKind]) : scan.message;
+/** The exemption that cleared the scan check, by its own name, never as a passed scan. @throws {never} */
+export function scanExemption(scan: ScanCheckState): string | undefined {
+  if (scan.exempt !== true) return undefined;
+  return scan.exemptionKind === undefined ? exemptionLabels["existing-project"] : exemptionLabels[scan.exemptionKind];
 }
 
 /** Whether checking again can change what the next action asks. @throws {never} */

@@ -1,4 +1,4 @@
-// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
+// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "The home grid orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
 import type { LifetimeTotal } from "./standings.ts";
 import type { ListedProject, Shown } from "./listing.ts";
 
@@ -44,7 +44,19 @@ export const prize: ListedProject = {
   reward: { kind: "external-prize-share", monthlyCapMinor: 0n, monthlyCapDisplay: "0 USDC", externalOpportunity: { name: "Agent Cup", advertisedAmountDisplay: "$25,000" } },
 };
 
-export const community: ListedProject[] = Array.from({ length: 12 }, (_, index) => ({
+export const tokenPool: ListedProject = {
+  ...base,
+  listingTier: "community",
+  id: "token-pool",
+  slug: "token-pool",
+  name: "Token Pool",
+  pool: "PoolFunded",
+  reward: { kind: "monthly-pool", monthlyCapMinor: 25_000_000_000_000n, monthlyCapDisplay: "25,000,000 SLOP", chain: "solana" },
+  rewardAsset: { kind: "token", network: "solana", address: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVpump", symbol: "SLOP", decimals: 6 },
+  escrow: { deployments: [{ network: "solana-mainnet" }] },
+};
+
+export const community: ListedProject[] = Array.from({ length: 4 }, (_, index) => ({
   ...base,
   listingTier: "community",
   id: `community-${index + 1}`,
@@ -53,7 +65,7 @@ export const community: ListedProject[] = Array.from({ length: 12 }, (_, index) 
   reward: { kind: "monthly-pool", monthlyCapMinor: 0n, monthlyCapDisplay: "0 USDC" },
 }));
 
-export const listed: ReadonlyArray<ListedProject> = [pool, bounty, prize, ...community];
+export const listed: ReadonlyArray<ListedProject> = [prize, bounty, ...community, tokenPool, pool];
 
 export const current = <T>(value: T): Shown<T> => ({ status: "Current", value });
 

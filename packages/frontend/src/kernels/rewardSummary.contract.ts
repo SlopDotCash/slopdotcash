@@ -1,5 +1,5 @@
 // spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"
-import { type CardProject, discoveryProjects, hasBountyOverview, hasProjectCardBounty, type ListingTier, projectRewardSummaries, type RewardSummary, type SecurityBounty, securityBountyAmountLabel } from "./rewardSummary.ts";
+import { type CardProject, hasBountyOverview, hasProjectCardBounty, projectRewardSummaries, type RewardSummary, type SecurityBounty, securityBountyAmountLabel } from "./rewardSummary.ts";
 import { vectors } from "./vectors.ts";
 
 const ETH_NATIVE = "0x0000000000000000000000000000000000000000";
@@ -85,17 +85,3 @@ export const onlyBountyOnlyProgramsReplaceOrdinaryWork = vectors<CardProject, bo
   [pointsProject, false],
   [ethPool, false],
 ], hasBountyOverview);
-
-const listed: ReadonlyArray<CardProject> = [
-  ethPool,
-  { ...ethPool, status: "paused" },
-  bountyOnly("closed"),
-  bountyOnly("open"),
-  pointsProject,
-  { ...pointsProject, listingTier: "retired" },
-];
-
-export const discoveryListsFollowPlacementAndOpenPrograms = vectors<ListingTier, number[]>([
-  ["featured", [0, 3]],
-  ["community", [4]],
-], (tier) => discoveryProjects(listed, tier).map((project) => listed.indexOf(project)));

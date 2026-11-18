@@ -41,12 +41,12 @@ export function slopbotAccess(fetcher: Fetcher | undefined) {
   return Layer.succeed(SlopbotAccess, { client: fetcher === undefined ? undefined : serviceClient(fetcher, { binding: "SLOPBOT", origin: "https://slopbot.internal" }) })
 }
 
-const unreachable = "Slop cannot reach Slopbot to check the installation right now. Try again later."
-const unanswered = "GitHub or Slopbot did not answer the installation check. Try again."
+const unreachable = "Slopbot unreachable."
+const unanswered = "Check failed."
 const rolePattern = /^[A-Za-z0-9 _-]{1,64}$/u
 
 export function scopeNote(repository: string): string {
-  return `On GitHub's install screen choose "Only select repositories" and pick ${repository}. Slopbot gets no access to your other private repositories.`
+  return `On GitHub, choose "Only select repositories" and pick ${repository}.`
 }
 
 function text(value: unknown): SetupText {
@@ -112,8 +112,8 @@ export function permissionOf(checked: Checked): AuthorityRead["permission"] {
   return checked.access.access.installation === "installed" ? "PermissionDenied" : "PermissionUnavailable"
 }
 
-export function repositoryAdmin(checked: Checked): boolean {
-  return checked.authority.state === "verified" && checked.access.state === "read" && checked.access.access.installation === "installed" && checked.access.access.permission === "admin"
+export function repositoryAdmin(access: AccessCheck): boolean {
+  return access.state === "read" && access.access.installation === "installed" && access.access.permission === "admin"
 }
 
 export function modelRead(checked: Checked, actor: number, repository: number): AuthorityRead {
@@ -151,7 +151,7 @@ effect function portRead(read: { readonly actorGithubId: string; readonly reposi
   const path = registeredPath(read.repositoryId) catch () => undefined
   if (member === undefined || path === undefined) return unavailable(read)
   const checked = try checkAuthority({ path, githubId: read.repositoryId }, { githubId: read.actorGithubId, login: member.login })
-  return { ...read, permission: permissionOf(checked), installation: installationOf(checked.access), repositoryAdmin: repositoryAdmin(checked) } satisfies PortRead
+  return { ...read, permission: permissionOf(checked), installation: installationOf(checked.access), repositoryAdmin: repositoryAdmin(checked.access) } satisfies PortRead
 }
 
 export const AuthorityLive = Layer.effect(Authority, effect {

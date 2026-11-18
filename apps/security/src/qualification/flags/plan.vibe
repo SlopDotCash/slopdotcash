@@ -1,0 +1,68 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"
+import { protectedCheckout, secretVariable, variable } from "../../programs/checkout.vibe"
+
+export error FlagsRefused { message: string }
+
+export interface FlagNames {
+  readonly worker: string
+  readonly databases: readonly [source: string]
+  readonly buckets: readonly [source: string]
+  readonly queues: readonly [work: string, failed: string]
+}
+
+export const protectedWorkflow = "SlopDotCash/slopdotcash/.github/workflows/vetting-recovery-qualification.yml@refs/heads/development"
+export const databaseBinding = "EVIDENCE_DATABASE"
+export const bucketBinding = "EVIDENCE_SOURCE"
+export const queueBinding = "EVIDENCE_BACKUP_QUEUE"
+export const flagActions = ["flags", "access", "empty"] as const
+
+export type FlagAction = (typeof flagActions)[number]
+
+export const flagsSchema = `CREATE TABLE qualification_results(phase TEXT PRIMARY KEY, result TEXT NOT NULL CHECK(json_valid(result)));
+CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL);
+`
+
+const runPattern = /^slop-vet-flags-[0-9]{1,20}-[0-9]{1,5}$/u
+const accountPattern = /^[a-f0-9]{32}$/u
+export const protectedRefusal = "Exact protected development qualification is required"
+
+export function isFlagsRun(run: string) {
+  return runPattern.test(run)
+}
+
+export function flagsRun(runId: string | undefined, attempt: string | undefined) {
+  const run = `slop-vet-flags-${runId ?? "0"}-${attempt ?? "0"}`
+  return isFlagsRun(run) ? run : undefined
+}
+
+export function flagNames(run: string): FlagNames {
+  return { worker: run, databases: [`${run}-source`], buckets: [`${run}-source`], queues: [`${run}-work`, `${run}-failed`] }
+}
+
+export function runtimeVars(run: string): Readonly<Record<string, string>> {
+  return { QUALIFICATION_RUN: run }
+}
+
+export function flagsPlan(source: string, run: string) {
+  const names = flagNames(run)
+  return {
+    mode: "plan",
+    source,
+    names,
+    resources: { d1: names.databases.length, r2: names.buckets.length, queues: 2, worker: 1 },
+    fixture: "two-flag-pause",
+    publicRoutes: false,
+    scans: false,
+    cleanup: "only exact resources created by this workflow run",
+  }
+}
+
+export effect function protectedFlagsRun(run: string) {
+  const checkout = protectedCheckout({ refs: ["refs/heads/development"], workflowRef: protectedWorkflow, mode: "execute", message: protectedRefusal }) catch effect () => {
+    throw new FlagsRefused({ message: protectedRefusal })
+  }
+  const account = try variable("CLOUDFLARE_ACCOUNT_ID")
+  const token = try secretVariable("CLOUDFLARE_API_TOKEN")
+  if (run.endsWith("-0") || account === undefined || !accountPattern.test(account) || token === undefined) throw new FlagsRefused({ message: protectedRefusal })
+  return checkout.sha
+}

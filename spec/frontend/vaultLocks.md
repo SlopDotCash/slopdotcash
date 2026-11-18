@@ -129,7 +129,9 @@ also refuses a gross above the free funds when nothing is locked) with "These fu
 been paid out yet. Withdraw only funds above the locked months." The page's
 promised-amount guard ([projections](./projections.md),
 `withdrawalAllowedOnSlopPages`) applies only when neither read shows locks
-and the month is not Funded by pledges. A Solana vault's refusal is the
+and the month is not Funded by pledges, against the free balance this review
+read (`free`); a review that could not read it is not refused by that guard
+(development `src/VaultActions.tsx:268–289` at `67fd54fd4`). A Solana vault's refusal is the
 server review's, `withdrawTakesPledgedFunds` of the
 [month pledges](../settlement/monthPledges.md), and reaches the page as a
 refused review.
@@ -143,7 +145,7 @@ pure def pageGuardApplies(pool: P::PoolFacts, locks: VaultLocks): bool =
   not(locks.cachedSupport) and not(locks.walletRead) and not(P::lockedByPledges(pool))
 pure def withdrawalAllowed(pool: P::PoolFacts, locks: VaultLocks, withdrawal: M::Amount): bool =
   not(lockRefusesWithdrawal(locks, withdrawal))
-    and (not(pageGuardApplies(pool, locks)) or P::withdrawalAllowedOnSlopPages(pool, withdrawal))
+    and (not(pageGuardApplies(pool, locks)) or not(locks.freeKnown) or P::withdrawalAllowedOnSlopPages(pool, locks.free, withdrawal))
 pure def lawAllowedWithdrawalLeavesTheLocks(pool: P::PoolFacts, locks: VaultLocks, withdrawal: M::Amount): bool =
   (withdrawalAllowed(pool, locks, withdrawal) and locks.walletRead and locks.freeKnown)
     implies M::compareAmounts(locks.free, M::addAmounts(locks.locked, withdrawal)) >= 0
@@ -152,9 +154,9 @@ pure def lawUnreadLocksLeaveItToTheContract(locks: VaultLocks, withdrawal: M::Am
 pure def lawLockVaultSkipsThePageGuard(pool: P::PoolFacts, locks: VaultLocks, withdrawal: M::Amount): bool =
   (locks.cachedSupport and not(locks.walletRead)) implies withdrawalAllowed(pool, locks, withdrawal)
 pure def lawVaultWithoutLocksKeepsThePromise(pool: P::PoolFacts, locks: VaultLocks, withdrawal: M::Amount): bool =
-  (not(locks.cachedSupport) and not(locks.walletRead) and not(P::lockedByPledges(pool)))
-    implies withdrawalAllowed(pool, locks, withdrawal) == P::withdrawalAllowedOnSlopPages(pool, withdrawal)
+  (not(locks.cachedSupport) and not(locks.walletRead) and not(P::lockedByPledges(pool)) and locks.freeKnown)
+    implies withdrawalAllowed(pool, locks, withdrawal) == P::withdrawalAllowedOnSlopPages(pool, locks.free, withdrawal)
 pure val noLocks: VaultLocks = { cachedSupport: false, walletRead: false, freeKnown: true, free: List(25), locked: List(0) }
-pure val locksValues = Set(noLocks, { ...noLocks, cachedSupport: true }, { ...noLocks, cachedSupport: true, walletRead: true, locked: List(20) },
+pure val locksValues = Set(noLocks, { ...noLocks, free: List(15) }, { ...noLocks, freeKnown: false }, { ...noLocks, cachedSupport: true }, { ...noLocks, cachedSupport: true, walletRead: true, locked: List(20) },
   { ...noLocks, cachedSupport: true, walletRead: true, locked: List(20), freeKnown: false })
 ```

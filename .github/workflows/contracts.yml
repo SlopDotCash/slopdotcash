@@ -48,6 +48,7 @@ jobs:
         with:
           job: contracts
       - run: forge fmt --root packages/contracts/evm --check
+      - run: forge build --root packages/contracts/evm --sizes
       - run: pnpm all test --filter=@repo/contracts
 
   solana-verifiable:

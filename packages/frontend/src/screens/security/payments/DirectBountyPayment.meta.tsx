@@ -20,7 +20,6 @@ export const meta: ComponentMeta<DirectBountyPaymentProps> = {
     hashes: {},
     error: null,
     stale: false,
-    notice: null,
     onConnect: fn(),
     onSend,
     onHash: fn(),
@@ -43,7 +42,7 @@ export const meta: ComponentMeta<DirectBountyPaymentProps> = {
     // spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"
     Uncertain: async () => {
       await expect(screen.queryByRole("button", { name: "Pay remaining transfers" })).toBeNull();
-      await expect(screen.getByText("Wallet result uncertain. Enter its transaction hash to continue.")).toBeVisible();
+      await expect(screen.getByText("Unknown result: paste hash")).toBeVisible();
       await expect(screen.getByRole("button", { name: "Verify submitted payments" })).toBeEnabled();
     },
     // spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"

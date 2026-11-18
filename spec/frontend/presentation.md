@@ -37,14 +37,18 @@ complete heading and disables typing and deletion. The persistent header stays
 at viewport top while scrolling. The existing main landmark and keyboard
 navigation remain, without restoring the removed Skip to content link.
 
-The heading is a parameter of this rule. Owner decision frontend-ui:OD1 is
-pending: production shows the accessible heading "MAKE MONEY SHIPPING OPEN
-SOURCE." while it types and deletes four rotating actions ("SHIPPING OPEN
-SOURCE.", "SECURING THE WEB.", "HACKING THE PLANET.", "BUILDING AGI."; hold
-2 400 ms, type 55 ms and delete 30 ms per character, 220 ms between actions),
-and that production behaviour is the default. The alternative is the sentence
-the samples below use. Either choice keeps the stable accessible name and the
-static heading under reduced motion.
+The heading follows the Home journey (`campaignOf`, from `audienceOf`
+below), as development decides it (`src/App.tsx` `HOME_AUDIENCES` and
+`HeroHeading` at `67fd54fd4`, settling owner decision frontend-ui:OD1). The
+Contributor journey shows the lead "MAKE MONEY" and types and deletes four
+rotating actions ("SHIPPING OPEN SOURCE.", "SECURING THE WEB.", "HACKING THE
+PLANET.", "BUILDING AGI."), with the accessible heading "MAKE MONEY SHIPPING
+OPEN SOURCE."; the Maintainer journey shows the lead "SHIP FASTER." with the
+one action "WITH CONTRIBUTORS.", accessible heading "SHIP FASTER. WITH
+CONTRIBUTORS.". Each holds 2 400 ms, types 55 ms and deletes 30 ms per
+character, with 220 ms between actions, and a change of journey restarts the
+campaign from its first action. Either keeps its stable accessible name and
+the static heading under reduced motion.
 
 ```quint
 type Motion = NormalMotion | ReducedMotion
@@ -53,6 +57,16 @@ pure def campaignVisibleText(motion: Motion, completeHeading: str, animatedText:
   if (motion == ReducedMotion) completeHeading else animatedText
 pure def campaignAccessibleHeading(completeHeading: str, animatedText: str): str = completeHeading
 pure def headerViewportTop(scrollOffset: int): int = 0
+type Campaign = { lead: str, accessibleHeading: str, actions: List[str] }
+pure val heroHoldMs = 2400
+pure val heroTypeMs = 55
+pure val heroDeleteMs = 30
+pure val heroGapMs = 220
+pure def campaignOf(journey: HomeAudience): Campaign =
+  if (journey == Maintainer) { lead: "SHIP FASTER.", accessibleHeading: "SHIP FASTER. WITH CONTRIBUTORS.",
+    actions: List("WITH CONTRIBUTORS.") }
+  else { lead: "MAKE MONEY", accessibleHeading: "MAKE MONEY SHIPPING OPEN SOURCE.",
+    actions: List("SHIPPING OPEN SOURCE.", "SECURING THE WEB.", "HACKING THE PLANET.", "BUILDING AGI.") }
 pure val mainLandmarkAvailable = true
 pure val skipToContentLinkAvailable = false
 pure def lawReducedMotionShowsCompleteHeading(heading: str, animatedText: str): bool =
@@ -102,11 +116,11 @@ pure val layoutValues = Set(
     appealInSettings: true, profileWalletShortcut: true, sessionList: true, connectionsCard: true,
     securityCard: true, activityOuterBorder: true }
 )
-pure val headingValues = Set("Make money shipping and securing open source.")
-pure val completeHeadingValues = Set("Make money shipping and securing open source.")
-pure val animatedTextValues = Set("", "Make money", "Make money shipping and securing open source.")
-pure val firstFrameValues = Set("", "Make money")
-pure val secondFrameValues = Set("Make money", "Make money shipping and securing open source.")
+pure val headingValues = Set("MAKE MONEY SHIPPING OPEN SOURCE.", "SHIP FASTER. WITH CONTRIBUTORS.")
+pure val completeHeadingValues = headingValues
+pure val animatedTextValues = Set("", "MAKE MONEY SHIP", "MAKE MONEY SHIPPING OPEN SOURCE.")
+pure val firstFrameValues = Set("", "MAKE MONEY SHIP")
+pure val secondFrameValues = Set("MAKE MONEY SHIP", "MAKE MONEY SHIPPING OPEN SOURCE.")
 pure val orderValues = Set(homeOrder, List(ProjectList, SecurityOffers, Rankings))
 pure val clearedProjectsValues = Set(0, 1, 2)
 pure val scrollOffsetValues = Set(0, 1, 1000)
@@ -120,7 +134,14 @@ The repository step offers the user's public-repository picker and URL entry
 for another public repository, then loads the selected repository facts.
 Project setup previews the public page and both generated skills. Rewards
 presents the approved monthly pool or private-bounty choice and its terms;
-it never adds a second review pool for a new project. Existing historical
+it never adds a second review pool for a new project. A monthly pool also
+offers "Promise this amount on the honor system" ([projections](./projections.md),
+`promiseWarning`): setup and settings start it unchecked, and a project
+saved without it reads unchecked; it can be checked only with a positive
+amount, and a checked promise can always be unchecked; leaving the monthly
+pool clears it. The review shows "Honor system (not vaulted or guaranteed)"
+in place of "Pledge", and settings list an "Honor-system promise" On/Off
+change (development `src/ProjectProposalPage.tsx` at `67fd54fd4`). Existing historical
 review commitments retain their terms. A custom image falls back to the
 GitHub owner avatar and never uses a social-preview image.
 
@@ -130,13 +151,19 @@ type SetupPresentation = { projectStep: bool, rewardsStep: bool, reviewStep: boo
   publicPreview: bool, contributorSkillPreview: bool, reviewerSkillPreview: bool,
   monthlyPoolChoice: bool, privateBountyChoice: bool, secondReviewPool: bool,
   grossAwardVisible: bool, researcherShareVisible: bool, slopShareVisible: bool,
-  privateReportTermsVisible: bool }
+  privateReportTermsVisible: bool, honorSystemOption: bool }
+pure val honorSystemDefault = false
+pure def honorSystemEditable(amountPositive: bool, checked: bool): bool = amountPositive or checked
+pure def honorSystemKept(monthlyPool: bool, checked: bool): bool = monthlyPool and checked
+pure def lawHonorSystemStartsOff(monthlyPool: bool): bool = not(honorSystemKept(monthlyPool, honorSystemDefault))
+pure def lawCheckedPromiseCanAlwaysBeWithdrawn(amountPositive: bool): bool = honorSystemEditable(amountPositive, true)
+pure def lawLeavingTheMonthlyPoolClearsThePromise(checked: bool): bool = not(honorSystemKept(false, checked))
 pure def acceptedSetupPresentation(view: SetupPresentation): bool =
   view.projectStep and view.rewardsStep and view.reviewStep and view.publicRepositoryPicker and
   view.repositoryUrlEntry and view.selectedFactsLoaded and view.publicPreview and
   view.contributorSkillPreview and view.reviewerSkillPreview and view.monthlyPoolChoice and
   view.privateBountyChoice and not(view.secondReviewPool) and view.grossAwardVisible and
-  view.researcherShareVisible and view.slopShareVisible and view.privateReportTermsVisible
+  view.researcherShareVisible and view.slopShareVisible and view.privateReportTermsVisible and view.honorSystemOption
 pure def projectImage(customImage: str, ownerAvatar: str): str =
   if (customImage != "") customImage else ownerAvatar
 pure def lawImageFallback(ownerAvatar: str): bool = projectImage("", ownerAvatar) == ownerAvatar
@@ -176,7 +203,7 @@ pure val viewValues = Set(
     repositoryUrlEntry: true, selectedFactsLoaded: true, publicPreview: true,
     contributorSkillPreview: true, reviewerSkillPreview: true, monthlyPoolChoice: true,
     privateBountyChoice: true, secondReviewPool: false, grossAwardVisible: true,
-    researcherShareVisible: true, slopShareVisible: true, privateReportTermsVisible: true }
+    researcherShareVisible: true, slopShareVisible: true, privateReportTermsVisible: true, honorSystemOption: true }
 )
 pure val customImageValues = Set("", "custom-image")
 pure val ownerAvatarValues = Set("owner-avatar")
@@ -370,8 +397,12 @@ the clipboard refuses), "Open in" offers Cursor, Claude, ChatGPT, Grok, Meta AI
 (Muse Spark), OpenClaw and Hermes Agent. The web agents open their own
 new-chat page with the prompt prefilled in a new tab without a referrer;
 OpenClaw opens its own scheme with the prompt as a message, and Hermes Agent,
-which has no prompt link, opens its confirmed skill install for this site's
-`SKILL.md`, both in the same tab. Opening any of them also copies the prompt.
+which has no prompt link, opens its confirmed skill install for the page's
+skill address, both in the same tab. On Home the prompt and that address are
+the selected journey's (`/contribute/SKILL.md` or `/maintain/SKILL.md`,
+below); on project and bounty pages they stay the page's own prompt and
+this site's `/SKILL.md` (development `src/App.tsx` `AgentPromptBox` and
+`InstallPanel` at `67fd54fd4`). Opening any of them also copies the prompt.
 Any provider, model and agent client may participate, so the list is never
 exclusive: the generic prompt and copy stay available whatever the list holds.
 
@@ -386,6 +417,8 @@ pure val agentShortcuts = List(
   { agent: "Meta AI (Muse Spark)", target: WebChat, carriesPrompt: true },
   { agent: "OpenClaw", target: AppScheme, carriesPrompt: true },
   { agent: "Hermes Agent", target: AppScheme, carriesPrompt: false })
+pure val siteSkillPath = "/SKILL.md"
+pure def shortcutSkillPath(onHome: bool, journey: HomeAudience): str = if (onHome) skillPath(journey) else siteSkillPath
 pure def opensNewTab(shortcut: AgentShortcut): bool = shortcut.target == WebChat
 pure def openingCopiesPrompt(shortcut: AgentShortcut): bool = true
 pure def genericPromptAvailable(shortcuts: List[AgentShortcut]): bool = true
@@ -396,4 +429,48 @@ pure val shortcutValues = Set(
   { agent: "Claude", target: WebChat, carriesPrompt: true },
   { agent: "Hermes Agent", target: AppScheme, carriesPrompt: false })
 pure val shortcutsValues = Set(List(), agentShortcuts)
+```
+
+## Story: Choose the contributor or maintainer journey on Home
+
+> As a visitor, I want to say whether I contribute or maintain, so that the
+> heading, the prompt and every agent shortcut lead to the right skill.
+
+### Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together
+
+The journey comes from the `audience` query parameter alone: "maintainer" is
+the Maintainer journey, and an absent or any other value is the Contributor
+journey. The switch (a group labelled "Choose your Slop journey" of two
+pressed-state buttons, "Contributor" and "Maintainer") pushes one history
+entry, dropping forward entries, that sets `audience=maintainer` or removes
+the parameter, keeping every other query parameter and the fragment; it
+stores nothing. Choosing the journey already shown does nothing. The
+heading (`campaignOf`), the prompt ("Read <origin><skill path> and follow
+it.", under "Paste into your agent.") and every agent shortcut's skill
+address derive from the journey alone, so back, forward and reload restore
+all three together. A change resets the copy feedback, discards a pending
+copy result of the old prompt and restarts the campaign. The direct "Add a
+project" route and the shared sections stay (development `src/App.tsx`
+`HomePage`, `formal/models/ui/ui_home_audience.qnt` and
+`tests/e2e/home-audience.spec.ts` at `67fd54fd4`).
+
+```quint
+type HomeAudience = Contributor | Maintainer
+type CopyFeedback = CopyIdle | CopyCopied | CopySelectText
+pure val maintainerQuery = "maintainer"
+pure def audienceOf(query: str): HomeAudience = if (query == maintainerQuery) Maintainer else Contributor
+pure def audienceQuery(journey: HomeAudience): str = if (journey == Maintainer) maintainerQuery else ""
+pure def skillPath(journey: HomeAudience): str = if (journey == Maintainer) "/maintain/SKILL.md" else "/contribute/SKILL.md"
+pure def audienceChanges(shown: HomeAudience, chosen: HomeAudience): bool = shown != chosen
+pure def feedbackAfterChoice(shown: HomeAudience, chosen: HomeAudience, feedback: CopyFeedback): CopyFeedback =
+  if (audienceChanges(shown, chosen)) CopyIdle else feedback
+pure def lawPromptAndLauncherFollowTheAudience(query: str): bool =
+  skillPath(audienceOf(query)) == skillPath(audienceOf(audienceQuery(audienceOf(query))))
+    and campaignOf(audienceOf(query)) == campaignOf(audienceOf(audienceQuery(audienceOf(query))))
+pure def lawUnknownAudienceIsContributor(query: str): bool = query != maintainerQuery implies audienceOf(query) == Contributor
+pure def lawSwitchResetsFeedback(shown: HomeAudience, chosen: HomeAudience, feedback: CopyFeedback): bool =
+  shown != chosen implies feedbackAfterChoice(shown, chosen, feedback) == CopyIdle
+pure def lawChoosingTheShownJourneyDoesNothing(shown: HomeAudience, feedback: CopyFeedback): bool =
+  feedbackAfterChoice(shown, shown, feedback) == feedback
+pure val queryValues = Set("", "maintainer", "contributor", "invalid")
 ```

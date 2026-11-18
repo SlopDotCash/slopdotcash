@@ -1,0 +1,127 @@
+import { assert, layer } from "@effect/vitest"
+import { D1, DatabaseFailure, d1, sql } from "@repo/platform/d1"
+import { rolesFrom } from "@repo/platform/roles"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { Authority, type Permission, type Installation, type ProjectView, Registry, Restrictions, VaultRegistrationRefused } from "@repo/ports/backend"
+import { AuthorityUnavailable, SecurityNoticeAccess } from "@repo/ports/security"
+import { SecurityNoticeAccessLive } from "../src/caseAuthority/notices.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+
+const project = "notice-access"
+const caseId = "sc_notice_access_1"
+const appealedCaseId = "sc_notice_access_2"
+const reporter = "9300000001"
+const maintainer = "9300000002"
+const stranger = "9300000003"
+const outage = "9300000004"
+const moderator = "9300000005"
+const steward = "9300000009"
+const seededAt = "2030-01-01T00:00:00.000Z"
+const manifest = JSON.stringify({ id: project, status: "active", repositories: [{ id: "slop-test/notice-access" }] })
+
+const reads: Readonly<Record<string, readonly [Permission, Installation]>> = {
+  [maintainer]: ["PermissionVerified", "Installed"],
+  [stranger]: ["PermissionDenied", "Installed"],
+  [outage]: ["PermissionUnavailable", "Installed"],
+  [moderator]: ["PermissionUnavailable", "InstallationUnavailable"],
+}
+
+const view: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: steward,
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
+  repositories: [{ id: "1301", nodeId: "R_notice", fullName: "slop-test/notice-access", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => succeed(projectId === project ? view : undefined),
+    byRepository: () => succeed(undefined),
+    byPath: () => succeed(undefined),
+    active: () => succeed([view]),
+    pausedProjects: () => succeed([]),
+    fence: () => succeed(sql`1`),
+    appendVaultRegistration: () => Effect.fail(new VaultRegistrationRefused({ code: "vault_authority_required" })),
+  } satisfies Registry.Shape),
+  Layer.succeed(Authority, {
+    repository: (read) => {
+      const [permission, installation] = reads[read.actorGithubId] ?? ["PermissionDenied", "InstallationMissing"]
+      return succeed({ ...read, permission, installation })
+    },
+  } satisfies Authority.Shape),
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: () => succeed({ restricted: false }),
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+)
+
+const Started = Layer.unwrap(effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "notice-access-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return d1(try promise(() => database(mf, "SLOP_DB")))
+})
+
+const shell = Layer.provideMerge(
+  SecurityNoticeAccessLive,
+  Layer.provideMerge(reportingProgramsLive, Layer.mergeAll(Started, ports, rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: moderator }))),
+)
+
+function caseRow(id: string, ghsa: string, appeal: "none" | "open") {
+  return sql`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id,
+      receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at)
+    VALUES (${id}, ${project}, 'slop-test/notice-access', ${ghsa}, ${reporter}, 'reporter', 'verified', ${seededAt}, ${seededAt}, ${steward},
+      'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', ${appeal}, 1, ${seededAt}, ${seededAt})`
+}
+
+const seeded = [
+  sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${project}, 1, ${manifest}, ${"a".repeat(64)}, 'Listed', ${seededAt})`,
+  sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${project}, 'active', 1, ${manifest}, ${"a".repeat(64)}, ${seededAt}, ${seededAt})`,
+  caseRow(caseId, "GHSA-aaaa-bbbb-cccc", "none"),
+  caseRow(appealedCaseId, "GHSA-dddd-eeee-ffff", "open"),
+]
+
+effect function outcome(githubId: string, id = caseId) {
+  return Effect.map((try SecurityNoticeAccess).forCase({ caseId: id, githubId }), (access) => access.allowed ? "allowed" : "denied") catch (error) =>
+    error instanceof AuthorityUnavailable ? "AuthorityUnavailable" : error instanceof DatabaseFailure ? "DatabaseFailure" : `unexpected ${String(error)}`
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(shell, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Case notice access fails as an authority outage only when GitHub cannot say, and as a storage failure only when storage cannot (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
+    const db = try D1
+    try db.batch(seeded)
+    const before = {
+      maintainer: try outcome(maintainer),
+      stranger: try outcome(stranger),
+      outage: try outcome(outage),
+      moderatorDuringOutage: try outcome(moderator),
+      moderatorDuringOutageOnAppeal: try outcome(moderator, appealedCaseId),
+      missingCase: try outcome(outage, "sc_notice_access_missing"),
+    }
+    try db.run(sql`DROP TABLE security_case_members`)
+    const storage = { maintainer: try outcome(maintainer), outage: try outcome(outage) }
+    try same(
+      { before, storage },
+      {
+        before: { maintainer: "allowed", stranger: "denied", outage: "AuthorityUnavailable", moderatorDuringOutage: "AuthorityUnavailable", moderatorDuringOutageOnAppeal: "allowed", missingCase: "denied" },
+        storage: { maintainer: "DatabaseFailure", outage: "DatabaseFailure" },
+      },
+    )
+  })
+})

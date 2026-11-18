@@ -12,6 +12,7 @@ import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
 import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
 import { SlopbotAudience } from "@repo/ports/slopbot"
 import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import { type IntakeVars, intakeRenewal, intakeToken } from "../src/intakeHealth/renewal.vibe"
 import { IntakeHealthLive } from "../src/intakeHealth/store.vibe"
 import { intakeWatch, productionWatch } from "../src/watch/checks.vibe"
 import { type NotifyEnv, notifyWorker } from "../src/workers/notify.vibe"
@@ -74,7 +75,7 @@ const unreached = () => die(new Error("the notify journey reached another area's
 const Ports = Layer.mergeAll(
   Layer.succeed(EmailConsent, { destination: unreached, enrollment: unreached }),
   Layer.succeed(EmailEnrollment, { registered: unreached, unsubscribeIssued: unreached, pendingVerification: unreached, markVerification: unreached }),
-  Layer.succeed(Registry, { project: unreached, byRepository: unreached, byPath: unreached, active: unreached, fence: unreached }),
+  Layer.succeed(Registry, { project: unreached, byRepository: unreached, byPath: unreached, active: unreached, pausedProjects: unreached, fence: unreached, appendVaultRegistration: unreached }),
   Layer.succeed(ProjectAudience, { listedBy: unreached, owners: unreached }),
   Layer.succeed(ContributorAudience, { affected: unreached }),
   Layer.succeed(DisputeAudience, { dispute: unreached }),
@@ -89,28 +90,23 @@ const statusToken = `github_pat_${"a".repeat(40)}`
 
 const context: ExecutionContext = { waitUntil: () => undefined }
 
-const envs = new Map<string, NotifyEnv>()
+let notifyEnv: NotifyEnv | undefined = undefined
 
-effect function envFor(token: string | undefined) {
-  const key = token ?? "anonymous"
-  const found = envs.get(key)
-  if (found !== undefined) return found
-  const made: NotifyEnv = {
+effect function envOf() {
+  notifyEnv ??= {
     SLOP_DB: (try Journey).db,
     ADMIN_EMAIL: { send: () => Promise.reject(new Error("the notify journey sends no mail")) },
     NOTIFY_FROM_ADDRESS: "notifications@slop.cash",
     NOTIFY_INBOX_URL: "https://slop.test/inbox",
     ADMIN_GITHUB_IDS: "7",
     PROJECT_MODERATOR_GITHUB_IDS: "",
-    ...token === undefined ? {} : { GITHUB_INTAKE_STATUS_TOKEN: token },
   }
-  envs.set(key, made)
-  return made
+  return notifyEnv
 }
 
-effect function posted(url: string, token: string | undefined = statusToken) {
-  const env = try envFor(token)
-  const request = try orDie(Effect.try(() => new WebRequest(url, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })))
+effect function requested(url: string, method: "POST" | "GET" | "PUT" | "DELETE" = "POST") {
+  const env = try envOf()
+  const request = try orDie(Effect.try(() => new WebRequest(url, method === "POST" ? { method, headers: { "content-type": "application/json" }, body: "{}" } : { method })))
   const response = try promise(() => app.fetch(request as unknown as globalThis.Request, env, context))
   const text = try promise(() => response.text())
   const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
@@ -129,14 +125,21 @@ effect function seed(enabled: number, verifiedAt: string) {
   try (try D1).run(sql`INSERT INTO private_intake_status(singleton, enabled, verified_at) VALUES (1, ${enabled}, ${verifiedAt})`)
 }
 
-const renewUrl = "https://notify.internal/v1/intake/renew"
+const production: IntakeVars = { GITHUB_INTAKE_STATUS_TOKEN: statusToken }
+
+effect function scheduled(vars: IntakeVars) {
+  provide Layer.merge(intakeToken(vars), outboundVia(internet)) {
+    const outcome = try exit(intakeRenewal.run())
+    return Exit.isSuccess(outcome) ? "renewed" : "failed"
+  }
+}
 
 effect function renewed(...answers: ReadonlyArray<Scripted>) {
   scripted(...answers)
   const before = try isoNow()
-  const answer = try posted(renewUrl)
+  const job = try scheduled(production)
   const row = try stored()
-  return { answer, credentials: seen.map((request) => request.authorization === "" ? "anonymous" : request.authorization === `Bearer ${statusToken}` ? "token" : "other"), row: row === undefined ? undefined : { enabled: row.enabled, fresh: row.verified_at >= before } }
+  return { job, credentials: seen.map((request) => request.authorization === "" ? "anonymous" : request.authorization === `Bearer ${statusToken}` ? "token" : "other"), row: row === undefined ? undefined : { enabled: row.enabled, fresh: row.verified_at >= before } }
 }
 
 const now = Date.UTC(2030, 5, 1, 12)
@@ -204,10 +207,12 @@ effect function watched<A, E, R>(program: A!E!R) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Renew the observation only from a usable GitHub answer through the notify Worker (spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours")', () => effect {
+  it.effect('Renew the observation only from a usable GitHub answer as the identity deployable\'s hourly job (spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours")', () => effect {
     scripted(status(true))
-    const outside = try posted("https://slop.cash/v1/intake/renew")
-    const outsideReads = seen.length
+    const route = try requested("https://notify.internal/v1/intake/renew")
+    const staging = try scheduled({ ...production, SLOP_ENVIRONMENT: "staging" })
+    const elsewhere = try scheduled({ ...production, IDENTITY_PUBLIC_ORIGIN: "http://localhost:4466" })
+    const offProductionReads = seen.length
     const enabled = try renewed(status(true))
     const disabled = try renewed(status(false))
     const refusedToken = try renewed({ status: 401, body: JSON.stringify({ message: "Bad credentials" }) }, status(true))
@@ -217,40 +222,60 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const unreachable = try renewed({ status: 0, disconnect: true })
     const unauthorized = try renewed({ status: 401, body: "{}" }, { status: 401, body: "{}" })
     scripted(status(true))
-    const badToken = try posted(renewUrl, "short")
+    const badToken = try scheduled({ GITHUB_INTAKE_STATUS_TOKEN: "short" })
     const badTokenReads = seen.map((request) => request.authorization)
+    const anonymous = try renewed(status(true))
     try seed(0, "2100-01-01T00:00:00.000Z")
     const late = try renewed(status(true))
     const port = try intakePort()
-    try Effect.try(() => assert.deepStrictEqual({ outside, outsideReads, enabled, disabled, refusedToken, rateLimited, malformed, unavailable, unreachable, unauthorized, badToken: badToken.body, badTokenReads, late, port }, {
-      outside: { status: 404, cache: "no-store", body: { error: "not_found" } },
-      outsideReads: 0,
-      enabled: { answer: { status: 200, cache: "no-store", body: { result: "Renewed", enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: true } },
-      disabled: { answer: { status: 200, cache: "no-store", body: { result: "Renewed", enabled: false, tokenRejected: false } }, credentials: ["token"], row: { enabled: 0, fresh: true } },
-      refusedToken: { answer: { status: 200, cache: "no-store", body: { result: "Renewed", enabled: true, tokenRejected: true } }, credentials: ["token", "anonymous"], row: { enabled: 1, fresh: true } },
-      rateLimited: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "RateLimited", httpStatus: 403, enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
-      malformed: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Malformed", enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
-      unavailable: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Rejected", httpStatus: 500, enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
-      unreachable: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Unreachable", enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
-      unauthorized: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Unauthorized", httpStatus: 401, enabled: true, tokenRejected: true } }, credentials: ["token", "anonymous"], row: { enabled: 1, fresh: false } },
-      badToken: { result: "Renewed", enabled: true, tokenRejected: true },
+    try Effect.try(() => assert.deepStrictEqual({ route: route.status, staging, elsewhere, offProductionReads, enabled, disabled, refusedToken, rateLimited, malformed, unavailable, unreachable, unauthorized, badToken, badTokenReads, late, port }, {
+      route: 404,
+      staging: "renewed",
+      elsewhere: "renewed",
+      offProductionReads: 0,
+      enabled: { job: "renewed", credentials: ["token"], row: { enabled: 1, fresh: true } },
+      disabled: { job: "renewed", credentials: ["token"], row: { enabled: 0, fresh: true } },
+      refusedToken: { job: "renewed", credentials: ["token", "anonymous"], row: { enabled: 1, fresh: true } },
+      rateLimited: { job: "failed", credentials: ["token"], row: { enabled: 1, fresh: false } },
+      malformed: { job: "failed", credentials: ["token"], row: { enabled: 1, fresh: false } },
+      unavailable: { job: "failed", credentials: ["token"], row: { enabled: 1, fresh: false } },
+      unreachable: { job: "failed", credentials: ["token"], row: { enabled: 1, fresh: false } },
+      unauthorized: { job: "failed", credentials: ["token", "anonymous"], row: { enabled: 1, fresh: false } },
+      badToken: "renewed",
       badTokenReads: [""],
-      late: { answer: { status: 200, cache: "no-store", body: { result: "OlderThanStored", enabled: false, tokenRejected: false } }, credentials: ["token"], row: { enabled: 0, fresh: true } },
+      late: { job: "renewed", credentials: ["token"], row: { enabled: 0, fresh: true } },
       port: { status: { enabled: false, verifiedAt: "2100-01-01T00:00:00.000Z" }, version: "0:2100-01-01T00:00:00.000Z" },
     }))
   })
 
   it.effect('The notify Worker serves only internal callers and answers an unconfigured pilot without delivering (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous")', () => effect {
     scripted()
-    const outside = try posted("https://slop.cash/v1/security-notifications/dispatch")
-    const security = try posted("https://notify.internal/v1/security-notifications/dispatch")
-    const activity = try posted("https://notify.internal/v1/activity-notifications/dispatch")
-    const capabilities = try posted("https://notify.internal/v1/email/capabilities")
-    try Effect.try(() => assert.deepStrictEqual({ outside, security, activity, capabilities, outbound: seen.length }, {
-      outside: { status: 404, cache: "no-store", body: { error: "not_found" } },
+    const outside = try requested("https://slop.cash/v1/security-notifications/dispatch")
+    const plainHttp = try requested("http://notify.internal/v1/security-notifications/dispatch")
+    const withPort = try requested("https://notify.internal:8443/v1/activity-notifications/dispatch")
+    const withQuery = try requested("https://notify.internal/v1/activity-notifications/dispatch?retry=1")
+    const outsideGet = try requested("https://slop.cash/v1/security-notifications/dispatch", "GET")
+    const security = try requested("https://notify.internal/v1/security-notifications/dispatch")
+    const activity = try requested("https://notify.internal/v1/activity-notifications/dispatch")
+    const capabilities = try requested("https://notify.internal/v1/email/capabilities")
+    const securityGet = try requested("https://notify.internal/v1/security-notifications/reconcile", "GET")
+    const activityPut = try requested("https://notify.internal/v1/activity-notifications/eligibility", "PUT")
+    const verificationDelete = try requested("https://notify.internal/v1/email/verification", "DELETE")
+    const spendGet = try requested("https://notify.internal/v1/slopbot-spend", "GET")
+    const notFound = { status: 404, cache: "no-store", body: { error: "not_found" } }
+    try Effect.try(() => assert.deepStrictEqual({ outside, plainHttp, withPort, withQuery, outsideGet, security, activity, capabilities, securityGet, activityPut, verificationDelete, spendGet, outbound: seen.length }, {
+      outside: notFound,
+      plainHttp: notFound,
+      withPort: notFound,
+      withQuery: notFound,
+      outsideGet: notFound,
       security: { status: 503, cache: "private, no-store", body: null },
       activity: { status: 503, cache: "private, no-store", body: null },
       capabilities: { status: 200, cache: "private, no-store", body: { enrollmentAvailable: false } },
+      securityGet: { status: 405, cache: "private, no-store", body: null },
+      activityPut: { status: 405, cache: "private, no-store", body: null },
+      verificationDelete: { status: 405, cache: "private, no-store", body: null },
+      spendGet: { status: 405, cache: "no-store", body: { error: "method_not_allowed" } },
       outbound: 0,
     }))
   })

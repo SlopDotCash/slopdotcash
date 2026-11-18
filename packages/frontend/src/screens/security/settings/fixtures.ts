@@ -1,5 +1,5 @@
-// spec/security/program.md, "A program revision needs current owner authority and exact split rules"
-import { terms } from "../program/fixtures.ts";
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"
+import { withOwnerExclusions as terms } from "../program/fixtures.ts";
 import { type EditorProject, editorProjectOf } from "./editor.ts";
 
 const manifest = {

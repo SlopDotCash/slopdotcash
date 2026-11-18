@@ -1,15 +1,14 @@
-// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"
+// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/poolListing.md, "Home shows one grid of the open Featured and Community projects that are listed this month, leaving bounty cards to the security bounties section"
 import { Button, DataState } from "@repo/ui";
 import { Plus } from "lucide-react";
-import { discoveryProjects } from "../../kernels/rewardSummary.ts";
 import { pageOrigin } from "../../platform/environment.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { CampaignHeading } from "./CampaignHeading.tsx";
 import { HomeStandings } from "./HomeStandings.tsx";
 import type { LifetimeTotal } from "./standings.ts";
 import { InstallPanel } from "./InstallPanel.tsx";
-import type { ListedProject, Shown } from "./listing.ts";
-import { CommunityProjects, type MergeLine, ProjectGrid } from "./ProjectCards.tsx";
+import { homeProjectOrder, homeProjects, type ListedProject, type Shown } from "./listing.ts";
+import { type MergeLine, ProjectGrid } from "./ProjectCards.tsx";
 import { copyText } from "./prompt.vibe";
 import { SecurityOffers } from "./SecurityOffers.tsx";
 
@@ -27,9 +26,7 @@ export type HomeViewProps = HomeReads & {
 };
 
 function Projects({ projects, mergeLine }: Pick<HomeReads, "projects" | "mergeLine">) {
-  const listed = projects.value ?? [];
-  const featured = discoveryProjects(listed, "featured");
-  const community = discoveryProjects(listed, "community");
+  const shown = homeProjectOrder(homeProjects(projects.value ?? []));
   return (
     <section id="projects" aria-labelledby="home-projects-title" className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -43,21 +40,7 @@ function Projects({ projects, mergeLine }: Pick<HomeReads, "projects" | "mergeLi
         </Button>
       </div>
       <DataState status={projects.status} onRetry={projects.onRetry}>
-        {featured.length + community.length === 0 ? (
-          <p className="text-muted-foreground">No projects yet.</p>
-        ) : (
-          <>
-            {featured.length > 0 ? (
-              <section aria-labelledby="featured-projects" className="flex flex-col gap-4">
-                <h3 id="featured-projects" className="text-lg font-semibold text-foreground">
-                  Featured
-                </h3>
-                <ProjectGrid projects={featured} mergeLine={mergeLine} />
-              </section>
-            ) : null}
-            <CommunityProjects projects={community} mergeLine={mergeLine} />
-          </>
-        )}
+        {shown.length === 0 ? <p className="text-muted-foreground">No projects yet.</p> : <ProjectGrid projects={shown} mergeLine={mergeLine} />}
       </DataState>
     </section>
   );

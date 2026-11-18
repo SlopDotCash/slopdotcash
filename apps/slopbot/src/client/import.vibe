@@ -7,6 +7,25 @@ export schema ImportReceipt {
   readonly sequence: number
 }
 
+export const importStreamMediaType = "application/x-ndjson"
+
+export const importHeartbeatMillis = 15_000
+
+export schema ImportPendingFrame {
+  readonly status: "pending"
+}
+
+export schema ImportRefusalBody {
+  readonly error: string
+}
+
+export const ImportTerminalFrame = Schema.Union([
+  Schema.Struct({ status: Schema.Literal(200), body: ImportReceipt }),
+  Schema.Struct({ status: Schema.Literal(409), body: ImportRefusalBody }),
+])
+
+export const ImportFrame = Schema.Union([ImportPendingFrame, ImportTerminalFrame])
+
 export const importLimitBytes = 25 * 1024 * 1024
 
 export const importMediaTypes = ["application/json", "multipart/form-data"] as const

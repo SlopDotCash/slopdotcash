@@ -1,8 +1,9 @@
 // spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"
 import { GitHub, type GitHubFailure, type RateLimited } from "@repo/platform/github"
-import { type Event as OrderEvent, canAdvanceClock, canExpire, canFinish, canResume, initial as unchecked, machineOver } from "../../../gen/operations__stagingOrder.effect.vibe"
+import { type Event as OrderEvent, canAdvanceClock, canExpire, canFinish, canResume } from "../../../gen/operations__stagingOrder.effect.vibe"
 import { isAncestor } from "./heads.vibe"
 import type { Run } from "./run.vibe"
+import { startStagingOrder } from "./stagingOrder.vibe"
 
 export error StagingHistoryRefused { message: string }
 
@@ -41,13 +42,6 @@ interface QuotaDelay {
   readonly valid: boolean
   readonly retryAt: number
 }
-
-export effect function startOrder() {
-  const held = try Ref.make(unchecked)
-  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
-}
-
-export type Order = Effect.Success<ReturnType<typeof startOrder>>
 
 function quotaDelay(failure: RateLimited, now: number): QuotaDelay {
   const reset = failure.secondary || failure.resetAt === undefined ? undefined : failure.resetAt + 1_000
@@ -99,7 +93,7 @@ effect function replayNewerAttempt(run: Run) {
 
 export effect function stagingHistory<E, R>(run: Run, repository: string, root: string, tested: string, observe: () => boolean!E!R) {
   const github = try GitHub
-  const order = try startOrder()
+  const order = try startStagingOrder()
   const startedAt = try Clock.currentTimeMillis
 
   effect function sent(event: OrderEvent) {
@@ -109,14 +103,14 @@ export effect function stagingHistory<E, R>(run: Run, repository: string, root: 
   }
 
   effect function elapsed() {
-    const state = try order.get()
+    const state = try order.state()
     const passed = (try Clock.currentTimeMillis) - startedAt - state.now
     if (canAdvanceClock(state, passed)) try sent({ type: "advanceClock", elapsed: passed })
-    if (canExpire(try order.get())) {
+    if (canExpire(try order.state())) {
       try sent({ type: "expire" })
       throw new StagingHistoryRefused({ message: "Staging order retry exceeded its deadline" })
     }
-    return try order.get()
+    return try order.state()
   }
 
   effect function failed(failure: GitHubFailure) {

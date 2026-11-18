@@ -13,7 +13,10 @@ which authorized details are mounted in the active browser lifetime.
 ### Private report IDs scope both heading references
 
 The shell prefixes these numeric references with the report element family.
-An immutable submission ID is a positive safe integer. One card and one
+Each is an immutable private report ID (a submission ID for a receipt, a case
+ID for a case detail opened by `?case=`; development `src/SecurityBounty.tsx`
+and `tests/e2e/inbox-report-reference.spec.ts` at `67fd54fd4`), which the
+shell maps to a positive safe integer. One card and one
 summary use distinct families, so their ID segments can be used without
 arithmetic on a potentially large identifier.
 

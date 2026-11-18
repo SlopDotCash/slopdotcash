@@ -104,3 +104,24 @@ pure val oValues = Set(
 pure val priorValues = oValues
 pure val nowMsValues = Set(1000, 3600999, 3601000, 5000000)
 ```
+
+### The GitHub handoff link follows the last verified enabled observation
+
+The public intake readiness read returns the GitHub private-reporting handoff
+link while the cached observation is `ready`: the identity matches, the last
+verified value is enabled, and its verification time is known and not in the
+future (`cachedReportingReadiness`, `handoffUrl` in
+`backend/security/handler.ts`). Staleness and a failed later refresh do not
+hide it; they are reported beside it. Readiness for automatic intake and
+forwarding still needs `readyFor`.
+
+```quint
+pure def handoffShown(r: Readiness, target: Target, nowMs: int): bool =
+  r.observations.some(o => sameKey(o, target.revision, target.repository) and identityMatches(o, target) and o.enabled
+    and o.verifiedAt > 0 and nowMs >= o.verifiedAt)
+pure def lawReadyShowsHandoff(r: Readiness, target: Target, nowMs: int): bool = readyFor(r, target, nowMs) implies handoffShown(r, target, nowMs)
+pure def sometimesHandoffShownWhileStale(r: Readiness): bool = handoffShown(r, registered, 5000000) and not(readyFor(r, registered, 5000000))
+pure val rValues = Set(initial, { observations: List({ revision: 1, repository: 1, repositoryId: 11, repositoryNodeId: 21, enabled: true,
+  verifiedAt: 1000, attemptedAt: 1000, failure: NoFailure }) }, { observations: List({ revision: 1, repository: 1, repositoryId: 11,
+  repositoryNodeId: 21, enabled: true, verifiedAt: 1000, attemptedAt: 3601000, failure: ReadFailed }) })
+```

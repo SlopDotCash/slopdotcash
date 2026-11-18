@@ -9,7 +9,7 @@ import { type SignatureRefused, type SignedRequest, serviceKeys, verifySigned } 
 
 export error Refused { status: number; code: string; message: string; headers?: Readonly<Record<string, string>> }
 
-export function refuse(status: number, code: string, message: string) {
+export function refuse(status: number, code: string, message = "") {
   return new Refused({ status, code, message })
 }
 
@@ -221,8 +221,12 @@ function refusalOf(error: unknown, routing: Routing): Refusal | undefined {
   }
 }
 
+export function refusalBody(refusal: Pick<Refusal, "code" | "message">) {
+  return refusal.message === "" ? { error: refusal.code } : { error: refusal.code, message: refusal.message }
+}
+
 function refusalResponse(refusal: Refusal) {
-  return json({ error: refusal.code, message: refusal.message }, refusal.status, refusal.headers)
+  return json(refusalBody(refusal), refusal.status, refusal.headers)
 }
 
 effect function internal() {
@@ -383,6 +387,22 @@ effect function preflighted(group: ReadonlyArray<AnyRoute>) {
       "cache-control": "no-store",
     },
   })
+}
+
+export const answerableMethods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"] as const
+
+export const methodNotAllowedAnswer = HttpServerResponse.empty({ status: 405, headers: { "cache-control": "private, no-store" } })
+
+function refusedMethods(routes: ReadonlyArray<AnyRoute>, path: string) {
+  const onPath = routes.filter((route) => route.path === path)
+  const preflighted = onPath.some((route) => route.cors !== undefined)
+  return answerableMethods.filter((method) => !onPath.some((route) => route.method === method) && (method !== "OPTIONS" || !preflighted))
+}
+
+export function methodNotAllowed<E, R>(routes: ReadonlyArray<AnyRoute>, answer?: HttpServerResponse.HttpServerResponse!E!R) {
+  const response: HttpServerResponse.HttpServerResponse!E!R = answer ?? succeed(methodNotAllowedAnswer)
+  const paths = [...new Set(routes.map((route) => route.path))]
+  return HttpRouter.addAll(paths.flatMap((path) => refusedMethods(routes, path).map((method) => HttpRouter.route(method, path, answered(response)))))
 }
 
 export function preflight(routes: ReadonlyArray<AnyRoute>) {

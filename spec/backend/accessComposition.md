@@ -70,31 +70,25 @@ pure def alwaysWritesTimed(c: Composed): bool =
 
 ### The ban decisions are those of participation restrictions, with their start times
 
-Each wrapped decision runs under its own guard. A ban records the time it
-started; a released ban no longer gates the account.
+Each wrapped decision runs under its own guard. Each ban a moderator's
+decision records starts at the time of that decision; a released ban no
+longer gates the account.
 
 ```quint
 pure def canRecordVettingBan(c: Composed, by: int, project: int, decision: int): bool =
   AC::canRecordVettingBan(c.access, by, project, decision)
 pure def recordVettingBan(c: Composed, by: int, project: int, decision: int): Composed =
   { ...c, access: AC::recordVettingBan(c.access, by, project, decision) }
-pure def canDecideProjectBan(c: Composed, by: int, project: int, decision: int): bool =
-  AC::canDecideProjectBan(c.access, by, project, decision)
-pure def decideProjectBan(c: Composed, by: int, project: int, decision: int): Composed =
-  { ...c, access: AC::decideProjectBan(c.access, by, project, decision) }
-pure def canIdentify(c: Composed, by: int, enforcement: int, target: int): bool = AC::canIdentify(c.access, by, enforcement, target)
-pure def identify(c: Composed, by: int, enforcement: int, target: int): Composed =
-  { ...c, access: AC::identify(c.access, by, enforcement, target) }
-pure def canBan(c: Composed, by: int, enforcement: int, target: int): bool = AC::canBan(c.access, by, enforcement, target)
-pure def ban(c: Composed, by: int, enforcement: int, target: int): Composed =
-  { ...c, access: AC::ban(c.access, by, enforcement, target),
-    banStarts: c.banStarts.append({ enforcement: enforcement, target: target, at: c.now }) }
-pure def canAppeal(c: Composed, by: int, enforcement: int): bool = AC::canAppeal(c.access, by, enforcement)
-pure def appeal(c: Composed, by: int, enforcement: int): Composed = { ...c, access: AC::appeal(c.access, by, enforcement) }
-pure def canTriageAppeal(c: Composed, by: int, appealId: int, uphold: bool, confidenceHundredths: int): bool =
-  AC::canTriageAppeal(c.access, by, appealId, uphold, confidenceHundredths)
-pure def triageAppeal(c: Composed, by: int, appealId: int, uphold: bool, confidenceHundredths: int): Composed =
-  { ...c, access: AC::triageAppeal(c.access, by, appealId, uphold, confidenceHundredths) }
+pure def canDecideProjectBan(c: Composed, by: int, project: int, decision: int, accounts: List[int]): bool =
+  AC::canDecideProjectBan(c.access, by, project, decision, accounts)
+pure def decideProjectBan(c: Composed, by: int, project: int, decision: int, accounts: List[int]): Composed =
+  { ...c, access: AC::decideProjectBan(c.access, by, project, decision, accounts),
+    banStarts: c.banStarts.concat(accounts.listMap(t => { enforcement: decision, target: t, at: c.now })) }
+pure def canAppeal(c: Composed, by: int, project: int): bool = AC::canAppeal(c.access, by, project)
+pure def appeal(c: Composed, by: int, project: int): Composed = { ...c, access: AC::appeal(c.access, by, project) }
+pure def canDenyAppeal(c: Composed, by: int, project: int, decision: int): bool = AC::canDenyAppeal(c.access, by, project, decision)
+pure def denyAppeal(c: Composed, by: int, project: int, decision: int): Composed =
+  { ...c, access: AC::denyAppeal(c.access, by, project, decision) }
 pure def canReinstateAccounts(c: Composed, by: int, decision: int, project: int, targets: List[int]): bool =
   AC::canReinstateAccounts(c.access, by, decision, project, targets)
 pure def reinstateAccounts(c: Composed, by: int, decision: int, project: int, targets: List[int]): Composed =
@@ -152,17 +146,13 @@ pure def sometimesCreditStops(c: Composed): bool =
 pure def sometimesWritesAgainAfterRelease(c: Composed): bool =
   c.access.releases.some(r => r.target == 7) and not(AC::banned(c.access, 7)) and
   c.committed.some(w => w.actor == 7 and c.banStarts.some(b => b.target == 7 and b.at < w.at))
-pure val byValues = Set(18633264, 202660855, 7, AC::vettingService, AC::slopbotService, scheduler)
+pure val byValues = Set(18633264, 202660855, 7, AC::vettingService, scheduler)
 pure val gateValues = Set(BountyReservation, FlagFiling, TraceRun)
 pure val keptValues = Set(FlagWithdrawal, IntakeReconciliation)
 pure val projectValues = Set(1)
 pure val decisionValues = Set(1, 2, 3)
-pure val enforcementValues = Set(2)
-pure val targetValues = Set(7)
+pure val accountsValues = Set(List(7))
 pure val targetsValues = Set(List(7))
-pure val appealIdValues = Set(1)
-pure val upholdValues = Set(true)
-pure val confidenceHundredthsValues = Set(95)
 pure val actorValues = Set(7)
 pure val atValues = Set(1, 2, 3)
 pure val restrictionValues = Set(E::Clear, E::FlagQuarantine, E::ModeratorQuarantine, E::ServiceBan, E::ModeratorBan)
@@ -170,9 +160,7 @@ pure val workValues = Set(AnalyzeCase, TriageCaseAppeal, NewReport, CheckReceipt
 pure val vValues = Set({ actor: 7, at: 1 }, { actor: 7, at: 2 })
 pure val weight_begin = 4
 pure val weight_commit = 4
-pure val weight_identify = 6
-pure val weight_ban = 6
-pure val weight_decideProjectBan = 6
+pure val weight_decideProjectBan = 8
 pure val weight_recordVettingBan = 6
 pure val weight_observeEvent = 3
 pure val cValues = Set(initial)

@@ -35,6 +35,8 @@ jobs:
           job: reviewed-historical-points
           verification: "false"
           publication: "true"
+      - name: Reject known production dependency vulnerabilities
+        run: pnpm audit --prod
       - run: pnpm all build --filter=@repo/points
       - name: Install canonical merge Git
         run: |

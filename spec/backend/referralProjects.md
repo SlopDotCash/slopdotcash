@@ -7,16 +7,13 @@ project registry. The route uses no session and provides no write. It returns
 responses. The request adapter recognizes the base path and its trailing
 slash. The registry supplies immutable attribution and registration time.
 
-The source query at `e170d85aa:backend/referrals/handler.ts` selects both
-non-null attribution fields and orders by creation and project ID. That
-query does not filter retired records. The approved endpoint is described
-as a list of already public projects. The supplied Slop repository
-instructions hide retired projects from every page and list. The contract
-requires current public listing eligibility, on the authority of the
-CLAUDE.md rule that a retired project is hidden "from every page and list";
-this is a recorded interpretation and a known divergence from the pinned
-query until an owner confirms it. Conformance must cover a retired
-registry row carrying a referrer.
+The query (Slop development `67fd54fd4:backend/referrals/handler.ts`)
+selects both non-null attribution fields and orders by creation and project
+ID. It does not filter by listing or restriction: every registered project
+with a recorded referrer appears, retired and restricted projects included,
+with its current registry status. This follows development, as the owner
+directed on 17 November 2026, and supersedes the earlier interpretation that
+hid retired records. Conformance must cover a retired registry row carrying a referrer.
 
 ## Story: Read immutable referral attribution for public registrations
 
@@ -43,9 +40,10 @@ pure def responseHasBody(method: Method, routePath: Path, registryReady: bool): 
 pure def lawHeadHasNoBody(routePath: Path, registryReady: bool): bool = not(responseHasBody(Head, routePath, registryReady))
 ```
 
-### Only current public projects with complete immutable attribution appear, in registry order
+### Every registered project with complete immutable attribution appears, in registry order
 
-Applications are stored separately. A public paused project remains listed.
+Applications are stored separately. A paused, retired or restricted project
+remains listed; the row's listing flag (`publicListing`) filters nothing.
 The authoritative query supplies order by registration time, then project ID.
 Filtering preserves that order and returns only the project identifier,
 current registry status, registration time and paired GitHub ID/login.
@@ -55,7 +53,7 @@ No private fields are available in the output type.
 type RegistryStatus = Active | Paused
 type Registration = { projectId: str, status: RegistryStatus, listedAt: str, publicListing: bool, referrerId: str, referrerLogin: str }
 type PublicProject = { projectId: str, status: RegistryStatus, listedAt: str, referrerId: str, referrerLogin: str }
-pure def visibleReferral(row: Registration): bool = row.publicListing and row.referrerId != "" and row.referrerLogin != ""
+pure def visibleReferral(row: Registration): bool = row.referrerId != "" and row.referrerLogin != ""
 pure def projectProjection(row: Registration): PublicProject =
   { projectId: row.projectId, status: row.status, listedAt: row.listedAt, referrerId: row.referrerId, referrerLogin: row.referrerLogin }
 pure def referredProjects(orderedRows: List[Registration]): List[PublicProject] = orderedRows.select(row => visibleReferral(row))
@@ -72,6 +70,9 @@ pure def lawFilterPreservesOrder(first: Registration, second: Registration): boo
   referredProjects(List(first, second)) ==
     (if (visibleReferral(first)) List(projectProjection(first)) else List()).concat(
       if (visibleReferral(second)) List(projectProjection(second)) else List())
+pure def lawRetiredRowWithAttributionAppears(row: Registration): bool =
+  (not(row.publicListing) and row.referrerId != "" and row.referrerLogin != "") implies
+    referredProjects(List(row)) == List(projectProjection(row))
 pure def lawEmptyRegistryReturnsEmpty(orderedRows: List[Registration]): bool =
   orderedRows.length() == 0 implies referredProjects(orderedRows).length() == 0
 ```

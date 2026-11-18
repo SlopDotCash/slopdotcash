@@ -84,10 +84,28 @@ pure def sometimesLateBudget(a: Assessment): bool = latest(a).state == AttemptUn
 pure def sometimesStaleResultHidden(a: Assessment): bool = a.shown == 0 and a.count > 0 and a.attempts.getOr(1, noAttempt).state == AttemptComplete
 ```
 
+### A case received without Slop intake is qualified at its receipt version
+
+A case received without a Slop intake (GitHub-verified, imported or
+maintainer-attested, so its source is not `SlopReceived`) needs no
+screening: development admits its analysis claim when the case has no intake
+row and reads the report from the GitHub advisory (the claim `INSERT … WHERE
+(? IS NULL AND NOT EXISTS(intake)) OR EXISTS(qualified intake)` in
+`backend/security/analysis.ts`). Its receipt version is qualified at once.
+The shell passes the case's own stored receipt source, never a request's
+claim; a case with a Slop intake still needs screening.
+
+```quint
+pure def canObserveReceiptQualified(a: Assessment, source: C::ReceiptSource): bool =
+  (source == C::GithubVerified or source == C::MaintainerAttested) and a.reportVersion == 1 and a.qualifiedVersion == 0
+pure def observeReceiptQualified(a: Assessment, source: C::ReceiptSource): Assessment = { ...a, qualifiedVersion: a.reportVersion }
+```
+
 ### Simulation samples
 
 ```quint
 pure val nowMsValues = Set(1, 900002)
+pure val sourceValues = Set(C::SlopReceived, C::GithubVerified, C::MaintainerAttested)
 pure val byValues = Set(1, 2)
 pure val checkedEpochValues = Set(1)
 pure val snapshotValues = Set(C::staff)

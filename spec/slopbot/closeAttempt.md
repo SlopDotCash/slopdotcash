@@ -220,19 +220,24 @@ pure def sometimesRejectedThenReserved(c: CloseAttempt): bool = c.rejected.lengt
 Source `notifyScamReviewForPenalty`: a confirmed close of a `scam` finding
 (the only `moderator_review` category) records one moderator Inbox notice
 per configured moderator under an idempotent key and adds the
-`slopbot: moderator` label. The notice is retried from the committed close
-even after GitHub already shows the item closed. Moderators are the PRD
-section 9 GitHub actors 18633264 and 202660855.
+`slopbot: moderator` label, but only when the close recorded an active
+penalty with moderator review (`penalty?.moderator_review === 1`,
+`review.ts` lines 1107, 1258 and 1994). A close whose revision a maintainer
+reopened records no penalty, or has its penalty reversed as a late reopen
+before the notice, so it notifies no one and adds no label. The notice is
+retried from the committed close even after GitHub already shows the item
+closed. Moderators are the PRD section 9 GitHub actors 18633264 and
+202660855.
 
 ```quint
 pure val slopModerators: Set[int] = Set(18633264, 202660855)
+pure def moderatorPenaltyRecorded(c: CloseAttempt): bool =
+  closedBySlopbot(c) and F::moderatorReview(c.candidate.triage.verdict.category) and not(c.maintainerReopened)
 pure def canNotifyModerator(c: CloseAttempt, recipient: int): bool =
-  closedBySlopbot(c) and F::moderatorReview(c.candidate.triage.verdict.category) and slopModerators.contains(recipient) and
-  not(c.moderatorNotices.contains(recipient))
+  moderatorPenaltyRecorded(c) and slopModerators.contains(recipient) and not(c.moderatorNotices.contains(recipient))
 pure def notifyModerator(c: CloseAttempt, recipient: int): CloseAttempt =
   { ...c, moderatorNotices: c.moderatorNotices.union(Set(recipient)) }
-pure def canAddModeratorLabel(c: CloseAttempt): bool =
-  closedBySlopbot(c) and F::moderatorReview(c.candidate.triage.verdict.category) and not(c.moderatorLabel)
+pure def canAddModeratorLabel(c: CloseAttempt): bool = moderatorPenaltyRecorded(c) and not(c.moderatorLabel)
 pure def addModeratorLabel(c: CloseAttempt): CloseAttempt = { ...c, moderatorLabel: true }
 pure def alwaysNoticesOnlyForConfirmedScam(c: CloseAttempt): bool =
   (c.moderatorNotices.size() > 0 or c.moderatorLabel) implies closedBySlopbot(c) and c.candidate.triage.verdict.category == F::Scam
@@ -240,7 +245,9 @@ pure def alwaysNoticesToModerators(c: CloseAttempt): bool = c.moderatorNotices.s
 pure def sometimesEveryModeratorNotified(c: CloseAttempt): bool = slopModerators.subseteq(c.moderatorNotices) and c.moderatorLabel
 pure val fair_notifyModerator = "weak"
 pure def leadsToEveryModeratorNotified(c: CloseAttempt, later: CloseAttempt): bool =
-  (closedBySlopbot(c) and c.candidate.triage.verdict.category == F::Scam) implies slopModerators.subseteq(later.moderatorNotices)
+  moderatorPenaltyRecorded(c) implies (slopModerators.subseteq(later.moderatorNotices) or later.maintainerReopened)
+pure def sometimesReopenedScamCloseNotifiesNoOne(c: CloseAttempt): bool =
+  closedBySlopbot(c) and c.maintainerReopened and c.moderatorNotices.size() == 0 and not(c.moderatorLabel)
 ```
 
 ## Story: A maintainer reopen or an upheld appeal undoes Slopbot's own close

@@ -18,6 +18,7 @@ export const meta: ComponentMeta<PointsDisputesProps> = {
   examples: {
     Filing: { shown: unreviewed ? { kind: "filing", item: unreviewed } : { kind: "none" } },
     ModeratorReview: { shown: { kind: "detail", dispute } },
+    TriageStalled: { shown: { kind: "detail", dispute: { ...dispute, draft: null, state: "triage", escalatedAt: null, mayDecide: false } } },
     Resolved: { shown: { kind: "detail", dispute: { ...dispute, state: "resolved", resolution: "denied", resolutionReason: "The award follows the published rule.", mayDecide: false } } },
     AccountChanged: { shown: { kind: "none" }, error: "The account changed. Reload Inbox." },
   },
@@ -42,6 +43,18 @@ export const meta: ComponentMeta<PointsDisputesProps> = {
       await userEvent.type(screen.getByRole("textbox", { name: "Decision reason" }), "Reverted the next day.");
       await userEvent.click(screen.getByRole("button", { name: "Uphold dispute" }));
       await expect(onDecide).toHaveBeenCalledWith("uphold", "Reverted the next day.");
+    },
+    // spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"
+    TriageStalled: async () => {
+      onRetryTriage.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "Retry review" }));
+      await expect(onRetryTriage).toHaveBeenCalledTimes(1);
+    },
+    // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+    AccountChanged: async () => {
+      onRetry.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "Retry loading" }));
+      await expect(onRetry).toHaveBeenCalledTimes(1);
     },
   },
 };

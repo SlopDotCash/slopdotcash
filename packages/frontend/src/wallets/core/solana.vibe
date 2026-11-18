@@ -1,7 +1,7 @@
 // spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"; spec/frontend/wallets.md, "A Solana wallet qualifies only with a solana chain, connect and sign-message features"
 import type { Wallet, WalletAccount } from "@wallet-standard/base"
 import { walletRequestAllowed } from "../../../gen/frontend__wallets.effect.vibe"
-import { type Held, WalletChanged, WalletChoice, WalletDeclined, WalletFailed, WalletUntrusted, changedMessage, conflictMessage } from "./discovery.vibe"
+import { type Held, WalletChanged, WalletChoice, WalletDeclined, WalletFailed, WalletUntrusted, conflictMessage } from "./discovery.vibe"
 import { connectStandard, failureOf, legacyConnect, legacySignMessage, standardShape, standardSignAndSend, standardSignMessage, standardSignTransaction, stillRegistered } from "./injected.ts"
 
 export interface SolanaConnection {
@@ -10,6 +10,7 @@ export interface SolanaConnection {
 }
 
 const signerChanged = "The signing wallet changed. Reconnect before continuing."
+const networkChanged = "Wallet or network changed. Reconnect and review."
 const unsupportedFormat = "This wallet does not support the vault transaction format."
 
 function walletFailure(caught: unknown) {
@@ -51,7 +52,7 @@ export effect function connectSolana(id: number) {
   const held = try heldSolana(id)
   if (held.kind === "standard") {
     const address = try tryPromise({ try: () => connectStandard(held.wallet), catch: walletFailure })
-    if (address === undefined) throw new WalletFailed({ message: "Your wallet did not return a Solana account that can sign messages." })
+    if (address === undefined) throw new WalletFailed({ message: "Wallet has no Solana account that signs messages." })
     return { id, address } satisfies SolanaConnection
   }
   if (held.kind !== "legacySolana") throw new WalletFailed({ message: "Choose a Solana wallet." })
@@ -65,7 +66,7 @@ export effect function solanaSignMessage(connection: SolanaConnection, message: 
   if (held.kind === "standard") {
     const account = try selectedAccount(connection, held.wallet, "solana:signMessage", undefined, signerChanged)
     const result = try tryPromise({ try: () => standardSignMessage(held.wallet, account, requested), catch: walletFailure })
-    if (result === undefined || result.signature.length !== 64 || !sameBytes(result.signedMessage, requested)) throw new WalletFailed({ message: "Your wallet changed the message. Use a wallet that signs it exactly." })
+    if (result === undefined || result.signature.length !== 64 || !sameBytes(result.signedMessage, requested)) throw new WalletFailed({ message: "Your wallet changed the message. Use another wallet." })
     return result.signature
   }
   if (held.kind !== "legacySolana") throw new WalletFailed({ message: "Choose a Solana wallet." })
@@ -79,7 +80,7 @@ export effect function solanaSignMessage(connection: SolanaConnection, message: 
 
 export effect function solanaSignTransaction(connection: SolanaConnection, chain: string, transaction: Uint8Array) {
   const wallet = try standardOf(connection.id)
-  const account = try selectedAccount(connection, wallet, "solana:signTransaction", chain, changedMessage)
+  const account = try selectedAccount(connection, wallet, "solana:signTransaction", chain, networkChanged)
   if (!standardShape(wallet).signTransaction) throw new WalletFailed({ message: unsupportedFormat })
   const reviewed = Uint8Array.from(transaction)
   const signed = try tryPromise({ try: () => standardSignTransaction(wallet, account, chain, reviewed), catch: walletFailure })
@@ -89,11 +90,11 @@ export effect function solanaSignTransaction(connection: SolanaConnection, chain
 
 export effect function solanaSignAndSend<E>(connection: SolanaConnection, chain: string, transaction: Uint8Array, beforePrompt: void!E) {
   const wallet = try standardOf(connection.id)
-  const account = try selectedAccount(connection, wallet, "solana:signAndSendTransaction", chain, changedMessage)
+  const account = try selectedAccount(connection, wallet, "solana:signAndSendTransaction", chain, networkChanged)
   if (!standardShape(wallet).signAndSend) throw new WalletFailed({ message: unsupportedFormat })
   const reviewed = Uint8Array.from(transaction)
   try beforePrompt
   const signature = try tryPromise({ try: () => standardSignAndSend(wallet, account, chain, reviewed), catch: walletFailure })
-  if (signature?.length !== 64) throw new WalletFailed({ message: "The wallet did not return a transaction signature. Check wallet activity before another attempt." })
+  if (signature?.length !== 64) throw new WalletFailed({ message: "No signature returned. Check wallet activity." })
   return signature
 }

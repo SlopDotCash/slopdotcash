@@ -57,15 +57,15 @@ function ExemptionForm({ runtime, actorId, project, onAccessLost, exemption, rep
         }}
       >
         {repositoryField}
-        <Field label={revoke ? "Reason for revocation" : "Reason for the exemption"}>
-          <Textarea minLength={minimumExemptionReason} maxLength={1000} required value={reason} onChange={(event) => setReason(event.target.value)} />
+        <Field label="Reason">
+          <Textarea aria-label="Exemption reason" minLength={minimumExemptionReason} maxLength={1000} required value={reason} onChange={(event) => setReason(event.target.value)} />
         </Field>
-        <Field label="Owner decision reference">
+        <Field label="Decision link">
           <Input maxLength={500} required value={decisionReference} onChange={(event) => setDecisionReference(event.target.value)} />
         </Field>
         <div className="flex items-start gap-3">
           <Checkbox id={confirmId} required checked={confirmed} onCheckedChange={(checked) => setConfirmed(checked === true)} />
-          <Label htmlFor={confirmId}>{revoke ? "I confirm the human owner authorized this revocation." : "I confirm the human owner explicitly authorized this exemption for this repository."}</Label>
+          <Label htmlFor={confirmId}>Owner authorized this</Label>
         </div>
         {error ? <Alert variant="destructive">{error}</Alert> : null}
         <Button type="submit" variant="secondary" className="self-start" loading={busy} disabled={busy || !complete}>

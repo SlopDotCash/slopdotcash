@@ -2,9 +2,10 @@
 import type { Person, XProfile } from "@repo/backend/client";
 import type { ProfileIndex } from "@repo/points/client";
 import { DataState, ExternalLink, Pagination } from "@repo/ui";
+import { GitMerge, Wrench } from "lucide-react";
 import type { Shown } from "../home/listing.ts";
 import { pageRows, usePages } from "./pages.ts";
-import { type ListedPerson, listedPeople, mergedText, peoplePageSize } from "./peopleRows.ts";
+import { type ListedPerson, listedPeople, peoplePageSize } from "./peopleRows.ts";
 import { lifetimeTotals, matching, type StandingHistory } from "./standings.ts";
 
 export type PeopleMembers = { readonly kind: "preview"; readonly site: string } | { readonly kind: "read"; readonly people: Shown<ReadonlyArray<Person>> };
@@ -44,10 +45,27 @@ function PersonRow({ person, totals, stewards }: { person: ListedPerson; totals:
       <a href={`/contributors/${encodeURIComponent(person.login)}`} className={linkClass}>
         {person.login}
       </a>
-      <span className="text-sm text-muted-foreground">{mergedText(person.merged)}</span>
-      <span className="font-mono text-sm tabular-nums">{earned === null ? "Points unavailable" : `${(earned + participation).toLocaleString("en-US")} pts`}</span>
-      {person.member ? <small className="text-xs text-muted-foreground">Public member</small> : null}
-      {maintains.length > 0 ? <small className="text-xs text-muted-foreground">Project maintainer · {maintains.join(", ")}</small> : null}
+      <span className="inline-flex items-center gap-1 text-sm text-muted-foreground" title={person.merged === null ? "PR count unavailable" : "Merged PRs"}>
+        <GitMerge aria-hidden className="size-3.5" />
+        {person.merged === null ? "—" : person.merged.toLocaleString("en-US")}
+        <span className="sr-only">{person.merged === null ? " PR count unavailable" : " merged PRs"}</span>
+      </span>
+      <span className="font-mono text-sm tabular-nums" title={earned === null ? "Points unavailable" : undefined}>
+        {earned === null ? (
+          <>
+            —<span className="sr-only"> Points unavailable</span>
+          </>
+        ) : (
+          `${(earned + participation).toLocaleString("en-US")} pts`
+        )}
+      </span>
+      {maintains.length > 0 ? (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 text-xs text-muted-foreground" title="Project maintainer">
+          <Wrench aria-hidden className="size-3.5" />
+          <span className="sr-only">Project maintainer · </span>
+          {maintains.join(", ")}
+        </span>
+      ) : null}
       {person.member?.x ? <XAccountLink account={person.member.x} /> : null}
     </li>
   );
@@ -83,9 +101,8 @@ export function People({ census, members, history, stewards, query }: PeopleProp
       <DataState status={census.status} onRetry={census.onRetry} retryLabel="Retry contributors" />
       {members.kind === "preview" ? (
         <p>
-          Public members load only on {new URL(members.site).hostname}.{" "}
           <a href={`${members.site}/points#people`} className={linkClass}>
-            View public members
+            View on {new URL(members.site).hostname}
           </a>
         </p>
       ) : (

@@ -12,11 +12,11 @@ import { deploymentOf } from "../../../wallets/owner/commitmentCalls.ts";
 import { familyOf } from "../../../wallets/owner/commitments.vibe";
 import type { NetworkPays } from "../../public/funding.ts";
 import { deploymentsOf, type FundingProject, NetworkName } from "../vault/index.ts";
-import { awardsRuntime, finalizeAwards, refreshAwards, saveAllocation, setAutomatic } from "./awards.vibe";
+import { awardsRuntime, type Checked, finalizeAwards, refreshAwards, saveAllocation, setAutomatic } from "./awards.vibe";
 import { useAwardAction, useFollowedMonth, useMonthView } from "./hooks.ts";
 import { monthBounds, monthsBetween, monthText, savedCommitmentMonths, shiftMonth } from "./month.ts";
 import { MonthPanel } from "./MonthPanel.tsx";
-import { OwnerCommitment } from "./OwnerCommitment.tsx";
+import { CommitmentResult, OwnerCommitment } from "./OwnerCommitment.tsx";
 
 export type OwnerAwardsProps = {
   /** The page's runtime, which knows the signed-in account. */
@@ -43,8 +43,10 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
   const followed = useFollowedMonth(runtime, account, githubId);
   const view = useMonthView(runtime);
   const monthly = useMonthly(runtime);
-  const { busy, error, notice, setNotice, act } = useAwardAction(runtime);
+  const { busy, error, act } = useAwardAction(runtime);
   const [selected, setSelected] = useState<string>();
+  const [savedActor, setSavedActor] = useState<string>();
+  const [reserved, setReserved] = useState<Checked>();
   const state = monthly.state;
   const loading = followed.status === "running";
   const shownError = error || (followed.status === "failed" ? followed.message : "");
@@ -52,7 +54,11 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
   const family = deployment === undefined ? undefined : familyOf(deployment);
   const registered = deployment === undefined ? undefined : deploymentsOf(project).find((entry) => entry.network === deployment.network && entry.vault === deployment.vault);
   const paymentsDisabled = project.reward.kind === "external-prize-share" || !deploymentsOf(project).some((entry) => networkPays(entry.network));
-  const refresh = () => act(refreshAwards());
+  const ownerAct: typeof act = (work, then) => {
+    setSavedActor(undefined);
+    return act(work, then);
+  };
+  const refresh = () => ownerAct(refreshAwards());
   return (
     <div className="flex flex-col gap-4">
       {loginHref !== undefined ? (
@@ -61,7 +67,6 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
         </a>
       ) : null}
       {shownError ? <Alert variant="destructive">{shownError}</Alert> : null}
-      {notice ? <Alert variant="info">{notice}</Alert> : null}
       {account !== 0 ? (
         <Button variant="secondary" className="self-start" loading={busy || loading} onClick={refresh}>
           Refresh awards
@@ -76,24 +81,34 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
             busy={busy || loading}
             manageHref={registered ? `/projects/${project.slug}/manage#vault-monthly-${registered.network}-${registered.vault}` : undefined}
             paymentsDisabled={paymentsDisabled}
-            onSave={(change) => act(saveAllocation(change.githubUserId, change.grossBase, change.cut, change.reason), setNotice)}
-            onFinalize={() => act(finalizeAwards(), setNotice)}
-            onAutomaticChange={(automatic) => act(setAutomatic(automatic))}
-            onReserve={setSelected}
+            savedActor={savedActor}
+            onSave={(change) => ownerAct(saveAllocation(change.githubUserId, change.grossBase, change.cut, change.reason), setSavedActor)}
+            onFinalize={() => ownerAct(finalizeAwards())}
+            onAutomaticChange={(automatic) => ownerAct(setAutomatic(automatic))}
+            onReserve={(githubUserId) => {
+              setReserved(undefined);
+              setSelected(githubUserId);
+            }}
             commitment={
               deployment && family ? (
-                <OwnerCommitment
-                  key={selected ?? "saved"}
-                  runtime={runtime}
-                  account={account}
-                  network={deployment.network}
-                  family={family}
-                  githubUserId={selected}
-                  onFinalized={() => {
-                    setSelected(undefined);
-                    void refresh();
-                  }}
-                />
+                <>
+                  {reserved ? <CommitmentResult network={deployment.network} checked={reserved} /> : null}
+                  <OwnerCommitment
+                    key={selected ?? "saved"}
+                    runtime={runtime}
+                    account={account}
+                    network={deployment.network}
+                    vault={deployment.vault}
+                    family={family}
+                    githubUserId={selected}
+                    login={view.run?.awards.find((award) => award.githubUserId === selected)?.login}
+                    onFinalized={(checked) => {
+                      setReserved(checked);
+                      setSelected(undefined);
+                      void refresh();
+                    }}
+                  />
+                </>
               ) : null
             }
           />
@@ -142,7 +157,7 @@ export function OwnerAwards({ runtime, project, awardMonths, networkPays }: Owne
       ))}
       {!opened ? (
         <Button variant="secondary" className="self-start" onClick={() => setOpened(true)}>
-          Review monthly awards
+          Open
         </Button>
       ) : (
         <>

@@ -1,5 +1,6 @@
 // spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
 import { type Event, type IncludedDepositEvidence, type Setup, type VaultKind, canCountDeposit, canFinalizeCreation, canFinalizeDeposit, canIncludeCreation, canIncludeDeposit, canObserveFailure, canReplaceCreation, canReplaceDeposit, depositAttempt, initial, machineOver } from "../../../gen/frontend__provisionalVault.effect.vibe"
+import { networkLabel } from "../../kernels/assetText.ts"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { EvmConnection } from "../core/evm.vibe"
 import type { SlotStorage } from "../core/slots.ts"
@@ -7,6 +8,7 @@ import { hexQuantity } from "./evmCalls.ts"
 import { blockIndex, expectedOf } from "./evmEvidence.ts"
 import { type EvmVault, type ReceiptState, depositsBy, evmVaultMessages, plannedTransfer, receiptState, sendTransfer, vaultCodeAt, verifyDeployment } from "./evmVault.vibe"
 import { type EvmCallPlan, type EvmDepositPlan, planOf, planText } from "./ownerPlans.schema.ts"
+import { receivedNotice } from "./receivedNotice.ts"
 import { keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
 
 export type { Setup, VaultKind }
@@ -26,7 +28,7 @@ export const provisionalMessages = {
   unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
   enterHash: evmVaultMessages.enterHash,
   waiting: "Submitted. Waiting for finalized chain evidence.",
-  received: "Received. Waiting for finality before it counts.",
+  received: (network: string, hash: string) => receivedNotice("deposit", networkLabel(network), hash, true),
   noVault: "The vault was not on chain in the block that confirmed this transaction, so no tokens moved. Review the deposit again once the vault is confirmed.",
   depositFailed: "The transaction failed. Review the amount and wallet, then retry.",
 } as const

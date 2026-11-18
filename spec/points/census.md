@@ -267,6 +267,46 @@ pure val remainingValues = Set(0, 100, 5000)
 pure val attemptValues = Set(1, 2)
 ```
 
+### An optional discussion probe starts only with two available points and never waits for quota to probe
+
+The live GraphQL client may run one optional reference-discussion read
+(`tryReferenceDiscussion`) only after GitHub has reported a rate limit and
+only when the available cost above is at least 2: one point for the probe
+and one kept for the ordinary timeline fallback. It never waits for budget
+to probe and makes one attempt. A complete answer is a discovery; an
+incomplete, invalid or timed-out answer yields no discovery and the ordinary
+path continues. A rate-limited answer (a 403 or 429 naming a primary or
+secondary limit or a Retry-After, or a `RATE_LIMITED` error) waits once for
+the reported delay, or checkpoints when that wait would reach the run's
+deadline, and then yields no discovery; a primary limit without a usable
+reset fails the run, and a bare 403 fails the run.
+
+```quint
+pure val probeCost = 2
+type ProbeAnswer = ProbeComplete | ProbeIncomplete | ProbeRateLimited | ProbeForbidden
+type ProbeOutcome = ProbeSkipped | ProbeDiscovered | ProbeNoDiscovery | ProbeWaitedNoDiscovery | ProbeCheckpointed | ProbeFailed
+pure def probeStarts(budget: Budget, reported: bool): bool = reported and availableCost(budget) >= probeCost
+pure def probeOutcome(budget: Budget, reported: bool, answer: ProbeAnswer, delay: int, now: int, deadline: int): ProbeOutcome =
+  if (not(probeStarts(budget, reported))) ProbeSkipped
+  else match answer {
+    | ProbeComplete => ProbeDiscovered
+    | ProbeIncomplete => ProbeNoDiscovery
+    | ProbeRateLimited => if (delay < 0) ProbeFailed else if (now + delay >= deadline) ProbeCheckpointed else ProbeWaitedNoDiscovery
+    | ProbeForbidden => ProbeFailed }
+pure def lawProbeKeepsFallbackPoint(budget: Budget, reported: bool): bool =
+  probeStarts(budget, reported) implies availableCost(budget) - 1 >= 1
+pure def lawProbeNeverWaitsForBudget(budget: Budget, answer: ProbeAnswer, delay: int, now: int, deadline: int): bool =
+  availableCost(budget) < probeCost implies probeOutcome(budget, true, answer, delay, now, deadline) == ProbeSkipped
+pure def lawUnreportedLimitSkipsProbe(budget: Budget, answer: ProbeAnswer, delay: int, now: int, deadline: int): bool =
+  probeOutcome(budget, false, answer, delay, now, deadline) == ProbeSkipped
+pure def lawRateLimitedProbeDiscoversNothing(budget: Budget, reported: bool, delay: int, now: int, deadline: int): bool =
+  probeOutcome(budget, reported, ProbeRateLimited, delay, now, deadline) != ProbeDiscovered
+pure val reportedValues = Set(true, false)
+pure val answerValues = Set(ProbeComplete, ProbeIncomplete, ProbeRateLimited, ProbeForbidden)
+pure val delayValues = Set(-1, 0, 60000)
+pure val deadlineValues = Set(1000, 2000000000)
+```
+
 ### Simulation samples include repeated cursors, count changes and blocked items
 
 ```quint

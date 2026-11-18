@@ -1,7 +1,8 @@
 // spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"
 import type { PublicMember } from "@repo/backend/client";
 import type { LeaderboardSnapshot } from "@repo/points/client";
-import { Button, DataState, Disclosure, ExternalLink, NotFound } from "@repo/ui";
+import { Button, DataState, Disclosure, ExternalLink, NotFound, Spinner, Status } from "@repo/ui";
+import { Clock, Info, Wallet as WalletIcon } from "lucide-react";
 import type { Effect } from "effect";
 import { useMemo, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
@@ -51,9 +52,8 @@ function Unverified({ login, status, onRetry }: { login: string; status: ReadSta
 
 function UnknownContributor({ login }: { login: string }) {
   return (
-    <NotFound title="No Slop contributor with this login">
+    <NotFound title={`@${login} not found`}>
       <p>
-        Slop has no contributor record for <strong>@{login}</strong>.{" "}
         <a href="/points" className={linkClass}>
           Find a contributor
         </a>
@@ -89,14 +89,23 @@ type Board = {
 function CurrentWallet({ reads, githubId, past }: Pick<Board, "reads"> & { githubId: string; past: WalletProof | undefined }) {
   const wallet = useShownRead(reads.wallet, githubId);
   const shown = (wallet.status === "Current" ? wallet.value : undefined) ?? past;
-  if (shown) {
-    return (
-      <ExternalLink href={shown.sourceUrl} className={linkClass}>
-        {shown === past ? "Past wallet" : "Wallet"} · {shortAddress(shown.address)}
-      </ExternalLink>
-    );
-  }
-  return pending.has(wallet.status) ? <span className="text-muted-foreground">Checking wallet…</span> : null;
+  return shown ? <WalletLink proof={shown} past={shown === past} /> : null;
+}
+
+function WalletLink({ proof, past }: { proof: WalletProof; past: boolean }) {
+  const short = shortAddress(proof.address);
+  return (
+    <ExternalLink href={proof.sourceUrl} className={`${linkClass} inline-flex items-center gap-1`} label={`${past ? "Past wallet" : "Wallet"} · ${short}`}>
+      {past ? (
+        <span title="Past wallet">
+          <Clock aria-hidden className="size-3.5" />
+        </span>
+      ) : (
+        <WalletIcon aria-hidden className="size-3.5" />
+      )}
+      {short}
+    </ExternalLink>
+  );
 }
 
 type WalletProof = { readonly address: string; readonly sourceUrl: string };
@@ -105,11 +114,7 @@ function Wallet({ reads, actor, shares }: Pick<Board, "reads"> & { actor: Profil
   const githubId = githubIdOf(actor);
   const past = shares.find(({ contributor }) => contributor.wallet)?.contributor.wallet ?? undefined;
   if (githubId !== undefined) return <CurrentWallet reads={reads} githubId={githubId} past={past} />;
-  return past ? (
-    <ExternalLink href={past.sourceUrl} className={linkClass}>
-      Past wallet · {shortAddress(past.address)}
-    </ExternalLink>
-  ) : null;
+  return past ? <WalletLink proof={past} past /> : null;
 }
 
 const unread: Shown<never> = { status: "Idle", value: undefined };
@@ -145,7 +150,7 @@ function Projects({ boot, standings, actor }: Pick<Board, "boot" | "standings"> 
                   <span className="flex items-baseline justify-between gap-4">
                     <strong className="text-foreground">{projectName(boot, view.project.id) ?? view.project.id}</strong>
                     <small className="text-sm text-muted-foreground" title="Accepted-work points">
-                      {leader.points.toLocaleString("en-US")} points
+                      {leader.points.toLocaleString("en-US")} pts
                     </small>
                   </span>
                   <span aria-hidden className="h-2 w-full overflow-hidden rounded-full bg-border">
@@ -166,11 +171,9 @@ function Penalties({ boot, snapshot, standings, actor }: Pick<Board, "boot" | "s
   return (
     <Disclosure summary={`Penalty history · ${penalties.length}`}>
       <div className="flex flex-col gap-3">
-        <p>
-          <a href="/how-it-works#penalties" className={linkClass}>
-            How penalties work
-          </a>
-        </p>
+        <a href="/how-it-works#penalties" className={`${linkClass} self-start`} aria-label="How penalties work" title="How penalties work">
+          <Info aria-hidden className="size-4" />
+        </a>
         <ul className="flex flex-col gap-2">
           {penalties.map((penalty) => {
             const project = findProjectByRepositoryId(boot, penalty.repository);
@@ -179,8 +182,9 @@ function Penalties({ boot, snapshot, standings, actor }: Pick<Board, "boot" | "s
                 <ExternalLink href={penalty.source.url} className={linkClass}>
                   {typeof project?.name === "string" ? project.name : penalty.repository} #{penalty.source.number}
                 </ExternalLink>{" "}
+                <Status presentation={{ tone: penalty.category === "spam" ? "Caution" : "Negative", icon: "Alert", label: penaltyLabels[penalty.category] ?? penalty.category }} />{" "}
                 <span>
-                  {penaltyLabels[penalty.category] ?? penalty.category} · {formatMonth(penalty.occurredAt.slice(0, 7))} · −{pointsText(penalty.debitThirds)} point debit · {standings ? `${pointsText(standings.applied.get(penalty.id) ?? 0)} applied` : "applied debit unavailable"}
+                  {formatMonth(penalty.occurredAt.slice(0, 7))} −{pointsText(penalty.debitThirds)} pts · {standings ? `${pointsText(standings.applied.get(penalty.id) ?? 0)} applied` : "applied debit unavailable"}
                 </span>
               </li>
             );
@@ -266,21 +270,14 @@ function Resolve({ board }: { board: Board }) {
     <main className={pageClass}>
       <ContributorIdentity actor={{ login }} />
       {checking ? (
-        <p role="status">Checking contributor…</p>
+        <Spinner label="Checking contributor" />
       ) : (
         <>
-          <p role="status">Contributor records are unavailable.</p>
-          <Button variant="outline" size="sm" className="self-start" onClick={retry}>
-            Retry profile
+          <p role="status">Profile unavailable</p>
+          <Button variant="outline" size="sm" className="self-start" aria-label="Retry profile" onClick={retry}>
+            Retry
           </Button>
         </>
-      )}
-      {checking ? null : (
-        <p>
-          <a href="/points" className={linkClass}>
-            Find a contributor
-          </a>
-        </p>
       )}
     </main>
   );

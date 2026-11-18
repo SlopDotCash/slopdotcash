@@ -1,6 +1,7 @@
 // spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"
-import { Alert, Button, Checkbox, Field, Input, Label, Switch } from "@repo/ui";
-import { type FormEvent, useState } from "react";
+import { Alert, Button, Checkbox, Field, Input, Label, Spinner, Status, type StatusProps, Switch } from "@repo/ui";
+import { LogIn, Mail, Pencil, RotateCcw } from "lucide-react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { type ConsentField, type EmailPanel, type Enrollment, enrollmentOf } from "../../flows/account/email.vibe";
 
 export type EmailPreferencesProps = {
@@ -20,18 +21,29 @@ export type EmailPreferencesProps = {
   onRetry: () => void;
 };
 
-const pendingLabels: Record<string, string> = { expired: "Verification expired", unknown: "Verification delivery not confirmed", sent: "Verification sent" };
+const pendingChips: Readonly<Record<string, StatusProps["presentation"]>> = {
+  expired: { tone: "Negative", icon: "Alert", label: "Expired" },
+  unknown: { tone: "Caution", icon: "Clock", label: "Unconfirmed" },
+  sent: { tone: "Notice", icon: "Check", label: "Sent" },
+};
 
-function detailOf(panel: EmailPanel, preview: boolean): string | undefined {
+const requested: StatusProps["presentation"] = { tone: "Neutral", icon: "Dot", label: "Pending" };
+
+function detailOf(panel: EmailPanel): ReactNode {
   const { state } = panel;
-  if (panel.busy) return "Saving…";
-  if (state.status === "loading") return "Loading…";
-  if (state.status === "failed") return `Email preferences could not be loaded: ${state.message}`;
+  if (panel.busy) return <Spinner size="sm" label="Saving" />;
+  if (state.status === "loading") return <Spinner size="sm" label="Loading" />;
+  if (state.status === "failed") return "Unavailable";
   if (state.status !== "ready") return undefined;
   const value = state.value;
-  if (value.availability === "verified") return value.enabled && value.securityEnabled ? undefined : `${preview ? "Preview address" : "Sent to"} ${value.email ?? ""}`;
-  if (value.availability === "unverified") return "No verified email address is on file. Notices still appear in this inbox.";
-  return "We could not check your email address, so activity email cannot be turned on yet.";
+  if (value.availability === "verified") {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Mail aria-hidden className="size-3.5" /> {value.email ?? ""}
+      </span>
+    );
+  }
+  return value.availability === "unverified" ? "No verified email" : "Email check failed";
 }
 
 type EnrollmentFormProps = {
@@ -59,20 +71,19 @@ function EnrollmentForm({ initial, busy, blocked, editing, onEdit, onRequest, on
       <Field label="Email address" className="w-full max-w-md">
         <Input type="email" autoComplete="email" required maxLength={254} disabled={busy} value={draft.email} onChange={(event) => change({ ...draft, email: event.target.value })} />
       </Field>
-      <fieldset disabled={busy} className="flex flex-col gap-2">
-        <legend className="mb-2 text-sm font-medium text-foreground">After verification</legend>
+      <fieldset aria-label="After verification" disabled={busy} className="flex flex-col gap-2">
         <Label>
           <Checkbox checked={draft.enabled} onCheckedChange={(checked) => change({ ...draft, enabled: checked === true })} />
-          Activity email
+          Activity
         </Label>
         <Label>
           <Checkbox checked={draft.securityEnabled} onCheckedChange={(checked) => change({ ...draft, securityEnabled: checked === true })} />
-          Security email
+          Security
         </Label>
       </fieldset>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="secondary" loading={busy} disabled={blocked}>
-          {busy ? "Requesting…" : "Send verification"}
+          Verify
         </Button>
         {editing ? (
           <Button variant="ghost" disabled={busy} onClick={onCancel}>
@@ -90,13 +101,11 @@ export function EmailPreferences({ panel, signInHref, localMailHref, onToggle, o
   const { state, busy, checking, problem } = panel;
   if (state.status === "signedOut") {
     return (
-      <p>
-        Your session expired.{" "}
-        <a className="text-primary underline underline-offset-4" href={signInHref}>
-          Sign in with GitHub
+      <Button asChild variant="secondary" className="self-start">
+        <a href={signInHref}>
+          <LogIn aria-hidden className="size-4" /> Sign in
         </a>
-        .
-      </p>
+      </Button>
     );
   }
   const ready = state.status === "ready" ? state.value : undefined;
@@ -105,13 +114,25 @@ export function EmailPreferences({ panel, signInHref, localMailHref, onToggle, o
   const securityOn = ready?.securityEnabled === true;
   const editing = panel.editing && !cancelled;
   const enrollmentOpen = ready !== undefined && ready.enrollmentAvailable && (editing || (ready.availability === "unverified" && ready.pending === null));
-  const detail = detailOf(panel, localMailHref !== undefined);
+  const detail = detailOf(panel);
   const failed = state.status === "failed";
   const canRetry = failed || ready?.availability === "unavailable";
   const edit = () => {
     setCancelled(false);
     onEdit();
   };
+  const editButton =
+    !enrollmentOpen && ready?.enrollmentAvailable ? (
+      ready.pending || verified ? (
+        <Button variant="ghost" size="icon" disabled={busy} aria-label="Change email" title="Change email" onClick={edit}>
+          <Pencil aria-hidden className="size-3.5" />
+        </Button>
+      ) : (
+        <Button variant="link" disabled={busy} onClick={edit}>
+          Add email
+        </Button>
+      )
+    ) : null;
   return (
     <div className="flex flex-col gap-4">
       {!enrollmentOpen ? (
@@ -119,17 +140,18 @@ export function EmailPreferences({ panel, signInHref, localMailHref, onToggle, o
           <div className="flex items-center justify-between gap-4">
             <div className="flex min-w-0 flex-col gap-1">
               <span id="email-activity-label" className="font-medium text-foreground">
-                Activity email
+                Activity
               </span>
-              {detail ? (
-                <span id="email-activity-detail" role={failed ? "alert" : state.status === "loading" ? "status" : undefined} className="text-sm text-muted-foreground">
+              <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span id="email-activity-detail" role={failed ? "alert" : undefined}>
                   {detail}
                 </span>
-              ) : null}
+                {ready?.pending ? null : editButton}
+              </span>
             </div>
             <Switch
               aria-labelledby="email-activity-label"
-              aria-describedby={detail ? "email-activity-detail" : undefined}
+              aria-describedby="email-activity-detail"
               aria-busy={busy || checking}
               checked={on}
               loading={busy}
@@ -139,7 +161,7 @@ export function EmailPreferences({ panel, signInHref, localMailHref, onToggle, o
           </div>
           <div className="flex items-center justify-between gap-4">
             <span id="email-security-label" className="font-medium text-foreground">
-              Security email
+              Security
             </span>
             <Switch
               aria-labelledby="email-security-label"
@@ -153,8 +175,8 @@ export function EmailPreferences({ panel, signInHref, localMailHref, onToggle, o
         </>
       ) : null}
       {ready?.pending ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          {pendingLabels[ready.pending.state] ?? "Verification requested"}: {ready.pending.email}
+        <p role="status" className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          {ready.pending.email} <Status presentation={pendingChips[ready.pending.state] ?? requested} /> {editButton}
           {localMailHref ? (
             <>
               {" "}
@@ -167,14 +189,10 @@ export function EmailPreferences({ panel, signInHref, localMailHref, onToggle, o
       ) : null}
       {enrollmentOpen && ready ? (
         <EnrollmentForm initial={enrollmentOf(ready)} busy={busy} blocked={checking} editing={editing} onEdit={onEdit} onRequest={onRequest} onCancel={() => setCancelled(true)} />
-      ) : ready?.enrollmentAvailable ? (
-        <Button variant="link" disabled={busy} onClick={edit} className="self-start">
-          {ready.pending ? "Change email" : "Add or change email"}
-        </Button>
       ) : null}
       {canRetry ? (
         <Button variant="secondary" size="sm" disabled={busy} onClick={onRetry} className="self-start">
-          Retry email preferences
+          <RotateCcw aria-hidden className="size-3.5" /> Retry
         </Button>
       ) : null}
       {problem ? <Alert variant="destructive">{problem}</Alert> : null}

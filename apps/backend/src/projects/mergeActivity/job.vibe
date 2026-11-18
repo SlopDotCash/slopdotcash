@@ -5,7 +5,7 @@ import type { Event } from "../../../gen/backend__mergeActivity.ts"
 import { canReadFailed, decodeEvent, due, readable, schedule } from "../../../gen/backend__mergeActivity.effect.vibe"
 import { validRepositoryPath } from "../github/lookup.vibe"
 import { type Read, repositoryRead } from "./github.vibe"
-import { type Evidence, type Facts, type Key, type StoredRow, rowOf, send, stateOf, storedRows } from "./store.vibe"
+import { type Evidence, type Facts, type Key, type StoredRow, rowOf, send, stateOf, storedRows, unlist } from "./store.vibe"
 
 schema ProjectManifest { id: string; manifest: string }
 schema ListedRepository { id: string; githubUrl?: string }
@@ -63,6 +63,13 @@ effect function sent(key: Key, facts: Facts, event: Event, evidence?: Evidence) 
   }
 }
 
+effect function unlisted(key: Key, facts: Facts) {
+  return unlist(key, facts) catch effect (error) => {
+    if (error._tag !== "Rejected") throw error
+    return undefined
+  }
+}
+
 effect function readEvent(read: Read) {
   if (read.kind === "failed") return { event: { type: "readFailed" }, evidence: { failure: read.failure, mergedAt: [] } } as const
   const { open, capped, merged, mergedAt } = read.pulls
@@ -76,11 +83,11 @@ export effect function refreshMergeActivity() {
   const projects = try registered()
   const stored = try storedRows()
   const storedBy = new Map(stored.map((row) => [keyText(row.project_id, row.repository), row] as const))
-  const listedBy = new Map(projects.map((project) => [project.projectId, project.listed] as const))
+  const projectBy = new Map(projects.map((project) => [project.projectId, project] as const))
   for (const row of stored) {
-    const listed = listedBy.get(row.project_id)
-    if (listed === undefined || listed.includes(row.repository)) continue
-    try sent({ projectId: row.project_id, repository: row.repository }, { at, measured: false, listed: false, running: true, reads: 0 }, { type: "prune" })
+    const project = projectBy.get(row.project_id)
+    if (project === undefined || project.listed.includes(row.repository)) continue
+    try unlisted({ projectId: row.project_id, repository: row.repository }, { at, measured: project.measured, listed: true, running: true, reads: 0 })
   }
   const queue: Queued[] = []
   for (const project of projects) {

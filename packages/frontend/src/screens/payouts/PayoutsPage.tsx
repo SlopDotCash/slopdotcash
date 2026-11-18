@@ -1,6 +1,6 @@
 // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"
 import type { AccountPayment, PaymentsAccount } from "@repo/settlement/client";
-import { Alert, Button, PageHeader, Status } from "@repo/ui";
+import { Alert, Button, PageHeader, Spinner, Status } from "@repo/ui";
 import { Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
@@ -14,7 +14,7 @@ import { netAmountProps } from "./PayoutAmount.tsx";
 import { PayoutConsent } from "./PayoutConsent.tsx";
 import { followPayouts, type PayoutsShown } from "./payoutDesk.vibe";
 import { PayoutRow } from "./PayoutRow.tsx";
-import { awardStatus, paymentStatus, receivedStatus } from "./status.ts";
+import { awardStatus, paymentStatus, receivedStatus, staleStatus } from "./status.ts";
 
 const cycleMonth = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC", year: "numeric" });
 
@@ -40,8 +40,6 @@ export type PayoutsViewProps = {
   consent?: (payment: AccountPayment) => ReactNode;
 };
 
-const linkClass = "text-sm text-primary underline underline-offset-4 hover:decoration-2";
-
 function AwardsAndPayments({ account, consent }: { account: PaymentsAccount; consent?: PayoutsViewProps["consent"] }) {
   return (
     <section aria-labelledby="payouts-payments" className="flex flex-col gap-2">
@@ -49,7 +47,7 @@ function AwardsAndPayments({ account, consent }: { account: PaymentsAccount; con
         Awards and payments
       </h2>
       {account.payments.length === 0 && account.monthlyAwards.length === 0 ? (
-        <p className="text-muted-foreground">No approved awards yet.</p>
+        <p className="text-muted-foreground">No awards yet</p>
       ) : (
         <ul aria-labelledby="payouts-payments">
           {account.monthlyAwards.map((award) => {
@@ -57,6 +55,7 @@ function AwardsAndPayments({ account, consent }: { account: PaymentsAccount; con
             return (
               <PayoutRow
                 key={`${award.projectId}/${award.period}`}
+                chain={award.chain}
                 network={award.network}
                 projectId={award.projectId}
                 amount={netAmountProps(award)}
@@ -69,18 +68,15 @@ function AwardsAndPayments({ account, consent }: { account: PaymentsAccount; con
           {account.payments.map((payment) => (
             <PayoutRow
               key={payment.id}
+              chain={payment.chain}
               network={payment.network}
               projectId={payment.projectId}
               amount={netAmountProps(payment)}
               status={paymentStatus(payment)}
               statusTitle={payment.deliveryState === "needs_wallet" ? `Awaiting wallet: add or confirm your ${CHAIN_NAMES[payment.chain]} wallet` : undefined}
+              statusHref={payment.deliveryState === "needs_wallet" ? "/account#wallets" : undefined}
               explorerUrl={transactionUrl(payment.network, payment.transactionId ?? payment.submittedTransactionId)}
             >
-              {payment.deliveryState === "needs_wallet" ? (
-                <a href="/account#wallets" className={linkClass}>
-                  Add or confirm your {CHAIN_NAMES[payment.chain]} wallet
-                </a>
-              ) : null}
               {consent?.(payment)}
             </PayoutRow>
           ))}
@@ -104,6 +100,7 @@ function DirectTransfers({ account }: { account: PaymentsAccount }) {
           return (
             <PayoutRow
               key={`${transfer.network}:${transfer.transactionId}`}
+              chain={transfer.chain}
               network={transfer.network}
               projectId={transfer.projectId}
               amount={{ amount: transfer.amountMicro, decimals: 6, symbol: "USDC" }}
@@ -128,11 +125,13 @@ export function PayoutsView({ loading, signedOut, loginHref, problem, account, o
         icon={<Wallet className="size-6" />}
         actions={
           <Button asChild variant="secondary" size="sm">
-            <a href="/account#wallets">Manage payout wallets</a>
+            <a href="/account#wallets">
+              <Wallet aria-hidden className="size-4" /> Wallets
+            </a>
           </Button>
         }
       />
-      {loading ? <Status role="status" presentation={{ tone: "Neutral", icon: "Spinner", label: "Checking your payouts…" }} /> : null}
+      {loading ? <Spinner size="sm" label="Checking your payouts" /> : null}
       {signedOut && !loading ? (
         <div>
           <Button asChild>
@@ -143,11 +142,11 @@ export function PayoutsView({ loading, signedOut, loginHref, problem, account, o
       {problem ? (
         <Alert variant="destructive" action={<Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>}>
           <p>{problem}</p>
-          {account ? <p>Showing the last verified data.</p> : null}
         </Alert>
       ) : null}
       {account ? (
         <>
+          {problem ? <Status presentation={staleStatus} className="self-start" /> : null}
           <AwardsAndPayments account={account} consent={consent} />
           <DirectTransfers account={account} />
         </>

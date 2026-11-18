@@ -226,11 +226,16 @@ The month observes each new `{automatic, sequence}` pair of the project
 setting. Turning the default off is always accepted. Turning it on is
 refused while an unfrozen month has a cut whose 24-hour notice ends after
 the cutoff and has not yet ended; the owner can turn it on, or finalize,
-once that notice ends.
+once that notice ends. The settings write itself refuses first
+(`cut_notice_window`, [monthly settings](./monthlySettings.md)
+`lateCutNotice`, which the shell computes with `lateCutNoticeAt` from each
+unfrozen month's latest cut, its cutoff and the time of the write); the
+month's own refusal to observe stays as defence.
 
 ```quint
-pure def cutNoticeOutlastsCutoff(m: Monthly): bool = m.phase == Proposed and m.latestCutAt > 0
-  and m.latestCutAt + cutNoticeSeconds > cutoff(m) and m.now < m.latestCutAt + cutNoticeSeconds
+pure def lateCutNoticeAt(latestCutAt: int, monthCutoff: int, now: int): bool = latestCutAt > 0
+  and latestCutAt + cutNoticeSeconds > monthCutoff and now < latestCutAt + cutNoticeSeconds
+pure def cutNoticeOutlastsCutoff(m: Monthly): bool = m.phase == Proposed and lateCutNoticeAt(m.latestCutAt, cutoff(m), m.now)
 pure def canObserveSettings(m: Monthly, automatic: bool, settingsSequence: int): bool =
   m.phase != Unopened and settingsSequence > m.settingsSequence and not(automatic and cutNoticeOutlastsCutoff(m))
 pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Monthly =
@@ -265,7 +270,7 @@ pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bo
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
   { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor, frozenAt: m.now }
 pure def automaticMayFreeze(m: Monthly): bool = m.now >= cutoff(m) and m.period >= firstAutomaticPeriod and m.eligibility.networkServed
-  and ((m.automatic and not(m.eligibility.paused) and not(m.eligibility.restricted)) or (pledgeKeepsMonth(m) and cutNoticeElapsed(m)))
+  and ((m.automatic and not(m.eligibility.paused) and not(m.eligibility.restricted)) or pledgeKeepsMonth(m))
 pure def canAutoFreeze(m: Monthly): bool = m.phase == Proposed and automaticMayFreeze(m) and financialTermsSame(m.revision, m.currentRevision)
 pure def autoFreeze(m: Monthly): Monthly = { ...m, phase: Frozen, trigger: AutomaticTrigger, frozenSequence: m.sequence, frozenAt: m.now }
 pure val fair_autoFreeze = "weak"
@@ -287,15 +292,12 @@ and `freezeMonthlyPeriod`, `month-pledges.ts` `pledgeKeepsMonth`, and
 development's model `monthly_month_pledge`): the coordinator freezes it at
 the cutoff with the automatic default off and while the project is paused
 or restricted, but not once it is retired, and a pledge in another vault of
-the project gives no consent. Development freezes a pledged month at the
-cutoff without waiting after a cut (PRD: a pledged month freezes at the
-cutoff whatever the automatic default says). Here the freeze on a pledge
-also waits until 24 hours after the latest cut, as the owner's finalization
-does, because a cut made with the default off less than 24 hours before the
-cutoff would otherwise be frozen with a shorter notice than "A month with a
-cut freezes no earlier than 24 hours after the latest cut" allows. Whether
-a pledged month freezes at the cutoff as in development, which needs that
-rule changed, is the owner's decision, pending. The owner path is unchanged.
+the project gives no consent. A pledged month freezes at the cutoff without
+waiting after a cut (PRD: a pledged month freezes at the cutoff whatever the
+automatic default says), so a cut made with the default off in the last 24
+hours before the cutoff is frozen with a shorter notice; this is
+development's decision (operator decision, 15 November 2026). The owner
+path still waits 24 hours after the latest cut.
 
 ```quint
 pure def canObservePledge(m: Monthly, pledgeVault: str): bool =
@@ -434,18 +436,23 @@ pure def alwaysPublicCutsCurrent(m: Monthly): bool =
   and m.shares.every(s => belowProposal(m, s.actor, s.amount) implies m.publicCuts.some(c => c.actor == s.actor))
 ```
 
-### A month with a cut freezes no earlier than 24 hours after the latest cut
+### A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff
 
 Owner finalization waits for the notice directly. The automatic freeze
 happens at the cutoff, which is at least 24 hours after any cut made while
 the default was on, and a default turned on after a later cut waits for that
-cut's notice to end.
+cut's notice to end. A month the owner's pledge freezes at the cutoff
+freezes there even when a cut made with the default off is less than 24
+hours old (development `coordinateMonthlyPayments` checks no cut notice).
 
 ```quint
 pure def alwaysAutomaticHonoursCutNotice(m: Monthly): bool = (m.phase == Proposed and m.automatic and m.latestCutAt > 0) implies
   (m.latestCutAt + cutNoticeSeconds <= cutoff(m) or m.now >= m.latestCutAt + cutNoticeSeconds)
 pure def alwaysFreezeAfterCutNotice(m: Monthly): bool = (frozenPhase(m.phase) and m.latestCutAt > 0) implies
-  m.frozenAt >= m.latestCutAt + cutNoticeSeconds
+  (m.frozenAt >= m.latestCutAt + cutNoticeSeconds
+    or (m.trigger == AutomaticTrigger and m.pledgedVault != "" and m.frozenAt >= cutoff(m)))
+pure def sometimesPledgedFrozenWithinCutNotice(m: Monthly): bool = m.trigger == AutomaticTrigger and m.pledgedVault != ""
+  and m.latestCutAt > 0 and m.frozenAt < m.latestCutAt + cutNoticeSeconds
 ```
 
 ### Obligations follow the frozen shares exactly, excluding only banned accounts

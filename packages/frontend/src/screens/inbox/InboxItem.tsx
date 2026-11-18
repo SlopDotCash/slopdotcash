@@ -1,17 +1,30 @@
 // spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"
-import { type InboxNotice, type NotificationsPage, asksAcknowledgment } from "@repo/operations/client";
-import { Button, ListItem } from "@repo/ui";
-import { Bell, CircleDollarSign, FolderGit2, type LucideIcon, ShieldCheck, Wallet } from "lucide-react";
+import type { InboxNotice, NotificationsPage } from "@repo/operations/client";
+import { Button, EmptyState, ListItem, cn } from "@repo/ui";
+import { Bell, Check, CircleDollarSign, FolderGit2, Inbox, Lock, type LucideIcon, MailWarning, ShieldCheck, Wallet } from "lucide-react";
 import { formatDateTime } from "../../app/format.ts";
 import { awaitsAcknowledgment, unreadKeys } from "../../flows/account/inbox.vibe";
 import { emailDeliveryLabel, noticePresentation } from "../../projections/notices.ts";
 
 function iconOf(kind: InboxNotice["kind"]): LucideIcon {
-  if (kind.startsWith("security_") || kind.startsWith("slopbot_")) return ShieldCheck;
+  if (kind.startsWith("security_")) return Lock;
+  if (kind.startsWith("slopbot_")) return ShieldCheck;
   if (kind === "wallet_changed") return Wallet;
   if (kind.startsWith("payment_") || kind.startsWith("payout_") || kind === "award_reserved") return CircleDollarSign;
   if (kind.startsWith("project_") || kind.startsWith("application_") || kind.startsWith("reinstatement_")) return FolderGit2;
   return Bell;
+}
+
+const troubledDelivery = { failed: "text-destructive", uncertain: "text-warn" } as const;
+
+function DeliveryMark({ delivery }: { delivery: InboxNotice["emailDelivery"] }) {
+  if (delivery !== "failed" && delivery !== "uncertain") return null;
+  const label = emailDeliveryLabel(delivery);
+  return (
+    <span role="img" aria-label={label} title={label} className={cn("inline-flex", troubledDelivery[delivery])}>
+      <MailWarning aria-hidden className="size-3.5" />
+    </span>
+  );
 }
 
 export type InboxItemProps = {
@@ -22,41 +35,48 @@ export type InboxItemProps = {
   onAcknowledge: (notice: InboxNotice) => void;
 };
 
-/** One notice: what changed, where to act on it, when, whether it was read, and the one word on its email. */
+/** One notice: what changed, where to act on it, when, whether it is unread, and a mark only when its email failed or is uncertain. */
 export function InboxItem({ notice, busy = false, onMark, onAcknowledge }: InboxItemProps) {
   const unread = notice.readAt === null;
   const { title, action } = noticePresentation(notice);
   const Icon = iconOf(notice.kind);
-  const delivery = notice.emailDelivery;
-  const troubled = delivery === "failed" || delivery === "uncertain";
   return (
     <ListItem
-      unread={unread}
-      leading={<Icon aria-hidden className="size-5 text-muted-foreground" />}
-      title={
-        <a href={notice.actionPath} aria-label={`${title}: ${action}`} className="underline-offset-4 hover:underline">
-          {title}
-        </a>
+      leading={
+        <span className="inline-flex rounded-md bg-info/10 p-2 text-info">
+          <Icon aria-hidden className="size-5" />
+        </span>
       }
-      detail={
-        <>
-          {notice.detail && notice.detail !== title ? <>{notice.detail} · </> : null}
+      title={
+        <span className="flex min-w-0 items-center gap-2">
+          {unread ? <span role="img" aria-label="Unread" title="Unread" className="inline-block size-2 shrink-0 rounded-full bg-info" /> : null}
+          <a href={notice.actionPath} aria-label={`${title}: ${action}`} className={cn("truncate underline-offset-4 hover:underline", unread && "font-semibold text-foreground")}>
+            {title}
+          </a>
+        </span>
+      }
+      detail={notice.detail && notice.detail !== title ? <span title={notice.detail}>{notice.detail}</span> : undefined}
+      trailing={
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <time dateTime={notice.sourceAt}>{formatDateTime(notice.sourceAt)}</time>
-          {unread ? null : <> · Read</>}
-          {delivery ? <span className={troubled ? "text-destructive" : undefined}> · {emailDeliveryLabel(delivery)}</span> : null}
-          {asksAcknowledgment(notice) && notice.acknowledgedAt ? <> · Acknowledged</> : null}
-        </>
+          <DeliveryMark delivery={notice.emailDelivery} />
+          {notice.kind === "security_case" && notice.acknowledgedAt ? (
+            <span role="img" aria-label="Acknowledged" title="Acknowledged" className="inline-flex">
+              <Check aria-hidden className="size-3.5" />
+            </span>
+          ) : null}
+        </span>
       }
       actions={
         <>
           {awaitsAcknowledgment(notice) ? (
             <Button size="sm" variant="outline" disabled={busy} aria-label={`Acknowledge: ${title}`} onClick={() => onAcknowledge(notice)}>
-              Acknowledge
+              Ack
             </Button>
           ) : null}
           {unread ? (
-            <Button size="sm" variant="ghost" disabled={busy} aria-label={`Mark as read: ${title}`} onClick={() => onMark([notice.eventKey])}>
-              Mark as read
+            <Button size="sm" variant="ghost" disabled={busy} aria-label={`Mark as read: ${title}`} title="Mark as read" onClick={() => onMark([notice.eventKey])}>
+              <Check aria-hidden className="size-4" />
             </Button>
           ) : null}
         </>
@@ -67,20 +87,17 @@ export function InboxItem({ notice, busy = false, onMark, onAcknowledge }: Inbox
 
 export type NoticesProps = Omit<InboxItemProps, "notice"> & { page: NotificationsPage };
 
-/** The notices of one Inbox page, with how many are unread and one control to mark the shown ones read. */
+/** The notices of one Inbox page, with one control to mark the page's unread notices read. */
 export function Notices({ page, busy = false, onMark, onAcknowledge }: NoticesProps) {
-  const shownUnread = unreadKeys(page);
-  if (page.notifications.length === 0) return <p className="text-muted-foreground">You have no notifications.</p>;
+  const pageUnread = unreadKeys(page);
+  if (page.notifications.length === 0) return <EmptyState title="Nothing yet" icon={<Inbox className="size-5" />} />;
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-sm text-muted-foreground">{page.unread === 0 ? "All read." : `${page.unread} unread`}</p>
-        {shownUnread.length > 0 ? (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => onMark(shownUnread)}>
-            Mark shown as read
-          </Button>
-        ) : null}
-      </div>
+      {pageUnread.length > 0 ? (
+        <Button size="sm" variant="outline" className="self-end" disabled={busy} onClick={() => onMark(pageUnread)}>
+          Mark page read
+        </Button>
+      ) : null}
       <ol aria-label="Notifications">
         {page.notifications.map((notice) => (
           <InboxItem key={notice.eventKey} notice={notice} busy={busy} onMark={onMark} onAcknowledge={onAcknowledge} />

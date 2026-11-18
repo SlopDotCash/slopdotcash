@@ -1,0 +1,80 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { noEdgeCache } from "@repo/platform/cache"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { outboundVia, serviceAuth } from "@repo/platform/http"
+import type { RetentionR2Bucket } from "@repo/platform/r2"
+import { rolesFrom } from "@repo/platform/roles"
+import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import { noticePorts } from "@repo/operations/live"
+import { Authority } from "@repo/ports/backend"
+import { ContributorAudience } from "@repo/ports/points"
+import { skillTemplateFrom } from "../../admission/livePin.vibe"
+import { ScanRequestsLive } from "../../admission/refresh.vibe"
+import { admissionRecordRoutes } from "../../admission/routes.vibe"
+import { EnforcementRowsLive, ProjectEventsLive, enforcementPorts } from "../../enforcement/port.vibe"
+import { enforcementRoutes } from "../../enforcement/routes.vibe"
+import { VettingBansLive } from "../../enforcement/vettingBans.vibe"
+import { evidenceBucket } from "../../evidence/objects.vibe"
+import { evidenceRoutes } from "../../evidence/routes.vibe"
+import { AuditLive } from "../../privacy/port.vibe"
+import { type FixtureKeys, type GitHubFixture, inProcess, templateAssets } from "./transport.ts"
+
+export const fixtureOrigin = "https://flag-qualification.invalid"
+export const publicReadToken = "qualification-public-read-token"
+
+export interface FixtureEnv {
+  readonly EVIDENCE_DATABASE: D1Database
+  readonly EVIDENCE_SOURCE: RetentionR2Bucket
+  readonly QUALIFICATION_RUN: string
+}
+
+export interface SiteFacts {
+  readonly keys: FixtureKeys
+  readonly github: GitHubFixture
+  readonly templateSha256: string
+  readonly administrator: string
+}
+
+interface SiteEnv {
+  readonly fixture: FixtureEnv
+  readonly facts: SiteFacts
+}
+
+const outsideAreas = Layer.mergeAll(
+  Layer.succeed(ContributorAudience, { affected: () => succeed(sql`SELECT NULL AS recipient WHERE 0`) } satisfies ContributorAudience.Shape),
+  Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
+)
+
+function services(env: SiteEnv) {
+  const { fixture, facts } = env
+  const base = Layer.mergeAll(
+    d1(fixture.EVIDENCE_DATABASE),
+    webCrypto,
+    noEdgeCache,
+    rolesFrom({ ADMIN_GITHUB_IDS: facts.administrator, PROJECT_MODERATOR_GITHUB_IDS: facts.administrator }),
+    outsideAreas,
+    noticePorts,
+    Layer.provide(serviceAuth(facts.keys.publicKey), webCrypto),
+    Layer.provide(github({ token: Redacted.make(publicReadToken), userAgent: "slop-flag-qualification" }), outboundVia(facts.github.fetcher)),
+    skillTemplateFrom(templateAssets(facts.templateSha256)),
+    evidenceBucket(fixture.EVIDENCE_SOURCE),
+  )
+  const rows = Layer.provideMerge(EnforcementRowsLive, base)
+  const backend = Layer.provideMerge(Layer.mergeAll(CallerLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive), rows)
+  const security = Layer.provideMerge(Layer.mergeAll(enforcementPorts, VettingBansLive, AuditLive), backend)
+  return Layer.provideMerge(Layer.provideMerge(ScanRequestsLive, ProjectEventsLive), security)
+}
+
+const site = worker({
+  services,
+  routes: Layer.mergeAll(enforcementRoutes, admissionRecordRoutes, evidenceRoutes),
+})
+
+export function fixtureSite(fixture: FixtureEnv, facts: SiteFacts): Fetcher {
+  return inProcess(site, { fixture, facts })
+}

@@ -4,7 +4,9 @@ This library formalizes PRD section 7's 13 November 2026 line-weight decision.
 Recipients are immutable actor IDs associated with unique accepted non-merge
 commits. The source adapter must exclude synchronization merges and already
 credited work, verify retained copies, and obtain complete line evidence.
-The returned allocation contains whole Points. Ties use increasing actor ID.
+The returned allocation contains whole Points. Ties use increasing actor ID:
+the caller numbers an allocation's recipients by their GitHub node ID in
+code-unit order (`shareImplementationPoints` sorts the node IDs that way).
 
 ## Story: Divide one work unit's fixed value between its implementation authors
 
@@ -33,7 +35,9 @@ pure def weightTotal(recipients: List[Recipient]): int =
 ### Largest remainder preserves the fixed pool and resolves equal remainders by actor ID
 
 Only the remaining whole Points follow remainder order. A zero-line recipient
-receives no Points when another recipient has positive lines.
+receives no Points when another recipient has positive lines. Equal
+remainders go to the recipient whose GitHub node ID comes first in code-unit
+order, which is the smaller actor number the caller assigned.
 
 ```quint
 pure def floorShare(total: int, r: Recipient, recipients: List[Recipient]): int = {

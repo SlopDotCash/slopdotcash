@@ -171,8 +171,11 @@ destination, the shell keeps that URL and renders the sign-in panel in place
 (a polite "Checking sign-in…" status, then "Sign in with GitHub" returning to
 the same URL, or an alert when the session check fails), while the machine's
 page stays Home and no private read can be received. Settings' `#wallets`
-section is the one part of a private page that renders signed out, because it
-holds only this browser's wallet choice. Otherwise the shown page is the
+section, because it holds only this browser's wallet choice, and the Inbox's
+email link action (an emailed verify or unsubscribe token,
+[email link actions](./emailAction.md); development `src/Inbox.tsx`
+`InboxEmailAction` at `67fd54fd4`) are the parts of a private page that
+render signed out; neither holds a private row. Otherwise the shown page is the
 addressed one, signed in or out: signing out on a public page leaves that page
 shown at its URL.
 

@@ -6,7 +6,7 @@ import { Session } from "../../../session/session.vibe"
 
 export const applicationsAccountChanged = "Your account changed. Reload your saved applications."
 export const applicationsUnavailable = "Saved applications are unavailable. Reload them."
-export const applicationsUnchecked = "Your private session could not be checked. Reload your saved applications."
+export const applicationsUnchecked = "Session check failed. Reload."
 export const applicationsUnloaded = "Saved applications could not load."
 export const cancellationUnconfirmed = "Cancellation could not be confirmed. Try again."
 export const applicationUnpublished = "The saved application could not be published."

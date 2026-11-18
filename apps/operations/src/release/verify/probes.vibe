@@ -1,6 +1,6 @@
 // spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/identityApp.md, "The public App lookup is retried on refusal and its contract fields must match exactly"
 import { boundedBytes } from "@repo/platform/browser"
-import { type AppContract, identityVerdict, maxLookups, retryAfter, retryWaitSeconds } from "../../../gen/operations__identityApp.effect.vibe"
+import { type AppContract, identityVerdict, retryAfter, retryWaitSeconds } from "../../../gen/operations__identityApp.effect.vibe"
 import { Cloudflare, ToolFailed } from "../wrangler/cloudflare.vibe"
 import { queryRows } from "../wrangler/outputs.vibe"
 
@@ -58,14 +58,8 @@ const identityAppUrl = "https://api.github.com/apps/slop-identity"
 const identityAppPage = "https://github.com/apps/slop-identity"
 const unreadContract: AppContract = { slug: "", name: "", clientMatches: false, owner: "", noPermissions: false, noEvents: false }
 
-export interface IdentityAppPatience {
-  readonly attempts: number
-  readonly delaySeconds: number
-}
-
 export const traceApiOrigin = "https://api.slop.cash"
 export const tracePatience = { rounds: 18, delaySeconds: 5 } as const
-export const identityAppPatience: IdentityAppPatience = { attempts: maxLookups, delaySeconds: retryWaitSeconds(1) }
 
 function probeFailed(step: string, message: string) {
   return new ToolFailed({ tool: "probe", step, message })
@@ -229,15 +223,15 @@ effect function lookedUpContract(step: string, bytes: Uint8Array, clientId: stri
   } satisfies AppContract
 }
 
-export effect function identityApp(clientId: string, patience: IdentityAppPatience = identityAppPatience) {
+export effect function identityApp(clientId: string) {
   const step = "identity app"
   const request = HttpClientRequest.get(identityAppUrl, { headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" } })
   for (let attempt = 1; ; attempt += 1) {
     const answer = exchanged(step, request, bodyLimit) catch () => undefined
     const status = answer?.status ?? 0
-    if (attempt < patience.attempts && retryAfter(status, attempt)) {
+    if (retryAfter(status, attempt)) {
       try Console.log(`GitHub answered HTTP ${httpCode(status)} for the public App lookup; retrying (attempt ${attempt}).`)
-      try sleep(Duration.seconds(attempt * patience.delaySeconds))
+      try sleep(Duration.seconds(retryWaitSeconds(attempt)))
       continue
     }
     const rateLimited = answer?.headers["x-ratelimit-remaining"]?.trim() === "0"

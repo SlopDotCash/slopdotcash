@@ -1,0 +1,86 @@
+// spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { postPaymentsProjectsByIdMonthlyByPeriodReserveRelease as rows } from "./refusals.vibe"
+
+export const ReleaseReviewBody = Schema.Record(Schema.String, Schema.Unknown)
+
+export schema ReleaseReviewStart {
+  readonly manifestSha256: string
+  readonly network: string
+}
+
+export schema ReleaseReviewCheck {
+  readonly manifestSha256: string
+  readonly network: string
+  readonly planId: string
+  readonly transactionId: string
+}
+
+export schema ReleaseReview = ReleaseReviewStart | ReleaseReviewCheck
+
+export schema ReleaseHeldReason = "allocation-unavailable" | "allocation-mismatch" | "allocation-not-admissible" | "no-wrong-sum-fault" | "prior-reserve-transition" | "upgrade-unqualified" | "evidence-stale"
+
+export schema ReleaseHeldAnswer {
+  readonly status: "held"
+  readonly reason: ReleaseHeldReason
+}
+
+export schema ReleasePlanTransaction {
+  readonly from: string
+  readonly to: string
+  readonly data: string
+  readonly value: "0"
+}
+
+export schema ReleasePlanTerms {
+  readonly allocationDigest: string
+  readonly allocationRoot: string
+  readonly root: string
+  readonly expectedRemaining: string
+  readonly releasedGross: string
+}
+
+export schema ReleasePlanRequest {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly manifestSha256: string
+}
+
+export schema ReleaseReady {
+  readonly status: "ready"
+  readonly family: "evm"
+  readonly request: ReleasePlanRequest
+  readonly vault: string
+  readonly signatureHex: string
+  readonly transaction: ReleasePlanTransaction
+  readonly terms: ReleasePlanTerms
+  readonly planId: string
+}
+
+export schema ReleaseStatus {
+  readonly status: "pending" | "failed" | "finalized"
+}
+
+export schema ReleaseAnswer = ReleaseHeldAnswer | ReleaseReady | ReleaseStatus
+
+function refusal(row: { readonly status: number; readonly error: string; readonly message?: string; readonly headers: Readonly<Record<string, string>> }) {
+  return { status: row.status, code: row.error, message: row.message ?? "", headers: row.headers }
+}
+
+export const monthlyReserveRelease = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/monthly/:period/reserve-release",
+  access: "sessionWrite",
+  limitKib: 4,
+  request: ReleaseReviewBody,
+  answer: ReleaseAnswer,
+  rejected: "release_held",
+  cache: "private",
+  invalid: refusal(rows.invalidReleaseReview),
+  unauthenticated: refusal(rows.notSignedIn),
+  sessionExpired: refusal(rows.sessionExpired),
+  actorMismatch: refusal(rows.actorChangedYourAccountChangedReload),
+})
+
+export const reserveReleaseApi: ReadonlyArray<AnyRoute> = [monthlyReserveRelease]

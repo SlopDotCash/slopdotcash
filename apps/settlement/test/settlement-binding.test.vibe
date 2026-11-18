@@ -322,7 +322,7 @@ layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestService
     const shared: unknown[] = []
     const sharedExpected: unknown[] = []
     for (const selfFirst of [true, false]) {
-      const id = obligationId(selfFirst ? "d" : "e")
+      const id = selfFirst ? obligationId("e") : "ef".repeat(32)
       try obligation({ id, owner: "401", outbox: "ready" })
       const beforeAttested = attested.length
       const beforeExecuted = executed.length

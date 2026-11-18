@@ -1,13 +1,13 @@
 // spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/frontend/requests.md, "Only the current request may publish its validated result"
-import { DataState, Disclosure, PageHeader, SegmentedControl } from "@repo/ui";
+import { DataState, Disclosure, PageHeader, SegmentedControl, Status } from "@repo/ui";
 import type { Effect } from "effect";
-import { ChartNoAxesColumnIncreasing } from "lucide-react";
+import { BookOpen, ChartNoAxesColumnIncreasing, Download } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { PageProps } from "../../app/pages.ts";
 import { findProject, type RegistryBoot } from "../../reads/registry.vibe";
 import { useShownRead } from "../projects/hooks.ts";
 import { projectRuntime } from "../projects/reads.vibe";
-import { ContributionPointTiers, pointsNotice } from "../public/index.ts";
+import { ContributionPointTiers } from "../public/index.ts";
 import { nextBoundary, useBoundary } from "../cycles/boundary.ts";
 import { type Settled, useOnce } from "../security/program/hooks.ts";
 import { ContributorStandings } from "./ContributorStandings.tsx";
@@ -26,9 +26,11 @@ const periods = [
   { value: "lifetime", label: "All time" },
 ];
 
-const historicalCategories: ReadonlyArray<readonly [string, string]> = [
-  ["Merged PR before scoring began", "10 each"],
-  ["Verified payout", "25 per project and month"],
+const reviewTiers: ReadonlyArray<readonly [string, number]> = [
+  ["Triage", 10],
+  ["Standard", 30],
+  ["Deep", 90],
+  ["Specialist", 240],
 ];
 
 /** `period=new` was an earlier link to recorded history. @throws {never} */
@@ -47,28 +49,21 @@ function Header({ controls }: { controls?: ReactNode }) {
 
 function Rules() {
   return (
-    <Disclosure id="rules" summary="Points rules and downloads">
+    <Disclosure id="rules" summary="Rules">
       <div className="flex flex-col gap-4">
-        <p>{pointsNotice}</p>
         <ContributionPointTiers />
-        <p>Useful reviews: triage 10 · standard 30 · deep 90 · specialist 240 points.</p>
-        <Disclosure summary="Historical and participation points">
-          <ul aria-label="Historical point categories" className="flex flex-col gap-2">
-            {historicalCategories.map(([activity, points]) => (
-              <li key={activity} className="flex justify-between gap-4">
-                <span>{activity}</span>
-                <strong className="font-mono tabular-nums">{points}</strong>
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
-        <p>
+        <p className="flex flex-wrap gap-2">
+          {reviewTiers.map(([tier, points]) => (
+            <Status key={tier} title={`${tier} review: ${points} points`} presentation={{ tone: "Neutral", icon: "Eye", label: `${tier} ${points}` }} />
+          ))}
+        </p>
+        <p className="flex flex-wrap items-center gap-2">
           <a href="/protocol/points-v1.md" className={linkClass}>
-            Read the points rules
-          </a>{" "}
-          ·{" "}
+            <BookOpen aria-hidden className="inline size-4" /> Rules
+          </a>
+          ·
           <a href="/data/points.json" download className={linkClass}>
-            Download points index
+            <Download aria-hidden className="inline size-4" /> JSON
           </a>
         </p>
       </div>

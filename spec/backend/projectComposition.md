@@ -29,8 +29,9 @@ project closes this one), and the admission outcome, which only the signed
 vetting service submits from the recorded state of the
 [assessment machine](../security/admission.md). The manifest policy result is
 the project API's deterministic `assertProjectPolicyTransition` check of the
-stored manifest at the current revision. Clock and finalized-funding events
-come only from the project API's own scheduled jobs (`-1`).
+stored manifest at the current revision. Clock events come only from the
+project API's own scheduled jobs (`-1`), and vault registrations only from
+the settlement area's vault setup service (`-2`) after finality.
 
 ## Story: Perform every project action on registry and security together
 
@@ -182,8 +183,14 @@ banned (activation is an owner-participation revision). It commits only
 against the revision, enforcement record count and clearance generation it
 read, so a scan result, grant, revocation or identity change recorded in
 between refuses it and the check runs again. Owner revisions,
-appended repositories, consent edits and placements are refused while any
-restriction holds (`project_restricted`). Removal is refused too while the
+appended repositories, consent edits, vault registrations and placements are
+refused while any restriction holds (`project_restricted`), and for a banned
+acting account or steward. An owner revision that appends repositories
+checks each against the registry (`appendReads`: no other project lists it
+and no restriction binds it) and records them on the security side in the
+same batch, unassessed. An administrator exception is refused while a
+restriction holds unless the restriction already retired the project, whose
+revision then stays paused and retired. Removal is refused too while the
 project's own restriction is in force, a pending restriction revision
 included: 409 `project_restricted`, "The project is <state>; request
 reinstatement before removing it", checked after the authority recheck and
@@ -204,22 +211,33 @@ pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountSt
   { ...c, project: p, security: sync(p, c.security) }
 pure def ownerWriteAllowed(c: Registry, by: int, account: AccountStanding): bool =
   c.security.restriction == E::Clear and unbanned(by, c.project.steward, account) and not(c.security.accountBans.includes(by))
-pure def canPublishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion]): bool =
-  P::canPublishOwnerRevision(c.project, by, change) and ownerWriteAllowed(c, by, account) and change.clearance == clearanceOf(c.security) and
+pure def appendsFree(c: Registry, change: P::OwnerChange, appendReads: List[RegistryRead]): bool =
+  change.appends.every(a => E::canAppendRepository(c.security, a.facts.repository) and
+    appendReads.some(r => repositoryFree(a.facts.repository, r)))
+pure def withAppends(change: P::OwnerChange, e: E::Enforcement): E::Enforcement =
+  change.appends.foldl(e, (s, a) => E::appendRepository(s, a.facts.repository))
+pure def ownerRevisionAllowed(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): bool =
+  ownerWriteAllowed(c, by, account) and change.clearance == clearanceOf(c.security) and appendsFree(c, change, appendReads) and
   exclusionsMayBecome(c, exclusions) and (change.exclusionsChanged iff exclusions != c.exclusions)
-pure def publishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion]): Registry =
+pure def canPublishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): bool =
+  P::canPublishOwnerRevision(c.project, by, change) and ownerRevisionAllowed(c, by, change, account, exclusions, appendReads)
+pure def publishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): Registry =
   val p = P::publishOwnerRevision(c.project, by, change)
-  { project: p, security: sync(p, c.security), exclusions: exclusions }
+  { project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
 pure def lawExecutableChangeNeedsClearance(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding,
-  exclusions: List[X::Exclusion]): bool =
-  (canPublishOwnerRevision(c, by, change, account, exclusions) and change.executable) implies
-    (publishOwnerRevision(c, by, change, account, exclusions).project.status == P::Paused or E::cleared(c.security))
-pure def canPublishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion]): bool =
-  P::canPublishUpdate(c.project, by, change) and ownerWriteAllowed(c, by, account) and change.clearance == clearanceOf(c.security) and
-  exclusionsMayBecome(c, exclusions) and (change.exclusionsChanged iff exclusions != c.exclusions)
-pure def publishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion]): Registry =
+  exclusions: List[X::Exclusion], appendReads: List[RegistryRead]): bool =
+  (canPublishOwnerRevision(c, by, change, account, exclusions, appendReads) and change.executable) implies
+    (publishOwnerRevision(c, by, change, account, exclusions, appendReads).project.status == P::Paused or E::cleared(c.security))
+pure def canPublishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): bool =
+  P::canPublishUpdate(c.project, by, change) and ownerRevisionAllowed(c, by, change, account, exclusions, appendReads)
+pure def publishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): Registry =
   val p = P::publishUpdate(c.project, by, change)
-  { project: p, security: sync(p, c.security), exclusions: exclusions }
+  { project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
 pure def canAppendRepository(c: Registry, by: int, appendEvidence: P::Append, account: AccountStanding, registry: RegistryRead): bool =
   P::canAppendRepository(c.project, by, appendEvidence) and ownerWriteAllowed(c, by, account) and
   E::canAppendRepository(c.security, appendEvidence.facts.repository) and repositoryFree(appendEvidence.facts.repository, registry)
@@ -237,7 +255,10 @@ pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
   val p = P::remove(c.project, by, removal)
   { ...c, project: p, security: E::withRevisionLanded(p.tier == P::Retired, sync(p, c.security)) }
 pure def canAdminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion]): bool =
-  P::canAdminRevise(c.project, by, exception) and c.security.restriction == E::Clear and exclusionsMayBecome(c, exclusions)
+  P::canAdminRevise(c.project, by, exception) and
+  (c.security.restriction == E::Clear or c.project.retirement == P::RestrictionRetired) and
+  exception.clearance == clearanceOf(c.security) and exclusionsMayBecome(c, exclusions) and
+  (exclusions != c.exclusions implies exception.financial)
 pure def adminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion]): Registry =
   val p = P::adminRevise(c.project, by, exception)
   { project: p, security: sync(p, c.security), exclusions: exclusions }
@@ -245,8 +266,11 @@ pure def canPlace(c: Registry, by: int, tier: P::Tier): bool = P::canPlace(c.pro
 pure def place(c: Registry, by: int, tier: P::Tier): Registry =
   val p = P::place(c.project, by, tier)
   { ...c, project: p, security: sync(p, c.security) }
-pure def canRecordFunding(c: Registry, by: int, funding: P::FundingEvidence): bool = P::canRecordFunding(c.project, by, funding)
-pure def recordFunding(c: Registry, by: int, funding: P::FundingEvidence): Registry = { ...c, project: P::recordFunding(c.project, by, funding) }
+pure def canRegisterVault(c: Registry, by: int, registration: P::VaultRegistration, account: AccountStanding): bool =
+  P::canRegisterVault(c.project, by, registration) and ownerWriteAllowed(c, registration.authority.actor, account)
+pure def registerVault(c: Registry, by: int, registration: P::VaultRegistration, account: AccountStanding): Registry =
+  val p = P::registerVault(c.project, by, registration)
+  { ...c, project: p, security: sync(p, c.security) }
 pure def canAdvanceMonth(c: Registry, by: int, month: int): bool = P::canAdvanceMonth(c.project, by, month)
 pure def advanceMonth(c: Registry, by: int, month: int): Registry = { ...c, project: P::advanceMonth(c.project, by, month) }
 ```
@@ -495,7 +519,7 @@ pure def sometimesExemptionLapsedWithSteward(c: Registry): bool =
 pure def sometimesExemptAfterSetupCheck(c: Registry): bool =
   c.security.exempt.contains(1) and E::cleared(c.security) and c.project.status == P::Active and
   E::latestOf(c.security, 1).state == E::NotAssessed
-pure val byValues = Set(-1, 0, 1, 2, 3, 5, 6)
+pure val byValues = Set(-2, -1, 0, 1, 2, 3, 5, 6)
 pure val goodStanding: E::FlagStanding = { actor: 2, revision: 1, accountAgeDays: 30, acceptedContributions: 1, maintainer: E::ReadNo, banned: E::ReadNo }
 pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 }, { ...goodStanding, revision: 2 }, { ...goodStanding, actor: 3, revision: 2 })
 pure val repositoryValues = Set(1, 2)
@@ -512,7 +536,13 @@ pure val checkValues = Set({ authority: P::owner1, installations: List({ reposit
   { authority: { ...P::owner1, installation: P::InstallationUnavailable }, installations: List() })
 pure val changeValues = Set(P::change1, { ...P::change1, presentation: false, financial: true, exclusionsChanged: true }, { ...P::change1, expectedRevision: 3, executable: true, clearance: P::ClearanceRetained },
   { ...P::change1, authority: { ...P::owner1, actor: 2 }, expectedRevision: 1 },
-  { ...P::change1, authority: { ...P::owner1, actor: 2 }, expectedRevision: 1, clearance: P::ClearanceMissing })
+  { ...P::change1, authority: { ...P::owner1, actor: 2 }, expectedRevision: 1, clearance: P::ClearanceMissing },
+  { ...P::change1, consent: P::ConsentChecked, executable: true, appends: List(P::newRepository2) },
+  { ...P::change1, consent: P::ConsentChecked, executable: true, appends: List(P::newRepository2), clearance: P::ClearanceMissing })
+pure val appendReadsValues = Set(List(), List({ repository: 2, listedBy: 0, restricted: false }),
+  List({ repository: 2, listedBy: 9, restricted: false }))
+pure val registrationValues = Set(P::registration1, { ...P::registration1, purpose: P::BountyVault },
+  { ...P::registration1, expectedRevision: 3 }, { ...P::registration1, finalized: false })
 pure val weight_publishUpdate = 4
 pure val appendEvidenceValues = Set({ ...P::append1, expectedRevision: 1 }, P::append1)
 pure val editValues = Set({ authority: P::owner1, expectedRevision: 2, checked: true })
@@ -540,8 +570,9 @@ pure def renderedSkill(revision: int): SkillServing =
 pure val skillValues = Set(renderedSkill(2), renderedSkill(1),
   { ...renderedSkill(2), served: SR::publish(SR::templateA, { digest: "d2", notes: List() }) })
 pure val observedValues = tuples(1.to(3), Set(0), 1.to(3)).map(x => { revision: x._1, enforcementGeneration: x._2, clearanceGeneration: x._3 })
-pure val exceptionValues = tuples(Set(P::Hold, P::ChangeSteward), 1.to(3)).map(x =>
-  { kind: x._1, steward: if (x._1 == P::ChangeSteward) 4 else 0, expectedRevision: x._2, reason: 1 })
+pure val exceptionValues = Set(1, 2, 3).map(n => { ...P::exception1, expectedRevision: n })
+  .union(Set(1, 2, 3).map(n => { ...P::exception1, expectedRevision: n, steward: 4 }))
+  .union(Set(2, 3).map(n => { ...P::exception1, expectedRevision: n, tier: P::Retired }))
 pure val revokeValues = Set({ grant: 11, decision: 1, reason: 1, confirmed: true })
 pure val identityValues = Set(2)
 pure val cValues = Set(initial)

@@ -1,12 +1,32 @@
-// spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"
+// spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"
+import { deploymentOrigins, tierOf } from "@repo/platform/config"
 import type { TokenRefusal } from "@repo/platform/github"
+import type { Job } from "@repo/platform/worker"
 import { type GitHubAnswer, type Health, Machine, type Observation, type RenewalResult, type Renewer, type Skip, canRenew, initial, machine, observedAt, renew } from "../../gen/operations__intakeHealth.effect.vibe"
 import { intakeVerdict } from "./facts.vibe"
 import { recordObservation, storedObservation } from "./store.vibe"
 
 export service IntakeToken {
   readonly token: Redacted.Redacted<string> | undefined
+  readonly renews: boolean
 }
+
+export interface IntakeVars {
+  readonly SLOP_ENVIRONMENT?: string
+  readonly IDENTITY_PUBLIC_ORIGIN?: string
+  readonly GITHUB_INTAKE_STATUS_TOKEN?: string
+}
+
+export function intakeToken(vars: IntakeVars) {
+  return Layer.effect(IntakeToken, effect {
+    const production = deploymentOrigins("production").identity
+    const renews = (try tierOf(vars.SLOP_ENVIRONMENT)) === "production" && (vars.IDENTITY_PUBLIC_ORIGIN ?? production) === production
+    const text = vars.GITHUB_INTAKE_STATUS_TOKEN
+    return { token: text === undefined ? undefined : Redacted.make(text), renews }
+  })
+}
+
+export error IntakeRenewalFailed
 
 export interface Renewal {
   readonly result: RenewalResult
@@ -96,3 +116,14 @@ export effect function renewIntake(by: Renewer, token: Redacted.Redacted<string>
     })
   }
 }
+
+export const intakeRenewalCron = "17 * * * *"
+
+export effect function renewOnSchedule() {
+  const { token, renews } = try IntakeToken
+  if (!renews) return
+  const renewal = try renewIntake("IdentityCron", token)
+  if (renewal.failed) throw new IntakeRenewalFailed()
+}
+
+export const intakeRenewal = { name: "intake renewal", run: () => renewOnSchedule() } satisfies Job

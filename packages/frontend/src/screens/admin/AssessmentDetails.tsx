@@ -1,9 +1,9 @@
 // spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"
 import { ExternalLink, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
-import { FileSearch } from "lucide-react";
+import { CircleAlert, Eye, FileSearch, Recycle } from "lucide-react";
 import { formatDateTime } from "../../app/format.ts";
-import { Fact, Facts, Identifier, Subsection } from "./parts.tsx";
-import { type Assessment, type AssessmentResult, assessmentPresentation, checkRows, coverageRows, evidenceHref, evidenceRunOf, resultOf, scanLabel, visibilityText } from "./vetting.ts";
+import { Chip, Fact, Facts, Identifier, Subsection } from "./parts.tsx";
+import { type Assessment, type AssessmentResult, assessmentPresentation, checkRows, coverageRows, type EvidenceRunLink, evidenceHref, evidenceRunOf, resultOf, scanLabel, visibilityOf } from "./vetting.ts";
 
 const passing = new Set(["passed", "not-found"]);
 
@@ -58,6 +58,44 @@ function ScanTables({ result }: { result: AssessmentResult }) {
   );
 }
 
+function Reused({ reusedAssessmentId, run }: { reusedAssessmentId: string; run: EvidenceRunLink | undefined }) {
+  const title = `Reused clean scan ${reusedAssessmentId}`;
+  return run ? (
+    <a href={evidenceHref(run)} title={title}>
+      <Chip icon={<Recycle aria-hidden />}>Reused</Chip>
+    </a>
+  ) : (
+    <Chip icon={<Recycle aria-hidden />} title={title}>
+      Reused
+    </Chip>
+  );
+}
+
+function Visibility({ result }: { result: AssessmentResult }) {
+  const { tampered, gaps } = visibilityOf(result);
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {tampered ? (
+        <Chip tone="Negative" icon={<CircleAlert aria-hidden />} title="Tampering detected">
+          Tampered
+        </Chip>
+      ) : null}
+      {gaps.length === 0 ? (
+        <Chip tone="Positive" icon={<Eye aria-hidden />} title="No visibility gaps">
+          Full
+        </Chip>
+      ) : (
+        <>
+          <Chip tone="Caution">
+            {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}
+          </Chip>
+          <span>{gaps.join("; ")}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
 export type AssessmentDetailsProps = {
   /** One recorded assessment of the project. */
   assessment: Assessment;
@@ -80,7 +118,7 @@ export function AssessmentDetails({ assessment }: AssessmentDetailsProps) {
       </header>
       <Facts>
         <Fact term="Queued by">
-          <ExternalLink href={`https://github.com/${encodeURIComponent(assessment.requestedBy.githubLogin)}`}>@{assessment.requestedBy.githubLogin}</ExternalLink> — {assessment.requestReason}
+          <ExternalLink href={`https://github.com/${encodeURIComponent(assessment.requestedBy.githubLogin)}`}>@{assessment.requestedBy.githubLogin}</ExternalLink> · {assessment.requestReason}
         </Fact>
         <Fact term="Assigned commit">
           <Identifier label="assigned commit" value={assessment.commitSha} />
@@ -100,10 +138,14 @@ export function AssessmentDetails({ assessment }: AssessmentDetailsProps) {
         {result?.coverage && result.checks ? (
           <Fact term="Scan coverage">
             <ScanTables result={result} />
-            {result.reusedAssessmentId ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)` : ""}
+            {result.reusedAssessmentId ? <Reused reusedAssessmentId={result.reusedAssessmentId} run={run} /> : null}
           </Fact>
         ) : null}
-        {result ? <Fact term="Visibility">{visibilityText(result)}</Fact> : null}
+        {result ? (
+          <Fact term="Visibility">
+            <Visibility result={result} />
+          </Fact>
+        ) : null}
         {result?.confirmation ? (
           <Fact term="Confirmation">
             {result.confirmation.basis} under {result.confirmation.rule}

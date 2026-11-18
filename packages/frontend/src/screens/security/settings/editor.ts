@@ -1,4 +1,4 @@
-// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { type SharePreview, bountySharePreview, carriedSecurityTerms, initialSecuritySplit } from "@repo/security/client";
 import type { Chain } from "@repo/settlement/kernels/networks";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
@@ -25,6 +25,7 @@ const ExistingTerms = Schema.Struct({
     deployments: Schema.Array(Schema.Unknown),
     includedAssets: Schema.Array(Schema.String),
     excludedDependencies: Schema.Array(Schema.String),
+    excludedFindings: Schema.optional(Schema.Array(Schema.String)),
     testingPermission: Schema.String,
     severityRubric: Schema.String,
     lossDefinition: Schema.String,
@@ -60,7 +61,7 @@ export interface EditorProject {
   readonly existing: { readonly terms: ExistingTerms; readonly raw: Raw } | undefined;
 }
 
-export type TextField = "includedAssets" | "excludedDependencies" | "testingPermission" | "severityRubric" | "lossDefinition" | "exhaustionRule" | "dispute" | "disclosure" | "safeHarbor";
+export type TextField = "includedAssets" | "excludedDependencies" | "excludedFindings" | "testingPermission" | "severityRubric" | "lossDefinition" | "exhaustionRule" | "dispute" | "disclosure" | "safeHarbor";
 
 export interface ResponseTargets {
   readonly acknowledgeHours: number;
@@ -79,20 +80,21 @@ export interface EditorForm {
   readonly text: Readonly<Record<TextField, string>>;
 }
 
-export const textFields: ReadonlyArray<readonly [TextField, string, string]> = [
-  ["includedAssets", "Covered assets", "One asset per line."],
-  ["excludedDependencies", "Excluded dependencies", "One dependency per line. Leave empty if none."],
-  ["testingPermission", "Test rules", ""],
-  ["severityRubric", "Severity guide", ""],
-  ["lossDefinition", "Loss of funds", "Describe the funds and losses covered by this program."],
-  ["exhaustionRule", "When funds run out", ""],
-  ["dispute", "Disputes", "Explain how to request a review."],
-  ["disclosure", "Disclosure", "State when and how a report may become public."],
-  ["safeHarbor", "Researcher protection", ""],
+export const textFields: ReadonlyArray<readonly [TextField, string]> = [
+  ["includedAssets", "Covered assets"],
+  ["excludedDependencies", "Excluded dependencies"],
+  ["excludedFindings", "Also does not qualify"],
+  ["testingPermission", "Test rules"],
+  ["severityRubric", "Severity guide"],
+  ["lossDefinition", "Loss of funds"],
+  ["exhaustionRule", "When funds run out"],
+  ["dispute", "Disputes"],
+  ["disclosure", "Disclosure"],
+  ["safeHarbor", "Researcher protection"],
 ];
 
 export const textGroups: ReadonlyArray<readonly [string, ReadonlyArray<TextField>]> = [
-  ["Scope and testing", ["includedAssets", "excludedDependencies", "testingPermission"]],
+  ["Scope and testing", ["includedAssets", "excludedDependencies", "excludedFindings", "testingPermission"]],
   ["Award criteria", ["severityRubric", "lossDefinition", "exhaustionRule"]],
   ["Researcher terms", ["dispute", "disclosure", "safeHarbor"]],
 ];
@@ -117,12 +119,15 @@ export function editorProjectOf(manifest: unknown): EditorProject | undefined {
   return Result.isSuccess(terms) ? { ...base, existing: { terms: terms.success, raw: securityBounty } } : undefined;
 }
 
+const optionalLists: ReadonlySet<TextField> = new Set(["excludedDependencies", "excludedFindings"]);
+
 /** @throws {never} */
 export function textLimits(field: TextField): { readonly required: boolean; readonly minLength: number | undefined; readonly maxLength: number } {
+  const optional = optionalLists.has(field);
   return {
-    required: field !== "excludedDependencies",
-    minLength: field === "excludedDependencies" ? undefined : field === "includedAssets" ? 2 : 12,
-    maxLength: field === "safeHarbor" ? 4000 : field === "includedAssets" || field === "excludedDependencies" ? 10000 : field === "exhaustionRule" ? 1000 : 2000,
+    required: !optional,
+    minLength: optional ? undefined : field === "includedAssets" ? 2 : 12,
+    maxLength: field === "safeHarbor" ? 4000 : optional || field === "includedAssets" ? 10000 : field === "exhaustionRule" ? 1000 : 2000,
   };
 }
 
@@ -176,6 +181,7 @@ export function initialForm(project: EditorProject): EditorForm {
     text: {
       includedAssets: existing?.scope.includedAssets.join("\n") ?? "",
       excludedDependencies: existing?.scope.excludedDependencies.join("\n") ?? "",
+      excludedFindings: existing?.scope.excludedFindings?.join("\n") ?? "",
       testingPermission: existing?.scope.testingPermission ?? "",
       severityRubric: existing?.scope.severityRubric ?? "",
       lossDefinition: existing?.scope.lossDefinition ?? "",
@@ -228,6 +234,7 @@ export function proposedProgram(project: EditorProject, form: EditorForm, actor:
   const later = afterApproval(project);
   const rawScope = typeof raw.scope === "object" && raw.scope !== null ? (raw.scope as Raw) : {};
   const { text } = form;
+  const excludedFindings = lines(text.excludedFindings);
   return {
     ...carriedSecurityTerms(existing?.raw),
     ...(form.assetChanged && !boundVault(project) ? { settlement: undefined } : {}),
@@ -246,6 +253,7 @@ export function proposedProgram(project: EditorProject, form: EditorForm, actor:
       deployments: rawScope.deployments ?? [],
       includedAssets: lines(text.includedAssets),
       excludedDependencies: lines(text.excludedDependencies),
+      ...(excludedFindings.length > 0 ? { excludedFindings } : {}),
       testingPermission: text.testingPermission.trim(),
       severityRubric: text.severityRubric.trim(),
       lossDefinition: text.lossDefinition.trim(),

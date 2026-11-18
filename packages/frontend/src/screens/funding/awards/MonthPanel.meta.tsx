@@ -1,6 +1,6 @@
 import { expect, fn, screen, userEvent } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
-import { cutsClosed, frozen, frozenMonth, managing, proposedMonth, reading, reviewedCommitment, viewOnlyMonth } from "./fixtures.ts";
+import { cutsClosed, frozen, frozenMonth, managing, proposedMonth, reading, reviewedCommitment, underfundedMonth, viewOnlyMonth } from "./fixtures.ts";
 import type { MonthPanelProps } from "./MonthPanel.tsx";
 
 const onSave = fn(() => Promise.resolve(true));
@@ -15,6 +15,8 @@ export const meta: ComponentMeta<MonthPanelProps> = {
     Frozen: { view: frozenMonth, state: frozen },
     Reviewed: { view: frozenMonth, state: reviewedCommitment },
     PaymentsDisabled: { paymentsDisabled: true },
+    Saved: { savedActor: "101" },
+    Underfunded: { view: underfundedMonth, state: frozen },
   },
   play: {
     // spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"

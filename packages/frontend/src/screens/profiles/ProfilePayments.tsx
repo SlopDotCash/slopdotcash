@@ -2,14 +2,15 @@
 import type { DirectTransfer, PublicVaultPayment } from "@repo/settlement/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { isNetworkKey, NETWORKS } from "@repo/settlement/kernels/networks";
-import { Button, ExternalLink, Status } from "@repo/ui";
+import { Button, ExternalLink, NetworkMark, Spinner, Status } from "@repo/ui";
+import { ExternalLink as ExternalLinkIcon, RotateCcw } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { CHAIN_NAMES, formatRewardMinor } from "../../kernels/assetText.ts";
 import { transactionUrl } from "../../kernels/explorers.ts";
 import type { Shown } from "../home/listing.ts";
 import { formatDate, formatMonth, PaymentRecord, VaultPaymentRecord } from "../projects/index.ts";
-import { contributorStateLabel, cycleLifecycleLabel, percentText, pointsText } from "../cycles/labels.ts";
+import { contributorStateLabel, cycleLifecyclePresentation, percentText, pointsText } from "../cycles/labels.ts";
 import type { Tier } from "../../platform/config.vibe";
 import { type CycleShare, moneyReceived, shownRecords } from "./profile.ts";
 
@@ -54,7 +55,7 @@ function cycleEntry({ contributor, cycle }: CycleShare, nameOf: ProfilePaymentsP
   const amount =
     cycle.kind === "external-prize-share"
       ? contributor.sharePartsPerMillion === null
-        ? "Share not recorded"
+        ? "—"
         : `${percentText(contributor.sharePartsPerMillion)} share`
       : usdc(contributor.state === "paid" ? contributor.paidMinor : contributor.approvedMinor !== "0" ? contributor.approvedMinor : contributor.suggestedMinor);
   return {
@@ -68,9 +69,11 @@ function cycleEntry({ contributor, cycle }: CycleShare, nameOf: ProfilePaymentsP
           </a>
         }
         detail={
-          <>
-            Archived cycle · {cycleLifecycleLabel(cycle, nowMs)} · {pointsText(contributor.scoreThirds ?? contributor.score * 3)} points
-          </>
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Cycle" }} />
+            <Status presentation={cycleLifecyclePresentation(cycle, nowMs)} />
+            {pointsText(contributor.scoreThirds ?? contributor.score * 3)} pts
+          </span>
         }
         amount={
           <>
@@ -92,25 +95,26 @@ function directEntry(payment: DirectTransfer, nameOf: ProfilePaymentsProps["name
       <PaymentRecord
         name={nameOf(payment.projectId) ?? payment.projectId}
         detail={
-          <>
-            Direct transfer · {CHAIN_NAMES[payment.chain]}
-            {testnet(payment.network) ? " testnet" : ""} · Work month: {formatMonth(payment.contributionMonth)} · Paid {formatDate(payment.blockTime)}
-          </>
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Direct" }} />
+            <NetworkMark network={CHAIN_NAMES[payment.chain]} size="sm" showName={false} role="img" aria-label={CHAIN_NAMES[payment.chain]} title={CHAIN_NAMES[payment.chain]} />
+            {testnet(payment.network) ? <Status presentation={{ tone: "Neutral", icon: "Dot", label: "testnet" }} /> : null}· {formatMonth(payment.contributionMonth)} · {formatDate(payment.blockTime)}
+          </span>
         }
         amount={
           <>
             <strong className="font-mono tabular-nums">{usdc(payment.amountMicro)}</strong>
-            <small className="text-xs text-muted-foreground">Paid directly</small>
+            <Status presentation={{ tone: "Positive", icon: "Check", label: "Paid" }} />
           </>
         }
         action={
           href ? (
-            <ExternalLink href={href} className={linkClass}>
-              View transaction
+            <ExternalLink href={href} className={linkClass} label="Transaction">
+              <ExternalLinkIcon aria-hidden className="size-4" />
             </ExternalLink>
           ) : (
-            <a href={`/projects/${payment.projectId}/funding`} className={linkClass}>
-              Funding record
+            <a href={`/projects/${payment.projectId}/funding`} className={linkClass} aria-label="Funding record" title="Funding record">
+              <ExternalLinkIcon aria-hidden className="size-4" />
             </a>
           )
         }
@@ -119,17 +123,19 @@ function directEntry(payment: DirectTransfer, nameOf: ProfilePaymentsProps["name
   };
 }
 
-function Notice({ read, failure, retryLabel, loading }: { read: Shown<unknown>; failure: string; retryLabel: string; loading: string }) {
-  if (pending.has(read.status)) return <Status presentation={{ tone: "Neutral", icon: "Spinner", label: loading }} />;
-  if (settled.has(read.status)) return null;
-  return (
-    <p>
-      {failure}{" "}
-      <Button variant="link" size="sm" onClick={read.onRetry}>
-        {retryLabel}
-      </Button>
-    </p>
-  );
+function Notices({ direct, vault }: Pick<ProfilePaymentsProps, "direct" | "vault">) {
+  const failed = [direct, vault].filter((read) => !settled.has(read.status) && !pending.has(read.status));
+  if (failed.length > 0) {
+    return (
+      <p role="status" className="flex items-center gap-2">
+        Some payments unavailable
+        <Button variant="ghost" size="icon" aria-label="Retry payment records" title="Retry payment records" onClick={() => failed.forEach((read) => read.onRetry?.())}>
+          <RotateCcw aria-hidden className="size-4" />
+        </Button>
+      </p>
+    );
+  }
+  return pending.has(direct.status) || pending.has(vault.status) ? <Spinner label="Loading payments" /> : null;
 }
 
 /** One record list keeping archived awards, direct transfers and vault payments distinct, with the money received over all time. */
@@ -147,17 +153,21 @@ export function ProfilePayments({ cycles, githubId, direct, vault, nameOf, nowMs
   return (
     <section aria-label="Awards and payments" className="flex flex-col gap-4">
       <h2 className="text-xl font-semibold text-foreground">Awards and payments</h2>
-      <p>
-        Money received (all time): <strong className="font-mono tabular-nums">{total !== undefined ? formatRewardMinor(total) : failed ? "Unavailable" : "Loading…"}</strong>
+      <p className="flex items-baseline gap-2">
+        <strong className="font-mono tabular-nums">
+          {total !== undefined ? (
+            formatRewardMinor(total)
+          ) : failed ? (
+            <span role="img" aria-label="Unavailable" title="Unavailable">
+              —
+            </span>
+          ) : (
+            <Spinner label="Loading" />
+          )}
+        </strong>
+        Received
       </p>
-      {githubId === undefined ? (
-        <p role="status">Payment identity unavailable.</p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <Notice read={direct} failure="Direct payment records unavailable." retryLabel="Retry payment records" loading="Loading direct payments…" />
-          <Notice read={vault} failure="Project payment records unavailable." retryLabel="Retry project payments" loading="Loading project payments…" />
-        </div>
-      )}
+      {githubId === undefined ? null : <Notices direct={direct} vault={vault} />}
       {entries.length > 0 ? (
         <ul className="flex flex-col divide-y divide-border">
           {(showAll ? entries : entries.slice(0, shownRecords)).map((entry) => (
@@ -165,11 +175,11 @@ export function ProfilePayments({ cycles, githubId, direct, vault, nameOf, nowMs
           ))}
         </ul>
       ) : directRows !== undefined && vaultRows !== undefined ? (
-        <p className="text-muted-foreground">No awards or payments recorded.</p>
+        <p className="text-muted-foreground">None yet</p>
       ) : null}
       {entries.length > shownRecords ? (
         <Button variant="outline" size="sm" className="self-start" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
-          {showAll ? "Show recent records" : `Show all ${entries.length} records`}
+          {showAll ? "Show less" : `Show all (${entries.length})`}
         </Button>
       ) : null}
     </section>

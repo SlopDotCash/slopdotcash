@@ -1,7 +1,9 @@
-// spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"
+// spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/review.md, "Every call is free, attributed and accounted"
 import { type ModelCall, type ModelReply, Provider, ProviderFailure, providers } from "@repo/platform/providers"
+import { buildPrompt } from "../review/prompt.vibe"
+import { verdictOutput } from "../review/verdict.vibe"
 import { priceUsage } from "../route/calls.vibe"
-import { type RouteControl, freeRoute, runStructuredRoute, stepOf } from "../route/route.vibe"
+import { type Output, type Prompt, type RouteControl, freeRoute, runStructuredRoute, stepOf, triageRoute } from "../route/route.vibe"
 import type { Evidence } from "../value/evidence/types.vibe"
 import { type ValueAssessment, type ValueCall, jointValueCall, singleValueCall } from "../value/inference/assessment.vibe"
 import { valueRoute } from "../value/inference/run.vibe"
@@ -19,8 +21,12 @@ const failure = "Slopbot model qualification failed; no publication is permitted
 const refusal = "Slopbot model qualification requires the protected main release and both provider keys."
 const usage = "usage: qualify-value-models [--dry-run]"
 
+export type QualificationPurpose = "value" | "general-review"
+
+export const reviewQualificationMarker = "Synthetic marker-file review qualification"
+
 export interface QualificationSummary {
-  readonly path: "single" | "joint"
+  readonly path: "single" | "joint" | "general-review-counterexample"
   readonly provider: string | null
   readonly requestedModel: string | null
   readonly servedModel: string | null
@@ -102,11 +108,17 @@ interface QualificationPath<T> {
   readonly assessments: (verdict: T) => ReadonlyArray<ValueAssessment>
 }
 
-interface Meter {
+export interface Meter {
   readonly micro: number
   readonly requests: number
   readonly uncertain: boolean
   readonly violated: boolean
+}
+
+export interface QualificationTransport {
+  readonly mayCall: () => boolean!!
+  readonly complete: (call: ModelCall) => ModelReply!ProviderFailure
+  readonly meter: () => Meter!!
 }
 
 const noReceipt = { model: null, usage: null, costMicroUsd: null, requestId: null, responseId: null, responseSha256: null }
@@ -119,49 +131,82 @@ function unresolvedMedia(assessments: ReadonlyArray<ValueAssessment>) {
   return assessments.length > 0 && assessments.every((assessment) => assessment.status === "unresolved" && assessment.tier === null && assessment.limitations.length > 0)
 }
 
-function boundOf(call: ModelCall, bytes: number) {
-  const provider = valueRoute.find((candidate) => routeOf(candidate) === call.route && stepOf(candidate).model === call.model)
+function routeFor(purpose: QualificationPurpose) {
+  return purpose === "value" ? valueRoute : triageRoute
+}
+
+function markerOf(purpose: QualificationPurpose) {
+  return purpose === "value" ? "contentOmittedFromModel" : reviewQualificationMarker
+}
+
+function boundOf(purpose: QualificationPurpose, call: ModelCall, bytes: number) {
+  const provider = routeFor(purpose).find((candidate) => routeOf(candidate) === call.route && stepOf(candidate).model === call.model)
   return provider === undefined ? undefined : priceUsage(stepOf(provider).priceKey, { input: bytes, cacheWrite: bytes, cacheRead: bytes, output: qualificationOutputTokens })
 }
 
-effect function meteredComplete(complete: (call: ModelCall) => ModelReply!ProviderFailure, meter: Ref.Ref<Meter>, call: ModelCall) {
+function quotaRejected(failure: ProviderFailure) {
+  return failure.route === "orbio" && failure.status === 402 && failure.reason === "provider-http-402-insufficient_quota"
+}
+
+function spendingDenied(failure: ProviderFailure) {
+  return failure.route === "surplus-anthropic" && failure.category === "SpendDenied" && failure.resetAt !== undefined
+}
+
+function charged(current: Meter, cost: number): Meter {
+  return { ...current, micro: current.micro + cost, uncertain: false, violated: current.violated || current.micro + cost > qualificationBudgetMicroUsd }
+}
+
+effect function meteredComplete(purpose: QualificationPurpose, complete: (call: ModelCall) => ModelReply!ProviderFailure, meter: Ref.Ref<Meter>, call: ModelCall) {
   const bounded: ModelCall = { ...call, maxTokens: qualificationOutputTokens }
   const wire = try orDie(Effect.try(() => JSON.stringify(bounded)))
   const bytes = new TextEncoder().encode(wire).length
-  const bound = boundOf(call, bytes)
+  const bound = boundOf(purpose, call, bytes)
   const before = try Ref.get(meter)
-  if (bytes > qualificationPayloadBytes || wire.includes("contentBase64") || !wire.includes("contentOmittedFromModel") || bound === undefined || before.uncertain || before.requests >= qualificationRequestLimit || before.micro + bound.costMicroUsd > qualificationBudgetMicroUsd) {
+  if (bytes > qualificationPayloadBytes || wire.includes("contentBase64") || !wire.includes(markerOf(purpose)) || bound === undefined || before.uncertain || before.requests >= qualificationRequestLimit || before.micro + bound.costMicroUsd > qualificationBudgetMicroUsd) {
     try Ref.set(meter, { ...before, violated: true })
     throw new ProviderFailure({ route: call.route, category: "Unavailable", reason: "qualification bound", receipt: noReceipt })
   }
   try Ref.set(meter, { ...before, requests: before.requests + 1, uncertain: true })
   const reply = complete(bounded) catch effect (failure) => {
-    const cost = failure.receipt.costMicroUsd
-    if (cost !== null) try Ref.update(meter, (current) => ({ ...current, micro: current.micro + cost, uncertain: false, violated: current.violated || current.micro + cost > qualificationBudgetMicroUsd }))
+    const cost = failure.receipt.costMicroUsd ?? (quotaRejected(failure) || spendingDenied(failure) ? bound.costMicroUsd : null)
+    if (cost !== null) try Ref.update(meter, (current) => charged(current, cost))
     throw failure
   }
   const cost = reply.costMicroUsd
-  if (cost !== null) try Ref.update(meter, (current) => ({ ...current, micro: current.micro + cost, uncertain: false, violated: current.violated || current.micro + cost > qualificationBudgetMicroUsd }))
+  if (cost !== null) try Ref.update(meter, (current) => charged(current, cost))
   return reply
 }
 
-effect function meteredRoute<T, E, R>(metered: Layer.Layer<Provider>, call: ValueCall<T>, control: RouteControl<E, R>) {
-  provide metered {
-    return try runStructuredRoute(valueRoute, call.prompt, "high", call.output, control)
+export effect function qualificationTransport(purpose: QualificationPurpose) {
+  const inner = try Provider
+  const meter = try Ref.make<Meter>({ micro: 0, requests: 0, uncertain: false, violated: false })
+  return {
+    mayCall: () => effect {
+      const current = try Ref.get(meter)
+      return !current.uncertain && !current.violated && current.requests < qualificationRequestLimit && current.micro < qualificationBudgetMicroUsd
+    },
+    complete: (call: ModelCall) => meteredComplete(purpose, inner.complete, meter, call),
+    meter: () => Ref.get(meter),
+  } satisfies QualificationTransport
+}
+
+effect function meteredRoute<T, E, R>(transport: QualificationTransport, purpose: QualificationPurpose, prompt: Prompt, output: Output<T>, control: RouteControl<E, R>) {
+  const inner = try Provider
+  provide Provider = { configured: inner.configured, complete: transport.complete } {
+    return try runStructuredRoute(routeFor(purpose), prompt, purpose === "value" ? "high" : "medium", output, control)
   }
+}
+
+function calling(transport: QualificationTransport, dryRun: boolean) {
+  return () => dryRun ? Effect.succeed(false) : transport.mayCall()
 }
 
 effect function qualifyPath<T>(path: QualificationPath<T>, dryRun: boolean) {
   const { item } = path.call.prompt
   if (item.includes("contentBase64") || !item.includes("\"contentOmittedFromModel\":true")) throw new QualificationFailed({ message: failure })
-  const inner = try Provider
-  const meter = try Ref.make<Meter>({ micro: 0, requests: 0, uncertain: false, violated: false })
-  const mayCall = () => effect {
-    const current = try Ref.get(meter)
-    return !dryRun && !current.uncertain && !current.violated && current.requests < qualificationRequestLimit && current.micro < qualificationBudgetMicroUsd
-  }
-  const routed = try meteredRoute(Layer.succeed(Provider, { configured: inner.configured, complete: (call: ModelCall) => meteredComplete(inner.complete, meter, call) }), path.call, freeRoute(mayCall))
-  const spent = try Ref.get(meter)
+  const transport = try qualificationTransport("value")
+  const routed = try meteredRoute(transport, "value", path.call.prompt, path.call.output, freeRoute(calling(transport, dryRun)))
+  const spent = try transport.meter()
   if (dryRun) {
     if (routed.calls.length > 0) throw new QualificationFailed({ message: failure })
     return { path: path.path, provider: null, requestedModel: null, servedModel: null, requestId: null, requests: 0, outcome: "dry-run; no provider calls" } satisfies QualificationSummary
@@ -169,6 +214,35 @@ effect function qualifyPath<T>(path: QualificationPath<T>, dryRun: boolean) {
   if (routed.kind !== "answered" || spent.violated || spent.uncertain || routed.calls.length !== spent.requests || !unresolvedMedia(path.assessments(routed.verdict))) throw new QualificationFailed({ message: failure })
   const served = routed.servedBy
   return { path: path.path, provider: served.gateway, requestedModel: served.requestedModel, servedModel: served.servedModel, requestId: served.providerRequestId, requests: spent.requests, outcome: "unviewed media unresolved" } satisfies QualificationSummary
+}
+
+const reviewPolicy = "Review whether a change has a useful effect. A file path or its existence can be an input to loaders or plugins."
+
+const reviewItem = `Title: ${reviewQualificationMarker}
+
+Body: This synthetic pull request adds a zero-byte .plugin-root file. The supplied snapshot does not contain the loader or plugin integration code. No execution results are supplied.
+
+Diff:
+diff --git a/.plugin-root b/.plugin-root
+new file mode 100644
+index 0000000..e69de29`
+
+const markerLimitation = /\b(?:loader|loading|marker|path|existence|presence)\b|\.plugin-root/iu
+
+export effect function qualifyGeneralReview(dryRun: boolean) {
+  const prompt = buildPrompt({ policy: [{ path: "CONTRIBUTING.md", text: reviewPolicy, truncated: false }], quality: [], itemText: reviewItem, related: undefined, limitations: [] }, "pull_request")
+  const transport = try qualificationTransport("general-review")
+  const routed = try meteredRoute(transport, "general-review", prompt, verdictOutput, freeRoute(calling(transport, dryRun)))
+  const spent = try transport.meter()
+  if (dryRun) {
+    if (routed.calls.length > 0) throw new QualificationFailed({ message: failure })
+    return { path: "general-review-counterexample", provider: null, requestedModel: null, servedModel: null, requestId: null, requests: 0, outcome: "dry-run; no provider calls" } satisfies QualificationSummary
+  }
+  if (routed.kind !== "answered" || spent.violated || spent.uncertain || routed.calls.length === 0 || routed.calls.length !== spent.requests || routed.calls.length > qualificationRequestLimit)
+    throw new QualificationFailed({ message: failure })
+  if (!routed.verdict.limitations.some((limitation) => markerLimitation.test(limitation))) throw new QualificationFailed({ message: failure })
+  const served = routed.servedBy
+  return { path: "general-review-counterexample", provider: served.gateway, requestedModel: served.requestedModel, servedModel: served.servedModel, requestId: served.providerRequestId, requests: spent.requests, outcome: "marker uncertainty preserved" } satisfies QualificationSummary
 }
 
 export effect function qualifyValueModels(dryRun: boolean) {
@@ -207,7 +281,12 @@ export effect function qualifyValueModelsCommand(args: ReadonlyArray<string>) {
     timeoutMs: 120_000,
     maxReplyBytes: 1024 * 1024,
   })
-  const summaries = Effect.provide(qualifyValueModels(dryRun), configured) catch effect () => {
+  const qualified = effect {
+    provide configured {
+      return [...try qualifyValueModels(dryRun), try qualifyGeneralReview(dryRun)]
+    }
+  }
+  const summaries = qualified catch effect () => {
     throw new QualificationFailed({ message: failure })
   }
   for (const summary of summaries) try Console.log(JSON.stringify(summary))

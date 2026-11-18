@@ -1,4 +1,4 @@
-// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
 import type { D1Database, QueueMessage } from "@repo/platform/bindings"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
@@ -9,6 +9,7 @@ import { backupJob } from "../../backup/jobs.vibe"
 import { startDaily } from "../../backup/pages.vibe"
 import { restoreCheck } from "../../backup/restore.vibe"
 import { EvidenceBackups, EvidenceSource, completeKey, copyKey, failed, headOf, immutable, pageKey, recorded } from "../../backup/store.vibe"
+import { qualifyRetention } from "./retention.vibe"
 import { SnapshotRows, restoreRows, snapshotRows } from "./snapshot.vibe"
 
 export service RecoveryFixture {
@@ -20,7 +21,7 @@ export service RecoveryFixture {
 export error FixtureRefused { issue: string }
 
 schema Marked { qualification: string }
-schema Command { qualification: string; action: "seed" | "verify" | "corrupt" | "empty"; delivery: string }
+schema Command { qualification: string; action: "seed" | "verify" | "corrupt" | "retention" | "empty"; delivery: string }
 schema SeedResult { day: string; fixtureAt: string; snapshotSha256: string; snapshotBytes: number; objectSha256: string; objects: number }
 schema PhaseRow { result: string }
 schema CyclePhase { phase: string }
@@ -211,6 +212,12 @@ effect function corrupt() {
   try recordPhase("corrupt", { changedBytesRefused: true, missingPageRefused: true, sourceUnchanged: true })
 }
 
+effect function retention() {
+  if ((try phase("retention")) !== undefined) return
+  if ((try phase("corrupt")) === undefined) return try refuse("Intact recovery and corruption checks required")
+  try recordPhase("retention", try qualifyRetention((try RecoveryFixture).restored))
+}
+
 effect function emptied(binding: RetentionR2Bucket) {
   const objects = retentionBucket(binding)
   for (;;) {
@@ -231,6 +238,7 @@ effect function performed(action: Command["action"]) {
   if (action === "seed") return try seed()
   if (action === "verify") return try verify()
   if (action === "corrupt") return try corrupt()
+  if (action === "retention") return try retention()
   try empty()
 }
 
@@ -252,7 +260,7 @@ export effect function recoveryMessage(message: QueueMessage) {
   if (command.qualification !== run) return try refuse("Wrong qualification identity")
   if (!new RegExp(`^${command.action}-[0-9]+$`, "u").test(command.delivery)) return try refuse("Missing command delivery identity")
   const completed = performed(command.action) catch effect (error) => {
-    try recordPhase(`failed-${command.action}`, { failed: true, category: error._tag === "FixtureRefused" ? error.issue : error._tag })
+    try recordPhase(`failed-${command.action}`, { failed: true, category: error._tag === "FixtureRefused" || error._tag === "RetentionRefused" ? error.issue : error._tag })
     return false
   }
   if (completed !== false) try delivered(`command:${command.delivery}`, command.action)

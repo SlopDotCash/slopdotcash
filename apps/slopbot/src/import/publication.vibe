@@ -1,0 +1,224 @@
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { mergeRecipe } from "@repo/platform/git/evidence"
+import { MergeVerifier } from "@repo/ports/security"
+import { collectEvidence } from "../value/evidence/collect.vibe"
+import { collectContext } from "../value/evidence/context.vibe"
+import type { Evidence } from "../value/evidence/types.vibe"
+import { ValueRefused, isSubscriptionProvenance, loadValuePolicy, publishValueAssessment, registeredProject, targetOf } from "../value/inference/publish.vibe"
+import type { Recovered } from "../value/proofs/blob.vibe"
+import { fileRecoveryCapture, recoveredFiles } from "../value/proofs/recovery.vibe"
+import { mergeInputOf } from "../value/workUnits/merge.vibe"
+import { prepareWorkUnitEvidence } from "../value/workUnits/prepare.vibe"
+import { publishWorkUnitAssessment } from "../value/workUnits/publish.vibe"
+import type { AssessedUnit } from "../value/workUnits/record.vibe"
+import { WorkUnitRefused, type WorkUnitSource } from "../value/workUnits/types.vibe"
+import type { GroupRepository } from "../value/workUnits/group.vibe"
+import { apiStart } from "../../gen/slopbot__valueRequests.effect.vibe"
+import { publicationCommitPages } from "./commitPages.vibe"
+import { reached } from "./diagnostics.vibe"
+import { bundleStream } from "./parts.ts"
+import { type AdmittedImport, type AdmittedSource, HistoricalPublication } from "./publisher.vibe"
+
+type Fields = Readonly<Record<string, unknown>>
+
+interface Collected {
+  readonly sources: ReadonlyArray<WorkUnitSource>
+  readonly targets: ReadonlyArray<GroupRepository>
+  readonly recovered: Recovered | undefined
+}
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function text(fields: Fields, key: string) {
+  const value = fields[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function isAssessedUnit(value: unknown): value is AssessedUnit {
+  const unit = fieldsOf(value)
+  const claimIds = unit?.["claimIds"]
+  const reviews = fieldsOf(unit?.["assessment"])?.["reviews"]
+  return Array.isArray(claimIds) && claimIds.every((id: unknown) => typeof id === "string")
+    && Array.isArray(reviews) && reviews.every((review: unknown) => typeof fieldsOf(review)?.["sourceId"] === "string")
+}
+
+function acceptedBeforeStart(evidence: Evidence) {
+  const occurred = Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? "")
+  return evidence.pull.state === "closed" && Number.isFinite(occurred) && occurred < apiStart * 1000
+}
+
+function singleResultOf(result: Fields) {
+  const assessedAt = text(result, "assessedAt")
+  const sourceDigest = text(result, "sourceDigest")
+  const policySha = text(result, "policySha")
+  const headSha = text(result, "headSha")
+  const pullRequestNodeId = text(result, "pullRequestNodeId")
+  if (assessedAt === undefined || sourceDigest === undefined || policySha === undefined || headSha === undefined || pullRequestNodeId === undefined) return undefined
+  return { verdict: result["verdict"], provenance: result["provenance"], assessedAt, sourceDigest, policySha, headSha, pullRequestNodeId }
+}
+
+function jointResultOf(result: Fields) {
+  const assessedAt = text(result, "assessedAt")
+  const sourceDigest = text(result, "sourceDigest")
+  const rubricVersion = text(result, "rubricVersion")
+  const units = fieldsOf(result["verdict"])?.["units"]
+  const provenance = result["provenance"]
+  if (assessedAt === undefined || sourceDigest === undefined || rubricVersion === undefined || !isSubscriptionProvenance(provenance)) return undefined
+  if (!Array.isArray(units) || !units.every(isAssessedUnit)) return undefined
+  const assessed: ReadonlyArray<AssessedUnit> = units
+  return { result: { assessedAt, sourceDigest, rubricVersion }, units: assessed, provenance }
+}
+
+effect function captured<A, E, R>(layer: Layer.Layer<GitHub, never, GitHub>, program: A!E!R) {
+  provide layer {
+    return try program
+  }
+}
+
+effect function through<A, E, R>(client: GitHub.Shape, program: A!E!R) {
+  provide GitHub = client {
+    return try program
+  }
+}
+
+effect function collectSource(source: AdmittedSource, index: number, count: number, capture: ReturnType<typeof fileRecoveryCapture>) {
+  try reached("source-evidence", index, count)
+  const [owner = "", repo = ""] = source.repository.split("/")
+  const registered = try registeredProject(owner, repo, source.repositoryDatabaseId)
+  const target = registered === undefined ? undefined : targetOf(registered.repositories, source.repository)
+  if (target === undefined) throw new ValueRefused({ reason: "Historical source is not registered" })
+  const collected = try captured(capture.layer, collectEvidence({ repository: source.repository, number: source.number, policy: target }))
+  if (!acceptedBeforeStart(collected)) throw new ValueRefused({ reason: "Subscription intake covers only work accepted before the API start" })
+  try reached("source-context", index, count)
+  let evidence = try collectContext(collected, source.contextPaths)
+  if (source.emptyMergeResolutions) {
+    if (evidence.commits.some((commit) => commit.parents.length === 2)) throw new ValueRefused({ reason: "Empty merge evidence requires no two-parent merges" })
+    evidence = { ...evidence, mergeResolutions: [] }
+  }
+  try reached("source-policy", index, count)
+  const policy = try loadValuePolicy(evidence.repositoryDatabaseId, evidence.pull.base.sha)
+  return { source: { evidence, policy } satisfies WorkUnitSource, target }
+}
+
+effect function reconstructed(admitted: AdmittedImport, bundle: Uint8Array, collected: Collected, capture: ReturnType<typeof fileRecoveryCapture>) {
+  const count = admitted.sources.length
+  const sources = [...collected.sources]
+  try reached("bundle-inputs", null, count)
+  if (new Set(sources.map(({ evidence }) => evidence.repositoryNodeId)).size !== 1) throw new WorkUnitRefused({ reason: "A Git bundle must bind one public repository" })
+  const verifier = try MergeVerifier
+  const inputs = sources.map(({ evidence }) => mergeInputOf(evidence))
+  const fileRequests = try capture.requests(sources.map(({ evidence }) => evidence))
+  try reached("bundle-file-recovery", null, count)
+  const recovery = try verifier.recover({ inputs, fileRequests, bundle: bundleStream(bundle) })
+  try reached("bundle-file-client", null, count)
+  const recovered = try recoveredFiles(fileRequests, recovery)
+  const fresh = fileRecoveryCapture()
+  for (const [index, source] of admitted.sources.entries()) {
+    try reached("bundle-source-recollection", index, count)
+    const target = collected.targets[index]
+    const input = inputs[index]
+    if (target === undefined || input === undefined) throw new WorkUnitRefused({ reason: "File recovery source identity changed" })
+    const recollected = try captured(fresh.layer, collectEvidence({ repository: source.repository, number: source.number, policy: target, recovered }))
+    if (JSON.stringify({ ...mergeInputOf(recollected), commitAttribution: [] }) !== JSON.stringify({ ...input, commitAttribution: [] }))
+      throw new WorkUnitRefused({ reason: "File recovery source identity changed" })
+    try reached("bundle-context-recollection", index, count)
+    const previous = sources[index]
+    if (previous === undefined) throw new WorkUnitRefused({ reason: "File recovery source identity changed" })
+    sources[index] = { ...previous, evidence: try collectContext(recollected, source.contextPaths, recovered) }
+  }
+  try reached("bundle-metadata", null, count)
+  for (const [path, signature] of capture.metadata) {
+    if (fresh.metadata.get(path) !== signature) throw new WorkUnitRefused({ reason: "Recovery source metadata changed" })
+  }
+  try reached("bundle-merge-reconstruction", null, count)
+  const resolved = try verifier.reconstruct({ inputs: sources.map(({ evidence }) => mergeInputOf(evidence)), bundle: bundleStream(bundle) })
+  if (resolved.length !== sources.length) throw new WorkUnitRefused({ reason: "Incomplete merge reconstruction" })
+  const bound: WorkUnitSource[] = []
+  for (const [index, source] of sources.entries()) {
+    try reached("bundle-identity", index, count)
+    const recipe = mergeRecipe(mergeInputOf(source.evidence))
+    const result = resolved[index]
+    if (result === undefined || result.inputSha256 !== recipe.inputSha256) throw new WorkUnitRefused({ reason: "Merge reconstruction identity mismatch" })
+    bound.push({ ...source, evidence: { ...source.evidence, mergeResolutions: result.mergeResolutions }, mergeRecipe: recipe })
+  }
+  return { sources: bound, targets: collected.targets, recovered } satisfies Collected
+}
+
+effect function collectAll(admitted: AdmittedImport) {
+  const count = admitted.sources.length
+  const capture = fileRecoveryCapture()
+  const sources: WorkUnitSource[] = []
+  const targets: GroupRepository[] = []
+  for (const [index, source] of admitted.sources.entries()) {
+    const { source: collected, target } = try collectSource(source, index, count, capture)
+    sources.push(collected)
+    targets.push(target)
+  }
+  const collected: Collected = { sources, targets, recovered: undefined }
+  return admitted.bundle === undefined ? collected : try reconstructed(admitted, admitted.bundle, collected, capture)
+}
+
+effect function publishInstalled(admitted: AdmittedImport) {
+  const count = admitted.sources.length
+  const pages = publicationCommitPages()
+  const wrapped = try pages.wrap
+  const collected = try through(wrapped, collectAll(admitted))
+  const [first] = collected.sources
+  const [target] = collected.targets
+  if (first === undefined || target === undefined) throw new ValueRefused({ reason: "Historical source is not registered" })
+  const [owner = "", repo = ""] = target.current.split("/")
+  const job = { installationId: admitted.installationId, repositoryId: first.evidence.repositoryDatabaseId, owner, repo, number: first.evidence.pull.number, itemKind: "pull_request" }
+  if (admitted.mode === "work-unit") {
+    try reached("prepare-work-unit", null, count)
+    const prepared = try prepareWorkUnitEvidence(collected.sources, collected.targets)
+    const joint = jointResultOf(admitted.result)
+    if (joint === undefined) throw new WorkUnitRefused({ reason: "Joint value assessment does not validate" })
+    try reached("publish-work-unit", null, count)
+    const stored = try publishWorkUnitAssessment({
+      job,
+      result: joint.result,
+      provenance: joint.provenance,
+      units: joint.units,
+      model: { ...joint.provenance },
+      evidence: prepared,
+      producerRevision: admitted.producerRevision,
+      supersedes: admitted.supersedes,
+      legacyPredecessors: admitted.legacyPredecessors,
+      revisionReason: admitted.revisionReason,
+      ...(collected.recovered === undefined ? {} : { recovered: collected.recovered }),
+      commitPages: pages,
+    })
+    return { recordDigest: stored.record_digest, sequence: stored.sequence }
+  }
+  const single = singleResultOf(admitted.result)
+  if (single === undefined) throw new ValueRefused({ reason: "Value result does not bind complete supplied source evidence" })
+  try reached("publish-single", null, count)
+  const stored = try publishValueAssessment({
+    job,
+    result: single,
+    evidence: first.evidence,
+    producerRevision: admitted.producerRevision,
+    supersedes: admitted.supersedes[0] ?? null,
+    revisionReason: admitted.revisionReason,
+    commitPages: pages,
+  })
+  return { recordDigest: stored.record_digest, sequence: stored.sequence }
+}
+
+effect function publishAdmitted(admitted: AdmittedImport) {
+  const scoped = (try GitHubApp).asInstallation(String(admitted.installationId))
+  provide scoped {
+    return try publishInstalled(admitted)
+  }
+}
+
+export const historicalPublication = Layer.effect(HistoricalPublication, effect {
+  const services = try Effect.context<Effect.Services<ReturnType<typeof publishAdmitted>>>()
+  return {
+    publish: (admitted) => Effect.provide(publishAdmitted(admitted), services),
+  }
+})

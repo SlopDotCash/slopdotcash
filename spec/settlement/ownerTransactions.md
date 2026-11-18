@@ -23,7 +23,8 @@ review step then returns an unsigned plan whose exact message the browser
 reconstructs before asking for a signature. The wallet may prepend only a
 compute-budget instruction, and a bounded assertion instruction may guard
 the expected balances. The browser saves the pending request before the
-wallet call and recovers it after a reload without a second submission. The
+wallet call and recovers it after a reload without a second submission,
+except a month lock or a lapsed-lock release, which only page memory holds. The
 check step verifies the exact submitted signature and its finalized result.
 A finalized reservation is a commitment, not a payment.
 
@@ -72,6 +73,12 @@ pure def review(r: OwnerRequest, kind: PlanKind, facts: ReviewFacts, message: st
 
 Only the reviewed message with at most an allowed wallet prefix is accepted.
 A reload recovers the pending request; it never creates a second submission.
+The saved request and its recovery after a reload apply to deposit,
+withdrawal, award and Solana monthly plans. A month lock or a lapsed-lock
+release is held only in page memory, so a reload loses its automatic check
+and the owner reviews and sends again (development `src/VaultMonthLock.tsx`
+keeps the sent lock or release in component state;
+[month lock](../frontend/monthLock.md)).
 
 ```quint
 pure def allowedPrefix(prefix: str): bool = prefix == "" or prefix == "compute-budget"
@@ -80,7 +87,8 @@ pure def canSavePending(r: OwnerRequest, submission: Submission): bool =
     and submission.signature != "" and submission.transaction != ""
 pure def savePending(r: OwnerRequest, submission: Submission): OwnerRequest =
   { ...r, phase: Pending, submitted: submission, submissions: r.submissions + 1 }
-pure def canRecover(r: OwnerRequest): bool = r.phase == Pending
+pure def savedKind(k: PlanKind): bool = k != LockMonthsPlan and k != ReleaseLapsedPledgePlan
+pure def canRecover(r: OwnerRequest): bool = r.phase == Pending and savedKind(r.kind)
 pure def recover(r: OwnerRequest): OwnerRequest = r
 ```
 

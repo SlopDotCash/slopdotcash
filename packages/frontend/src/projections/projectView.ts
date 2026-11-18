@@ -258,23 +258,12 @@ export function capFor(terms: MonthlyPoolTerms, cycleId: string): bigint {
 
 /** @throws {RangeError} */
 export function allocateByWeight(total: bigint, leaders: ReadonlyArray<Pick<ProjectContributor, "actor" | "weight">>): ReadonlyArray<bigint> {
-  const weighted = leaders.flatMap((leader, index) => (leader.weight > 0n ? [{ index, nodeId: leader.actor.id, actor: Number(githubUserIdFromNodeId(leader.actor.id)), weight: leader.weight }] : []));
   const amounts = leaders.map(() => 0n);
+  const weighted = leaders.flatMap((leader, index) => (leader.weight > 0n ? [{ index, leader }] : [])).sort((left, right) => compareActors(left.leader.actor, right.leader.actor));
   if (total <= 0n || weighted.length === 0) return amounts;
-  const byNumber = new Map<number, (typeof weighted)[number]>();
-  for (const recipient of weighted) {
-    if (!Number.isSafeInteger(recipient.actor) || recipient.actor <= 0) throw new RangeError(`Contributor ${recipient.nodeId} has accepted-work weight but no numeric GitHub id`);
-    const shared = byNumber.get(recipient.actor);
-    if (shared !== undefined) throw new RangeError(`Contributors ${shared.nodeId} and ${recipient.nodeId} share GitHub id ${recipient.actor}`);
-    byNumber.set(recipient.actor, recipient);
-  }
-  const allocation = allocate(total, weighted.map(({ actor, weight }) => ({ actor, weight })));
+  const allocation = allocate(total, weighted.map(({ leader }, position) => ({ actor: position + 1, weight: leader.weight })));
   if (allocation.kind === "Refused") throw new RangeError("The contributor weights cannot be allocated");
-  for (const share of allocation.shares) {
-    const recipient = byNumber.get(share.actor);
-    if (recipient === undefined) throw new RangeError(`The allocation returned a share for unknown GitHub id ${share.actor}`);
-    amounts[recipient.index] = share.amount;
-  }
+  for (const share of allocation.shares) amounts[weighted[share.actor - 1].index] = share.amount;
   return amounts;
 }
 

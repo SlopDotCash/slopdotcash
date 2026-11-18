@@ -9,7 +9,8 @@ export const meta: ComponentMeta<FeeConversionListProps> = {
     // spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network's target"
     Default: async () => {
       await expect(screen.getByText("Not converted")).toBeTruthy();
-      await expect(screen.getByText(/to 3,150\.25 USDC$/)).toBeTruthy();
+      await expect(screen.getByTitle("0x4200000000000000000000000000000000000006")).toBeTruthy();
+      await expect(screen.getByTitle("2 conversions")).toBeTruthy();
       await expect(screen.getByText("No conversions")).toBeTruthy();
     },
   },

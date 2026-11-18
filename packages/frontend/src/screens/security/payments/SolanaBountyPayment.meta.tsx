@@ -17,7 +17,6 @@ export const meta: ComponentMeta<SolanaBountyPaymentProps> = {
     busy: false,
     error: null,
     stale: false,
-    notice: null,
     onConnect: fn(),
     onSend,
     onType: fn(),
@@ -43,7 +42,7 @@ export const meta: ComponentMeta<SolanaBountyPaymentProps> = {
     },
     // spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"
     Uncertain: async () => {
-      await expect(screen.getByText("Wallet result uncertain. Enter its signature to continue.")).toBeVisible();
+      await expect(screen.getByText("Unknown result: paste signature")).toBeVisible();
       await expect(screen.queryByRole("button", { name: "Pay approved award" })).toBeNull();
     },
     // spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"

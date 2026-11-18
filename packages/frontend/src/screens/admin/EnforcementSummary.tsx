@@ -1,10 +1,9 @@
 // spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"
 import type { EnforcementPreview } from "@repo/backend/client";
-import { Alert } from "@repo/ui";
-import { History } from "lucide-react";
+import { Bot, CircleAlert, ExternalLink, History, Info } from "lucide-react";
 import { formatDateTime } from "../../app/format.ts";
-import { actionLabel, appealLabel, resultLabel, stateLabel } from "./enforcement.ts";
-import { Accounts, Fact, Facts, Reference, Subsection } from "./parts.tsx";
+import { actionLabel, appealLabel, isWebLink, resultLabel, stateLabel } from "./enforcement.ts";
+import { Accounts, Chip, Fact, Facts, Subsection } from "./parts.tsx";
 import type { Enforcement } from "./projects.ts";
 
 export type EnforcementSummaryProps = {
@@ -13,6 +12,52 @@ export type EnforcementSummaryProps = {
   status: string;
   listingTier: string;
 };
+
+const reinstatementSteps = ["Appeal", "Clean scan", "Moderator"] as const;
+
+type EnforcementRecord = Enforcement["records"][number];
+
+function RecordEvidence({ reference }: { reference: string }) {
+  return isWebLink(reference) ? (
+    <a href={reference} target="_blank" rel="noreferrer" aria-label="Evidence" title="Evidence" className="inline-flex text-primary [&_svg]:size-4">
+      <ExternalLink aria-hidden />
+    </a>
+  ) : (
+    <code title="Evidence" className="font-mono text-xs break-all">
+      {reference}
+    </code>
+  );
+}
+
+function RecordEntry({ record }: { record: EnforcementRecord }) {
+  return (
+    <li className="flex flex-col gap-1">
+      <p className="flex flex-wrap items-center gap-2">
+        <Chip>{actionLabel(record.action, record.maintainerBans !== undefined)}</Chip>
+        <Chip icon={record.actor ? undefined : <Bot aria-hidden />} title={`${record.actorRole}, ${record.decisionSource}`}>
+          {record.actor ? `@${record.actor.githubLogin}` : "Scanner"}
+        </Chip>
+        <time dateTime={record.createdAt}>{formatDateTime(record.createdAt)}</time>
+        <span title={resultLabel(record.result)}>
+          rev {record.beforeRevision}
+          {record.afterRevision === null ? "" : `→${record.afterRevision}`}
+        </span>
+        <RecordEvidence reference={record.evidenceReference} />
+        {record.maintainerBans?.map((account) => (
+          <Chip key={`ban:${account.githubLogin}`} tone="Negative" title="Banned">
+            <span className="sr-only">Banned </span>@{account.githubLogin}
+          </Chip>
+        ))}
+        {record.accountReinstatements?.map((account) => (
+          <Chip key={`reinstated:${account.githubLogin}`} tone="Positive" title="Reinstated">
+            <span className="sr-only">Reinstated </span>@{account.githubLogin}
+          </Chip>
+        ))}
+      </p>
+      <p>{record.reason}</p>
+    </li>
+  );
+}
 
 /** A project's restriction, appeals, banned maintainers and the records that made them. */
 export function EnforcementSummary({ enforcement, revision, status, listingTier }: EnforcementSummaryProps) {
@@ -27,45 +72,51 @@ export function EnforcementSummary({ enforcement, revision, status, listingTier 
           </Fact>
         ) : null}
         {enforcement.restrictedBy.length > 0 ? (
-          <Fact term="Restricted by · cannot decide appeal">
+          <Fact
+            term={
+              <span className="inline-flex items-center gap-1">
+                Restricted by
+                <span role="img" aria-label="Cannot decide the appeal" title="Cannot decide the appeal" className="inline-flex [&_svg]:size-4">
+                  <Info aria-hidden />
+                </span>
+              </span>
+            }
+          >
             <Accounts accounts={enforcement.restrictedBy} />
           </Fact>
         ) : null}
       </Facts>
       {enforcement.decisionRequired ? (
-        <Alert variant="destructive" announcement="Polite">
-          Confirmed malicious result. Reinstatement requires the owner's appeal, a fresh clean scan and a moderator decision.
-        </Alert>
+        <p role="status" className="flex flex-wrap items-center gap-2">
+          <Chip tone="Negative" icon={<CircleAlert aria-hidden />}>
+            Confirmed malicious
+          </Chip>
+          {reinstatementSteps.map((step) => (
+            <Chip key={step} title="Required for reinstatement">
+              {step}
+            </Chip>
+          ))}
+        </p>
       ) : null}
       {enforcement.revisionPending ? (
-        <Alert variant="warn" announcement="Polite">
-          Restriction active; revision {revision} is still {status} and {listingTier}. Delist to pause and retire it.
-        </Alert>
+        <p role="status">
+          <Chip tone="Caution" icon={<CircleAlert aria-hidden />} title={`Revision ${revision} is still ${status}, ${listingTier}. Delist to retire it.`}>
+            Revision pending
+          </Chip>
+        </p>
       ) : null}
       {enforcement.records.length > 0 ? (
-        <Subsection icon={<History aria-hidden />} title={`Enforcement history · ${enforcement.records.length}`}>
+        <Subsection
+          icon={<History aria-hidden />}
+          title={
+            <>
+              History <Chip>{enforcement.records.length}</Chip>
+            </>
+          }
+        >
           <ol className="flex flex-col gap-3 text-sm">
             {enforcement.records.map((record) => (
-              <li key={record.id} className="flex flex-col gap-1">
-                <p>
-                  <strong>{actionLabel(record.action, record.maintainerBans !== undefined)}</strong> by {record.actor ? `@${record.actor.githubLogin}` : "the signed security vetting service"} ({record.actorRole}, {record.decisionSource}) on {formatDateTime(record.createdAt)}. Revision {record.beforeRevision}
-                  {record.afterRevision === null ? "" : ` → ${record.afterRevision}`}: {resultLabel(record.result)}.
-                </p>
-                <p>Reason: {record.reason}</p>
-                <p>
-                  Evidence: <Reference value={record.evidenceReference} />
-                </p>
-                {record.maintainerBans ? (
-                  <p>
-                    Banned maintainers: <Accounts accounts={record.maintainerBans} />
-                  </p>
-                ) : null}
-                {record.accountReinstatements?.length ? (
-                  <p>
-                    Reinstated accounts: <Accounts accounts={record.accountReinstatements} />
-                  </p>
-                ) : null}
-              </li>
+              <RecordEntry key={record.id} record={record} />
             ))}
           </ol>
         </Subsection>
@@ -94,20 +145,22 @@ export function EnforcementPreviewFacts({ preview }: { preview: EnforcementPrevi
         </Fact>
         <Fact term="Result">{resultLabel(preview.result)}</Fact>
         {preview.maintainerBans.length > 0 ? (
-          <Fact term="Maintainer accounts banned">
+          <Fact term="Bans">
             <Accounts accounts={preview.maintainerBans} />
           </Fact>
         ) : null}
         {preview.accountReinstatements.length > 0 ? (
           <Fact term="Accounts reinstated">
-            <Accounts accounts={preview.accountReinstatements} />. The project restriction and other account bans stay in place.
+            <Accounts accounts={preview.accountReinstatements} />
           </Fact>
         ) : null}
       </Facts>
       {preview.pendingReason ? (
-        <Alert variant="warn" announcement="Polite">
-          Restriction applies now; revision not appended yet: {preview.pendingReason}
-        </Alert>
+        <p role="status">
+          <Chip tone="Caution" icon={<CircleAlert aria-hidden />} title={preview.pendingReason}>
+            Revision pending
+          </Chip>
+        </p>
       ) : null}
     </>
   );

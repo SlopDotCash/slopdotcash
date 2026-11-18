@@ -2,8 +2,9 @@
 
 PRD section 6 "Received-fee handling" and "SLOP buyback and burn" require
 every fee that reaches a network fee wallet to come from a settled source,
-and every buyback income entry to come from a received USDC fee, a finalized
-conversion output or a completed direct-award fee, each counted once. This
+and every buyback income entry to come from a finalized USDC vault claim, a
+finalized conversion output or a completed direct-award fee, each counted
+once. This
 machine composes the [conversion journal](./conversion.md) of one network fee
 wallet, the [direct-award fee journal](./directBountyIncome.md) and the
 [buyback bridge leg](./buyback.md) of the same network. It drives the
@@ -87,9 +88,10 @@ pure def book(s: FeeFlow, bounty: D::DirectBounty, timing: J::AwardTimes, read: 
 ### The conversion run is the journal's, and a finalized conversion output is retained once
 
 Publication, readiness, token discovery, the lease, evaluation, the native
-reservation, signing and settlement are the conversion journal's own guarded
-transitions. When a settlement finalizes a conversion with a positive
-output, that row and output are retained as the output's identity.
+reservation, signing, vault registration, accrual, claims and settlement
+are the conversion journal's own guarded transitions. When a settlement
+finalizes a conversion or a vault claim with a positive output, that row
+and output are retained as the output's identity.
 
 ```quint
 pure def canPublishWorker(s: FeeFlow, config: R::WorkerConfig, by: R::Sender): bool = CV::canPublishWorker(s.fee, config, by)
@@ -113,25 +115,37 @@ pure def canFinalizeSend(s: FeeFlow, runId: int, id: int, receipt: CV::SendRecei
 pure def finalizeSend(s: FeeFlow, runId: int, id: int, receipt: CV::SendReceipt, by: R::Sender): FeeFlow =
   val after = CV::finalizeSend(s.fee, runId, id, receipt, by)
   val row = after.rows.nthOr(id - 1, CV::noRow)
-  { ...s, fee: after, outputs: if (row.kind == CV::Conversion and row.state == CV::Finalized and row.output > 0)
+  { ...s, fee: after, outputs: if ((row.kind == CV::Conversion or row.kind == CV::Claim) and row.state == CV::Finalized and row.output > 0)
       s.outputs.append({ row: id, output: row.output }) else s.outputs }
+pure def canRegisterVault(s: FeeFlow, reviewed: CV::ReviewedVault, by: R::Sender): bool = CV::canRegisterVault(s.fee, reviewed, by)
+pure def registerVault(s: FeeFlow, reviewed: CV::ReviewedVault, by: R::Sender): FeeFlow = { ...s, fee: CV::registerVault(s.fee, reviewed, by) }
+pure def canAccrue(s: FeeFlow, accrual: CV::VaultAccrual, by: R::Sender): bool = CV::canAccrue(s.fee, accrual, by)
+pure def accrue(s: FeeFlow, accrual: CV::VaultAccrual, by: R::Sender): FeeFlow = { ...s, fee: CV::accrue(s.fee, accrual, by) }
+pure def canClaim(s: FeeFlow, runId: int, vaultClaim: CV::VaultClaim, by: R::Sender): bool = CV::canClaim(s.fee, runId, vaultClaim, by)
+pure def claim(s: FeeFlow, runId: int, vaultClaim: CV::VaultClaim, by: R::Sender): FeeFlow = { ...s, fee: CV::claim(s.fee, runId, vaultClaim, by) }
+pure def outputRow(s: FeeFlow, id: int): CV::Row = s.fee.rows.nthOr(id - 1, CV::noRow)
 pure def alwaysOutputsOnce(s: FeeFlow): bool = s.outputs.every(o => o.row > 0 and o.output > 0
-  and s.outputs.select(x => x.row == o.row).length() == 1)
+  and s.outputs.select(x => x.row == o.row).length() == 1
+  and outputRow(s, o.row).id == o.row and outputRow(s, o.row).state == CV::Finalized and outputRow(s, o.row).output == o.output
+  and (outputRow(s, o.row).kind == CV::Conversion or outputRow(s, o.row).kind == CV::Claim))
 ```
 
 ## Story: Count each buyback income once, from its own receipt
 
-### Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee
+### Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee
 
-A USDC payout fee counts from its finalized receipt at or after activation.
-A fee in another token counts only as its later conversion output. A
-direct-award fee counts only once its case is booked as complete and
-eligible, and only when it arrived in USDC; otherwise its conversion output
-counts. A USDC direct-award receipt is never also a payout-fee credit. Each
-income key is the identity of its own receipt: the fee receipt for a USDC
-payout or direct-award fee, the journal row for a conversion output. Only
-the fee Worker records income, on the buyback instance of this wallet's
-network.
+Payout fees accrue in the reviewed vaults and reach the fee wallet only
+through the journal's claims, so a USDC payout fee counts as its finalized
+claim of the network's USDC holding, for the claimed amount the receipt
+proved. A fee in another token, a claim of one included, counts only as
+its later conversion output. A direct-award fee counts only once its case
+is booked as complete and eligible, and only when it arrived in USDC;
+otherwise its conversion output counts. Each income key is the identity of
+its own record: the journal row for a claim or a conversion output, the fee
+receipt for a direct-award fee (`buyback-store.ts` `feeIncome`: live
+finalized conversions into the token and claims of it, plus completed
+direct-award fees). Only the fee Worker records income, on the buyback
+instance of this wallet's network.
 
 ```quint
 pure def entryFor(s: FeeFlow, feeReceipt: int): FeeEntry =
@@ -144,21 +158,22 @@ pure def credited(s: FeeFlow, key: B::IncomeKey): bool = s.credits.some(c => c.k
 pure def keyOf(kind: B::IncomeKind, network: R::Network, id: int): B::IncomeKey = { kind: kind, network: network, id: id }
 pure def canAdvanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): bool = by == R::Worker and B::canAdvanceClock(s.buyback, now, R::Worker)
 pure def advanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): FeeFlow = { ...s, buyback: B::advanceClock(s.buyback, now, R::Worker) }
-pure def canCreditUsdcFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sender): bool =
-  val e = entryFor(s, feeReceipt)
-  val key = keyOf(B::UsdcClaim, s.fee.network, feeReceipt)
-  by == R::Worker and s.fee.network == s.buyback.source and e.receipt > 0 and e.source == PayoutFee and e.usdc
-    and chainTime == e.chainTime and not(credited(s, key))
-    and B::canRecordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker)
-pure def creditUsdcFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sender): FeeFlow =
-  val e = entryFor(s, feeReceipt)
-  val key = keyOf(B::UsdcClaim, s.fee.network, feeReceipt)
-  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker),
-    credits: s.credits.append({ key: key, amount: M::smallAmount(e.amount) }) }
+pure def usdcClaimRow(s: FeeFlow, id: int): bool =
+  outputRow(s, id).kind == CV::Claim and CV::holding(s.fee, outputRow(s, id).token).asset == CV::TargetStable
+pure def canCreditClaim(s: FeeFlow, id: int, chainTime: int, by: R::Sender): bool =
+  val o = outputFor(s, id)
+  val key = keyOf(B::UsdcClaim, s.fee.network, id)
+  by == R::Worker and s.fee.network == s.buyback.source and o.row > 0 and usdcClaimRow(s, id) and not(credited(s, key))
+    and B::canRecordIncome(s.buyback, key, M::smallAmount(o.output), chainTime, R::Worker)
+pure def creditClaim(s: FeeFlow, id: int, chainTime: int, by: R::Sender): FeeFlow =
+  val o = outputFor(s, id)
+  val key = keyOf(B::UsdcClaim, s.fee.network, id)
+  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(o.output), chainTime, R::Worker),
+    credits: s.credits.append({ key: key, amount: M::smallAmount(o.output) }) }
 pure def canCreditConversion(s: FeeFlow, id: int, chainTime: int, by: R::Sender): bool =
   val o = outputFor(s, id)
   val key = keyOf(B::ConversionOutput, s.fee.network, id)
-  by == R::Worker and s.fee.network == s.buyback.source and o.row > 0 and not(credited(s, key))
+  by == R::Worker and s.fee.network == s.buyback.source and o.row > 0 and outputRow(s, id).kind == CV::Conversion and not(credited(s, key))
     and B::canRecordIncome(s.buyback, key, M::smallAmount(o.output), chainTime, R::Worker)
 pure def creditConversion(s: FeeFlow, id: int, chainTime: int, by: R::Sender): FeeFlow =
   val o = outputFor(s, id)
@@ -177,15 +192,20 @@ pure def creditDirectFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sen
   { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker),
     credits: s.credits.append({ key: key, amount: M::smallAmount(e.amount) }) }
 pure def backed(s: FeeFlow, credit: Credit): bool =
-  if (credit.key.kind == B::ConversionOutput) s.outputs.some(o => o.row == credit.key.id and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
-  else s.entries.some(e => e.receipt == credit.key.id and e.usdc and M::equalAmounts(credit.amount, M::smallAmount(e.amount))
-    and (if (credit.key.kind == B::UsdcClaim) e.source == PayoutFee else credit.key.kind == B::DirectFee and e.source == DirectAwardFee))
+  if (credit.key.kind == B::ConversionOutput) outputRow(s, credit.key.id).kind == CV::Conversion
+    and s.outputs.some(o => o.row == credit.key.id and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
+  else if (credit.key.kind == B::UsdcClaim) usdcClaimRow(s, credit.key.id)
+    and s.outputs.some(o => o.row == credit.key.id and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
+  else credit.key.kind == B::DirectFee and s.entries.some(e => e.receipt == credit.key.id and e.usdc
+    and M::equalAmounts(credit.amount, M::smallAmount(e.amount)) and e.source == DirectAwardFee)
 pure def alwaysIncomeBackedByReceiptOrConversion(s: FeeFlow): bool = s.credits.every(c => backed(s, c))
   and s.buyback.sources.length() == s.credits.length() and s.credits.every(c => s.buyback.sources.includes(c.key))
   and s.buyback.income == s.credits.foldl(M::zero, (total, c) => M::addAmounts(total, c.amount))
-pure def receiptKeyed(credit: Credit): bool = credit.key.kind != B::ConversionOutput
+pure def receiptKeyed(credit: Credit): bool = credit.key.kind == B::DirectFee
+pure def rowKeyed(credit: Credit): bool = credit.key.kind == B::ConversionOutput or credit.key.kind == B::UsdcClaim
 pure def alwaysNoReceiptCountedTwice(s: FeeFlow): bool = s.credits.every(c => s.credits.select(x => x.key == c.key).length() == 1
-  and (receiptKeyed(c) implies s.credits.select(x => receiptKeyed(x) and x.key.id == c.key.id).length() == 1))
+  and (receiptKeyed(c) implies s.credits.select(x => receiptKeyed(x) and x.key.id == c.key.id).length() == 1)
+  and (rowKeyed(c) implies s.credits.select(x => rowKeyed(x) and x.key.id == c.key.id).length() == 1))
 pure def sometimesUsdcFeeIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::UsdcClaim)
 pure def sometimesConversionIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::ConversionOutput)
 pure def sometimesDirectFeeIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::DirectFee)
@@ -196,6 +216,9 @@ pure val evidenceValues = Set(
   { source: DirectAwardFee, receipt: 4, token: 1, amount: 25, chainTime: B::buybackStart + 1, caseId: 1, reconciled: true },
   { source: DirectAwardFee, receipt: 5, token: 1, amount: 26, chainTime: B::buybackStart + 1, caseId: 1, reconciled: true })
 pure val feeReceiptValues = Set(1, 3, 4)
+pure val reviewedValues = CV::reviewedValues
+pure val accrualValues = CV::accrualValues
+pure val vaultClaimValues = CV::vaultClaimValues
 pure val chainTimeValues = Set(B::buybackStart - 1, B::buybackStart, B::buybackStart + 1)
 pure val byValues = Set(R::Worker, R::ReleaseWorkflow, R::Owner)
 pure val idValues = Set(1, 2)
@@ -219,7 +242,7 @@ pure val weight_evaluate = 8
 pure val weight_reserveGas = 8
 pure val weight_sign = 10
 pure val weight_finalizeSend = 10
-pure val weight_creditUsdcFee = 8
+pure val weight_creditClaim = 8
 pure val weight_creditConversion = 8
 pure val weight_creditDirectFee = 8
 ```

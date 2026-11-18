@@ -1,7 +1,8 @@
 // spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
 import { Caller, bytesBody, handleRaw, json } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
-import { ImportReceipt, importLimitBytes, importMediaTypes, otherImportMethods, valueImport } from "../client/import.vibe"
+import { later } from "@repo/platform/worker"
+import { ImportReceipt, ImportTerminalFrame, importHeartbeatMillis, importLimitBytes, importMediaTypes, importStreamMediaType, otherImportMethods, valueImport } from "../client/import.vibe"
 import { postSlopbotValueImport } from "../client/refusals.vibe"
 import { historicalParts, utf8Text } from "./parts.ts"
 
@@ -34,6 +35,12 @@ interface RefusalRow {
 }
 
 const privateNoStore = { "cache-control": "private, no-store" }
+
+const streamHeaders = { "cache-control": "private, no-store, no-transform", "x-content-type-options": "nosniff" }
+
+const pendingFrame = "{\"status\":\"pending\"}\n"
+
+type Terminal = typeof ImportTerminalFrame.Type
 
 function respond(status: number, body: unknown) {
   return json(body, status, privateNoStore)
@@ -88,12 +95,45 @@ effect function importAnswer() {
   if (!publisher.configured) return refused(postSlopbotValueImport.intakeUnavailable)
   const submitted = try submission(mediaType, request.headers["content-type"] ?? "")
   if (submitted === undefined) return refused(postSlopbotValueImport.invalidRequest)
-  const receipt = publisher.publish(actor.githubId, submitted.input, submitted.bundle) catch effect () => {
+  const publication = published(publisher, actor.githubId, submitted)
+  if (!acceptsStream(request)) {
+    const result = try publication
+    return respond(result.status, result.body)
+  }
+  const outcome = try Deferred.make<Terminal>()
+  try later(effect {
+    try Deferred.succeed(outcome, try publication)
+  })
+  const encoder = new TextEncoder()
+  return HttpServerResponse.stream(Stream.map(frames(outcome), (frame) => encoder.encode(frame)), { status: 200, headers: streamHeaders, contentType: importStreamMediaType })
+}
+
+function acceptsStream(request: HttpServerRequest.HttpServerRequest) {
+  return (request.headers.accept ?? "").split(",").some((type) => type.trim() === importStreamMediaType)
+}
+
+effect function published(publisher: HistoricalValueImport.Shape, administratorGithubId: string, submitted: Submission) {
+  const receipt = publisher.publish(administratorGithubId, submitted.input, submitted.bundle) catch effect () => {
     try Effect.logError("historical value import failure")
     return undefined
   }
-  if (receipt === undefined) return refused(postSlopbotValueImport.assessmentNotPublished)
-  return respond(200, receipt)
+  const terminal: Terminal = receipt === undefined
+    ? { status: 409, body: { error: postSlopbotValueImport.assessmentNotPublished.error } }
+    : { status: 200, body: receipt }
+  return terminal
+}
+
+effect function* frames(outcome: Deferred.Deferred<Terminal>) {
+  yield pendingFrame
+  while (true) {
+    const settled = try.race [Deferred.await(outcome), Effect.as(sleep(Duration.millis(importHeartbeatMillis)), undefined)]
+    if (settled === undefined) {
+      yield pendingFrame
+      continue
+    }
+    yield `${JSON.stringify(settled)}\n`
+    return
+  }
 }
 
 export const importRoutes = Layer.mergeAll(

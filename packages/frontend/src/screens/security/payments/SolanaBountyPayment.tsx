@@ -1,5 +1,5 @@
 // spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"
-import { Button, Field, Input, TransactionStatus, WalletChooser, type WalletOption } from "@repo/ui";
+import { Button, Field, Input, Spinner, Status, TransactionStatus, WalletChooser, type WalletOption } from "@repo/ui";
 import { useState } from "react";
 import { type Phase, visible } from "../../../../gen/frontend__solanaBountyPrompt.ts";
 import { useMachine } from "../../../../gen/frontend__solanaBountyPrompt.react.ts";
@@ -9,6 +9,7 @@ import { isSolanaSignature } from "../../../wallets/bounty/records.ts";
 import type { SolanaConnection } from "../../../wallets/core/solana.vibe";
 import { useView } from "../../account/useView.ts";
 import type { SecurityCase } from "../cases/case.schema.ts";
+import type { PaymentHold } from "../cases/CaseDetail.tsx";
 import { act, useAction } from "./hooks.ts";
 import { ActionOutcome, type Outcome, sendPresentations } from "./parts.tsx";
 import { type PaymentsRuntime, type SolanaOpened, connectSolana, sendSolana, verifySolana, watchOffers } from "./payments.vibe";
@@ -37,7 +38,7 @@ export type SolanaBountyPaymentProps = Outcome & {
  * before the wallet opens; a signature is only a candidate the case verifies.
  * @model spec/frontend/solanaBountyPrompt.md
  */
-export function SolanaBountyPayment({ network, phase, saved, confirmed, wallets, address, busy, typed, error, stale, notice, onConnect, onSend, onType, onCheck, onRefresh }: SolanaBountyPaymentProps) {
+export function SolanaBountyPayment({ network, phase, saved, confirmed, wallets, address, busy, typed, error, stale, onConnect, onSend, onType, onCheck, onRefresh }: SolanaBountyPaymentProps) {
   const held = saved.identity !== "" || saved.hash !== "" || saved.candidate !== "";
   const kept = saved.candidate !== "" ? saved.candidate : saved.hash;
   const signature = typed ?? kept;
@@ -53,10 +54,12 @@ export function SolanaBountyPayment({ network, phase, saved, confirmed, wallets,
             hashLabel="Transaction signature"
             explorerUrl={kept === "" ? undefined : transactionUrl(network, kept)}
           />
-          <Field label="Transaction signature from your wallet">
+          <Field label="Transaction signature">
             <Input value={signature} spellCheck={false} disabled={busy} onChange={(event) => onType(event.target.value)} />
           </Field>
-          <p role="status">{saved.hash !== "" ? "Submitted. Verify finalized payment." : "Wallet result uncertain. Enter its signature to continue."}</p>
+          <p role="status">
+            <Status presentation={saved.hash !== "" ? { tone: "Caution", icon: "Clock", label: "Submitted" } : { tone: "Caution", icon: "Alert", label: "Unknown result: paste signature" }} />
+          </p>
         </>
       ) : null}
       <div className="flex flex-wrap gap-2">
@@ -71,7 +74,7 @@ export function SolanaBountyPayment({ network, phase, saved, confirmed, wallets,
           </Button>
         ) : null}
       </div>
-      <ActionOutcome error={error} stale={stale} notice={notice} onRefresh={onRefresh} />
+      <ActionOutcome error={error} stale={stale} onRefresh={onRefresh} />
     </section>
   );
 }
@@ -80,22 +83,17 @@ export type SolanaBountyPaymentSectionProps = {
   runtime: PaymentsRuntime;
   record: SecurityCase;
   opened: SolanaOpened;
-  onChanged: () => void;
+  hold: PaymentHold;
 };
 
 /** The Solana payment form over the case's prepared plan, opened by the case's payment controls. */
-export function SolanaBountyPaymentSection({ runtime, record, opened, onChanged }: SolanaBountyPaymentSectionProps) {
+export function SolanaBountyPaymentSection({ runtime, record, opened, hold }: SolanaBountyPaymentSectionProps) {
   const { state } = useMachine(opened.runtime);
   const offers = useView(runtime, watchOffers) ?? [];
   const [wallet, setWallet] = useState<SolanaConnection | null>(null);
   const [typed, setTyped] = useState<string | undefined>(undefined);
-  const action = useAction();
-  if (state === undefined)
-    return (
-      <p aria-live="polite" className="text-muted-foreground">
-        Checking saved payment…
-      </p>
-    );
+  const action = useAction(() => hold.hold(null));
+  if (state === undefined) return <Spinner size="sm" label="Checking saved payment…" />;
   return (
     <SolanaBountyPayment
       network={record.settlement?.network ?? ""}
@@ -108,20 +106,13 @@ export function SolanaBountyPaymentSection({ runtime, record, opened, onChanged 
       typed={typed}
       error={action.error}
       stale={action.stale}
-      notice={action.notice}
-      onConnect={(option) => action.run(() => act(runtime, connectSolana(opened, Number(option.id))), (connection) => {
-        setWallet(connection);
-        return null;
-      })}
+      onConnect={(option) => action.run(() => act(runtime, connectSolana(opened, Number(option.id))), setWallet)}
       onSend={() => {
-        if (wallet !== null) action.run(() => act(runtime, sendSolana(opened, wallet)), () => null);
+        if (wallet !== null) action.run(() => act(runtime, sendSolana(opened, wallet)));
       }}
       onType={setTyped}
-      onCheck={() => action.run(() => act(runtime, verifySolana(opened, typed ?? "")), (message) => {
-        onChanged();
-        return message;
-      })}
-      onRefresh={onChanged}
+      onCheck={() => action.run(() => act(runtime, verifySolana(opened, typed ?? "")), hold.changed)}
+      onRefresh={hold.changed}
     />
   );
 }

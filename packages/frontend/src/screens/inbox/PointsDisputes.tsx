@@ -101,8 +101,8 @@ function DisputeDetailView({ dispute, busy, onDecide, onRetryTriage }: { dispute
       {dispute.mayDecide ? <DecisionForm key={`${dispute.id}:${dispute.state}`} busy={busy} onDecide={onDecide} /> : null}
       <div className="flex gap-2">
         {!dispute.draft && dispute.state !== "resolved" ? (
-          <Button variant="outline" disabled={busy} onClick={onRetryTriage}>
-            Retry Slopbot review
+          <Button variant="outline" disabled={busy} aria-label="Retry review" onClick={onRetryTriage}>
+            Retry
           </Button>
         ) : null}
         <Button asChild variant="outline">
@@ -157,12 +157,19 @@ function AwardRows({ list, busy, onOlder, onReview }: { list: AwardList; busy: b
 /** The recipient's Points records with their reviews: request one with a reason, follow it, and, as a moderator, decide it. */
 export function PointsDisputes({ shown, busy = false, error, onRetry, onOlder, onReview, onBack, onFile, onDecide, onRetryTriage }: PointsDisputesProps) {
   return (
-    <section aria-labelledby="points-review" className="flex flex-col gap-4">
-      <h2 id="points-review" className="text-xl font-semibold text-foreground">
+    <section aria-label="Points review" className="flex flex-col gap-4">
+      <h2 className="text-xl font-semibold text-foreground">
         Review Points
       </h2>
       {error ? (
-        <Alert variant="destructive" action={<Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>}>
+        <Alert
+          variant="destructive"
+          action={
+            <Button variant="outline" size="sm" aria-label="Retry loading" onClick={onRetry}>
+              Retry
+            </Button>
+          }
+        >
           {error}
         </Alert>
       ) : null}

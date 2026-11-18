@@ -116,7 +116,11 @@ owner notices and the completion flag commit in one batch. This machine
 holds one delivery ID; the order of changes across deliveries is checked
 in the installation unit. A failed batch or an
 invalid GitHub source time leaves the flag unset, so a redelivery retries
-without running ordinary release.
+without running ordinary release. Ordinary release deletes the receipt only
+when no reopen source was retained and no value request names this
+delivery: `slopbot_value_requests.delivery_id` references the receipt, so
+the delete fails and the receipt stays (`releaseDelivery` in
+`persistence.ts`; migration `0050`).
 
 ```quint
 pure def canClaim(w: Webhook, requestId: int): bool =
@@ -143,7 +147,7 @@ pure def finishInstallation(w: Webhook, requestId: int, committed: bool): Webhoo
   else if (committed and I::canDeliver(w.install, change)) answer(r, 500, Failed, { ...w, install: I::deliver(w.install, change) })
   else answer(r, 503, Failed, w)
 pure def releaseOrdinary(w: Webhook): Webhook =
-  if (w.reopen != noReopen) w
+  if (w.reopen != noReopen or w.value != noValue) w
   else { ...w, receipt: NoReceipt, exists: false, installationProcessed: false, firstEvent: Other }
 ```
 
@@ -154,7 +158,8 @@ outputs from authenticated bytes. It recognizes GitHub's exact event/action
 pairs, normalizes source identifiers and comment commands, and keeps only
 known kinds. Ordinary review excludes a private repository and self-sent
 work except the exact recognized quality-comment marker and comment identity.
-Only active contributor registration can write the immutable value request.
+Only active contributor registration can write the immutable value request,
+and only while the receipt it references exists.
 The guarded write compares installation, repository ID, owner/name and PR
 number for the same delivery. It independently rechecks registration. A
 paused, flagged or quarantined project can queue security-only review.
@@ -171,7 +176,8 @@ pure def inspectValue(w: Webhook, requestId: int, registration: RS::RegistryObse
   val r = request(w, requestId)
   val wants = r.body.valueCandidate and RS::slopbotScope(registration) == RS::Contributor
   val value = r.body.value
-  val conflict = wants and (RS::slopbotScope(writeRegistration) != RS::Contributor or not(validValue(value)) or (w.value != noValue and w.value != value))
+  val conflict = wants and (not(w.exists) or RS::slopbotScope(writeRegistration) != RS::Contributor or not(validValue(value))
+    or (w.value != noValue and w.value != value))
   if (not(lookupOk) or conflict) answer(r, 503, Failed, releaseOrdinary(w))
   else updateRequest({ ...r, phase: InspectQueue, valued: wants },
     { ...w, value: if (wants) value else w.value })
@@ -262,6 +268,10 @@ pure def canConfirmReopen(w: Webhook, evidence: ReopenObservation): bool =
 pure def confirmReopen(w: Webhook, evidence: ReopenObservation): Webhook = { ...w, confirmed: true }
 pure def alwaysConfirmedSource(w: Webhook): bool = w.confirmed implies w.reopen != noReopen
 pure def alwaysReopenHasReceipt(w: Webhook): bool = w.reopen != noReopen implies w.exists
+pure def alwaysValueRequestHasReceipt(w: Webhook): bool = w.value != noValue implies w.exists
+pure def sometimesValuedReceiptKeptAfterFailure(w: Webhook): bool =
+  w.value != noValue and w.reopen == noReopen and w.receipt == PendingReceipt
+    and w.requests.some(r => r.result == Failed)
 pure def stepValueSourceImmutable(before: Webhook, after: Webhook): bool = before.value != noValue implies after.value == before.value
 pure def stepReopenSourceImmutable(before: Webhook, after: Webhook): bool = before.reopen != noReopen implies after.reopen == before.reopen
 pure def sometimesValued(w: Webhook): bool = w.value != noValue

@@ -6,7 +6,7 @@ import { Notices } from "@repo/ports/operations"
 import { ContributorAudience } from "@repo/ports/points"
 import { Roles } from "@repo/platform/roles"
 import type { Enforcement, JournalEntry, RecordAction } from "../../gen/security__enforcement.ts"
-import { parseState } from "../../gen/security__enforcement.effect.vibe"
+import { decidingAt, parseState } from "../../gen/security__enforcement.effect.vibe"
 
 export error DetailsMissing { event: string; needed: string }
 
@@ -92,10 +92,10 @@ function assessmentText(rowid: number): Statement {
   return sql`(SELECT id FROM vetting_assessments WHERE rowid = ${rowid})`
 }
 
-function reviewStatement(id: string, after: Enforcement): ReadonlyArray<Statement> {
-  const first = after.repositories[0]
-  const clean = first === undefined ? undefined : after.latest[first]
-  if (clean === undefined) return []
+function reviewStatement(id: string, before: Enforcement, after: Enforcement): ReadonlyArray<Statement> {
+  const first = before.repositories[0]
+  const clean = first === undefined ? undefined : decidingAt(before, first, before.pinReads)
+  if (clean === undefined || clean.id === 0) return []
   const findings = after.reviewedFindings.length === 0 ? sql`'[]'` : sql`(SELECT json_group_array(id) FROM (SELECT id FROM vetting_assessments WHERE rowid IN (SELECT value FROM json_each(${JSON.stringify(after.reviewedFindings)})) ORDER BY rowid))`
   return [sql`INSERT INTO project_vetting_reinstatements (enforcement_id, assessment_id, malicious_assessment_ids) VALUES (${id}, ${assessmentText(clean.id)}, ${findings})`]
 }
@@ -141,7 +141,7 @@ effect function journalWrites(change: EnforcementChange, before: Enforcement, af
     const id = entry.issuer === "ByContributorFlags" ? `enf_flags_${try writer.recordId()}` : `enf_${try writer.recordId()}`
     const journaled = { id, entry }
     writes.push(recordStatement(change, after, journaled, authored))
-    if (entry.kind === "RecordReinstate" && entry.issuer === "ByModerator") writes.push(...reviewStatement(id, after))
+    if (entry.kind === "RecordReinstate" && entry.issuer === "ByModerator") writes.push(...reviewStatement(id, before, after))
     writes.push(...(try noticesOf(change, after, journaled, authored.actor)))
   }
   return writes

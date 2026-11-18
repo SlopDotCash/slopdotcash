@@ -1,0 +1,274 @@
+// spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"; spec/operations/backup.md, "Backups expire after thirty days and access-log entries after one year"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { type Part, type RetentionR2Bucket, bucket, partBytes, partKey, retentionBucket } from "@repo/platform/r2"
+import { type Job, encoded } from "../../backup/codec.vibe"
+import { dayOfMillis, dayText } from "../../backup/days.ts"
+import { backupJob, daily } from "../../backup/jobs.vibe"
+import { startDaily } from "../../backup/pages.vibe"
+import { restoreCheck } from "../../backup/restore.vibe"
+import { cleanupEvidence } from "../../backup/retention.vibe"
+import { BackupQueue, BackupSettings, EvidenceBackups, EvidenceSource, copyKey, evidenceBuckets, failed, headOf, immutable } from "../../backup/store.vibe"
+
+export error RetentionRefused { issue: string }
+
+schema Count { n: number }
+schema HeldAudit { id: string; reason: string | null }
+
+interface Fixture {
+  readonly id: string
+  readonly key: string
+  readonly keys: ReadonlyArray<string>
+  readonly sha: string
+  readonly parts: ReadonlyArray<Part>
+  readonly data: Uint8Array
+  readonly missing: boolean
+  readonly partial: boolean
+}
+
+type Case = readonly [name: string, age: number | null, chunked: boolean]
+
+const prefix = "vet_000_retention_"
+const fixturePattern = `${prefix}%`
+const octets = "application/octet-stream"
+const sentinelKey = "contributor-trace-outside-scope"
+const dayMillis = 86_400_000
+const cleanupBound = 20
+const released = { backup: true, retention: true, retirement: false }
+const disabled = { ...released, backup: false }
+
+const cases: ReadonlyArray<Case> = [
+  ["chunks", 91, true],
+  ["single", 91, false],
+  ...Array.from({ length: 18 }, (_, index): Case => [`missing_${String(index).padStart(2, "0")}`, 91, false]),
+  ["partial", 91, true],
+  ["recent", 89, false],
+  ["open", null, false],
+  ["permanent_admission", 91, false],
+]
+
+const openCycles = sql`SELECT count(*) AS n FROM vetting_storage_cycles WHERE phase <> 'complete'`
+const missingAudits = sql`SELECT count(*) AS n FROM vetting_evidence_audit WHERE action = 'retention-missing' AND assessment_id LIKE ${fixturePattern}`
+const deletionReceipts = sql`SELECT count(*) AS n FROM vetting_evidence_deletions WHERE assessment_id LIKE ${fixturePattern}`
+const auditFixtures = sql`SELECT count(*) AS n FROM vetting_evidence_audit WHERE id LIKE 'qualification-audit-%'`
+const heldAudits = sql`SELECT id, reason FROM vetting_evidence_audit WHERE action = 'retention-held' AND assessment_id LIKE ${fixturePattern} ORDER BY id`
+
+function heldSource(source: RetentionR2Bucket, attempted: () => void): RetentionR2Bucket {
+  return {
+    put: async (key, value, options) => source.put(key, value, options),
+    get: async (key) => source.get(key),
+    head: async (key) => source.head(key),
+    list: async (options) => source.list(options),
+    delete: async () => {
+      attempted()
+      throw new Error("Legacy evidence must remain physically held")
+    },
+  }
+}
+
+function unchanged(before: ReadonlyArray<HeldAudit>, after: ReadonlyArray<HeldAudit>) {
+  return before.length === after.length && before.every((row, index) => row.id === after[index]?.id && row.reason === after[index]?.reason)
+}
+
+effect function refuse(issue: string) {
+  throw new RetentionRefused({ issue })
+}
+
+effect function check(condition: boolean, issue: string) {
+  if (!condition) throw new RetentionRefused({ issue })
+}
+
+effect function refused<A, E, R>(program: A!E!R) {
+  return Exit.isFailure(try exit(program))
+}
+
+effect function count(statement: Statement) {
+  return (try first(Count, statement))?.n ?? 0
+}
+
+effect function jsonText(value: unknown) {
+  return new TextDecoder().decode(try encoded(value))
+}
+
+effect function fixtureRows(fixture: Fixture, name: string, age: number | null, at: string, now: number) {
+  const closedAt = age === null ? undefined : try isoAt(now - age * dayMillis)
+  const chunks = fixture.parts.length === 0 ? null : try jsonText(fixture.parts.map((part, index) => ({ index, sha256: part.sha256, sizeBytes: part.size })))
+  const admission = try jsonText({ schemaVersion: "slop-vetting-result-v2", disposition: "clean" })
+  const permanent = name === "permanent_admission"
+  try (try D1).batch([
+    sql`INSERT INTO vetting_assessments(id, state, completed_at) VALUES(${fixture.id}, 'incomplete', ${at})`,
+    ...(permanent && closedAt !== undefined ? [sql`UPDATE vetting_assessments SET state = 'clean', result = ${admission}, completed_at = ${closedAt} WHERE id = ${fixture.id}`] : []),
+    sql`INSERT INTO vetting_evidence_runs(assessment_id, run_id, trace_sha256, manifest_sha256, manifest, policy, created_at, expires_at) VALUES(${fixture.id}, 'run', ${fixture.sha}, ${fixture.sha}, '{}', '{}', ${at}, ${at})`,
+    sql`INSERT INTO vetting_evidence_objects(assessment_id, run_id, sha256, size_bytes, kind, label, content_type, object_key, chunks) VALUES(${fixture.id}, 'run', ${fixture.sha}, ${fixture.data.length}, 'trace', 'Harmless retention fixture', ${octets}, ${fixture.key}, ${chunks})`,
+    ...(!permanent && closedAt !== undefined ? [sql`INSERT INTO vetting_evidence_case_closures VALUES(${fixture.id}, ${closedAt}, 'qualification', 'Synthetic aged closure')`] : []),
+  ])
+}
+
+effect function seeded(now: number) {
+  const at = try isoAt(now)
+  const source = (try EvidenceSource).binding
+  const fixtures: Fixture[] = []
+  for (const [name, age, chunked] of cases) {
+    const id = `${prefix}${name}`
+    const missing = name.startsWith("missing_")
+    const partial = name === "partial"
+    const data = new Uint8Array(chunked ? partBytes + 17 : 10).fill(13)
+    const sha = try sha256Hex(data)
+    const key = `vetting/${id}/run/${sha}`
+    const parts: Part[] = []
+    if (chunked) {
+      for (let offset = 0; offset < data.length; offset += partBytes) {
+        const slice = data.slice(offset, offset + partBytes)
+        const digest = try sha256Hex(slice)
+        parts.push({ key: partKey(key, parts.length, digest), sha256: digest, size: slice.length })
+      }
+    }
+    const fixture: Fixture = { id, key, keys: chunked ? parts.map((part) => part.key) : [key], sha, parts, data, missing, partial }
+    try fixtureRows(fixture, name, age, at, now)
+    for (const [index, part] of parts.entries()) {
+      if (partial && index === 1) continue
+      try immutable(source, part.key, data.slice(index * partBytes, index * partBytes + part.size), octets)
+    }
+    if (!chunked && !missing) try immutable(source, key, data, octets)
+    fixtures.push(fixture)
+  }
+  return fixtures
+}
+
+effect function faultsRefused(day: string, part: Part, bytes: Uint8Array, restored: RetentionR2Bucket) {
+  const source = (try EvidenceSource).binding
+  const copies = (try EvidenceBackups).binding
+  const backupKey = try copyKey(day, part.key)
+  try retentionBucket(copies).remove(backupKey)
+  try check(try refused(restoreCheck({ day, sourceKey: part.key, checkId: "missing-legacy" }, restored)), "Missing backup passed restore")
+  try check((try headOf(source, part.key)) !== undefined, "Missing backup lost source")
+  try tryPromise({
+    try: () => copies.put(backupKey, new Uint8Array(bytes.length), { onlyIf: { etagDoesNotMatch: "*" }, customMetadata: { sha256: part.sha256 }, httpMetadata: { contentType: octets } }),
+    catch: failed("put", backupKey),
+  })
+  try check(try refused(restoreCheck({ day, sourceKey: part.key, checkId: "corrupt-legacy" }, restored)), "Corrupt backup passed restore")
+  try check((try headOf(source, part.key)) !== undefined, "Corrupt backup lost source")
+  try retentionBucket(copies).remove(backupKey)
+  try immutable(copies, backupKey, bytes, octets)
+}
+
+export effect function qualifyRetention(restored: RetentionR2Bucket) {
+  const now = try Clock.currentTimeMillis
+  const fixtures = try seeded(now)
+  try Effect.logInfo("Qualification retention: fixtures ready")
+  const source = (try EvidenceSource).binding
+  const copies = (try EvidenceBackups).binding
+  const db = try D1
+  const jobs: Job[] = []
+  const captured = { send: (job: Job) => sync(() => { jobs.push(job) }) }
+  let deletes = 0
+  const held = heldSource(source, () => { deletes += 1 })
+  const time = now + dayMillis
+  const day = dayText(dayOfMillis(time))
+
+  effect function drained<E, R>(faults: void!E!R) {
+    let cleanupPages = 0
+    while (jobs.length > 0) {
+      try check(cleanupPages < cleanupBound, "Unbounded fixture cleanup")
+      const job = jobs.shift()
+      if (job === undefined) return try refuse("Controlled subjob missing")
+      if (job.kind !== "cleanup") {
+        try backupJob(job)
+        continue
+      }
+      if (cleanupPages === 0) try faults
+      cleanupPages += 1
+      provide evidenceBuckets(held, copies) {
+        try cleanupEvidence(job.day)
+      }
+    }
+    return cleanupPages
+  }
+
+  provide BackupSettings = released, BackupQueue = captured {
+    try startDaily(time)
+    try check(try refused(cleanupEvidence(day)), "Incomplete snapshot allowed deletion")
+    try startDaily(time + dayMillis)
+    try check((try count(openCycles)) === 1, "Concurrent snapshot started")
+    try Effect.logInfo("Qualification retention: premature cleanup refused")
+
+    const target = fixtures[0]
+    const firstPart = target?.parts[0]
+    if (target === undefined || firstPart === undefined) return try refuse("Chunked retention fixture missing")
+    const cleanupPages = try drained(faultsRefused(day, firstPart, target.data.slice(0, firstPart.size), restored))
+    try check(cleanupPages >= 3, "Retention pagination not exercised")
+    try check(deletes === 0, "Legacy cleanup attempted physical deletion")
+    for (const fixture of fixtures) {
+      for (const [index, key] of fixture.keys.entries()) {
+        const uploaded = !fixture.missing && !(fixture.partial && index === 1)
+        try check(((try headOf(source, key)) !== undefined) === uploaded, "Legacy source retention differs")
+        try check(((try headOf(copies, try copyKey(day, key))) !== undefined) === uploaded, "Backup inventory differs")
+      }
+    }
+
+    const heldBefore = try rows(HeldAudit, heldAudits)
+    try check((try count(deletionReceipts)) === 0, "Legacy evidence received deletion receipts")
+    try check(heldBefore.length === 21, "Expired legacy references were not explicitly held")
+    try check((try count(missingAudits)) === 0, "Legacy hold fabricated a physical inventory result")
+    try cleanupEvidence(day)
+    try check(unchanged(heldBefore, try rows(HeldAudit, heldAudits)) && (try count(deletionReceipts)) === 0, "Replay changed the legacy hold or deletion state")
+    const pinned = heldBefore[0]?.id ?? ""
+    try check(try refused(db.run(sql`DELETE FROM vetting_evidence_audit WHERE id = ${pinned}`)), "Legacy hold audit was removable")
+    try check(try refused(db.run(sql`UPDATE vetting_evidence_audit SET reason = 'changed' WHERE id = ${pinned}`)), "Legacy hold audit was mutable")
+    for (const [index, key] of target.keys.entries()) {
+      try restoreCheck({ day, sourceKey: key, checkId: `retention-${index}` }, restored)
+    }
+    const restoredParts = target.parts.map((part, index) => ({ ...part, key: `restore-checks/retention-${index}/${part.key}` }))
+    const whole = try bucket(restored).getParts({ key: target.key, sha256: target.sha, size: target.data.length, parts: restoredParts }, () => Effect.void)
+    try check(whole, "Held evidence was not restored")
+    try check((try headOf(source, sentinelKey)) !== undefined, "Permanent trace sentinel deleted")
+    try Effect.logInfo("Qualification retention: legacy hold and restoration verified")
+
+    const audits: ReadonlyArray<readonly [string, string]> = [["old", try isoAt(now - 400 * dayMillis)], ["current", try isoAt(now)], ["invalid", "z-invalid-date"]]
+    try db.batch(audits.map(([id, date]) => sql`INSERT INTO vetting_evidence_audit VALUES(${`qualification-audit-${id}`}, 'qualification', 'fixture', ${target.id}, NULL, NULL, 'Harmless audit fixture', ${date})`))
+    provide BackupSettings = disabled {
+      try daily(time)
+    }
+    try check((try count(auditFixtures)) === 3, "Disabled backup pruned audit")
+    try daily(time)
+    const [waiting, ...others] = jobs
+    const waitingDay = dayText(dayOfMillis(time + dayMillis))
+    try check(others.length === 0 && waiting !== undefined && waiting.kind !== "cleanup" && waiting.kind !== "restore" && waiting.day === waitingDay && waiting.page === 0, "Scheduled audit pruning differs")
+    try drained(Effect.void)
+    try check((try count(openCycles)) === 0 && (try count(auditFixtures)) === 2, "Scheduled audit pruning differs")
+    try check((try first(Count, sql`SELECT 1 AS n FROM vetting_evidence_audit WHERE id = 'qualification-audit-old'`)) === undefined, "Old audit retained")
+    for (const id of ["current", "invalid"]) {
+      try check(try refused(db.run(sql`DELETE FROM vetting_evidence_audit WHERE id = ${`qualification-audit-${id}`}`)), "Protected audit deleted")
+    }
+    try check(try refused(db.run(sql`UPDATE vetting_evidence_audit SET reason = 'changed' WHERE id = 'qualification-audit-current'`)), "Audit mutated")
+    try check(
+      (try count(auditFixtures)) === 2 && (try count(deletionReceipts)) === 0 && unchanged(heldBefore, try rows(HeldAudit, heldAudits)) && deletes === 0,
+      "Scheduled pruning changed protected records",
+    )
+    try Effect.logInfo("Qualification retention: scheduled audit verified")
+    return {
+      actualStorageCore: true,
+      actualScheduledCore: true,
+      controlledSequentialSubjobs: true,
+      fixtureOnlyRetentionEnabled: true,
+      fixtureCaseCount: fixtures.length,
+      agedDays: [89, 91],
+      incompleteSnapshotAndMissingCorruptRestoresRefused: true,
+      legacyPhysicalDeletionRefused: true,
+      cleanupPages,
+      deletedCompleteObjects: 0,
+      heldLegacyReferences: heldBefore.length,
+      missingInventoryAudits: 0,
+      openRecentAndPermanentTraceRetained: true,
+      permanentAdmissionEvidenceRetained: true,
+      immutableHoldAudits: true,
+      holdReplayUnchanged: true,
+      restoredHeldSha256: target.sha,
+      restoredHeldBytes: target.data.length,
+      scheduledOldAuditRemoved: true,
+      disabledAndProtectedAuditRetained: true,
+      elapsedRetentionObservation: false,
+    }
+  }
+}

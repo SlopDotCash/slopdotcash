@@ -428,18 +428,23 @@ pure def sometimesCloseCandidate(c: Closure): bool = c.outcome == CloseCandidate
 Source `runReview`: a certain finding whose close is blocked by a policy gate
 (no consent, an ineligible author, mode label, inactive switch) is commented
 and labeled with its category label. Issues are labeled and never closed. A
-close candidate whose close is later blocked is labeled by its close attempt.
+close candidate is commented and labeled with its category label the same
+way before its close is reserved (`runReview` in `review.ts`, lines
+1780-1880: comment, action, label, then `reserveClose`); a close that is
+later blocked updates that comment through its close attempt.
 
 ```quint
 pure def canLabelFinding(c: Closure): bool =
-  c.outcome == LabelFinding and mayActOrdinary(c) and not(c.findingLabel) and
+  (c.outcome == LabelFinding or c.outcome == CloseCandidate) and mayActOrdinary(c) and not(c.findingLabel) and
   effectiveMode(c.gate.source, c.triage.verdict.category) != ModeOff
 pure def labelFinding(c: Closure): Closure = { ...c, findingLabel: true }
 pure def alwaysLabelOnlyCategoriesNeverCandidates(c: Closure): bool =
   F::neverCloses(c.triage.verdict.category) implies c.outcome != CloseCandidate
 pure def alwaysFindingLabelFollowsOutcome(c: Closure): bool = c.findingLabel implies
-  (c.outcome == LabelFinding or (c.outcome == SecurityAdvisory and c.triage.verdict.category == F::Scam))
+  (c.outcome == LabelFinding or c.outcome == CloseCandidate
+    or (c.outcome == SecurityAdvisory and c.triage.verdict.category == F::Scam))
 pure def sometimesLabeledFinding(c: Closure): bool = c.findingLabel and c.outcome == LabelFinding
+pure def sometimesLabeledCloseCandidate(c: Closure): bool = c.findingLabel and c.outcome == CloseCandidate
 ```
 
 ### A restricted project permits only an authorized security comment and the confirmed scam label

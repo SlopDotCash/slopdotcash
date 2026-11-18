@@ -14,7 +14,7 @@ export const meta: ComponentMeta<RetryProps> = {
   play: {
     // spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"
     Default: async () => {
-      await expect(screen.getByText("AI proposal. The report text can try to influence it; you decide.")).toBeTruthy();
+      await expect(screen.getByRole("img", { name: "AI proposal; you decide" })).toBeTruthy();
       onRetry.mockClear();
       await userEvent.click(screen.getByRole("button", { name: "Run the analysis again" }));
       await expect(onRetry).toHaveBeenCalled();

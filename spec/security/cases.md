@@ -25,11 +25,23 @@ fields, and a moderator decides only appeals and related-party reviews.
 ### A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim
 
 A Slop or GitHub-verified receipt is created by the intake and forwarding
-specifications with terms the [program](./program.md) issued at receipt. A
+specifications with terms the [program](./program.md) issued at receipt; a
+maintainer's import of the program's GitHub private reports creates
+GitHub-verified receipts the same way. A
 legacy reporter claim (before which no finding, award, appeal or
 relatedness exists) stays a claim until a current technical approver
 verifies that the GitHub advisory names this reporter, freezing the terms in
-force at the maintainer-attested receipt time, or rejects the link. The
+force at the maintainer-attested receipt time, or rejects the link, or until
+a receipt check settles it against GitHub (below). A current security
+maintainer may also record a GitHub advisory's case directly (`mode:
+"record"` of `POST /api/v1/security-cases`, `createCase` in
+`backend/security/handler.ts`): with explicit confirmation, for a reporter
+other than themselves, at an attested past receipt time and under the terms
+in force then; the case is verified at once, with the maintainer-attested
+source. The shell refuses a caller without the maintainer role (403
+`forbidden`), a missing confirmation (400 `confirmation_required`), the
+caller's own report (403 `conflicted`) and an advisory that already has a
+verified case (409 `advisory_already_recorded`). The
 receipt guard checks the full term validity (`T::validReceipt`); the terms
 then never change (`stepReceiptFrozen`). Cases
 received before discretionary awards arrive through the migration import
@@ -54,7 +66,7 @@ type Authority = { epoch: int, technical: List[int], financial: List[int], moder
   relatedParties: List[int], programRestricted: bool }
 type AppealRecord = { from: Receipt, resolution: AppealState, by: int }
 type Triage = { state: TriageState, appealRevision: int, attempt: int, startedAt: int, escalated: bool, belowFloor: bool, returnDraft: bool,
-  exclusions: T::ExclusionContext, matchedLine: int }
+  exclusions: T::ExclusionContext }
 type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSource, terms: T::ReceiptTerms, revision: int,
   reportVersion: int, authority: Authority, triagers: List[int], triagerEpoch: int, revokedTriagers: List[int], memberEvents: int,
   receipt: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int,
@@ -65,7 +77,7 @@ pure val noAuthority: Authority = { epoch: 0, technical: List(), financial: List
   relatedParties: List(), programRestricted: false }
 pure val noAppealRecord: AppealRecord = { from: Received, resolution: NoAppeal, by: 0 }
 pure val noTriage: Triage = { state: NoTriage, appealRevision: 0, attempt: 0, startedAt: 0, escalated: false, belowFloor: false, returnDraft: false,
-  exclusions: T::noExclusions, matchedLine: 0 }
+  exclusions: T::noExclusions }
 pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: NoSource, terms: T::unpaidTerms(0, 0), revision: 0,
   reportVersion: 0, authority: noAuthority, triagers: List(), triagerEpoch: 0, revokedTriagers: List(), memberEvents: 0,
   receipt: Received, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0,
@@ -95,8 +107,13 @@ pure def verifyLink(c: PrivateCase, by: int, checkedEpoch: int, terms: T::Receip
     award: if (terms.paidTerms) Pending else NotApplicable }
 pure def canRejectLink(c: PrivateCase, by: int, checkedEpoch: int): bool = c.submission == Claimed and technicalNow(c, by, checkedEpoch)
 pure def rejectLink(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase = { ...c, submission: LinkRejected, revision: c.revision + 1 }
+pure def canRecordAttested(c: PrivateCase, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): bool =
+  c.submission == NotReceived and technicalNow(c, by, checkedEpoch) and confirmed and T::validReceipt(terms)
+pure def recordAttested(c: PrivateCase, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): PrivateCase =
+  { ...c, submission: Verified, source: MaintainerAttested, terms: terms, revision: 1, reportVersion: 1,
+    award: if (terms.paidTerms) Pending else NotApplicable }
 pure def alwaysUnpaidHasNoAward(c: PrivateCase): bool = c.terms.paidTerms == (c.award != NotApplicable)
-pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Verified implies c.terms.revision > 0
+pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Verified implies c.terms.revision >= 0
   and c.terms.receivedAt > 0 and c.source != NoSource and c.reportVersion > 0 and c.revision > 0)
   and (c.submission != Verified implies c.award == NotApplicable)
 pure def alwaysUnreceivedBlank(c: PrivateCase): bool = c.revision >= 0 and (c.submission != Verified implies
@@ -109,6 +126,33 @@ pure def stepReceiptFrozen(before: PrivateCase, after: PrivateCase): bool = afte
 pure def sometimesLinkRejected(c: PrivateCase): bool = c.submission == LinkRejected
 pure def sometimesAttestedReceipt(c: PrivateCase): bool = c.source == MaintainerAttested
 pure def sometimesUnpaidReceipt(c: PrivateCase): bool = c.submission == Verified and c.award == NotApplicable
+pure def sometimesReceivedBeforeAnyRevision(c: PrivateCase): bool = c.submission == Verified and c.terms.revision == 0
+```
+
+### A claimed link settles against GitHub when its reporter or a maintainer checks the receipt
+
+While a link is claimed, its reporter or a current security maintainer may
+ask for a receipt check (`check-receipt`, `allowedActions` and
+`automaticAction` in `backend/security/handler.ts`). The check reads the
+complete list of the program repository's GitHub private reports (the
+reporter's own, or all of them for a maintainer, which also imports every
+report that has no case yet through the receipt above). A report of this
+advisory whose GitHub author is the claimant verifies the claim with the
+GitHub-verified source, GitHub's creation time as the receipt time and the
+terms in force then. When the complete list has no such report, the claim is
+rejected (`receipt-mismatch` event, `link-rejected`). An unreadable list
+writes nothing (503 `receipt_check_unavailable`), and an advisory already
+held by a verified case or GitHub's copy of a report saved on Slop leaves the
+claim as it is; the shell sends no event for either. A maintainer may still
+verify or reject the link by hand.
+
+```quint
+pure def canCheckReceipt(c: PrivateCase, by: int, checkedEpoch: int, listed: bool, terms: T::ReceiptTerms): bool =
+  c.submission == Claimed and (by == c.reporter or technicalNow(c, by, checkedEpoch)) and (listed implies T::validReceipt(terms))
+pure def checkReceipt(c: PrivateCase, by: int, checkedEpoch: int, listed: bool, terms: T::ReceiptTerms): PrivateCase =
+  if (listed) { ...c, submission: Verified, source: GithubVerified, terms: terms, revision: c.revision + 1, reportVersion: 1,
+    award: if (terms.paidTerms) Pending else NotApplicable }
+  else { ...c, submission: LinkRejected, revision: c.revision + 1 }
 ```
 
 ### Authority snapshots advance and triager membership is audited at the next revision
@@ -162,8 +206,11 @@ pure def sometimesTriagerReassignedAfterSnapshot(c: PrivateCase): bool = c.triag
 Screening is advisory and never sets these states. A current technical
 approver or assigned triager asks for information. The reporter may save a
 new immutable report version while the finding is open, including after a
-returned appeal; it reopens triage and needs a fresh decision. A decision binds the report version
-it read; a revision saved first makes that decision stale.
+returned appeal; it keeps the receipt state (needs information stays needs
+information, `backend/security/report-intake.ts` changes only the case
+revision), queues screening of the new version and needs a fresh decision.
+A decision binds the report version it read; a revision saved first makes
+that decision stale.
 
 ```quint
 pure def receiptOpen(c: PrivateCase): bool = c.receipt == Received or c.receipt == NeedsInformation or c.receipt == Triaging
@@ -174,8 +221,8 @@ pure def requestInformation(c: PrivateCase, by: int, checkedEpoch: int): Private
 pure def canReviseReport(c: PrivateCase, by: int, version: int): bool = c.submission == Verified and by == c.reporter
   and receiptOpen(c) and not(committed(c)) and version == c.reportVersion + 1
 pure def reviseReport(c: PrivateCase, by: int, version: int): PrivateCase =
-  { ...c, reportVersion: version, receipt: if (c.receipt == NeedsInformation) Triaging else c.receipt, revision: c.revision + 1 }
-pure def sometimesInformationProvided(c: PrivateCase): bool = c.receipt == Triaging and c.reportVersion > 1
+  { ...c, reportVersion: version, revision: c.revision + 1 }
+pure def sometimesInformationProvided(c: PrivateCase): bool = c.receipt == NeedsInformation and c.reportVersion > 1
 ```
 
 ### A technical decision records the finding, duplicate identity and relatedness
@@ -292,14 +339,15 @@ that appeal revision (`security_appeal_triages`, prompt
 advice only and records the escalation reason `private-security-case`, and
 `confidence-below-floor` below 0.9. A draft also records the exclusion context
 the triage received, Slop's default exclusions and the owner's lines of the
-case's receipt-time terms ([terms](./terms.md)), and may name a matching line;
-neither decides anything. Failed, unavailable and lost attempts
+case's receipt-time terms, or none for a receipt without a scope
+([terms](./terms.md)); a matching line is named only in the free-text
+rationale, and nothing here decides anything. Failed, unavailable and lost attempts
 (running for more than 15 minutes) may be retried by a moderator. A late
 result of an older attempt or appeal cannot finish. The reporter's view omits
 the draft.
 
 ```quint
-type TriageOutcome = Drafted({ returnCase: bool, confidencePercent: int, exclusions: T::ExclusionContext, matchedLine: int })
+type TriageOutcome = Drafted({ returnCase: bool, confidencePercent: int, exclusions: T::ExclusionContext })
   | TriageFailedResult | TriageUnavailableResult
 pure def appealable(c: PrivateCase): bool = c.receipt == Duplicate or c.receipt == OutOfScope or c.receipt == Rejected
   or (c.receipt == Confirmed and (c.award == Ineligible or c.award == CapacityExhausted))
@@ -314,12 +362,12 @@ pure def canFinishTriage(c: PrivateCase, appealRevision: int, attempt: int, resu
   c.appeal == AppealOpen and c.triage.state == TriageRunning and appealRevision == c.triage.appealRevision
     and attempt == c.triage.attempt and (match result {
       | Drafted(d) => d.confidencePercent >= 0 and d.confidencePercent <= 100
-        and d.exclusions == T::receiptExclusions(c.terms) and T::namesExclusionLine(d.exclusions, d.matchedLine)
+        and d.exclusions == T::receiptExclusions(c.terms)
       | _ => true })
 pure def finishTriage(c: PrivateCase, appealRevision: int, attempt: int, result: TriageOutcome): PrivateCase =
   match result {
     | Drafted(d) => { ...c, triage: { ...c.triage, state: TriageComplete, escalated: true, belowFloor: d.confidencePercent < 90, returnDraft: d.returnCase,
-      exclusions: d.exclusions, matchedLine: d.matchedLine } }
+      exclusions: d.exclusions } }
     | TriageFailedResult => { ...c, triage: { ...c.triage, state: TriageFailed } }
     | TriageUnavailableResult => { ...c, triage: { ...c.triage, state: TriageUnavailable } }
   }
@@ -329,7 +377,7 @@ pure def canRetryTriage(c: PrivateCase, by: int, checkedEpoch: int, nowMs: int):
 pure def retryTriage(c: PrivateCase, by: int, checkedEpoch: int, nowMs: int): PrivateCase = { ...c, triage: { ...c.triage, state: TriageQueued } }
 pure def alwaysTriageEscalates(c: PrivateCase): bool = c.triage.state == TriageComplete implies c.triage.escalated
 pure def alwaysTriageUsesReceiptExclusions(c: PrivateCase): bool = c.triage.state == TriageComplete implies
-  c.triage.exclusions == T::receiptExclusions(c.terms) and T::namesExclusionLine(c.triage.exclusions, c.triage.matchedLine)
+  c.triage.exclusions == T::receiptExclusions(c.terms)
 pure def alwaysTriageBoundToAppeal(c: PrivateCase): bool = c.triage.attempt >= 0 and (c.triage.state != NoTriage implies c.triage.appealRevision > 0)
   and (c.triage.state == TriageRunning implies c.triage.attempt > 0 and c.triage.startedAt > 0)
 pure def stepTriageIsAdvice(before: PrivateCase, via: str, after: PrivateCase): bool =
@@ -378,7 +426,7 @@ pure val byValues = Set(1, 2, 3, 4, 5, 6, 7)
 pure val actorValues = Set(1, 6)
 pure val checkedEpochValues = Set(1, 2, 3)
 pure val sourceValues = Set(SlopReceived, GithubVerified)
-pure val termsValues = Set(T::standardTerms, T::fullTerms, T::historicalTerms, T::unpaidTerms(1, 2))
+pure val termsValues = Set(T::standardTerms, T::fullTerms, T::historicalTerms, T::unpaidTerms(1, 2), T::unpaidTerms(0, 2), T::pausedTerms)
 pure val grossValues = Set(List(4), List(0))
 pure val historyValues = Set(NewReceipt, ImportedReservation, ImportedCapacityWait)
 pure val reportVersionValues = Set(1)
@@ -396,9 +444,9 @@ pure val clearanceValues = Set(2, 3, 4, 5).fold(Set(), (cs, revision) => cs.unio
 pure val nowMsValues = Set(1, 900002)
 pure val appealRevisionValues = Set(2, 3, 4, 5, 6)
 pure val attemptValues = Set(1, 2)
-pure val resultValues = Set(T::standardTerms, T::unpaidTerms(1, 2)).fold(Set(TriageFailedResult, TriageUnavailableResult), (results, t) => results.union(Set(
-  Drafted({ returnCase: true, confidencePercent: 95, exclusions: T::receiptExclusions(t), matchedLine: 11 }),
-  Drafted({ returnCase: false, confidencePercent: 40, exclusions: T::receiptExclusions(t), matchedLine: 0 }))))
+pure val resultValues = Set(T::standardTerms, T::unpaidTerms(1, 2), T::pausedTerms).fold(Set(TriageFailedResult, TriageUnavailableResult), (results, t) => results.union(Set(
+  Drafted({ returnCase: true, confidencePercent: 95, exclusions: T::receiptExclusions(t) }),
+  Drafted({ returnCase: false, confidencePercent: 40, exclusions: T::receiptExclusions(t) }))))
 pure val weight_decide = 8
 pure val weight_decideAward = 8
 pure val weight_appeal = 6

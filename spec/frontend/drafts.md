@@ -1,6 +1,6 @@
 # Private report drafts
 
-PRD section 8. Write report and Review and submit occupy one route. The browser
+PRD section 8. The steps Write and Review occupy one route. The browser
 stores a draft only in session storage bound to an account and project. It keeps
 the same idempotency key through uncertain retries. The private intake owns the
 durable object, case and Inbox receipt transaction.
@@ -54,6 +54,18 @@ pure def canReceiveReceipt(d: Draft, actorId: int, projectId: int, contentDigest
   contentDigest == d.digest and submissionKey == d.key and receiptId > 0
 pure def receiveReceipt(d: Draft, actorId: int, projectId: int, contentDigest: int, submissionKey: int, receiptId: int): Draft =
   { ...d, receipt: receiptId, stage: Received, stored: false }
+```
+
+### A definite refusal returns the report to review with a fresh key
+
+A definite refusal of the send (HTTP 400) accepted no report: the draft
+returns to Review with its account, project and content kept and no key, so
+the next send takes a fresh one (development `src/PrivateReportForm.tsx`
+`submit` at `67fd54fd4`). Only a send in flight can be refused.
+
+```quint
+pure def canRefuse(d: Draft): bool = d.stage == Sending
+pure def refuse(d: Draft): Draft = { ...d, stage: Reviewing, key: 0 }
 ```
 
 ### A reviewed or submitted draft retains its account, project and content identity

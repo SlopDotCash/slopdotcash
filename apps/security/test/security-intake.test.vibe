@@ -1,5 +1,5 @@
 import { assert, layer } from "@effect/vitest"
-import { type Answer, type World, admissions, banned, bans, digest, faults, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
+import { type Answer, type World, admissions, banned, bans, digest, faults, maintainer, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
 
 service Intake { readonly world: World }
 
@@ -49,13 +49,35 @@ effect function caseRows(world: World, caseId: string) {
   }
 }
 
+effect function screened(world: World, submissionId: string) {
+  const state = promise(() => rows(world, "SELECT screening_state FROM security_submission_intake WHERE submission_id=?", submissionId))
+  try repeat(state, { until: (found) => !["queued", "running"].includes(String(found[0]?.screening_state)), times: 200 })
+}
+
+interface Listed { readonly id: string; readonly intake: { readonly canReview: boolean; readonly canRevise: boolean; readonly canAuthorize: boolean } | null }
+
+function listedIds(answer: Answer) {
+  const body = answer.body as { readonly submissions: ReadonlyArray<Listed> }
+  return [answer.status, answer.cache, body.submissions.map((entry) => entry.id).sort()]
+}
+
+function flags(answer: Answer, id: string) {
+  const found = (answer.body as { readonly submissions: ReadonlyArray<Listed> }).submissions.find((entry) => entry.id === id)
+  return found?.intake === null || found === undefined ? undefined : { canReview: found.intake.canReview, canRevise: found.intake.canRevise, canAuthorize: found.intake.canAuthorize }
+}
+
+function detailOf(answer: Answer) {
+  const body = answer.body as { readonly recipientGithubId?: string; readonly submission?: Listed; readonly report?: unknown }
+  return { status: answer.status, cache: answer.cache, keys: Object.keys(body).sort(), id: body.submission?.id, report: body.report }
+}
+
 effect function counts(world: World, githubId: string) {
   const [found] = try promise(() => rows(world, "SELECT (SELECT COUNT(*) FROM security_intake_rate_admissions WHERE actor_github_id=?) AS admissions, (SELECT COUNT(*) FROM security_submissions WHERE reporter_github_id=?) AS submissions, (SELECT COUNT(*) FROM security_cases WHERE reporter_github_id=?) AS cases", githubId, githubId, githubId))
   return found
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Submit report: exact bytes in R2, digest verified, case and Inbox receipt atomic (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset")', () => effect {
+  it.effect('Submit report: exact bytes in R2, digest verified, case and Inbox receipt atomic (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
     const world = (try Intake).world
     const anonymous = try promise(() => request(world, "/api/v1/security-submissions", { json: { projectId: "intake-fixture", idempotencyKey: "anonymous-key-0001", origin: "slop", report } }))
     const extra = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-fixture", idempotencyKey: "extra-key-00000001", origin: "slop", report, note: "x" } }))
@@ -71,6 +93,55 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const unpaid = try submit(world, "unpaid-report-key-01", "intake-unpaid")
     const full = try submit(world, "full-award-key-00001", "intake-full")
     const closed = try submit(world, "closed-program-key-1", "intake-closed")
+    try screened(world, saved.id)
+    const triager = "4040"
+    const stranger = "9090"
+    try promise(() => rows(world, "INSERT INTO security_case_members(case_id,github_id,github_login,role,added_by_github_id,added_at) VALUES(?,?,?,'triager',?,?)", saved.caseId, triager, "case-triager", maintainer, new Date().toISOString()))
+    const detailPath = `/api/v1/security-submissions/${saved.id}`
+    const listed = (as: string) => promise(() => request(world, "/api/v1/security-submissions", { as }))
+    const detail = (as: string, path = detailPath) => promise(() => request(world, path, { as }))
+    const lists = { reporter: try listed(reporter), maintainer: try listed(maintainer), triager: try listed(triager), stranger: try listed(stranger) }
+    const details = { reporter: try detail(reporter), maintainer: try detail(maintainer), triager: try detail(triager) }
+    const receiptView = try detail(reporter, `${detailPath}?view=receipt`)
+    const hidden = [try detail(stranger), try detail(stranger, `${detailPath}?view=receipt`), try detail(stranger, "/api/v1/security-submissions/ss_unknownsubmission01"), try promise(() => request(world, detailPath))]
+    const anonymousList = try promise(() => request(world, "/api/v1/security-submissions"))
+    const reads = try promise(() => rows(world, "SELECT actor_github_id, action FROM security_intake_access_log WHERE submission_id=? ORDER BY id", saved.id))
+    const strangerList = lists.stranger.body as Record<string, unknown>
+    const reportBody = { summary: "Vault drain through stale price", description: report.description, severity: "high" }
+    const projectRows = [saved.id, submissionOf(unpaid).id, submissionOf(full).id, submissionOf(closed).id].sort()
+    try same({
+      lists: [listedIds(lists.reporter), listedIds(lists.maintainer), listedIds(lists.triager), listedIds(lists.stranger)],
+      strangerList: [strangerList.recipientGithubId, strangerList.automatic, strangerList.storedIntake, strangerList.authorityUnavailable],
+      roleFlags: [flags(lists.reporter, saved.id), flags(lists.maintainer, saved.id), flags(lists.triager, saved.id)],
+      details: [detailOf(details.reporter), detailOf(details.maintainer), detailOf(details.triager)],
+      receiptView: detailOf(receiptView),
+      hidden: hidden.map(shown),
+      anonymousList: shown(anonymousList),
+      reads,
+    }, {
+      lists: [
+        [200, "private, no-store", projectRows],
+        [200, "private, no-store", projectRows],
+        [200, "private, no-store", [saved.id]],
+        [200, "private, no-store", []],
+      ],
+      strangerList: [stranger, false, true, false],
+      roleFlags: [
+        { canReview: false, canRevise: true, canAuthorize: false },
+        { canReview: true, canRevise: false, canAuthorize: false },
+        { canReview: false, canRevise: false, canAuthorize: false },
+      ],
+      details: [reporter, maintainer, triager].map(() => ({ status: 200, cache: "private, no-store", keys: ["report", "submission"], id: saved.id, report: reportBody })),
+      receiptView: { status: 200, cache: "private, no-store", keys: ["recipientGithubId", "submission"], id: saved.id, report: undefined },
+      hidden: [
+        refusal(404, "not_found", "Report not found"),
+        refusal(404, "not_found", "Report not found"),
+        refusal(404, "not_found", "Report not found"),
+        refusal(401, "unauthorized", "Sign in with GitHub"),
+      ],
+      anonymousList: refusal(401, "unauthorized", "Sign in with GitHub"),
+      reads: [reporter, maintainer, triager, reporter].map((actor) => ({ actor_github_id: actor, action: "read" })),
+    })
     try same({
       refused: [anonymous, extra, changed, short, missing].map(shown),
       created: [created.status, created.cache, saved.intake.revision],
@@ -94,9 +165,9 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       object: { size: normalised.length, sha256: sha, text: normalised },
       receipt: {
         submissions: [{ state: "draft", origin: "slop", revision: 1, repository: "slop-test/intake" }],
-        intake: [{ screening_state: "queued", report_version: 1, revision: 1 }],
+        intake: [{ screening_state: "unavailable", report_version: 1, revision: 3 }],
         reports: [{ version: 1, object_key: `security-reports/${saved.id}/1-${sha}.json`, content_sha256: sha, byte_count: normalised.length }],
-        intakeEvents: [{ revision: 1, kind: "receive" }],
+        intakeEvents: [{ revision: 1, kind: "receive" }, { revision: 2, kind: "screen-start" }, { revision: 3, kind: "screen-finish" }],
         submissionEvents: [{ revision: 1, kind: "create", detail: JSON.stringify({ origin: "slop", durable: true }) }],
       },
       record: {
@@ -228,18 +299,21 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('A reporter revises a report that needs information and every version advances together (spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together")', () => effect {
+  it.effect('A reporter revises a report that needs information and every version advances together (spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision")', () => effect {
     const world = (try Intake).world
     const author = "6060"
     const created = submissionOf(try submit(world, "revision-key-000001", "intake-fixture", report, author))
     const path = `/api/v1/security-submissions/${created.id}/report`
     const revised = { ...report, description: `${report.description} The fee path is affected as well.` }
-    const notYet = try promise(() => request(world, path, { as: author, json: { expectedRevision: 1, report: revised } }))
+    try screened(world, created.id)
+    try promise(() => rows(world, "UPDATE security_submission_intake SET screening_state='legitimate',revision=revision+1 WHERE submission_id=?", created.id))
+    const notYet = try promise(() => request(world, path, { as: author, json: { expectedRevision: 4, report: revised } }))
     try promise(() => rows(world, "UPDATE security_submission_intake SET screening_state='needs-information',screening_reason='Provide the affected component.',revision=revision+1 WHERE submission_id=?", created.id))
-    const stranger = try promise(() => request(world, path, { as: "7070", json: { expectedRevision: 2, report: revised } }))
+    const stranger = try promise(() => request(world, path, { as: "7070", json: { expectedRevision: 5, report: revised } }))
     const stale = try promise(() => request(world, path, { as: author, json: { expectedRevision: 1, report: revised } }))
-    const unchanged = try promise(() => request(world, path, { as: author, json: { expectedRevision: 2, report } }))
-    const accepted = try promise(() => request(world, path, { as: author, json: { expectedRevision: 2, report: revised } }))
+    const unchanged = try promise(() => request(world, path, { as: author, json: { expectedRevision: 5, report } }))
+    const accepted = try promise(() => request(world, path, { as: author, json: { expectedRevision: 5, report: revised } }))
+    try screened(world, created.id)
     const revisedText = JSON.stringify({ summary: "Vault drain through stale price", description: revised.description, severity: "high" })
     const revisedSha = try promise(() => digest(revisedText))
     try same({
@@ -257,7 +331,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         refusal(409, "report_unchanged", "Update the report before submitting it again."),
       ],
       accepted: 200,
-      intake: [{ screening_state: "queued", report_version: 2, revision: 3 }],
+      intake: [{ screening_state: "unavailable", report_version: 2, revision: 8 }],
       reports: [{ version: 1, content_sha256: try promise(() => digest(normalised)) }, { version: 2, content_sha256: revisedSha }],
       object: revisedText,
       events: [{ case_revision: 1, kind: "submit" }, { case_revision: 2, kind: "report-revised" }],

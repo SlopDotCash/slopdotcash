@@ -26,9 +26,9 @@ lifetime cap. Each actor appears once with its cumulative amount. The positive `
 contract's zero-based next index. Preparation and signing both recheck the
 authenticated distributor snapshot through its `canPostRoot` rule. The
 distributor binding names its network and is pinned with the token: Robinhood
-Chain Testnet whenever the [activation control](./referrals.md) allows any
-posting, and Robinhood Chain mainnet only after the owner's explicit posting
-activation. A mainnet distributor is a separate binding from a testnet one. The Merkle
+Chain Testnet or Robinhood Chain mainnet, the configured network, only in
+Posting, after the owner's explicit posting activation in the
+[activation control](./referrals.md). A mainnet distributor is a separate binding from a testnet one. The Merkle
 encoder must verify the committed digest against these exact entries and total; its byte-level correctness
 requires the future adapter's independent tests.
 
@@ -379,7 +379,7 @@ pure def stepClaimedNeverFalls(before: Publication, after: Publication): bool = 
 pure def sometimesUncertain(p: Publication): bool = p.phase == Uncertain
 pure def sometimesClaimed(p: Publication): bool = p.claims.length() > 0
 pure def sometimesVoided(p: Publication): bool = p.roots.some(root => root.voided)
-pure def sometimesTestnetBeforeActivation(p: Publication): bool = p.roots.length() > 0 and p.network == R::RobinhoodTestnet and not(p.activated)
+pure def sometimesTestnetPosting(p: Publication): bool = p.roots.length() > 0 and p.network == R::RobinhoodTestnet and p.activated
 pure def sometimesMainnetAfterActivation(p: Publication): bool = p.roots.length() > 0 and p.network == R::RobinhoodMainnet
 ```
 

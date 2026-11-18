@@ -4,5 +4,5 @@ import type { HomeViewProps } from "./HomePage.tsx";
 
 export const meta: ComponentMeta<HomeViewProps> = {
   args: { projects: current(listed), mergeLine, totals: current(totals), origin, onCopy: copied },
-  examples: { DiscoveryFailed: { projects: failed(), totals: failed() } },
+  examples: { DiscoveryFailed: { projects: failed(), totals: failed() }, NoProjects: { projects: current([]) } },
 };

@@ -18,15 +18,14 @@ per-assessment record (`recordOf`). The shell supplies both from the stored
 assessment row, which it parses through this machine's state (composition
 obligation recorded in the area report).
 
-PRD section 5 (operator decision of 16 November 2026, replacing the
-Orbio-first order of 11 November) routes repository scanning through Surplus
-Sonnet, then Surplus Terra, then Orbio Sonnet as the backstop; a Surplus
-spending denial goes directly to Orbio, and the request waits for the Surplus
-reset only when Orbio serves no valid result. PRD section 8
-routes admission scans through Surplus Sonnet with a specialist only for
-ambiguous or high-risk findings. This is an owner decision gate: until the
-owner confirms, the narrower confidential Surplus route of section 8 governs
-admission analysis.
+Repository scans use only the two pinned Surplus profiles: Surplus
+`claude-sonnet-5.5` (Anthropic Messages) as the primary reviewer and Surplus
+`gpt-6.1-terra` (Responses) as the specialist, both with the operator's
+Surplus key; any other provider, endpoint, model or reviewer is refused
+before a provider is contacted, and there is no Orbio fallback
+(`PINNED_SCANNER_PROFILES` and `validateProfile` in
+`workers/vetting/scanners.ts`). The wider Surplus-then-Orbio chain that PRD
+section 5 records for 16 November is not used for scans.
 
 ## Story: Review every acquired item before granting admission
 
@@ -247,7 +246,8 @@ pure val artifactRunValues = Set({ artifacts: 1, sandbox: sandboxDone, analysis:
 ### The primary review decides and an ambiguous or high-risk finding needs the specialist
 
 The primary review (Surplus Claude Sonnet 5.5) reads the complete assessed
-inventory. A high-risk result, or an ambiguous deterministic match, escalates
+inventory; the specialist is Surplus GPT-6.1 Terra, and no other profile
+reviews a scan. A high-risk result, or an ambiguous deterministic match, escalates
 to the specialist review before any clean or malicious decision. A declined
 review is incomplete. A provider outage returns the assessment to the queue.
 A model label never confirms malice.

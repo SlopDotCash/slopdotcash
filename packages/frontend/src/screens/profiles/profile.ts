@@ -42,9 +42,9 @@ export const shownRecords = 5;
 
 export const penaltyLabels: Readonly<Record<string, string>> = {
   spam: "Spam",
-  scam: "Scam or malicious",
-  busywork: "Clear violation of a quoted project rule",
-  gaming: "Clear violation of a quoted project rule",
+  scam: "Scam",
+  busywork: "Rule violation",
+  gaming: "Rule violation",
 };
 
 const avatarActor = /^https:\/\/avatars\.githubusercontent\.com\/u\/(\d+)(?:\?|$)/u;

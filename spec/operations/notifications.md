@@ -52,7 +52,7 @@ type Kind = ApplicationApproved | ApplicationRejected | ProjectRevision | AwardR
 type Channel = NoEmail | SecurityOutbox | ActivityOutbox
 type Template = CaseTemplate | ReceiptTemplate | ActivityTemplate
 type DeliveryState = NotQueued | Queued | Retrying | Sending | ProviderAccepted | Delivered | Bounced | Suppressed
-  | Exhausted | Ambiguous | Cancelled
+  | Exhausted | Ambiguous
 type Category = ActivityMail | SecurityMail
 type Notice = { id: int, key: int, kind: Kind, recipient: int, createdAt: int, readAt: int, acknowledgedAt: int,
   channel: Channel, category: Category, template: Template, essential: bool, state: DeliveryState, attempts: int,
@@ -161,11 +161,13 @@ pure def sometimesUnsubscribed(i: Inbox): bool =
   i.enrollments.some(e => e.preference.stored and not(e.preference.security) and not(e.preference.activity))
 ```
 
-### Account closure cancels every waiting notice of the account in the same write
+### Account closure suppresses every waiting notice of the account in the same write
 
 Closing an account withdraws both consents in the enrollment and, in the same
-commit, cancels each of the account's queued and retrying notices. The Inbox
-rows remain; a send already claimed is not recalled.
+commit, suppresses each of the account's queued and retrying notices, exactly
+as an opt-out of both consents does. The Inbox rows remain; a send already
+claimed is not recalled. A suppressed row stays suppressed: it is never
+claimed, prepared or sent again.
 
 ```quint
 pure def canCloseAccount(i: Inbox, by: int, enrollment: E::Enrollment): bool =
@@ -173,24 +175,26 @@ pure def canCloseAccount(i: Inbox, by: int, enrollment: E::Enrollment): bool =
   not(enrollment.preference.security)
 pure def closeAccount(i: Inbox, by: int, enrollment: E::Enrollment): Inbox =
   { ...i, enrollments: withSnapshot(i, enrollment),
-    notices: i.notices.listMap(n => if (n.recipient == enrollment.actor and waiting(n)) { ...n, state: Cancelled } else n) }
+    notices: i.notices.listMap(n => if (n.recipient == enrollment.actor and waiting(n)) { ...n, state: Suppressed } else n) }
 pure def noWaitingMail(i: Inbox, recipient: int): bool = i.notices.every(n => n.recipient == recipient implies not(waiting(n)))
 pure def lawClosedAccountHasNoWaitingMail(i: Inbox, enrollment: E::Enrollment): bool =
   noWaitingMail(closeAccount(i, accountService, enrollment), enrollment.actor)
 pure def stepConsentNeverQueuesHistory(before: Inbox, via: str, after: Inbox): bool =
   (via == "observeEnrollment" or via == "closeAccount") implies after.notices.length() == before.notices.length()
     and before.notices.every(n => after.notices.some(a => a.id == n.id and
-      (a.state == n.state or (waiting(n) and (a.state == Suppressed or a.state == Cancelled)))))
-pure def alwaysCancelledNeverPrepared(i: Inbox): bool = i.notices.every(n => n.state == Cancelled implies not(n.prepared))
-pure def anyCancelled(i: Inbox): bool = i.notices.some(n => n.state == Cancelled)
-pure def sometimesClosedCancelled(i: Inbox): bool = anyCancelled(i)
+      (a.state == n.state or (waiting(n) and a.state == Suppressed))))
+pure def stepSuppressedStaysSuppressed(before: Inbox, after: Inbox): bool =
+  before.notices.every(n => n.state == Suppressed implies after.notices.some(a => a.id == n.id and a.state == Suppressed))
+pure def anySuppressed(i: Inbox): bool = i.notices.some(n => n.state == Suppressed)
+pure def sometimesClosedSuppressed(i: Inbox): bool = i.notices.some(n => n.state == Suppressed and n.attempts > 0)
 ```
 
 ## Story: Deliver each attempt once and never resend an uncertain one
 
 ### A claimed attempt has one owner; a stale claim becomes ambiguous
 
-A due queued or retrying row is claimed with its attempt count incremented.
+A due queued or retrying row is claimed with its attempt count incremented;
+the claim keeps the destination digest an earlier attempt bound.
 A claim older than five minutes is marked ambiguous, because the process may
 have stopped after the provider accepted; it is never resent automatically.
 Every later step names its attempt, so a stale worker cannot overwrite a
@@ -207,7 +211,7 @@ pure def advanceClock(i: Inbox, elapsed: int): Inbox = { ...i, clock: i.clock + 
 pure def canClaim(i: Inbox, id: int): bool = val n = notice(i, id)
   id > 0 and n.id == id and waiting(n) and n.nextAt <= i.clock and n.attempts < maxAttempts
 pure def claim(i: Inbox, id: int): Inbox = val n = notice(i, id)
-  { ...i, notices: setNotice(i, id, { ...n, state: Sending, attempts: n.attempts + 1, claimedAt: i.clock, prepared: false, digest: 0 }) }
+  { ...i, notices: setNotice(i, id, { ...n, state: Sending, attempts: n.attempts + 1, claimedAt: i.clock, prepared: false }) }
 pure def canExpireClaim(i: Inbox, id: int): bool = val n = notice(i, id)
   id > 0 and n.id == id and n.state == Sending and i.clock - n.claimedAt > claimMs
 pure def expireClaim(i: Inbox, id: int): Inbox = val n = notice(i, id)
@@ -229,11 +233,11 @@ An unavailable authority check, a preparation failure or a destination not
 yet in effect sends nothing and retries within the five-attempt bound. A
 recipient without current access is suppressed. While registered account
 destinations are in use, a recipient with a registered destination needs
-consent for the bound destination version. Otherwise a security notice may
-use the recipient's operator-verified pilot destination unless the
-recipient explicitly turned security mail off; a recipient with neither is
-suppressed. Activity mail always needs a registered destination and its
-consent. A suppression sent nothing and never escalates. A provider
+consent for the bound destination version. Otherwise a security notice, or
+an essential activity notice, may use the recipient's operator-verified
+pilot destination unless the recipient explicitly turned security mail off;
+a recipient with neither is suppressed. Optional activity mail always needs
+a registered destination and its consent. A suppression sent nothing and never escalates. A provider
 acceptance proves acceptance only. A documented quota rejection retries; any
 other thrown send is ambiguous.
 
@@ -246,7 +250,7 @@ pure def unavailable(access: AccessCheck): bool = match access { | Unavailable =
 pure def registered(i: Inbox, n: Notice): bool = i.config.generalEmail and enrollmentOf(i, n.recipient).destination.version > 0
 pure def pilotUsable(i: Inbox, n: Notice): bool =
   val e = enrollmentOf(i, n.recipient)
-  n.channel == SecurityOutbox and not(registered(i, n)) and routeOf(i, n.recipient).pilotDigest > 0
+  n.category == SecurityMail and not(registered(i, n)) and routeOf(i, n.recipient).pilotDigest > 0
     and not(e.preference.stored and not(e.preference.security))
 pure def destinationEffectiveAt(i: Inbox, n: Notice): int =
   if (registered(i, n)) enrollmentOf(i, n.recipient).destination.verifiedAt else routeOf(i, n.recipient).pilotEffectiveAt
@@ -403,11 +407,11 @@ sending rows read `queued`; provider acceptance reads `sent`, never
 delivered; independent delivery evidence reads `delivered`; a bounce, or an
 exhausted row whose attempt bound a destination, reads `failed`; an
 ambiguous row reads `uncertain`. A row that sent nothing (suppressed for
-consent, access or destination, cancelled by account closure, never queued,
+consent, access, destination or account closure, never queued,
 or exhausted without a bound destination) shows no email word, so the Inbox
 never reveals why private mail was withheld. Whether an exhausted row bound a destination is read from
-its destination digest, which each claim clears, so it is the binding of its
-last attempt. Only case notices show an acknowledgment time.
+its destination digest, which a claim keeps, so it reads whether any of its
+attempts bound one. Only case notices show an acknowledgment time.
 
 The stored kinds are the 21 of `Kind`. A Slopbot appeal review whose appeal
 or points dispute has since been resolved is shown as resolved, the 22nd
@@ -433,7 +437,7 @@ pure def inboxItem(n: Notice, appealResolved: bool): InboxItem =
 pure def lawEmailWordNeverOverstates(delivery: DeliveryState, bound: bool): bool =
   val word = emailWord(delivery, bound)
   (word == SentWord iff delivery == ProviderAccepted) and (word == DeliveredWord iff delivery == Delivered)
-    and ((delivery == Suppressed or delivery == NotQueued or delivery == Cancelled) implies word == NoEmailWord)
+    and ((delivery == Suppressed or delivery == NotQueued) implies word == NoEmailWord)
 pure def lawOnlyAppealReviewsShowResolved(noticeKind: Kind, appealResolved: bool): bool =
   inboxItem({ ...noNotice, id: 1, kind: noticeKind }, appealResolved).appealResolved implies noticeKind == SlopbotAppealReview
 ```
@@ -442,18 +446,21 @@ pure def lawOnlyAppealReviewsShowResolved(noticeKind: Kind, appealResolved: bool
 
 ### Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment
 
-Reading is never acknowledgment. Acknowledgment needs current case access.
-Provider acceptance and delivery never prove acknowledgment.
+Reading is never acknowledgment. Any private case notice of the recipient,
+the report receipt included, may be acknowledged with current case access;
+only case notices ask for it. Provider acceptance and delivery never prove
+acknowledgment.
 
 ```quint
 pure def canRead(i: Inbox, id: int, by: int): bool = val n = notice(i, id)
   id > 0 and n.id == id and n.recipient == by and n.readAt == 0
 pure def read(i: Inbox, id: int, by: int): Inbox = { ...i, notices: setNotice(i, id, { ...notice(i, id), readAt: i.clock }) }
 pure def canAcknowledge(i: Inbox, id: int, by: int, access: AccessCheck): bool = val n = notice(i, id)
-  id > 0 and n.id == id and n.recipient == by and n.template == CaseTemplate and n.acknowledgedAt == 0 and allowed(access)
+  id > 0 and n.id == id and n.recipient == by and n.channel == SecurityOutbox and n.acknowledgedAt == 0 and allowed(access)
 pure def acknowledge(i: Inbox, id: int, by: int, access: AccessCheck): Inbox =
   { ...i, notices: setNotice(i, id, { ...notice(i, id), acknowledgedAt: i.clock }) }
-pure def alwaysAcknowledgmentForCases(i: Inbox): bool = i.notices.every(n => n.acknowledgedAt > 0 implies n.template == CaseTemplate)
+pure def alwaysAcknowledgmentOnSecurityNotices(i: Inbox): bool =
+  i.notices.every(n => n.acknowledgedAt > 0 implies n.channel == SecurityOutbox)
 ```
 
 ### A failed or overdue case notice escalates once to a backup with current access

@@ -34,6 +34,7 @@
     "./chain/rpc": "./src/chain/rpc.vibe",
     "./chain/evm": "./src/chain/evm.vibe",
     "./chain/solana": "./src/chain/solana.vibe",
+    "./chain/reviewed": "./src/chain/reviewed.ts",
     "./git": "./src/git/index.ts",
     "./git/bytes": "./src/git/bytes.ts",
     "./git/evidence": "./src/git/evidence.ts",

@@ -1,19 +1,8 @@
 // spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"
-import { type AnyRoute, route } from "@repo/platform/route"
+import { deploymentOrigins } from "@repo/platform/config"
+import { type AnyRoute, type TierOrigins, route } from "@repo/platform/route"
 
-export interface Origins {
-  readonly identity: string
-  readonly site: string
-  readonly browserOrigins: ReadonlyArray<string>
-}
-
-export const deploymentOrigins = {
-  production: { identity: "https://identity.slop.cash", site: "https://slop.cash", browserOrigins: ["https://slop.cash", "https://slop.tech", "https://eliza.army"] },
-  staging: { identity: "https://identity-staging.slop.cash", site: "https://staging.slop.cash", browserOrigins: ["https://staging.slop.cash"] },
-  local: { identity: "https://identity.slop.test", site: "https://slop.test", browserOrigins: ["https://slop.test"] },
-} satisfies Readonly<Record<"production" | "staging" | "local", Origins>>
-
-const browserOrigins: ReadonlyArray<string> = [...new Set(Object.values(deploymentOrigins).flatMap((origins) => origins.browserOrigins))]
+const browserOrigins: TierOrigins = { production: [...deploymentOrigins("production").browserOrigins], staging: [...deploymentOrigins("staging").browserOrigins], local: [] }
 
 export const identityInternalHost = "identity.internal"
 

@@ -44,7 +44,7 @@ function Rows({ history, period, query, page, onPage, compact, nowMs }: Required
   return (
     <>
       <Leaderboard label="Contributor standings table" rows={pageRows(rows, pages, size).map((row) => leaderboardRow(row, compact))} />
-      {rows.length === 0 ? <p className="text-muted-foreground">No contributors match this view.</p> : null}
+      {rows.length === 0 ? <p className="text-muted-foreground">No results</p> : null}
       <Pagination state={pages} onSend={send} label="Contributor standings pages" />
     </>
   );

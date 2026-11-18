@@ -1,6 +1,6 @@
 // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"
-import { Alert, Button, Disclosure, Field, Select } from "@repo/ui";
-import { RotateCcw } from "lucide-react";
+import { Alert, Button, Disclosure, Field, Select, Spinner, Status } from "@repo/ui";
+import { ArrowLeft, RotateCcw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { SignInPanel } from "../../../app/SignInPanel.tsx";
@@ -10,7 +10,8 @@ import { LinkReportSection } from "../program/ClaimForm.tsx";
 import { run, useMounted } from "../program/hooks.ts";
 import { type CaseList, type SecurityCase, caseOf } from "./case.schema.ts";
 import { CaseDetail, type PaymentSlot } from "./CaseDetail.tsx";
-import { type ReportFilter, awardText, caseTitle, matchesReport, reportFilters } from "./labels.ts";
+import { type ReportFilter, awardShort, badge, caseTitle, filterOption, listPresentation, matchesReport, reportFilters } from "./labels.ts";
+import { RetryButton, StaleNotice } from "./parts.tsx";
 import { type CasesRuntime, casesRuntime, loadCases, openCase, programChoices, recheckSession, watchCases } from "./runtime.vibe";
 
 const casePattern = /^sc_[A-Za-z0-9_-]{8,72}$/u;
@@ -51,8 +52,11 @@ function CaseChoice({ record, selected, onOpen }: { record: SecurityCase; select
         <strong title={record.id} className="text-foreground">
           {caseTitle(record)}
         </strong>
-        <span>{record.nextStep}</span>
-        <span className="text-sm">Award: {awardText(record)}</span>
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <Status presentation={listPresentation(record)} />
+          <small className="text-muted-foreground">{record.nextStep}</small>
+        </span>
+        <Status title="Award" presentation={badge(awardShort(record))} />
       </button>
     </li>
   );
@@ -61,22 +65,17 @@ function CaseChoice({ record, selected, onOpen }: { record: SecurityCase; select
 /** The viewer's private cases: a filter for maintainers, the case list and the selected case. */
 export function CasesView({ list, filter, onFilter, selected, onOpen, note, refreshError, onReload, detail, link }: CasesViewProps) {
   const maintains = list.programs.some((entry) => entry.roles.includes("security-maintainer"));
-  const unavailable = list.authorityUnavailable === true;
   const shown = list.cases.filter((record) => matchesReport(record, filter));
   return (
     <div className="flex flex-col gap-6">
       {note ? <p role="status">{note}</p> : null}
-      {refreshError ? (
-        <Alert variant="destructive" action={<Retry label="Retry" onRetry={onReload} />}>
-          {refreshError} Showing the last loaded cases.
-        </Alert>
-      ) : null}
+      {refreshError ? <StaleNotice error={refreshError} onRetry={onReload} /> : null}
       {maintains ? (
-        <Field label="Show reports" className="max-w-xs">
+        <Field label={<span className="sr-only">Show reports</span>} className="max-w-xs">
           <Select value={filter} onChange={(event) => onFilter(event.target.value as ReportFilter)}>
             {reportFilters.map(([value, label]) => (
               <option key={value} value={value}>
-                {label}
+                {filterOption(value, label, list.cases)}
               </option>
             ))}
           </Select>
@@ -84,15 +83,16 @@ export function CasesView({ list, filter, onFilter, selected, onOpen, note, refr
       ) : null}
       <section aria-labelledby="security-cases" className="flex flex-col gap-4">
         <h2 id="security-cases" className="text-xl font-semibold text-foreground">
-          Decisions and payments
+          Cases
         </h2>
-        {unavailable ? (
-          <Alert variant="warn" action={<Retry label="Retry access check" onRetry={onReload} />}>
-            Some maintainer access could not be checked.
-          </Alert>
+        {list.authorityUnavailable === true ? (
+          <p role="status" className="flex items-center gap-2">
+            <Status title="Some maintainer access could not be checked" presentation={badge("Partial list", "Caution", "Alert")} />
+            <RetryButton label="Retry access check" onRetry={onReload} />
+          </p>
         ) : null}
         {list.cases.length === 0 ? (
-          <p className="text-muted-foreground">{unavailable ? "No cases to show. Retry the access check." : "You have no private security cases."}</p>
+          <p className="text-muted-foreground">No cases</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {shown.map((record) => (
@@ -102,8 +102,8 @@ export function CasesView({ list, filter, onFilter, selected, onOpen, note, refr
         )}
         {selected ? (
           <>
-            <Button variant="link" className="self-start" onClick={() => onOpen(null)}>
-              Back to reports
+            <Button variant="ghost" size="icon" className="self-start" aria-label="Back to reports" title="Back to reports" onClick={() => onOpen(null)}>
+              <ArrowLeft aria-hidden className="size-4" />
             </Button>
             {detail}
           </>
@@ -122,7 +122,7 @@ function initialCase(): string | null {
 function Link({ runtime, section, owner, onCreated }: { runtime: PageRuntime; section: CasesRuntime; owner: string; onCreated: (created: unknown) => void }) {
   const choices = useMounted(section, programChoices);
   return (
-    <Disclosure summary="Link or import a GitHub report" defaultOpen={location.hash === "#security-link"}>
+    <Disclosure summary="Link report" defaultOpen={location.hash === "#security-link"}>
       {choices.status === "running" ? (
         <p role="status">Loading projects…</p>
       ) : choices.status === "failed" ? (
@@ -136,9 +136,9 @@ function Link({ runtime, section, owner, onCreated }: { runtime: PageRuntime; se
   );
 }
 
-type ContentProps = { runtime: PageRuntime; section: CasesRuntime; owner: string; embedded: boolean; signIn: string; payment?: PaymentSlot };
+type ContentProps = { runtime: PageRuntime; section: CasesRuntime; owner: string; embedded: boolean; payment?: PaymentSlot };
 
-function InboxContent({ runtime, section, owner, embedded, signIn, payment }: ContentProps) {
+function InboxContent({ runtime, section, owner, embedded, payment }: ContentProps) {
   useMounted(section, () => loadCases(owner));
   const list = useView(section, watchCases);
   const [filter, setFilter] = useState<ReportFilter>("all");
@@ -160,13 +160,11 @@ function InboxContent({ runtime, section, owner, embedded, signIn, payment }: Co
     setNote("Report saved.");
     reload();
   };
-  if (list === undefined || list.status === "loading" || (list.status === "ready" && list.value.viewer.githubId !== owner)) return <p aria-live="polite">Loading your cases…</p>;
+  if (list === undefined || list.status === "loading" || (list.status === "ready" && list.value.viewer.githubId !== owner)) return <Spinner size="sm" label="Loading your cases…" />;
   switch (list.status) {
-    case "signedOut":
-      return <SignInPanel view={{ status: "signedOut" }} href={signIn} purpose="Your session ended." />;
     case "problem":
       return (
-        <Alert variant="destructive" action={<Retry label="Retry private session" onRetry={() => void run(section, recheckSession()).then(reload)} />}>
+        <Alert variant="destructive" action={<Retry label="Reload" onRetry={() => void run(section, recheckSession()).then(reload)} />}>
           {list.message}
         </Alert>
       );
@@ -215,10 +213,10 @@ export function SecurityInbox({ runtime, embedded = false, payment }: SecurityIn
   const section = casesRuntime(runtime);
   const signIn = shown === undefined ? "" : loginHrefFor(shown, embedded ? "/inbox?view=reports" : "/security");
   let body: ReactNode;
-  if (shown === undefined || shown.view.status === "checking") body = <p role="status">Checking private session…</p>;
+  if (shown === undefined || shown.view.status === "checking") body = <Spinner size="sm" label="Checking private session…" />;
   else if (shown.view.status === "signedIn")
-    body = <InboxContent key={shown.view.session.githubId} runtime={runtime} section={section} owner={shown.view.session.githubId} embedded={embedded} signIn={signIn} payment={payment} />;
-  else body = <SignInPanel view={shown.view} href={signIn} purpose="Sign in to see your security cases." />;
+    body = <InboxContent key={shown.view.session.githubId} runtime={runtime} section={section} owner={shown.view.session.githubId} embedded={embedded} payment={payment} />;
+  else body = <SignInPanel view={shown.view} href={signIn} />;
   return embedded ? (
     <section aria-label="Private security reports" className="flex flex-col gap-6">
       {body}

@@ -1,0 +1,31 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { SubmissionView } from "./intake.vibe"
+
+export schema VulnerablePackage { ecosystem: string; name?: string }
+
+export schema Vulnerability { package: VulnerablePackage; vulnerableVersionRange?: string; patchedVersions?: string }
+
+export schema PrivateReport {
+  summary: string
+  description: string
+  severity?: "critical" | "high" | "medium" | "low"
+  cvssVectorString?: string
+  cweIds?: ReadonlyArray<string>
+  vulnerabilities?: ReadonlyArray<Vulnerability>
+}
+
+export schema SubmissionList {
+  recipientGithubId: string
+  automatic: boolean
+  storedIntake: boolean
+  authorityUnavailable: boolean
+  submissions: ReadonlyArray<SubmissionView>
+}
+
+export schema SubmissionRead { recipientGithubId?: string; submission: SubmissionView; report?: PrivateReport }
+
+export const listSubmissions = route({ method: "GET", path: "/api/v1/security-submissions", access: "session", limitKib: 1, request: undefined, answer: SubmissionList, rejected: "not_found", cache: "private" })
+export const readSubmission = route({ method: "GET", path: "/api/v1/security-submissions/:id", access: "session", limitKib: 1, request: undefined, answer: SubmissionRead, rejected: "not_found", cache: "private" })
+
+export const submissionsApi: ReadonlyArray<AnyRoute> = [listSubmissions, readSubmission]

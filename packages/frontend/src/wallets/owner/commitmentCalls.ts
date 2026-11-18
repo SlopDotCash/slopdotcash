@@ -30,8 +30,8 @@ export type MonthlyCap = { readonly kind: "cap"; readonly cap: bigint } | { read
 
 export const monthlyCapMessages = {
   noAmount: "This project has no monthly amount.",
-  asset: "The vault token differs from the project's reward asset. Update the reward asset in project settings first.",
-  decimals: "The vault token's decimals differ from the project's monthly amount. Update the reward asset in project settings first.",
+  asset: "Vault token mismatch. Update the reward asset.",
+  decimals: "Token decimals mismatch. Update the reward asset.",
   invalid: "The project's monthly amount is invalid.",
 } as const;
 

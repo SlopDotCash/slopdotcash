@@ -45,12 +45,12 @@ type WorkerVersion = { version: int, number: int, source: int, codeHash: int, ru
 type RotationRequest = { manualMain: bool, releaseEnabled: bool, checkout: int, pinnedVersion: int, pinnedSource: int,
   active: WorkerVersion, onlyActiveAndLatest: bool, sourceParity: bool, reviewedDatabase: int, pair: RpcPair }
 type Rotation = { phase: RotationPhase, checkout: int, base: WorkerVersion, pair: RpcPair, priorHistory: bool, leaseHeld: bool,
-  leaseReleased: bool, candidate: WorkerVersion, activation: int, receipts: List[RotationPhase] }
+  leaseReleased: bool, candidate: WorkerVersion, activation: int, receipts: List[RotationPhase], commandFailed: bool }
 pure val noPair: RpcPair = { primary: "", recovery: "" }
 pure val noVersion: WorkerVersion = { version: 0, number: 0, source: 0, codeHash: 0, runtime: 0, settings: 0, otherBindings: 0,
   database: 0, signer: false, rpc: noPair }
 pure val initial: Rotation = { phase: NotStarted, checkout: 0, base: noVersion, pair: noPair, priorHistory: false, leaseHeld: false,
-  leaseReleased: false, candidate: noVersion, activation: 0, receipts: List() }
+  leaseReleased: false, candidate: noVersion, activation: 0, receipts: List(), commandFailed: false }
 pure def independentPair(pair: RpcPair): bool = pair.primary != "" and pair.recovery != "" and pair.primary != pair.recovery
 pure def enter(nextPhase: RotationPhase, r: Rotation): Rotation = { ...r, phase: nextPhase, receipts: r.receipts.append(nextPhase) }
 pure def stop(nextPhase: RotationPhase, r: Rotation): Rotation = { ...r, phase: nextPhase }
@@ -154,7 +154,22 @@ A run that ends verified or refused while holding the lease releases it. An
 activation whose outcome is unknown keeps the lease until it expires, so no
 fee run resumes before the version is read back.
 
+The activation is requested exactly once per candidate: the run sends one
+deployment command and never repeats it. A deployment command that fails
+may still have been accepted, so the run records the failure only as a
+fixed category (authentication, rate limit, version unavailable, timeout or
+command failed) with its numeric exit and provider codes, and then reads the
+activation back; the read-back alone decides whether the activation is
+confirmed or ambiguous. The shell bounds the read-back to ten reads one
+second apart (`rotate-fee-solana-rpc.ts` `safeRotationCommandError`,
+`confirmSolanaRotation`).
+
 ```quint
+pure def canRecordCommandFailure(r: Rotation): bool = r.phase == Deploying and not(r.commandFailed)
+pure def recordCommandFailure(r: Rotation): Rotation = { ...r, commandFailed: true }
+pure def stepActivationRequestedOnce(before: Rotation, after: Rotation): bool =
+  before.activation != 0 implies after.activation == before.activation
+pure def sometimesVerifiedAfterCommandFailure(r: Rotation): bool = r.phase == Verified and r.commandFailed
 pure def canReleaseLease(r: Rotation): bool = r.leaseHeld and (r.phase == Verified or r.phase == Refused)
 pure def releaseLease(r: Rotation): Rotation = { ...r, leaseHeld: false, leaseReleased: true }
 pure def alwaysUncertainKeepsLease(r: Rotation): bool = r.phase == Uncertain implies r.leaseHeld and not(r.leaseReleased)

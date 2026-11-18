@@ -99,14 +99,18 @@ Each claim reads the live registry, the installation, the value
 settings, GitHub through the installation and the durable assessment
 history, in that order. A thrown failure is a transient retry. A paused,
 retired or unregistered project parks the request. An inactive
-installation throws and so retries. Missing settings, producer revision
-or provider keys wait as a budget block. A repository that GitHub no
+installation throws and so retries. Missing or invalid settings, producer
+revision or provider keys wait as a budget block; the settings include the
+consumer's start (`valueStart`), an exact time never before 1 November 2026
+UTC, which alerts-only mode sets to that date (`valueSettings` in
+`value-settings.ts`). A repository that GitHub no
 longer identifies by the registered ID waits for authority. A pull request
 GitHub reports as absent from a repository the installation still reads is
 missing. An unreadable pull request, an invalid close time and an
 incomplete source or group are incomplete. An open pull request stays
-open. Work accepted before 1 November 2026 UTC is historical and belongs
-to the [subscription import](./historicalImport.md). The claim then leases
+open. Work accepted before the configured start is historical and belongs
+to the [subscription import](./historicalImport.md), whose cutoff is the
+same start (`subscriptionCutoff`). The claim then leases
 the whole source group below; a group it does not hold is a transient
 retry. A reusable current assessment is current. The
 [inference admission](./valueInference.md) then decides between exhausted
@@ -129,19 +133,19 @@ the checks, not the truth of those facts.
 type PullRead = PullMissing | PullUnreadable | PullOpen | PullClosed
 type Admission = AdmitEligible | AdmitRetained | AdmitBudget | AdmitPending | AdmitExhausted
 type Observation = { threw: bool, registry: RS::RegistryObservation, configured: bool, repositoryMatches: bool,
-  pull: PullRead, occurredAt: int, evidenceComplete: bool, groupComplete: bool, sources: Set[int],
+  valueStart: int, pull: PullRead, occurredAt: int, evidenceComplete: bool, groupComplete: bool, sources: Set[int],
   alreadyCurrent: bool, admission: Admission, providerResult: bool, authorityHeld: bool }
 pure def decide(o: Observation, installed: bool, leased: bool): Outcome =
   if (o.threw) Retry
   else if (not(RS::mayAssessValue(RS::slopbotScope(o.registry)))) Parked
   else if (not(installed)) Retry
-  else if (not(o.configured)) BudgetWait
+  else if (not(o.configured) or o.valueStart < apiStart) BudgetWait
   else if (not(o.repositoryMatches)) AuthorityWait
   else if (o.pull == PullMissing) Missing
   else if (o.pull == PullUnreadable) SourceIncomplete
   else if (o.pull == PullOpen) StillOpen
   else if (o.occurredAt <= 0) SourceIncomplete
-  else if (o.occurredAt < apiStart) Historical
+  else if (o.occurredAt < o.valueStart) Historical
   else if (not(o.evidenceComplete) or not(o.groupComplete)) SourceIncomplete
   else if (not(leased)) Retry
   else if (o.alreadyCurrent) Current
@@ -170,7 +174,8 @@ pure def lawUnleasedGroupNeverScores(v: ValueRequests, token: int, o: Observatio
     (outcomeFor(v, token, o) != Published and outcomeFor(v, token, o) != Current
       and outcomeFor(v, token, o) != AttemptsExhausted)
 pure def lawPreStartWorkIsHistorical(o: Observation, installed: bool, leased: bool): bool =
-  decide(o, installed, leased) == Historical implies o.occurredAt > 0 and o.occurredAt < apiStart
+  decide(o, installed, leased) == Historical implies
+    o.occurredAt > 0 and o.occurredAt < o.valueStart and o.valueStart >= apiStart
 pure def lawIncompleteIsNeverAScore(o: Observation, installed: bool, leased: bool): bool =
   (not(o.evidenceComplete) or not(o.groupComplete)) implies
     (decide(o, installed, leased) != Published and decide(o, installed, leased) != Current)
@@ -334,14 +339,15 @@ pure val activeRegistry: RS::RegistryObservation = { lookup: RS::CurrentPath, re
   rowActive: true, manifestActive: true, retirement: RS::NotRetired, restriction: RS::Clear, flags: RS::NotFlagged }
 pure val registryValues = Set(activeRegistry, { ...activeRegistry, rowActive: false })
 pure val publishable: Observation = { threw: false, registry: activeRegistry, configured: true, repositoryMatches: true,
-  pull: PullClosed, occurredAt: 1793491300, evidenceComplete: true, groupComplete: true, sources: Set(1),
+  valueStart: apiStart, pull: PullClosed, occurredAt: 1793491300, evidenceComplete: true, groupComplete: true, sources: Set(1),
   alreadyCurrent: false, admission: AdmitEligible, providerResult: true, authorityHeld: true }
 pure val observationValues = Set(publishable, { ...publishable, threw: true },
   { ...publishable, registry: { ...activeRegistry, rowActive: false } }, { ...publishable, configured: false },
   { ...publishable, pull: PullMissing }, { ...publishable, pull: PullOpen }, { ...publishable, occurredAt: 1790000000 },
   { ...publishable, evidenceComplete: false }, { ...publishable, admission: AdmitExhausted },
   { ...publishable, admission: AdmitBudget }, { ...publishable, alreadyCurrent: true },
-  { ...publishable, sources: Set(1, 2) })
+  { ...publishable, sources: Set(1, 2) }, { ...publishable, valueStart: 1793577600 },
+  { ...publishable, valueStart: 1790000000 })
 pure val installedValues = Set(true, false)
 pure val leasedValues = Set(true, false)
 pure val oValues = observationValues

@@ -12,7 +12,6 @@ export const meta: ComponentMeta<SolanaBountyRecoveryProps> = {
     busy: false,
     error: null,
     stale: false,
-    notice: null,
     onConnect: fn(),
     onCheck,
     onRefresh: fn(),

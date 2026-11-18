@@ -3,12 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Disposable evidence recovery, or the plan of the two-flag pause fixtures.
+        description: Disposable evidence recovery or two-flag pause fixtures.
         type: choice
         options: [recovery, flags]
         default: recovery
       mode:
-        description: Plan only by default. Execute creates and removes disposable harmless recovery fixtures.
+        description: Plan only by default. Execute creates and removes disposable harmless fixtures.
         type: choice
         options: [plan, execute]
         default: plan
@@ -28,11 +28,6 @@ jobs:
       group: slop-vetting-recovery-qualification
       cancel-in-progress: false
     steps:
-      - name: Refuse hosted execution of the flag fixtures
-        if: inputs.scope == 'flags' && inputs.mode == 'execute'
-        run: |
-          echo "::error::The two-flag pause fixtures are planned only; hosted execution is not qualified."
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -59,10 +54,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node apps/operations/dist/programs/main.js qualify recovery --mode execute
+      - name: Run the harmless hosted two-flag pause qualification
+        if: inputs.scope == 'flags' && inputs.mode == 'execute'
+        env:
+          VETTING_QUALIFICATION_MODE: execute
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node apps/security/dist/programs/main.js vetting-controls --scope flags --mode execute
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always() && inputs.mode == 'execute'
         with:
           name: harmless-vetting-${{ inputs.scope }}-${{ github.sha }}
-          path: ${{ runner.temp }}/vetting-recovery-report/result.json
+          path: ${{ runner.temp }}/vetting-*-report/result.json
           if-no-files-found: warn
           retention-days: 30

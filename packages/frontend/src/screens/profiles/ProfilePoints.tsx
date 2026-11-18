@@ -45,7 +45,7 @@ const linkClass = "text-primary underline underline-offset-4 hover:decoration-2"
 
 function XBadge({ x }: { x: Shown<XProfile | null> | undefined }) {
   if (x?.value) return <XAccountLink account={x.value} />;
-  if (x && (x.status === "Failed" || x.status === "Invalid" || x.status === "Unavailable" || x.status === "Denied")) return <small className="text-sm text-muted-foreground">X link unavailable</small>;
+  if (x && (x.status === "Failed" || x.status === "Invalid" || x.status === "Unavailable" || x.status === "Denied")) return <small className="text-sm text-muted-foreground">X unavailable</small>;
   return null;
 }
 
@@ -64,14 +64,9 @@ export function ProfilePoints({ login, actorId, census, history, own, joined, jo
   const known = ready && (member !== undefined || identity !== undefined || recorded !== undefined || (actorId !== undefined && joinStatus === "absent"));
   const unavailable = known ? undefined : history.status === "Loading" || history.status === "Idle" ? "Loading…" : "Unavailable";
   if (notFoundWhenUnrecorded && ready && census.value !== undefined && joinStatus === "absent" && !own && !member && !recorded && named.length === 0) {
-    return (
-      <NotFound as="section" title="No Slop contributor with this login">
-        <p>Slop has no public record for {login}.</p>
-      </NotFound>
-    );
+    return <NotFound as="section" title="Contributor not found" />;
   }
   const total = (member && history.value ? (lifetimeTotals(history.value).get(member.actor.id) ?? 0) : 0) + (identity?.welcome ?? 0) + (identity?.socialPoints ?? 0);
-  const membershipText = joinStatus === "loading" ? "Looking up membership…" : joinStatus === "unavailable" ? "Membership could not load." : "No recorded points yet.";
   return (
     <section aria-label="Slop Points" className="flex flex-col gap-6">
       <ProfileActivity
@@ -88,15 +83,15 @@ export function ProfilePoints({ login, actorId, census, history, own, joined, jo
               <div className="flex flex-wrap gap-4">
                 <XBadge x={x} />
               </div>
-            ) : ready ? (
-              <p>{membershipText}</p>
+            ) : ready && (joinStatus === "loading" || joinStatus === "unavailable") ? (
+              <p>{joinStatus === "loading" ? "Looking up membership…" : "Membership could not load."}</p>
             ) : null}
           </>
         }
         summary={
           <>
-            <Metric label={`Points · last ${recentDays} days`} value={unavailable ?? recentPoints(member?.awards ?? [], nowMs, recentDays).toLocaleString("en-US")} />
-            <Metric label="total points" value={unavailable ?? total.toLocaleString("en-US")} />
+            <Metric label={`${recentDays} days`} value={unavailable ?? recentPoints(member?.awards ?? [], nowMs, recentDays).toLocaleString("en-US")} />
+            <Metric label="Total" value={unavailable ?? total.toLocaleString("en-US")} />
           </>
         }
         payments={payments}

@@ -1,4 +1,4 @@
-// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Both possible winners stay retained"
+// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Both possible winners stay retained"
 import { ed25519 } from "@noble/curves/ed25519.js"
 import { hexToBytes } from "@noble/hashes/utils.js"
 import { type Account, type Address, type LatestBlockhash, MAX_TRANSACTION_BYTES, SolanaRpc, address, addressOf, base64Decode, base64Encode, isSignature, publicKey as publicKeyOf, solanaRpc } from "@repo/platform/chain/solana"
@@ -282,6 +282,7 @@ function lineage(request: BindingRequest) {
 effect function rotationAuthorized(tables: PaymentTables, request: BindingRequest, bound: BindingAccount) {
   const claimed = try first(ChainRow, sql`SELECT w.chain AS chain FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${request.claimId} AND w.github_user_id = ${request.githubUserId}`)
   if (claimed === undefined || claimed.chain !== "solana") throw held("Wallet rotation authorization missing")
+  try solanaAuthorization(tables, request)
   const predecessor = try first(IdRow, sql`${lineage(request)} SELECT id FROM lineage WHERE record_sha256 = ${bound.claimDigest} AND depth > 0`)
   if (predecessor === undefined) throw held("Wallet rotation is not a successor of the on-chain binding")
   const pending = try first(IdRow, sql`${lineage(request)} SELECT a.id AS id FROM ${tables.attempts} a JOIN lineage l ON l.id = a.claim_id JOIN ${tables.obligations} o ON o.id = a.obligation_id WHERE l.depth > 0 AND a.state IN ('prepared', 'unknown', 'submitted') AND o.state = 'reserved' LIMIT 1`)

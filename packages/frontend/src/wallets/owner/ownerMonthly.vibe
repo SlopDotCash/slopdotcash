@@ -7,7 +7,7 @@ import { type CallFailure, call } from "../../platform/api.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { SlotStorage } from "../core/slots.ts"
 import { type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
-import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
+import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage } from "./slotKeeper.vibe"
 
 export type { ChainResult, MonthView, Notice, OwnerMonthly, Target }
 
@@ -37,14 +37,15 @@ export const monthlyMessages = {
   reason: "An amount below the proposed amount needs a reason of 20 to 500 characters. The reason is public and sent to the contributor.",
   unavailable: "The monthly awards could not load. Retry.",
   declined: "You declined the wallet request. Nothing was sent.",
-  unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+  unclear: "Result unclear. Enter the transaction hash.",
+  unreadable: "Saved request unreadable. Check wallet activity.",
   approvalNeeded: "The reserve release needs the attester's approval from fresh finalized evidence first.",
 } as const
 
 const noticeMessages: Readonly<Record<Notice, string>> = {
   Quiet: "",
-  AllocationSaved: "Allocation saved.",
-  CutSaved: "Cut saved. The reason is public and the contributor was notified.",
+  AllocationSaved: "",
+  CutSaved: "",
   Conflict: "The allocations changed. Reload them before saving.",
   Closed: "The cutoff for this month has passed. The automatic process pays the current allocations.",
   Failed: "The change could not be saved. Retry.",
@@ -179,7 +180,7 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
     else if (canSaveReply(now, saving.lifetime, saving.saving, "SaveFailed", server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result: "SaveFailed" }, server)
     if (!("failure" in answer)) {
       const read = try observed(saving.lifetime, answer)
-      return { view: read.view, state: read.state, message: noticeMessages[saving.savingCut ? "CutSaved" : "AllocationSaved"] }
+      return { view: read.view, state: read.state }
     }
     return { view: undefined, state: try machine.get(), message: answer.failure.message }
   }
@@ -204,7 +205,7 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
     const beforePrompt = effect (plan: OwnerPlan) => {
       const state = try machine.get()
       if (!canSend(state, target, identity, true, state.owner)) try refuse(state, slotChangedMessage)
-      if (keeper.unreadable(slotTarget(target))) throw new MonthlyRefused({ notice: "Occupied", message: unreadableMessage })
+      if (keeper.unreadable(slotTarget(target))) throw new MonthlyRefused({ notice: "Occupied", message: monthlyMessages.unreadable })
       if (!keeper.writable()) {
         try sent({ type: "send", target, identity, stored: false }, state.owner)
         throw new MonthlyRefused({ notice: "StorageBlocked", message: storageBlockedMessage })

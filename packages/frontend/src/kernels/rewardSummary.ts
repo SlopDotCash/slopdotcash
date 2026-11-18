@@ -1,7 +1,7 @@
 // spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import type { Chain } from "@repo/settlement/kernels/networks";
-import { type BountyMode, bountyOverview, type CardPolicy, type CardVariant, cardNamesBounty, cardVariants, listedForDiscovery } from "../../gen/frontend__views.ts";
+import { type BountyMode, bountyOverview, type CardPolicy, type CardVariant, cardNamesBounty, cardVariants } from "../../gen/frontend__views.ts";
 import { type AssetKind, assetSymbol } from "./assetText.ts";
 import { assetUrl } from "./explorers.ts";
 
@@ -121,9 +121,4 @@ export function hasProjectCardBounty(project: CardProject): boolean {
 /** @throws {never} */
 export function hasBountyOverview(project: CardProject): boolean {
   return bountyOverview(cardPolicy(project));
-}
-
-/** @throws {never} */
-export function discoveryProjects<P extends CardProject>(projects: ReadonlyArray<P>, tier: ListingTier): P[] {
-  return projects.filter((project) => project.listingTier === tier && listedForDiscovery(cardPolicy(project)));
 }

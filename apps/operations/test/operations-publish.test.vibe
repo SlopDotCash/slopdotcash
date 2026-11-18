@@ -1,5 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
+import { TestClock } from "effect/testing"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import type { Handler } from "@repo/platform/testing"
 import { type Served, serve } from "@repo/platform/testing/chains"
@@ -236,8 +237,14 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         identity.answers.push(...answers)
         identity.page = page
         identity.asked.splice(0)
-        const verdict = identityApp(clientId, { attempts: 4, delaySeconds: 0 }) catch (error) => described(error)
-        return { verdict, asked: [...identity.asked] }
+        const virtualTime = TestClock.layer()
+        provide virtualTime {
+          const fiber = try Effect.forkChild(exit(identityApp(clientId)))
+          while (fiber.pollUnsafe() === undefined) try TestClock.adjust(Duration.millis(100))
+          const ended = try Fiber.join(fiber)
+          const verdict = Exit.isSuccess(ended) ? ended.value : described(Cause.squash(ended.cause))
+          return { verdict, waitedQuarterMinutes: Math.floor((try Clock.currentTimeMillis) / 15_000), asked: [...identity.asked] }
+        }
       }
       const spent = { status: 429 }
       const exhausted = { status: 403, headers: { "x-ratelimit-remaining": "0" } }
@@ -291,11 +298,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       honest: { matches: true, environment: "Production", dnsTlsHeaders: true },
       tampered: { matches: false, served: true },
       identityChecks: {
-        publicOnly: { verdict: "IdentityPublicOnly", asked: ["api", "api", "api", "api", "page"] },
-        pageMissing: { verdict: "identity app: The Slop Identity GitHub App lookup was rate limited (HTTP 403) and its public page answered HTTP 404.", asked: ["api", "api", "api", "api", "page"] },
-        undiscoverable: { verdict: "identity app: the Slop Identity GitHub App is not publicly discoverable (HTTP 403)", asked: ["api", "api", "api", "api"] },
-        recovered: { verdict: "IdentityVerified", asked: ["api", "api"] },
-        drifted: { verdict: "identity app: the public Slop Identity GitHub App contract drifted", asked: ["api"] },
+        publicOnly: { verdict: "IdentityPublicOnly", waitedQuarterMinutes: 6, asked: ["api", "api", "api", "api", "page"] },
+        pageMissing: { verdict: "identity app: The Slop Identity GitHub App lookup was rate limited (HTTP 403) and its public page answered HTTP 404.", waitedQuarterMinutes: 6, asked: ["api", "api", "api", "api", "page"] },
+        undiscoverable: { verdict: "identity app: the Slop Identity GitHub App is not publicly discoverable (HTTP 403)", waitedQuarterMinutes: 6, asked: ["api", "api", "api", "api"] },
+        recovered: { verdict: "IdentityVerified", waitedQuarterMinutes: 1, asked: ["api", "api"] },
+        drifted: { verdict: "identity app: the public Slop Identity GitHub App contract drifted", waitedQuarterMinutes: 0, asked: ["api"] },
       },
     }))
   }))

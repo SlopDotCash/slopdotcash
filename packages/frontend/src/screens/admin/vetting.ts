@@ -77,20 +77,23 @@ export function clearanceLabel(clearance: Clearance | null): string {
   return bases.length === 0 ? clearanceStateLabel(clearance.state) : bases.join(" · ");
 }
 
-/** @throws {never} */
-export function clearancePresentation(clearance: Clearance | null): Presentation {
+/** Cleared, restricted, or anything short of cleared. @throws {never} */
+export function clearanceTone(clearance: Clearance | null): "Positive" | "Negative" | "Caution" {
   const state = clearance?.state ?? "unscanned";
-  const label = clearanceLabel(clearance);
-  if (state === "cleared") return { tone: "Positive", icon: "Check", label };
-  return { tone: state === "banned" || state === "quarantined" ? "Negative" : "Caution", icon: state === "banned" ? "Ban" : "Alert", label };
+  return state === "cleared" ? "Positive" : state === "banned" || state === "quarantined" ? "Negative" : "Caution";
 }
 
 /** Each repository's clearance and what decided it, named where the project lists its repositories. @throws {never} */
 export function decidedBy(project: VettedProject): ReadonlyArray<{ readonly repository: string | null; readonly text: string }> {
   return (project.clearance?.repositories ?? []).map((entry) => ({
     repository: project.repositories?.find((repository) => repository.githubId === entry.repositoryId)?.id ?? (project.repositories ? entry.repositoryId : null),
-    text: entry.state === "unscanned" ? "Awaiting admission scan" : entry.state === "cleared" ? entry.basis : `${clearanceStateLabel(entry.state)} · ${entry.basis}`,
+    text: entry.state === "unscanned" ? "Awaiting admission scan" : entry.state === "stale" ? "Head ≠ scanned" : entry.state === "cleared" ? entry.basis : `${clearanceStateLabel(entry.state)} · ${entry.basis}`,
   }));
+}
+
+/** A clearance that only exemptions decided is already named by its badge. @throws {never} */
+export function decidedByExemption(clearance: Clearance | null): boolean {
+  return clearance !== null && clearance.state === "cleared" && clearance.repositories.length > 0 && clearance.repositories.every((entry) => entry.basis !== admissionBasis);
 }
 
 /** @throws {never} */
@@ -135,10 +138,9 @@ export function checkRows(result: AssessmentResult): ReadonlyArray<readonly [str
   return Object.entries(result.checks ?? {}).sort((a, b) => Number(a[1] === "passed") - Number(b[1] === "passed"));
 }
 
-/** @throws {never} */
-export function visibilityText(result: AssessmentResult): string {
-  const gaps = result.telemetry?.visibilityGaps ?? result.visibilityGaps ?? [];
-  return `${result.telemetry?.tamperDetected ? "Tampering detected. " : ""}${gaps.length === 0 ? "No visibility gaps" : gaps.join("; ")}`;
+/** The tampering signal and the visibility gaps a run reported. @throws {never} */
+export function visibilityOf(result: AssessmentResult): { readonly tampered: boolean; readonly gaps: ReadonlyArray<string> } {
+  return { tampered: result.telemetry?.tamperDetected === true, gaps: result.telemetry?.visibilityGaps ?? result.visibilityGaps ?? [] };
 }
 
 /** One project's vetting: its scan history newest first, whether its current revision is queued, its exemptions and active flags. @throws {never} */
@@ -157,13 +159,13 @@ export function projectVetting(overview: Overview, projectId: string): ProjectVe
   };
 }
 
-/** The current revision's clearance in one sentence. @throws {never} */
-export function activationClearanceText(overview: Overview, projectId: string, revision: number): string {
+/** The current revision's clearance, or why it cannot be shown. @throws {never} */
+export function activationClearance(overview: Overview, projectId: string, revision: number): { readonly kind: "ready"; readonly clearance: Clearance | null } | { readonly kind: "message"; readonly text: string } {
   const project = overview.projects.find((entry) => entry.id === projectId);
-  return !project || project.revision !== revision ? "Revision changed. Reload the page." : `Revision ${revision}: ${clearanceLabel(project.clearance)}.`;
+  return !project || project.revision !== revision ? { kind: "message", text: "Revision changed. Reload the page." } : { kind: "ready", clearance: project.clearance };
 }
 
 /** @throws {never} */
 export function evidenceStateLabel(state: string): string {
-  return state === "stored-unverified" ? "Retained; not yet verified" : state.replaceAll("-", " ");
+  return state === "stored-unverified" ? "Unverified" : state.replaceAll("-", " ");
 }

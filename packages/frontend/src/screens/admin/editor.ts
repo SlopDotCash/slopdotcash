@@ -4,7 +4,6 @@ import type { Chain } from "@repo/settlement/kernels/networks";
 import { Result, Schema } from "effect";
 import type { RewardAssetKind } from "../../flows/projects/proposal.ts";
 import { rewardAssetChoice } from "../../flows/security/bountyAsset.ts";
-import { contributionLabels } from "../setup/fields/contribution.ts";
 import { rewardNetwork } from "../setup/fields/rewardAsset.ts";
 import { type AdminProject, chainOf, isRecord, type JsonRecord } from "./projects.ts";
 
@@ -38,8 +37,10 @@ export const detailFields: ReadonlyArray<readonly [DetailField, string, number]>
 
 export const editorMessages = {
   notObject: "The manifest is not a valid JSON object.",
-  controlledKeys: "Use the Status, Contribution fields, and Reward asset controls. Remove those keys from advanced settings.",
+  controlledKeys: "Remove status, contribution and rewardAsset from JSON.",
   skillIncomplete: "Complete the approved scope, or clear every contribution field.",
+  newerEdits: "Saved. Newer edits are unsaved — copy them first.",
+  discardFailed: "Draft not discarded. Retry.",
 } as const;
 
 const controlledKeys = ["status", "contribution", "rewardAsset"] as const;
@@ -141,17 +142,21 @@ export function skillStarted(skill: SkillDraft): boolean {
   return contributionFields.some((field) => skill[field].trim() !== "");
 }
 
-/** Each contribution field's error once any of them is filled: the approved scope needs 6 to 2000 characters, the others at most 2000. @throws {never} */
-export function skillErrors(skill: SkillDraft): Readonly<Record<ContributionField, string | null>> {
+/** Each contribution field's bound once any of them is filled and it is outside it: the approved scope needs 6 to 2000 characters, the others at most 2000. @throws {never} */
+export function skillErrors(skill: SkillDraft): Readonly<Record<ContributionField, boolean>> {
   const started = skillStarted(skill);
   return Object.fromEntries(
     contributionFields.map((field) => {
       const length = skill[field].trim().length;
       const minimum = field === "approvedScope" ? 6 : 0;
-      const label = contributionLabels[field].label;
-      return [field, started && (length < minimum || length > 2000) ? (minimum ? `${label} must be ${minimum} to 2000 characters.` : `${label} must be at most 2000 characters.`) : null];
+      return [field, started && (length < minimum || length > 2000)];
     }),
-  ) as Record<ContributionField, string | null>;
+  ) as Record<ContributionField, boolean>;
+}
+
+/** The length a contribution field accepts, short and in full. @throws {never} */
+export function skillBound(field: ContributionField): { readonly short: string; readonly full: string } {
+  return field === "approvedScope" ? { short: "6–2000 characters", full: "6 to 2000 characters" } : { short: "Up to 2000 characters", full: "Up to 2000 characters" };
 }
 
 /** The next manifest: the advanced settings with the status, contribution fields and generated skill templates, and the chosen reward asset of a monthly pool. @throws {never} */
@@ -159,7 +164,7 @@ export function builtManifest(project: AdminProject, draft: ManifestDraft): Buil
   const fields = projectFieldsOf(draft.text);
   if (fields === undefined) return { kind: "invalid", message: editorMessages.notObject };
   if (controlledKeys.some((key) => Object.hasOwn(fields, key))) return { kind: "invalid", message: editorMessages.controlledKeys };
-  if (Object.values(skillErrors(draft.skill)).some((error) => error !== null)) return { kind: "invalid", message: editorMessages.skillIncomplete };
+  if (Object.values(skillErrors(draft.skill)).some(Boolean)) return { kind: "invalid", message: editorMessages.skillIncomplete };
   const choice = rewardAssetChoice({ network: draft.asset.network, assetKind: draft.asset.kind, tokenAddress: draft.asset.address, tokenSymbol: draft.asset.symbol });
   if (choice.kind === "invalid") return { kind: "invalid", message: choice.message };
   const { contribution: _contribution, rewardAsset: _asset, ...rest } = fields;

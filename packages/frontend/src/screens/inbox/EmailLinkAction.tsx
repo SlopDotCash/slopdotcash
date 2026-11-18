@@ -1,5 +1,6 @@
 // spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"
-import { Alert, Button } from "@repo/ui";
+import { Alert, Button, Spinner, Status } from "@repo/ui";
+import { X } from "lucide-react";
 import { Cause } from "effect";
 import { useState } from "react";
 import type { EmailAction } from "../../../gen/frontend__emailAction.ts";
@@ -28,37 +29,33 @@ export type EmailLinkActionProps = {
 export function EmailLinkAction({ link, step, error, busy = false, signInHref, onConfirm, onDismiss, onRetryCheck }: EmailLinkActionProps) {
   const verb = link === "verify" ? "Verify email" : "Unsubscribe";
   return (
-    <section aria-labelledby="email-link-action" className="flex flex-col items-start gap-3 rounded-md border border-border bg-card p-4 text-card-foreground">
-      <h2 id="email-link-action" className="text-lg font-semibold text-foreground">
-        {verb}
-      </h2>
-      {step === "invalid" ? (
-        <Alert variant="destructive">This email link is invalid.</Alert>
-      ) : step === "done" ? (
-        <>
-          <Alert variant="ok">{link === "verify" ? "Email verified." : "Email notifications stopped."}</Alert>
-          <a href="/account#notifications" className="text-primary underline underline-offset-4">
-            Email preferences
-          </a>
-        </>
-      ) : step === "checking" ? (
-        <p role="status">Checking your account…</p>
-      ) : step === "recheck" ? (
-        <Button variant="outline" onClick={onRetryCheck}>
-          Retry account check
-        </Button>
-      ) : step === "signIn" ? (
-        <Button asChild variant="outline">
-          <a href={signInHref}>Sign in to verify email</a>
-        </Button>
-      ) : (
-        <Button variant="outline" loading={busy} onClick={onConfirm}>
-          {busy ? "Saving…" : verb}
-        </Button>
-      )}
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
-      <Button variant="link" disabled={busy} onClick={onDismiss}>
-        Dismiss
+    <section aria-label={verb} className="flex items-start gap-3 rounded-md border border-border bg-card p-4 text-card-foreground">
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-3">
+        {step === "invalid" ? (
+          <Alert variant="destructive">Invalid link</Alert>
+        ) : step === "done" ? (
+          <p role="status">
+            <Status presentation={{ tone: "Positive", icon: "Check", label: link === "verify" ? "Verified" : "Unsubscribed" }} />
+          </p>
+        ) : step === "checking" ? (
+          <Spinner label="Checking account" />
+        ) : step === "recheck" ? (
+          <Button variant="outline" onClick={onRetryCheck}>
+            Retry
+          </Button>
+        ) : step === "signIn" ? (
+          <Button asChild variant="outline">
+            <a href={signInHref}>Sign in</a>
+          </Button>
+        ) : (
+          <Button variant="outline" loading={busy} onClick={onConfirm}>
+            {busy ? "Saving…" : verb}
+          </Button>
+        )}
+        {error ? <Alert variant="destructive">{error}</Alert> : null}
+      </div>
+      <Button variant="ghost" size="icon" disabled={busy} aria-label="Dismiss" title="Dismiss" onClick={onDismiss}>
+        <X aria-hidden className="size-4" />
       </Button>
     </section>
   );

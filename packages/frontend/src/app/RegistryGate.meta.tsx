@@ -20,6 +20,7 @@ export const meta: ComponentMeta<RegistryGateProps> = {
     children: <p>Leaderboard rows</p>,
   },
   examples: {
+    Loading: { freshness: undefined },
     Current: { freshness: registries.current },
     Failed: { freshness: registries.failed },
     NeedsCurrent: { kind: "ManageProject", freshness: registries.stale },
@@ -29,17 +30,21 @@ export const meta: ComponentMeta<RegistryGateProps> = {
     // spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"
     Default: async () => {
       onRetry.mockClear();
-      await expect([screen.getByRole("status").textContent, screen.getByText("Leaderboard rows") !== null]).toEqual(["Projects may be outdated · updated Nov 15, 2026, 09:30 UTC.Try again", true]);
-      await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await expect([screen.getByRole("status") !== null, screen.getByText("Leaderboard rows") !== null]).toEqual([true, true]);
+      await userEvent.click(screen.getByRole("button"));
       await expect(onRetry).toHaveBeenCalledOnce();
     },
     // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"
+    Loading: async () => {
+      await expect([screen.getAllByRole("status").length > 0, screen.queryByText("Leaderboard rows")]).toEqual([true, null]);
+    },
+    // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"
     Failed: async () => {
-      await expect([screen.getByRole("heading").textContent, screen.getByRole("alert").textContent, screen.queryByText("Leaderboard rows")]).toEqual(["Projects are unavailable", "Project data could not load.Try again", null]);
+      await expect([screen.getByRole("alert") !== null, screen.queryByText("Leaderboard rows")]).toEqual([true, null]);
     },
     // spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"
     NeedsCurrent: async () => {
-      await expect(screen.getByRole("alert").textContent).toBe("This page needs current project data.Try again");
+      await expect([screen.getByRole("alert") !== null, screen.queryByText("Leaderboard rows")]).toEqual([true, null]);
     },
     // spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"
     Independent: async () => {

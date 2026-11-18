@@ -44,9 +44,9 @@ export function DelistButton({ runtime, project, actorId, onAccessLost, onDone }
     <ConfirmDialog
       state={confirmation}
       onSend={onSend}
-      title="Hide this project everywhere?"
-      confirmLabel="Delist project"
-      cancelLabel="Keep listed"
+      title="Delist?"
+      confirmLabel="Confirm delist"
+      cancelLabel="Cancel"
       destructive
       reason={reason}
       trigger={
@@ -56,7 +56,7 @@ export function DelistButton({ runtime, project, actorId, onAccessLost, onDone }
         </Button>
       }
     >
-      Delisting appends a paused, retired revision. Its history stays, and setup never reactivates it.
+      {null}
     </ConfirmDialog>
   );
 }

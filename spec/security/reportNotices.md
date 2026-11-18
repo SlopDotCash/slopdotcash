@@ -173,9 +173,10 @@ pure def sometimesRevisedBodyRetained(r: ReportNotices): bool = r.bodies.length(
 ### The receipt-time exclusion context reaches screening, assessment and appeal triage
 
 [Screening](./screening.md), the [assessment](./assessment.md) and appeal
-[triage](./cases.md) each record the exclusion context they ran with and the
-line they named; the [composed flow](./journey.md) binds that context to the
-case's receipt-time [terms](./terms.md), and no decision reads it.
+[triage](./cases.md) each record the exclusion context they ran with; a
+matching line is named only in free text. The [composed flow](./journey.md)
+binds that context to the case's receipt-time [terms](./terms.md), and no
+decision reads it.
 
 ```quint
 pure def canClaimScreening(r: ReportNotices, seenRevision: int, nowMs: int): bool = J::canClaimScreening(r.journey, seenRevision, nowMs)
@@ -208,7 +209,7 @@ pure def finishTriage(r: ReportNotices, appealRevision: int, attempt: int, resul
   { ...r, journey: { ...r.journey, privateCase: C::finishTriage(r.journey.privateCase, appealRevision, attempt, result) } }
 pure def alwaysAdviceUsesReceiptExclusions(r: ReportNotices): bool = J::alwaysAdviceUsesReceiptExclusions(r.journey)
 pure def sometimesTriageWithContext(r: ReportNotices): bool = r.journey.privateCase.triage.state == C::TriageComplete
-  and r.journey.privateCase.triage.matchedLine > r.journey.privateCase.triage.exclusions.defaults
+  and r.journey.privateCase.triage.exclusions.owner.length() > 0
 pure def sometimesAssessedWithContext(r: ReportNotices): bool = J::sometimesAssessmentShown(r.journey)
   and r.journey.assessment.attempts.getOr(r.journey.assessment.shown, A::noAttempt).exclusions.owner.length() > 0
 ```
@@ -299,7 +300,10 @@ pure def sometimesUnverifiableKeepsCase(r: ReportNotices): bool = r.journey.forw
 ### A legacy direct report is received only from a checked GitHub receipt
 
 A report filed on GitHub first becomes a case of its own, separate from the
-composed report, only when the direct-origin check of the live private
+composed report: an existing legacy direct report, or a new direct-origin
+submission a reporter starts by naming a GHSA of the program's intake
+repository (origin `direct`, no report body stored; `createSubmission` and
+`verifyDirect` in `backend/security/submissions.ts`). It is received only when the direct-origin check of the live private
 advisory names this reporter and the project's repository, the advisory
 carries no Slop submission marker of the composed report and forwarding has
 not bound its GHSA. Forwarding never binds that GHSA afterwards. Its receipt
@@ -352,9 +356,9 @@ pure val advisoryReadValues = Set(F::earlyReceipt, githubFirstReceipt)
 pure val tokenValues = Set({ revision: 2, version: 1, digest: "original" }, { revision: 3, version: 2, digest: "revised" })
 pure val offerExclusions: T::ExclusionContext = { defaults: T::slopDefaultExclusionCount, owner: P::standardOffer.excludedFindings }
 pure val inputValues = Set({ exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions })
-pure val observationValues = Set(S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false, matchedLine: 12 }),
-  S::Proposal({ phase: S::Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false, matchedLine: 0 }))
-pure val resultValues = Set(C::Drafted({ returnCase: false, confidencePercent: 95, exclusions: offerExclusions, matchedLine: 12 }),
+pure val observationValues = Set(S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }),
+  S::Proposal({ phase: S::Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }))
+pure val resultValues = Set(C::Drafted({ returnCase: false, confidencePercent: 95, exclusions: offerExclusions }),
   C::TriageFailedResult)
 pure val decisionValues = Set({ finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0,
   duplicateOf: 0, declareRelated: false })

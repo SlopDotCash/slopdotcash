@@ -36,7 +36,7 @@ export const meta: ComponentMeta<WalletManagementProps> = {
       onConfirmChange.mockClear();
       onKeepSaved.mockClear();
       await expect(screen.getByRole("button", { name: "Change Solana wallet" }).hasAttribute("disabled")).toBe(true);
-      await userEvent.click(screen.getByRole("button", { name: "Keep saved address" }));
+      await userEvent.click(screen.getByRole("button", { name: "Keep saved" }));
       await expect([onKeepSaved.mock.calls.length, onConfirmChange.mock.calls.length]).toEqual([1, 0]);
     },
     // spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"

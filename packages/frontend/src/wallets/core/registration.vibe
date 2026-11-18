@@ -11,7 +11,6 @@ import { type SolanaConnection, solanaSignMessage } from "./solana.vibe"
 export const paymentsLimitBytes = 1_048_576
 export const paymentsDeadlineMs = 30_000
 
-export const networkNames: Readonly<Record<Chain, string>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood Chain", solana: "Solana" }
 export const familyLabels: Readonly<Record<Family, string>> = { evm: "EVM", solana: "Solana" }
 
 export interface SavedWallet {
@@ -89,13 +88,12 @@ export effect function registerChain(chain: Chain, signer: WalletSigner, actorId
   }
   return confirmed catch effect (error) => {
     if (error._tag === "SignedOut" || error._tag === "AccountChanged" || claim.claimId === previous?.claimId) throw error
-    const network = networkNames[chain]
     const reason = messageOf(error, "Wallet confirmation failed.")
-    if (attempted) throw new RegistrationFailed({ message: `${reason} Your new ${network} address ${signer.address} was saved, but confirmation could not be verified. Check the current wallet status below before trying again.` })
+    if (attempted) throw new RegistrationFailed({ message: `${reason} Saved, not confirmed. Check status, then retry.` })
     throw new RegistrationFailed({
       message: previous?.authorized === true
-        ? `${reason} Your new ${network} address ${signer.address} is saved but not confirmed. Your verified address ${previous.address} remains active for payouts. Connect your new wallet again to confirm the replacement.`
-        : `${reason} Your ${network} address ${signer.address} is saved but not confirmed. Connect your wallet again to confirm it for automatic payments.`,
+        ? `${reason} Not confirmed. Old address still active. Reconnect to confirm.`
+        : `${reason} Saved, not confirmed. Reconnect to confirm.`,
     })
   }
 }
@@ -110,7 +108,7 @@ export effect function registerFamily(signer: WalletSigner, actorId: string, sav
     }
     claims[chain] = try registerChain(chain, signer, actorId, saved)
   }
-  return { claims, message: `${familyLabels[signer.family]} wallet confirmed. Eligible unpaid awards are sent automatically.` }
+  return { claims, message: `${familyLabels[signer.family]} confirmed` }
 }
 
 export function replacedWallet(family: Family, address: string, saved: ReadonlyArray<SavedWallet>): SavedWallet | undefined {
@@ -118,6 +116,4 @@ export function replacedWallet(family: Family, address: string, saved: ReadonlyA
   return saved.find((wallet) => chains.includes(wallet.chain) && wallet.address !== address)
 }
 
-export function keptMessage(family: Family): string {
-  return `Kept your saved ${familyLabels[family]} address. Nothing was registered.`
-}
+export const keptMessage = "Kept saved address"

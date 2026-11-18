@@ -1,12 +1,13 @@
 // spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"
 import { Alert, Button, Field, Input, Select, Status, Textarea } from "@repo/ui";
+import { Lock } from "lucide-react";
 import { type FormEvent, useId, useRef, useState } from "react";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { decideEnforcement, enforcementRequest, previewEnforcement, type Reviewed } from "../../flows/projects/admin.vibe";
 import { isAdminActionAccessLoss } from "../../session/adminAccess.vibe";
 import { actionLabel, availableActions, type EnforcementAction, isEnforcementAction, namesAccounts, restrictionPresentation } from "./enforcement.ts";
 import { EnforcementPreviewFacts, EnforcementSummary } from "./EnforcementSummary.tsx";
-import { act } from "./parts.tsx";
+import { act, Chip } from "./parts.tsx";
 import type { AdminProject } from "./projects.ts";
 
 const requestChanged = "The request changed. Preview the current action again.";
@@ -77,8 +78,7 @@ export function EnforcementPanel({ runtime, project, actorId, onAccessLost, onDo
       return;
     }
     if (latestKey.current !== submitted.key) return;
-    const decided = submitted.reviewed.preview;
-    onDone(`${actionLabel(decided.action, decided.maintainerBans.length > 0)} recorded for ${decided.projectName}.`);
+    onDone("Recorded.");
   };
 
   const locked = preview !== null;
@@ -93,9 +93,13 @@ export function EnforcementPanel({ runtime, project, actorId, onAccessLost, onDo
       </header>
       <EnforcementSummary enforcement={enforcement} revision={project.revision} status={project.status} listingTier={project.manifest.listingTier} />
       {enforcement.moderation === "unconfigured" ? (
-        <p className="text-sm text-muted-foreground">Moderation unavailable.</p>
+        <p>
+          <Chip>Unavailable</Chip>
+        </p>
       ) : enforcement.moderation === "not-moderator" ? (
-        <p className="text-sm text-muted-foreground">Moderator access required.</p>
+        <p>
+          <Chip icon={<Lock aria-hidden />}>Moderators only</Chip>
+        </p>
       ) : (
         <form className="flex flex-col gap-4" onSubmit={(event) => void showPreview(event)}>
           <Field label="Action">
@@ -108,20 +112,30 @@ export function EnforcementPanel({ runtime, project, actorId, onAccessLost, onDo
             </Select>
           </Field>
           {namesAccounts(action, enforcement.decisionRequired) ? (
-            <Field label={action === "reinstate_accounts" ? "Accounts to reinstate (comma-separated)" : "Responsible accounts (comma-separated, optional)"}>
-              <Input value={responsible} readOnly={locked} onChange={(event) => setResponsible(event.target.value)} />
+            <Field
+              label={
+                action === "reinstate_accounts" ? (
+                  "Accounts"
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    Responsible accounts <Chip>optional</Chip>
+                  </span>
+                )
+              }
+            >
+              <Input placeholder="@a, @b" value={responsible} readOnly={locked} onChange={(event) => setResponsible(event.target.value)} />
             </Field>
           ) : null}
           <Field label="Reason">
             <Textarea maxLength={1000} required readOnly={locked} value={reason} onChange={(event) => setReason(event.target.value)} />
           </Field>
-          <Field label="Evidence link or case ID">
-            <Input maxLength={500} required readOnly={locked} spellCheck={false} value={evidence} onChange={(event) => setEvidence(event.target.value)} />
+          <Field label="Evidence">
+            <Input maxLength={500} placeholder="URL or case ID" required readOnly={locked} spellCheck={false} value={evidence} onChange={(event) => setEvidence(event.target.value)} />
           </Field>
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           {preview === null ? (
-            <Button type="submit" variant="secondary" className="self-start" loading={busy === "preview"} disabled={busy !== null || reason.trim() === "" || evidence.trim() === ""}>
-              {busy === "preview" ? "Preparing preview…" : "Preview action"}
+            <Button type="submit" variant="secondary" className="self-start" aria-busy={busy === "preview"} loading={busy === "preview"} disabled={busy !== null || reason.trim() === "" || evidence.trim() === ""}>
+              Preview
             </Button>
           ) : (
             <fieldset className="flex flex-col gap-4 rounded-md border border-border p-4">

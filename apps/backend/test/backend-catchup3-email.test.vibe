@@ -1,0 +1,180 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { type StartedWorker, bundle, database, migrate, startWorker } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { EmailConsent, type EnrollmentRead } from "@repo/ports/backend"
+import { noFacts } from "../src/accounts/store/codec.vibe"
+import { type Intent, type Sender, send } from "../src/accounts/store/store.vibe"
+import { EmailConsentLive } from "../src/email/live.vibe"
+
+const start = 1_794_916_800_000
+const minute = 60_000
+const githubId = "4100"
+const login = "nora"
+const sessionHash = "5e55".padEnd(64, "0")
+const firstVersion = "b1".padEnd(64, "1")
+const secondVersion = "c2".padEnd(64, "2")
+const identityTiers = { production: "https://identity.slop.cash", staging: "https://identity-staging.slop.cash" } as const
+
+type PublicTier = keyof typeof identityTiers
+
+interface StartAnswer {
+  readonly status: number
+  readonly error: unknown
+  readonly allowedOrigin: string | null
+}
+
+service World {
+  readonly clock: SettableClock
+  readonly db: D1Database
+  started(tier: PublicTier, method: "POST" | "OPTIONS", origin: string): StartAnswer!!
+}
+
+error MigrationFailed { file: string }
+
+const identityVars = {
+  GITHUB_APP_CLIENT_ID: "Iv1.catchup3",
+  GITHUB_APP_CLIENT_SECRET: "catchup3-client-secret",
+  IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+  IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+}
+
+effect function migrated(mf: StartedWorker, binding: string) {
+  const applied = try promise(() => migrate(mf, binding, migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  return mf
+}
+
+effect function identityWorker(script: string, tier: PublicTier) {
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { IDENTITY_DB: `identity-${tier}` },
+    ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+    vars: { SLOP_ENVIRONMENT: tier, ...identityVars },
+  })), (running) => promise(() => running.dispose()))
+  return try migrated(mf, "IDENTITY_DB")
+}
+
+const Started = Layer.effect(World, effect {
+  const store = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "catchup3-email" } })), (running) => promise(() => running.dispose()))
+  const migratedStore = try migrated(store, "SLOP_DB")
+  const db = try promise(() => database(migratedStore, "SLOP_DB"))
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "identity" }))
+  const identities = { production: try identityWorker(script, "production"), staging: try identityWorker(script, "staging") }
+  return {
+    clock: settableClock(start),
+    db,
+    started: (tier, method, origin) => promise(async () => {
+      const response = await identities[tier].dispatchFetch(`${identityTiers[tier]}/v1/oauth/start`, method === "POST"
+        ? { method, headers: { "content-type": "application/json", origin, "cf-connecting-ip": "198.51.100.40" }, body: JSON.stringify({ audience: "slop-points-web" }) }
+        : { method, headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type", "cf-connecting-ip": "198.51.100.40" } })
+      const text = await response.text()
+      const body = (text === "" ? {} : JSON.parse(text)) as { readonly error?: unknown }
+      return { status: response.status, error: body.error ?? null, allowedOrigin: response.headers.get("access-control-allow-origin") }
+    }),
+  }
+})
+
+const Shell = Layer.unwrap(effect {
+  const { db } = try World
+  return Layer.mergeAll(d1(db), Layer.provide(EmailConsentLive, d1(db)), webCrypto)
+})
+
+effect function sent(intent: Intent, sender: Sender = { kind: "session", hash: sessionHash }) {
+  const { clock } = try World
+  provide clock.layer {
+    return try send(intent, sender, { ...noFacts, mailAvailable: true })
+  }
+}
+
+effect function snapshot() {
+  return try (try EmailConsent).enrollment({ githubId })
+}
+
+effect function enrolled(address: string, requestKey: string, token: string, destinationVersion: string) {
+  const { clock } = try World
+  try sent({ kind: "requestEmail", requestKey, address, addressKey: try sha256Hex(address), activity: true, security: true, verificationId: try sha256Hex(`${requestKey}-id`), tokenHash: try sha256Hex(token) })
+  clock.advance(2 * minute)
+  const prior = try snapshot()
+  try sent({ kind: "verifyEmail", tokenHash: try sha256Hex(token), checkedRevision: prior.revision ?? -1, destinationVersion })
+  clock.advance(2 * minute)
+  return try snapshot()
+}
+
+function guard(read: EnrollmentRead) {
+  return [read.stored, read.activity, read.security, read.preferenceVersion ?? null, read.destinationVersion ?? null, read.verifiedAt ?? null] as const
+}
+
+function at(minutes: number) {
+  return new Date(start + minutes * minute).toISOString()
+}
+
+layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The enrollment snapshot moves its version guard on a destination change and on closure (spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/backend/email.md, "Account closure withdraws both consents and cancels pending verification"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents")', () => effect {
+    const { clock } = try World
+    try sent({ kind: "signIn", assertion: { githubId, login, nodeId: "U_nora" }, reopen: false, sessionHash }, { kind: "session", hash: "" })
+    const before = try snapshot()
+    const first = try enrolled("nora@example.test", "nora-request-0001", "first-token", firstVersion)
+    const changed = try enrolled("nora@another.test", "nora-request-0002", "second-token", secondVersion)
+    try sent({ kind: "close", confirmation: login })
+    clock.advance(minute)
+    const closed = try snapshot()
+    try Effect.try(() => assert.deepStrictEqual({
+      before,
+      guards: [guard(first), guard(changed), guard(closed)],
+      revisions: [first.revision !== undefined, (first.revision ?? 0) < (changed.revision ?? 0), (changed.revision ?? 0) < (closed.revision ?? 0)],
+    }, {
+      before: { stored: false, activity: false, security: false },
+      guards: [
+        [true, true, true, firstVersion, firstVersion, at(2)],
+        [true, true, true, secondVersion, secondVersion, at(6)],
+        [true, false, false, "", secondVersion, at(6)],
+      ],
+      revisions: [true, true, true],
+    }))
+  })
+
+  it.effect('Identity accepts the browser origins of its own tier only (spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment")', () => effect {
+    const { started } = try World
+    const answers = {
+      production: [
+        try started("production", "POST", "https://slop.cash"),
+        try started("production", "POST", "https://slop.tech"),
+        try started("production", "POST", "https://eliza.army"),
+        try started("production", "POST", "https://staging.slop.cash"),
+        try started("production", "POST", "https://slop.test"),
+        try started("production", "OPTIONS", "https://slop.cash"),
+        try started("production", "OPTIONS", "https://staging.slop.cash"),
+      ],
+      staging: [
+        try started("staging", "POST", "https://staging.slop.cash"),
+        try started("staging", "POST", "https://slop.cash"),
+        try started("staging", "POST", "https://slop.test"),
+        try started("staging", "OPTIONS", "https://staging.slop.cash"),
+        try started("staging", "OPTIONS", "https://slop.cash"),
+      ],
+    }
+    try Effect.try(() => assert.deepStrictEqual(answers, {
+      production: [
+        { status: 201, error: null, allowedOrigin: "https://slop.cash" },
+        { status: 201, error: null, allowedOrigin: "https://slop.tech" },
+        { status: 201, error: null, allowedOrigin: "https://eliza.army" },
+        { status: 403, error: "origin_not_allowed", allowedOrigin: null },
+        { status: 403, error: "origin_not_allowed", allowedOrigin: null },
+        { status: 204, error: null, allowedOrigin: "https://slop.cash" },
+        { status: 403, error: "origin_not_allowed", allowedOrigin: null },
+      ],
+      staging: [
+        { status: 201, error: null, allowedOrigin: "https://staging.slop.cash" },
+        { status: 403, error: "origin_not_allowed", allowedOrigin: null },
+        { status: 403, error: "origin_not_allowed", allowedOrigin: null },
+        { status: 204, error: null, allowedOrigin: "https://staging.slop.cash" },
+        { status: 403, error: "origin_not_allowed", allowedOrigin: null },
+      ],
+    }))
+  })
+})

@@ -4,7 +4,8 @@ Contributors use live repository authority and approved work. Ordinary
 GitHub submission ([work and review](./workflow.md) `submit`) reads no
 installation, local receipt, session, trace or opened-run state: the work
 model imports none of the installation, receipt, session or opened-run
-machines, it reads the [server trace run](./traceServer.md) only in
+machines, it reads the author's server run only through the opened pull
+request's participation proof ([PR-opened record](./prOpened.md)) in
 `recordRun`, after submission, and its law
 `lawSubmissionIgnoresStarsForksAndRuns` shows that stars, forks and the
 recorded run do not change the submission guard. Evidence collection,

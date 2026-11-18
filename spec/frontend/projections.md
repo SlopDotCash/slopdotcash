@@ -193,7 +193,7 @@ pure val rightValues = Set(10, 30)
 ### Pool funding is Funded, Withdrawn or points only
 
 The operator decision of 15 November 2026 (PRD section 6) shows a monthly
-pool's amount on cards, lists, project and funding pages only when the
+pool's vault-backed amount on cards, lists, project and funding pages only when the
 project's recorded vaults on paying networks hold it, from cached finalized
 counters (`src/lib/pool-funding.ts:156–217`, `GET /api/v1/pool-funding`).
 Owed now is this month's amount plus last month's until last month's cutoff
@@ -202,8 +202,10 @@ was funded on the 1st: the vaults' first finalized read of the month, within
 an hour of 00:00 UTC, held this month's amount plus last month's. It then
 stays Funded while the current free balance covers what is owed, and becomes
 Withdrawn when a withdrawal during the month left it short. Everything else,
-and any read that is loading, stale or failed, shows points only: never an
-amount and never zero. The month-start read itself is retained once by the
+and any read that is loading, stale or failed, shows no vault-backed amount
+and never zero: points only, or, for a positive pool whose owner opted into
+an honor-system promise, the month's amount as a promise under the next rule
+(honor-system exception, 17 November 2026). The month-start read itself is retained once by the
 [vault snapshots](../settlement/vaultSnapshots.md).
 
 A vault whose contract supports month pledges (its cached read carries
@@ -255,11 +257,58 @@ pure def lawShortPledgeKeepsTheFreeFundsRule(pool: PoolFacts): bool =
     implies poolDisplay(pool) == poolDisplay({ ...pool, pledgeSupport: false, pledged: M::zero })
 ```
 
+### An owner's honor-system promise shows this month's amount as promised, never as vault-backed
+
+PRD section 6 (owner decision, 17 November 2026; development
+`src/lib/pool-funding.ts` `publicPoolReward` and
+`formal/models/ui/ui_pool_funding.qnt` at `67fd54fd4`): a monthly pool whose
+owner opted into the honor system (`honorSystem`, the project's
+[setup](./presentation.md) choice) and whose month is not Funded shows this
+month's positive amount with a warning instead of points only. The warning
+reads "Promised · Not vaulted" when every recorded paying vault of the
+project has a read free balance or pledge support (or the project records
+none), and "Promised · Vault funding unverified" when some recorded paying
+vault has neither (`vaultUnread`; every recorded paying vault while the
+funding read is not current). The project page adds "Promised by the project
+owner; Slop does not guarantee payment." A Funded month shows its
+vault-backed amount and no promise; a zero amount and an opted-out pool never
+show one. The promise is presentation only: `poolDisplay`, `owedNow`,
+`withdrawalAllowedOnSlopPages`, the [monthly listing](./poolListing.md) and
+agent discovery never read it, and it allocates, settles and pays nothing.
+
+```quint
+type PromiseWarning = NoPromise | PromisedNotVaulted | PromisedUnverified
+type PromiseFacts = { pool: PoolFacts, honorSystem: bool, vaultUnread: bool }
+pure val promiseNoticeText = "Promised by the project owner; Slop does not guarantee payment."
+pure def promiseWarning(promise: PromiseFacts): PromiseWarning =
+  if (not(promise.honorSystem) or not(promise.pool.monthlyPool) or not(M::positiveAmount(promise.pool.amount))
+    or poolDisplay(promise.pool) == PoolFunded) NoPromise
+  else if (promise.vaultUnread) PromisedUnverified else PromisedNotVaulted
+pure def promiseText(warning: PromiseWarning): str =
+  if (warning == PromisedNotVaulted) "Promised · Not vaulted"
+  else if (warning == PromisedUnverified) "Promised · Vault funding unverified" else ""
+pure def lawPromiseIsNeverVaultBacked(promise: PromiseFacts): bool =
+  promiseWarning(promise) != NoPromise implies poolDisplay(promise.pool) != PoolFunded
+pure def lawNotVaultedNeedsARead(promise: PromiseFacts): bool =
+  promiseWarning(promise) == PromisedNotVaulted implies not(promise.vaultUnread)
+pure def lawNoPromiseWithoutOptIn(promise: PromiseFacts): bool =
+  not(promise.honorSystem) implies promiseWarning(promise) == NoPromise
+pure def lawZeroAmountStaysPointsOnly(promise: PromiseFacts): bool =
+  not(M::positiveAmount(promise.pool.amount)) implies promiseWarning(promise) == NoPromise
+pure val promiseValues = Set(
+  { pool: fundedPool, honorSystem: true, vaultUnread: false },
+  { pool: { ...fundedPool, read: PoolStale }, honorSystem: true, vaultUnread: true },
+  { pool: { ...fundedPool, freeNow: List(15), withdrawnSince: true }, honorSystem: true, vaultUnread: false },
+  { pool: { ...fundedPool, freeAtStart: List(15) }, honorSystem: false, vaultUnread: false },
+  { pool: { ...fundedPool, amount: List(0) }, honorSystem: true, vaultUnread: false })
+```
+
 ### Slop's pages refuse a withdrawal below the promised amount
 
 While the month is Funded, the owner withdrawal form on Slop's pages refuses
-an amount that would leave the free balance below what is owed now
-(`src/VaultActions.tsx:123–130,263–269`). A vault without month locks does
+an amount that would leave the withdrawing vault's free balance, as the
+withdrawal review just read it (`vaultFree`), below what is owed now
+(development `src/VaultActions.tsx:268–289` at `67fd54fd4`). A vault without month locks does
 not enforce this; for it the refusal is a promise of Slop's pages only. A
 vault with month locks, and a month Funded by its pledges
 (`lockedByPledges`), is guarded by the contract's locks instead
@@ -268,14 +317,14 @@ vault with month locks, and a month Funded by its pledges
 so a review calls it only through `withdrawalAllowed`.
 
 ```quint
-pure def withdrawalAllowedOnSlopPages(pool: PoolFacts, withdrawal: M::Amount): bool =
+pure def withdrawalAllowedOnSlopPages(pool: PoolFacts, vaultFree: M::Amount, withdrawal: M::Amount): bool =
   poolDisplay(pool) != PoolFunded
-    or M::compareAmounts(pool.freeNow, M::addAmounts(owedNow(pool), withdrawal)) >= 0
-pure def lawWithdrawalKeepsPromise(pool: PoolFacts, withdrawal: M::Amount): bool =
-  (poolDisplay(pool) == PoolFunded and withdrawalAllowedOnSlopPages(pool, withdrawal))
-    implies M::compareAmounts(pool.freeNow, M::addAmounts(owedNow(pool), withdrawal)) >= 0
-pure def lawUnpromisedMonthNeverRefuses(pool: PoolFacts, withdrawal: M::Amount): bool =
-  poolDisplay(pool) != PoolFunded implies withdrawalAllowedOnSlopPages(pool, withdrawal)
+    or M::compareAmounts(vaultFree, M::addAmounts(owedNow(pool), withdrawal)) >= 0
+pure def lawWithdrawalKeepsPromise(pool: PoolFacts, vaultFree: M::Amount, withdrawal: M::Amount): bool =
+  (poolDisplay(pool) == PoolFunded and withdrawalAllowedOnSlopPages(pool, vaultFree, withdrawal))
+    implies M::compareAmounts(vaultFree, M::addAmounts(owedNow(pool), withdrawal)) >= 0
+pure def lawUnpromisedMonthNeverRefuses(pool: PoolFacts, vaultFree: M::Amount, withdrawal: M::Amount): bool =
+  poolDisplay(pool) != PoolFunded implies withdrawalAllowedOnSlopPages(pool, vaultFree, withdrawal)
 pure val fundedPool: PoolFacts = { read: PoolCurrent, monthlyPool: true, period: 202612, amount: List(10),
   priorAmount: List(10), priorPending: true, freeNow: List(25), monthStartRead: true, freeAtStart: List(20), withdrawnSince: false,
   pledgeSupport: false, pledged: List(0) }
@@ -284,6 +333,7 @@ pure val poolValues = Set(fundedPool, { ...fundedPool, read: PoolStale }, { ...f
   { ...fundedPool, pledgeSupport: true, pledged: List(10), freeNow: List(0), monthStartRead: false, freeAtStart: List(0) },
   { ...fundedPool, pledgeSupport: true, pledged: List(5), freeNow: List(0), monthStartRead: false, freeAtStart: List(0) })
 pure val withdrawalValues = Set(List(0), List(5), List(6))
+pure val vaultFreeValues = Set(List(15), List(25), List(30))
 ```
 
 ## Story: Show public cuts, merge activity and their freshness

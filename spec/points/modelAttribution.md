@@ -31,7 +31,8 @@ type Declaration = NoDeclaration | ExactDeclaration | HumanOnly | MarkerDeclarat
 type TextSource = { node: int, author: int, bot: bool, attached: bool, signal: bool, declaration: Declaration }
 type AttributionStatus = Complete | Partial | Missing | Invalid
 pure val slopMarker = "slop-contribution-attribution:v1"
-pure val legacyMarkers = Set("eliza-computer-attribution:v1", "elizaos-contribution-attribution:v1", "elizaos-contribution-attribution:v2")
+pure val legacyMarkers = Set("eliza-computer-attribution:v1", "eliza-computer-attribution:v2", "elizaos-contribution-attribution:v1",
+  "elizaos-contribution-attribution:v2")
 pure def acceptedMarker(marker: str): bool = marker == slopMarker or legacyMarkers.contains(marker)
 pure def assessed(s: TextSource, actor: int): bool = s.author == actor and actor > 0 and not(s.bot) and s.attached and s.signal
 pure def validDeclaration(d: Declaration): bool = match d {
@@ -94,7 +95,8 @@ pure val sourcesValues = Set(List(), List(own), List(own, { ...own, node: 2, dec
   List({ ...own, declaration: NoDeclaration }))
 pure val otherValues = Set({ ...own, node: 3, author: 6 }, { ...own, node: 4, attached: false }, { ...own, node: 5, declaration: Malformed, author: 6 })
 pure val actorValues = Set(0, 5)
-pure val markerValues = Set(slopMarker, "eliza-computer-attribution:v1", "elizaos-contribution-attribution:v1", "gitarmy-v1")
+pure val markerValues = Set(slopMarker, "eliza-computer-attribution:v1", "eliza-computer-attribution:v2",
+  "elizaos-contribution-attribution:v1", "gitarmy-v1")
 pure val viewValues = Set({ points: 10, rank: 1, share: 3, payment: 0, modelStatus: Missing })
 pure val nodeValues = Set(1, 2)
 ```

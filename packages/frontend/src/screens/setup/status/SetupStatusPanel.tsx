@@ -1,7 +1,7 @@
 // spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
 import type { SetupStatus } from "@repo/backend/client";
 import { Effect } from "effect";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { useRun } from "../proposal/run.ts";
 import { followSetup, type SetupView, setupUnfinished } from "./check.vibe";
@@ -28,17 +28,21 @@ interface Attempt {
 function ActorSetup({ runtime, projectId, actorId, generation = "initial", initial, onSetup, showProjectLink }: SetupStatusPanelProps) {
   const [view, setView] = useState<SetupView>({ setup: initial ?? null, busy: initial === undefined, error: null });
   const [attempt, setAttempt] = useState<Attempt>({ count: 0, requestScan: false });
+  const latest = useRef(view);
+  const started = useRef(new Set<string>());
+  const key = `setup:${projectId}:${actorId}:${generation}:${attempt.count}`;
   const show = (next: SetupView) =>
     Effect.sync(() => {
+      latest.current = next;
       setView(next);
       onSetup?.(next.setup);
     });
-  const run = useRun(
-    runtime,
-    `setup:${projectId}:${actorId}:${generation}:${attempt.count}`,
-    () => followSetup({ projectId, actorId, requestScan: attempt.requestScan, initial: view.setup, checkFirst: attempt.count > 0 || initial === undefined }, show),
-    setupUnfinished,
-  );
+  const follow = () => {
+    const resumed = started.current.has(key);
+    started.current.add(key);
+    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !resumed, initial: latest.current.setup, checkFirst: resumed || attempt.count > 0 || initial === undefined }, show);
+  };
+  const run = useRun(runtime, key, follow, setupUnfinished);
   const shown: SetupView = run?.status === "failed" ? { ...view, busy: false, error: run.message } : view;
   const check = (requestScan: boolean) => {
     if (!shown.busy) setAttempt(({ count }) => ({ count: count + 1, requestScan }));
@@ -46,7 +50,7 @@ function ActorSetup({ runtime, projectId, actorId, generation = "initial", initi
   return <SetupSummary projectId={projectId} view={shown} onCheck={check} showProjectLink={showProjectLink} />;
 }
 
-/** The project's setup status for one account, checked on arrival unless given, again on request, and again when the reader returns while it waits on them. */
+/** The project's setup status for one account, checked on arrival unless given, again on request, again when the reader returns while it waits on them, and read once more when a hidden panel that stopped its check is shown again, never repeating a scan request. */
 export function SetupStatusPanel(props: SetupStatusPanelProps) {
   return <ActorSetup key={`${props.projectId}:${props.actorId}:${props.generation ?? "initial"}`} {...props} />;
 }

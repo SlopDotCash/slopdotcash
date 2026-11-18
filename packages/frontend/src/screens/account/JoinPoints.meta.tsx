@@ -25,7 +25,7 @@ export const meta: ComponentMeta<JoinPointsProps> = {
     // spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"
     Closed: async () => {
       onStart.mockClear();
-      await userEvent.click(screen.getByRole("button", { name: "Reopen account with GitHub" }));
+      await userEvent.click(screen.getByRole("button", { name: "Reopen account" }));
       await expect(onStart).toHaveBeenCalledWith(true);
     },
     // spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"

@@ -1,0 +1,111 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WorkerRequest } from "miniflare"
+import { webCrypto } from "../src/crypto.vibe"
+import { GitHubApp, githubApp } from "../src/github/app.vibe"
+import { Caller, Unauthenticated, handle, methodNotAllowed, outboundVia, refuse } from "../src/http.vibe"
+import { route } from "../src/route.vibe"
+import { githubFake } from "../src/testing/github.ts"
+
+interface Reply {
+  readonly status: number
+  readonly cacheControl: string | null
+  readonly body: unknown
+}
+
+const fixtureCaller = Layer.succeed(Caller, {
+  current: () => effect {
+    throw new Unauthenticated()
+  },
+})
+
+const declined = route({ method: "GET", path: "/v1/fixture/declined", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "fixture_refused", cache: "no-store" })
+const getOnly = route({ method: "GET", path: "/v1/fixture/get-only", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "fixture_refused", cache: "no-store" })
+const postOnly = route({ method: "POST", path: "/v1/fixture/post-only", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "fixture_refused", cache: "no-store" })
+const headable = route({ method: "GET", path: "/v1/fixture/headable", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "fixture_refused", cache: "no-store" })
+
+const routes = Layer.mergeAll(
+  handle(declined, (input) => effect {
+    if (input.query.get("explained") === "1") throw refuse(400, "invalid_request", "Request is invalid")
+    throw refuse(400, "invalid_request")
+  }),
+  handle(getOnly, () => effect { return { served: true } }),
+  handle(postOnly, () => effect { return { served: true } }),
+  handle(headable, () => effect { return { served: true } }),
+  methodNotAllowed([getOnly, postOnly]),
+)
+
+service Site {
+  ask(path: string, method?: string): Reply!!
+}
+
+const Served = Layer.effect(Site, effect {
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes as Layer.Layer<never, never, HttpRouter.HttpRouter>, fixtureCaller), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  const handler = web.handler as unknown as (request: globalThis.Request) => Promise<globalThis.Response>
+  return {
+    ask: (path, method = "GET") => promise(async () => {
+      const response = await handler(new WorkerRequest(`https://platform.test${path}`, { method }) as unknown as globalThis.Request)
+      const text = await response.text()
+      return { status: response.status, cacheControl: response.headers.get("cache-control"), body: text === "" ? null : JSON.parse(text) }
+    }),
+  }
+})
+
+function keys(reply: Reply) {
+  return typeof reply.body === "object" && reply.body !== null ? Object.keys(reply.body).sort() : []
+}
+
+layer(Layer.merge(webCrypto, Served), { excludeTestServices: true, timeout: "60 seconds" })((it) => {
+  it.effect(`A renamed repository's installation is unavailable to a read that does not follow renames (spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token")`, () => effect {
+    const fake = try orDie(Effect.try(() => {
+      const made = githubFake()
+      made.world.addUser({ id: 583231, login: "octocat", createdAt: "2026-10-01T12:00:00Z" })
+      made.world.addRepo({ id: 1296269, owner: "octocat", name: "hello-world", createdAt: "2026-10-01T12:00:00Z" })
+      made.world.addInstallation({ id: 77, account: "octocat", repositories: ["hello-world"], permissions: { metadata: "read" } })
+      return made
+    }))
+    const app = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem) }), outboundVia({ fetch: fake.fetch }))
+    let before = ""
+    let followed = ""
+    let failure: { readonly _tag: string; readonly status?: number } = { _tag: "" }
+    provide app {
+      const installations = try GitHubApp
+      before = try installations.installationFor("octocat", "hello-world", { followRenamed: false })
+      try orDie(Effect.try(() => fake.world.renameRepo("octocat/hello-world", "octocat/hello-galaxy")))
+      followed = try installations.installationFor("octocat", "hello-world")
+      failure = try Effect.flip(installations.installationFor("octocat", "hello-world", { followRenamed: false }))
+    }
+    const movedReads = fake.requests.filter((request) => new URL(request.url).pathname === "/repositories/1296269/installation").length
+    try Effect.try(() => assert.deepStrictEqual({ before, followed, failure: [failure._tag, failure.status], movedReads }, { before: "77", followed: "77", failure: ["GitHubUnavailable", 301], movedReads: 1 }))
+  })
+
+  it.effect('A refusal row without a message answers only its error code, and a route answers 405 to the methods it does not serve (spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one")', () => effect {
+    const site = try Site
+    const silent = try site.ask("/v1/fixture/declined")
+    const explained = try site.ask("/v1/fixture/declined?explained=1")
+    const served = try site.ask("/v1/fixture/get-only")
+    const head = try site.ask("/v1/fixture/get-only", "HEAD")
+    const patch = try site.ask("/v1/fixture/get-only", "PATCH")
+    const options = try site.ask("/v1/fixture/get-only", "OPTIONS")
+    const postGet = try site.ask("/v1/fixture/post-only")
+    const postDelete = try site.ask("/v1/fixture/post-only", "DELETE")
+    const postPut = try site.ask("/v1/fixture/post-only", "PUT")
+    const posted = try site.ask("/v1/fixture/post-only", "POST")
+    const otherHead = try site.ask("/v1/fixture/headable", "HEAD")
+    const refused = [405, "private, no-store", null]
+    try Effect.try(() => assert.deepStrictEqual({
+      silent: [silent.status, keys(silent)],
+      explained: [explained.status, keys(explained)],
+      served: [served.status, served.body],
+      notAllowed: [head, patch, options, postGet, postDelete, postPut].map((reply) => [reply.status, reply.cacheControl, reply.body]),
+      posted: [posted.status, posted.body],
+      otherHead: otherHead.status,
+    }, {
+      silent: [400, ["error"]],
+      explained: [400, ["error", "message"]],
+      served: [200, { served: true }],
+      notAllowed: [refused, refused, refused, refused, refused, refused],
+      posted: [200, { served: true }],
+      otherHead: 200,
+    }))
+  })
+})

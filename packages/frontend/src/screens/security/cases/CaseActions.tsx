@@ -24,7 +24,7 @@ export function CaseActions({ record, onSend }: CaseActionsProps) {
   return (
     <section aria-label="Case actions" className="flex flex-col gap-4">
       <fieldset className="flex flex-wrap gap-2">
-        <legend className="mb-2 text-sm font-medium text-foreground">Review actions</legend>
+        <legend className="sr-only">Review actions</legend>
         {primary.map((action) => (
           <Button key={action} variant="outline" size="sm" aria-pressed={active === action} data-case-action-selector={action} onClick={() => setSelected(action)}>
             {title(action)}
@@ -33,7 +33,7 @@ export function CaseActions({ record, onSend }: CaseActionsProps) {
       </fieldset>
       {others ? (
         <Disclosure summary="Other case actions" defaultOpen={!primaryActions.includes(active)}>
-          <Field label="Action">
+          <Field label={<span className="sr-only">Action</span>}>
             <Select value={active} onChange={(event) => setSelected(event.target.value)}>
               {actions.map((action) => (
                 <option key={action} value={action}>

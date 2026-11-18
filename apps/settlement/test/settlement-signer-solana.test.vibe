@@ -1,0 +1,226 @@
+import { assert, layer } from "@effect/vitest"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { sha256 } from "@noble/hashes/sha2.js"
+import { bytesToHex } from "@noble/hashes/utils.js"
+import { Response } from "miniflare"
+import type { D1Database } from "@repo/platform/bindings"
+import { type Address, SYSTEM_PROGRAM, addressOf, base64Encode } from "@repo/platform/chain/solana"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { fileJournal } from "@repo/platform/journal"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { serve } from "@repo/platform/testing/chains"
+import { frozenCopy } from "@repo/platform/testing/frozen"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { accountDiscriminator } from "../src/chain/solana/accounts.ts"
+import { type Digest, type U64, digest, digestBytes, u64 } from "../src/chain/solana/bytes.ts"
+import { awardAddress, awardId, bindingAddress, configAddress, keyBytes, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
+import { createJournal, ordinaryScope, within } from "../src/journal/journal.vibe"
+import { ordinaryFeeBase } from "../src/kernels/fees.ts"
+import { NETWORKS } from "../src/kernels/networks.ts"
+import { registryProjectDigest } from "../src/owner/ownerInstructions.ts"
+import { paymentWalletMessage } from "../src/signer/binding.vibe"
+import { ORDINARY_SCOPE } from "../src/signer/privateScope.vibe"
+import { type BindingRequest, SolanaAttesterConfig, prepareSolanaBinding, solanaAttesterConfig } from "../src/signer/solana.vibe"
+
+interface Wallet {
+  readonly address: Address
+  readonly seed: Uint8Array
+}
+
+interface FakeAccount {
+  readonly owner: string
+  readonly executable: boolean
+  readonly data: Uint8Array
+}
+
+interface RpcCall {
+  readonly id: unknown
+  readonly method: string
+  readonly params: ReadonlyArray<unknown>
+}
+
+service Bench {
+  readonly db: D1Database
+  readonly rpc: string
+  readonly journalPath: string
+}
+
+const network = "solana-devnet"
+const projectId = "rotation-journey"
+const actor = 501n
+const githubUserId = actor.toString()
+const at = "2026-11-17T03:00:00.000Z"
+const expiresAt = "2099-01-01T00:00:00.000Z"
+const genesis = NETWORKS[network].genesisHash
+const networkDomain = "e".repeat(64)
+const bindingDelay = 86_400n
+const rotationDelay = 172_800n
+const bindingDelaySeconds = bindingDelay.toString()
+const rotationDelaySeconds = rotationDelay.toString()
+const identitySeed = "11".repeat(32)
+const gross = 1_000_000n
+const fee = ordinaryFeeBase(gross)
+const idempotencyKey = "rotation-attempt-1"
+const code = new TextEncoder().encode("slop escrow rotation fixture")
+
+function walletOf(byte: number): Wallet {
+  const seed = new Uint8Array(32).fill(byte)
+  return { address: addressOf(ed25519.getPublicKey(seed)) as Address, seed }
+}
+
+const identity = walletOf(0x11)
+const formerWallet = walletOf(0x21)
+const successorWallet = walletOf(0x22)
+const program = walletOf(0x31).address
+const owner = walletOf(0x32).address
+const feeRecipient = walletOf(0x33).address
+const rotationAuthority = walletOf(0x34).address
+const project = projectAddress(program, owner, registryProjectDigest(projectId), "Ordinary")
+const vault = vaultAddress(program, project)
+const source = bytesToHex(sha256(new TextEncoder().encode("source:rotation"))) as Digest
+const obligationId = awardId(project, source)
+const formerDigest = bytesToHex(sha256(new TextEncoder().encode("record:former"))) as Digest
+const successorDigest = bytesToHex(sha256(new TextEncoder().encode("record:successor")))
+const attemptKey = `solana:attester:${network}:${idempotencyKey}`
+
+function word(value: bigint) {
+  const bytes = new Uint8Array(8)
+  new DataView(bytes.buffer).setBigUint64(0, value, true)
+  return bytes
+}
+
+function anchored(name: string, size: number, fields: ReadonlyArray<readonly [number, Uint8Array]>) {
+  const data = new Uint8Array(size)
+  data.set(accountDiscriminator(name), 0)
+  for (const [offset, bytes] of fields) data.set(bytes, offset)
+  return data
+}
+
+function domain(): Uint8Array {
+  return digestBytes(digest(networkDomain) as Digest)
+}
+
+const accounts = new Map<string, FakeAccount>([
+  [program, { owner: "BPFLoader2111111111111111111111111111111111", executable: true, data: code }],
+  [configAddress(program), { owner: program, executable: false, data: anchored("Config", 105, [[8, keyBytes(identity.address)], [40, keyBytes(feeRecipient)], [72, keyBytes(rotationAuthority)]]) }],
+  [project, { owner: program, executable: false, data: anchored("Project", 340, [
+    [8, keyBytes(owner)], [40, digestBytes(registryProjectDigest(projectId))], [72, domain()], [104, keyBytes(identity.address)], [136, keyBytes(feeRecipient)],
+    [168, keyBytes(SYSTEM_PROGRAM)], [249, word(bindingDelay)], [298, word(rotationDelay)],
+  ]) }],
+  [awardAddress(program, project, obligationId), { owner: program, executable: false, data: anchored("Obligation", 145, [
+    [8, word(gross)], [16, digestBytes(source)], [48, keyBytes(project)], [80, digestBytes(obligationId)], [112, word(actor)], [120, word(gross - fee)], [128, word(fee)],
+  ]) }],
+  [bindingAddress(program, project, u64(actor) as U64), { owner: program, executable: false, data: anchored("WalletBinding", 169, [
+    [8, digestBytes(formerDigest)], [40, keyBytes(identity.address)], [72, word(actor)], [80, domain()], [112, keyBytes(formerWallet.address)], [144, word(1n)],
+  ]) }],
+])
+
+const asked: string[] = []
+
+function accountAnswer(params: ReadonlyArray<unknown>) {
+  const found = accounts.get(String(params[0]))
+  return { context: { slot: 10 }, value: found === undefined ? null : { owner: found.owner, lamports: 1_000_000, data: [base64Encode(found.data), "base64"], executable: found.executable, rentEpoch: 0, space: found.data.length } }
+}
+
+function chainAnswer(call: RpcCall): unknown {
+  switch (call.method) {
+    case "getGenesisHash": return genesis
+    case "getAccountInfo": return accountAnswer(call.params)
+    case "getLatestBlockhash": return { context: { slot: 10 }, value: { blockhash: genesis, lastValidBlockHeight: 500 } }
+    case "getBlockHeight": return 10
+    case "getSignatureStatuses": return { context: { slot: 10 }, value: (Array.isArray(call.params[0]) ? call.params[0] : []).map(() => null) }
+    default: return null
+  }
+}
+
+const solanaChain: Handler = async (request) => {
+  const call = await request.json() as RpcCall
+  asked.push(call.method)
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: chainAnswer(call) }), { headers: { "content-type": "application/json" } })
+}
+
+const pin = {
+  network, chain: "solana", projectId, vault, asset: SYSTEM_PROGRAM, owner, identityAuthority: identity.address, feeRecipient, programId: program, projectPda: project, networkDomain,
+  upgradeAuthority: null, rotationAuthority, rotationDelaySeconds, bindingDelaySeconds, deploymentTransaction: "rotation-journey-deployment", sourceCommit: "0".repeat(40),
+  codeSha256: bytesToHex(sha256(code)), genesisHash: genesis,
+}
+
+const request: BindingRequest = { obligationId, network, vault, githubUserId, claimId: "claim-successor", claimDigest: successorDigest, destination: successorWallet.address, idempotencyKey }
+
+const Started = Layer.effect(Bench, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { PAYMENTS_DB: "signer-solana-rotation" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
+  const chain = try acquireRelease(promise(() => serve(solanaChain)), (served) => promise(() => served.close()))
+  const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
+  return { db: try promise(() => database(mf, "PAYMENTS_DB")), rpc: chain.url, journalPath: `${scratch.root}/signer-solana.sqlite` }
+})
+
+effect function seed(text: string, ...params: ReadonlyArray<string | number | null>) {
+  const { db } = try Bench
+  try promise(() => db.prepare(text).bind(...params).run())
+}
+
+effect function claim(id: string, wallet: Wallet, record: string, supersedes: string | null) {
+  try seed("INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at, chain) VALUES (?, ?, 'rotating-member', ?, 'd1_registry', ?, ?, ?, ?, ?, 'solana')",
+    id, githubUserId, wallet.address, "b".repeat(64), at, record, supersedes, at)
+}
+
+effect function authorize(id: string, wallet: Wallet, record: string) {
+  const challengeId = `challenge-${id}`
+  const message = paymentWalletMessage({ actorId: githubUserId, chain: "solana", address: wallet.address, claimId: id, claimDigest: record, nonce: challengeId, expiresAt })
+  const signature = base64Encode(try Effect.try(() => ed25519.sign(new TextEncoder().encode(message), wallet.seed)))
+  try seed("INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at) VALUES (?, ?, ?, ?, ?, ?)", challengeId, id, githubUserId, message, expiresAt, at)
+  try seed("INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature) VALUES (?, ?, ?, ?, ?)", id, githubUserId, at, challengeId, signature)
+}
+
+effect function signer() {
+  const { db, rpc, journalPath } = try Bench
+  const urls = try Effect.try(() => JSON.stringify({ [network]: rpc }))
+  const config = try solanaAttesterConfig({ SIGNER_STACK: "test", PAYMENT_RPC_URLS: urls, TEST_SOLANA_SIGNER_SEED: identitySeed }, try Effect.try(() => JSON.stringify([pin])))
+  return Layer.mergeAll(d1(db), fileJournal(journalPath), webCrypto, outbound, Layer.succeed(SolanaAttesterConfig, config))
+}
+
+effect function prepared() {
+  provide try signer() {
+    try createJournal()
+    return prepareSolanaBinding(ORDINARY_SCOPE, request) catch (error) => error._tag
+  }
+}
+
+effect function journalled() {
+  provide try signer() {
+    return try within(ordinaryScope, (entries) => entries.get(attemptKey))
+  }
+}
+
+layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A Solana rotation needs the registry authorization (spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
+    try claim("claim-former", formerWallet, formerDigest, null)
+    try authorize("claim-former", formerWallet, formerDigest)
+    try claim("claim-successor", successorWallet, successorDigest, "claim-former")
+    try seed("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (?, ?, ?, ?, 'solana', ?, ?, 9, ?, ?, ?, 'reserved', ?, NULL)",
+      obligationId, projectId, githubUserId, network, vault, SYSTEM_PROGRAM, gross.toString(), fee.toString(), source, at)
+    try seed("INSERT INTO payment_attempts (id, obligation_id, claim_id, created_at, transaction_id, state) VALUES (?, ?, 'claim-successor', ?, NULL, 'prepared')", idempotencyKey, obligationId, at)
+
+    const unauthorized = try prepared()
+    const heldEntry = try journalled()
+    try authorize("claim-successor", successorWallet, successorDigest)
+    const answer = try prepared()
+    const entry = try journalled()
+    const stored = typeof entry === "object" && entry !== null ? entry as Readonly<Record<string, unknown>> : {}
+    try Effect.try(() => assert.deepStrictEqual({
+      unauthorized: [unauthorized, heldEntry],
+      prepared: typeof answer === "string" ? answer : { transactionId: answer.transactionId, transaction: answer.transaction },
+      journalled: { obligationId: stored.obligationId, transactionId: stored.transactionId, raw: stored.raw, cosigner: stored.cosigner },
+      broadcast: asked.filter((method) => method === "sendTransaction"),
+    }, {
+      unauthorized: ["AttemptHeld", undefined],
+      prepared: { transactionId: stored.transactionId, transaction: stored.raw },
+      journalled: { obligationId, transactionId: stored.transactionId, raw: stored.raw, cosigner: successorWallet.address },
+      broadcast: [],
+    }))
+  })
+})

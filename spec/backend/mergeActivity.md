@@ -29,9 +29,11 @@ failure.
 An outside pull request's author is not an owner, member or collaborator
 and is not a bot. The waiting count takes open outside pull requests that
 are not drafts, were opened seven days or more ago and have no review or
-comment from a maintainer. The median takes outside pull requests merged in
-the last 30 days and is kept doubled, so an even count stays exact; with no
-such pull request it is absent (`-1`), never zero.
+comment from a maintainer. The 30-day count takes every outside pull request
+merged in the last 30 days. The median takes their merge durations that are
+not negative (a merge time before the opening time counts but has no
+duration) and is kept doubled, so an even count stays exact; with no such
+duration it is absent (`-1`), never zero.
 
 ```quint
 type Association = Owner | Member | Collaborator | Contributor | FirstTimer | NoAssociation
@@ -44,9 +46,10 @@ pure def outsideAuthor(association: Association, bot: bool): bool =
   not(bot) and association != Owner and association != Member and association != Collaborator
 pure def waitingOutside(open: List[OpenPull], now: int): int = open.select(p => outsideAuthor(p.association, p.bot)
   and not(p.draft) and not(p.maintainerResponded) and p.openedAt <= now - waitingHours).length()
-pure def recentDurations(merged: List[MergedPull], now: int): List[int] = merged.select(p =>
-  outsideAuthor(p.association, p.bot) and p.mergedAt >= now - medianWindowHours and p.mergedAt >= p.openedAt)
-  .listMap(p => p.mergedAt - p.openedAt)
+pure def recentMerges(merged: List[MergedPull], now: int): List[MergedPull] = merged.select(p =>
+  outsideAuthor(p.association, p.bot) and p.mergedAt >= now - medianWindowHours)
+pure def recentDurations(merged: List[MergedPull], now: int): List[int] =
+  recentMerges(merged, now).select(p => p.mergedAt >= p.openedAt).listMap(p => p.mergedAt - p.openedAt)
 pure def kth(xs: List[int], k: int): int =
   xs.foldl(-1, (best, x) => if (xs.select(y => y <= x).length() >= k and (best == -1 or x < best)) x else best)
 pure def medianDoubled(xs: List[int]): int =
@@ -56,11 +59,13 @@ pure def summarize(open: List[OpenPull], capped: bool, merged: List[MergedPull],
   val durations = recentDurations(merged, now)
   { lastMergedAt: merged.foldl(0, (latest, p) => if (p.mergedAt > latest) p.mergedAt else latest),
     waitingOutside: waitingOutside(open, now), waitingCapped: capped,
-    mergedOutside30d: durations.length(), medianDoubled: medianDoubled(durations) }
+    mergedOutside30d: recentMerges(merged, now).length(), medianDoubled: medianDoubled(durations) }
 pure def lawMaintainersAndBotsAreNotOutside(association: Association, bot: bool): bool =
   (bot or association == Owner or association == Member or association == Collaborator) implies not(outsideAuthor(association, bot))
 pure def lawNoMergesNoMedian(merged: List[MergedPull], now: int): bool =
   summarize(List(), false, merged, now).mergedOutside30d == 0 implies summarize(List(), false, merged, now).medianDoubled == -1
+pure def lawCountKeepsMergesWithoutDuration(merged: List[MergedPull], now: int): bool =
+  summarize(List(), false, merged, now).mergedOutside30d >= recentDurations(merged, now).length()
 ```
 
 ### A bounded daily run reads due repositories of active projects
@@ -69,7 +74,13 @@ The registry decides whether the repository is measured: it belongs to an
 active, listed project; a paused or retired project's repositories are not
 read. A repository is due when it has no row, 20 hours after its last
 attempt, or an hour after a failed one. One run reads at most 15 due
-repositories, oldest attempt first.
+repositories, oldest attempt first. Each read takes open pull requests oldest
+first, 50 a page, at most 6 pages, and stops at the first page that reaches
+one opened less than 7 days ago or has no next page; the waiting count is
+capped when the sixth page ends the read with more pages left. Merged pull
+requests are read from 30 days back, at most 3 pages of 100 (Slop development
+`backend/projects/merge-activity.ts`, `OPEN_PAGE`, `OPEN_PAGES`,
+`MERGED_PAGE`, `MERGED_PAGES`).
 
 ```quint
 type Table = MergeActivityRows | Scores | ProjectStatus | Payments
@@ -82,6 +93,14 @@ pure val registry = "registry"
 pure val repositoriesPerRun = 15
 pure val refreshAfterHours = 20
 pure val retryAfterHours = 1
+pure val openPageSize = 50
+pure val openPages = 6
+pure val mergedPageSize = 100
+pure val mergedPages = 3
+pure def openReadCapped(page: int, hasNextPage: bool, reachedRecent: bool): bool =
+  page == openPages and hasNextPage and not(reachedRecent)
+pure def lawCapNeedsTheLastOpenPage(page: int, hasNextPage: bool, reachedRecent: bool): bool =
+  openReadCapped(page, hasNextPage, reachedRecent) implies (page == openPages and not(reachedRecent))
 pure val noSummary: Summary = { lastMergedAt: 0, waitingOutside: 0, waitingCapped: false, mergedOutside30d: 0, medianDoubled: -1 }
 pure val noRow: Row = { stored: false, observedAt: 0, attemptedAt: 0, failed: false, summary: noSummary }
 pure val initial: Merges = { repository: 1, now: 1, measured: false, listed: true, row: noRow, running: false, reads: 0 }
@@ -176,7 +195,8 @@ pure val outsideOld: OpenPull = { association: Contributor, bot: false, draft: f
 pure val outsideMerged: MergedPull = { association: FirstTimer, bot: false, openedAt: 1, mergedAt: 3 }
 pure val openValues = Set(List(), List(outsideOld, { ...outsideOld, association: Member }, { ...outsideOld, draft: true },
   { ...outsideOld, bot: true }))
-pure val mergedValues = Set(List(), List(outsideMerged, { ...outsideMerged, association: Owner }))
+pure val mergedValues = Set(List(), List(outsideMerged, { ...outsideMerged, association: Owner }),
+  List(outsideMerged, { ...outsideMerged, openedAt: 5, mergedAt: 3 }))
 pure val nowValues = Set(2, 22, 200)
 pure val byValues = Set(schedule, registry)
 pure val weight_readOther = 8

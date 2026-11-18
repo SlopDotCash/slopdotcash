@@ -2,13 +2,16 @@
 
 PRD section 7 determines implementation recipients from GitHub-linked
 primary authors of accepted, unique, non-merge commits on every integration
-branch. Opening, recreating, updating or merging a PR alone earns no share.
+branch, and from the resolution work of a merge commit with exactly one
+reviewed merge resolution. Opening, recreating, updating or merging a PR
+alone earns no share.
 A commit without an eligible linked author falls back to the source PR
 creator, or to the original PR creator when verified retained-copy evidence
 binds the commit to that PR. A PR description reference alone is never such
 evidence. Maintainers are not excluded from implementation credit; bots and
 vendor agents are. The owner decision of 13 November 2026 weights recipients
-by additions plus deletions in their accepted commits. The owner decision of
+by additions plus deletions; development counts them per canonical
+commit-path claim (`workUnitLineWeights`). The owner decision of
 14 November 2026 redirects, for October 2026 sources of the five named
 projects only, a verified replacement PR's carried commits and its carrier's
 verified follow-up commits to the verified original contributor (the
@@ -41,7 +44,7 @@ type AttributionPhase = Gathering | Attributed | Credited | ConflictHeld | Claim
 type CarryBinding = NoCarry | VerifiedCarry({ original: int, followup: bool, parentEdges: bool }) | AmbiguousCarry
 type Observed = Unknown | Seen({ actor: int, kind: ActorKind, linked: bool })
 type Lines = NoLines | CompleteLines({ additions: int, deletions: int })
-type Acceptance = NotObserved | AcceptedCommit({ merge: bool, earlierSource: bool }) | Unaccepted
+type Acceptance = NotObserved | AcceptedCommit({ merge: bool, earlierSource: bool, resolutions: int }) | Unaccepted
 type CopyBinding = NoCopy | VerifiedCopy({ actor: int, kind: ActorKind }) | DescriptionOnly
 type CommitAttribution = { phase: AttributionPhase, commitId: int, sourceId: int, project: str, occurredAt: int,
   primary: Observed, source: Observed, copy: CopyBinding, carry: CarryBinding, acceptance: Acceptance, lines: Lines,
@@ -130,10 +133,12 @@ pure def lawBotsAndAgentsExcluded(actor: int, kind: ActorKind): bool =
     sourceRecipient(Seen({ actor: actor, kind: kind, linked: false })) == 0)
 ```
 
-### Only accepted unique non-merge commits contribute line weight
+### Only accepted unique commits contribute line weight, a merge only through its one merge resolution
 
-A synchronization merge and a commit already credited in an earlier accepted
-source contribute nothing. The commit is already credited when an accepted
+A commit already credited in an earlier accepted source contributes nothing.
+A merge commit contributes only when exactly one merge resolution is
+recorded for it, and then only the resolution's own work; a synchronization
+merge with none, or with several, contributes nothing. The commit is already credited when an accepted
 work unit that does not contain this source contains the commit. For a retained copy the line counts are the
 accepted copy's. Complete zero-line evidence stays explicit; missing line
 evidence holds a multiple-recipient allocation.
@@ -141,15 +146,17 @@ evidence holds a multiple-recipient allocation.
 ```quint
 pure def creditedElsewhere(a: CommitAttribution, units: W::Units): bool =
   units.units.some(u => u.accepted and u.commits.contains(a.commitId) and not(u.sources.contains(a.sourceId)))
-pure def canObserveAcceptance(a: CommitAttribution, merge: bool, units: W::Units): bool =
-  a.phase == Gathering and notObserved(a.acceptance)
-pure def observeAcceptance(a: CommitAttribution, merge: bool, units: W::Units): CommitAttribution =
-  { ...a, acceptance: AcceptedCommit({ merge: merge, earlierSource: creditedElsewhere(a, units) }) }
+pure def canObserveAcceptance(a: CommitAttribution, merge: bool, resolutions: int, units: W::Units): bool =
+  a.phase == Gathering and notObserved(a.acceptance) and resolutions >= 0
+pure def observeAcceptance(a: CommitAttribution, merge: bool, resolutions: int, units: W::Units): CommitAttribution =
+  { ...a, acceptance: AcceptedCommit({ merge: merge, earlierSource: creditedElsewhere(a, units), resolutions: resolutions }) }
 pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int): bool =
   a.phase == Gathering and additions >= 0 and deletions >= 0 and not(hasLines(a.lines))
 pure def recordLines(a: CommitAttribution, additions: int, deletions: int): CommitAttribution =
   { ...a, lines: CompleteLines({ additions: additions, deletions: deletions }) }
-pure def contributes(a: CommitAttribution): bool = acceptedAs(a.acceptance, false, false)
+pure def contributes(a: CommitAttribution): bool = match a.acceptance {
+  | AcceptedCommit(x) => not(x.earlierSource) and (not(x.merge) or x.resolutions == 1)
+  | _ => false }
 pure def canAttribute(a: CommitAttribution): bool = a.phase == Gathering and contributes(a) and recipientFor(a) > 0
 pure def attribute(a: CommitAttribution): CommitAttribution = { ...a, phase: Attributed, recipient: recipientFor(a) }
 pure def canCreditCommit(a: CommitAttribution): bool = a.phase == Attributed and hasLines(a.lines)
@@ -183,7 +190,8 @@ pure def sometimesCopyFallback(a: CommitAttribution): bool = a.phase == Credited
 pure def sometimesSourceFallback(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == 0 and copyRecipient(a.copy) == 0 and a.recipient > 0
 pure def sometimesConflictHeld(a: CommitAttribution): bool = a.phase == ConflictHeld
 pure def sometimesRepaired(a: CommitAttribution): bool = a.phase == Repaired
-pure def sometimesMergeHeld(a: CommitAttribution): bool = acceptedAs(a.acceptance, true, false)
+pure def sometimesMergeHeld(a: CommitAttribution): bool = acceptedAs(a.acceptance, true, false) and not(contributes(a))
+pure def sometimesMergeResolutionCredited(a: CommitAttribution): bool = a.phase == Credited and acceptedAs(a.acceptance, true, false)
 pure def sometimesCreditedElsewhere(a: CommitAttribution): bool = acceptedAs(a.acceptance, false, true)
 pure def sometimesConflictResolved(a: CommitAttribution): bool = a.phase == Credited and a.repairedFrom == 0 and sameSeen(a.primary, 2, User, true)
 pure def sometimesFollowupRedirected(a: CommitAttribution): bool = a.phase == Credited and carriedRecipient(a) > 0
@@ -205,34 +213,62 @@ pure def reread(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool)
   { ...a, phase: Gathering, primary: Seen({ actor: actor, kind: kind, linked: linked }), source: Unknown, copy: NoCopy, recipient: 0 }
 ```
 
-### Recipient line weights sum additions plus deletions over contributing commits
+### Recipient line weights sum additions plus deletions over claimed commit paths
 
-The allocation receives one recipient per attributed actor of a
-contributing commit, derived from the commits themselves, so no attributed
-actor can be omitted. Each row is a credited attribution record above.
-Merge commits, commits credited in an earlier source, unattributed commits
-and commits without complete line evidence contribute no lines; any such
-missing evidence keeps the allocation's complete-lines input false.
+The allocation receives one recipient per actor credited by a canonical
+commit-path claim of the unit, derived from the claims themselves, so no
+credited actor can be omitted. A claim adds the additions plus deletions of
+its claimed file in its commit; for a retained copy, the accepted copy's
+commit and file. A renamed file claimed under both its new and its previous
+path counts once per source, commit and file. A merge commit's claim counts
+the claimed file of its one merge resolution, without that de-duplication.
+A claim with no credited actor adds nothing. A repeated claim, a claim with
+more than one credited actor or an unknown actor set, a merge commit
+without exactly one resolution or without the claimed file, and a
+non-merge commit whose attribution is missing, repeated, limited or lacks
+exactly one matching file, make the unit's weights incomplete, which holds
+its allocation.
 
 ```quint
-type CommitLines = { recipient: int, additions: int, deletions: int, merge: bool, earlierSource: bool, complete: bool }
-pure def commitWeight(c: CommitLines): int = if (c.merge or c.earlierSource or not(c.complete)) 0 else c.additions + c.deletions
-pure def linesFor(commits: List[CommitLines], actor: int): int =
-  commits.foldl(0, (acc, c) => if (c.recipient == actor) acc + commitWeight(c) else acc)
-pure def contributingCommit(c: CommitLines): bool = not(c.merge) and not(c.earlierSource) and c.recipient > 0
-pure def addActor(xs: List[int], c: CommitLines): List[int] =
-  if (contributingCommit(c) and not(xs.includes(c.recipient))) xs.append(c.recipient) else xs
-pure def actorsOf(commits: List[CommitLines]): List[int] = commits.foldl(List(), (acc, c) => addActor(acc, c))
-pure def recipientLines(commits: List[CommitLines]): List[A::Recipient] =
-  actorsOf(commits).listMap(actor => { actor: actor, lines: linesFor(commits, actor) })
-pure def completeLines(commits: List[CommitLines]): bool =
-  commits.every(c => c.merge or c.earlierSource or (c.complete and c.recipient > 0))
+type PathClaim = { claim: int, actor: int, creditedActors: int, actorsKnown: bool, file: int, merge: bool,
+  resolutions: int, attributed: bool, limited: bool, fileFound: bool, additions: int, deletions: int }
+type LineTally = { counted: List[int], lines: int }
+pure def claimUsable(c: PathClaim): bool =
+  c.actorsKnown and c.creditedActors <= 1 and c.additions >= 0 and c.deletions >= 0 and
+  (c.creditedActors == 0 or
+    (if (c.merge) c.resolutions == 1 and c.fileFound else c.attributed and not(c.limited) and c.fileFound))
+pure def claimsComplete(claims: List[PathClaim]): bool =
+  claims.every(c => claimUsable(c) and claims.select(o => o.claim == c.claim).length() == 1)
+pure def tallyClaim(t: LineTally, c: PathClaim, actor: int): LineTally =
+  if (c.creditedActors != 1) t
+  else if (c.merge) (if (c.actor == actor) { ...t, lines: t.lines + c.additions + c.deletions } else t)
+  else { counted: if (t.counted.includes(c.file)) t.counted else t.counted.append(c.file),
+    lines: if (c.actor == actor and not(t.counted.includes(c.file))) t.lines + c.additions + c.deletions else t.lines }
+pure def linesFor(claims: List[PathClaim], actor: int): int =
+  claims.foldl({ counted: List(), lines: 0 }, (t, c) => tallyClaim(t, c, actor)).lines
+pure def addActor(xs: List[int], c: PathClaim): List[int] =
+  if (c.creditedActors == 1 and c.actor > 0 and not(xs.includes(c.actor))) xs.append(c.actor) else xs
+pure def actorsOf(claims: List[PathClaim]): List[int] = claims.foldl(List(), (acc, c) => addActor(acc, c))
+pure def recipientLines(claims: List[PathClaim]): List[A::Recipient] =
+  actorsOf(claims).listMap(actor => { actor: actor, lines: linesFor(claims, actor) })
+pure def completeLines(claims: List[PathClaim]): bool = claimsComplete(claims)
+pure val plainClaim: PathClaim = { claim: 1, actor: 1, creditedActors: 1, actorsKnown: true, file: 7, merge: false,
+  resolutions: 0, attributed: true, limited: false, fileFound: true, additions: 2, deletions: 1 }
 pure def lawLinesAreAdditionsPlusDeletions(additions: int, deletions: int): bool =
-  commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: false, earlierSource: false, complete: true }) == additions + deletions
-pure def lawMergeCommitsContributeZero(additions: int, deletions: int): bool =
-  commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: true, earlierSource: false, complete: true }) == 0
-pure def lawEarlierSourceContributesZero(additions: int, deletions: int): bool =
-  commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: false, earlierSource: true, complete: true }) == 0
+  linesFor(List({ ...plainClaim, additions: additions, deletions: deletions }), 1) == additions + deletions
+pure def lawRenamedFileCountsOnce(additions: int, deletions: int): bool =
+  linesFor(List({ ...plainClaim, additions: additions, deletions: deletions },
+    { ...plainClaim, claim: 2, additions: additions, deletions: deletions }), 1) == additions + deletions
+pure def lawMergeResolutionCounted(additions: int, deletions: int): bool =
+  linesFor(List({ ...plainClaim, merge: true, resolutions: 1, attributed: false, additions: additions, deletions: deletions }), 1) ==
+    additions + deletions
+pure def lawUnresolvedMergeHolds(resolutions: int): bool =
+  resolutions != 1 implies not(completeLines(List({ ...plainClaim, merge: true, resolutions: resolutions })))
+pure def lawSharedClaimHolds(creditedActors: int): bool =
+  creditedActors > 1 implies not(completeLines(List({ ...plainClaim, creditedActors: creditedActors })))
+pure def lawRepeatedClaimHolds(additions: int): bool = not(completeLines(List(plainClaim, { ...plainClaim, additions: additions })))
+pure val creditedActorsValues = Set(0, 1, 2)
+pure val resolutionsValues = Set(0, 1, 2)
 ```
 
 ### Simulation samples exercise linked, unlinked, conflicting and ineligible evidence

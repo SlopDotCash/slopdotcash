@@ -57,6 +57,7 @@ import identity as I from "./identity"
 import email as E from "./email"
 import xConnection as X from "./xConnection"
 import notifications as N from "../operations/notifications"
+import participation as PT from "../points/participation"
 type Membership = Open | Closed
 type Member = { actor: int, githubId: int, login: str, membership: Membership, public: bool,
   joinedAt: int, closedAt: int, xLink: X::XLink, telegramLinked: bool, email: E::Enrollment }
@@ -197,8 +198,12 @@ pure def lawJoinAfterCloseIssuesNoSession(s: Accounts, token: int): bool =
 A session is valid only before its exact expiry and only while it exists.
 Sign-out deletes the caller's session. Revocation by ID deletes a session of
 the caller's own account, the caller's included; an ID of another account
-or an unknown ID changes nothing. The product shows no session list or
-session panel. The hourly identity job deletes expired sessions and expired
+or an unknown ID changes nothing. No page shows a session list, but
+`GET /api/v1/points/sessions` answers a live session with its own account's
+unexpired sessions (`id`, the first 24 hexadecimal characters of the token
+hash; `expiresAt`; and `current`, whether it is the caller's), newest expiry
+first; it only reads, and a missing or expired session gets 401
+`not_signed_in` or `session_expired` as the other session routes do. The hourly identity job deletes expired sessions and expired
 X flows with the identity rows.
 
 ```quint

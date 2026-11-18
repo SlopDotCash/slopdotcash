@@ -65,13 +65,15 @@ pure def lawLaterCarrierEarnsNothing(e: Evidence, first: int, later: int): bool 
 
 Several claims of one pull request may belong to different outcomes, and
 several pull requests may share one outcome. Every outcome is nonempty
-and names only claims of the group. A partial or overlapping partition
-refuses publication. The record keeps the partition, and each outcome is
+and names only claims of the group. A group with no claims has the empty
+partition, which is complete (`completeClaimPartition(0, [])` in
+`verified-work-unit.ts`); an empty outcome is still refused. A partial or
+overlapping partition refuses publication. The record keeps the partition, and each outcome is
 what the Points journal credits.
 
 ```quint
 pure def completePartition(e: Evidence, units: List[Set[int]]): bool =
-  units.length() > 0 and units.every(u => u.size() > 0 and u.subseteq(claimIds(e)))
+  units.every(u => u.size() > 0 and u.subseteq(claimIds(e)))
     and claimIds(e).forall(id => units.select(u => u.contains(id)).length() == 1)
 pure def lawPartialPartitionRefused(e: Evidence, units: List[Set[int]]): bool =
   claimIds(e).exists(id => not(units.some(u => u.contains(id)))) implies not(completePartition(e, units))
@@ -166,7 +168,7 @@ pure def alwaysRecordsAreUnique(j: Journal): bool =
   j.records.every(r => r.digest > 0 and r.assessmentKey > 0 and r.sequence > 0 and r.sequence <= j.lastSequence
     and j.records.select(o => o.digest == r.digest).length() == 1
     and j.records.select(o => o.assessmentKey == r.assessmentKey).length() == 1 and reasonMatches(r)
-    and r.units.length() > 0 and r.units.every(u => u.size() > 0 and u.subseteq(r.claims)))
+    and (r.claims.size() > 0 implies r.units.length() > 0) and r.units.every(u => u.size() > 0 and u.subseteq(r.claims)))
 pure def alwaysPredecessorsAreRetiredAndEarlier(j: Journal): bool =
   j.records.every(r => r.parents.forall(p => j.retired.contains(p) and recordOf(j, p).digest > 0
     and recordOf(j, p).sequence < r.sequence and recordOf(j, p).sources.subseteq(r.sources))
@@ -191,6 +193,7 @@ pure def sometimesMerged(j: Journal): bool = j.records.some(r => r.parents.size(
 pure def sometimesCorrected(j: Journal): bool =
   j.records.some(r => r.parents.size() == 1 and r.revisionReason != "" and not(j.retired.contains(r.digest)))
 pure def sometimesSecondRoot(j: Journal): bool = liveRecords(j).length() > 1
+pure def sometimesClaimlessGroupRecorded(j: Journal): bool = j.records.some(r => r.claims.size() == 0)
 pure def sometimesLegacyConsumed(j: Journal): bool =
   j.records.some(r => r.legacyParents.size() > 0) and currentLegacy(j).length() == 0 and j.legacy.length() > 0
 pure val claimOne: Claim = { id: 1, carriers: Set(1), credit: 1 }
@@ -201,7 +204,7 @@ pure val evidenceTwo: Evidence = { project: 1, accepted: List(2), claims: List(c
 pure val evidenceJoint: Evidence = { project: 1, accepted: List(1, 2), claims: List(claimOne, claimTwo, claimThree), limitations: false }
 pure val eValues = Set(evidenceOne, evidenceTwo, evidenceJoint, { ...evidenceJoint, limitations: true },
   { ...evidenceJoint, claims: List(claimOne, { ...claimTwo, credit: 2 }, claimThree) },
-  { ...evidenceJoint, accepted: List(2, 1) })
+  { ...evidenceJoint, accepted: List(2, 1) }, { project: 1, accepted: List(3), claims: List(), limitations: false })
 pure val recordOne: JointRecord = { digest: 1, assessmentKey: 1, project: 1, sources: Set(1), claims: Set(1),
   units: List(Set(1)), parents: Set(), legacyParents: Set(), revisionReason: "", sequence: 0 }
 pure val rValues = Set(recordOne, { ...recordOne, legacyParents: Set(11), revisionReason: "legacy" },
@@ -211,7 +214,8 @@ pure val rValues = Set(recordOne, { ...recordOne, legacyParents: Set(11), revisi
   { ...recordOne, digest: 4, assessmentKey: 4, sources: Set(1, 2), claims: Set(1, 2, 3), units: List(Set(1, 2, 3)),
     parents: Set(1), revisionReason: "merge" },
   { ...recordOne, digest: 5, assessmentKey: 5, parents: Set(1), revisionReason: "correction" },
-  { ...recordOne, digest: 6, assessmentKey: 6, sources: Set(1, 2), claims: Set(1, 2, 3), units: List(Set(1, 2), Set(2, 3)) })
+  { ...recordOne, digest: 6, assessmentKey: 6, sources: Set(1, 2), claims: Set(1, 2, 3), units: List(Set(1, 2), Set(2, 3)) },
+  { ...recordOne, digest: 7, assessmentKey: 7, sources: Set(3), claims: Set(), units: List() })
 pure val lValues = Set({ digest: 11, source: 1 }, { digest: 12, source: 2 }, { digest: 13, source: 1 })
 pure val kindValues = Set({ indirect: false, noChangePromotion: false }, { indirect: true, noChangePromotion: false })
 pure val changeValues = Set({ delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true },

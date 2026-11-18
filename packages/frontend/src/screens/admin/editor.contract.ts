@@ -90,7 +90,7 @@ export const moderatorsSeeOnlyTheActionsTheRestrictionAllows = vectors<string, R
 
 export const feeTotalsShowExactAmountsAndRobinhoodIsNotConverted = vectors<string, unknown>(
   [
-    ["report", [["Base", "USDC", ["2 conversions: 1000000000000000000 base units of token 0x4200000000000000000000000000000000000006 to 3,150.25 USDC"], false], ["Ethereum", "USDC", [], true], ["Robinhood Chain", "Not converted", [], false]]],
+    ["report", [["Base", "USDC", [{ token: "0x4200000000000000000000000000000000000006", tokenPreview: "0x4200…0006", amountIn: "1000000000000000000", converted: "3,150.25 USDC", conversions: 2 }], false], ["Ethereum", "USDC", [], true], ["Robinhood Chain", "Not converted", [], false]]],
     ["negative count", false],
     ["leading zero", false],
   ],
@@ -98,6 +98,6 @@ export const feeTotalsShowExactAmountsAndRobinhoodIsNotConverted = vectors<strin
     const [total] = feeReport.totals;
     if (name === "negative count" && total) return wellFormedReport({ ...feeReport, totals: [{ ...total, conversions: 0 }] });
     if (name === "leading zero" && total) return wellFormedReport({ ...feeReport, totals: [{ ...total, amountIn: "01" }] });
-    return networkConversions(feeReport).map((network) => [network.name, network.target, network.lines, network.none]);
+    return networkConversions(feeReport).map((network) => [network.name, network.target, network.totals, network.none]);
   },
 );

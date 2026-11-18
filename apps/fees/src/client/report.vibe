@@ -1,4 +1,4 @@
-// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network's target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals"
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network's target"; spec/fees/feeReport.md, "The buyback block shows the latest orders, purchases and burns with their outcomes and live totals"; spec/fees/feeReport.md, "The claims block shows the latest 100 claim attempts, finalized live claim totals per network, fee wallet and token, and 24-hour claim state counts"
 import { type AnyRoute, type Method, route } from "@repo/platform/route"
 import { getAdminFeeConversions } from "./refusals.vibe"
 
@@ -85,6 +85,39 @@ export schema BuybackReport {
   readonly totals: ReadonlyArray<BuybackTotal>
 }
 
+export schema ClaimLine {
+  readonly id: string
+  readonly network: string
+  readonly mode: string
+  readonly feeWallet: string
+  readonly token: string
+  readonly estimatedAmount: string
+  readonly amountClaimed: string | null
+  readonly txId: string | null
+  readonly landedTxId: string | null
+  readonly state: string
+  readonly reason: string | null
+  readonly createdAt: string
+  readonly submittedAt: string | null
+  readonly finalizedAt: string | null
+  readonly projectId: string | null
+  readonly vault: string | null
+}
+
+export schema ClaimTotal {
+  readonly network: string
+  readonly feeWallet: string
+  readonly token: string
+  readonly claims: number
+  readonly amountClaimed: string
+}
+
+export schema ClaimReport {
+  readonly recent: ReadonlyArray<ClaimLine>
+  readonly totals: ReadonlyArray<ClaimTotal>
+  readonly last24Hours: ReadonlyArray<FeeConversionStateCount>
+}
+
 export schema FeeConversionsReport {
   readonly schemaVersion: "1"
   readonly recent: ReadonlyArray<FeeConversionLine>
@@ -92,6 +125,7 @@ export schema FeeConversionsReport {
   readonly totals: ReadonlyArray<FeeConversionTotal>
   readonly last24Hours: ReadonlyArray<FeeConversionStateCount>
   readonly buyback: BuybackReport
+  readonly claims: ClaimReport
 }
 
 export const feeConversionsPath = "/api/v1/admin/fee-conversions"

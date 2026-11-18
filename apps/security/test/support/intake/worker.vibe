@@ -1,4 +1,4 @@
-// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"
+// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"
 import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
@@ -8,10 +8,11 @@ import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
-import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Authority, type ProjectView, Registry, Restrictions, VaultRegistrationRefused } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
 import { privateRoute } from "../../../src/analysis/route.vibe"
 import { intakeSettings } from "../../../src/intake/availability.vibe"
+import { submissionReadRoutes } from "../../../src/intake/list.vibe"
 import { intakeRoutes } from "../../../src/intake/routes.vibe"
 import { reportBucket } from "../../../src/privacy/reads.vibe"
 import { reportingProgramsLive } from "../../../src/receipt/program.vibe"
@@ -39,6 +40,8 @@ function fixture(projectId: string, restricted: boolean): ProjectView {
     listingTier: restricted ? "Retired" : "Community",
     retirement: restricted ? "RestrictionRetired" : "NotRetired",
     stewardGithubId: "900",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
     repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   }
@@ -77,7 +80,9 @@ function ports(env: Env) {
       byRepository: () => succeed(undefined),
       byPath: () => succeed(undefined),
       active: () => succeed([...projects.values()]),
+      pausedProjects: () => succeed([...projects.values()].filter((project) => project.rowStatus === "Paused")),
       fence: () => succeed(sql`1`),
+      appendVaultRegistration: () => fail(new VaultRegistrationRefused({ code: "vault_setup_unavailable" })),
     } satisfies Registry.Shape),
     Layer.succeed(Authority, {
       repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
@@ -135,5 +140,5 @@ export default worker({
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
     Layer.provide(ports(env), d1(env.SLOP_DB)),
   ),
-  routes: Layer.mergeAll(intakeRoutes, testRoutes),
+  routes: Layer.mergeAll(intakeRoutes, submissionReadRoutes, testRoutes),
 })

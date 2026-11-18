@@ -4,7 +4,7 @@ import type { EvidenceRunCardProps } from "./EvidenceRunCard.tsx";
 import { evidenceRun } from "./fixtures.ts";
 
 export const meta: ComponentMeta<EvidenceRunCardProps> = {
-  args: { run: evidenceRun, policyVersion: "slop-scanner-evidence-2026-10-28", selected: null, onSelect: () => undefined, item: (object) => <p>Inspecting {object.label}</p> },
+  args: { run: evidenceRun, retentionBoundary: "Evidence is retained only while its case needs it.", policyVersion: "slop-scanner-evidence-2026-10-28", selected: null, onSelect: () => undefined, item: (object) => <p>Inspecting {object.label}</p> },
   examples: {
     Selected: { selected: "4".repeat(64) },
     Empty: { run: { ...evidenceRun, objects: [] } },
@@ -12,8 +12,8 @@ export const meta: ComponentMeta<EvidenceRunCardProps> = {
   play: {
     // spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
     Default: async () => {
-      await userEvent.click(screen.getByText("Run details and retention"));
-      await expect(screen.getByText("Case open. Evidence is retained until 90 days after closure.")).toBeTruthy();
+      await userEvent.click(screen.getByText("Details"));
+      await expect(screen.getByTitle("Retained until 90 days after closure")).toBeTruthy();
       await expect(screen.getByText("expired")).toBeTruthy();
     },
     // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"

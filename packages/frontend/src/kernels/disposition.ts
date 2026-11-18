@@ -18,12 +18,11 @@ export interface AllocationWallet {
 
 export interface AllocationDisplay {
   readonly presentation: StatusProps["presentation"];
-  readonly title?: string;
 }
 
 export const allocationDisplays = Object.freeze({
   Sent: { presentation: { tone: "Positive", icon: "Check", label: "Sent" } },
-  Scheduled: { presentation: { tone: "Neutral", icon: "Clock", label: "Scheduled" }, title: "Scheduled for the next transfer batch" },
+  Scheduled: { presentation: { tone: "Neutral", icon: "Clock", label: "Scheduled" } },
   AwaitingWallet: { presentation: { tone: "Caution", icon: "Wallet", label: "Awaiting wallet" } },
   Unclaimed: { presentation: { tone: "Neutral", icon: "Alert", label: "Unclaimed" } },
 } as const satisfies Record<AllocationPhase, AllocationDisplay>);

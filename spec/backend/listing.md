@@ -58,17 +58,22 @@ pure def lawPauseKeepsListing(project: P::Project, security: E::Enforcement, clo
 
 Ordinary and bounty projects follow the same predicates. Placement changes do
 not change funding, rewards, clearance or recorded obligations. The tier and
-these registry reads stay independent of funding. Separately, from the
-operator decision of 16 November 2026 (PRD section 10), the home page,
-/sponsors and agent discovery leave out an active monthly pool that is not
-funded this month, while a failed funding read lists every project; that
-month listing is `listedThisMonth` of the
+these registry reads stay independent of funding. The home page lists every
+open Featured and Community project in its tier regardless of funding (owner
+decision, 17 November 2026, Slop development `47f9b35c1`). Only /sponsors and
+agent discovery leave out an active monthly pool that is not vault-backed
+this month, while a failed funding read lists every project; that month
+listing is `listedThisMonth` of the
 [monthly listing](../frontend/poolListing.md), applied on top of these
-predicates, and never moves a project between tiers.
+predicates, and never moves a project between tiers. An honor-system promise
+changes no listing.
 
 ```quint
 pure def lawFundingDoesNotChoosePlacement(project: P::Project, security: E::Enforcement, closure: R::Closure, tier: P::Tier): bool =
   inTier(project, security, closure, tier) == inTier({ ...project, funded: not(project.funded) }, security, closure, tier)
+pure def lawHonorPromiseChangesNoListing(project: P::Project, security: E::Enforcement, closure: R::Closure, tier: P::Tier): bool =
+  inTier(project, security, closure, tier) == inTier({ ...project, honorSystem: not(project.honorSystem) }, security, closure, tier) and
+  publicRead(project, security, closure) == publicRead({ ...project, honorSystem: not(project.honorSystem) }, security, closure)
 pure def lawPlacementLeavesFundingAndClearance(project: P::Project, by: int, tier: P::Tier): bool =
   P::canPlace(project, by, tier) implies
     (P::place(project, by, tier).funded == project.funded and P::place(project, by, tier).status == project.status and
@@ -79,7 +84,8 @@ pure def lawReinstatementNeverRestoresFeatured(project: P::Project): bool =
 pure val listedProject: P::Project = { ...P::initial, revision: 1, creator: 1, steward: 1, branch: 1, license: P::license1,
   history: List({ number: 1, kind: P::Created, status: P::Paused, tier: P::Community, by: 1 }) }
 pure val projectValues = Set(P::initial, listedProject, { ...listedProject, tier: P::Featured },
-  { ...listedProject, tier: P::Retired, retirement: P::RestrictionRetired }, { ...listedProject, funded: true })
+  { ...listedProject, tier: P::Retired, retirement: P::RestrictionRetired }, { ...listedProject, funded: true },
+  { ...listedProject, honorSystem: true })
 pure val securityValues = Set(E::initial, { ...E::initial, restriction: E::FlagQuarantine, epoch: 1 },
   { ...E::initial, restriction: E::ModeratorBan, epoch: 1 })
 pure val closureValues = Set({ project: 1, source: 0 }, { project: 1, source: 2 }, { project: 1, source: 1 }, { project: 2, source: 0 })

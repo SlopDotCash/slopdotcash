@@ -26,15 +26,15 @@ export const meta: ComponentMeta<ProfilePaymentsProps> = {
     },
     // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
     NoIdentity: async () => {
-      await expect([screen.getByText("Payment identity unavailable."), screen.getByText("Unavailable")]).toEqual([expect.anything(), expect.anything()]);
+      await expect([screen.getByRole("img", { name: "Unavailable" }), screen.queryByRole("button")]).toEqual([expect.anything(), null]);
     },
     // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
     DirectFailed: async () => {
-      await expect([screen.getByRole("button", { name: "Retry payment records" }), screen.getByText("Unavailable")]).toEqual([expect.anything(), expect.anything()]);
+      await expect([screen.getByRole("button", { name: "Retry payment records" }), screen.getByRole("img", { name: "Unavailable" })]).toEqual([expect.anything(), expect.anything()]);
     },
     // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
     Nothing: async () => {
-      await expect(screen.getByText("No awards or payments recorded.")).toBeTruthy();
+      await expect(screen.queryAllByRole("listitem")).toHaveLength(0);
     },
   },
 };

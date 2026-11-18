@@ -1,4 +1,4 @@
-// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account"
+// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"
 import { ExperimentalNodeHttpServer } from "vibelang-runtime/experimental/platform-node"
 import { CallerLive } from "@repo/backend/caller"
 import { localDevelopmentOrigin } from "@repo/platform/config"
@@ -9,11 +9,11 @@ import { type MailSink, type SentMail, statements } from "@repo/platform/testing
 import { type Bridge, bridged, identityBridge } from "./identity.vibe"
 import { captureMail, mailOwners, mailPage, ownerOf } from "./mail.vibe"
 import { dataDirectory, privateDirectory } from "./paths.vibe"
-import { type AssertionStore, type Deployable, forward, startLocal, stopLocal } from "./workers.ts"
+import { type AssertionStore, type Deployable, type LocalWorkers, forward, startLocal, stopLocal } from "./workers.ts"
 
 export const deployables: readonly [Deployable, ...Deployable[]] = [
   { name: "site", config: "apps/app/wrangler/site.staging.jsonc", script: "packages/frontend/dist/_worker.js", assets: "packages/frontend/dist/site" },
-  { name: "notify", config: "apps/operations/wrangler/notify.staging.jsonc", script: "apps/operations/dist/notify.js" },
+  { name: "notify", config: "apps/operations/wrangler/notify.staging.jsonc", script: "apps/app/dist/notify.js" },
   { name: "identity", config: "apps/backend/wrangler/identity.staging.jsonc", script: "apps/backend/dist/identity.js" },
 ]
 
@@ -106,7 +106,7 @@ export effect function localVars(root: string, directory: string, origin: string
   const text = fs.readFileString((try Path.Path).join(root, ".dev.vars")) catch () => ""
   const merged: Record<string, string> = { ...(try keptSecrets(directory)), ...parsedVars(text) }
   for (const name of Object.keys(merged)) merged[name] = (try setting(name)) ?? merged[name] ?? ""
-  return { ...merged, SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: origin }
+  return { ...merged, SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: origin, NOTIFY_GENERAL_EMAIL_ENABLED: "true" }
 }
 
 effect function built(root: string) {
@@ -194,6 +194,27 @@ export effect function answer(local: Local) {
   return HttpServerResponse.text("Not found", { status: 404 })
 }
 
+const dispatchFailed = "Local mail dispatch failed; queued notices remain retryable."
+
+interface ScheduledWorker {
+  scheduled(): Promise<{ readonly outcome: string }>
+}
+
+effect function dispatchedOnce(workers: LocalWorkers) {
+  const notify = try tryPromise(async () => (await workers.mf.getWorker("notify")) as unknown as ScheduledWorker)
+  const result = try tryPromise(() => notify.scheduled())
+  return result.outcome === "ok"
+}
+
+effect function mailTick(workers: LocalWorkers) {
+  const dispatched = dispatchedOnce(workers) catch () => false
+  if (!dispatched) try Console.error(dispatchFailed)
+}
+
+export effect function mailDispatch(workers: LocalWorkers) {
+  try Effect.forkScoped(Effect.repeat(mailTick(workers), Schedule.spaced("5 seconds")))
+}
+
 export effect function serve() {
   const settings = try serveSettings()
   const path = try Path.Path
@@ -214,6 +235,7 @@ export effect function serve() {
     provide Layer.provideMerge(CallerLive, d1(workers.database)) {
       const applied = try migrated(path.join(settings.root, "migrations"))
       desk.services = try Effect.context<MailServices>()
+      try mailDispatch(workers)
       const handler = Effect.provide(answer(local), try Effect.context<D1 | Caller | FileSystem.FileSystem | Path.Path | HttpClient.HttpClient | Experimental.Crypto.Crypto>())
       try Console.log(`local serve ready on http://127.0.0.1:${settings.port}\n  serves ${settings.origin}\n  sign-in: Slop production identity handoff\n  migrations applied: ${applied.length}\n  data: ${directory}`)
       try Layer.launch(Layer.provide(HttpRouter.serve(HttpRouter.add("*", "*", handler), { disableListenLog: true, disableLogger: true }), ExperimentalNodeHttpServer.layer({ port: settings.port, host: "127.0.0.1" })))

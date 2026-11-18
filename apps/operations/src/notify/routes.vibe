@@ -1,14 +1,16 @@
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
 import { handleRaw, json, jsonBody } from "@repo/platform/http"
-import { type AnyRoute, route } from "@repo/platform/route"
+import { type AnyRoute, type Method, route } from "@repo/platform/route"
 import { EmailEnrollment } from "@repo/ports/backend"
 import {
   notifyPostV1ActivityNotificationsDispatch,
   notifyPostV1ActivityNotificationsEligibility,
   notifyPostV1ActivityNotificationsReconcile,
+  notifyPostV1EmailCapabilities,
   notifyPostV1EmailVerification,
   notifyPostV1SecurityNotificationsDispatch,
   notifyPostV1SecurityNotificationsReconcile,
+  notifyPostV1SlopbotFailure,
   notifyPostV1SlopbotSpend,
 } from "../client/refusals.vibe"
 import { notifyInternalHost, slopbotFailureNoticePath, slopbotSpendNoticePath } from "../notifications/contracts.schema.vibe"
@@ -19,31 +21,32 @@ import { reconcile, reconcileRequest } from "./reconcile.vibe"
 import { dispatch } from "./send.vibe"
 import { sendVerification } from "./verification.vibe"
 
-function internal(path: `/${string}`, limitKib: number) {
-  return route({ method: "POST", path, access: "public", limitKib, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
+const notifyInternalOrigin = `https://${notifyInternalHost}`
+
+const otherMethods: ReadonlyArray<Method> = ["GET", "PUT", "DELETE"]
+
+function descriptor(method: Method, path: `/${string}`, limitKib: number) {
+  return route({ method, path, access: "public", limitKib, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
 }
 
-const securityDispatchRoute = internal("/v1/security-notifications/dispatch", 8)
-const securityReconcileRoute = internal("/v1/security-notifications/reconcile", 8)
-const activityEligibilityRoute = internal("/v1/activity-notifications/eligibility", 8)
-const activityDispatchRoute = internal("/v1/activity-notifications/dispatch", 8)
-const activityReconcileRoute = internal("/v1/activity-notifications/reconcile", 8)
-const emailCapabilitiesRoute = internal("/v1/email/capabilities", 2)
-const emailVerificationRoute = internal("/v1/email/verification", 2)
-const slopbotSpendRoute = internal(slopbotSpendNoticePath, 8)
-const slopbotFailureRoute = internal(slopbotFailureNoticePath, 8)
+interface Internal {
+  readonly path: `/${string}`
+  readonly limitKib: number
+}
 
-export const notifyApi: ReadonlyArray<AnyRoute> = [
-  securityDispatchRoute,
-  securityReconcileRoute,
-  activityEligibilityRoute,
-  activityDispatchRoute,
-  activityReconcileRoute,
-  emailCapabilitiesRoute,
-  emailVerificationRoute,
-  slopbotSpendRoute,
-  slopbotFailureRoute,
-]
+const securityDispatchPath: Internal = { path: "/v1/security-notifications/dispatch", limitKib: 8 }
+const securityReconcilePath: Internal = { path: "/v1/security-notifications/reconcile", limitKib: 8 }
+const activityEligibilityPath: Internal = { path: "/v1/activity-notifications/eligibility", limitKib: 8 }
+const activityDispatchPath: Internal = { path: "/v1/activity-notifications/dispatch", limitKib: 8 }
+const activityReconcilePath: Internal = { path: "/v1/activity-notifications/reconcile", limitKib: 8 }
+const emailCapabilitiesPath: Internal = { path: "/v1/email/capabilities", limitKib: 2 }
+const emailVerificationPath: Internal = { path: "/v1/email/verification", limitKib: 2 }
+const slopbotSpendPath: Internal = { path: slopbotSpendNoticePath, limitKib: 8 }
+const slopbotFailurePath: Internal = { path: slopbotFailureNoticePath, limitKib: 8 }
+
+const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, slopbotSpendPath, slopbotFailurePath]
+
+export const notifyApi: ReadonlyArray<AnyRoute> = internals.flatMap((internal) => [descriptor("POST", internal.path, internal.limitKib), ...otherMethods.map((method) => descriptor(method, internal.path, 1))])
 
 interface Row {
   readonly status: number
@@ -67,11 +70,15 @@ const verification = notifyPostV1EmailVerification
 
 effect function internalRequest() {
   const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
-  return url.host === notifyInternalHost && url.search === ""
+  return url.origin === notifyInternalOrigin && url.search === ""
+}
+
+function notFound() {
+  return json({ error: notifyPostV1SlopbotSpend.notFoundNoStore.error }, notifyPostV1SlopbotSpend.notFoundNoStore.status)
 }
 
 effect function guarded<E, R>(name: string, failure: Row, program: HttpServerResponse.HttpServerResponse!E!R) {
-  if (!(try internalRequest())) return json({ error: notifyPostV1SlopbotSpend.notFoundNoStore.error }, notifyPostV1SlopbotSpend.notFoundNoStore.status)
+  if (!(try internalRequest())) return notFound()
   return program catch effect (error) => {
     try Effect.logError("notify_route_failed", { route: name, kind: typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown" })
     return answer(failure)
@@ -139,22 +146,42 @@ effect function activityPilot() {
   return (try NotifySettings).activity
 }
 
+interface NotAllowed {
+  readonly status: number
+  readonly error: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+function refusedMethod(refusal: Row | NotAllowed) {
+  return "error" in refusal ? json({ error: refusal.error }, refusal.status, refusal.headers) : answer(refusal)
+}
+
+effect function methodRefused(refusal: Row | NotAllowed) {
+  if (!(try internalRequest())) return notFound()
+  return refusedMethod(refusal)
+}
+
+function served<E, R>(internal: Internal, failure: Row, notAllowed: Row | NotAllowed, program: () => HttpServerResponse.HttpServerResponse!E!R) {
+  const refused = otherMethods.map((method) => handleRaw(descriptor(method, internal.path, 1), () => methodRefused(notAllowed)))
+  return Layer.mergeAll(handleRaw(descriptor("POST", internal.path, internal.limitKib), () => guarded(internal.path, failure, program())), ...refused)
+}
+
 export const notifyRoutes = Layer.mergeAll(
-  handleRaw(securityDispatchRoute, () => guarded("/v1/security-notifications/dispatch", security.status500PrivateNoStore, effect {
+  served(securityDispatchPath, security.status500PrivateNoStore, notifyPostV1SecurityNotificationsDispatch.otherMethods.status405PrivateNoStore, () => effect {
     return try dispatched("security", try securityPilot(), security.status503PrivateNoStore, security.status400PrivateNoStore, { status: 204, headers: bare })
-  })),
-  handleRaw(securityReconcileRoute, () => guarded("/v1/security-notifications/reconcile", security.status500PrivateNoStore, effect {
+  }),
+  served(securityReconcilePath, security.status500PrivateNoStore, notifyPostV1SecurityNotificationsReconcile.otherMethods.status405PrivateNoStore, () => effect {
     return try reconciled("security", try securityPilot(), security.status503PrivateNoStore, security.status400PrivateNoStore, security.status409PrivateNoStore, { status: 204, headers: bare })
-  })),
-  handleRaw(activityEligibilityRoute, () => guarded("/v1/activity-notifications/eligibility", activity.status500, eligibility())),
-  handleRaw(activityDispatchRoute, () => guarded("/v1/activity-notifications/dispatch", activity.status500, effect {
+  }),
+  served(activityEligibilityPath, activity.status500, notifyPostV1ActivityNotificationsEligibility.otherMethods.status405, () => eligibility()),
+  served(activityDispatchPath, activity.status500, notifyPostV1ActivityNotificationsDispatch.otherMethods.status405, () => effect {
     return try dispatched("activity", try activityPilot(), activity.status503, activity.status400, { status: 204, headers: plain })
-  })),
-  handleRaw(activityReconcileRoute, () => guarded("/v1/activity-notifications/reconcile", activity.status500, effect {
+  }),
+  served(activityReconcilePath, activity.status500, notifyPostV1ActivityNotificationsReconcile.otherMethods.status405, () => effect {
     return try reconciled("activity", try activityPilot(), activity.status503, activity.status400, activity.status409, { status: 204, headers: plain })
-  })),
-  handleRaw(emailCapabilitiesRoute, () => guarded("/v1/email/capabilities", verification.status500, capabilities())),
-  handleRaw(emailVerificationRoute, () => guarded("/v1/email/verification", verification.status500, verified())),
-  handleRaw(slopbotSpendRoute, () => guarded(slopbotSpendNoticePath, notifyPostV1SlopbotSpend.serviceMisconfigured, adminNotice("spend"))),
-  handleRaw(slopbotFailureRoute, () => guarded(slopbotFailureNoticePath, notifyPostV1SlopbotSpend.serviceMisconfigured, adminNotice("failure"))),
+  }),
+  served(emailCapabilitiesPath, verification.status500, notifyPostV1EmailCapabilities.otherMethods.status405, () => capabilities()),
+  served(emailVerificationPath, verification.status500, verification.otherMethods.status405, () => verified()),
+  served(slopbotSpendPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("spend")),
+  served(slopbotFailurePath, notifyPostV1SlopbotFailure.serviceMisconfigured, notifyPostV1SlopbotFailure.otherMethods.methodNotAllowedNoStore, () => adminNotice("failure")),
 )

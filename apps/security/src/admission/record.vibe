@@ -4,12 +4,12 @@ import { sha256Hex } from "@repo/platform/crypto"
 import { Registry } from "@repo/ports/backend"
 import type { Confirmation, Outcome } from "../../gen/security__admission.ts"
 import { validOutcome } from "../../gen/security__admission.effect.vibe"
-import type { Enforcement, PinRead } from "../../gen/security__enforcement.ts"
-import { canReinstateFlagPause, identityOf, latestOf, provenance } from "../../gen/security__enforcement.effect.vibe"
+import type { Enforcement } from "../../gen/security__enforcement.ts"
+import { canReinstateFlagPause, latestOf, provenance } from "../../gen/security__enforcement.effect.vibe"
 import { withDecidingEvidence } from "../enforcement/retained.vibe"
 import { loadEnforcement } from "../enforcement/store.vibe"
 import { compose, manifestText, policyCheck, vettingService } from "./compose.vibe"
-import { pinOrUndefined } from "./livePin.vibe"
+import { pinReads } from "./pins.vibe"
 import type { RecordedResult } from "./result.ts"
 import { type Assessment, projectAssessments, resultWrites } from "./store.vibe"
 
@@ -75,22 +75,8 @@ export effect function reinstateFromScan(projectId: string, scan: Assessment) {
   if (loaded.state.restriction !== "FlagQuarantine") return false
   const view = try (try Registry).project(projectId)
   if (view === undefined) return false
-  const loadedState = loaded.state
-  const assessments = try projectAssessments(projectId)
-  const pins: PinRead[] = []
-  for (const repository of loadedState.repositories) {
-    const listed = view.repositories.find((entry) => entry.id === String(repository))
-    const pin = listed === undefined ? undefined : try pinOrUndefined(view, listed.fullName)
-    if (pin === undefined) {
-      pins.push({ repository, assessment: latestOf(loadedState, repository).id, pin: "PinUnavailable" })
-      continue
-    }
-    for (const recorded of loadedState.recorded.filter((each) => each.repository === repository && each.identity === identityOf(loadedState, repository))) {
-      const row = assessments.find((each) => each.row === recorded.id)
-      pins.push({ repository, assessment: recorded.id, pin: row !== undefined && row.commitSha === pin.commitSha && row.templateSha256 === pin.templateSha256 ? "PinMatches" : "PinChanged" })
-    }
-  }
-  const observed = try withDecidingEvidence(loadedState, pins)
+  const pins = try pinReads(loaded.state, view, try projectAssessments(projectId))
+  const observed = try withDecidingEvidence(loaded.state, pins)
   if (!canReinstateFlagPause(observed, vettingService, pins)) return false
   if (!provenance(observed, pins).includes(scan.row)) return false
   const issuer = { keySha256: scan.signingKeySha256, assessmentId: scan.id, policyVersion: scan.policyVersion, rule: reinstatementRule }

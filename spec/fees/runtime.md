@@ -61,11 +61,15 @@ pure def setReleaseVariable(r: Runtime, variable: bool, by: Sender): Runtime = {
 
 ### The preflight refuses an incomplete live configuration
 
-Native ceilings per transaction and per UTC day are the PRD table in gwei
-and lamports: Base 100,000 and 1,000,000 (the transaction ceiling includes
-the 0.00005 ETH data and operator reserve), Ethereum 1,000,000 and
-10,000,000, Robinhood Chain 200,000 and 2,000,000, Solana 5,000,000 and
-20,000,000 lamports including account creation and priority fees. A
+Native ceilings per transaction and per UTC day are the PRD table in
+megawei (10^6 wei, rounded up by the adapter) and lamports: Base 100,000,000
+and 1,000,000,000 (the transaction ceiling includes the 0.00005 ETH data and
+operator reserve), Ethereum 1,000,000,000 and 10,000,000,000, Robinhood
+Chain 200,000,000 and 2,000,000,000, Solana 5,000,000 and 20,000,000
+lamports including account creation and priority fees. The Worker
+configures them in exact wei (`FEE_CONVERTER_NATIVE_BUDGETS`); each is a
+whole number of megawei, and megawei keep every daily ceiling a safe
+integer. A
 converting network is any network with a verified USDC target: Base,
 Ethereum and Solana. Live conversion needs every enabled network's key, and
 native limits for every converting network. A buyback that is not off needs
@@ -78,9 +82,9 @@ signing key.
 ```quint
 pure def converts(network: Network): bool = network != Robinhood
 pure def transactionCeilingOf(network: Network): int =
-  if (network == Base) 100000 else if (network == Ethereum) 1000000 else if (network == Robinhood) 200000 else 5000000
+  if (network == Base) 100000000 else if (network == Ethereum) 1000000000 else if (network == Robinhood) 200000000 else 5000000
 pure def dailyCeilingOf(network: Network): int =
-  if (network == Base) 1000000 else if (network == Ethereum) 10000000 else if (network == Robinhood) 2000000 else 20000000
+  if (network == Base) 1000000000 else if (network == Ethereum) 10000000000 else if (network == Robinhood) 2000000000 else 20000000
 pure def listed(networks: List[Network], network: Network): bool = networks.includes(network)
 pure def preflightPasses(environment: Environment, config: WorkerConfig): bool =
   config.source > 0 and config.evmWallet > 0 and config.solanaWallet > 0 and config.evmWallet != config.solanaWallet

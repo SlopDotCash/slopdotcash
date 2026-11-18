@@ -1,6 +1,6 @@
-// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
+// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import { D1, type Statement, first, list, rows, sql } from "@repo/platform/d1"
-import { type Network, ProjectAudience, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
+import { type Network, ProjectAudience, type ProjectListing, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
 import { EnforcementRows } from "@repo/ports/security"
 import { currentPath } from "../authority/live.vibe"
 import { closureOf, listedById } from "../projectRegistry/claims.vibe"
@@ -8,7 +8,7 @@ import { listedStablecoins, retirementOf, tierOf } from "./store/codec.vibe"
 import { activeBans, unbanned, unbannedFence } from "./store/facts.vibe"
 import { type Manifest, ProjectRow, manifestOf, revisionRead, revisionsOf } from "./store/rows.vibe"
 
-schema ListedBy { github_id: string | null }
+schema ListingFacts { steward_type: string | null; from_application: number; applicant_github_id: string | null; first_actor_github_id: string | null }
 schema KeyHolder { project_id: string }
 schema ProjectId { id: string }
 schema ManifestRow { id: string; status: "active" | "paused"; revision: number; manifest: string; manifest_sha256: string; updated_at: string }
@@ -41,6 +41,13 @@ function repositoriesOf(manifest: Manifest) {
   }))
 }
 
+function listingOf(facts: ListingFacts | undefined): ProjectListing {
+  if (facts === undefined) return { fromApplication: false }
+  const applicant = facts.applicant_github_id === null ? {} : { applicantGithubId: facts.applicant_github_id }
+  const firstActor = facts.first_actor_github_id === null ? {} : { firstActorGithubId: facts.first_actor_github_id }
+  return { fromApplication: facts.from_application === 1, ...applicant, ...firstActor }
+}
+
 effect function projectView(projectId: string) {
   const row = try first(ProjectRow, sql`SELECT id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login FROM projects WHERE id = ${projectId}`)
   if (row === undefined) return undefined
@@ -49,7 +56,7 @@ effect function projectView(projectId: string) {
   const revisions = try revisionsOf(projectId, revisionRows?.rows ?? [])
   const listing = tierOf(manifest.listingTier)
   const retirement = retirementOf(revisions)
-  const listedBy = try first(ListedBy, sql`SELECT COALESCE(a.applicant_github_id, r.actor_github_id) AS github_id FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 AND p.source_application_id IS NULL WHERE p.id = ${projectId}`)
+  const facts = try first(ListingFacts, sql`SELECT json_extract(p.manifest, '$.steward.github.type') AS steward_type, p.source_application_id IS NOT NULL AS from_application, a.applicant_github_id, r.actor_github_id AS first_actor_github_id FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 WHERE p.id = ${projectId}`)
   return {
     projectId,
     revision: row.revision,
@@ -59,7 +66,8 @@ effect function projectView(projectId: string) {
     listingTier: listing,
     retirement: listing === "Retired" && retirement === "NotRetired" ? "RetirementProofUnavailable" : retirement,
     stewardGithubId: manifest.steward.github.actorId,
-    listedByGithubId: listedBy?.github_id ?? undefined,
+    stewardAccount: facts?.steward_type === "Organization" ? "OrganizationSteward" : "UserSteward",
+    listing: listingOf(facts),
     repositories: repositoriesOf(manifest),
     network: networkOf(manifest),
     asset: assetAddressOf(manifest),

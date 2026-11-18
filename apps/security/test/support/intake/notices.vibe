@@ -11,4 +11,5 @@ export const receiptNotices = Layer.succeed(Notices, {
       WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
   },
   fanout: () => succeed([]),
+  payoutRecipient: (project) => succeed(project.stewardGithubId),
 } satisfies Notices.Shape)

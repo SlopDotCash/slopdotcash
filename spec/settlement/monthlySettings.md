@@ -15,8 +15,17 @@ each new `{automatic, sequence}` pair.
 
 Only the project owner, steward or a current repository administrator may
 change it, never write or maintain permission alone and never a banned
-account. Each change carries the sequence it read, so a concurrent change
-refuses. Turning the default off after a month's cutoff reopens that month's
+account. Turning the default on carries the sequence it read, so a
+concurrent change refuses it; turning it off is accepted whatever sequence it
+read, so even a later saved change never keeps an opt-out from being stored
+(development `setAutomatic`: an enable's sequence is checked, an opt-out's
+is not). Turning the default on is also refused, storing nothing, while one
+of the project's unfrozen months has a cut whose 24-hour notice ends after
+that month's cutoff and has not yet ended (`cut_notice_window`, operator
+decision of 15 November 2026): the shell reads the latest cut of each
+unfrozen month and passes `lateCutNotice` when
+[monthly allocations](./monthly.md) `lateCutNoticeAt` holds for any of them.
+Turning the default off after a month's cutoff reopens that month's
 adjustments; turning it on again closes them.
 
 ```quint
@@ -28,9 +37,9 @@ pure val initial: Settings = { project: "eliza", revision: 1, automatic: true, s
 pure def mayChange(s: Settings, authority: SettingsAuthority): bool =
   (authority.role == SettingsOwner or authority.role == SettingsSteward or authority.role == SettingsAdmin)
     and not(authority.banned) and authority.actor > 0 and authority.revision == s.revision
-pure def canSetAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority): bool =
-  mayChange(s, authority) and expectedSequence == s.sequence
-pure def setAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority): Settings =
+pure def canSetAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority, lateCutNotice: bool): bool =
+  mayChange(s, authority) and (not(automatic) or expectedSequence == s.sequence) and not(automatic and lateCutNotice)
+pure def setAutomatic(s: Settings, automatic: bool, expectedSequence: int, authority: SettingsAuthority, lateCutNotice: bool): Settings =
   { ...s, automatic: automatic, sequence: s.sequence + 1,
     changes: s.changes.append({ sequence: s.sequence + 1, automatic: automatic, actor: authority.actor }) }
 pure def canObserveRevision(s: Settings, revision: int): bool = revision > s.revision

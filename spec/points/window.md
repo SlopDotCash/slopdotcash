@@ -10,10 +10,11 @@ an empty leaderboard. This machine follows `src/lib/leaderboard.ts`
 
 The GitHub read adapter supplies each event with its immutable ID, actor
 kind, times and the census item it belongs to. The [census](./census.md)
-supplies the source inventory: publication needs a census record in phase
-`Ready` or `Published` whose terminal page was read and whose item count
-equals GitHub's `totalCount`, and every recorded event must belong to an
-item of that inventory. Passing the census state of the same refresh is
+supplies the source inventory: one refresh collects the issue and pull
+request census of every repository, and publication needs every one of them
+in phase `ReadyForPublication`, its terminal page read and its item count
+equal to GitHub's `totalCount`, with no item in two of them; every recorded
+event must belong to an item of that inventory. Passing the census state of the same refresh is
 composition obligation C10. Accepted-work values come from [work units](./workUnits.md)
 and the [Points journal](./journal.md).
 
@@ -66,8 +67,9 @@ pure def alwaysIdsDistinct(w: Window): bool = w.records.every(r => r.id > 0 and 
 
 ### Publication needs a verified complete census; a failure keeps the previous window
 
-The census must be complete by its own rules, cover the window's first day
-and contain the source of every event already recorded. Without it the
+Every source census of the refresh must be complete by its own rules and
+cover the window's first day, no item may appear in two of them, and their
+union must contain the source of every event already recorded. Without it the
 window never publishes, even an empty one; an empty window publishes only
 when a complete census proves the inventory empty.
 
@@ -75,10 +77,16 @@ when a complete census proves the inventory empty.
 pure def censusVerified(c: C::Census): bool =
   c.phase == C::ReadyForPublication and C::alwaysCompleteWhenReady(c) and C::alwaysItemsDistinct(c) and
   c.totalCount >= 0
-pure def canCompleteCensus(w: Window, c: C::Census): bool =
-  w.phase == Building and w.censusTotal < 0 and censusVerified(c) and c.lowerDay <= w.from and
-  w.records.every(r => c.items.some(i => i.id == r.source))
-pure def completeCensus(w: Window, c: C::Census): Window = { ...w, inventory: c.items, censusTotal: c.totalCount }
+pure def censusItems(censuses: List[C::Census]): List[C::Item] = censuses.foldl(List(), (acc, c) => acc.concat(c.items))
+pure def censusesTotal(censuses: List[C::Census]): int = censuses.foldl(0, (acc, c) => acc + c.totalCount)
+pure def canCompleteCensus(w: Window, censuses: List[C::Census]): bool =
+  val items = censusItems(censuses)
+  w.phase == Building and w.censusTotal < 0 and censuses.length() > 0 and
+  censuses.every(c => censusVerified(c) and c.lowerDay <= w.from) and
+  items.every(i => items.select(o => o.id == i.id).length() == 1) and
+  w.records.every(r => items.some(i => i.id == r.source))
+pure def completeCensus(w: Window, censuses: List[C::Census]): Window =
+  { ...w, inventory: censusItems(censuses), censusTotal: censusesTotal(censuses) }
 pure def canPublish(w: Window): bool = w.phase == Building and w.censusTotal >= 0 and w.records.every(r => inInventory(w, r.source))
 pure def publish(w: Window): Window =
   { ...w, phase: Published, publishedFrom: w.from, publishedTo: w.to, publishedCount: countedRecords(w) }
@@ -112,6 +120,8 @@ pure val upperValues = Set(35, 70, 71)
 pure val censusItem: C::Item = { ...C::human, id: 1 }
 pure val readyCensus: C::Census = { ...C::initial, phase: C::ReadyForPublication, lowerDay: 0, cursorsSeen: List(0), expectedCursor: 0,
   totalCount: 1, terminalSeen: true, items: List(censusItem) }
-pure val cValues = Set(readyCensus, { ...readyCensus, phase: C::Collecting }, { ...readyCensus, totalCount: 2 },
-  { ...readyCensus, items: List(), totalCount: 0 })
+pure val pullCensus: C::Census = { ...readyCensus, items: List({ ...censusItem, id: 9 }) }
+pure val censusesValues = Set(List(readyCensus), List(readyCensus, pullCensus), List(readyCensus, readyCensus),
+  List({ ...readyCensus, phase: C::Collecting }), List({ ...readyCensus, totalCount: 2 }),
+  List({ ...readyCensus, items: List(), totalCount: 0 }))
 ```

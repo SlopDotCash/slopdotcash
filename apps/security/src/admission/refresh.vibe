@@ -2,12 +2,13 @@
 import { Registry, RegistryManifests } from "@repo/ports/backend"
 import { ScanRequests } from "@repo/ports/security"
 import type { Enforcement, RequestOrigin } from "../../gen/security__enforcement.ts"
-import { canRequestAssessment, clearanceState, latestOf } from "../../gen/security__enforcement.effect.vibe"
-import { withRetainedEvidence } from "../enforcement/retained.vibe"
+import { canRequestAssessment, clearanceState, latestOf, provenance } from "../../gen/security__enforcement.effect.vibe"
+import { withDecidingEvidence, withRetainedEvidence } from "../enforcement/retained.vibe"
 import { loadEnforcement } from "../enforcement/store.vibe"
 import { serviceAvailable, vettingService } from "./compose.vibe"
 import { idOf } from "../enforcement/replay.vibe"
 import { type Pin, pinOrUndefined } from "./livePin.vibe"
+import { pinReads } from "./pins.vibe"
 import { type Plan, type Requester, queueRepositories, requeueTemplate } from "./queue.vibe"
 import { reinstateFromScan } from "./record.vibe"
 import { type Assessment, nextAssessmentNumber, projectAssessments } from "./store.vibe"
@@ -103,9 +104,15 @@ export effect function refreshQueue() {
     let plans: Plan[] = []
     const retries: { readonly pending: Assessment; readonly pin: Pin }[] = []
     if (flagPaused) {
-      const latestClean = state.repositories.map((repository) => byRow(latestOf(state, repository).id)).filter((each) => each?.state === "clean").at(-1)
-      if (latestClean !== undefined && (try reinstateFromScan(projectId, latestClean))) {
-        reinstated.push(latestClean.id)
+      const pins = try pinReads(loaded.state, view, assessments)
+      if (pins.some((read) => read.pin === "PinUnavailable")) {
+        skipped.push({ projectId, reason: "pin_unavailable" })
+        continue
+      }
+      const deciding = provenance(try withDecidingEvidence(loaded.state, pins), pins)
+      const issuing = assessments.filter((each) => deciding.includes(each.row)).at(-1)
+      if (issuing !== undefined && (try reinstateFromScan(projectId, issuing))) {
+        reinstated.push(issuing.id)
         continue
       }
       plans = try plansFor(state, "FlagRecovery", freshScanReason, paths)

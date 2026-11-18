@@ -1,39 +1,43 @@
 // spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"
-import { Alert } from "@repo/ui";
-import { escalationLabels } from "./labels.ts";
-import { Fact, RetryButton, type RetryProps } from "./parts.tsx";
+import { Alert, Progress, Spinner, Status } from "@repo/ui";
+import { Bot } from "lucide-react";
+import { badge, escalationLabels } from "./labels.ts";
+import { RetryButton, type RetryProps } from "./parts.tsx";
 
 /** Slopbot's first triage of an open appeal: a draft for the moderator who decides; it never decides the appeal. */
 export function AppealTriage({ record, busy, error, onRetry }: RetryProps) {
   const triage = record.appealTriage ?? null;
+  const canRun = record.allowedActions.includes("triage-appeal");
+  if (triage === null && !canRun) return null;
   const headingId = `appeal-triage-${record.id}`;
+  const confidence = triage?.confidence == null ? null : Math.round(triage.confidence * 100);
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h4 id={headingId} className="font-semibold text-foreground">
-        Slopbot appeal triage
+      <h4 id={headingId} className="inline-flex items-center gap-2 font-semibold text-foreground">
+        <Bot aria-hidden className="size-4" /> Appeal draft
       </h4>
-      {triage === null ? (
-        <p className="text-muted-foreground">No appeal triage yet.</p>
-      ) : triage.state === "running" ? (
-        <p aria-live="polite" className="text-muted-foreground">
-          Slopbot is drafting a resolution…
-        </p>
+      {triage === null ? null : triage.state === "running" ? (
+        <Spinner size="sm" label="Slopbot is drafting a resolution…" />
       ) : triage.state === "complete" ? (
         <>
-          <dl className="flex flex-col gap-2">
-            <Fact term="Drafted resolution">{triage.proposedOutcome === "return" ? "Return the case for a new technical review" : "Keep the decision"}</Fact>
-            <Fact term="Confidence">{triage.confidence === null ? "—" : `${Math.round(triage.confidence * 100)}%`}</Fact>
-            <Fact term="Escalated to a moderator">{triage.escalationReasons.map((reason) => escalationLabels[reason] ?? reason).join("; ")}</Fact>
-          </dl>
+          <p className="flex flex-wrap items-center gap-2">
+            <Status title="Drafted resolution" presentation={badge(triage.proposedOutcome === "return" ? "Return" : "Uphold")} />
+            {confidence === null ? null : (
+              <>
+                <Progress aria-label="Confidence" title="Confidence" value={confidence} max={100} className="w-24" /> {confidence}%
+              </>
+            )}
+            <Status presentation={badge("Moderator decides")} />
+          </p>
+          {triage.escalationReasons.length === 0 ? null : <p>{triage.escalationReasons.map((reason) => escalationLabels[reason] ?? reason).join("; ")}</p>}
           <p>{triage.rationale}</p>
-          <p className="text-sm text-muted-foreground">Slopbot draft. The appeal text can try to influence it; a moderator decides.</p>
         </>
       ) : (
-        <p className="text-muted-foreground">
-          {triage.state === "unavailable" ? "Slopbot triage is unavailable. A moderator decides without a draft." : "The appeal triage failed. A moderator decides without a draft."}
+        <p>
+          <Status presentation={triage.state === "unavailable" ? badge("Unavailable") : badge("Failed", "Negative", "Alert")} />
         </p>
       )}
-      {record.allowedActions.includes("triage-appeal") ? <RetryButton busy={busy} label="Run the appeal triage again" onRetry={onRetry} /> : null}
+      {canRun ? <RetryButton busy={busy} label={busy ? "Starting…" : "Run the appeal triage again"} onRetry={onRetry} /> : null}
       {error ? <Alert variant="destructive">{error}</Alert> : null}
     </section>
   );

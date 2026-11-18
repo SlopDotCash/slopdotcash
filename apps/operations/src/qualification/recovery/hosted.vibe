@@ -1,4 +1,4 @@
-// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
+// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
 import { Cloudflare, ToolFailed } from "../../release/wrangler/cloudflare.vibe"
 import { ControlPlane, ControlRefused, type Method } from "./account.vibe"
 import { type Names, RecoveryRefused, bucketBindings, databaseBindings, protectedWorkflow, qualificationMigrations, qualificationSchema, queueBinding, runtimeVars } from "./plan.vibe"
@@ -395,6 +395,12 @@ export effect function hostedQualification(hosted: Hosted) {
     report.results.acknowledgedVerifyCommands = 2
     try command("corrupt")
     report.results.corrupt = try waitFor("corrupt")
+    try command("retention")
+    report.results.retention = try waitFor("retention")
+    try command("retention")
+    report.results.replayedRetention = try waitFor("retention")
+    if ((try count("SELECT count(*) n FROM qualification_deliveries WHERE action='retention'")) !== 2) throw refused("Repeated retention verification was not delivered")
+    report.results.acknowledgedRetentionCommands = 2
     success = true
   }
 

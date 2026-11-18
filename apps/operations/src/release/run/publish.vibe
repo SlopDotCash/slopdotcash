@@ -1,6 +1,7 @@
-// spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+// spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"
 import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
 import { type Environment, type ListedDeployment, type Service, canBeginPublication, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseRewrite, canSupersede, headAhead, serviceAt } from "../../../gen/operations__release.effect.vibe"
+import { type ReleaseWrite, mayWrite } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 import { observeLock } from "../../publicationLock/group.vibe"
 import { thisRun } from "../../publicationLock/lock.vibe"
 import { selectCoverage } from "../coverage/options.vibe"
@@ -44,6 +45,7 @@ const releaseVariables: ReadonlyArray<readonly [Service, string]> = [
 ]
 
 const inertFee: WorkerConfig = { source: 0, converterMode: "Off", buybackMode: "Off", networks: [], keys: [], nativeLimits: [], evmWallet: 1, solanaWallet: 2 }
+const releaseWrites: ReadonlyArray<ReleaseWrite> = ["EarlierWorker", "ServiceWorkers", "StaticSite"]
 const siteAttempts = 3
 const siteBackoffSeconds = 10
 
@@ -198,6 +200,9 @@ export effect function release(input: ReleaseInput) {
   }
   const run = try startRun(environment, facts.by)
   try run.send({ type: "configure", environment, ref: facts.ref })
+  if (!releaseWrites.every((write) => mayWrite(facts.mode, write))) {
+    throw new ReleaseStopped({ outcome: "Refused", message: "An RPC rotation run publishes no Worker or static site" })
+  }
   try run.lock.send({ type: "start", environment, kind: "CodeRelease" }, run.lockBy)
   try selectCoverage(run, facts)
   const verified = try verifyBundle(input.bundle)

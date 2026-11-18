@@ -26,11 +26,11 @@ export const meta: ComponentMeta<ContributorStandingsProps> = {
     },
     // spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"
     NoMatch: async () => {
-      await expect(screen.getByText("No contributors match this view.")).toBeTruthy();
+      await expect(screen.getByText("No results")).toBeTruthy();
     },
     // spec/frontend/requests.md, "Only the current request may publish its validated result"
     Failed: async () => {
-      await expect([screen.getByRole("button", { name: "Retry points" }), screen.queryByText("No contributors match this view.")]).toEqual([expect.anything(), null]);
+      await expect([screen.getByRole("button", { name: "Retry points" }), screen.queryByText("No results")]).toEqual([expect.anything(), null]);
     },
   },
 };

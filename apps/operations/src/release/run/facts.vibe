@@ -1,5 +1,6 @@
-// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"
+// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"
 import type { Actor, Environment, RefKind, RunRef } from "../../../gen/operations__release.effect.vibe"
+import type { RunMode } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 
 export error RunFactsInvalid { message: string }
 
@@ -27,6 +28,7 @@ export interface PullFacts {
 
 export interface RunFacts {
   readonly ref: RunRef
+  readonly mode: RunMode
   readonly by: Actor
   readonly sha: string
   readonly runId: string
@@ -37,6 +39,7 @@ export interface RunFacts {
 }
 
 const deployWorkflow = ".github/workflows/deploy.yml"
+const rotationInputs = ["rotate_robinhood_rpc_from", "rotate_solana_rpc_from"]
 const revision = /^[0-9a-f]{40}$/u
 
 export function environmentOf(name: string): Environment | undefined {
@@ -52,6 +55,13 @@ effect function variable(name: string) {
 function chosen(inputs: Readonly<Record<string, string | number | boolean | null>> | null | undefined, name: string) {
   const value = inputs?.[name]
   return value === true || value === "true"
+}
+
+function modeOf(inputs: Readonly<Record<string, string | number | boolean | null>> | null | undefined): RunMode {
+  return rotationInputs.some((name) => {
+    const value = inputs?.[name]
+    return typeof value === "string" && value !== ""
+  }) ? "RpcRotationRun" : "NormalRun"
 }
 
 function refKind(eventName: string, ref: string, actions: boolean, pull: PullRequest | undefined): RefKind | undefined {
@@ -107,6 +117,7 @@ export effect function runFacts() {
       repository,
       githubEnvironment: try variable("SLOP_GITHUB_ENVIRONMENT"),
     },
+    mode: modeOf(inputs),
     by: trusted ? "TrustedWorkflow" : "Contributor",
     sha,
     runId: try variable("GITHUB_RUN_ID"),

@@ -157,7 +157,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     })
   }))
 
-  it.effect('Back up, restore and verify disposable evidence in the qualification Worker (spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest")', () => scoped(effect {
+  it.effect('Back up, restore and verify disposable evidence in the qualification Worker (spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const outbound: string[] = []
     const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "recovery" }))
@@ -184,13 +184,22 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     }
     let deliveries = 0
 
-    effect function send(action: string) {
+    effect function failure(action: string) {
+      return (try evidence(first(ResultRow, sql`SELECT result FROM qualification_results WHERE phase = ${`failed-${action}`}`)))?.result
+    }
+
+    effect function attempt(action: string) {
       deliveries += 1
       const delivery = `${action}-${deliveries}`
+      const before = try failure(action)
       const outcome = try promise(() => queue(mf, "qualification", [{ qualification: localRun, action, delivery }]))
       const acknowledged = try evidence(first(CountRow, sql`SELECT count(*) AS n FROM qualification_deliveries WHERE id = ${`command:${delivery}`}`))
-      const failed = try evidence(first(ResultRow, sql`SELECT result FROM qualification_results WHERE phase = ${`failed-${action}`}`))
-      try same({ retried: outcome.retryMessages.length, acknowledged: acknowledged?.n, failed }, { retried: 0, acknowledged: 1, failed: undefined })
+      const after = try failure(action)
+      return { retried: outcome.retryMessages.length, acknowledged: acknowledged?.n, failed: after === before ? undefined : after }
+    }
+
+    effect function send(action: string) {
+      try same(try attempt(action), { retried: 0, acknowledged: 1, failed: undefined })
     }
 
     effect function resultText(phase: string) {
@@ -222,12 +231,21 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try send("verify")
     const proof = try result("verify")
     try send("verify")
+    const premature = try attempt("retention")
     try send("corrupt")
     const corruption = try result("corrupt")
     const verifyDeliveries = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'verify'`)
     const verifyResults = try count(sql`SELECT count(*) AS n FROM qualification_results WHERE phase = 'verify'`)
     const grant = try onDatabase(restored, first(GrantRow, sql`SELECT consumed_at FROM vetting_evidence_grants WHERE token_hash = ${"0".repeat(64)}`))
     const sourceAudit = try evidence(rows(Schema.Struct({ id: Schema.String }), sql`SELECT id FROM vetting_evidence_audit ORDER BY id`))
+
+    try send("retention")
+    const retained = try result("retention")
+    const retainedText = try resultText("retention")
+    try send("retention")
+    const replayedRetention = try resultText("retention")
+    const retentionDeliveries = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'retention'`)
+    const retentionResults = try count(sql`SELECT count(*) AS n FROM qualification_results WHERE phase = 'retention'`)
 
     try send("empty")
     const remaining: number[] = []
@@ -256,6 +274,33 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try same(seeded.objectSha256, try sha256Hex(new Uint8Array(largeSize).fill(7)))
     try same(corruption, { changedBytesRefused: true, missingPageRefused: true, sourceUnchanged: true })
     try same({ verifyDeliveries, verifyResults, consumedAt: grant?.consumed_at, sourceAudit: sourceAudit.map((row) => row.id) }, { verifyDeliveries: 2, verifyResults: 1, consumedAt: seeded.fixtureAt, sourceAudit: ["qualification-audit"] })
+    const cleanupPages = typeof retained === "object" && retained !== null && "cleanupPages" in retained ? Number(retained.cleanupPages) : 0
+    try Effect.try(() => assert.isTrue(cleanupPages >= 3 && cleanupPages < 20))
+    try same(premature, { retried: 0, acknowledged: 0, failed: JSON.stringify({ failed: true, category: "Intact recovery and corruption checks required" }) })
+    try same(retained, {
+      actualStorageCore: true,
+      actualScheduledCore: true,
+      controlledSequentialSubjobs: true,
+      fixtureOnlyRetentionEnabled: true,
+      fixtureCaseCount: 23,
+      agedDays: [89, 91],
+      incompleteSnapshotAndMissingCorruptRestoresRefused: true,
+      legacyPhysicalDeletionRefused: true,
+      cleanupPages,
+      deletedCompleteObjects: 0,
+      heldLegacyReferences: 21,
+      missingInventoryAudits: 0,
+      openRecentAndPermanentTraceRetained: true,
+      permanentAdmissionEvidenceRetained: true,
+      immutableHoldAudits: true,
+      holdReplayUnchanged: true,
+      restoredHeldSha256: try sha256Hex(new Uint8Array(largeSize).fill(13)),
+      restoredHeldBytes: largeSize,
+      scheduledOldAuditRemoved: true,
+      disabledAndProtectedAuditRetained: true,
+      elapsedRetentionObservation: false,
+    })
+    try same({ replayedRetention, retentionDeliveries, retentionResults }, { replayedRetention: retainedText, retentionDeliveries: 2, retentionResults: 1 })
     try same({ remaining, outbound }, { remaining: [0, 0, 0], outbound: [] })
   }))
 })

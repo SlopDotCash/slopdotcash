@@ -1,4 +1,4 @@
-// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
 import type { Statement } from "@repo/platform/d1"
 import type { ReadFailure } from "./backend.vibe"
 
@@ -34,4 +34,79 @@ export schema PointsDispute {
 
 export service DisputeAudience {
   dispute(appealKey: string): (PointsDispute | undefined)!ReadFailure
+}
+
+export schema ValueActor {
+  readonly id: string
+  readonly login: string
+  readonly avatarUrl: string
+  readonly url: string
+  readonly kind: string
+}
+
+export schema CensusCommit {
+  readonly oid: string
+  readonly author: ValueActor | null
+  readonly parentCount?: number
+  readonly additions?: number
+  readonly deletions?: number
+}
+
+export schema CensusOutcome {
+  readonly id: string
+  readonly url: string
+  readonly number: number
+  readonly headRefOid?: string
+  readonly updatedAt: string
+  readonly mergedAt: string | null
+  readonly closedAt?: string | null
+  readonly baseRefName?: string
+  readonly commits?: ReadonlyArray<CensusCommit> | null
+}
+
+export schema RetainedCommitCredit {
+  readonly pullRequestId: string
+  readonly commitSha: string
+  readonly actor: ValueActor
+  readonly originalPullRequestId: string
+  readonly originalPullRequestUrl: string
+  readonly originalCommitSha: string
+}
+
+export schema AttributionHold {
+  readonly sourceId: string
+  readonly limitations: ReadonlyArray<string>
+}
+
+export schema HeldWorkUnit {
+  readonly recordDigest: string
+  readonly sourceNodeIds: ReadonlyArray<string>
+  readonly unavailableNodeIds: ReadonlyArray<string>
+}
+
+export interface ValueCensus {
+  readonly value: ReadonlyArray<CensusOutcome>
+  readonly attribution: ReadonlyArray<CensusOutcome>
+}
+
+export interface SourceDecision {
+  readonly sourceId: string
+  readonly decision: unknown
+}
+
+export interface ValueInputsRead {
+  readonly valueDecisions: ReadonlyArray<SourceDecision>
+  readonly jointValueDecisions: ReadonlyArray<SourceDecision>
+  readonly valueActors: ReadonlyArray<ValueActor>
+  readonly retainedCommitCredits: ReadonlyArray<RetainedCommitCredit>
+  readonly attributionHolds: ReadonlyArray<AttributionHold>
+  readonly heldWorkUnits: ReadonlyArray<HeldWorkUnit>
+}
+
+export error ValueFeedUnavailable { message: string }
+
+export error ValueEvidenceRefused { message: string }
+
+export service ValueInputs {
+  load(census: ValueCensus): ValueInputsRead!(ValueFeedUnavailable | ValueEvidenceRefused)
 }

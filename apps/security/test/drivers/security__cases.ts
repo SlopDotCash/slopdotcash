@@ -93,6 +93,17 @@ function manifestOf(projectId: string, lines: ReadonlyArray<string>) {
   return JSON.stringify({ id: projectId, status: "active", ...(lines.length === 0 ? {} : { securityBounty: { scope } }) });
 }
 
+const storedRevisions = new Map<string, number>();
+
+function storedTerms(receipt: Receive["terms"]): Receive["terms"] {
+  if (receipt.revision <= 0) return receipt;
+  const lengths = receipt.paidTerms ? receipt.excludedFindings : [];
+  const variant = `${receipt.revision}:${receipt.publishedAt}:${lengths.join(",")}`;
+  const revision = storedRevisions.get(variant) ?? storedRevisions.size + 1;
+  storedRevisions.set(variant, revision);
+  return { ...receipt, revision };
+}
+
 async function seeded(receipt?: Receive["terms"]): Promise<string> {
   const projectId = projectOf();
   const at = new Date(epoch).toISOString();
@@ -101,7 +112,7 @@ async function seeded(receipt?: Receive["terms"]): Promise<string> {
   await db.batch([
     db.prepare("INSERT OR IGNORE INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Cases conformance',?)").bind(projectId, pointerRevision, pointer, "a".repeat(64), at),
     db.prepare("INSERT OR IGNORE INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',?,?,?,?,?)").bind(projectId, pointerRevision, pointer, "a".repeat(64), at, at),
-    ...(receipt === undefined || receipt.revision <= 0 || receipt.revision >= pointerRevision ? [] : [
+    ...(receipt === undefined || receipt.revision <= 0 ? [] : [
       db.prepare("INSERT OR IGNORE INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Cases conformance terms',?)").bind(projectId, receipt.revision, manifestOf(projectId, lines), "b".repeat(64), new Date(base() + receipt.publishedAt).toISOString()),
     ]),
   ]);
@@ -200,16 +211,17 @@ async function receive(caseKey: string, event: Receive): Promise<Outcome> {
   const submissionId = `ss_cases_g${generation}_${caseKey}`;
   const receivedAt = new Date(base() + Math.max(event.terms.receivedAt, 1)).toISOString();
   const digest = "b".repeat(64);
-  const projectId = await seeded(event.terms);
+  const stored = { ...event, terms: storedTerms(event.terms) };
+  const projectId = await seeded(stored.terms);
   const prepared = slopReceipt({
     caseId, submissionId, projectId, repository, reporter: { githubId: githubId(1), login: `member-${githubId(1)}` }, idempotencyKey: key(), marker: "d".repeat(32), receivedAt,
-    policyRevision: event.terms.revision, terms: frozenOf(event.terms), receiptTerms: event.terms,
+    policyRevision: stored.terms.revision, terms: frozenOf(stored.terms), receiptTerms: stored.terms,
     report: { key: `security-reports/${submissionId}/1-${digest}.json`, digest, bytes: 64 }, ownerGithubId: null, unbanned: sql`1`,
   });
   const fresh = event.source === "SlopReceived" && event.history === "NewReceipt";
   const result = fresh
     ? await outcome(Effect.flatMap(prepared, batched))
-    : await outcome(prepared).then((valid) => valid === "accepted" ? existing(caseId, projectId, event, receivedAt) : valid);
+    : await outcome(prepared).then((valid) => valid === "accepted" ? existing(caseId, projectId, stored, receivedAt) : valid);
   if (result === "accepted") cases.set(caseKey, caseId);
   return result;
 }
@@ -237,8 +249,8 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   if (caseId === undefined) return "refused";
   switch (event.type) {
     case "verifyLink": {
-      terms = event.terms;
-      await seeded(event.terms);
+      terms = storedTerms(event.terms);
+      await seeded(terms);
       clock.set(Math.max(clock.now(), base() + event.terms.receivedAt));
       return act(caseKey, caseId, by, "verify-link", { receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: true });
     }
@@ -323,6 +335,7 @@ export const driver: Driver<ReturnType<typeof shape>> & AsyncDisposable = {
     generation += 1;
     snapshot = noAuthority;
     terms = undefined;
+    storedRevisions.clear();
     cases.clear();
     starters.clear();
     clock.set(base());

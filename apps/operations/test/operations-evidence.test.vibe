@@ -12,7 +12,7 @@ import { InspectRefused, InspectUsage, inspect } from "../src/programs/inspect.v
 import { AgentClientsRefused, agentClientGate, requiredClients } from "../src/release/evidence/agentClients.vibe"
 import { EvidenceRefused, type Verification, sealEvidence, validateEvidence } from "../src/release/evidence/bundle.vibe"
 import { captureEvidence, committedBuild, servedArtifacts } from "../src/release/evidence/capture.vibe"
-import { rotateRobinhoodRpc } from "../src/release/rpc/command.vibe"
+import { type PinRequest, activateCandidate, confirmActivation, pinActive, pinnedWrangler, rotateRobinhoodRpc, uploadCandidate } from "../src/release/rpc/command.vibe"
 import { type ContractProbe, RotationRefused } from "../src/release/rpc/qualify.vibe"
 import { cloudflare } from "../src/release/wrangler/cloudflare.vibe"
 
@@ -179,7 +179,7 @@ function converterHost(host: ConverterHost, by: ApiCall["by"], release: string):
       return envelope([{ success: true, results: [{ openSends: 0, openBridgeOrders: 0, openRobinhoodGas: 0 }] }])
     }
     if (request.method === "POST" && path === deployments) {
-      if (host.refuseDeploy) return envelope(null, 400)
+      if (host.refuseDeploy) return Response.json({ success: false, errors: [{ code: 10021, message: "deployment refused" }], messages: [], result: null }, { status: 400 })
       host.deployed = true
     }
     if (by === "release" && host.staleAfterDeploy && host.deployed && request.method === "GET" && path === deployments) {
@@ -189,7 +189,7 @@ function converterHost(host: ConverterHost, by: ApiCall["by"], release: string):
   }
 }
 
-effect function seedConverter(host: ConverterHost, sha: string, database: string) {
+effect function seedConverter(host: ConverterHost, sha: string, database: string, solanaKey = false) {
   const api = cloudflareApi({ accountId })
   const base = `https://cloudflare.test/client/v4/accounts/${accountId}/workers/scripts/slop-fee-converter`
   const metadata = JSON.stringify({
@@ -200,6 +200,7 @@ effect function seedConverter(host: ConverterHost, sha: string, database: string
       { name: "FEE_DB", type: "d1", id: database },
       { name: "FEE_CONVERTER_MODE", type: "plain_text", text: "live" },
       { name: "BUYBACK_MODE", type: "plain_text", text: "live" },
+      ...solanaKey ? [{ name: "FEE_WALLET_KEY_SOLANA", type: "secret_text", text: "never-export" }] : [],
     ],
   })
   const authorized = { authorization: "Bearer journey" }
@@ -219,6 +220,16 @@ effect function seedConverter(host: ConverterHost, sha: string, database: string
   host.pinnedDeployment = api.state.deployments["slop-fee-converter"]?.[0]?.id ?? ""
   host.calls.length = 0
   return pinned
+}
+
+effect function solanaSteps(request: PinRequest) {
+  provide cloudflare({ root: request.root, wrangler: pinnedWrangler(request.root) }) {
+    const pin = try pinActive(request)
+    const candidate = try uploadCandidate(pin, { RPC_URL_SOLANA: Redacted.make("https://solana-primary.test/v1"), SOLANA_RECOVERY_RPC_URL: Redacted.make("https://solana-recovery.test/v1") })
+    const activation = try activateCandidate(pin, candidate)
+    const confirmation = try confirmActivation(pin, candidate)
+    return { pinnedTag: pin.before.annotations?.["workers/tag"], candidate, activation, confirmation }
+  }
 }
 
 interface ReadbackScenario {
@@ -395,7 +406,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     }))
   }))
 
-  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
+  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/solanaRpcRotation.md, "A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-rpc-rotation-" })
@@ -482,17 +493,30 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       journalReads: host.calls.filter((call) => call.path.endsWith("/query")).length,
       strayed: host.calls.filter(strayed).map((call) => `${call.method} ${call.path}`),
     })
+    const solana = (pinnedSource: string, expected: string) => {
+      host.calls.length = 0
+      return effect {
+        const ended = try exit(routed(configured(solanaSteps({ root: checkout, kind: "solana", sha: head, pinnedSource, expected, runnerTemp: directory }), environment), asFetch(network(robinhood, robinhood))))
+        return Exit.isSuccess(ended) ? ended.value : described(Cause.squash(ended.cause))
+      }
+    }
+    const qualifyingReads = (pinned: string) => [`GET ${worker}/deployments`, `GET ${worker}/versions`, `GET ${worker}/versions/${pinned}`, `POST /accounts/${accountId}/d1/database/${feeDatabase}/query`]
     const qualifiedRpc = ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"]
 
-    const wrongChain = try rotate(environment, base, robinhood)
-    const headersOnly = try rotate(environment, stateless, robinhood)
     const insecure = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: "http://candidate-rpc.test/v1/journey" }, robinhood, robinhood)
     const reference = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: `${referenceRpc}/` }, robinhood, robinhood)
     const untrusted = try rotate({ ...environment, GITHUB_REF: "refs/heads/development" }, robinhood, robinhood)
     const pushed = try rotate({ ...environment, GITHUB_EVENT_NAME: "push" }, robinhood, robinhood)
     const disabled = try rotate({ ...environment, SLOP_FEE_CONVERTER_RELEASE: "" }, robinhood, robinhood)
-    const contradicted = try rotate(environment, robinhood, forked)
     const qualified = try rotate(environment, robinhood, robinhood)
+
+    const qualifyingPin = try seedConverter(host, head, feeDatabase)
+    const pinnedEnvironment = { ...environment, SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: qualifyingPin }
+    const wrongChain = try rotate(pinnedEnvironment, base, robinhood)
+    const headersOnly = try rotate(pinnedEnvironment, stateless, robinhood)
+    const contradicted = try rotate(pinnedEnvironment, robinhood, forked)
+    const unpublishedPin = try seedConverter(host, otherSha, feeDatabase)
+    const unpublished = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: unpublishedPin }, robinhood, robinhood)
 
     const refusedPin = try seedConverter(host, head, feeDatabase)
     host.refuseDeploy = true
@@ -513,16 +537,30 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const serving = host.api.state.deployments["slop-fee-converter"]?.at(-1)
     const candidate = host.api.state.versions["slop-fee-converter"]?.at(-1)
 
-    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, pushed, disabled, contradicted, qualified }, {
-      wrongChain: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: [] },
-      headersOnly: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber"], cloudflare: [] },
+    const solanaPinned = try seedConverter(host, otherSha, feeDatabase, true)
+    const checkoutPinned = try solana(head, solanaPinned)
+    const solanaRotated = try solana(otherSha, solanaPinned)
+    const solanaRotatedEffects = effects()
+    const solanaCandidate = host.api.state.versions["slop-fee-converter"]?.at(-1)
+    const solanaServing = host.api.state.deployments["slop-fee-converter"]?.at(-1)
+    const otherDatabasePin = try seedConverter(host, otherSha, "6e2d5c4b-3a2f-4e1d-8c9b-0a1f2e3d4c5b", true)
+    const otherDatabase = try solana(otherSha, otherDatabasePin)
+    const solanaRefusedPin = try seedConverter(host, otherSha, feeDatabase, true)
+    host.refuseDeploy = true
+    const solanaRefused = try solana(otherSha, solanaRefusedPin)
+    const solanaRefusedCandidate = host.api.state.versions["slop-fee-converter"]?.at(-1)
+
+    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, pushed, disabled, contradicted, qualified, unpublished }, {
+      wrongChain: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: qualifyingReads(qualifyingPin) },
+      headersOnly: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber"], cloudflare: qualifyingReads(qualifyingPin) },
       insecure: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
       reference: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
       untrusted: { outcome: "The fee-converter release requires trusted main and verified TLS.", rpc: [], cloudflare: [] },
       pushed: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
       disabled: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
-      contradicted: { outcome: "The independent Robinhood RPC did not verify the candidate block.", rpc: qualifiedRpc, cloudflare: [] },
-      qualified: { outcome: "Fee-converter deployment or upload history is unavailable.", rpc: qualifiedRpc, cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`] },
+      contradicted: { outcome: "The independent Robinhood RPC did not verify the candidate block.", rpc: qualifiedRpc, cloudflare: qualifyingReads(qualifyingPin) },
+      qualified: { outcome: "Fee-converter deployment or upload history is unavailable.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`] },
+      unpublished: { outcome: "First publish this main revision without a rotation input.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`, `GET ${worker}/versions/${unpublishedPin}`] },
     }))
     try Effect.try(() => assert.deepStrictEqual({
       deployRefused: deployRefused.outcome, deployRefusedEffects, deployRefusedSummary,
@@ -543,6 +581,24 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       serving: [{ versionId: candidate?.id ?? "", percentage: 100 }],
       servingMessage: release,
       candidate: { number: 2, tag: head, message: `${release}; Robinhood RPC rotation from ${confirmedPin}` },
+    }))
+    try Effect.try(() => assert.deepStrictEqual({
+      checkoutPinned, solanaRotated, solanaRotatedEffects, otherDatabase, solanaRefused,
+      solanaCandidate: { tag: solanaCandidate?.tag, message: solanaCandidate?.annotations["workers/message"] },
+      solanaServing: solanaServing?.versions,
+    }, {
+      checkoutPinned: "Active fee source differs from the reviewed pin",
+      solanaRotated: { pinnedTag: otherSha, candidate: solanaCandidate?.id ?? "", activation: { activation: "Requested" }, confirmation: { outcome: "Confirmed" } },
+      solanaRotatedEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 0, strayed: [] },
+      otherDatabase: "Active fee database differs from the reviewed binding",
+      solanaRefused: {
+        pinnedTag: otherSha,
+        candidate: solanaRefusedCandidate?.id ?? "",
+        activation: { activation: "Unknown", command: { category: "command-failed", exitCode: 1, providerCode: 10021 } },
+        confirmation: { outcome: "Refused", reason: "The pinned fee-converter deployment or latest upload changed." },
+      },
+      solanaCandidate: { tag: head, message: `${release}; Solana RPC rotation from ${solanaPinned}` },
+      solanaServing: [{ versionId: solanaCandidate?.id ?? "", percentage: 100 }],
     }))
   }))
 

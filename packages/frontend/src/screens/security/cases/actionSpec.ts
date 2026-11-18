@@ -3,15 +3,26 @@ import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { utcInput } from "../../../flows/security/cases.vibe";
 import { decimalToMinor } from "./amount.ts";
 import type { SecurityCase } from "./case.schema.ts";
-import { awardText, money } from "./labels.ts";
+import { awardAmounts, awardText, money } from "./labels.ts";
 
 type Shown = { readonly field: string; readonly values: ReadonlyArray<string> };
 
 export type FieldSpec =
-  | { readonly name: string; readonly label: string; readonly kind: "text" | "textarea"; readonly hint?: string; readonly optional?: boolean; readonly initial?: string; readonly when?: Shown }
+  | {
+      readonly name: string;
+      readonly label: string;
+      readonly kind: "text" | "textarea";
+      readonly placeholder?: string;
+      readonly private?: boolean;
+      readonly optional?: boolean;
+      readonly requiredWhen?: Shown;
+      readonly initial?: string;
+      readonly when?: Shown;
+    }
   | { readonly name: string; readonly label: string; readonly kind: "select"; readonly options: ReadonlyArray<readonly [string, string]>; readonly when?: Shown }
-  | { readonly name: string; readonly label: string; readonly kind: "checkbox" | "utc"; readonly when?: Shown }
-  | { readonly name: string; readonly label: string; readonly kind: "amount"; readonly decimals: number; readonly hint?: string; readonly initial?: string; readonly readOnly?: boolean; readonly when?: Shown };
+  | { readonly name: string; readonly label: string; readonly kind: "checkbox"; readonly info?: string; readonly publicNotice?: boolean; readonly when?: Shown }
+  | { readonly name: string; readonly label: string; readonly kind: "utc"; readonly when?: Shown }
+  | { readonly name: string; readonly label: string; readonly kind: "amount"; readonly decimals: number; readonly chip?: string; readonly initial?: string; readonly readOnly?: boolean; readonly when?: Shown };
 
 export interface ActionSpec {
   readonly title: string;
@@ -23,7 +34,7 @@ export type FieldValues = Readonly<Record<string, string | boolean>>;
 
 export type ActionFields = { readonly ok: true; readonly fields: Readonly<Record<string, unknown>> } | { readonly ok: false; readonly message: string };
 
-const reason = { name: "reason", label: "Private reason", kind: "textarea", hint: "Do not name another reporter or quote another report." } as const satisfies FieldSpec;
+const reason = { name: "reason", label: "Reason", kind: "textarea", private: true } as const satisfies FieldSpec;
 
 const severityOptions: ReadonlyArray<readonly [string, string]> = [
   ["critical", "Critical"],
@@ -57,34 +68,27 @@ function awardSpec(record: SecurityCase): ActionSpec | null {
   const terms = record.terms;
   const fixed = terms.fundingPolicy === "after-approval";
   const direct = record.paymentRail === "direct";
-  const available = record.awardFunds ? `Available to reserve: ${money(record.awardFunds.availableMinor, record.awardFunds)}.` : undefined;
-  const hint = direct
-    ? fixed
-      ? "The published award is fixed."
-      : undefined
-    : fixed
-      ? ["The published award is fixed.", available, "Without funds, it stays selected and unpaid."].filter((part) => part !== undefined).join(" ")
-      : available;
+  const chip = direct ? undefined : record.awardFunds ? `Available ${money(record.awardFunds.availableMinor, record.awardFunds)}` : "No verified funds";
   const exact = terms.grossMinor !== undefined && /^[0-9]+$/u.test(terms.grossMinor) && Number.isInteger(terms.decimals) && terms.decimals >= 0 && terms.decimals <= 36;
   const fixedGross = fixed && exact && terms.grossMinor !== undefined ? formatBaseUnits({ value: BigInt(terms.grossMinor), decimals: terms.decimals, grouping: false }) : undefined;
   return {
     title: "Award",
-    submit: "Record award decision",
+    submit: "Save",
     fields: [
       {
         name: "decision",
         label: "Decision",
         kind: "select",
         options: [
-          ["amount", fixed ? "Award the published amount" : "Award an amount"],
+          ["amount", "Award"],
           ["none", "No award"],
         ],
       },
-      { name: "grossMinor", label: `Gross award (${terms.currency})`, kind: "amount", decimals: terms.decimals, initial: fixedGross, readOnly: fixed, hint, when: { field: "decision", values: ["amount"] } },
+      { name: "grossMinor", label: `Gross award (${terms.currency})`, kind: "amount", decimals: terms.decimals, initial: fixedGross, readOnly: fixed, chip, when: { field: "decision", values: ["amount"] } },
       { name: "paymentDeadline", label: "Payment deadline (UTC)", kind: "utc", when: { field: "decision", values: ["amount"] } },
       {
         name: "confirmation",
-        label: `I approve this award for @${record.reporter?.githubLogin ?? "the reporter"}.${direct ? "" : fixed ? " It remains unpaid until verified funds cover the award." : " Approval reserves the amount now."}`,
+        label: `Approve award for @${record.reporter?.githubLogin ?? "the reporter"}`,
         kind: "checkbox",
         when: { field: "decision", values: ["amount"] },
       },
@@ -97,17 +101,18 @@ function paymentSpec(action: "consent-payment" | "prepare-payment", record: Secu
   if (record.paymentNetworks.length === 0) return null;
   const consent = action === "consent-payment";
   return {
-    title: consent ? "Accept payment visibility" : record.settlement ? "Refresh payment request" : "Prepare payment",
-    submit: consent ? "Accept visibility" : record.settlement ? "Refresh unsigned payment" : "Prepare unsigned payment",
+    title: consent ? "Visibility" : record.settlement ? "Refresh payment" : "Prepare payment",
+    submit: consent ? "Accept" : record.settlement ? "Refresh" : "Prepare",
     fields: [
-      { name: "network", label: "Payment network", kind: "select", options: record.paymentNetworks.map((network) => [network, network] as const) },
+      { name: "network", label: "Network", kind: "select", options: record.paymentNetworks.map((network) => [network, network] as const) },
       {
         name: "confirmation",
         label: consent
           ? record.paymentRail === "direct"
-            ? "I understand that chain transactions reveal my wallet, time and amounts. My report stays private."
-            : "I understand that chain transactions reveal my GitHub actor number, wallet, time and amounts. My report stays private."
-          : `I approve ${awardText(record)} on this network. This prepares an unsigned request; it does not pay.`,
+            ? "On-chain: wallet, time, amount public"
+            : "On-chain: GitHub ID, wallet, time, amount public"
+          : `Approve ${awardAmounts(record) ?? awardText(record)}`,
+        publicNotice: consent,
         kind: "checkbox",
       },
     ],
@@ -121,24 +126,14 @@ function recoverySpec(record: SecurityCase): ActionSpec | null {
   return {
     title: "Recover payment",
     submit:
-      recovery.mode === "resume-original"
-        ? "Resume original wallet"
-        : recovery.mode === "cancellation-required"
-          ? "Verify cancellation"
-          : recovery.mode === "retirement-required"
-            ? "Verify previous transaction"
-            : "Check payment recovery",
+      recovery.mode === "resume-original" ? "Resume" : transaction ? "Verify" : "Check",
     fields: [
       ...(transaction
         ? [
-            {
-              name: "cancellationTransactionId",
-              label: recovery.mode === "retirement-required" ? `Previous ${recovery.role === "fee" ? "fee" : "researcher"} transaction ID` : "Cancellation transaction ID",
-              kind: "text",
-            } as const,
+            { name: "cancellationTransactionId", label: "Transaction ID", kind: "text" } as const,
           ]
         : []),
-      { name: "confirmation", label: "I approve recovery to the payout wallet shown above.", kind: "checkbox" },
+      { name: "confirmation", label: "Approve recovery to this wallet", kind: "checkbox" },
     ],
   };
 }
@@ -146,7 +141,7 @@ function recoverySpec(record: SecurityCase): ActionSpec | null {
 function decideSpec(record: SecurityCase): ActionSpec {
   const proposal = record.analysis?.state === "complete" ? record.analysis : null;
   return {
-    title: "Decide the finding",
+    title: "Decide",
     submit: "Record decision",
     fields: [
       {
@@ -167,20 +162,16 @@ function decideSpec(record: SecurityCase): ActionSpec {
         kind: "select",
         options: [
           ["unresolved", "Unresolved"],
-          ["verified-potential", "Verified potential loss"],
-          ["verified-actual", "Verified actual loss"],
-          ["not-verified", "Not verified"],
+          ["verified-potential", "Potential"],
+          ["verified-actual", "Actual"],
+          ["not-verified", "None"],
         ],
       },
-      { name: "inScope", label: "The affected asset is in scope", kind: "checkbox" },
-      {
-        name: "relatedParty",
-        label: "The reporter is a related party (owner, employee, sponsor or approver). An independent reviewer must then approve any award.",
-        kind: "checkbox",
-      },
-      { name: "rootCauseKey", label: "Root cause key", kind: "text", optional: true, initial: proposal?.rootCauseKey ?? "", hint: "Lowercase words and hyphens. Required to confirm." },
+      { name: "inScope", label: "In scope", kind: "checkbox" },
+      { name: "relatedParty", label: "Related party", info: "Owner, employee, sponsor or approver", kind: "checkbox" },
+      { name: "rootCauseKey", label: "Root cause key", kind: "text", optional: true, initial: proposal?.rootCauseKey ?? "", placeholder: "root-cause-key" },
       { name: "duplicateOf", label: "Original case ID", kind: "text", when: { field: "outcome", values: ["duplicate"] }, initial: proposal?.duplicateCaseIds[0] ?? "" },
-      { name: "evidenceReference", label: "Private evidence reference (optional)", kind: "text", optional: true },
+      { name: "evidenceReference", label: "Evidence ref", kind: "text", optional: true },
       reason,
     ],
   };
@@ -191,13 +182,13 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
   switch (action) {
     case "verify-link":
       return {
-        title: "Verify the GitHub report",
+        title: "Verify report",
         submit: "Verify report",
         fields: [
-          { name: "receivedAt", label: "Time GitHub received the report (UTC)", kind: "utc" },
+          { name: "receivedAt", label: "Received (UTC)", kind: "utc" },
           {
             name: "confirmation",
-            label: `I checked on GitHub that ${record.advisory?.ghsa ?? "this advisory"} exists and that @${record.reporter?.githubLogin ?? "the reporter"} submitted it.`,
+            label: `Verified on GitHub: ${record.advisory?.ghsa ?? "this advisory"} by @${record.reporter?.githubLogin ?? "the reporter"}`,
             kind: "checkbox",
           },
         ],
@@ -206,16 +197,9 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
       return { title: "Reject this link", submit: "Reject link", fields: [reason] };
     case "request-information":
       return {
-        title: "Ask the reporter for information",
+        title: "Request info",
         submit: "Ask for information",
-        fields: [
-          {
-            name: "reason",
-            label: "What you need",
-            kind: "textarea",
-            hint: record.advisory ? "The reporter answers in the private GitHub advisory." : "Use the private report review to request further evidence.",
-          },
-        ],
+        fields: [{ name: "reason", label: "What you need", kind: "textarea" }],
       };
     case "decide":
       return decideSpec(record);
@@ -232,15 +216,15 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
             kind: "select",
             options: [
               ["investigating", "Investigating"],
-              ["fixing", "Fixing in a private workspace"],
+              ["fixing", "Fixing"],
               ["retest", "Retest"],
-              ["resolved", "Resolved (fix merged)"],
-              ["mitigation-verified", "Deployed mitigation verified"],
+              ["resolved", "Resolved"],
+              ["mitigation-verified", "Mitigated"],
               ["reopened", "Reopened"],
             ],
           },
-          { name: "patchDigest", label: "Exact patch SHA-256", kind: "text", hint: "The patch under retest, merged or deployed.", when: { field: "remediationState", values: ["retest", "resolved", "mitigation-verified"] } },
-          { name: "evidenceReference", label: "Private test or deployment evidence", kind: "text", optional: true, hint: "Required for resolved and for deployed mitigation." },
+          { name: "patchDigest", label: "Patch SHA-256", kind: "text", when: { field: "remediationState", values: ["retest", "resolved", "mitigation-verified"] } },
+          { name: "evidenceReference", label: "Evidence ref", kind: "text", optional: true, requiredWhen: { field: "remediationState", values: ["resolved", "mitigation-verified"] } },
           { ...reason, optional: true },
         ],
       };
@@ -255,13 +239,13 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
             kind: "select",
             options: [
               ["embargoed", "Embargoed"],
-              ["redaction-approved", "Redacted text approved"],
-              ["disclosed", "Disclosed by the security maintainer"],
+              ["redaction-approved", "Redaction approved"],
+              ["disclosed", "Disclosed"],
             ],
           },
-          { name: "evidenceReference", label: "Private disclosure approval evidence", kind: "text", hint: "Reference the approval in the private advisory. Do not paste the content here." },
-          { name: "redactedContentDigest", label: "Approved redacted content SHA-256", kind: "text", optional: true, hint: "Required when approving redacted text or recording disclosure." },
-          { name: "embargoChange", label: "Approved embargo change", kind: "textarea", optional: true, hint: "Leave blank if unchanged." },
+          { name: "evidenceReference", label: "Approval ref", kind: "text" },
+          { name: "redactedContentDigest", label: "Redacted SHA-256", kind: "text", optional: true, requiredWhen: { field: "disclosureState", values: ["redaction-approved", "disclosed"] } },
+          { name: "embargoChange", label: "Embargo change", kind: "textarea", optional: true },
           reason,
         ],
       };
@@ -270,8 +254,8 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
         title: "Assign a triager",
         submit: "Assign triager",
         fields: [
-          { name: "githubId", label: "Triager GitHub account ID", kind: "text" },
-          { name: "githubLogin", label: "Triager GitHub login", kind: "text" },
+          { name: "githubId", label: "GitHub ID", kind: "text" },
+          { name: "githubLogin", label: "Login", kind: "text" },
         ],
       };
     case "revoke-triager": {
@@ -285,20 +269,20 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
     }
     case "recognition": {
       const choices: ReadonlyArray<readonly [string, string]> = [
-        ["private", "No, keep my identity private"],
-        ["opt-in", "Yes, after authorized disclosure"],
+        ["private", "Off"],
+        ["opt-in", "On"],
       ];
       return {
         title: "Public recognition",
         submit: "Save my choice",
-        fields: [{ name: "recognition", label: "Show my name publicly", kind: "select", options: [...choices].sort(([value]) => (value === record.recognition ? -1 : 1)) }],
+        fields: [{ name: "recognition", label: "Public name", kind: "select", options: [...choices].sort(([value]) => (value === record.recognition ? -1 : 1)) }],
       };
     }
     case "appeal":
       return {
-        title: "Appeal this decision",
+        title: "Appeal",
         submit: "Send appeal",
-        fields: [{ name: "reason", label: "Why the decision is wrong", kind: "textarea", hint: "An independent reviewer reads this privately." }],
+        fields: [{ name: "reason", label: "Reason", kind: "textarea", private: true }],
       };
     case "decide-appeal":
       return {
@@ -310,8 +294,8 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
             label: "Outcome",
             kind: "select",
             options: [
-              ["uphold", "Uphold the original decision"],
-              ["return", "Return the case for a new decision"],
+              ["uphold", "Uphold"],
+              ["return", "Return"],
             ],
           },
           reason,
@@ -319,7 +303,7 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
       };
     case "decide-related-party":
       return {
-        title: "Related-party award review",
+        title: "Related-party review",
         submit: "Record review",
         fields: [
           {
@@ -327,8 +311,8 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
             label: "Outcome",
             kind: "select",
             options: [
-              ["approve", `Approve ${record.award && record.terms ? money(record.award.grossMinor, record.terms) : "the proposed award"}${record.paymentRail === "direct" ? "" : " and reserve it if funds remain"}`],
-              ["refuse", "Refuse: the reporter is not eligible for this award"],
+              ["approve", record.award && record.terms ? `Approve ${money(record.award.grossMinor, record.terms)}` : "Approve"],
+              ["refuse", "Refuse"],
             ],
           },
           reason,
@@ -342,8 +326,8 @@ export function actionSpec(action: string, record: SecurityCase): ActionSpec | n
         title: "Verify payment",
         submit: "Verify payment",
         fields: [
-          { name: "transactionIds", label: "Transaction IDs", kind: "textarea", hint: "One per line." },
-          { name: "confirmation", label: "These transactions pay the approved award.", kind: "checkbox" },
+          { name: "transactionIds", label: "Transaction IDs", kind: "textarea", placeholder: "One per line" },
+          { name: "confirmation", label: "Pays this award", kind: "checkbox" },
         ],
       };
     case "recover-payment":

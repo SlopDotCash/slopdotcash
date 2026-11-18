@@ -199,11 +199,11 @@ function choiceOf(fields: Readonly<Record<string, unknown>> | undefined) {
   }
   if (kind !== "token") return invalid("Choose native coin, stablecoin or token")
   const canonical = canonicalAddress(network, String(fields?.address ?? ""))
-  if (canonical === undefined) return invalid(definition.family === "evm" ? "Enter a 0x token contract address with 40 hexadecimal characters" : "Enter a base58 SPL mint address")
+  if (canonical === undefined) return invalid(definition.family === "evm" ? "Enter a 0x address with 40 hex characters" : "Enter a base58 SPL mint address")
   if (canonical === definition.native.address) return invalid(`Choose ${definition.native.symbol} as the native coin`)
   if (canonical === definition.stablecoin.address) return invalid(`That address is the network stablecoin; choose ${definition.stablecoin.symbol}`)
   const symbol = String(fields?.symbol ?? "").trim()
-  if (!symbolPattern.test(symbol)) return invalid("Enter a token symbol of 1 to 16 letters or digits")
+  if (!symbolPattern.test(symbol)) return invalid("Enter a symbol of 1-16 letters or digits")
   return { network, kind, address: canonical, symbol } as const
 }
 

@@ -1,11 +1,11 @@
-// spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"; spec/ui/status.md, "Setup checks never look ready unless they are"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
-import { Alert, Button, Checklist, NetworkMark, StatusIcon, TokenAmount } from "@repo/ui";
+// spec/frontend/presentation.md, "Setup readiness shows authority, Slopbot, security and funding separately"; spec/ui/status.md, "Setup checks never look ready unless they are"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/frontend/projections.md, "An exemption is never displayed as a passed scan"
+import { Alert, Button, Checklist, Disclosure, NetworkMark, Status, StatusIcon, TokenAmount } from "@repo/ui";
 import { isChain } from "@repo/settlement/kernels/networks";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { CHAIN_NAMES } from "../../../kernels/assetText.ts";
 import { NetworkName } from "../../funding/vault/index.ts";
 import type { SetupView } from "./check.vibe";
-import { authorityReadiness, checksAgain, fundingAmount, installationReadiness, scanFinding, scanReadiness, setupHeadings } from "./checks.ts";
+import { authorityReadiness, checksAgain, fundingAmount, installationReadiness, scanExemption, scanReadiness, setupStates } from "./checks.ts";
 import { type SetupFunding, setupFundingOf } from "./funding.schema.ts";
 
 export type SetupSummaryProps = {
@@ -20,39 +20,36 @@ function Network({ network }: { network: string }) {
   return isChain(network) ? <NetworkMark network={CHAIN_NAMES[network]} size="sm" /> : <NetworkName network={network} />;
 }
 
-function Funding({ funding, slug }: { funding: SetupFunding | undefined; slug: string }) {
-  if (funding === undefined) return <p className="text-sm text-muted-foreground">Funding is unavailable.</p>;
-  if (funding.mode === "none")
-    return (
-      <p className="text-sm text-muted-foreground">
-        Contribution funding <span className="text-xs">Optional</span> · Points only
-      </p>
-    );
+function FundingValue({ funding, slug }: { funding: SetupFunding | undefined; slug: string }) {
+  if (funding === undefined) return <Status presentation={{ tone: "Neutral", icon: "Slash", label: "Unavailable" }} />;
+  if (funding.mode === "none") return <span className="text-muted-foreground">Points only</span>;
   const bounty = funding.mode === "bounty";
   const minor = bounty ? funding.awardAmountMinor : funding.monthlyAmountMinor;
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-      <span className="font-medium text-foreground">{bounty ? "Private bounty" : "Contribution funding"}</span>
-      <TokenAmount value={`${fundingAmount(minor, funding.decimals, funding.symbol, funding.network)} / ${bounty ? "accepted finding" : "month"}`} label={bounty ? "Award per accepted finding" : "Monthly amount"} />
+    <>
+      <TokenAmount value={`${fundingAmount(minor, funding.decimals, funding.symbol, funding.network)} / ${bounty ? "finding" : "month"}`} label={bounty ? "Award per finding" : "Monthly amount"} />
       {funding.network ? <Network network={funding.network} /> : null}
       {bounty ? (
-        <span className="text-muted-foreground">{funding.state === "pledged" ? "Pledged" : "Funding verified"}</span>
+        <Status presentation={funding.state === "pledged" ? { tone: "Caution", icon: "Dot", label: "Pledged" } : { tone: "Positive", icon: "Check", label: "Funded" }} />
       ) : (
         <a href={`/projects/${slug}/manage#project-vault`} className="text-primary underline underline-offset-4">
-          Vault funding
+          Fund vault
         </a>
       )}
-    </div>
+    </>
   );
 }
 
-/** One project's setup result: the next action, each check on its own, and funding apart from activation. */
+/** One project's setup result: its state, the next action, each check on its own, and funding apart from activation. */
 export function SetupSummary({ projectId, view: { setup, busy, error }, onCheck, showProjectLink = true }: SetupSummaryProps) {
   const headingId = `setup-${projectId}`;
+  const checkLabel = busy ? "Checking…" : "Check again";
+  const funding = setup ? setupFundingOf(setup.funding) : undefined;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4 rounded-lg border border-border p-4">
-      <h2 id={headingId} className="text-lg font-semibold text-foreground">
-        Setup status{setup ? `: ${setupHeadings[setup.state]}` : ""}
+      <h2 id={headingId} className="flex flex-wrap items-center gap-3 text-lg font-semibold text-foreground">
+        Setup
+        {setup ? <Status presentation={setupStates[setup.state]} /> : null}
       </h2>
       {setup === null ? (
         error ? null : (
@@ -64,9 +61,11 @@ export function SetupSummary({ projectId, view: { setup, busy, error }, onCheck,
       ) : (
         <>
           {setup.state !== "ready" ? (
-            <p role="status" className="text-sm text-foreground">
-              {setup.nextAction.message}
-            </p>
+            setup.nextAction.message ? (
+              <p role="status" className="text-sm text-foreground">
+                {setup.nextAction.message}
+              </p>
+            ) : null
           ) : showProjectLink ? (
             <a href={`/projects/${setup.slug}`} className="text-sm text-primary underline underline-offset-4">
               View project
@@ -83,23 +82,38 @@ export function SetupSummary({ projectId, view: { setup, busy, error }, onCheck,
             ) : null}
             {setup.nextAction.kind === "request_scan" ? (
               <Button loading={busy} onClick={() => onCheck(true)}>
-                {busy ? "Requesting…" : "Request a new scan"}
+                {busy ? "Requesting…" : "Rescan"}
               </Button>
             ) : null}
             {checksAgain(setup.nextAction) ? (
-              <Button variant="outline" loading={busy} onClick={() => onCheck(false)}>
-                {busy ? "Checking…" : "Check again"}
+              <Button variant="outline" size="icon" aria-label={checkLabel} title={checkLabel} disabled={busy} onClick={() => onCheck(false)}>
+                <RefreshCw aria-hidden />
               </Button>
             ) : null}
           </div>
           <Checklist
             items={[
-              { id: "authority", label: "GitHub access", status: authorityReadiness(setup.checks.authority), value: setup.checks.authority.message },
-              { id: "installation", label: "Slopbot", status: installationReadiness(setup.checks.installation), value: setup.checks.installation.message },
-              { id: "scan", label: "Security scan", status: scanReadiness(setup.checks.scan), value: scanFinding(setup.checks.scan) },
+              { id: "authority", label: "GitHub access", status: authorityReadiness(setup.checks.authority) },
+              { id: "installation", label: "Slopbot", status: installationReadiness(setup.checks.installation) },
+              { id: "scan", label: "Security scan", status: scanReadiness(setup.checks.scan), value: scanExemption(setup.checks.scan) },
             ]}
           />
-          <Funding funding={setupFundingOf(setup.funding)} slug={setup.slug} />
+          <dl className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+            <dt className="font-medium text-foreground">{funding?.mode === "bounty" ? "Private bounty" : "Funding"}</dt>
+            <dd className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <FundingValue funding={funding} slug={setup.slug} />
+            </dd>
+          </dl>
+          <Disclosure summary="Check details">
+            <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[minmax(8rem,auto)_1fr]">
+              <dt className="text-muted-foreground">GitHub access</dt>
+              <dd>{setup.checks.authority.message}</dd>
+              <dt className="text-muted-foreground">Slopbot</dt>
+              <dd>{setup.checks.installation.message}</dd>
+              <dt className="text-muted-foreground">Security scan</dt>
+              <dd>{setup.checks.scan.message}</dd>
+            </dl>
+          </Disclosure>
         </>
       )}
       {error ? (

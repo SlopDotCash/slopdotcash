@@ -1,13 +1,13 @@
 // spec/points/profiles.md, "A renamed repository is followed by its permanent registry identity"
 import { legacyHolder } from "@repo/backend/legacy"
-import type { RegistryProject } from "../census/projects.vibe"
+import type { RegistryRepository } from "../census/projects.vibe"
 
 export interface RepositoryIdentity {
   historical(repository: string): boolean
   canonical(repository: string): string | undefined
 }
 
-export function repositoryIdentity(projects: ReadonlyArray<RegistryProject>): RepositoryIdentity {
+export function repositoryIdentity(projects: ReadonlyArray<{ readonly repositories: ReadonlyArray<Pick<RegistryRepository, "id" | "aliases">> }>): RepositoryIdentity {
   const byName = new Map<string, string>()
   const byLegacy = new Map<string, string>()
   for (const project of projects) {

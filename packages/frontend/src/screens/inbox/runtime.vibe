@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
 import type { DisputeAnswer } from "@repo/points/client"
 import type { InboxNotice } from "@repo/operations/client"
 import type { PageRuntime } from "../../app/runtime.vibe"
@@ -110,9 +110,9 @@ export effect function dismissEmailLink() {
   try (try EmailLink).dismiss()
 }
 
-export effect function assessmentPage(actor: string, cursor: string | null, reloadOnRefusal: boolean) {
+export effect function assessmentPage(actor: string, cursor: string | null) {
   const queue = try loadAssessmentQueue(actor, cursor)
-  if (reloadOnRefusal && (queue.kind === "refresh" || queue.kind === "suppressed")) try (try Inbox).load()
+  if (queue.kind === "refresh" || queue.kind === "suppressed") try (try Inbox).load()
   return queue
 }
 

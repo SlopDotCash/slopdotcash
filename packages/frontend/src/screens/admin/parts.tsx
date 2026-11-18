@@ -1,5 +1,5 @@
 // spec/frontend/navigation.md, "Administration sections and project selection are parameters of the one Administration page"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
-import { Alert, Button, CopyButton, ExternalLink, StatusIcon } from "@repo/ui";
+import { Alert, Button, CopyButton, cn, ExternalLink, StatusIcon, type StatusProps } from "@repo/ui";
 import { Effect, Exit } from "effect";
 import type { MouseEvent, ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -86,6 +86,27 @@ export function Identifier({ label, value }: { label: string; value: string }) {
     <span className="inline-flex max-w-full items-center gap-2">
       <code className="min-w-0 font-mono text-xs break-all">{value}</code>
       <CopyButton text={value} label={`Copy ${label}`} />
+    </span>
+  );
+}
+
+export type ChipTone = StatusProps["presentation"]["tone"];
+
+const chipTones: Readonly<Record<ChipTone, string>> = {
+  Neutral: "text-muted-foreground",
+  Emphasis: "text-primary",
+  Positive: "text-ok",
+  Caution: "text-warn",
+  Negative: "text-destructive",
+  Notice: "text-info",
+};
+
+/** A short state or count in its tone, with what it stands for in its title. */
+export function Chip({ tone = "Neutral", icon, title, children }: { tone?: ChipTone; icon?: ReactNode; title?: string; children: ReactNode }) {
+  return (
+    <span title={title} className={cn("inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs font-medium [&_svg]:size-3.5 [&_svg]:shrink-0", chipTones[tone])}>
+      {icon}
+      {children}
     </span>
   );
 }

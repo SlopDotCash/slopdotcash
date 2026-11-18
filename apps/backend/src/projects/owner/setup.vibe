@@ -4,7 +4,7 @@ import { type ScanQueued, ScanRequests } from "@repo/ports/security"
 import type { Registry, SetupState } from "../../../gen/backend__projectComposition.effect.vibe"
 import type { InstallationRead, SetupCheck } from "../../../gen/backend__projects.effect.vibe"
 import { canActivate, observation, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
-import { basis, latestOf } from "../../../gen/security__enforcement.effect.vibe"
+import { basis, clearanceState, latestOf } from "../../../gen/security__enforcement.effect.vibe"
 import { type AccessActor, type AccessCheck, type Checked, checkAuthority, currentPath, installationOf, modelRead, readAccess, scopeNote, slopbotInstallUrl } from "../../authority/live.vibe"
 import type { SetupStatus } from "../../client/projectSetup.vibe"
 import { idOf } from "../store/codec.vibe"
@@ -64,8 +64,8 @@ export function setupCheckOf(manifest: Json, reads: Reads, actor: number): Setup
 type Restriction = Registry["security"]["restriction"]
 type Security = Registry["security"]
 
-function restrictionText(restriction: Restriction): string {
-  return restriction === "FlagQuarantine" || restriction === "ModeratorQuarantine" ? "quarantined" : restriction === "Clear" ? "clear" : "banned"
+function restrictionLabel(restriction: Restriction): string {
+  return restriction === "FlagQuarantine" || restriction === "ModeratorQuarantine" ? "Quarantined" : "Banned"
 }
 
 interface Check {
@@ -83,7 +83,7 @@ export type ScanRequest = { readonly kind: "queue"; readonly reason: string } | 
 
 type Queued = ScanQueued | "failed"
 
-const scanQueuedMessage = "The security scan is queued. Nothing is needed from you."
+const scanQueuedMessage = "Scan queued."
 const scanUnavailable: Scan = { state: "unavailable", message: "The scan service is unavailable. Check again later." }
 const scanNotQueued: Scan = { state: "unavailable", message: "The scan could not be queued. Check again." }
 
@@ -92,25 +92,23 @@ function installationCheck(manifest: Json, reads: Reads): Check & { readonly rep
   const all = [{ repositoryId: primary.id, access: reads.checked.access }, ...reads.listed.map((read) => ({ repositoryId: read.path, access: read.access }))]
   const unmet = all.find((read) => read.access.state === "retry" || read.access.access.installation !== "installed")
   const repository = unmet?.repositoryId ?? primary.id
-  if (unmet === undefined) {
-    const named = all.length === 1 ? repository : `${all.slice(0, -1).map((read) => read.repositoryId).join(", ")} and ${all.at(-1)?.repositoryId ?? ""}`
-    return { state: "installed", message: `Slopbot is installed on ${named}.`, repository }
-  }
+  if (unmet === undefined) return { state: "installed", message: all.length === 1 ? "Installed." : `Installed on ${all.slice(0, -1).map((read) => read.repositoryId).join(", ")} and ${all.at(-1)?.repositoryId ?? ""}.`, repository }
   if (unmet.access.state === "retry") return { state: "retry", message: unmet.access.message, repository }
-  if (unmet.access.access.installation === "suspended") return { state: "suspended", message: `The Slopbot installation for ${repository} is suspended on GitHub.`, repository }
-  return { state: "missing", message: `Slopbot is not installed on ${repository}.`, repository }
+  if (unmet.access.access.installation === "suspended") return { state: "suspended", message: all.length === 1 ? "Suspended on GitHub." : `Suspended on GitHub for ${repository}.`, repository }
+  return { state: "missing", message: all.length === 1 ? "Not installed." : `Not installed on ${repository}.`, repository }
 }
 
 function repositoryScan(security: Security, repository: number): Scan {
+  if (clearanceState(security, repository) === "Stale") return { state: "stale", message: "Scan stale." }
   const latest = latestOf(security, repository)
   const cleared = basis(security, repository)
   if (cleared === "Scanned") return { state: "cleared", message: `Repository admission passed at revision ${latest.revision}.` }
-  if (cleared === "FrozenExemption") return { state: "cleared", exempt: true, exemptionKind: "existing-project", message: "Existing project, permanently exempt from scan clearance." }
-  if (cleared === "OwnerApprovedExemption") return { state: "cleared", exempt: true, exemptionKind: "owner-approved-admission", message: "Owner-approved admission exemption. No passed scan is claimed." }
+  if (cleared === "FrozenExemption") return { state: "cleared", exempt: true, exemptionKind: "existing-project", message: "Exempt · existing project" }
+  if (cleared === "OwnerApprovedExemption") return { state: "cleared", exempt: true, exemptionKind: "owner-approved-admission", message: "Owner-approved exemption" }
   if (latest.state === "APending") return { state: "queued", message: scanQueuedMessage }
   if (latest.state === "AClean") return { state: "unverified", message: "The clean assessment has no current complete authorized canonical assembly and retained evidence. Its assembly may be incomplete or absent, or evidence may be unavailable, corrupt or expired." }
-  if (latest.state === "AIncomplete") return { state: "quarantined", message: "The last scan could not finish, so it did not clear the project.", guidance: "Fix the cause if you know it, then request a new scan." }
-  if (latest.state === "AMalicious") return { state: "quarantined", message: "Findings block clearance.", guidance: "Review the scan result before requesting a new scan." }
+  if (latest.state === "AIncomplete") return { state: "quarantined", message: "The last scan could not finish, so it did not clear the project." }
+  if (latest.state === "AMalicious") return { state: "quarantined", message: "Findings block clearance.", guidance: "Review the scan result first." }
   return { state: "unscanned", message: "This revision has not been scanned yet." }
 }
 
@@ -191,17 +189,17 @@ function nextActionOf(setup: SetupState, state: Registry, installation: Check & 
   const authority = reads.checked.authority
   if (setup === "SetupRestricted") {
     const restriction = state.security.restriction
-    return action("restricted", restriction !== "Clear" ? `This project is ${restrictionText(restriction)}. Contributor work is closed. The steward or the account that created the project may request reinstatement.` : "This project is delisted. Its history stays public.")
+    return action("restricted", restriction !== "Clear" ? `${restrictionLabel(restriction)}. Steward can request reinstatement.` : "Delisted")
   }
   if (installation.state === "retry") return action("retry_installation", installation.message)
-  if (installation.state !== "installed") return action("install_slopbot", `${installation.message} Install it to continue. It is free. ${scopeNote(installation.repository)}`, slopbotInstallUrl)
+  if (installation.state !== "installed") return action("install_slopbot", `${installation.message} ${scopeNote(installation.repository)}`, slopbotInstallUrl)
   if (authority.state === "retry") return action("retry_authority", authority.message)
   if (authority.state === "denied") return action("ask_maintainer", authority.message)
   if (setup === "SetupReady") return action("none", "Contributors can find this project and its skills.")
   if (scan.state === "cleared") {
     return state.project.fieldsComplete
-      ? action("activate_project", `${scan.message} Your edit kept the project paused. Check again to activate it.`)
-      : action("complete_skill_fields", `${scan.message} The project stays paused until its contributor guide and skill fields are complete. Add them in a project update.`)
+      ? action("activate_project", "Paused by your edit.")
+      : action("complete_skill_fields", "Paused: add contributor rules.")
   }
   if (scan.state === "queued") return action("wait_for_scan", scan.message)
   if (scan.state === "quarantined") return action("request_scan", `${scan.message} ${scan.guidance ?? ""}`.trim())

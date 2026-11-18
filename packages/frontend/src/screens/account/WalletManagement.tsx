@@ -1,11 +1,12 @@
 // spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"
-import { Address, Alert, Button, Card, CardTitle, Dialog, DialogContent, DialogTitle, ExternalLink, NetworkMark, type NetworkMarkProps, WalletChooser } from "@repo/ui";
-import { Check, Pencil, Plus, TriangleAlert, Wallet } from "lucide-react";
+import { Address, Alert, Button, Card, CardTitle, Dialog, DialogContent, DialogTitle, ExternalLink, NetworkMark, Spinner, Status, WalletChooser } from "@repo/ui";
+import { Check, Eye, Pencil, Plus, TriangleAlert, Wallet } from "lucide-react";
 import { useState } from "react";
 import { type Chain, NETWORKS } from "@repo/settlement/kernels/networks";
-import { formatAssetAmount, networkLabel } from "../../kernels/assetText.ts";
+import { CHAIN_NAMES, formatAssetAmount, networkLabel } from "../../kernels/assetText.ts";
 import type { Family, WalletOffer } from "../../wallets/core/discovery.vibe";
-import { familyChains, familyLabels, networkNames, type SavedWallet } from "../../wallets/core/registration.vibe";
+import { familyChains, familyLabels, type SavedWallet } from "../../wallets/core/registration.vibe";
+import { staleStatus } from "../payouts/status.ts";
 import type { PaymentsAccount, WalletPanel } from "./walletPanel.vibe";
 
 export type WalletManagementProps = {
@@ -45,8 +46,6 @@ const downloads: Readonly<Record<Family, ReadonlyArray<{ readonly name: string; 
   ],
 };
 
-const marks: Readonly<Record<Chain, NetworkMarkProps["network"]>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood Chain", solana: "Solana" };
-
 const mainNetwork = (chain: Chain): string | undefined => Object.entries(NETWORKS).find(([, network]) => network.chain === chain && !network.testnet)?.[0];
 
 function Confirmed({ ok }: { ok: boolean }) {
@@ -81,11 +80,11 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
               {rows.map(({ chain, wallet }) => (
                 <span key={chain} className="inline-flex items-center gap-0.5">
                   <NetworkMark
-                    network={marks[chain]}
+                    network={CHAIN_NAMES[chain]}
                     showName={false}
                     size="sm"
                     role="img"
-                    aria-label={wallet ? `${networkNames[chain]}, ${wallet.authorized ? "confirmed" : "not confirmed"}` : networkNames[chain]}
+                    aria-label={wallet ? `${CHAIN_NAMES[chain]}, ${wallet.authorized ? "confirmed" : "not confirmed"}` : CHAIN_NAMES[chain]}
                   />
                   {wallet ? wallet.authorized ? <Check aria-hidden className="size-3 text-ok" /> : <TriangleAlert aria-hidden className="size-3 text-warn" /> : null}
                 </span>
@@ -101,8 +100,8 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
                 {rows.map(({ chain, wallet }) =>
                   wallet ? (
                     <li key={chain} className="flex items-center gap-2">
-                      <NetworkMark network={marks[chain]} showName={false} decorative size="sm" />
-                      <Address value={wallet.address} label={`${networkNames[chain]} wallet address`} onCopy={onCopy} />
+                      <NetworkMark network={CHAIN_NAMES[chain]} showName={false} decorative size="sm" />
+                      <Address value={wallet.address} label={`${CHAIN_NAMES[chain]} wallet address`} onCopy={onCopy} />
                       <Confirmed ok={wallet.authorized} />
                     </li>
                   ) : null,
@@ -114,9 +113,9 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
                 {rows.flatMap(({ chain, unpaid }) =>
                   unpaid.map((balance: PaymentsAccount["balances"][number]) => (
                     <li key={`${chain}:${balance.network}:${balance.assetAddress}`} title={`Unpaid${balance.network === mainNetwork(chain) ? "" : ` on ${networkLabel(balance.network)}`}`} className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm">
-                      <NetworkMark network={marks[chain]} showName={false} decorative size="sm" />
+                      <NetworkMark network={CHAIN_NAMES[chain]} showName={false} decorative size="sm" />
                       <strong>{formatAssetAmount(BigInt(balance.netBase), balance)}</strong>
-                      <span className="sr-only">unpaid on {networkNames[chain]}</span>
+                      <span className="sr-only">unpaid on {CHAIN_NAMES[chain]}</span>
                     </li>
                   )),
                 )}
@@ -137,9 +136,8 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
         {change ? (
           <section aria-labelledby={`wallet-change-${family}`} className="flex flex-col gap-3 border-t border-border pt-4">
             <h3 id={`wallet-change-${family}`} tabIndex={-1} ref={(node) => node?.focus()} className="font-semibold text-foreground">
-              Register a different {label} address?
+              Change {label} address?
             </h3>
-            <p>Your wallet returned a different account. Nothing is registered yet.</p>
             <dl className="flex flex-col gap-2">
               <div>
                 <dt className="text-sm text-muted-foreground">Saved address</dt>
@@ -154,13 +152,16 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
                 </dd>
               </div>
             </dl>
-            <p>
-              <strong>Your GitHub identity and this address become a public, permanent record.</strong> The earlier address stays public.
+            <p className="flex items-start gap-2">
+              <Eye aria-hidden className="mt-0.5 size-4 shrink-0" />
+              <span>
+                <strong>Your GitHub identity and this address become public and permanent.</strong> The earlier address stays public.
+              </span>
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={onConfirmChange}>Register wallet account</Button>
+              <Button onClick={onConfirmChange}>Register</Button>
               <Button variant="secondary" onClick={onKeepSaved}>
-                Keep saved address
+                Keep saved
               </Button>
             </div>
           </section>
@@ -173,7 +174,7 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
 function Downloads({ family }: { family: Family }) {
   return (
     <div className="flex flex-col gap-2">
-      <p>No wallet found. Install one, then reload.</p>
+      <p>No wallet found</p>
       <ul className="flex flex-col gap-2">
         {downloads[family].map((download) => (
           <li key={download.name}>
@@ -217,7 +218,7 @@ export function WalletManagement({ panel, offers, signInHref, onReload, onConnec
           </DialogContent>
         ) : null}
       </Dialog>
-      {panel.loading ? <p role="status">Checking your payouts…</p> : null}
+      {panel.loading ? <Spinner size="sm" label="Checking your payouts" /> : null}
       {panel.signedOut && !panel.loading ? (
         <Button asChild className="self-start">
           <a href={signInHref}>Sign in with GitHub</a>
@@ -240,7 +241,7 @@ export function WalletManagement({ panel, offers, signInHref, onReload, onConnec
       {panel.message ? <p role="status">{panel.message}</p> : null}
       {account ? (
         <>
-          {failure.length > 0 ? <p>Showing the last verified data.</p> : null}
+          {failure.length > 0 ? <Status presentation={staleStatus} className="self-start" /> : null}
           <section aria-label="Payout wallets" className="flex flex-col gap-4">
             {families.map(({ id }) => (
               <FamilyCard key={id} account={account} family={id} panel={panel} onPick={() => setPicker(id)} onConfirmChange={onConfirmChange} onKeepSaved={onKeepSaved} onCopy={onCopy} />

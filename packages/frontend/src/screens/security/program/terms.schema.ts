@@ -1,4 +1,4 @@
-// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/program.md, "Receipt terms come only from the open published revision"
+// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/program.md, "Receipt terms come only from the open published revision"
 import { Result, Schema } from "effect";
 
 const Person = Schema.Struct({ githubLogin: Schema.String });
@@ -21,6 +21,7 @@ export const ProgramScope = Schema.Struct({
   deployments: Schema.Array(Schema.Struct({ network: Schema.String, address: Schema.String, codeIdentity: Schema.NullOr(Schema.String) })),
   includedAssets: Schema.Array(Schema.String),
   excludedDependencies: Schema.Array(Schema.String),
+  excludedFindings: Schema.optional(Schema.Array(Schema.String)),
   testingPermission: Schema.String,
   severityRubric: Schema.String,
   lossDefinition: Schema.String,

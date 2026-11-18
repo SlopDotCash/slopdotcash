@@ -1,10 +1,12 @@
 // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
-import { Button, Field, Input, TransactionStatus } from "@repo/ui";
+import { Button, Disclosure, Field, Input, TransactionStatus } from "@repo/ui";
 import { useState } from "react";
 
 export type PendingCheckProps = {
   /** What the saved request does, such as "Deposit" or "Token approval". */
   action: string;
+  /** The status line of a request whose screen names it with a spinner, such as "Pending · don't resend"; otherwise the action awaits verification. */
+  status?: string;
   /** The request's exact amount, already formatted. */
   amount?: string;
   /** The transaction hash or signature the wallet returned or the owner entered. */
@@ -26,15 +28,16 @@ export type PendingCheckProps = {
 };
 
 /** A saved wallet request that must be verified before another is sent, with its recovery controls. */
-export function PendingCheck({ action, amount, hash, explorerUrl, solana = false, canCheck, busy = false, onCheck, onEnterHash, onConfirmUnsent }: PendingCheckProps) {
+export function PendingCheck({ action, status, amount, hash, explorerUrl, solana = false, canCheck, busy = false, onCheck, onEnterHash, onConfirmUnsent }: PendingCheckProps) {
   const [candidate, setCandidate] = useState("");
   const label = solana ? "Transaction signature" : "Transaction hash";
   return (
     <TransactionStatus
-      presentation={{ tone: "Notice", icon: "Clock", label: `${action} awaiting verification. Do not send it again.` }}
+      presentation={status === undefined ? { tone: "Notice", icon: "Clock", label: `${action} awaiting verification. Do not send it again.` } : { tone: "Notice", icon: "Spinner", label: status }}
       hash={hash || undefined}
       hashLabel={label}
       explorerUrl={explorerUrl}
+      explorerLabel="Transaction"
       actions={
         <>
           {amount ? <span className="text-sm text-foreground">{amount}</span> : null}
@@ -59,9 +62,11 @@ export function PendingCheck({ action, amount, hash, explorerUrl, solana = false
             </Button>
           )}
           {onConfirmUnsent ? (
-            <Button variant="ghost" disabled={busy} onClick={onConfirmUnsent}>
-              Nothing was sent; clear the saved request
-            </Button>
+            <Disclosure summary="Nothing was sent?">
+              <Button variant="secondary" disabled={busy} onClick={onConfirmUnsent}>
+                Not sent — clear
+              </Button>
+            </Disclosure>
           ) : null}
         </>
       }

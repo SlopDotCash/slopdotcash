@@ -34,7 +34,7 @@ export type ProfileActivityProps = {
 const segments = [
   { key: "merged", label: "Merged", query: "is:merged", tone: "bg-primary" },
   { key: "open", label: "Open", query: "is:open", tone: "bg-muted-foreground" },
-  { key: "closed", label: "Closed without merging", query: "is:closed is:unmerged", tone: "bg-border" },
+  { key: "closed", label: "Closed", query: "is:closed is:unmerged", tone: "bg-border" },
 ] as const;
 
 type Counts = { readonly merged: number; readonly open: number; readonly closed: number };
@@ -46,9 +46,7 @@ function PullRequestBar({ counts, login }: { counts: Counts; login: string }) {
     <section aria-label="Pull requests" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-xl font-semibold text-foreground">Pull requests</h2>
-        <span className="text-sm text-muted-foreground">
-          {total.toLocaleString("en-US")} total{decided > 0 ? ` · ${Math.round((counts.merged * 100) / decided)}% merged` : ""}
-        </span>
+        {decided > 0 ? <span className="text-sm text-muted-foreground">{Math.round((counts.merged * 100) / decided)}% merged</span> : null}
       </div>
       {total > 0 ? (
         <div aria-hidden className="flex h-2 w-full overflow-hidden rounded-full">
@@ -60,7 +58,7 @@ function PullRequestBar({ counts, login }: { counts: Counts; login: string }) {
           <li key={segment.key} className="flex items-center gap-2">
             <span aria-hidden className={cn("size-2 rounded-full", segment.tone)} />
             <a href={contributorPullSearchUrl(login, segment.query)} className="text-primary underline underline-offset-4 hover:decoration-2">
-              <strong>{counts[segment.key].toLocaleString("en-US")}</strong> PRs {segment.label.toLowerCase()}
+              <strong>{counts[segment.key].toLocaleString("en-US")}</strong> {segment.label}
             </a>
           </li>
         ))}
@@ -75,7 +73,7 @@ function ActivityChart({ awards, nowMs }: { awards: ReadonlyArray<DatedAward>; n
   const total = days.reduce((sum, day) => sum + day.points, 0);
   return (
     <section aria-label="Daily activity" className="flex flex-col gap-2">
-      <h2 className="text-sm text-muted-foreground">Daily activity · last {activityDays} days</h2>
+      <h2 className="text-sm text-muted-foreground">{activityDays} days</h2>
       <BarChart
         label={`Points per day, last ${activityDays} days: ${total.toLocaleString("en-US")} points`}
         bars={days.map((day) => ({ label: `${formatDate(day.day)} · ${day.points.toLocaleString("en-US")} points`, value: Math.max(0, day.points) }))}

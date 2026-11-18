@@ -9,11 +9,13 @@ import { type CaseList, type SecurityCase, caseListOf, caseOf } from "./case.sch
 
 export const caseMessages = {
   invalid: "The private case answer could not be read. Retry.",
+  signedOut: "Signed out.",
+  revoked: "Access revoked.",
+  unverified: "Session check failed.",
 } as const
 
 export type Loaded<T> =
   | { readonly status: "loading" }
-  | { readonly status: "signedOut" }
   | { readonly status: "problem"; readonly message: string }
   | { readonly status: "failed"; readonly message: string }
   | { readonly status: "ready"; readonly value: T; readonly refreshError: string | null }
@@ -35,7 +37,6 @@ export type Acted =
 
 type Outcome<T> =
   | { readonly kind: "value"; readonly value: T }
-  | { readonly kind: "signedOut" }
   | { readonly kind: "problem"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "closed"; readonly message: string }
@@ -48,11 +49,12 @@ function outcomeOf<A, T>(result: Private<A>, decode: (value: A) => T | undefined
     }
     case "failed": {
       const failure = result.failure
-      if (failure._tag === "Refused" && failure.status === 401) return { kind: "signedOut" }
-      if (failure._tag === "Refused" && [403, 404, 410].includes(failure.status)) return { kind: "problem", message: result.message }
+      if (failure._tag === "Refused" && failure.status === 401) return { kind: "problem", message: caseMessages.signedOut }
+      if (failure._tag === "Refused" && [403, 404, 410].includes(failure.status)) return { kind: "problem", message: caseMessages.revoked }
       return { kind: "failed", message: result.message }
     }
     case "unverified":
+      return { kind: "problem", message: caseMessages.unverified }
     case "accountChanged":
       return { kind: "problem", message: result.message }
     case "closed":
@@ -63,7 +65,6 @@ function outcomeOf<A, T>(result: Private<A>, decode: (value: A) => T | undefined
 function settled<T>(prior: Loaded<T>, outcome: Outcome<T>): Loaded<T> | undefined {
   switch (outcome.kind) {
     case "value": return { status: "ready", value: outcome.value, refreshError: null }
-    case "signedOut": return { status: "signedOut" }
     case "problem": return { status: "problem", message: outcome.message }
     case "failed": return prior.status === "ready" ? { ...prior, refreshError: outcome.message } : { status: "failed", message: outcome.message }
     case "closed": return prior.status === "ready" ? undefined : { status: "problem", message: outcome.message }

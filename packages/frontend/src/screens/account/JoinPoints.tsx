@@ -1,6 +1,6 @@
 // spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"
 import { Button } from "@repo/ui";
-import { LogIn } from "lucide-react";
+import { Eye, LogIn } from "lucide-react";
 import type { SignInState } from "./signIn.vibe";
 
 export type JoinPointsProps = {
@@ -29,10 +29,12 @@ export function JoinPoints({ session, attempt, elsewhere, onStart }: JoinPointsP
   return (
     <div className="flex flex-col items-start gap-4">
       {session === "failed" ? <p role="status">Could not check your session. Sign in again.</p> : null}
-      <p>Signing in makes your Slop membership and any connected X profile link public.</p>
+      <p className="flex items-center gap-2">
+        <Eye aria-hidden className="size-4" /> Membership and X link are public
+      </p>
       <Button loading={attempt.waiting} disabled={session === "checking"} onClick={() => onStart(attempt.closedAccount)}>
         {attempt.waiting ? null : <LogIn aria-hidden className="size-4" />}
-        {attempt.waiting ? "Waiting for GitHub…" : attempt.closedAccount ? "Reopen account with GitHub" : "Continue with GitHub"}
+        {attempt.waiting ? "Waiting for GitHub…" : attempt.closedAccount ? "Reopen account" : "Continue with GitHub"}
       </Button>
       <p role="status">{attempt.message}</p>
     </div>

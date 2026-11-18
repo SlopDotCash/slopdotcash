@@ -10,7 +10,7 @@ project's [public read](../backend/listing.md), its admission clearance and
 the build's template index, rendering each skill per request
 ([rendering](./skillRendering.md), after the
 [substitution checks](./rendering.md)). The site build (`scripts/prepare-site.mjs`)
-publishes the template index, the bootstrap skill, the agent discovery files
+publishes the template index, the three global skills, the agent discovery files
 and the protocol documents. This library holds the response and build
 predicates; it keeps no state.
 
@@ -225,12 +225,13 @@ pure def lawOtherMethodsPassThrough(route: RouteKind): bool = not(handled(OtherM
 ## Story: Publish the build's template index with exact provenance
 
 The site build publishes the two canonical template trees under
-`/skill-templates/` with `/skill-templates/index.json`. The owner's decision
-on revising the renderer inputs is pending (inventory D3, ARCHITECTURE O7);
-until it is made, the six renderer source paths and their bytes stay frozen
-and the `templateSha256` formula is unchanged, so no project's clearance pin
-changes. The alternative is a new template input set, which would re-queue
-every clearance.
+`/skill-templates/` with `/skill-templates/index.json`. The six renderer
+source paths, their order and the `templateSha256` formula are fixed; their
+digests are of the bytes the build reads (whether those equal the build
+commit's is the separate revision status below), so a change to any of them (as
+`development` made to `src/lib/project-schema.mjs` in b43a64dac and
+47f9b35c1) yields a new `templateSha256` and every clearance then binds the
+new digest (VET-07). The build commit is still no input.
 
 ### The template index binds templateSha256 to the template, renderer and accepted-revision digests
 
@@ -330,81 +331,148 @@ pure def lawMismatchedTemplateRetries(known: ArtifactFacts): bool =
     implies artifactAnswer(SkillArtifactRoute, known) == RetryLater
 ```
 
-## Story: Publish the bootstrap skill and agent discovery files from one source
+## Story: Publish the three global skills and agent discovery files from one source
 
-The owner's decision on revising the bootstrap is pending (inventory D1,
-ARCHITECTURE O7). Until it is made, `scripts/render-install-guide.mjs`,
-`src/lib/install-command.ts` and `skill-authority.mjs` keep their paths and
-bytes and the bootstrap `skills/slop/SKILL.md` is not revised; the
-alternative is a revised bootstrap with a new renderer contract, which every
-installed bootstrap would then have to accept.
+The bootstrap was revised into an entry skill and two role skills
+(`development` 52fc7cd79, 13 November 2026): `skills/slop/SKILL.md` routes
+to `skills/slop-contributor/SKILL.md`, which carries the renderer contract,
+and to `skills/slop-maintainer/SKILL.md`. The renderer paths did not change.
 
-### The served bootstrap skill and the agent-skills index carry the same digest
+### Each global skill, its discovery copy, its index entry and llms.txt carry the same digest
 
-The bootstrap source is exactly one regular file, `skills/slop/SKILL.md`,
-named `slop` in its front matter and accepted by the skill validator. The
-build copies it unchanged to `/SKILL.md` and
-`/.well-known/agent-skills/slop/SKILL.md`, and writes
+The global skills, in this fixed order, are `slop` at `/SKILL.md` ("Slop
+entry skill"), `slop-contributor` at `/contribute/SKILL.md` ("Contributor
+skill") and `slop-maintainer` at `/maintain/SKILL.md` ("Maintainer skill").
+Each source is exactly one regular file, `skills/<name>/SKILL.md`, accepted
+by the skill validator, named `<name>` in its front matter and with a
+description. Every role is validated before any published skill file is
+removed, so one refused source fails the build and leaves the old
+`/.well-known/agent-skills/`, `/contribute/` and `/maintain/` trees in place.
+The build then removes those three trees and, role by role, copies each
+source unchanged to its path and then to
+`/.well-known/agent-skills/<name>/SKILL.md`; after every copy it writes
 `/.well-known/agent-skills/index.json` (schema
-`https://schemas.agentskills.io/discovery/0.2.0/schema.json`) with one
-`skill-md` entry: its name, description, URL `https://slop.cash/SKILL.md`
-and digest `sha256:<SHA-256 of the source bytes>`. `llms.txt` states the
-same digest.
+`https://schemas.agentskills.io/discovery/0.2.0/schema.json`) listing the
+three in order, each with its name, type `skill-md`, description, URL
+`https://slop.cash/<path>` and digest `sha256:<SHA-256 of the source
+bytes>`; then `llms.txt`, which lists each with its label, URL, description
+and the same SHA-256; and last `skill-manifest.json`. A write that fails
+before the index leaves neither a new index nor a new manifest, and one that
+fails after it leaves no new manifest.
 
 ```quint
-type BootstrapSource = { files: List[str], name: str, validated: bool, bytes: SourceFile }
-type BootstrapOutputs = { rootDigest: str, discoveryCopyDigest: str, indexDigest: str, llmsDigest: str,
-  revision: str, status: RevisionStatus }
-pure def bootstrapPublishable(source: BootstrapSource, templatePathsAgree: bool): bool =
-  source.files == List("SKILL.md") and source.name == "slop" and source.validated and source.bytes.working != ""
-  and templatePathsAgree
-pure def bootstrapOutputs(source: BootstrapSource, commit: str): BootstrapOutputs =
-  { rootDigest: source.bytes.working, discoveryCopyDigest: source.bytes.working, indexDigest: source.bytes.working,
-    llmsDigest: source.bytes.working, revision: commit, status: sourceStatus(List(source.bytes)) }
-pure def lawBootstrapDigestsAgree(source: BootstrapSource, commit: str): bool =
-  val outputs = bootstrapOutputs(source, commit)
-  outputs.rootDigest == outputs.indexDigest and outputs.discoveryCopyDigest == outputs.indexDigest
-  and outputs.llmsDigest == outputs.indexDigest and outputs.indexDigest == source.bytes.working
+type GlobalRole = SlopEntry | SlopContributor | SlopMaintainer
+type GlobalSource = { role: GlobalRole, files: List[str], name: str, validated: bool, bytes: SourceFile }
+type GlobalOutput = { role: GlobalRole, canonicalDigest: str, aliasDigest: str, indexDigest: str, manifestDigest: str,
+  llmsDigest: str, revision: str, status: RevisionStatus }
+type WriteKind = RemoveTree | CanonicalCopy | DiscoveryAlias | DiscoveryIndex | LlmsText | SkillManifest
+type GlobalWrite = { kind: WriteKind, path: str }
+pure val globalRoles = List(SlopEntry, SlopContributor, SlopMaintainer)
+pure def roleName(role: GlobalRole): str =
+  if (role == SlopEntry) "slop" else if (role == SlopContributor) "slop-contributor" else "slop-maintainer"
+pure def rolePath(role: GlobalRole): str =
+  if (role == SlopEntry) "SKILL.md" else if (role == SlopContributor) "contribute/SKILL.md" else "maintain/SKILL.md"
+pure def roleAlias(role: GlobalRole): str =
+  if (role == SlopEntry) ".well-known/agent-skills/slop/SKILL.md"
+  else if (role == SlopContributor) ".well-known/agent-skills/slop-contributor/SKILL.md"
+  else ".well-known/agent-skills/slop-maintainer/SKILL.md"
+pure def roleSource(role: GlobalRole): str =
+  if (role == SlopEntry) "skills/slop/SKILL.md" else if (role == SlopContributor) "skills/slop-contributor/SKILL.md"
+  else "skills/slop-maintainer/SKILL.md"
+pure def roleLabel(role: GlobalRole): str =
+  if (role == SlopEntry) "Slop entry skill" else if (role == SlopContributor) "Contributor skill" else "Maintainer skill"
+pure val removedTrees = List(".well-known/agent-skills", "contribute", "maintain")
+pure val noWrite: GlobalWrite = { kind: RemoveTree, path: "" }
+pure def globalSourcePublishable(source: GlobalSource): bool =
+  source.files == List("SKILL.md") and source.name == roleName(source.role) and source.validated
+  and source.bytes.working != ""
+pure def globalSourcesValid(sources: List[GlobalSource]): bool =
+  sources.listMap(x => x.role) == globalRoles and sources.every(x => globalSourcePublishable(x))
+pure def globalOutput(source: GlobalSource, commit: str): GlobalOutput =
+  { role: source.role, canonicalDigest: source.bytes.working, aliasDigest: source.bytes.working,
+    indexDigest: source.bytes.working, manifestDigest: source.bytes.working, llmsDigest: source.bytes.working,
+    revision: commit, status: sourceStatus(List(source.bytes)) }
+pure def globalOutputs(sources: List[GlobalSource], commit: str): List[GlobalOutput] =
+  sources.listMap(x => globalOutput(x, commit))
+pure def roleWrites(role: GlobalRole): List[GlobalWrite] =
+  List({ kind: CanonicalCopy, path: rolePath(role) }, { kind: DiscoveryAlias, path: roleAlias(role) })
+pure def globalWrites(sources: List[GlobalSource]): List[GlobalWrite] =
+  if (not(globalSourcesValid(sources))) List()
+  else removedTrees.listMap(x => { kind: RemoveTree, path: x })
+    .concat(globalRoles.foldl(List(), (written, r) => written.concat(roleWrites(r))))
+    .concat(List({ kind: DiscoveryIndex, path: ".well-known/agent-skills/index.json" }, { kind: LlmsText, path: "llms.txt" },
+      { kind: SkillManifest, path: "skill-manifest.json" }))
+pure def lawGlobalDigestsAgree(sources: List[GlobalSource], commit: str): bool =
+  globalOutputs(sources, commit).every(o => o.canonicalDigest == o.indexDigest and o.aliasDigest == o.indexDigest
+    and o.manifestDigest == o.indexDigest and o.llmsDigest == o.indexDigest and o.revision == commit)
+  and globalOutputs(sources, commit).listMap(o => o.indexDigest) == sources.listMap(x => x.bytes.working)
+pure def lawGlobalOrderIsFixed(sources: List[GlobalSource], commit: str): bool =
+  globalSourcesValid(sources) implies globalOutputs(sources, commit).listMap(o => o.role) == globalRoles
+pure def lawOneRefusedRolePublishesNothing(sources: List[GlobalSource]): bool =
+  sources.some(x => not(globalSourcePublishable(x))) implies not(globalSourcesValid(sources)) and globalWrites(sources) == List()
+pure def lawEachAliasFollowsItsCopyAndMetadataComesLast(sources: List[GlobalSource]): bool =
+  val w = globalWrites(sources)
+  globalSourcesValid(sources) implies
+    w.length() == 12 and List(0, 1, 2).every(i => w.nthOr(i, noWrite).kind == RemoveTree
+      and w.nthOr(3 + 2 * i, noWrite) == { kind: CanonicalCopy, path: rolePath(globalRoles.nthOr(i, SlopEntry)) }
+      and w.nthOr(4 + 2 * i, noWrite) == { kind: DiscoveryAlias, path: roleAlias(globalRoles.nthOr(i, SlopEntry)) })
+    and w.nthOr(9, noWrite).kind == DiscoveryIndex and w.nthOr(10, noWrite).kind == LlmsText
+    and w.nthOr(11, noWrite).kind == SkillManifest
 ```
 
 ### llms.txt and skill-manifest.json state the build commit and its committed or working-tree status
 
-`/llms.txt` names the bootstrap source revision as the full build commit
-followed by `(committed)` when the bootstrap bytes equal the commit's
-`skills/slop/SKILL.md`, else `(working-tree)`. `/skill-manifest.json` is
+Each skill's line in `/llms.txt` names its source revision as the full build
+commit followed by `(committed)` when its bytes equal the commit's
+`skills/<name>/SKILL.md`, else `(working-tree)`; `llms.txt` also links the
+discovery index and the skill manifest. `/skill-manifest.json` is
 `{ schemaVersion: "1", name: null, repository: "SlopDotCash/slopdotcash",
-revision: <commit>, revisionStatus, generatedAt }` with the same status. The
+revision: <commit>, revisionStatus, skills, generatedAt }`, where `skills`
+lists the three in order as `{ name, source: skills/<name>/SKILL.md, url,
+digest, revision, revisionStatus }` with each skill's own status, and the
+top-level `revisionStatus` is `committed` only when every skill's is. The
 build refuses a commit that is not 40 lowercase hexadecimal characters.
 
 ```quint
-pure def lawBootstrapStatusIsExact(source: BootstrapSource, commit: str): bool =
-  (bootstrapOutputs(source, commit).status == CommittedStatus iff
+pure def manifestStatus(sources: List[GlobalSource]): RevisionStatus =
+  if (sources.every(x => sourceStatus(List(x.bytes)) == CommittedStatus)) CommittedStatus else WorkingTreeStatus
+pure def lawGlobalStatusIsExact(source: GlobalSource, commit: str): bool =
+  (globalOutput(source, commit).status == CommittedStatus iff
     (source.bytes.committed != "" and source.bytes.working == source.bytes.committed))
-  and bootstrapOutputs(source, commit).revision == commit
+  and globalOutput(source, commit).revision == commit
+pure def lawManifestCommittedNeedsEverySkill(sources: List[GlobalSource]): bool =
+  (manifestStatus(sources) == CommittedStatus) iff
+    sources.every(x => x.bytes.committed != "" and x.bytes.working == x.bytes.committed)
 ```
 
 ### The bootstrap's renderer contract names files that exist byte-identical at the build commit
 
-The bootstrap rebuilds each install guide from `SlopDotCash/slopdotcash` at
-the manifest's revision with the entrypoint `scripts/render-install-guide.mjs`
-and the paths `scripts/render-install-guide.mjs`,
-`src/lib/install-command.ts` and, where `install-command.ts` imports it,
+The contributor skill (`skills/slop-contributor/SKILL.md`) carries the
+renderer contract: it rebuilds each install guide from
+`SlopDotCash/slopdotcash` at the manifest's revision with the entrypoint
+`scripts/render-install-guide.mjs` and the paths
+`scripts/render-install-guide.mjs`, `src/lib/install-command.ts` and, where
+`install-command.ts` imports it,
 `skills/project-contributor-template/scripts/skill-authority.mjs`. A guide
 record names the build commit as its renderer revision only when those
-files are committed at it; otherwise the revision is null and the bootstrap
-refuses the guide. The build also refuses to publish when the template paths
-inlined in `install-command.ts` differ from the project schema's.
+files are committed at it; otherwise the revision is null and the
+contributor skill refuses the guide. The build also fails when the template
+paths inlined in `install-command.ts` differ from the project schema's; it
+compares them after writing the global skills, so a failed build is never
+deployed.
 
 ```quint
 pure val guideRendererPaths = List("scripts/render-install-guide.mjs", "src/lib/install-command.ts",
   "skills/project-contributor-template/scripts/skill-authority.mjs")
+pure def globalSetPublishable(sources: List[GlobalSource], templatePathsAgree: bool): bool =
+  globalSourcesValid(sources) and templatePathsAgree
 pure def guideRendererRevision(i: TemplateIndexBuild): str =
   if (guideRendererStatus(i) == CommittedStatus) i.commit else ""
 pure def lawGuideRevisionOnlyWhenCommitted(i: TemplateIndexBuild): bool =
   guideRendererRevision(i) != "" implies guideRendererStatus(i) == CommittedStatus and guideRendererRevision(i) == i.commit
 pure def lawGuidePathsAreRendererSources(i: TemplateIndexBuild): bool =
   indexPublishable(i) implies guideRendererPaths.every(x => i.rendererSources.listMap(y => y.path).includes(x))
-pure def lawBootstrapNeedsAgreeingTemplatePaths(source: BootstrapSource): bool = not(bootstrapPublishable(source, false))
+pure def lawGlobalSetNeedsAgreeingTemplatePaths(sources: List[GlobalSource]): bool = not(globalSetPublishable(sources, false))
 ```
 
 ### Protocol documents are generated from their one maintained source and historical protocol links stay immutable
@@ -468,9 +536,17 @@ pure val indexA: TemplateIndexBuild = { commit: "0123456789abcdef0123456789abcde
   acceptedRevisions: List("any committed template revision") }
 pure val iValues = Set(indexA, { ...indexA, rendererSources: List() }, { ...indexA, reviewer: { ...groupA, committedPaths: List() } })
 pure val commitValues = Set("0123456789abcdef0123456789abcdef01234567", "fedcba9876543210fedcba9876543210fedcba98")
-pure val bootstrapA: BootstrapSource = { files: List("SKILL.md"), name: "slop", validated: true, bytes: committedFile }
-pure val sourceValues = Set(bootstrapA, { ...bootstrapA, bytes: { ...committedFile, committed: "" } },
-  { ...bootstrapA, files: List("SKILL.md", "extra.md") })
+pure val entrySource: GlobalSource = { role: SlopEntry, files: List("SKILL.md"), name: "slop", validated: true,
+  bytes: committedFile }
+pure val contributorSource: GlobalSource = { ...entrySource, role: SlopContributor, name: "slop-contributor" }
+pure val maintainerSource: GlobalSource = { ...entrySource, role: SlopMaintainer, name: "slop-maintainer" }
+pure val sourceValues = Set(entrySource, { ...entrySource, bytes: { ...committedFile, committed: "" } },
+  { ...entrySource, files: List("SKILL.md", "extra.md") }, { ...maintainerSource, validated: false },
+  { ...contributorSource, name: "slop" })
+pure val sourcesValues = Set(List(entrySource, contributorSource, maintainerSource),
+  List(entrySource, { ...contributorSource, bytes: { ...committedFile, working: "b" } }, maintainerSource),
+  List(entrySource, contributorSource, { ...maintainerSource, validated: false }),
+  List(entrySource, maintainerSource, contributorSource), List())
 pure val filesValues = Set(List({ indexed: "a", servedSha256: "a", size: 1, present: true }),
   List({ indexed: "a", servedSha256: "b", size: 1, present: true }))
 ```

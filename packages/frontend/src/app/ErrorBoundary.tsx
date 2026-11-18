@@ -13,8 +13,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
     if (!this.state.failed) return this.props.children;
     return (
       <main role="alert" className="flex flex-col items-start gap-4">
-        <PageHeader title="Slop could not load." />
-        <Button onClick={() => location.reload()}>Reload the page</Button>
+        <PageHeader title="Something broke" />
+        <Button onClick={() => location.reload()}>Reload</Button>
       </main>
     );
   }

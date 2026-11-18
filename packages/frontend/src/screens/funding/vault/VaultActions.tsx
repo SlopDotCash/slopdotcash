@@ -1,4 +1,4 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/settlement/vault.md, "Only the fixed refund destination receives free funds"; spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/settlement/vault.md, "Only the fixed refund destination receives free funds"; spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { Address, Alert, Button, Card, CardTitle, Disclosure, Field, Input, NetworkMark, type NetworkMarkProps, RadioGroup, Status, WalletChooser } from "@repo/ui";
 import { Effect } from "effect";
@@ -59,6 +59,15 @@ const live = new Set(["Awaiting", "Sent", "Unclear"]);
 const batchLive = new Set<Batch["phase"]>(["IntentSaved", "WalletReference", "Uncertain", "HashKnown"]);
 const marks = new Set<string>(["Base", "Base Sepolia", "Ethereum", "Ethereum Sepolia", "Robinhood Chain", "Robinhood Chain Testnet", "Solana"]);
 
+const followed = new WeakMap<object, { readonly account: number; readonly turn: number }>();
+
+function followKey(runtime: object, account: number): string {
+  const last = followed.get(runtime);
+  const current = last === undefined ? { account, turn: 0 } : last.account === account ? last : { account, turn: last.turn + 1 };
+  followed.set(runtime, current);
+  return `follow:${current.turn}:${account}`;
+}
+
 /** The network's mark beside its name, or its name alone where no mark exists. */
 export function NetworkName({ network }: { network: string }) {
   const label = networkLabel(network);
@@ -68,7 +77,7 @@ export function NetworkName({ network }: { network: string }) {
 /** Deposits and withdrawals on one registered vault, each sent by the person's own wallet after the request is saved. */
 export function VaultActions({ project, deployment, period, account, loginHref, pool, onFinalized }: VaultActionsProps) {
   const runtime = vaultRuntime(project, deployment, period);
-  useSettled(runtime, `follow:${account}`, () => followVault(account));
+  useSettled(runtime, followKey(runtime, account), () => followVault(account));
   const vault = useVault(runtime);
   const batch = useBatch(runtime);
   const offers = useWalletOffers(runtime);

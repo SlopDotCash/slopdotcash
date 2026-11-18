@@ -58,19 +58,19 @@ pure val baseJournal: C::Fee = { ...C::initial, runtime: liveRuntime, lease: { h
   holdings: List({ ...C::noHolding, token: 1, asset: C::TargetStable, feeIncome: 1000000000, claimed: 1000000000,
     vaultObserved: 1000000000, balance: 1000000000 }, { ...C::noHolding, token: 2, asset: C::NativeAsset }),
   rows: List({ ...C::noRow, id: 1, token: 1, kind: C::Claim, live: true, state: C::Finalized, runId: 1, wallet: 1,
-    amountIn: 1000000000, nonce: 0, attempts: List({ tx: 12, maxFee: 50, priority: 2, at: 0 }) },
+    amountIn: 1000000000, output: 1000000000, nonce: 0, attempts: List({ tx: 12, maxFee: 50000, priority: 2000, at: 0 }) },
     { ...C::noRow, id: 2, token: 2, kind: C::Conversion, live: true, state: C::Finalized, runId: 1, wallet: 1,
-    amountIn: 500000000, output: 450000000, nonce: 1, attempts: List({ tx: 11, maxFee: 50, priority: 2, at: 0 }) }),
-  gas: List({ ...C::noGas, id: 1, runId: 1, nonce: 0, maximum: 50000, state: C::Signed, row: 1, tx: 12, settled: true, actual: 40000 },
-    { ...C::noGas, id: 2, runId: 1, nonce: 1, maximum: 50000, state: C::Signed, row: 2, tx: 11, settled: true, actual: 40000 }) }
+    amountIn: 500000000, output: 450000000, nonce: 1, attempts: List({ tx: 11, maxFee: 50000, priority: 2000, at: 0 }) }),
+  gas: List({ ...C::noGas, id: 1, runId: 1, nonce: 0, maximum: 50000000, state: C::Signed, row: 1, tx: 12, settled: true, actual: 40000000 },
+    { ...C::noGas, id: 2, runId: 1, nonce: 1, maximum: 50000000, state: C::Signed, row: 2, tx: 11, settled: true, actual: 40000000 }) }
 pure val robinhoodJournal: C::Fee = { ...baseJournal, network: R::Robinhood, holdings: List(), rows: List(), gas: List() }
 pure val fValues = Set(baseJournal).union(Set(robinhoodJournal)).union(Set({ ...baseJournal, clock: 900000 }))
 pure val buybackSendValues = Set(
-  { network: R::Base, kind: BridgeOrderSend, runId: 1, tx: 21, nonce: 2, maximum: 50000 },
-  { network: R::Base, kind: BridgeApprovalSend, runId: 1, tx: 21, nonce: 1, maximum: 50000 },
-  { network: R::Base, kind: PurchaseSend, runId: 1, tx: 24, nonce: 2, maximum: 50000 },
-  { network: R::Robinhood, kind: PurchaseSend, runId: 1, tx: 24, nonce: 0, maximum: 100000 },
-  { network: R::Robinhood, kind: BurnSend, runId: 1, tx: 25, nonce: 0, maximum: 300000 })
+  { network: R::Base, kind: BridgeOrderSend, runId: 1, tx: 21, nonce: 2, maximum: 50000000 },
+  { network: R::Base, kind: BridgeApprovalSend, runId: 1, tx: 21, nonce: 1, maximum: 50000000 },
+  { network: R::Base, kind: PurchaseSend, runId: 1, tx: 24, nonce: 2, maximum: 50000000 },
+  { network: R::Robinhood, kind: PurchaseSend, runId: 1, tx: 24, nonce: 0, maximum: 100000000 },
+  { network: R::Robinhood, kind: BurnSend, runId: 1, tx: 25, nonce: 0, maximum: 300000000 })
 ```
 
 ## Story: Credit the pool only from the owning leg
@@ -94,6 +94,6 @@ pure val arrivedLeg: B::Buyback = { ...B::initial, orders: List(1),
 pure val legValues = Set(B::initial).union(Set(arrivedLeg)).union(Set({ ...arrivedLeg, source: R::Solana }))
 pure val arrivalValues = Set({ network: R::Base, order: 1, takeAmount: 495000000, height: 2 },
   { network: R::Base, order: 1, takeAmount: 500000000, height: 2 }, { network: R::Solana, order: 1, takeAmount: 495000000, height: 2 })
-pure val poolValues = Set(P::initial).union(Set({ ...P::initial, credit: 495000000,
+pure val poolValues = Set(P::initial).union(Set({ ...P::initial, credits: List({ ...P::noCredit(P::usdg), credit: 495000000 }),
   arrivals: List({ network: R::Base, order: 1, takeAmount: 495000000, height: 2 }) }))
 ```

@@ -8,8 +8,6 @@ import type { ProjectCycleView } from "../../projections/projectView.ts";
 import { formatDate } from "../projects/index.ts";
 import { awaitingApproval } from "./labels.ts";
 
-export const reminderText = "This record does not verify the month's funding status.";
-
 export type Lifecycle = CycleIndexEntry["state"] | "live" | "closed";
 
 export interface CycleFacts {
@@ -66,22 +64,26 @@ export function stagesOf(facts: CycleFacts): { readonly stages: ReadonlyArray<St
   const second: Stage =
     cutoff !== undefined
       ? { label: "Owner changes", description: `${cutoff <= nowMs ? "Closed" : "Closes"} ${formatDateTime(new Date(cutoff).toISOString())}` }
-      : { label: "Review", description: record?.reviewEndsAt ? `${reviewClosed ? "Ended" : "Ends"} ${formatDate(record.reviewEndsAt)}` : "Not started" };
+      : { label: "Review", description: record?.reviewEndsAt ? `${reviewClosed ? "Ended" : "Ends"} ${formatDate(record.reviewEndsAt)}` : "—" };
   return {
     current,
     stages: [
       { label: "Contribution", description: `${formatDate(from)}–${formatDate(to)}` },
       second,
-      { label: "Approval", description: record?.approvedAt ? `Approved ${formatDate(record.approvedAt)}` : reviewClosed ? "Awaiting owner approval" : "Not approved" },
-      { label: "Payment", description: record?.settledAt ? `Paid ${formatDate(record.settledAt)}` : record?.state === "settlement-planned" ? "Ready; payment not verified" : "Payment not verified" },
+      { label: "Approval", description: record?.approvedAt ? `Approved ${formatDate(record.approvedAt)}` : reviewClosed ? "Awaiting owner" : "—" },
+      { label: "Payment", description: record?.settledAt ? `Paid ${formatDate(record.settledAt)}` : record?.state === "settlement-planned" ? "Ready" : "Unverified" },
     ],
   };
 }
 
-/** The words that replace the stages for a record that ends without an ordinary payment. @throws {never} */
+/** The words for a record that ends without an ordinary payment; a cycle closed without awards has only its status. @throws {never} */
 export function terminalMessage(record: CycleIndexEntry | undefined): string | undefined {
-  if (record?.kind === "external-prize-share") return "External prize shares. Not paid through Slop.";
-  if (record?.state === "closed-no-awards") return "Closed without awards. No payment is due.";
-  if (record?.state === "wound-up") return "The vault was returned. Approved awards are held unfunded.";
+  if (record?.kind === "external-prize-share") return "External prize · not paid by Slop";
+  if (record?.state === "wound-up") return "Vault returned · awards unfunded";
   return undefined;
+}
+
+/** A terminal cycle has no stage progress; its status names its state. @throws {never} */
+export function cycleTerminal(record: CycleIndexEntry | undefined): boolean {
+  return terminalMessage(record) !== undefined || record?.state === "closed-no-awards";
 }

@@ -16,14 +16,15 @@ export const meta: ComponentMeta<PayoutsViewProps> = {
     Default: async () => {
       await expect(screen.getAllByText("Paid").length).toBe(1);
       await expect(["Submitted", "Queued", "Held", "Needs wallet", "Underfunded", "Unavailable", "Received"].map((word) => screen.getAllByText(word).length > 0)).toEqual([true, true, true, true, true, true, true]);
+      await expect(screen.getByRole("link", { name: "Awaiting wallet: add or confirm your Base wallet" }).getAttribute("href")).toBe("/account#wallets");
     },
     // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
     Empty: async () => {
-      await expect(screen.getByText("No approved awards yet.")).toBeTruthy();
+      await expect(screen.queryByRole("list", { name: "Awards and payments" })).toBeNull();
     },
     // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
     FailedKeepsRows: async () => {
-      await expect([screen.getByText("Showing the last verified data.").textContent, screen.getAllByText("Paid").length]).toEqual(["Showing the last verified data.", 1]);
+      await expect([Boolean(screen.getByRole("button", { name: "Retry" })), screen.getAllByText("Paid").length]).toEqual([true, 1]);
     },
   },
 };

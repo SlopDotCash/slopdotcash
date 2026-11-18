@@ -1,0 +1,262 @@
+import { assert, layer } from "@effect/vitest"
+import { hexToBytes } from "@noble/hashes/utils.js"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { Request as WebRequest } from "miniflare"
+import { privateKeyToAccount } from "viem/accounts"
+import type { D1Database, ExecutionContext } from "@repo/platform/bindings"
+import { type Hex, evmRpc } from "@repo/platform/chain/evm"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated, outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { anvil } from "@repo/platform/testing/chains"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { worker } from "@repo/platform/worker"
+import { Authority, type Permission, type ProjectView, Registry, type RegistryManifest, RegistryManifests, Restrictions, VaultRegistrationRefused } from "@repo/ports/backend"
+import { type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { type MonthlyReservation, SOURCE_SEQUENCE_CALL, decodeMonthlyReserve, monthlyReserveCall, monthlyRootCall, reserveMonthlyCalldata, reserveStruct, sumTree } from "../src/chain/evm/monthlyRoot.ts"
+import { walletTypedData } from "../src/chain/evm/typedData.ts"
+import type { NetworkKey } from "../src/kernels/networks.ts"
+import { monthlyFacts } from "../src/monthly/store.vibe"
+import { type ApprovalRequest, ReleaseApprover } from "../src/reserveRelease/release.vibe"
+import { reserveReleaseJournal, reserveReleaseRoutes } from "../src/reserveRelease/routes.vibe"
+import { type EscrowStack, FEE_RECIPIENT, NOVEMBER_2026, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
+
+service Release {
+  readonly escrow: EscrowStack
+  readonly db: D1Database
+}
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+}
+
+const context: ExecutionContext = { waitUntil: () => undefined }
+const windowOpen = 1796346000
+const releaseNetwork: NetworkKey = "base-mainnet"
+const SOURCE_COMMIT = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
+const steward = "77"
+const stranger = "78"
+const repository = { id: "501", nodeId: "R_501", fullName: "owner/release", integrationBranch: "main", aliases: [] }
+const views = new Map<string, ProjectView>()
+const manifests: RegistryManifest[] = []
+
+const Started = Layer.effect(Release, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { PAYMENTS_DB: "reserve-release-route" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
+  return { escrow, db: try promise(() => database(mf, "PAYMENTS_DB")) }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function lower(text: string) {
+  const parsed = evmAddress(text)
+  if (parsed === undefined) return try die(new Error(`${text} is not an address`))
+  return parsed
+}
+
+effect function codeDigest(at: string) {
+  const { escrow } = try Release
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+  if (typeof code !== "string") return try die(new Error("eth_getCode answered no code"))
+  return try sha256Hex(try Effect.try(() => hexToBytes(code.slice(2))))
+}
+
+effect function registered(projectId: string, vault: EvmAddress) {
+  const { escrow, db } = try Release
+  const head = try promise(() => escrow.head())
+  const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
+  if (created === undefined) return try die(new Error("the factory logged no VaultCreated for the vault"))
+  const factorySlot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = `0x${factorySlot.slice(-40)}`
+  const deployment = {
+    network: releaseNetwork, vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: escrow.dollar, owner: try lower(escrow.roles.owner.address),
+    identityAuthority: try lower(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, deploymentTransaction: created.at.transaction,
+    sourceCommit: SOURCE_COMMIT, codeSha256: try codeDigest(vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: escrow.factory, factoryCodeSha256: try codeDigest(escrow.factory), registrar: try lower(escrow.roles.registrar.address),
+    evmUpgrade: {
+      authority: try lower(escrow.roles.upgrader.address),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(factoryImplementation),
+    },
+  }
+  const escrowPolicy = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] }
+  const manifest = JSON.stringify({ id: projectId, status: "active", steward: { github: { type: "Organization" } }, reward: { kind: "monthly-pool", monthlyCapMinor: "50000000" }, escrow: escrowPolicy })
+  const manifestSha256 = try sha256Hex(manifest)
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${projectId}, 1, ${manifest}, ${manifestSha256}, 'Activated automatically', '2026-10-01T00:00:00.000Z')`,
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${projectId}, 'active', 1, ${manifest}, ${manifestSha256}, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`,
+    ])
+  }
+  manifests.push({ projectId, active: true, revision: 1, manifest, manifestSha256, updatedAt: "2026-10-01T00:00:00.000Z" })
+  views.set(projectId, { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: "OrganizationSteward", listing: { fromApplication: false }, repositories: [repository], closureConsent: false })
+  return manifestSha256
+}
+
+effect function reservedMonth(projectId: string, first: bigint, fault: bigint) {
+  const { escrow, db } = try Release
+  const owner = try lower(escrow.roles.owner.address)
+  const donor = escrow.roles.donor.address
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(first), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  try promise(() => escrow.fund(vault, 20_000_000n, donor))
+  const entries = entriesFrom(first, [1_000_000n, 2_000_000n])
+  const tree = try Effect.try(() => sumTree(entries))
+  const snapshot = try sha256Hex(`snapshot:${projectId}`)
+  const allocationDigest = bytes32(`0x${snapshot}`)
+  const sequence = decodeUint(try promise(() => escrow.call(vault, SOURCE_SEQUENCE_CALL)), U256_MAX)
+  if (allocationDigest === undefined || sequence === undefined) return try die(new Error("malformed monthly reservation inputs"))
+  const gross = tree.root.total + fault
+  const reservation: MonthlyReservation = { allocationDigest, allocationRoot: tree.root.hash, wholeGross: gross, remainingGross: gross, count: entries.length, sourceSequence: sequence }
+  const typedData = try Effect.try(() => walletTypedData({ chainId: escrow.chainId, vault }, reserveStruct(NOVEMBER_2026, reservation)))
+  const signature = try promise(() => escrow.signTypedData(escrow.roles.authority.address, typedData))
+  const reserve = try Effect.try(() => reserveMonthlyCalldata(NOVEMBER_2026, reservation, signature))
+  try promise(() => escrow.send(donor, vault, reserve))
+  const plan = {
+    family: "evm",
+    request: { projectId, period: "2026-11", network: releaseNetwork, snapshotSha256: snapshot },
+    deployment: { network: releaseNetwork, vault },
+    entries: entries.map((entry) => ({ githubUserId: entry.actor.toString(), grossMicro: entry.gross.toString(), sourceDigest: entry.sourceDigest })),
+    evmReservation: { version: 2, allocationRoot: tree.root.hash },
+  }
+  const authorization = JSON.stringify({ plan })
+  const total = tree.root.total.toString()
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${projectId}, '2026-11', '{}', ${snapshot}, ${snapshot}, '50000000', 2, '2026-12-01T12:00:00.000Z')`,
+      sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES (${projectId}, '2026-11', 'automatic', NULL, 0, 'snapshot', ${snapshot}, ${releaseNetwork}, ${vault}, ${total}, '2026-12-04T00:00:00.000Z', NULL)`,
+      sql`UPDATE monthly_payment_runs SET obligations_created_at = '2026-12-04T00:05:00.000Z' WHERE project_id = ${projectId} AND period = '2026-11'`,
+      sql`INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) VALUES (${projectId}, '2026-11', ${releaseNetwork}, ${snapshot}, ${authorization}, '2026-12-04T00:10:00.000Z')`,
+    ])
+  }
+  return { projectId, vault, manifestSha256: try registered(projectId, vault) }
+}
+
+effect function remainingOf(vault: EvmAddress) {
+  const { escrow } = try Release
+  const rootCall = try Effect.try(() => monthlyRootCall(NOVEMBER_2026))
+  const reserveCall = try Effect.try(() => monthlyReserveCall(NOVEMBER_2026))
+  const root = try promise(() => escrow.call(vault, rootCall))
+  const reserve = try promise(() => escrow.call(vault, reserveCall))
+  return decodeMonthlyReserve({ root, reserve })?.remaining
+}
+
+const caller = Layer.succeed(Caller, {
+  current: () => effect {
+    const id = (try HttpServerRequest.HttpServerRequest).headers["x-test-actor"]
+    if (id === undefined) throw new Unauthenticated()
+    return { githubId: id, login: `user${id}`, actorId: `actor-${id}` }
+  },
+})
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => effect { return views.get(projectId) },
+    byRepository: () => effect { return undefined },
+    byPath: () => effect { return undefined },
+    active: () => effect { return [...views.values()] },
+    pausedProjects: () => effect { return [] },
+    fence: () => effect { return sql`1` },
+    appendVaultRegistration: () => Effect.fail(new VaultRegistrationRefused({ code: "vault_setup_unavailable" })),
+  }),
+  Layer.succeed(Authority, {
+    repository: (read) => effect {
+      const permission: Permission = read.actorGithubId === steward && read.repositoryId === repository.id ? "PermissionVerified" : "PermissionDenied"
+      return { ...read, permission, installation: "Installed" as const }
+    },
+  }),
+  Layer.succeed(Restrictions, {
+    account: () => effect { return { banned: false } },
+    project: () => effect { return { restricted: false } },
+    fence: () => effect { return sql`SELECT 1` },
+    unbanned: () => effect { return sql`1` },
+  }),
+  Layer.succeed(RegistryManifests, {
+    current: () => effect { return [...manifests] },
+    project: (projectId) => effect { return manifests.find((manifest) => manifest.projectId === projectId) },
+  }),
+)
+
+effect function siteOf(approvals: ApprovalRequest[]) {
+  const { escrow, db } = try Release
+  const authority = try Effect.try(() => privateKeyToAccount(escrow.roles.authority.privateKey))
+  const approver = Layer.succeed(ReleaseApprover, {
+    approve: (request) => effect {
+      approvals.push(request)
+      return (try promise(() => authority.sign({ hash: request.digest }))) as Hex
+    },
+  })
+  const rpc = Layer.provide(evmRpc({ urls: Redacted.make([escrow.chain.url]), chainId: escrow.chainId }), outbound)
+  const base = Layer.mergeAll(d1(db), webCrypto, KeyValueStore.layerMemory, caller, ports, approver, rpc)
+  const facts = Layer.provideMerge(monthlyFacts(new Set([releaseNetwork])), base)
+  return worker({ services: (_env: object) => Layer.provideMerge(reserveReleaseJournal([releaseNetwork]), facts), routes: reserveReleaseRoutes })
+}
+
+function errorOf(answer: Answer) {
+  const body = answer.body
+  return [answer.status, typeof body === "object" && body !== null && "error" in body ? body.error : "ok"] as const
+}
+
+function field(value: unknown, ...path: ReadonlyArray<string>): unknown {
+  return path.reduce<unknown>((at, key) => typeof at === "object" && at !== null && key in at ? (at as Readonly<Record<string, unknown>>)[key] : undefined, value)
+}
+
+layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Release an untouched wrong-total reserve through the route (spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve")', () => effect {
+    const { escrow } = try Release
+    const wrong = try reservedMonth("release-route", 0x9400n, 7n)
+    escrow.chain.setFinalized(try promise(() => escrow.head()))
+    const approvals: ApprovalRequest[] = []
+    const site = try siteOf(approvals)
+    const env = {}
+    const ask = (body: unknown, as: string) => effect {
+      const headers = { origin: "https://slop.test", "content-type": "application/json", "x-test-actor": as }
+      const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects/${wrong.projectId}/monthly/2026-11/reserve-release`, { method: "POST", headers, body: JSON.stringify(body) })))
+      const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
+      return { status: response.status, body: try promise(() => response.json()) } satisfies Answer
+    }
+    const review = { network: releaseNetwork, manifestSha256: wrong.manifestSha256 }
+    const malformed = [
+      try ask({ ...review, amount: "10" }, steward),
+      try ask({ ...review, planId: "A".repeat(64), transactionId: "0x1" }, steward),
+      try ask({ ...review, planId: "a".repeat(64), transactionId: `0x${"f".repeat(129)}` }, steward),
+    ]
+    const outsider = try ask(review, stranger)
+    const changed = try ask({ ...review, manifestSha256: "0".repeat(64) }, steward)
+    const prepared = try ask(review, steward)
+    const planId = field(prepared.body, "planId")
+    const data = field(prepared.body, "transaction", "data")
+    if (typeof planId !== "string" || typeof data !== "string") return try die(new Error(`the wrong total answered no plan: ${JSON.stringify(prepared.body)}`))
+    const sent = try promise(() => escrow.send(escrow.roles.owner.address, wrong.vault, data as Hex))
+    const pending = try ask({ ...review, planId, transactionId: sent.transactionHash }, steward)
+    escrow.chain.setFinalized(try promise(() => escrow.head()))
+    const finalized = try ask({ ...review, planId, transactionId: sent.transactionHash }, steward)
+    try same({
+      malformed: malformed.map(errorOf),
+      outsider: errorOf(outsider),
+      changed: errorOf(changed),
+      prepared: [prepared.status, field(prepared.body, "status"), field(prepared.body, "request"), field(prepared.body, "transaction", "from"), field(prepared.body, "transaction", "to"), field(prepared.body, "terms", "releasedGross"), /^[a-f0-9]{64}$/u.test(planId)],
+      approvals: approvals.map((approval) => [approval.vault, approval.period, approval.identityAuthority]),
+      checks: [[pending.status, pending.body], [finalized.status, finalized.body]],
+      remaining: try remainingOf(wrong.vault),
+    }, {
+      malformed: [[400, "invalid_release_review"], [400, "invalid_release_review"], [400, "invalid_release_review"]],
+      outsider: [403, "owner_required"],
+      changed: [409, "project_changed"],
+      prepared: [200, "ready", { projectId: wrong.projectId, period: "2026-11", network: releaseNetwork, manifestSha256: wrong.manifestSha256 }, try lower(escrow.roles.owner.address), wrong.vault, "3000007", true],
+      approvals: [[wrong.vault, "2026-11", try lower(escrow.roles.authority.address)]],
+      checks: [[200, { status: "pending" }], [200, { status: "finalized" }]],
+      remaining: 0n,
+    })
+  })
+})

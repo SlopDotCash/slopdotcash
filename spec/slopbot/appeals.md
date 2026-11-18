@@ -138,9 +138,12 @@ pure def sometimesRetiredEscalated(a: Appeal): bool = a.escalation == RetiredPro
 
 `/slopbot accept` applies the draft and `/slopbot reject` escalates it. Only
 the appellant or a current maintainer of the repository may answer, checked
-by the GitHub permission service for the sender. A participation ban seen at
-acceptance escalates instead of resolving. An escalated appeal ignores
-further draft answers.
+by the GitHub permission service for the sender. A participation ban of the
+appellant seen at an answer escalates instead of resolving, whether or not a
+draft exists yet; the shell sends that escalation only for an answer from the
+appellant or a current maintainer (`review.ts` lines 3060-3082). Without a
+ban and without a draft, an answer changes nothing ("no draft to answer
+yet"). An escalated appeal ignores further draft answers.
 
 ```quint
 type ActorRole = RoleUnavailable | CurrentMaintainer | NotMaintainer
@@ -150,7 +153,7 @@ pure def mayAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool = by > 0
 pure def answerable(a: Appeal): bool = unresolved(a) and not(escalated(a)) and a.draft != NoDraft
 pure def canReject(a: Appeal, by: int, authority: AuthorityCheck): bool = answerable(a) and mayAnswer(a, by, authority)
 pure def reject(a: Appeal, by: int, authority: AuthorityCheck): Appeal = escalatedWith(DraftRejected, a)
-pure def canEscalateBanAtAnswer(a: Appeal): bool = answerable(a) and a.ban == Banned
+pure def canEscalateBanAtAnswer(a: Appeal): bool = unresolved(a) and not(escalated(a)) and a.ban == Banned
 pure def escalateBanAtAnswer(a: Appeal): Appeal = escalatedWith(ParticipationBan, a)
 pure def canAccept(a: Appeal, by: int, authority: AuthorityCheck): bool =
   answerable(a) and mayAnswer(a, by, authority) and a.ban == NotBanned and criteriaReason(a) == NotEscalated
@@ -159,6 +162,7 @@ pure def accept(a: Appeal, by: int, authority: AuthorityCheck): Appeal =
     journal: a.journal.append({ stage: ResolutionStage, by: by }) }
 pure def sometimesAcceptedDraft(a: Appeal): bool = a.via == AcceptedDraft and a.resolution == Upheld
 pure def sometimesRejectedDraft(a: Appeal): bool = a.escalation == DraftRejected
+pure def sometimesBanEscalatedBeforeDraft(a: Appeal): bool = a.escalation == ParticipationBan and a.draft == NoDraft
 ```
 
 ### Only a moderator other than the appellant decides an escalated appeal

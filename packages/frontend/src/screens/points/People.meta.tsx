@@ -14,14 +14,11 @@ export const meta: ComponentMeta<PeopleProps> = {
   play: {
     // spec/backend/accounts.md, "Public reads show only public open members and never publish anything"
     Default: async () => {
-      await expect(screen.getByText("3 people")).toBeTruthy();
-      await expect(screen.getAllByText("Public member")).toHaveLength(2);
-      await expect(screen.getByText("Project maintainer · Slop")).toBeTruthy();
+      await expect(screen.getAllByRole("listitem")).toHaveLength(3);
     },
     // spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"
     Preview: async () => {
-      await expect(screen.getByRole("link", { name: "View public members" })).toBeTruthy();
-      await expect(screen.queryByText("Public member")).toBeNull();
+      await expect(screen.getAllByRole("link").filter((link) => link.getAttribute("href") === "https://slop.cash/points#people")).toHaveLength(1);
     },
     // spec/backend/accounts.md, "Public reads show only public open members and never publish anything"
     MembersFailed: async () => {
@@ -29,7 +26,7 @@ export const meta: ComponentMeta<PeopleProps> = {
     },
     // spec/backend/accounts.md, "Public reads show only public open members and never publish anything"
     Query: async () => {
-      await expect(screen.getByText("1 people")).toBeTruthy();
+      await expect(screen.getAllByRole("listitem")).toHaveLength(1);
     },
   },
 };

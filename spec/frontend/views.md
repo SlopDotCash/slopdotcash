@@ -17,7 +17,9 @@ or milliseconds) before these decisions see it.
 ### A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards
 
 Variants derive only from the registry's reward policy. An external prize
-share shows its advertised amount. Otherwise a monthly pool with a cap above
+share's card reads "Points + external prize", and its project page names the
+prize ("<compact advertised amount> external prize", or "External prize"
+without an amount). A points-only card reads "Points only" alone. Otherwise a monthly pool with a cap above
 zero shows its cap (a stablecoin pool in dollars, a token pool with its ticker
 and explorer link), unless the security program is bounty-only. A security
 program, separate or bounty-only, adds its own variant with its amount, status
@@ -25,7 +27,13 @@ and eligibility. A project with none of these shows Points only. A bounty-only
 program replaces ordinary work: its project page is the bounty overview, its
 title says "security bounty", and Home and community lists show it only while
 the program is open. A card also names a separate bounty when that bounty is
-open on a monthly-pool project with no cap.
+open on a monthly-pool project with no cap. A monthly review budget shows
+only once its funding is committed: a card adds "+<committed> reviews", the
+project page a "<committed> / <cap>" Reviews meter; a pledged budget shows
+nothing. Home cards carry no merge-activity line and no bounty funding
+state; the project page keeps " · Pledged" or " · Funded" after a bounty's
+amount (development `src/App.tsx` `ProjectCard` and `ProjectRewardSummary`,
+`src/Presentation.tsx` `ReviewBudget` at `67fd54fd4`).
 
 ```quint
 type RewardKind = MonthlyPoolReward | ExternalPrizeShare
@@ -38,6 +46,7 @@ pure def cardVariants(policy: CardPolicy): List[CardVariant] =
   val withBounty = if (policy.bounty != NoBounty) ordinary.append(SecurityBountyCard) else ordinary
   if (withBounty.length() == 0) List(PointsOnlyCard) else withBounty
 pure def bountyOverview(policy: CardPolicy): bool = policy.bounty == BountyOnly
+pure def reviewBudgetShown(committed: bool): bool = committed
 pure def cardNamesBounty(policy: CardPolicy): bool = policy.bounty == BountyOnly or
   (policy.bounty == SeparateBounty and policy.bountyOpen and policy.reward == MonthlyPoolReward and not(policy.monthlyCapPositive))
 pure def listedForDiscovery(policy: CardPolicy): bool = policy.active and (not(bountyOverview(policy)) or policy.bountyOpen)
@@ -63,8 +72,10 @@ pure val policyValues = Set(
 
 A public cycle record and its manifest do not establish the month's funding;
 only the monthly payment run qualifies obligations against current funds. A
-cycle page therefore shows "This record does not verify the month's funding
-status." from 604 800 000 ms before the cycle closes onward, only for a monthly
+cycle page therefore shows a reminder, a "Check funding →" link to the
+project's funding section, or "Funding unverified" when the project is no
+longer in the registry (development `src/CyclePages.tsx` at `67fd54fd4`),
+from 604 800 000 ms before the cycle closes onward, only for a monthly
 pool with a cap above zero that has not settled and whose cycle is not closed
 without awards, an external provisional record, paid or wound up.
 

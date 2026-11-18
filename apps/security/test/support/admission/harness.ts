@@ -6,6 +6,7 @@ import { base64url, ed25519Sign, sha256Hex, webCrypto } from "@repo/platform/cry
 import { signatureHeaders, signedMessage } from "@repo/platform/signed";
 import { type StartedWorker, bundle, database, migrate, startWorker, storage } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";
+import { executableContent } from "../../../src/admission/binding.ts";
 
 export const origin = "https://slop.test";
 export const project = "admission-fixture";
@@ -35,6 +36,7 @@ export interface World {
   readonly mf: StartedWorker;
   readonly sandbox: ReadonlyArray<string>;
   readonly heads: Map<string, string>;
+  readonly outage: Set<string>;
 }
 
 /** @throws {never} */
@@ -65,6 +67,7 @@ async function boot(keys: string): Promise<World> {
   const script = await bundle(root, { config: "test/support/admission/vite.config.ts", entry: "admission" });
   const sandbox: string[] = [];
   const heads = new Map<string, string>();
+  const outage = new Set<string>();
   const mf = startWorker({
     script,
     d1: { SLOP_DB: "slop-private" },
@@ -81,6 +84,7 @@ async function boot(keys: string): Promise<World> {
       },
       GITHUB: (request) => {
         const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/main$/u.exec(new URL(request.url).pathname);
+        if (branch?.[1] !== undefined && outage.has(branch[1])) return answer({ message: "Server Error" }, 500);
         const head = branch?.[1] === undefined ? undefined : heads.get(branch[1]);
         return head === undefined ? answer({ message: "Not Found" }, 404) : answer({ commit: { sha: head } });
       },
@@ -89,7 +93,7 @@ async function boot(keys: string): Promise<World> {
   });
   const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined);
   if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
-  return { db: await database(mf, "SLOP_DB"), evidence: await storage(mf, "VETTING_EVIDENCE"), mf, sandbox, heads };
+  return { db: await database(mf, "SLOP_DB"), evidence: await storage(mf, "VETTING_EVIDENCE"), mf, sandbox, heads, outage };
 }
 
 export async function started(keys: string = configuredKeys): Promise<World> {
@@ -112,8 +116,9 @@ export interface Listed {
 
 export interface Scan {
   readonly repository: string;
-  readonly state: "clean" | "incomplete";
+  readonly state: "clean" | "incomplete" | "pending";
   readonly commit?: string;
+  readonly retained?: false;
 }
 
 export interface FlagProject {
@@ -123,7 +128,6 @@ export interface FlagProject {
 }
 
 export const signingKeySha256 = "5".repeat(64);
-const contentSha256 = "b".repeat(64);
 const policyVersion = "slop-scan-policy-v2";
 const surfaces = ["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"];
 const threats = ["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection"];
@@ -150,9 +154,9 @@ function flagManifest(fixture: FlagProject): string {
 }
 
 /** @throws {never} */
-function scanResult(input: { readonly id: string; readonly projectId: string; readonly scan: Scan; readonly at: number; readonly report: string; readonly inputs: string }): string {
-  const startedAt = new Date(input.at).toISOString();
-  const completedAt = new Date(input.at + minute).toISOString();
+function scanResult(input: { readonly id: string; readonly projectId: string; readonly scan: Scan; readonly startedAt: number; readonly completedAt: number; readonly report: string; readonly inputs: string }): string {
+  const startedAt = new Date(input.startedAt).toISOString();
+  const completedAt = new Date(input.completedAt).toISOString();
   return JSON.stringify({
     schemaVersion: "slop-vetting-result-v2",
     assessmentId: input.id,
@@ -176,11 +180,11 @@ function scanResult(input: { readonly id: string; readonly projectId: string; re
   });
 }
 
-async function retained(world: World, id: string, kind: string, text: string): Promise<{ readonly sha: string; readonly statement: D1PreparedStatement }> {
+async function retained(world: World, id: string, kind: string, text: string, kept: boolean): Promise<{ readonly sha: string; readonly statement: D1PreparedStatement }> {
   const bytes = new TextEncoder().encode(text);
   const sha = await digest(bytes);
   const key = `vetting/${id}/run-1/${sha}`;
-  await world.evidence.put(key, bytes, { customMetadata: { sha256: sha }, httpMetadata: { contentType: "application/json" } });
+  if (kept) await world.evidence.put(key, bytes, { customMetadata: { sha256: sha }, httpMetadata: { contentType: "application/json" } });
   return { sha, statement: world.db.prepare(`INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation) VALUES(?,'run-1',?,?,?,?,'application/json',?,NULL,'run',NULL)`).bind(id, sha, bytes.length, kind, kind, key) };
 }
 
@@ -190,9 +194,47 @@ async function digest(bytes: Uint8Array): Promise<string> {
 
 type D1PreparedStatement = ReturnType<D1Database["prepare"]>;
 
+async function contentOf(manifest: string): Promise<string> {
+  return Effect.runPromise(Effect.provide(sha256Hex(executableContent(JSON.parse(manifest) as Record<string, unknown>)), webCrypto));
+}
+
+interface Completion {
+  readonly id: string;
+  readonly projectId: string;
+  readonly scan: Scan;
+  readonly startedAt: number;
+  readonly completedAt: number;
+}
+
+async function completion(world: World, input: Completion): Promise<ReadonlyArray<D1PreparedStatement>> {
+  const { db } = world;
+  const kept = input.scan.retained !== false;
+  const report = await retained(world, input.id, "trace", `{"report":"${input.id}"}`, kept);
+  const inputs = await retained(world, input.id, "manifest", `{"inputs":"${input.id}"}`, kept);
+  const result = scanResult({ ...input, report: report.sha, inputs: inputs.sha });
+  const run = JSON.stringify({ traceSha256: report.sha, objects: [{ sha256: report.sha, kind: "trace" }, { sha256: inputs.sha, kind: "manifest" }] });
+  const completedAt = new Date(input.completedAt).toISOString();
+  return [
+    db.prepare("UPDATE vetting_assessments SET state=?,policy_version=?,result=?,result_sha256=?,signing_key_sha256=?,completed_at=? WHERE id=?")
+      .bind(input.scan.state, policyVersion, result, await digest(new TextEncoder().encode(result)), signingKeySha256, completedAt, input.id),
+    db.prepare("INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run-1',?,?,?,'{}',?,?)")
+      .bind(input.id, report.sha, await digest(new TextEncoder().encode(run)), run, completedAt, new Date(Date.now() + 86_400_000).toISOString()),
+    report.statement,
+    inputs.statement,
+  ];
+}
+
+export async function complete(world: World, id: string): Promise<void> {
+  const [row] = (await world.db.prepare("SELECT project_id, repository_id, commit_sha, requested_at FROM vetting_assessments WHERE id = ?").bind(id).all()).results;
+  if (row === undefined) throw new Error(`no assessment ${id}`);
+  const scan: Scan = { repository: String(row.repository_id), state: "clean", commit: String(row.commit_sha) };
+  await world.db.batch(await completion(world, { id, projectId: String(row.project_id), scan, startedAt: Date.parse(String(row.requested_at)), completedAt: Date.now() }));
+}
+
 export async function flagged(world: World, fixture: FlagProject): Promise<ReadonlyArray<string>> {
   const { db } = world;
   const text = flagManifest(fixture);
+  const content = await contentOf(text);
   const base = Date.now() - 4 * 60 * minute;
   const at = (offset: number) => new Date(base + offset).toISOString();
   const flagIds = [`flg_${fixture.id}_1`, `flg_${fixture.id}_2`];
@@ -212,19 +254,11 @@ export async function flagged(world: World, fixture: FlagProject): Promise<Reado
     assessments += 1;
     const id = `vet_${assessments.toString(16).padStart(32, "0")}`;
     const requested = base + (60 + index * 10) * minute;
-    const report = await retained(world, id, "trace", `{"report":"${id}"}`);
-    const inputs = await retained(world, id, "manifest", `{"inputs":"${id}"}`);
-    const result = scanResult({ id, projectId: fixture.id, scan, at: requested, report: report.sha, inputs: inputs.sha });
-    const run = JSON.stringify({ traceSha256: report.sha, objects: [{ sha256: report.sha, kind: "trace" }, { sha256: inputs.sha, kind: "manifest" }] });
+    const completed = scan.state === "pending" ? [] : await completion(world, { id, projectId: fixture.id, scan, startedAt: requested, completedAt: requested + minute });
     await db.batch([
       db.prepare(`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,repository_id,flag_ids)
-        VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic fresh scan after two contributor flags paused the project','pending',?,?)`).bind(id, fixture.id, "a".repeat(64), contentSha256, scan.commit ?? commit, template, new Date(requested).toISOString(), scan.repository, JSON.stringify(flagIds)),
-      db.prepare("UPDATE vetting_assessments SET state=?,policy_version=?,result=?,result_sha256=?,signing_key_sha256=?,completed_at=? WHERE id=?")
-        .bind(scan.state, policyVersion, result, await digest(new TextEncoder().encode(result)), signingKeySha256, new Date(requested + minute).toISOString(), id),
-      db.prepare("INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run-1',?,?,?,'{}',?,?)")
-        .bind(id, report.sha, await digest(new TextEncoder().encode(run)), run, new Date(requested + minute).toISOString(), new Date(Date.now() + 86_400_000).toISOString()),
-      report.statement,
-      inputs.statement,
+        VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic fresh scan after two contributor flags paused the project','pending',?,?)`).bind(id, fixture.id, "a".repeat(64), content, scan.commit ?? commit, template, new Date(requested).toISOString(), scan.repository, JSON.stringify(flagIds)),
+      ...completed,
     ]);
     ids.push(id);
   }

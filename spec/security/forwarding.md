@@ -4,9 +4,13 @@ PRD sections 8 and 10. The [Slop intake](./intake.md) owns the original case
 and receipt. The [screening model](./screening.md) owns approval of the
 current retained report. Forwarding owns the optional GitHub delivery journal
 for that submission, starting from a durable Slop case. The case and its
-original receipt remain available through every forwarding outcome. An
-existing legacy direct report uses the same GitHub receipt identity checks
-with the direct-origin rules below.
+original receipt remain available through every forwarding outcome. A
+direct-origin submission, an existing legacy one or a new one a reporter
+starts by naming a GHSA of the program's intake repository (origin `direct`,
+no report body stored; `createSubmission` in
+`backend/security/submissions.ts`), uses the same GitHub receipt identity
+checks with the direct-origin rules below, and only a `DirectReceipt` creates
+its case.
 
 Source at main `78eed5564d796119d82ae541c36b0c770263dc5f` is
 `backend/security/submissions.ts:746–1095`, `backend/security/submission-store.ts:129–277`,
@@ -222,13 +226,15 @@ time. The allowed GitHub clock skew is five minutes. An advisory read error
 or 404 in this forwarded path keeps the canonical copy and stays submitted.
 The direct-origin adapter requires a live private vulnerability report in
 triage, draft or published state and treats 404 as a failed verification.
-Editable reporter credits and pasted links cannot establish authorship.
+Editable reporter credits and pasted links cannot establish authorship. A
+reporter may start a new direct-origin submission as well as finish a legacy
+one; its verification needs the same reporter grant.
 
 A matching advisory with no current technical contacts stays recoverable,
 and a later verified linkage clears that pending contact state. A read whose
 repository, marker or creation time does not match keeps the canonical copy
 and permits another exact read with fresh consent; it never permits a resend.
-An author mismatch is terminal. Only a legacy GitHub-first draft or failure
+An author mismatch is terminal. Only a GitHub-first (direct-origin) draft or failure
 with no saved Slop report and no GitHub copy is abandoned (D1 `abandoned`)
 after 24 idle hours; a saved Slop report never is.
 Otherwise the compare-and-set links only the retained case, with an exact

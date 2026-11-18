@@ -1,4 +1,4 @@
-// spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"
+// spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
 import { millisOf, nowSeconds, isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { D1, sql } from "@repo/platform/d1"
@@ -7,6 +7,7 @@ import type { MergeRecipe } from "@repo/platform/git/evidence"
 import { type ProjectView, Registry, type RegistryPin } from "@repo/ports/backend"
 import { Enforcement } from "@repo/ports/security"
 import { absentOn404, loadPolicy } from "../../context/load.vibe"
+import type { CommitPages } from "../../import/commitPages.vibe"
 import { activeInstallation } from "../../installation/store.vibe"
 import { Acceptance, nativeMergeContext, noChangePromotionContext } from "../evidence/acceptance.vibe"
 import { collectEvidence } from "../evidence/collect.vibe"
@@ -61,6 +62,14 @@ export function repositoriesOf(view: ProjectView): ReadonlyArray<GroupRepository
     aliases: repository.aliases,
     current: repository.fullName,
   }))
+}
+
+export function targetOf(repositories: ReadonlyArray<GroupRepository>, path: string) {
+  return repositories.find((repository) => findRepository([repository], path) !== undefined)
+}
+
+export function currentPathOf(repository: GroupRepository) {
+  return repository.current.toLowerCase()
 }
 
 export effect function registeredProject(owner: string, repo: string, repositoryId: number) {
@@ -155,6 +164,11 @@ export interface CurrentCheck {
   readonly sourceDigest: string
 }
 
+export effect function verifiedThrough<A, E, R>(pages: CommitPages | undefined, verify: A!E!R) {
+  if (pages === undefined) return try verify
+  return try provideService(verify, GitHub, try pages.wrap)
+}
+
 export effect function verifyCurrentValueSource(evidence: Evidence, result: CurrentCheck, repositories: ReadonlyArray<RegisteredRepository>, joint: { readonly mergeRecipe?: MergeRecipe; readonly group: ReadonlyArray<WorkUnitSource>; readonly recovered?: Recovered } | undefined = undefined) {
   const repository = findRepository(repositories, evidence.repository)
   if (repository === undefined) throw new ValueRefused({ reason: "Value source is absent from the verified registry" })
@@ -176,8 +190,9 @@ export effect function verifyCurrentValueSource(evidence: Evidence, result: Curr
 }
 
 export interface SingleResult {
-  readonly verdict: ValueAssessment
-  readonly servedBy: { readonly gateway?: string; readonly provider?: string; readonly requestedModel: string; readonly servedModel: string | null; readonly outcome: string }
+  readonly verdict: unknown
+  readonly servedBy?: { readonly gateway?: string; readonly provider?: string; readonly requestedModel: string; readonly servedModel: string | null; readonly outcome: string }
+  readonly provenance?: unknown
   readonly assessedAt: string
   readonly sourceDigest: string
   readonly policySha: string
@@ -212,8 +227,7 @@ export effect function prepareValueRecord(result: SingleResult, evidence: Eviden
   const occurredAt = evidence.pull.merged_at ?? evidence.pull.closed_at
   if (evidence.pull.state !== "closed" || occurredAt === null || !Number.isFinite(millisOf(occurredAt))) throw new ValueRefused({ reason: "Value record requires a closed outcome with its occurrence date" })
   if (assessment === undefined) throw new ValueRefused({ reason: "Value result lacks a validated assessment" })
-  const model = producerIdentity(result.servedBy, result.assessedAt)
-  if (model === undefined) throw new ValueRefused({ reason: "Value result lacks a validated model identity" })
+  const model = try producerOf(result)
   const record = {
     schemaVersion: "slop-value-record:v1",
     projectId: registered.view.projectId,
@@ -239,6 +253,17 @@ export effect function prepareValueRecord(result: SingleResult, evidence: Eviden
   const recordJson = try orDie(Effect.try(() => JSON.stringify(record)))
   const assessmentKey = try valueAssessmentKey({ repositoryNodeId: record.repositoryNodeId, pullRequestNodeId: record.pullRequestNodeId, sourceDigest: record.sourceDigest, rubricVersion: valueRubricVersion, producerRevision })
   return { recordJson, recordDigest: try sha256Hex(recordJson), assessmentKey }
+}
+
+effect function producerOf(result: SingleResult) {
+  if (result.provenance !== undefined) {
+    if (!isSubscriptionProvenance(result.provenance) || !Number.isFinite(millisOf(result.assessedAt)) || result.servedBy !== undefined)
+      throw new ValueRefused({ reason: "Subscription value result must not claim API call evidence" })
+    return { ...result.provenance }
+  }
+  const model = result.servedBy === undefined ? undefined : producerIdentity(result.servedBy, result.assessedAt)
+  if (model === undefined) throw new ValueRefused({ reason: "Value result lacks a validated model identity" })
+  return model
 }
 
 export function legacySourceOf(evidence: Evidence, repository: RegisteredRepository) {
@@ -307,25 +332,33 @@ export function producerRecognized(model: ProducerIdentity) {
     || (model.provider === "surplus" && historicalModels.includes(model.requested))
 }
 
+export type PublicationJobPath = Pick<ValueRequest, "installationId" | "repositoryId" | "owner" | "repo" | "number">
+
 export interface SinglePublication {
-  readonly job: ValueRequest
+  readonly job: PublicationJobPath
   readonly result: SingleResult
   readonly evidence: Evidence
   readonly producerRevision: string
   readonly supersedes: string | null
   readonly revisionReason: string | null
-  readonly claim: Claim
+  readonly claim?: Claim
+  readonly commitPages?: CommitPages
 }
 
 export effect function publishValueAssessment(publication: SinglePublication) {
   const { job, evidence, claim } = publication
-  if (job.repositoryId !== evidence.repositoryDatabaseId || `${job.owner}/${job.repo}`.toLowerCase() !== evidence.repository.toLowerCase() || job.number !== evidence.pull.number)
+  if (claim === undefined && !isSubscriptionProvenance(publication.result.provenance))
+    throw new ValueRefused({ reason: "API value publication requires its processing claim" })
+  if (job.repositoryId !== evidence.repositoryDatabaseId || job.number !== evidence.pull.number)
     throw new ValueRefused({ reason: "Value publication job does not match its source" })
   const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
   if (registered === undefined) throw new ValueRefused({ reason: "Repository is not active in the Slop project registry" })
+  const target = targetOf(registered.repositories, evidence.repository)
+  if (target === undefined || currentPathOf(target) !== `${job.owner}/${job.repo}`.toLowerCase())
+    throw new ValueRefused({ reason: "Value publication job does not match its source" })
   try assertInstallation(job.installationId)
   try assertListed([evidence])
-  const current = try verifyCurrentValueSource(evidence, publication.result, registered.repositories)
+  const current = try verifiedThrough(publication.commitPages, verifyCurrentValueSource(evidence, publication.result, registered.repositories))
   const prepared = try prepareValueRecord(publication.result, current.evidence, current.policy, publication.producerRevision, publication.supersedes, publication.revisionReason, registered)
   const repository = findRepository(registered.repositories, current.evidence.repository)
   if (repository === undefined) throw new ValueRefused({ reason: "Value source is absent from the verified registry" })
@@ -339,18 +372,28 @@ export effect function publishValueAssessment(publication: SinglePublication) {
   return try appendSingleRecord(prepared.recordJson, {
     installationId: job.installationId,
     projectId: registered.view.projectId,
-    registryFence: try registryFence(registered, [`${job.owner}/${job.repo}`]),
-    leaseFence: try leaseFence(claim, sources),
+    registryFence: try registryFence(registered, [currentPathOf(target)]),
+    ...(claim === undefined ? {} : { leaseFence: try leaseFence(claim, sources) }),
   }, sourceKindOf(evidence))
 }
 
-const subscriptionChannels: Readonly<Record<string, string>> = { "chatgpt-subscription": "openai", "claude-subscription": "anthropic" }
+const subscriptionChannels: Readonly<Record<string, string>> = { "chatgpt-subscription": "openai", "claude-subscription": "anthropic", "codex-subscription": "openai" }
+
+export interface SubscriptionProvenance {
+  readonly channel: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly exactVariant: null
+  readonly identityEvidence: "self-reported"
+  readonly apiReceipt: null
+}
 
 function identityLabel(value: unknown) {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,95}$/u.test(value)
 }
 
-export function isSubscriptionProvenance(value: unknown) {
+export function isSubscriptionProvenance(value: unknown): value is SubscriptionProvenance {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false
   const fields: Readonly<Record<string, unknown>> = { ...value }
   const channel = fields["channel"]
@@ -368,7 +411,12 @@ function refusalOf(error: { readonly _tag: string }) {
 effect function registration(job: PublicationJob, sources: ReadonlyArray<Evidence>, claim: Claim | undefined) {
   const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
   if (registered === undefined) return undefined
-  const keys = [`${job.owner}/${job.repo}`, ...sources.flatMap((source) => findRepository(registered.repositories, source.repository)?.id ?? [])]
+  const keys: string[] = []
+  for (const source of sources) {
+    const target = targetOf(registered.repositories, source.repository)
+    if (target === undefined) throw new ValueRefused({ reason: "Value source is absent from the verified registry" })
+    keys.push(currentPathOf(target))
+  }
   const scopes = sources.map((source) => ({ repositoryDatabaseId: source.repositoryDatabaseId, pullRequestNumber: source.pull.number }))
   return {
     project: { id: registered.view.projectId, active: activeView(registered.view) },
@@ -394,11 +442,11 @@ export const publicationChecks = Layer.effect(PublicationChecks, effect {
     subscribed: (provenance: unknown) => Effect.succeed(isSubscriptionProvenance(provenance)),
     registration: (job, sources, claim) => Effect.mapError(Effect.provide(registration(job, sources, claim), services), refusalOf),
     admitted: (job, sources) => Effect.mapError(Effect.provide(admitted(job, sources), services), refusalOf),
-    current: (check) => Effect.mapError(Effect.provide(Effect.asVoid(verifyCurrentValueSource(check.source.evidence, { policySha: check.source.policy.sha, sourceDigest: check.sourceDigest }, check.repositories, {
+    current: (check) => Effect.mapError(Effect.provide(Effect.asVoid(verifiedThrough(check.commitPages, verifyCurrentValueSource(check.source.evidence, { policySha: check.source.policy.sha, sourceDigest: check.sourceDigest }, check.repositories, {
       group: check.group,
       ...(check.source.mergeRecipe === undefined ? {} : { mergeRecipe: check.source.mergeRecipe }),
       ...(check.recovered === undefined ? {} : { recovered: check.recovered }),
-    })), services), refusalOf),
+    }))), services), refusalOf),
   }
 })
 

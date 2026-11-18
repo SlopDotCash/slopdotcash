@@ -2,7 +2,7 @@
 import type { CycleIndex, CycleIndexEntry } from "@repo/settlement/client";
 import { parsePeriod, type Period } from "@repo/settlement/kernels/calendar";
 import { Alert, DataState, Disclosure, EmptyState, NotFound, PageHeader, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
-import { CalendarDays, CircleAlert } from "lucide-react";
+import { CalendarDays, CircleAlert, History } from "lucide-react";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
@@ -22,12 +22,12 @@ import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts"
 import { indexStale } from "./CycleArchivePage.tsx";
 import { CycleAllocation } from "./CycleAllocation.tsx";
 import { amountPhases, CycleAmountHistory, usdcText } from "./CycleAmountHistory.tsx";
-import { contributorStateLabel, cycleLifecycleLabel, percentText, pointsText } from "./labels.ts";
+import { contributorStateLabel, cycleLifecyclePresentation, percentText, pointsText } from "./labels.ts";
 import { OwnerCuts } from "./OwnerCuts.tsx";
 import { reminderLeadMs } from "../../../gen/frontend__views.ts";
 import { nextBoundary, staleFrom, useBoundary } from "./boundary.ts";
 import { loadLiveCycle } from "./live.vibe";
-import { type CycleFacts, lifecycleOf, ownerCutoffMs, reminderShown, reminderText, stagesOf, terminalMessage } from "./stages.ts";
+import { type CycleFacts, cycleTerminal, lifecycleOf, ownerCutoffMs, reminderShown, stagesOf, terminalMessage } from "./stages.ts";
 
 export type CyclePageProps = PageProps & {
   /** The repository registry the public snapshot is checked against, from the project registry. */
@@ -72,7 +72,7 @@ function ArchivedContributors({ cycle }: { cycle: CycleIndexEntry }) {
         Contributors
       </h2>
       {cycle.contributors.length === 0 ? (
-        <EmptyState title="This cycle closed with no accepted awards." />
+        <EmptyState title="No awards" />
       ) : (
         <Table label="Archived cycle contributors">
           <TableCaption visuallyHidden>Archived cycle contributors and current award amounts</TableCaption>
@@ -80,7 +80,7 @@ function ArchivedContributors({ cycle }: { cycle: CycleIndexEntry }) {
             <TableRow>
               <TableHead>Contributor</TableHead>
               <TableHead>Points</TableHead>
-              <TableHead>{external ? "External prize share" : "Amount"}</TableHead>
+              <TableHead>{external ? "Share" : "Amount"}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -103,9 +103,12 @@ function ArchivedContributors({ cycle }: { cycle: CycleIndexEntry }) {
                         <span>
                           {label} <strong className="font-mono tabular-nums">{usdcText(contributor[key])}</strong>
                         </span>
-                        <Disclosure summary="Amount history">
+                        <details>
+                          <summary aria-label="Amount history" title="Amount history" className="inline-flex cursor-pointer items-center text-muted-foreground">
+                            <History aria-hidden className="size-3.5" />
+                          </summary>
                           <CycleAmountHistory amounts={contributor} />
-                        </Disclosure>
+                        </details>
                       </div>
                     )}
                   </TableCell>
@@ -122,13 +125,13 @@ function ArchivedContributors({ cycle }: { cycle: CycleIndexEntry }) {
 /** @throws {never} */
 function headline(record: CycleIndexEntry | undefined, view: ProjectCycleView | undefined, project: ShownProject): { readonly amount: string; readonly caption: string } {
   if (record) {
-    if (record.kind === "external-prize-share") return { amount: percentText(record.reward.sharePartsPerMillion ?? 0), caption: "provisional shares assigned" };
+    if (record.kind === "external-prize-share") return { amount: percentText(record.reward.sharePartsPerMillion ?? 0), caption: "shares" };
     const paid = record.state === "paid";
     const approved = record.approvedAt !== null;
-    return { amount: usdcText(paid ? record.reward.paidMinor : approved ? record.reward.approvedMinor : record.reward.suggestedMinor), caption: paid ? "paid principal" : approved ? "approved principal" : "suggested principal" };
+    return { amount: usdcText(paid ? record.reward.paidMinor : approved ? record.reward.approvedMinor : record.reward.suggestedMinor), caption: paid ? "paid" : approved ? "approved" : "suggested" };
   }
-  if (view?.kind === "monthly-pool") return { amount: formatRewardMinor(view.reward.projectedPrincipalMinor, project.rewardAsset), caption: "projected principal" };
-  return { amount: percentText(view?.kind === "external-prize-share" ? view.reward.totalSharePartsPerMillion : 0n), caption: "provisional shares assigned" };
+  if (view?.kind === "monthly-pool") return { amount: formatRewardMinor(view.reward.projectedPrincipalMinor, project.rewardAsset), caption: "projected" };
+  return { amount: percentText(view?.kind === "external-prize-share" ? view.reward.totalSharePartsPerMillion : 0n), caption: "shares" };
 }
 
 function Cuts({ reads, project, cycleId }: { reads: ContributorSection; project: ShownProject; cycleId: string }) {
@@ -151,13 +154,13 @@ function CycleView({ found, record, view, index, snapshotAt, freshness }: { foun
   const lifecycle = lifecycleOf(facts);
   const { stages, current } = stagesOf(facts);
   const terminal = terminalMessage(record);
+  const ended = cycleTerminal(record);
   const top = headline(record, view, project);
   const basis = record?.kind === "monthly-pool" ? record.reward.fundingBasis : undefined;
   const noFunding = record !== undefined && record.state !== "paid" && basis !== undefined && (basis.fundingState !== "committed" || basis.committedMinor === "0");
-  const paid = lifecycle === "paid";
   return (
     <main className={pageClass}>
-      {record && index ? indexStale(index, nowMs) ? <p role="status">Cycle history may be outdated · updated {formatDate(index.generatedAt)}</p> : null : freshness}
+      {record && index ? indexStale(index, nowMs) ? <p role="status">Cycles stale · {formatDate(index.generatedAt)}</p> : null : freshness}
       <p>
         <a href={projectHref} className={linkClass}>
           {project.name}
@@ -168,52 +171,42 @@ function CycleView({ found, record, view, index, snapshotAt, freshness }: { foun
         <p className="text-muted-foreground">
           {formatDate(from)}–{formatDate(to)}
         </p>
-        <Status presentation={{ tone: paid ? "Positive" : lifecycle === "live" ? "Notice" : "Caution", icon: paid ? "Check" : "Clock", label: record ? cycleLifecycleLabel(record, nowMs) : lifecycle.replaceAll("-", " ") }} />
+        <Status presentation={record ? cycleLifecyclePresentation(record, nowMs) : { tone: lifecycle === "live" ? "Notice" : "Caution", icon: "Clock", label: lifecycle.replaceAll("-", " ") }} />
         <div className="flex flex-col gap-1">
           <strong className="font-mono text-3xl tabular-nums">{top.amount}</strong>
           <span className="text-sm text-muted-foreground">{top.caption}</span>
-          {noFunding ? <p>No funding committed for this cycle.</p> : null}
+          {noFunding ? <Status presentation={{ tone: "Caution", icon: "Alert", label: "Unfunded" }} /> : null}
         </div>
       </section>
       {reminderShown(facts) ? (
         <Alert variant="warn" announcement="Polite">
-          <CircleAlert aria-hidden className="mr-2 inline size-4" />
-          {reminderText}{" "}
-          {listed ? (
-            <a href={`/projects/${project.slug}/funding`} className={linkClass}>
-              View project funding
-            </a>
-          ) : null}
+          <span className="inline-flex items-center gap-2">
+            <CircleAlert aria-hidden className="size-4" />
+            {listed ? (
+              <a href={`/projects/${project.slug}/funding`} className={linkClass}>
+                Check funding →
+              </a>
+            ) : (
+              <span>Funding unverified</span>
+            )}
+          </span>
         </Alert>
       ) : null}
-      {terminal ? (
-        <p>{terminal}</p>
-      ) : (
-        <p>
-          <strong>{stages[current]?.label}</strong> · {stages[current]?.description}
-        </p>
+      {terminal ? <p>{terminal}</p> : null}
+      {ended ? null : (
+        <ol aria-label="Cycle progress" className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          {stages.map((stage, position) => (
+            <li key={stage.label} aria-current={position === current ? "step" : undefined} className="flex flex-col gap-1">
+              <strong>{stage.label}</strong>
+              <p className="text-sm text-muted-foreground">{stage.description}</p>
+            </li>
+          ))}
+        </ol>
       )}
       {ownerCutoffMs(period) !== undefined ? <Cuts reads={reads} project={project} cycleId={cycleId} /> : null}
-      {!terminal || record?.reward.lines ? (
-        <Disclosure summary="Cycle history">
-          <div className="flex flex-col gap-4">
-            {!terminal ? (
-              <ol aria-label="Cycle progress" className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-                {stages.map((stage, position) => (
-                  <li key={stage.label} aria-current={position === current ? "step" : undefined} className="flex flex-col gap-1">
-                    <strong>{stage.label}</strong>
-                    <p className="text-sm text-muted-foreground">{stage.description}</p>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
-            {record?.reward.lines ? (
-              <section className="flex flex-col gap-2">
-                <h3 className="font-semibold">Historical pool breakdown</h3>
-                <CycleAmountHistory amounts={record.reward} />
-              </section>
-            ) : null}
-          </div>
+      {record?.reward.lines ? (
+        <Disclosure summary="Breakdown">
+          <CycleAmountHistory amounts={record.reward} />
         </Disclosure>
       ) : null}
       {record ? <ArchivedContributors cycle={record} /> : view && snapshotAt ? <CycleAllocation view={view} updatedAt={snapshotAt} project={project} /> : null}
@@ -257,11 +250,10 @@ function Live({ found, force, onRetry }: { found: Found; force: boolean; onRetry
     return (
       <NotFound title={`No ${formatMonth(cycleId)} cycle record`}>
         <p>
-          {live.collected ? "" : "Activity for this project has not been collected yet. "}See the{" "}
+          {live.collected ? "" : "Not collected yet · "}
           <a href={listed ? `/projects/${project.slug}` : `/cycles?project=${encodeURIComponent(project.id)}`} className={linkClass}>
-            {listed ? "project page" : "cycle archive"}
+            {listed ? "Project" : "Archive"}
           </a>
-          .
         </p>
       </NotFound>
     );

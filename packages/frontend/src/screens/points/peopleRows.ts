@@ -40,9 +40,3 @@ export function listedPeople(census: ProfileIndex | undefined, members: Readonly
   return [...byId.values()].sort((left, right) => left.login.localeCompare(right.login));
 }
 
-/** @throws {never} */
-export function mergedText(merged: number | null): string {
-  if (merged === null) return "PR count unavailable";
-  if (merged === 0) return "No merged PRs";
-  return `${merged.toLocaleString("en-US")} merged PR${merged === 1 ? "" : "s"}`;
-}

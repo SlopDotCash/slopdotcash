@@ -33,14 +33,13 @@ type Restriction = Clear | FlagQuarantine | ModeratorQuarantine | ServiceBan | M
 type Appeal = NoAppeal | AppealRequested | AppealGranted | AppealDenied
 type AState = NotAssessed | APending | AIncomplete | AClean | AMalicious
 type Assessment = { id: int, repository: int, identity: int, state: AState, revision: int, requestedAt: int, requestEpoch: int,
-  requeued: bool, reused: bool, verified: bool, snapshot: List[int] }
+  requeued: bool, reused: bool, verified: bool, snapshot: List[int], chainRequestedAt: int }
 type Flag = { receipt: int, actor: int, filedDay: int }
-type ExemptionKind = OwnerApproved | CursoryReview
-type ReviewedBranch = IntegrationBranch | OwnerSelectedDevelop | OtherBranch
-type Grant = { id: int, kind: ExemptionKind, repository: int, identity: int, revision: int, manifestDigest: int, steward: int,
-  approver: int, at: int, decision: int, reason: int, branch: ReviewedBranch, head: int, scope: int, limitations: int }
+type Grant = { id: int, repository: int, identity: int, revision: int, manifestDigest: int, steward: int,
+  approver: int, at: int, decision: int, reason: int }
 type Revocation = { grant: int, administrator: int, decision: int, reason: int, at: int }
 type RecordAction = RecordQuarantine | RecordBan | RecordAppeal | RecordReinstate | RecordDeny
+  | RecordAccountAppeal | RecordAccountDenial | RecordAccountReinstatement
 type Issuer = ByModerator | ByVettingService | ByContributorFlags | ByAppellant
 type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan, assessments: List[int] }
 type Recipient = ListingAccount | StewardAccount | IndependentModerators
@@ -54,9 +53,9 @@ type Enforcement = { projectId: int, repositories: List[int], original: Set[int]
   grants: List[Grant], activeGrant: int -> int, exempt: Set[int], revocations: List[Revocation],
   journal: List[JournalEntry], notices: List[Notice] }
 pure val unassessed: Assessment = { id: 0, repository: 0, identity: 0, state: NotAssessed, revision: 0, requestedAt: 0, requestEpoch: 0,
-  requeued: false, reused: false, verified: false, snapshot: List() }
-pure val noGrant: Grant = { id: 0, kind: OwnerApproved, repository: 0, identity: 0, revision: 0, manifestDigest: 0, steward: 0,
-  approver: 0, at: 0, decision: 0, reason: 0, branch: OtherBranch, head: 0, scope: 0, limitations: 0 }
+  requeued: false, reused: false, verified: false, snapshot: List(), chainRequestedAt: 0 }
+pure val noGrant: Grant = { id: 0, repository: 0, identity: 0, revision: 0, manifestDigest: 0, steward: 0,
+  approver: 0, at: 0, decision: 0, reason: 0 }
 pure val initial: Enforcement = { projectId: 1, repositories: List(1), original: Set(1), frozen: Set(), identities: Map(),
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
   restriction: Clear, epoch: 0, restrictedBy: Set(), appeal: NoAppeal, appellants: Set(),
@@ -98,7 +97,11 @@ pending or incomplete investigations and identity changes, and never covers
 malice. An owner-approved grant covers its repository only for the identity
 and steward it bound (`g.steward_id` in `backend/vetting/persistence.ts`), and
 only until an assessment of that identity is requested on or after the day of
-the grant: a request at the same timestamp controls too. The project clears
+the grant: a request at the same timestamp controls too. A template-only
+replacement of a covered request stays covered through its persisted
+replacement chain (`replaces_assessment_id`, `replacesTemplate`), never by
+its own day or its reason text: coverage reads the request day of the first
+assessment of the chain (`chainRequestedAt`). The project clears
 only when every repository clears. Each repository shows one clearance state
 (`backend/vetting/README.md`); public views label a grant "Owner-approved
 exemption" and never a passed scan.
@@ -115,7 +118,7 @@ pure def frozenCovers(e: Enforcement, repository: int): bool =
 pure def grantCovers(e: Enforcement, repository: int): bool =
   val g = grantOf(e, repository)
   e.exempt.contains(repository) and latestOf(e, repository).state != AMalicious and g.identity == identityOf(e, repository) and
-  g.steward == e.steward and (not(controlling(e, repository)) or latestOf(e, repository).requestedAt < g.at)
+  g.steward == e.steward and (not(controlling(e, repository)) or latestOf(e, repository).chainRequestedAt < g.at)
 pure def repositoryCleared(e: Enforcement, repository: int): bool =
   assessedClean(e, repository) or frozenCovers(e, repository) or grantCovers(e, repository)
 pure def cleared(e: Enforcement): bool = e.repositories.every(r => repositoryCleared(e, r))
@@ -142,7 +145,7 @@ pure def lawExemptionLapsesWithSteward(e: Enforcement, repository: int): bool =
     implies not(repositoryCleared(e, repository))
 pure def lawRestrictionsBlockWork(e: Enforcement): bool = e.restriction != Clear implies not(mayContribute(e))
 pure def lawLaterRequestOverridesGrant(e: Enforcement, repository: int): bool =
-  (controlling(e, repository) and latestOf(e, repository).requestedAt >= grantOf(e, repository).at and
+  (controlling(e, repository) and latestOf(e, repository).chainRequestedAt >= grantOf(e, repository).at and
     latestOf(e, repository).state != AClean and not(e.frozen.contains(repository))) implies not(repositoryCleared(e, repository))
 pure def lawEarlierIdentityControlsNothing(e: Enforcement, repository: int): bool =
   (latestOf(e, repository).identity != identityOf(e, repository) and not(e.frozen.contains(repository)) and not(e.exempt.contains(repository)))
@@ -167,9 +170,14 @@ cover every active flag. A repository has at most one pending assessment.
 The request captures the day, the repository's identity epoch, the active
 flag receipts and the restriction epoch. When a release replaces the scanner
 template before a pending scan finishes, the signed refresh requeues it as a
-new assessment with the original request: same day, identity, revision and
-flags, so a template-only replacement of a request a grant covers stays
-covered.
+new assessment, only for a clear project none of whose repositories is
+banned: same revision, manifest, content, commit and identity as the retried
+request, the live template, and the day, restriction epoch and active flag
+receipts of the requeue, inserted only while the retried row is still that
+repository's pending assessment (`automaticScans`, `queueAssessment` in
+`backend/vetting/handler.ts`). It records the replacement
+(`replaces_assessment_id`), through which a grant that covered the retried
+request keeps covering it.
 
 ```quint
 type RequestOrigin = SetupCheck | OwnerRescan | AdminInvestigation | FlagRecovery
@@ -194,13 +202,15 @@ pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrig
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
     latest: e.latest.put(repository, { id: assessmentId, repository: repository, identity: identityOf(e, repository), state: APending,
       revision: e.revision, requestedAt: e.clockDay, requestEpoch: e.epoch, requeued: false, reused: false, verified: false,
-      snapshot: activeReceipts(e) }) }
+      snapshot: activeReceipts(e), chainRequestedAt: e.clockDay }) }
 pure def canRequeueTemplate(e: Enforcement, by: int, repository: int, assessmentId: int): bool =
   by == vettingService and e.repositories.includes(repository) and latestOf(e, repository).state == APending and
-  assessmentId > 0 and not(e.assessmentIds.contains(assessmentId))
+  assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and
+  e.restriction == Clear and e.repositories.every(r => latestOf(e, r).state != AMalicious)
 pure def requeueTemplate(e: Enforcement, by: int, repository: int, assessmentId: int): Enforcement =
   { ...e, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, { ...latestOf(e, repository), id: assessmentId, requeued: true }) }
+    latest: e.latest.put(repository, { ...latestOf(e, repository), id: assessmentId, requeued: true, requestedAt: e.clockDay,
+      requestEpoch: e.epoch, snapshot: activeReceipts(e) }) }
 pure def alwaysLatestIdsRequested(e: Enforcement): bool =
   e.repositories.every(r => latestOf(e, r).state == NotAssessed or
     (e.assessmentIds.contains(latestOf(e, r).id) and latestOf(e, r).repository == r))
@@ -357,9 +367,9 @@ pure def alwaysFrozenOriginalOnly(e: Enforcement): bool = e.frozen.subseteq(e.or
 
 ### An administrator records an audited exemption only for a current authorized steward
 
-The Umia fork decision (27 October 2026, `OwnerApproved`) and the
-cursory-review decision (11 November 2026, `CursoryReview`) use this record
-(`POST /api/v1/admin/vetting/exemptions`, migration `0102`). The approving
+The Umia fork decision (27 October 2026) uses this record, the one kind of
+exemption, an owner-approved admission (`POST
+/api/v1/admin/vetting/exemptions`, migration `0102`). The approving
 administrator need not have repository access, and an ordinary owner never
 grants themselves one: the approver is neither the steward nor the listing
 account. The registered creator or individual steward must currently hold
@@ -367,53 +377,48 @@ write or maintain authority read through the Slopbot installation on that
 repository (`workers/slopbot/repository-access.ts`); an organization is never
 the collaborator identity. The record binds the current revision and its
 canonical manifest digest, the repository's identity and the steward, and
-keeps the reviewed branch (the registered integration branch, or `develop`
-when the owner selected it) with its observed head, the review scope and
-limitations, the approver, the owner decision reference, the reason and the
-grant day. An older pin or an unproven source-to-binary match does not block
+keeps the approver, the owner decision reference (1 to 500 characters), the
+reason (1 to 1,000 characters) and the grant day; no reviewed branch, head,
+scope or limitations are recorded (`exemptionReason` and `grantExemption` in
+`backend/vetting/handler.ts`). An older pin or an unproven source-to-binary match does not block
 it. A restriction, a malicious latest result, missing installation,
 unavailable or denied authority, a changed revision, a missing confirmation,
 an enforcement record written since the administrator's preview
 (`stale_revision`) or a second active grant refuses it. Grants and
-revocations are separate append-only lists; earlier assessments stay. The
-development branch has no cursory-review source yet (no reviewed branch,
-scope or limitation fields in `backend/vetting`), so its conformance is
-pending.
+revocations are separate append-only lists; earlier assessments stay.
 
 ```quint
 type Access = AccessVerified | AccessDenied | AccessUnavailable | InstallationMissing | InstallationSuspended
 type StewardCheck = { actor: int, repository: int, access: Access }
-type GrantRequest = { id: int, kind: ExemptionKind, repository: int, revision: int, manifestDigest: int, steward: int,
-  check: StewardCheck, decision: int, reason: int, branch: ReviewedBranch, head: int, scope: int, limitations: int, confirmed: bool }
+type GrantRequest = { id: int, repository: int, revision: int, manifestDigest: int, steward: int,
+  check: StewardCheck, decision: int, reason: int, confirmed: bool }
 pure def canGrantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): bool =
   e.administrators.contains(by) and by != e.steward and by != e.creator and fenced(e, fence) and e.restriction == Clear and
   e.repositories.includes(request.repository) and request.id > 0 and not(e.grants.some(g => g.id == request.id)) and
   not(e.exempt.contains(request.repository)) and request.revision == e.revision and request.steward == e.steward and
   (request.check.actor == e.steward or request.check.actor == e.creator) and request.check.repository == request.repository and
   request.check.access == AccessVerified and e.repositories.every(r => latestOf(e, r).state != AMalicious) and
-  request.confirmed and request.manifestDigest > 0 and request.decision > 0 and request.reason > 0 and
-  request.branch != OtherBranch and request.head > 0 and request.scope > 0 and request.limitations > 0
+  request.confirmed and request.manifestDigest > 0 and request.decision > 0 and request.reason > 0
 pure def grantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): Enforcement =
   { ...e, seq: e.seq + 1, exempt: e.exempt.union(Set(request.repository)), activeGrant: e.activeGrant.put(request.repository, request.id),
-    grants: e.grants.append({ id: request.id, kind: request.kind, repository: request.repository,
+    grants: e.grants.append({ id: request.id, repository: request.repository,
       identity: identityOf(e, request.repository), revision: request.revision, manifestDigest: request.manifestDigest,
-      steward: request.steward, approver: by, at: e.clockDay, decision: request.decision, reason: request.reason,
-      branch: request.branch, head: request.head, scope: request.scope, limitations: request.limitations }) }
+      steward: request.steward, approver: by, at: e.clockDay, decision: request.decision, reason: request.reason }) }
 pure val verifiedCheck: StewardCheck = { actor: 1, repository: 1, access: AccessVerified }
-pure val goodGrant: GrantRequest = { id: 11, kind: CursoryReview, repository: 1, revision: 1, manifestDigest: 1, steward: 1,
-  check: verifiedCheck, decision: 1, reason: 1, branch: OwnerSelectedDevelop, head: 1, scope: 1, limitations: 1, confirmed: true }
+pure val goodGrant: GrantRequest = { id: 11, repository: 1, revision: 1, manifestDigest: 1, steward: 1,
+  check: verifiedCheck, decision: 1, reason: 1, confirmed: true }
 pure val lostAuthorityGrant: GrantRequest = { ...goodGrant, check: { ...verifiedCheck, access: AccessDenied } }
-pure val requestValues = Set(goodGrant, { ...goodGrant, id: 12, kind: OwnerApproved, branch: IntegrationBranch },
+pure val requestValues = Set(goodGrant, { ...goodGrant, id: 12 },
   lostAuthorityGrant, { ...goodGrant, check: { ...verifiedCheck, access: InstallationMissing } },
   { ...goodGrant, check: { ...verifiedCheck, access: AccessUnavailable } },
-  { ...goodGrant, check: { ...verifiedCheck, actor: 3 } }, { ...goodGrant, revision: 2 }, { ...goodGrant, head: 0 },
-  { ...goodGrant, branch: OtherBranch }, { ...goodGrant, confirmed: false })
+  { ...goodGrant, check: { ...verifiedCheck, actor: 3 } }, { ...goodGrant, revision: 2 }, { ...goodGrant, decision: 0 },
+  { ...goodGrant, reason: 0 }, { ...goodGrant, confirmed: false })
 pure def alwaysExemptionGranted(e: Enforcement): bool =
   e.exempt.forall(r => e.repositories.includes(r) and grantOf(e, r).id > 0 and grantOf(e, r).repository == r and
     grantOf(e, r).steward > 0)
 pure def alwaysGrantsAudited(e: Enforcement): bool =
   e.grants.every(g => g.id > 0 and e.administrators.contains(g.approver) and g.manifestDigest > 0 and g.decision > 0 and
-    g.reason > 0 and g.branch != OtherBranch and g.head > 0 and g.scope > 0 and g.limitations > 0 and g.at <= e.clockDay and
+    g.reason > 0 and g.at <= e.clockDay and
     g.identity <= identityOf(e, g.repository))
 ```
 
@@ -689,6 +694,49 @@ pure def denyAppeal(e: Enforcement, by: int, fence: Fence): Enforcement =
   { ...e, appeal: AppealDenied, journal: entry(e, RecordDeny, ByModerator, by), notices: owners(e) }
 ```
 
+### Account entries share the project journal without changing its restriction
+
+The access machine's account decisions are rows of the same
+`project_enforcements` sequence (`ENFORCEMENT_ACTIONS` in
+`backend/projects/enforcement.ts`, migration `0072`): a banned account's own
+appeal, filed while the project is clear or while a project appeal is open
+(`request_reinstatement` with the `banned-account` role), a moderator's
+denial of it, and a moderator's reinstatement of selected accounts
+(`reinstate_accounts`). Each takes the next sequence number of the project
+journal, so a moderator's preview of the project goes stale, and changes no
+restriction, project appeal, flag, clearance or recorded account ban
+(`foldEnforcementStatus`). A moderator decision confirms the sequence its
+preview showed. The appeal notifies the listing account, the steward and the
+moderators; the denial notifies the listing account and the steward; an
+account reinstatement notifies neither (`notifyProjectEnforcement` in
+`backend/notifications/events.ts`). Which bans an account appeal and a
+reinstatement concern, Slopbot's triage of the appeal and the independence
+of the deciding moderator from each ban are the rules of
+[participation restrictions](../backend/access.md).
+
+```quint
+pure def accountAppealOpen(e: Enforcement): bool = e.journal.foldl(false, (open, j) =>
+  if (j.kind == RecordAccountAppeal) true
+  else if (j.kind == RecordAccountDenial or j.kind == RecordAccountReinstatement) false else open)
+pure def canJournalAccountEntry(e: Enforcement, by: int, fence: Fence, accountAction: RecordAction): bool =
+  by > 0 and e.revision > 0 and
+  (if (accountAction == RecordAccountAppeal) e.accountBans.includes(by) and (e.restriction == Clear or e.appeal == AppealRequested)
+   else (accountAction == RecordAccountDenial or accountAction == RecordAccountReinstatement) and fenced(e, fence)
+     and e.moderators.contains(by) and accountAppealOpen(e) and not(e.accountBans.includes(by)))
+pure def journalAccountEntry(e: Enforcement, by: int, fence: Fence, accountAction: RecordAction): Enforcement =
+  { ...e, journal: entry(e, accountAction, if (accountAction == RecordAccountAppeal) ByAppellant else ByModerator, by),
+    notices: if (accountAction == RecordAccountAppeal) owners(e).append({ entry: e.journal.length() + 1, to: IndependentModerators })
+      else if (accountAction == RecordAccountDenial) owners(e) else e.notices }
+pure def stepAccountEntriesKeepRestriction(before: Enforcement, via: str, after: Enforcement): bool =
+  via == "journalAccountEntry" implies (after.restriction == before.restriction and after.appeal == before.appeal
+    and after.epoch == before.epoch and after.revisionPending == before.revisionPending and after.flags == before.flags
+    and after.accountBans == before.accountBans and after.resolved == before.resolved and after.recorded == before.recorded
+    and after.journal.length() == before.journal.length() + 1)
+pure def sometimesAccountReinstatementJournaled(e: Enforcement): bool =
+  e.journal.some(j => j.kind == RecordAccountReinstatement) and e.journal.some(j => j.kind == RecordAccountAppeal)
+pure val accountActionValues = Set(RecordAccountAppeal, RecordAccountDenial, RecordAccountReinstatement, RecordAppeal)
+```
+
 ### An independent moderator reinstates only after fresh clean scans of every repository
 
 Reinstatement needs an open project appeal, a moderator independent of the
@@ -735,7 +783,8 @@ pure def alwaysUnbannedReviewedFindings(e: Enforcement): bool =
 pure def alwaysReviewedAreFindings(e: Enforcement): bool = e.reviewedFindings.subseteq(e.findings)
 pure def noticeTo(entry: int, recipient: Recipient): Notice = { entry: entry, to: recipient }
 pure def alwaysNoticesPerEntry(e: Enforcement): bool =
-  e.journal.every(j => e.notices.includes(noticeTo(j.seq, ListingAccount)) and e.notices.includes(noticeTo(j.seq, StewardAccount)))
+  e.journal.every(j => j.kind == RecordAccountReinstatement or
+    (e.notices.includes(noticeTo(j.seq, ListingAccount)) and e.notices.includes(noticeTo(j.seq, StewardAccount))))
 pure def alwaysJournalNumbered(e: Enforcement): bool =
   e.journal.every(j => j.seq > 0 and j.seq <= e.journal.length() and e.journal.every(k => k.seq == j.seq implies k == j))
 pure def alwaysFlagReceiptsUnique(e: Enforcement): bool =
@@ -795,8 +844,8 @@ pure def sometimesReinstatedAfterMalice(e: Enforcement): bool = e.restriction ==
 pure def sometimesAppealDenied(e: Enforcement): bool = e.appeal == AppealDenied and e.restriction == ModeratorQuarantine
 pure def sometimesExemptWithoutScan(e: Enforcement): bool =
   cleared(e) and e.exempt.size() > 0 and latestOf(e, 1).state == NotAssessed and basisLabel(basis(e, 1)) == "Owner-approved exemption"
-pure def sometimesCursoryReviewOfDevelop(e: Enforcement): bool =
-  grantCovers(e, 1) and grantOf(e, 1).kind == CursoryReview and grantOf(e, 1).branch == OwnerSelectedDevelop
+pure def sometimesRequeueAfterGrantStaysCovered(e: Enforcement): bool =
+  latestOf(e, 1).requeued and latestOf(e, 1).requestedAt >= grantOf(e, 1).at and grantCovers(e, 1)
 pure def sometimesGrantRefusedAfterAuthorityLoss(e: Enforcement): bool =
   e.revision == 1 and e.steward == 1 and canGrantExemption(e, 7, { revision: 1, sequence: e.journal.length() + 1 }, goodGrant) and
   not(canGrantExemption(e, 7, { revision: 1, sequence: e.journal.length() + 1 }, lostAuthorityGrant))

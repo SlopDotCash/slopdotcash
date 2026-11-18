@@ -1,23 +1,24 @@
-// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"
 import { type InboxNotice, type NotificationsPage, acknowledgeCaseNotice, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark } from "@repo/operations/client"
 import { ActorChanged, type CallFailure, call } from "../../platform/api.vibe"
 import { type ReadFailure, type Resource, Unreadable, resource } from "../../reads/resource.vibe"
 import { BrowserSession } from "../../session/browserSession.vibe"
 import { Session, actorNumber } from "../../session/session.vibe"
+import { queueValid } from "./assessments.vibe"
 
 export const inboxLimitBytes = 1_048_576
 export const receiptLimitBytes = 1024
 
 export const inboxMessages = {
-  unavailable: "The inbox could not load. Retry.",
+  unavailable: "Inbox unavailable",
   invalid: "The inbox returned an invalid response.",
-  accountChanged: "The inbox account changed. Retry.",
-  viewChanged: "Your account changed. Retry your inbox.",
-  privateUnavailable: "The inbox and private session could not load. Retry.",
-  markFailed: "Could not mark the notification as read. Please retry.",
-  acknowledgeFailed: "Could not acknowledge the security notice. Please retry.",
-  marked: "Marked as read.",
-  acknowledged: "Security notice acknowledged.",
+  accountChanged: "Account changed",
+  viewChanged: "Account changed",
+  privateUnavailable: "Inbox unavailable",
+  markFailed: "Not saved",
+  acknowledgeFailed: "Not saved",
+  marked: "Marked read",
+  acknowledged: "Notice acknowledged",
 } as const
 
 export type InboxStatus = "loading" | "signedOut" | "failed" | "ready"
@@ -31,6 +32,7 @@ export interface InboxView {
   readonly actionError: string | undefined
   readonly busy: boolean
   readonly hasNewer: boolean
+  readonly loadedAt: number
 }
 
 const recipientPattern = /^[1-9][0-9]{0,19}$/u
@@ -56,9 +58,14 @@ function validNotice(notice: InboxNotice): boolean {
     && (notice.acknowledgedAt === undefined || notice.acknowledgedAt === null || timestamp(notice.acknowledgedAt))
 }
 
+function validBundledQueue(page: NotificationsPage): boolean {
+  const queue = page.incompleteAssessments
+  return queue === undefined || queue === null || (queueValid(queue) && queue.recipientGithubId === page.recipientGithubId)
+}
+
 export function validInboxPage(page: NotificationsPage): boolean {
   return recipientPattern.test(page.recipientGithubId) && page.notifications.every(validNotice) && Number.isSafeInteger(page.unread) && page.unread >= 0
-    && (page.nextCursor === null || validCursor(page.nextCursor))
+    && (page.nextCursor === null || validCursor(page.nextCursor)) && validBundledQueue(page)
 }
 
 export function unreadKeys(page: NotificationsPage): ReadonlyArray<string> {
@@ -87,7 +94,7 @@ function signedOutBy(failure: ReadFailure | undefined): boolean {
   return failure?._tag === "Refused" && failure.status === 401
 }
 
-const loadingView: InboxView = { status: "loading", recipient: null, page: undefined, message: undefined, done: undefined, actionError: undefined, busy: false, hasNewer: false }
+const loadingView: InboxView = { status: "loading", recipient: null, page: undefined, message: undefined, done: undefined, actionError: undefined, busy: false, hasNewer: false, loadedAt: 0 }
 
 export service Inbox {
   readonly reads: Resource<NotificationsPage>
@@ -179,7 +186,8 @@ export const inboxLayer = Layer.effect(Inbox, effect {
       if (!(try browser.acceptPrivate({ actorId: actorNumber(page.recipientGithubId), epoch: lifetime.epoch }, page.notifications.length, true))) return try failed(inboxMessages.accountChanged)
       const asked = cursor
       if ((try acceptRecipient(page.recipientGithubId)) && asked !== null) return try read(mine)
-      return try update((view) => ({ ...view, status: "ready", page, message: undefined }))
+      const loadedAt = try Clock.currentTimeMillis
+      return try update((view) => ({ ...view, status: "ready", page, message: undefined, loadedAt }))
     }
     if (signedOutBy(reads.failure())) return try signedOut()
     return try revalidated(mine)
@@ -225,7 +233,7 @@ export const inboxLayer = Layer.effect(Inbox, effect {
           if (current(mine)) try signedOut()
           return
         }
-        if (try owns(mine, expected)) try update(() => ({ ...before, busy: true, actionError: writeFailure(wrote.failure, refused) }))
+        if (try owns(mine, expected)) try update(() => ({ ...before, done: undefined, busy: true, actionError: writeFailure(wrote.failure, refused) }))
         return
       }
       if (!(try owns(mine, expected))) return

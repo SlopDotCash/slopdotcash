@@ -4,8 +4,9 @@ PRD section 4 (owner decision of 18 October 2026, SKL-03) and CLAUDE.md
 "Project skills are generated" define one canonical generic template per
 role and the approved D1 project revision as the only inputs of a project
 skill. The source is `src/lib/project-skill.mjs` (`renderProjectSkill`) and
-`src/lib/project-skill-publication.mjs`, which `scripts/prepare-site.mjs`
-publishes as raw Markdown endpoints and `.skill` archives. No project keeps a
+`src/lib/project-skill-publication.mjs`, which the Pages artifact route
+([publication](./publication.md)) renders per request as raw Markdown
+endpoints and `.skill` archives. No project keeps a
 skill folder or copy of its own. The [authority component](./skillAuthority.md)
 admits downloaded bytes only when they equal `render` of the pair it admits.
 
@@ -16,10 +17,13 @@ admits downloaded bytes only when they equal `render` of the pair it admits.
 The rendered skill names the exact template commit and revision digest it
 came from. Rendering is a pure function of those two inputs: the request
 time, host and requester never reach it, so the same template revision and
-D1 revision give the same bytes. The site build (the only sender of
-`publishSkill`) publishes one rendering as both the raw Markdown endpoint
+D1 revision give the same bytes. The Pages artifact route
+([publication](./publication.md)) is the only sender of `publishSkill`: it
+renders per request from the current D1 revision and the build's verified
+template files, and serves one rendering as both the raw Markdown endpoint
 and the file inside the `.skill` archive, whose provenance names the pair;
-the checksum beside it detects corruption only. Placeholder substitution,
+the checksum beside it detects corruption only. The site build publishes
+only the template trees and their index. Placeholder substitution,
 encoding, archive layout and file order are the shell's and need conformance
 evidence.
 

@@ -2,7 +2,15 @@
 import { boundedBytes } from "@repo/platform/browser"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 
-export error ToolFailed { tool: string; step: string; message: string; httpStatus?: number }
+export type CommandCategory = "authentication" | "rate-limit" | "version-unavailable" | "timeout" | "command-failed"
+
+export interface CommandFailure {
+  readonly category: CommandCategory
+  readonly exitCode: number | null
+  readonly providerCode: number | null
+}
+
+export error ToolFailed { tool: string; step: string; message: string; httpStatus?: number; command?: CommandFailure }
 
 export interface Call {
   readonly args: ReadonlyArray<string>
@@ -64,6 +72,24 @@ effect function collected<E>(stream: Stream.Stream<Uint8Array, E>, limit: number
   return bytes
 }
 
+function categoryOf(text: string, timedOut: boolean): CommandCategory {
+  if (/unauthorized|authentication|forbidden|\b(?:401|403)\b/iu.test(text)) return "authentication"
+  if (/rate.?limit|\b429\b/iu.test(text)) return "rate-limit"
+  if (/not found|does not exist|100146/iu.test(text)) return "version-unavailable"
+  return timedOut || /timeout|timed out/iu.test(text) ? "timeout" : "command-failed"
+}
+
+function commandFailure(output: { readonly stdout: Uint8Array; readonly stderr: Uint8Array; readonly code: number } | undefined): CommandFailure {
+  const decoder = new TextDecoder()
+  const text = output === undefined ? "" : `${decoder.decode(output.stderr)}\n${decoder.decode(output.stdout)}`
+  const provider = Number(/\[code:\s*(\d+)\]/u.exec(text)?.[1] ?? Number.NaN)
+  return {
+    category: categoryOf(text, output === undefined),
+    exitCode: output !== undefined && Number.isSafeInteger(output.code) ? output.code : null,
+    providerCode: Number.isSafeInteger(provider) ? provider : null,
+  }
+}
+
 function lastLine(bytes: Uint8Array) {
   const lines = new TextDecoder().decode(bytes).split(/\r?\n/u).map((line) => line.trim()).filter((line) => line !== "")
   return (lines.at(-1) ?? "no diagnostic").slice(0, 300)
@@ -107,9 +133,9 @@ export function cloudflare(options: CloudflareOptions) {
         return { stdout, stderr, code: Number(code) }
       })
       const output = timeout(ran, Duration.seconds(call.seconds ?? defaultSeconds)) catch effect () => {
-        throw new ToolFailed({ tool, step, message: `${tool} did not finish within its bound or exceeded its output bound` })
+        throw new ToolFailed({ tool, step, message: `${tool} did not finish within its bound or exceeded its output bound`, command: commandFailure(undefined) })
       }
-      if (output.code !== 0) throw new ToolFailed({ tool, step, message: `${tool} exited ${output.code}: ${lastLine(output.stderr)}` })
+      if (output.code !== 0) throw new ToolFailed({ tool, step, message: `${tool} exited ${output.code}: ${lastLine(output.stderr)}`, command: commandFailure(output) })
       return new TextDecoder().decode(output.stdout)
     }
 

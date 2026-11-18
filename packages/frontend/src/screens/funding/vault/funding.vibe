@@ -29,6 +29,7 @@ import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts"
 import { ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
 import type { EvmBatchPlan, OwnerPlan } from "../../../wallets/owner/ownerPlans.schema.ts"
 import { type OwnerVaultPage, type Saved, ownerVaultPage } from "../../../wallets/owner/ownerVault.vibe"
+import { receivedNotice } from "../../../wallets/owner/receivedNotice.ts"
 import { type ReviewedFunding, type SolanaVault, checkFunding, reviewFunding, sendFunding } from "../../../wallets/owner/solanaVault.vibe"
 import { pageHidden } from "./pageVisibility.ts"
 import type { FundingDeployment, FundingProject } from "./project.schema.ts"
@@ -273,7 +274,7 @@ function transferMessage(check: TransferCheck, operation: "deposit" | "withdraw"
   const label = networkLabel(network)
   switch (check) {
     case "pending": return { answer: "StillPending", message: fromWallet ? fundingMessages.waitingWallet : fundingMessages.waiting }
-    case "received": return { answer: "IncludedRead", message: `${operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${label} block. It counts once ${label} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}` }
+    case "received": return { answer: "IncludedRead", message: receivedNotice(operation, label, hash, false) }
     case "finalized": return { answer: "FinalRead", message: `${operation === "deposit" ? "Deposit" : "Withdrawal"} verified on the finalized chain. ${hash}` }
     case "approvalConfirmed": return { answer: "FinalRead", message: fundingMessages.approval }
     case "failed": return { answer: "Reverted", message: fundingMessages.failed }
@@ -293,7 +294,7 @@ effect function batchGross(evm: EvmVault, plan: EvmBatchPlan) {
   const last = plan.calls.at(-1)
   const gross = last === undefined ? undefined : decodeUint(`0x${last.data.slice(-64)}`, U128_MAX)
   if (gross === undefined || gross === 0n) return undefined
-  const calls = Effect.try(() => batchCalls(evmTerms(evm), gross, plan.calls.length === 3)) catch () => undefined
+  const calls = Effect.try(() => batchCalls(evmTerms(evm), gross, { resetAllowance: plan.calls.length === 3, approvalNeeded: plan.calls.length > 1 })) catch () => undefined
   return calls !== undefined && sameBatch(plan, batchPlan(plan.from, evm.chainId, calls)) ? gross : undefined
 }
 

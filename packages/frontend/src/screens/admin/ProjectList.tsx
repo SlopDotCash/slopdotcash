@@ -57,7 +57,7 @@ export function ProjectFacts({ project }: { project: AdminProject }) {
           ))}
         </span>
       </Fact>
-      <Fact term="Discovery placement">{project.manifest.listingTier}</Fact>
+      <Fact term="Listing">{project.manifest.listingTier}</Fact>
       <Fact term="Revision">
         {project.revision} · updated {formatDateTime(project.updatedAt)}
       </Fact>

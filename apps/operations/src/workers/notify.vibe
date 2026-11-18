@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"
+// spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
 import type { D1Database, EmailMessage, SendEmail } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
@@ -9,8 +9,6 @@ import type { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@
 import type { ContributorAudience, DisputeAudience } from "@repo/ports/points"
 import type { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
 import type { SlopbotAudience } from "@repo/ports/slopbot"
-import { IntakeToken } from "../intakeHealth/renewal.vibe"
-import { intakeRoutes } from "../intakeHealth/routes.vibe"
 import { type NotifyVars, notifySettings } from "../notify/config.vibe"
 import { notifyRoutes } from "../notify/routes.vibe"
 import { type OutgoingMail, drain, mailVia } from "../notify/send.vibe"
@@ -18,7 +16,6 @@ import { type OutgoingMail, drain, mailVia } from "../notify/send.vibe"
 export interface NotifyEnv extends NotifyVars, RoleVars {
   readonly SLOP_DB: D1Database
   readonly ADMIN_EMAIL: SendEmail
-  readonly GITHUB_INTAKE_STATUS_TOKEN?: string
 }
 
 export type NotifyPorts = EmailConsent | EmailEnrollment | Registry | ProjectAudience | ContributorAudience | DisputeAudience | SecurityNoticeAccess | VettingBans | SlopbotAudience
@@ -29,12 +26,8 @@ const noSessions = Layer.succeed(Caller, {
   },
 })
 
-function intakeToken(text: string | undefined) {
-  return Layer.succeed(IntakeToken, { token: text === undefined ? undefined : Redacted.make(text) })
-}
-
 function notifyBase(env: NotifyEnv, internet: Layer.Layer<HttpClient.HttpClient>, envelope: (mail: OutgoingMail) => EmailMessage) {
-  const platform = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, internet, noSessions, rolesFrom(env), intakeToken(env.GITHUB_INTAKE_STATUS_TOKEN), mailVia(env.ADMIN_EMAIL, envelope))
+  const platform = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, internet, noSessions, rolesFrom(env), mailVia(env.ADMIN_EMAIL, envelope))
   return Layer.provideMerge(notifySettings(env), platform)
 }
 
@@ -49,7 +42,7 @@ export interface NotifyComposition<Env extends NotifyEnv> {
 export function notifyWorker<Env extends NotifyEnv>(composition: NotifyComposition<Env>) {
   return worker({
     services: (env: Env) => Layer.provideMerge(composition.ports(env), notifyBase(env, composition.internet, composition.envelope)),
-    routes: Layer.mergeAll(notifyRoutes, intakeRoutes),
+    routes: notifyRoutes,
     scheduled: () => drain(),
   })
 }

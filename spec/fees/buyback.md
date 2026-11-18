@@ -119,7 +119,11 @@ decisions"), replacing 500 USDC and 1.5%. `costBps` is the total cost of the
 order as a share of its amount: the spread between the amount and the take
 amount plus the priced fixed fee, order-account rent and network fee. A
 quote whose native cost cannot be priced is no quote, so it records nothing
-and signs nothing. Reconciliation of open orders, refunds and arrivals never
+and signs nothing. Native costs are integer megawei (10^6 wei) on an EVM
+network, rounded up by the adapter, and lamports on Solana, as in the
+[conversion journal](./conversion.md): the fixed order fee is at most
+0.001 ETH (1,000,000,000 megawei) and a Solana order's whole SOL debit at
+most 0.05 SOL (`BUYBACK_MAX_BRIDGE_NATIVE_FEE`). Reconciliation of open orders, refunds and arrivals never
 waits on the minimum.
 
 ```quint
@@ -128,7 +132,7 @@ type BridgeQuote = { route: BridgeRoute, amount: int, takeAmount: int, costBps: 
 pure val minimumBridge = 25000000
 pure val maximumBridgeCostBps = 1000
 pure val maximumSafeValue = 9007199254740991
-pure def nativeFeeCeiling(b: Buyback): int = if (b.source == R::Solana) 50000000 else 1000000
+pure def nativeFeeCeiling(b: Buyback): int = if (b.source == R::Solana) 50000000 else 1000000000
 pure def bridgeDecision(decided: DecisionState, reason: BridgeReason, b: Buyback, quote: BridgeQuote): BridgeDecision =
   { state: decided, reason: reason, amount: quote.amount, live: b.runtime.buybackMode == R::Live, at: b.clock }
 pure def decisionOf(b: Buyback, quote: BridgeQuote): BridgeDecision =
@@ -184,7 +188,7 @@ pure def nativeToday(spends: List[Spend], now: int): int = spends.foldl(0, (tota
 pure def bridgeNativeAllowed(b: Buyback, request: BridgeOrder): bool =
   if (request.solana) request.nativeFee > 0 and request.nativeFee <= 50000000
     and nativeToday(b.bridgeNative, b.clock) + request.nativeFee <= 100000000
-  else request.nativeFee >= 0 and request.nativeFee <= 1000000
+  else request.nativeFee >= 0 and request.nativeFee <= 1000000000
 pure def orderTermsValid(b: Buyback, request: BridgeOrder): bool =
   request.solana == (b.source == R::Solana) and request.orderId > 0 and not(b.orders.includes(request.orderId))
     and request.amount >= minimumBridge and request.amount <= 1000000000 and request.takeAmount > 0
@@ -347,25 +351,25 @@ pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMod
   { ...R::liveAll, source: 3, buybackMode: R::Off })
 pure val requestValues = Set(
   { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 },
   { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
     externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 600000000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 1001, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 },
   { orderId: 2, tx: 24, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "wrong", authority: "fees", beneficiary: "fees",
-    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000000, balance: 600000000 },
   { orderId: 4, tx: 28, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
     externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 600000000 },
   { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 },
   { orderId: 3, tx: 27, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 },
   { orderId: 5, tx: 25, amount: 25000000, takeAmount: 22500000, costBps: 1000, receiver: "fees", authority: "fees", beneficiary: "fees",
     externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 25000000 },
   { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 499999999 })
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 499999999 })
 pure val receiptValues = Set({ tx: 21, succeeded: true, finalized: true }, { tx: 22, succeeded: true, finalized: true },
   { tx: 22, succeeded: false, finalized: true }, { tx: 23, succeeded: true, finalized: true }, { tx: 24, succeeded: false, finalized: true },
   { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false },
@@ -378,11 +382,11 @@ pure val refundValues = Set({ order: 1, amount: 500000000, beneficiary: "fees", 
   { order: 2, amount: 500000000, beneficiary: "fees", height: 3, finalized: true })
 pure val cancellationValues = Set({ order: 1, height: 4, finalized: true }, { order: 1, height: 4, finalized: false })
 pure val quoteValues = Set(
-  { route: RouteFound, amount: 500000000, takeAmount: 495000000, costBps: 100, nativeFee: 1000 },
-  { route: RouteFound, amount: 20000000, takeAmount: 19800000, costBps: 100, nativeFee: 1000 },
-  { route: RouteFound, amount: 25000000, takeAmount: 22500000, costBps: 1000, nativeFee: 1000 },
+  { route: RouteFound, amount: 500000000, takeAmount: 495000000, costBps: 100, nativeFee: 1000000 },
+  { route: RouteFound, amount: 20000000, takeAmount: 19800000, costBps: 100, nativeFee: 1000000 },
+  { route: RouteFound, amount: 25000000, takeAmount: 22500000, costBps: 1000, nativeFee: 1000000 },
   { route: NoRouteResult, amount: 500000000, takeAmount: 0, costBps: 0, nativeFee: 0 },
-  { route: RouteFound, amount: 500000000, takeAmount: 450000000, costBps: 1001, nativeFee: 1000 })
+  { route: RouteFound, amount: 500000000, takeAmount: 450000000, costBps: 1001, nativeFee: 1000000 })
 pure val weight_publishWorker = 4
 pure val weight_verifyReadiness = 4
 pure val weight_recordIncome = 6

@@ -1,0 +1,160 @@
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+import { sha256Hex } from "@repo/platform/crypto"
+
+export const historicalIntakeStages = [
+  "envelope",
+  "installation",
+  "github-client",
+  "source-repository",
+  "source-registry",
+  "source-installation",
+  "source-evidence",
+  "source-context",
+  "source-policy",
+  "bundle-inputs",
+  "bundle-file-recovery",
+  "bundle-file-client",
+  "bundle-source-recollection",
+  "bundle-context-recollection",
+  "bundle-metadata",
+  "bundle-merge-reconstruction",
+  "bundle-identity",
+  "prepare-work-unit",
+  "publish-work-unit",
+  "publish-single",
+] as const
+
+export type HistoricalIntakeStage = (typeof historicalIntakeStages)[number]
+
+export const historicalIntakeErrorNames = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "URIError",
+  "EvalError",
+  "DOMException",
+  "AbortError",
+  "TimeoutError",
+  "DataError",
+  "OperationError",
+  "NotSupportedError",
+  "InvalidAccessError",
+  "DataCloneError",
+  "QuotaExceededError",
+  "GitHubError",
+  "OtherError",
+] as const
+
+export const historicalIntakeStatuses = [400, 401, 403, 404, 408, 409, 413, 415, 422, 429, 500, 502, 503, 504] as const
+
+const githubFailures: ReadonlySet<string> = new Set(["NotFound", "GitHubRefused", "RateLimited", "GitHubUnavailable", "GitHubMalformed"])
+const stageNames: ReadonlySet<string> = new Set(historicalIntakeStages)
+const errorNames: ReadonlySet<string> = new Set(historicalIntakeErrorNames)
+const statuses: ReadonlySet<number> = new Set(historicalIntakeStatuses)
+const messageLimit = 4096
+const digestPattern = /^[a-f0-9]{64}$/u
+const sourceLimit = 10_000
+
+export interface HistoricalIntakeProgress {
+  readonly stage: HistoricalIntakeStage
+  readonly sourceIndex: number | null
+  readonly sourceCount: number | null
+}
+
+export const HistoricalIntakeFailure = Schema.Struct({
+  event: Schema.Literal("historical-intake-failure"),
+  stage: Schema.Literals(historicalIntakeStages),
+  sourceIndex: Schema.NullOr(Schema.Number),
+  sourceCount: Schema.NullOr(Schema.Number),
+  errorName: Schema.Literals(historicalIntakeErrorNames),
+  httpStatus: Schema.NullOr(Schema.Literals(historicalIntakeStatuses)),
+  messageSha256: Schema.NullOr(Schema.String),
+})
+
+export type HistoricalIntakeFailure = typeof HistoricalIntakeFailure.Type
+
+export service IntakeProgress {
+  static readonly defaultValue = () => ({ observe: (_progress: HistoricalIntakeProgress) => Effect.void })
+  observe(progress: HistoricalIntakeProgress): void!!
+}
+
+export effect function reached(stage: HistoricalIntakeStage, sourceIndex: number | null, sourceCount: number | null) {
+  try (try IntakeProgress).observe({ stage, sourceIndex, sourceCount })
+}
+
+function positionsValid(failure: HistoricalIntakeFailure) {
+  const { sourceCount, sourceIndex } = failure
+  if (sourceCount !== null && (!Number.isSafeInteger(sourceCount) || sourceCount < 1 || sourceCount > sourceLimit)) return false
+  if (sourceIndex === null) return true
+  return sourceCount !== null && Number.isSafeInteger(sourceIndex) && sourceIndex >= 0 && sourceIndex < sourceCount
+}
+
+export effect function projectHistoricalIntakeFailure(value: unknown) {
+  const decoded = Schema.decodeUnknownEffect(HistoricalIntakeFailure)(value, { onExcessProperty: "error" }) catch () => undefined
+  if (decoded === undefined || !stageNames.has(decoded.stage) || !positionsValid(decoded)) return undefined
+  if (decoded.messageSha256 !== null && !digestPattern.test(decoded.messageSha256)) return undefined
+  return decoded
+}
+
+interface ErrorFields {
+  readonly _tag?: unknown
+  readonly name?: unknown
+  readonly message?: unknown
+  readonly reason?: unknown
+  readonly status?: unknown
+}
+
+function fieldsOf(error: unknown): ErrorFields {
+  return error !== null && typeof error === "object" ? error as ErrorFields : {}
+}
+
+function errorNameOf(fields: ErrorFields) {
+  if (typeof fields._tag === "string") return githubFailures.has(fields._tag) ? "GitHubError" : "Error"
+  return typeof fields.name === "string" && errorNames.has(fields.name) ? fields.name : "OtherError"
+}
+
+function httpStatusOf(fields: ErrorFields) {
+  if (fields._tag === "NotFound") return 404
+  return typeof fields.status === "number" && statuses.has(fields.status) ? fields.status : null
+}
+
+function messageOf(fields: ErrorFields) {
+  if (typeof fields.reason === "string") return fields.reason
+  return typeof fields.message === "string" ? fields.message : undefined
+}
+
+export effect function historicalIntakeFailure(progress: HistoricalIntakeProgress, error: unknown) {
+  const fields = fieldsOf(error)
+  const message = messageOf(fields)
+  const hashable = message !== undefined && message.length <= messageLimit && new TextEncoder().encode(message).length <= messageLimit
+  return try projectHistoricalIntakeFailure({
+    event: "historical-intake-failure",
+    stage: progress.stage,
+    sourceIndex: progress.sourceIndex,
+    sourceCount: progress.sourceCount,
+    errorName: errorNameOf(fields),
+    httpStatus: httpStatusOf(fields),
+    messageSha256: hashable ? try sha256Hex(message) : null,
+  })
+}
+
+effect function logged(progress: HistoricalIntakeProgress, error: unknown) {
+  const safe = try historicalIntakeFailure(progress, error)
+  if (safe !== undefined) try Effect.logError(JSON.stringify(safe))
+}
+
+export effect function withHistoricalIntakeDiagnostics<A, E, R>(program: A!E!R) {
+  const current = try Ref.make<HistoricalIntakeProgress>({ stage: "envelope", sourceIndex: null, sourceCount: null })
+  const observer: IntakeProgress.Shape = { observe: (progress) => Ref.set(current, progress) }
+  const observed = effect {
+    provide IntakeProgress = observer {
+      return try program
+    }
+  }
+  return observed catch effect (error) => {
+    try exit(logged(try Ref.get(current), error))
+    throw error
+  }
+}

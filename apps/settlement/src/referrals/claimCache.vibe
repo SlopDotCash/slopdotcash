@@ -2,49 +2,40 @@
 import { isoAt } from "@repo/platform/clock"
 import { D1, first, sql } from "@repo/platform/d1"
 import { EvmRpc, type Log, decodeEvents, decodeResult, encodeCall } from "@repo/platform/chain/evm"
+import { Digest32, Instant, ReferralProgram as ClaimProgram } from "../client/referrals.vibe"
 import { ReferralProgram } from "./config.vibe"
 import { activeEpochIndex } from "./claimsView.ts"
 import { type Deployment, DistributorMismatch, ReferralDeployment, distributorAbi, eventTopics, onDistributor, readDistributor, wide } from "./distributor.vibe"
 import { claimCacheWrite } from "./publication.vibe"
 import { scanPageBlocks } from "./reconcile.vibe"
 
-export schema CachedProgram {
-  readonly network: "robinhood-testnet" | "robinhood-mainnet"
-  readonly chainId: number
-  readonly distributor: string
-  readonly token: string
-  readonly decimals: number
-  readonly codeHash: string
-}
+const Seconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8_640_000_000_000 }))
+const EpochIndex = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 
-export schema CachedEpoch {
-  readonly epoch: number
-  readonly period: string
-  readonly root: string
-  readonly totalBase: string
-  readonly claimableAt: number
-  readonly voided: boolean
-}
+export const ClaimEpoch = Schema.Struct({
+  epoch: EpochIndex,
+  period: Schema.String,
+  root: Digest32,
+  totalBase: Schema.String,
+  claimableAt: Seconds,
+  voided: Schema.Boolean,
+})
+export type ClaimEpoch = typeof ClaimEpoch.Type
 
-export schema CachedBlock {
-  readonly number: string
-  readonly hash: string
-  readonly timestamp: number
-}
-
-export schema ClaimSnapshot {
-  readonly program: CachedProgram
-  readonly deploymentBlock: string
-  readonly block: CachedBlock
-  readonly observedAt: string
-  readonly paused: boolean
-  readonly pauseAt: number | null
-  readonly latestPaused: boolean
-  readonly ended: boolean
-  readonly epochs: ReadonlyArray<CachedEpoch>
-  readonly claimed: Readonly<Record<string, string>>
-  readonly claimedEpochs?: ReadonlyArray<number>
-}
+export const ClaimSnapshot = Schema.Struct({
+  program: ClaimProgram,
+  deploymentBlock: Schema.String,
+  block: Schema.Struct({ number: Schema.String, hash: Schema.String, timestamp: Seconds }),
+  observedAt: Instant,
+  paused: Schema.Boolean,
+  pauseAt: Schema.NullOr(Seconds),
+  latestPaused: Schema.Boolean,
+  ended: Schema.Boolean,
+  epochs: Schema.Array(ClaimEpoch),
+  claimed: Schema.Record(Schema.String, Schema.String),
+  claimedEpochs: Schema.optionalKey(Schema.Array(EpochIndex)),
+})
+export type ClaimSnapshot = typeof ClaimSnapshot.Type
 
 schema PriorRow {
   readonly body: string | null
@@ -56,7 +47,8 @@ schema JournalRow {
 
 export type CacheRefresh = { readonly status: "off" | "unconfigured" } | { readonly status: "refreshed"; readonly block: string; readonly epochs: number }
 
-const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
+export const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
+const admitSnapshot = Schema.decodeUnknownEffect(ClaimSnapshot)
 const encodeSnapshot = Schema.encodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
 const noIndex = (1n << 256n) - 1n
 
@@ -163,7 +155,7 @@ effect function refreshed(deployment: Deployment, decimals: number, priorBody: s
   if (finalized.number < deployment.deploymentBlock) throw differs("referral finality unavailable")
   const chain = try readDistributor(deployment)
   if (chain.decimals !== decimals) throw differs("the referral token decimals differ")
-  const program = { network: deployment.networkKey, chainId: Number(deployment.chainId), distributor: deployment.distributor, token: deployment.token, decimals, codeHash: deployment.codeHash } satisfies CachedProgram
+  const program = { network: deployment.networkKey, chainId: Number(deployment.chainId), distributor: deployment.distributor, token: deployment.token, decimals, codeHash: deployment.codeHash } satisfies ClaimProgram
   const block = { number: finalized.number.toString(), hash: finalized.hash, timestamp: finalized.timestamp }
   const now = try isoAt(try Clock.currentTimeMillis)
   const stored = priorBody === null ? undefined : try decodeSnapshot(priorBody)
@@ -190,14 +182,16 @@ export effect function refreshClaimCache() {
   if (deployment === undefined) return { status: "unconfigured" } satisfies CacheRefresh
   const db = try D1
   const prior = try first(PriorRow, sql`SELECT body FROM referral_claim_cache WHERE id = 'program'`)
-  const snapshot = onDistributor(deployment, refreshed(deployment, program.ledger.tokenDecimals, prior?.body ?? null)) catch effect (error) => {
+  const written = onDistributor(deployment, effect {
+    const snapshot = try refreshed(deployment, program.ledger.tokenDecimals, prior?.body ?? null)
+    try db.run(claimCacheWrite(try encodeSnapshot(try admitSnapshot(snapshot)), snapshot.observedAt))
+    return snapshot
+  }) catch effect (error) => {
     const failedAt = try isoAt(try Clock.currentTimeMillis)
     try db.run(sql`INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', NULL, NULL, ${failedAt}) ON CONFLICT(id) DO UPDATE SET error_at = excluded.error_at WHERE referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at <= excluded.error_at`)
     try Effect.logWarning("referral_claim_refresh_failed", { reason: error instanceof Error ? error.message.slice(0, 200) : "refresh failed" })
     throw error
   }
-  const body = try encodeSnapshot(snapshot)
-  try db.run(claimCacheWrite(body, snapshot.observedAt))
-  return { status: "refreshed", block: snapshot.block.number, epochs: snapshot.epochs.length } satisfies CacheRefresh
+  return { status: "refreshed", block: written.block.number, epochs: written.epochs.length } satisfies CacheRefresh
 }
 

@@ -12,25 +12,25 @@ export interface CaseSummary {
 }
 
 const failureLabels: Readonly<Record<string, string>> = {
-  "pvr-disabled": "GitHub private vulnerability reporting is off for this repository. Nothing was published.",
-  "app-not-installed": "The Slop private intake app is not installed on this repository. Report directly on GitHub instead.",
+  "pvr-disabled": "GitHub private reporting is off. Not sent.",
+  "app-not-installed": "Slop app not installed. Report on GitHub.",
   forbidden: "GitHub refused the report for your account.",
   invalid: "GitHub rejected the report fields. Fix them and send again.",
-  "author-mismatch": "GitHub lists a different author for this advisory, so Slop cannot link it to you.",
-  "not-found": "GitHub has no advisory with that ID that your account can see.",
+  "author-mismatch": "Advisory belongs to another account.",
+  "not-found": "Advisory not found.",
   "grant-expired": "Your GitHub authorization expired. Authorize again.",
   "already-recorded": "This advisory already has a verified private case.",
-  "not-private-report": "This advisory is not a live private report you filed. Link it for a maintainer to verify instead.",
-  unverifiable: "GitHub has this report, but Slop could not confirm it within 24 hours. Link the advisory for a maintainer to verify instead.",
+  "not-private-report": "Not your private report. Link it instead.",
+  unverifiable: "Unconfirmed after 24h. Link the advisory.",
 };
 
 const screeningLabels: Readonly<Record<string, string>> = {
-  queued: "Waiting for screening.",
-  running: "Screening in progress.",
-  legitimate: "Screening complete. Ready for the project owner's review.",
-  "needs-information": "More evidence needed before owner review.",
-  spam: "Held as spam or unsupported; available for owner review.",
-  unavailable: "Screening unavailable; report saved.",
+  queued: "Queued",
+  running: "Screening",
+  legitimate: "Owner review",
+  "needs-information": "Needs evidence",
+  spam: "Held",
+  unavailable: "Unscreened",
 };
 
 /** @throws {RangeError} */
@@ -51,21 +51,21 @@ export function sendable(submission: SubmissionView): boolean {
 export function githubSubmissionStatus(submission: SubmissionView, nowMs: number): string {
   switch (submission.state) {
     case "draft":
-      return submission.retryAllowed ? "GitHub has no copy. You can send again." : submission.origin === "direct" ? "Ready to verify with GitHub." : "Not sent yet.";
+      return submission.retryAllowed ? "Not sent · resend" : submission.origin === "direct" ? "Ready to verify" : "Not sent";
     case "submitting":
-      return "Sending to GitHub privately…";
+      return "Sending";
     case "uncertain":
       return submission.reconcileAfter !== null && Date.parse(submission.reconcileAfter) > nowMs
-        ? `Not confirmed by GitHub yet. Check again after ${utc(submission.reconcileAfter)}.`
-        : "Not confirmed by GitHub. Check again.";
+        ? `Unconfirmed · after ${utc(submission.reconcileAfter)}`
+        : "Unconfirmed";
     case "submitted":
-      return "Received by GitHub. Confirming…";
+      return "Confirming";
     case "receipt-verified":
       return `GitHub receipt · ${utc(submission.githubCreatedAt)}.`;
     case "failed":
       return failureLabels[submission.failureCode ?? ""] ?? "GitHub did not accept the report.";
     case "abandoned":
-      return "Expired after 24 hours without a send.";
+      return "Expired";
     default:
       return "GitHub did not accept the report.";
   }
@@ -75,8 +75,8 @@ export function githubSubmissionStatus(submission: SubmissionView, nowMs: number
 export function submissionStatus(submission: SubmissionView, nowMs: number): string {
   const intake = submission.intake;
   if (intake === null) return githubSubmissionStatus(submission, nowMs);
-  if (intake.canForward && intake.routingState === "pending") return "Report cleared for review. The owner notification is pending.";
-  if (intake.canForward && intake.reviewedAt !== null) return "A maintainer cleared this report for owner review. No award has been approved by this routing decision.";
+  if (intake.canForward && intake.routingState === "pending") return "Cleared · notifying owner";
+  if (intake.canForward && intake.reviewedAt !== null) return "Cleared · no award yet";
   return screeningLabels[intake.state] ?? screeningLabels.unavailable;
 }
 

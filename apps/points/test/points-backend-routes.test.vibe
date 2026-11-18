@@ -16,6 +16,7 @@ const fundedId = 9004
 const removableId = 9005
 const racingId = 9006
 const linkedId = 9007
+const unconsentedId = 9008
 const pairSteward = 51
 const pairFirstId = 6101
 const pairSecondId = 6102
@@ -67,6 +68,7 @@ const Built = Layer.effect(World, effect {
     github.world.addRepo({ id: removableId, nodeId: `R_${removableId}`, owner: `member-${stewardId}`, name: "removable", defaultBranch: "main", license: { spdx: "MIT" } })
     github.world.addRepo({ id: racingId, nodeId: `R_${racingId}`, owner: `member-${stewardId}`, name: "racing", defaultBranch: "main", license: { spdx: "MIT" } })
     github.world.addRepo({ id: linkedId, nodeId: `R_${linkedId}`, owner: `member-${stewardId}`, name: "linked", defaultBranch: "main", license: { spdx: "MIT" } })
+    github.world.addRepo({ id: unconsentedId, nodeId: `R_${unconsentedId}`, owner: `member-${stewardId}`, name: "unconsented", defaultBranch: "main", license: { spdx: "MIT" } })
     github.world.addRepo({ id: pairFirstId, nodeId: `R_${pairFirstId}`, owner: `member-${pairSteward}`, name: "reinstate-one", defaultBranch: "main", license: { spdx: "MIT" } })
     github.world.addRepo({ id: pairSecondId, nodeId: `R_${pairSecondId}`, owner: `member-${pairSteward}`, name: "reinstate-two", defaultBranch: "main", license: { spdx: "MIT" } })
   }))
@@ -565,7 +567,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('Owner website and X links publish as presentation, validate and clear, and ready-label settings publish within their bounds (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths")', () => effect {
+  it.effect('Owner website and X links publish as presentation, validate and clear, and ready-label settings publish within their bounds (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting")', () => effect {
     const area = try Area
     const steward = try member(stewardId)
     const linked = try listed("linked-tool", "linked", linkedId)
@@ -583,6 +585,10 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const readyAt = (readyLabel: unknown) => revise(steward, id, { manifest: { ...base, slopbot: { automaticClosure: true, readyLabel } }, expectedRevision: 5 })
     const labelled = try revise(steward, id, { manifest: { ...base, slopbot: { automaticClosure: true, readyLabel: ready } }, expectedRevision: 4 })
     const stewardLabel = field((try stored(id)).manifest, "slopbot")
+    const unconsented = manifest(try listed("unconsented-tool", "unconsented", unconsentedId), { slopbot: { automaticClosure: false } })
+    const unconsentedSetup = try created(steward, unconsented, unconsentedId)
+    const unconsentedLabelled = try revise(steward, unconsented.id, { manifest: { ...unconsented, slopbot: { automaticClosure: false, readyLabel: ready } }, expectedRevision: 2 })
+    const unconsentedLabel = field((try stored(unconsented.id)).manifest, "slopbot")
     const bounds = [
       refused(try readyAt({ ...ready, approvals: 11 })),
       refused(try readyAt({ ...ready, approvals: 0 })),
@@ -606,6 +612,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       afterClear,
       labelled: [labelled.status, field(labelled.body, "changes"), ...project(labelled)],
       stewardLabel,
+      unconsentedSetup,
+      unconsentedLabelled: [unconsentedLabelled.status, field(unconsentedLabelled.body, "changes"), ...project(unconsentedLabelled)],
+      unconsentedLabel,
       bounds,
     }, {
       setup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
@@ -616,6 +625,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       afterClear: base.links,
       labelled: [200, { presentation: ["slopbot"], executable: [], financial: [] }, 5, "active", "community"],
       stewardLabel: { automaticClosure: true, readyLabel: ready },
+      unconsentedSetup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
+      unconsentedLabelled: [200, { presentation: ["slopbot"], executable: [], financial: [] }, 3, "active", "community"],
+      unconsentedLabel: { automaticClosure: false, readyLabel: ready },
       bounds: [
         [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],
         [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],
@@ -693,7 +705,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const fence = try nextFence(a, race)
     const banned: Array<Answer> = []
     world.beforeAuthority.push(() => Effect.runPromise(area.request(`/api/v1/admin/projects/${race}/enforcement`, { json: { ...decision("ban"), ...fence }, as: a })).then((answer) => banned.push(answer)))
-    const raced = try remove(steward, race, 2)
+    const raced = try remove(steward, race, 3)
+    const raceListing = try listing(race)
     const raceRows = try area.sql("SELECT sequence, action, state_after, actor_role FROM project_enforcements WHERE project_id = ? ORDER BY sequence", race)
     const removals = try area.sql("SELECT COUNT(*) AS count FROM project_revisions WHERE project_id = ? AND reason = 'Removed by a current repository maintainer'", race)
 
@@ -731,6 +744,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       raceSetup,
       raced: [restricted(raced), banned.map(outcome)],
       raceRows,
+      raceListing,
       removals,
     }, {
       listedSetup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
@@ -752,6 +766,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       raceSetup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
       raced: [[409, "project_restricted", "The project is banned; request reinstatement before removing it", "no-store", "project-registry-v1"], [[200, null]]],
       raceRows: [{ sequence: 1, action: "ban", state_after: "banned", actor_role: "project-moderator" }],
+      raceListing: [{ revision: 3, status: "paused", tier: "retired" }],
       removals: [{ count: 0 }],
     })
   })
@@ -798,7 +813,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       unretained: refused(unretained),
       deciding: [deciding.status, deciding.rows.map((row) => row.repository_id), decidingEvidence],
       investigation: [investigation.status, investigation.rows.length, pending],
-      placerReinstates: outcome(placerReinstates),
+      placerReinstates: refused(placerReinstates),
       reinstated: [outcome(reinstated), field(field(reinstated.body, "record"), "action")],
       rows,
       listing: try listing(id),
@@ -814,7 +829,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       unretained: vettingRequired,
       deciding: [201, [first], [[201, 200, 200]]],
       investigation: [201, 1, [{ state: "pending" }]],
-      placerReinstates: [409, "rejected"],
+      placerReinstates: [403, "independent_review_required", "A moderator who did not place this restriction must decide the appeal"],
       reinstated: [[200, null], "reinstate"],
       rows: [
         { sequence: 1, action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },

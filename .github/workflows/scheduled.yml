@@ -158,6 +158,8 @@ jobs:
           job: monthly-allocation
           verification: "false"
           publication: "true"
+      - name: Reject known production dependency vulnerabilities
+        run: pnpm audit --prod
       - run: pnpm all build --filter=@repo/settlement
       - name: Validate requested cycle
         id: cycle

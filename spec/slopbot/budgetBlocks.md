@@ -20,8 +20,9 @@ it directly.
 
 ### Only the current claim owner records an immutable block
 
-A block needs a recognized Surplus spending denial with a reset time later
-than now, remembered by the [review](./review.md) route after the Orbio
+A block needs a recognized Surplus spending denial with a valid reset time,
+one already past included (a past reset is due at once and the next
+dispatch run sends it), remembered by the [review](./review.md) route after the Orbio
 backstop had no key or served no valid result: the denial the shell passes
 says whether Orbio served after it. An Orbio failure alone never blocks,
 and an Orbio verdict after a denial leaves no block. The
@@ -61,7 +62,7 @@ pure def canFinish(s: BudgetState, token: int, status: RowStatus): bool =
 pure def finish(s: BudgetState, token: int, status: RowStatus): BudgetState = { ...s, status: status, leaseUntil: 0 }
 pure def blocksRoute(d: Denial): bool = d.source == SurplusSpendingDenial and not(d.orbioServed)
 pure def canRecordBlock(s: BudgetState, token: int, d: Denial): bool =
-  owns(s, token) and blocksRoute(d) and d.resetAt > s.now and s.current.id == 0
+  owns(s, token) and blocksRoute(d) and d.resetAt > 0 and s.current.id == 0
 pure def recordBlock(s: BudgetState, token: int, d: Denial): BudgetState =
   { ...s, status: Failed, leaseUntil: 0, blockCount: s.blockCount + 1,
     current: { id: s.blockCount + 1, token: token, retryAt: d.resetAt, dispatched: false } }
@@ -111,7 +112,9 @@ pure def sometimesResumed(s: BudgetState): bool = s.blockCount > 0 and s.sends >
 pure def sometimesSuspendedBlockWaits(s: BudgetState): bool =
   s.current.id > 0 and not(s.current.dispatched) and s.current.retryAt <= s.now and s.install.suspended
 pure def sometimesResentAfterLostRecord(s: BudgetState): bool = s.sends > 1
+pure def sometimesPastResetDueAtOnce(s: BudgetState): bool = s.current.id > 0 and s.current.retryAt <= s.now and s.status == Failed
 pure val dValues = Set({ source: SurplusSpendingDenial, resetAt: 100, orbioServed: false },
+  { source: SurplusSpendingDenial, resetAt: 1, orbioServed: false },
   { source: OrbioFailure, resetAt: 100, orbioServed: false }, { source: SurplusOtherFailure, resetAt: 100, orbioServed: false },
   { source: SurplusSpendingDenial, resetAt: 100, orbioServed: true })
 pure val eValues = Set(

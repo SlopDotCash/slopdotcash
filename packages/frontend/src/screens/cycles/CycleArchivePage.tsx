@@ -1,6 +1,6 @@
 // spec/frontend/views.md, "Cycle archive filters keep only selections that a published cycle supports"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
 import type { CycleIndex, CycleIndexEntry } from "@repo/settlement/client";
-import { Alert, Button, DataState, Label, PageHeader, Select, Status } from "@repo/ui";
+import { Alert, Button, DataState, Label, PageHeader, Select, Spinner, Status } from "@repo/ui";
 import { CalendarDays } from "lucide-react";
 import type { Effect } from "effect";
 import { snapshotStale } from "../../../gen/frontend__snapshotCache.ts";
@@ -16,7 +16,7 @@ import { type Settled, useOnce } from "../security/program/hooks.ts";
 import { nextBoundary, staleFrom, useBoundary } from "./boundary.ts";
 import { usdcText } from "./CycleAmountHistory.tsx";
 import { archiveOrder, archiveView, type FilterKey, filterLabels, filterQuery, requestedFilter, selected } from "./filters.ts";
-import { cycleLifecycleLabel, cycleStateLabel, percentText } from "./labels.ts";
+import { cycleLifecyclePresentation, cycleStateLabel, percentText } from "./labels.ts";
 
 type ProjectSection = Effect.Success<ReturnType<typeof projectReads>>;
 type ContributorSection = Effect.Success<ReturnType<typeof contributorReads>>;
@@ -32,7 +32,6 @@ export function indexStale(index: Pick<CycleIndex, "generatedAt">, nowMs: number
 function CycleRecord({ cycle, name, nowMs }: { cycle: CycleIndexEntry; name: string; nowMs: number }) {
   const stage = cycle.state === "paid" ? "Paid" : cycle.approvedAt !== null ? "Approved" : "Suggested";
   const amount = stage === "Paid" ? cycle.reward.paidMinor : stage === "Approved" ? cycle.reward.approvedMinor : cycle.reward.suggestedMinor;
-  const paid = cycle.state === "paid";
   return (
     <article className="flex flex-wrap items-start justify-between gap-4 py-4">
       <div className="flex flex-col gap-2">
@@ -41,11 +40,11 @@ function CycleRecord({ cycle, name, nowMs }: { cycle: CycleIndexEntry; name: str
             {name} · {formatMonth(cycle.cycleId)}
           </a>
         </h2>
-        <Status presentation={{ tone: paid ? "Positive" : "Caution", icon: paid ? "Check" : "Clock", label: cycleLifecycleLabel(cycle, nowMs) }} />
+        <Status presentation={cycleLifecyclePresentation(cycle, nowMs)} />
       </div>
       {cycle.kind === "external-prize-share" ? (
         <dl>
-          <dt className="text-sm text-muted-foreground">External prize share</dt>
+          <dt className="text-sm text-muted-foreground">Share</dt>
           <dd className="font-mono tabular-nums">{percentText(cycle.reward.sharePartsPerMillion ?? 0)}</dd>
         </dl>
       ) : (
@@ -94,9 +93,9 @@ function Archive({ cycles, boot, nowMs }: { cycles: Shown<CycleIndex>; boot: Reg
       {count > 0 ? <Filters keys={view.offered} options={view.options} filter={view.filter} nameOf={nameOf} total={count} shown={view.cycles.length} /> : null}
       {view.noMatch ? (
         <p>
-          No cycles match these filters.{" "}
+          No matches ·{" "}
           <Button variant="link" size="sm" onClick={() => writeQuery({ project: "", month: "", state: "" })}>
-            Clear filters
+            Clear
           </Button>
         </p>
       ) : null}
@@ -110,7 +109,7 @@ function Archive({ cycles, boot, nowMs }: { cycles: Shown<CycleIndex>; boot: Reg
 }
 
 function IndexState({ cycles, nowMs }: { cycles: Shown<CycleIndex>; nowMs: number }) {
-  if (cycles.status === "Idle" || cycles.status === "Loading") return <p role="status">Loading cycle history…</p>;
+  if (cycles.status === "Idle" || cycles.status === "Loading") return <Spinner label="Loading cycle history" />;
   if (cycles.value === undefined) {
     return (
       <Alert
@@ -127,8 +126,8 @@ function IndexState({ cycles, nowMs }: { cycles: Shown<CycleIndex>; nowMs: numbe
   }
   return (
     <>
-      {cycles.value.cycles.length === 0 ? <p>No published cycles yet.</p> : null}
-      {cycles.status === "Stale" || indexStale(cycles.value, nowMs) ? <p role="status">Cycle history may be outdated · updated {formatDate(cycles.value.generatedAt)}</p> : null}
+      {cycles.value.cycles.length === 0 ? <p>No cycles yet</p> : null}
+      {cycles.status === "Stale" || indexStale(cycles.value, nowMs) ? <p role="status">Cycles stale · {formatDate(cycles.value.generatedAt)}</p> : null}
     </>
   );
 }

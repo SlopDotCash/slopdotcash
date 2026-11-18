@@ -12,7 +12,6 @@ import { api as accounts } from "./client/accounts.vibe"
 import { api as binding } from "./client/bindingConsent.vibe"
 import { api as email } from "./client/email.vibe"
 import { chooseCode } from "./client/referrals.vibe"
-import { purgeExpired } from "./identity/maintenance.vibe"
 import { ReferralCodeRoutes } from "./referrals/routes.vibe"
 import { type BackendVars, backendServices } from "./services.vibe"
 
@@ -27,5 +26,4 @@ function base(env: Env) {
 export default worker({
   services: (env: Env) => Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(env)), base(env)),
   routes: Layer.mergeAll(AccountRoutes, BindingRoutes, ReferralCodeRoutes, preflight([...accounts, ...email, ...binding, chooseCode])),
-  scheduled: () => purgeExpired(),
 })

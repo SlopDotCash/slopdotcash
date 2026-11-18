@@ -8,17 +8,15 @@ export type AwardAmountsProps = {
   net: string;
   /** The 2% fee, already formatted. */
   fee: string;
-  /** Names the gross as the saved allocation rather than a frozen award. */
-  saved?: boolean;
   className?: string;
 };
 
 /** One recipient's gross, contributor amount and fee, exactly as computed from base units. */
-export function AwardAmounts({ gross, net, fee, saved = false, className }: AwardAmountsProps) {
+export function AwardAmounts({ gross, net, fee, className }: AwardAmountsProps) {
   const rows: ReadonlyArray<readonly [string, string]> = [
-    [saved ? "Saved gross" : "Award", gross],
-    ["Contributor receives", net],
-    ["Fee", fee],
+    ["Gross", gross],
+    ["Net", net],
+    ["Fee (2%)", fee],
   ];
   return (
     <dl className={cn("grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm", className)}>

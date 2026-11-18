@@ -1,6 +1,6 @@
 import { expect, fn, screen, userEvent } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
-import { queue } from "./fixtures.ts";
+import { queue, queueReadAt } from "./fixtures.ts";
 import type { IncompleteAssessmentsProps } from "./IncompleteAssessments.tsx";
 
 const onEarlier = fn();
@@ -8,7 +8,7 @@ const onMore = fn();
 const onRetry = fn();
 
 export const meta: ComponentMeta<IncompleteAssessmentsProps> = {
-  args: { queue, onEarlier, onMore, onRetry },
+  args: { queue, now: queueReadAt, onEarlier, onMore, onRetry },
   examples: {
     LaterPage: { queue: { ...queue, next: null }, hasEarlier: true },
     Unavailable: { queue: undefined, failed: true },

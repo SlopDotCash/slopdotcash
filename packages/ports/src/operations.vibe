@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Follow the account's email enrollment and closure"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
+// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Follow the account's email enrollment and closure"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import type { Statement } from "@repo/platform/d1"
 import type { MailCategory, Network, ProjectView, ReadFailure } from "./backend.vibe"
 
@@ -45,7 +45,6 @@ export interface Suppression {
 
 export service NoticeOutbox {
   suppress(suppression: Suppression): ReadonlyArray<Statement>!!
-  cancel(closure: { readonly recipientGithubId: string }): ReadonlyArray<Statement>!!
 }
 
 export interface JobKey {

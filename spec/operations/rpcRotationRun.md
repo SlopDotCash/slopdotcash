@@ -12,7 +12,9 @@ tests). A rotation run also skips the retained-data freshness check
 ([retained production data](../points/retainedFreshness.md), `freshnessChecked`).
 The run's verdict reads the fee rotation machine's own phase: its
 `Verified` phase is a confirmed rotation and `Uncertain` an uncertain
-activation.
+activation. The Robinhood rotation's own checks are the
+[Robinhood RPC rotation](./robinhoodRpcRotation.md), whose `verdict` maps its
+end onto the same phases.
 
 ## Story: A rotation run changes one endpoint and never counts as a release
 

@@ -133,9 +133,18 @@ pure def sometimesVaultHoldSettled(b: Bounty): bool = b.holds.some(h => h.settle
 
 ### Awards, related-party reviews and appeals go through the case with project clearance
 
+A confirmed finding under paid terms is refused while another case of the
+project holds its root cause: a vault reservation, a direct award, a held full
+award or a pending related-party proposal (409 `root_cause_reserved`,
+`assertRootCauseFree` in `backend/security/handler.ts`); the later report is
+recorded as a duplicate instead. A finding under unpaid terms, and every
+other outcome, is not checked.
+
 ```quint
+pure def rootCauseFreeFor(b: Bounty, id: int, rootCause: int): bool = b.holds.every(h => h.caseId == id or h.rootCause != rootCause)
 pure def canDecide(b: Bounty, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): bool =
   known(id) and C::canDecide(caseOf(b, id), by, checkedEpoch, version, decision)
+  and ((decision.finding == C::Confirmed and caseOf(b, id).terms.paidTerms) implies rootCauseFreeFor(b, id, decision.rootCause))
 pure def decide(b: Bounty, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): Bounty =
   putCase(id, C::decide(caseOf(b, id), by, checkedEpoch, version, decision), b)
 pure def canDecideAward(b: Bounty, id: int, by: int, checkedEpoch: int, amount: M::Amount): bool = known(id) and not(hasHold(b, id))
@@ -187,6 +196,8 @@ pure def stepHoldsNeedClearance(before: Bounty, after: Bounty): bool = after.hol
   or before.holds.includes({ ...h, settledReceipt: 0 }) or (not(caseOf(before, h.caseId).authority.programRestricted) and rootCauseFree(before, h.caseId) and firstQualifying(before, h.caseId)))
 pure def sometimesSecondReportBlocked(b: Bounty): bool = C::committed(caseOf(b, 1)) and caseOf(b, 2).receipt == C::Confirmed
   and caseOf(b, 2).rootCause == caseOf(b, 1).rootCause and caseOf(b, 2).award == C::Pending
+pure def sometimesHeldRootCauseDuplicate(b: Bounty): bool = hasHold(b, 1) and caseOf(b, 2).receipt == C::Duplicate
+  and caseOf(b, 2).rootCause == caseOf(b, 1).rootCause
 pure def sometimesVaultHold(b: Bounty): bool = b.holds.some(h => h.kind == VaultHold)
 pure def sometimesDirectHold(b: Bounty): bool = b.holds.some(h => h.kind == DirectHold)
 pure def sometimesProposalHold(b: Bounty): bool = b.holds.some(h => h.kind == ProposalHold)
