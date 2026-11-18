@@ -22,6 +22,19 @@ const sender = (by: unknown): Address => {
   return ready().accounts[by].address;
 };
 
+// The spec's transitions for these events take no sender, and the contracts let anyone call them: ProjectEscrow's deposit,
+// expirePledge, commitMonthly, reserveMonthly, commitMonthlyLeaf, pay and claimFees, EscrowFactory's
+// executeIdentityAuthorityRotation, a plain transfer for transferIn, and the factory proxy's deployment with its initializer
+// for initializeFactory (tick sends nothing). The simulator still names a sender for them (vibestack/SPEC.md: once any
+// transition takes `by`, every event has one), but it means nothing here, so they go from the deployer: an account the spec
+// never names as a party, funded in ETH and minted test dollars like every fixture account.
+const anyone = new Set<Event["type"]>([
+  "tick", "initializeFactory", "deposit", "transferIn", "commitMonthly", "reserveMonthly", "commitMonthlyLeaf", "pay",
+  "executeIdentityAuthorityRotation", "expirePledge", "claimFees",
+]);
+
+const senderOf = (event: Event, by: unknown): Address => (anyone.has(event.type) ? ready().accounts.deployer.address : sender(by));
+
 const logicAt = (pair: readonly [Address, Address], logic: number): Address => {
   if (!Number.isSafeInteger(logic) || logic < 0) throw new Unrepresentable(`${logic} names no implementation`);
   if (logic === 0) return zeroAddress;
@@ -307,7 +320,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
   },
   dispatch: async (_key, event, by) => {
     try {
-      return (await accepted(event, sender(by))) ? "accepted" : "refused";
+      return (await accepted(event, senderOf(event, by))) ? "accepted" : "refused";
     } catch (error) {
       if (error instanceof Unrepresentable) return "refused";
       throw error;
