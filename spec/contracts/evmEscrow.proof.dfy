@@ -940,6 +940,8 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   ensures stepConfigurationFixed(e, commitMonthly(e, period, entries, attested))
   ensures stepAuthorityChanges(e, "commitMonthly", commitMonthly(e, period, entries, attested))
   ensures stepMonthlyPolicyByOwner(e, "commitMonthly", commitMonthly(e, period, entries, attested))
+  ensures alwaysPledgesCovered(commitMonthly(e, period, entries, attested))
+  ensures alwaysPledgedMonthUnadmitted(commitMonthly(e, period, entries, attested))
 {
   var after := commitMonthly(e, period, entries, attested);
   var newEntries := freshEntries(e.vault, entries);
@@ -983,6 +985,610 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
     ensures b in e.vault.bindings
   {
   }
+  ClosePledgeCovers(e, period);
+  PledgedMonthAfterClose(e, period, after);
+}
+
+// ---- Month pledges -------------------------------------------------------------
+
+// pledgeOf's fold returns its start or a pledge of that period, and a pledge of that period when one exists.
+lemma PledgeOfPick(f: (Pledge, Pledge) -> Pledge, ps: seq<Pledge>, period: int, init: Pledge)
+  requires forall a, x :: f(a, x) == (if (x.period == period) then x else a)
+  ensures Std.Collections.Seq.FoldLeft(f, init, ps) == init
+    || (Std.Collections.Seq.FoldLeft(f, init, ps) in ps && Std.Collections.Seq.FoldLeft(f, init, ps).period == period)
+  ensures (exists i :: 0 <= i < |ps| && ps[i].period == period)
+    ==> Std.Collections.Seq.FoldLeft(f, init, ps) in ps && Std.Collections.Seq.FoldLeft(f, init, ps).period == period
+  decreases |ps|
+{
+  if |ps| > 0 {
+    PledgeOfPick(f, ps[1..], period, f(init, ps[0]));
+    if (exists i :: 0 <= i < |ps| && ps[i].period == period) && ps[0].period != period {
+      var i :| 0 <= i < |ps| && ps[i].period == period;
+      assert ps[1..][i - 1] == ps[i];
+    }
+  }
+}
+
+// With one pledge per period, pledgeOf finds the pledge itself.
+lemma PledgeOfMember(v: Vault, p: Pledge)
+  requires p in v.pledges
+  requires forall x :: x in v.pledges ==> |ProofLib.Filter((o: Pledge) => (o.period == x.period), v.pledges)| == 1
+  ensures pledgeOf(v, p.period) == p
+{
+  var ps := v.pledges;
+  var i :| 0 <= i < |ps| && ps[i] == p;
+  PledgeOfPick((found: Pledge, x: Pledge) => (if (x.period == p.period) then x else found), ps, p.period, noPledge);
+  var q := pledgeOf(v, p.period);
+  if q != p {
+    var j :| 0 <= j < |ps| && ps[j] == q;
+    ProofLib.FilterTwo((o: Pledge) => (o.period == p.period), ps, i, j);
+  }
+}
+
+// A transition that keeps the pledges keeps every open pledge whole.
+lemma PledgesKept(e: Escrow, via: string, after: Escrow)
+  requires alwaysPledgesCovered(e)
+  requires after.vault.pledges == e.vault.pledges
+  ensures stepPledgeIrrevocable(e, via, after)
+{
+  forall p | p in e.vault.pledges
+    ensures pledgeOf(after.vault, p.period) == p
+  {
+    PledgeOfMember(e.vault, p);
+    assert pledgeOf(after.vault, p.period) == pledgeOf(e.vault, p.period);
+  }
+}
+
+// Positive pledges never sum below zero.
+lemma OpenPledgedNonneg(f: (int, Pledge) -> int, init: int, ps: seq<Pledge>)
+  requires forall t, x :: f(t, x) == (if x.open then (t + x.amount) else t)
+  requires init >= 0 && forall x :: x in ps ==> x.amount > 0
+  ensures Std.Collections.Seq.FoldLeft(f, init, ps) >= 0
+  decreases |ps|
+{
+  if |ps| > 0 {
+    OpenPledgedNonneg(f, f(init, ps[0]), ps[1..]);
+  }
+}
+
+lemma PledgedNonneg(e: Escrow)
+  requires alwaysPledgesCovered(e)
+  ensures e.vault.pledged >= 0
+{
+  OpenPledgedNonneg((t: int, x: Pledge) => (if x.open then (t + x.amount) else t), 0, e.vault.pledges);
+}
+
+// Closing a pledge keeps the open pledges summed and one per period, and leaves no open pledge of that period.
+lemma ClosePledgeCovers(e: Escrow, period: int)
+  requires alwaysPledgesCovered(e)
+  ensures closePledge(e.vault, period).pledged == openPledged(closePledge(e.vault, period).pledges)
+  ensures closePledge(e.vault, period).pledged <= e.vault.pledged
+  ensures forall p :: p in closePledge(e.vault, period).pledges ==>
+    (p.amount > 0 && |ProofLib.Filter((o: Pledge) => (o.period == p.period), closePledge(e.vault, period).pledges)| == 1)
+  ensures forall p :: p in closePledge(e.vault, period).pledges && p.open ==> p in e.vault.pledges && p.period != period
+{
+  var v := e.vault;
+  var ps := v.pledges;
+  var q := pledgeOf(v, period);
+  if !q.open {
+    forall p | p in ps && p.open
+      ensures p.period != period
+    {
+      if p.period == period {
+        PledgeOfMember(v, p);
+      }
+    }
+  } else {
+    var ys := closePledge(v, period).pledges;
+    PledgeOfPick((found: Pledge, x: Pledge) => (if (x.period == period) then x else found), ps, period, noPledge);
+    assert q != noPledge;
+    var i :| 0 <= i < |ps| && ps[i] == q;
+    assert q in ps;
+    forall j | 0 <= j < |ps| && j != i
+      ensures ys[j] == ps[j]
+    {
+      if ps[j].period == period {
+        ProofLib.FilterTwo((o: Pledge) => (o.period == q.period), ps, i, j);
+      }
+    }
+    assert ys[i] == q.(open := false);
+    SumFoldChangeOne((t: int, p: Pledge) => (if p.open then (t + p.amount) else t), (p: Pledge) => (if p.open then p.amount else 0), 0, ps, ys, i);
+    forall p | p in ys
+      ensures p.amount > 0 && |ProofLib.Filter((o: Pledge) => (o.period == p.period), ys)| == 1
+      ensures p.open ==> p in ps && p.period != period
+    {
+      var k :| 0 <= k < |ys| && ys[k] == p;
+      assert ps[k] in ps;
+      ProofLib.FilterLengthPointwise((o: Pledge) => (o.period == ps[k].period), (o: Pledge) => (o.period == p.period), ps, ys);
+    }
+  }
+}
+
+// Adding a month for one period leaves every open pledge of another period unadmitted.
+lemma PledgedMonthAfterClose(e: Escrow, period: int, after: Escrow)
+  requires alwaysPledgesCovered(e) && alwaysPledgedMonthUnadmitted(e)
+  requires after.vault.pledges == closePledge(e.vault, period).pledges
+  requires forall m :: m in after.vault.months ==> m in e.vault.months || m.period == period
+  ensures alwaysPledgedMonthUnadmitted(after)
+{
+  ClosePledgeCovers(e, period);
+  forall p | p in after.vault.pledges && p.open
+    ensures !hasMonth(after.vault.months, p.period)
+  {
+    assert p in e.vault.pledges;
+  }
+}
+
+// Appending one open pledge per period keeps the base and adds exactly those pledges.
+lemma AppendPledges(f: (seq<Pledge>, int) -> seq<Pledge>, base: seq<Pledge>, periods: seq<int>, amount: int)
+  requires forall a, period :: f(a, period) == a + [Pledge(period, amount, true)]
+  ensures forall x :: x in Std.Collections.Seq.FoldLeft(f, base, periods) ==>
+    (x in base || (x == Pledge(x.period, amount, true) && x.period in periods))
+  ensures forall period :: period in periods ==> Pledge(period, amount, true) in Std.Collections.Seq.FoldLeft(f, base, periods)
+  ensures forall x :: x in base ==> x in Std.Collections.Seq.FoldLeft(f, base, periods)
+  decreases |periods|
+{
+  if |periods| > 0 {
+    var next := f(base, periods[0]);
+    assert next == base + [Pledge(periods[0], amount, true)];
+    assert Std.Collections.Seq.FoldLeft(f, base, periods) == Std.Collections.Seq.FoldLeft(f, next, periods[1..]);
+    AppendPledges(f, next, periods[1..], amount);
+    assert periods[0] in periods;
+    forall x | x in next
+      ensures x in base || x == Pledge(periods[0], amount, true)
+    {
+    }
+    forall x | x in base
+      ensures x in next
+    {
+    }
+    forall period | period in periods[1..]
+      ensures period in periods
+    {
+    }
+    forall period | period in periods
+      ensures period == periods[0] || period in periods[1..]
+    {
+      var i :| 0 <= i < |periods| && periods[i] == period;
+      if i > 0 {
+        assert periods[1..][i - 1] == period;
+      }
+    }
+  }
+}
+
+// pledgeMonths keeps the pledges of other periods and appends one open pledge per period.
+lemma PledgeMonthsView(e: Escrow, fromPeriod: int, count: int, amount: int, by_: string)
+  ensures pledgeMonths(e, fromPeriod, count, amount, by_).vault.pledges == Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), ProofLib.Filter((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), e.vault.pledges), pledgePeriods(fromPeriod, count))
+  ensures pledgeMonths(e, fromPeriod, count, amount, by_).vault.months == e.vault.months
+{
+}
+
+// Pledging months leaves every open pledge at least as large and pledges only unadmitted months.
+lemma PledgeMonthsKeeps(e: Escrow, fromPeriod: int, count: int, amount: int, by_: string)
+  requires inv(e) && canPledgeMonths(e, fromPeriod, count, amount, by_)
+  ensures alwaysPledgedMonthUnadmitted(pledgeMonths(e, fromPeriod, count, amount, by_))
+  ensures stepPledgeIrrevocable(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_))
+{
+  var after := pledgeMonths(e, fromPeriod, count, amount, by_);
+  var ps := e.vault.pledges;
+  PledgeMonthsView(e, fromPeriod, count, amount, by_);
+  AppendPledges((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), ProofLib.Filter((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), ps), pledgePeriods(fromPeriod, count), amount);
+  forall p | p in after.vault.pledges && p.open
+    ensures !hasMonth(after.vault.months, p.period)
+  {
+    ProofLib.FilterMember((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), ps, p);
+  }
+  forall p | p in ps && p.open
+    ensures pledgeOf(after.vault, p.period).open && pledgeOf(after.vault, p.period).amount >= p.amount
+  {
+    PledgeOfMember(e.vault, p);
+    ProofLib.FilterMember((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), ps, p);
+    var held := if p.period in pledgePeriods(fromPeriod, count) then Pledge(p.period, amount, true) else p;
+    assert held in after.vault.pledges;
+    var w :| 0 <= w < |after.vault.pledges| && after.vault.pledges[w] == held;
+    PledgeOfPick((found: Pledge, x: Pledge) => (if (x.period == p.period) then x else found), after.vault.pledges, p.period, noPledge);
+    var q := pledgeOf(after.vault, p.period);
+    assert q in after.vault.pledges && q.period == p.period;
+    ProofLib.FilterMember((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), ps, q);
+    if q != held {
+      var a :| 0 <= a < |ps| && ps[a] == p;
+      var b :| 0 <= b < |ps| && ps[b] == q;
+      ProofLib.FilterTwo((o: Pledge) => (o.period == p.period), ps, a, b);
+    }
+  }
+}
+
+// The month after a period is a later period.
+lemma NextAfter(p: int)
+  ensures contracts__ledger_nextPeriod(p) > p
+{
+  var q := contracts__ledger_quotient_contracts__ledger(p, 100);
+  assert contracts__ledger_remainder_contracts__ledger(p, 100) == p - 100 * q;
+}
+
+lemma PeriodsIncrease(g: (seq<int>, int) -> seq<int>, from: int, ps: seq<int>, xs: seq<int>)
+  requires forall a, i :: g(a, i) == a + [(if |a| == 0 then from else contracts__ledger_nextPeriod(a[|a| - 1]))]
+  requires forall i, j :: 0 <= i < j < |ps| ==> ps[i] < ps[j]
+  ensures forall i, j :: 0 <= i < j < |Std.Collections.Seq.FoldLeft(g, ps, xs)| ==>
+    Std.Collections.Seq.FoldLeft(g, ps, xs)[i] < Std.Collections.Seq.FoldLeft(g, ps, xs)[j]
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var next := g(ps, xs[0]);
+    if |ps| > 0 {
+      NextAfter(ps[|ps| - 1]);
+    }
+    forall i, j | 0 <= i < j < |next|
+      ensures next[i] < next[j]
+    {
+      if j == |ps| && i < |ps| - 1 {
+        assert ps[i] < ps[|ps| - 1];
+      }
+    }
+    PeriodsIncrease(g, from, next, xs[1..]);
+  }
+}
+
+// The pledged periods strictly increase, so none repeats.
+lemma PledgePeriodsIncrease(fromPeriod: int, count: int)
+  ensures forall i, j :: 0 <= i < j < |pledgePeriods(fromPeriod, count)| ==> pledgePeriods(fromPeriod, count)[i] < pledgePeriods(fromPeriod, count)[j]
+{
+  PeriodsIncrease((ps: seq<int>, i: int) => (ps + [(if (|ps| == 0) then fromPeriod else contracts__ledger_nextPeriod((if ((0 <= (|ps| - 1)) && ((|ps| - 1) < |ps|)) then ps[(|ps| - 1)] else fromPeriod)))]), fromPeriod, [], ProofLib.Filter((i: int) => (i <= count), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+  assert pledgePeriods(fromPeriod, count) == Std.Collections.Seq.FoldLeft((ps: seq<int>, i: int) => (ps + [(if (|ps| == 0) then fromPeriod else contracts__ledger_nextPeriod((if ((0 <= (|ps| - 1)) && ((|ps| - 1) < |ps|)) then ps[(|ps| - 1)] else fromPeriod)))]), [], ProofLib.Filter((i: int) => (i <= count), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+}
+
+lemma OpenCons(x: Pledge, rest: seq<Pledge>)
+  ensures openPledged([x] + rest) == (if x.open then x.amount else 0) + openPledged(rest)
+{
+  assert ([x] + rest)[0] == x && ([x] + rest)[1..] == rest;
+  SumFoldShift((t: int, p: Pledge) => (if p.open then (t + p.amount) else t), (p: Pledge) => (if p.open then p.amount else 0), (if x.open then x.amount else 0), rest);
+}
+
+// Open pledges sum over two disjoint filters as over their union.
+lemma OpenUnion(a: Pledge -> bool, b: Pledge -> bool, c: Pledge -> bool, xs: seq<Pledge>)
+  requires forall x :: c(x) == (a(x) || b(x)) && !(a(x) && b(x))
+  ensures openPledged(ProofLib.Filter(c, xs)) == openPledged(ProofLib.Filter(a, xs)) + openPledged(ProofLib.Filter(b, xs))
+  decreases |xs|
+{
+  if |xs| == 0 {
+    ProofLib.FilterNil(a, xs);
+    ProofLib.FilterNil(b, xs);
+    ProofLib.FilterNil(c, xs);
+  } else {
+    ProofLib.FilterCons(a, xs);
+    ProofLib.FilterCons(b, xs);
+    ProofLib.FilterCons(c, xs);
+    OpenUnion(a, b, c, xs[1..]);
+    OpenCons(xs[0], ProofLib.Filter(a, xs[1..]));
+    OpenCons(xs[0], ProofLib.Filter(b, xs[1..]));
+    OpenCons(xs[0], ProofLib.Filter(c, xs[1..]));
+    assert [] + ProofLib.Filter(a, xs[1..]) == ProofLib.Filter(a, xs[1..]);
+    assert [] + ProofLib.Filter(b, xs[1..]) == ProofLib.Filter(b, xs[1..]);
+    assert [] + ProofLib.Filter(c, xs[1..]) == ProofLib.Filter(c, xs[1..]);
+  }
+}
+
+lemma OpenAll(xs: seq<Pledge>)
+  ensures openPledged(ProofLib.Filter((o: Pledge) => true, xs)) == openPledged(xs)
+  decreases |xs|
+{
+  if |xs| == 0 {
+    ProofLib.FilterNil((o: Pledge) => true, xs);
+  } else {
+    ProofLib.FilterCons((o: Pledge) => true, xs);
+    OpenAll(xs[1..]);
+    OpenCons(xs[0], ProofLib.Filter((o: Pledge) => true, xs[1..]));
+    OpenCons(xs[0], xs[1..]);
+    assert xs == [xs[0]] + xs[1..];
+  }
+}
+
+// With one pledge per period, the open pledges of a period sum to pledgeOf's open amount.
+lemma OpenOne(v: Vault, z: int)
+  requires forall p :: p in v.pledges ==> |ProofLib.Filter((o: Pledge) => (o.period == p.period), v.pledges)| == 1
+  ensures openPledged(ProofLib.Filter((o: Pledge) => (o.period == z), v.pledges)) == (if pledgeOf(v, z).open then pledgeOf(v, z).amount else 0)
+{
+  var ps := v.pledges;
+  var f := ProofLib.Filter((o: Pledge) => (o.period == z), ps);
+  if exists y :: y in ps && y.period == z {
+    var y :| y in ps && y.period == z;
+    PledgeOfMember(v, y);
+    ProofLib.FilterLengthPointwise((o: Pledge) => (o.period == y.period), (o: Pledge) => (o.period == z), ps, ps);
+    ProofLib.FilterMember((o: Pledge) => (o.period == z), ps, y);
+    assert f[0] in f;
+    assert f == [y];
+    OpenCons(y, []);
+    assert [y] + [] == [y];
+    assert openPledged([]) == 0;
+  } else {
+    forall i | 0 <= i < |ps|
+      ensures ps[i].period != z
+    {
+      assert ps[i] in ps;
+    }
+    ProofLib.FilterNone((o: Pledge) => (o.period == z), ps);
+    assert f == [];
+    LastMatchNone((found: Pledge, p: Pledge) => (if (p.period == z) then p else found), (p: Pledge) => p.period == z, noPledge, ps);
+    assert pledgeOf(v, z) == noPledge;
+  }
+}
+
+// The open pledges of distinct periods sum to their pledgeOf amounts.
+lemma RemovedSum(v: Vault, periods: seq<int>)
+  requires forall p :: p in v.pledges ==> |ProofLib.Filter((o: Pledge) => (o.period == p.period), v.pledges)| == 1
+  requires forall i, j :: 0 <= i < j < |periods| ==> periods[i] < periods[j]
+  ensures openPledged(ProofLib.Filter((o: Pledge) => (o.period in periods), v.pledges))
+    == Std.Collections.Seq.FoldLeft((t: int, period: int) => (t + (if pledgeOf(v, period).open then pledgeOf(v, period).amount else 0)), 0, periods)
+  decreases |periods|
+{
+  if |periods| == 0 {
+    ProofLib.FilterNone((o: Pledge) => (o.period in periods), v.pledges);
+  } else {
+    var first := periods[..|periods| - 1];
+    var z := periods[|periods| - 1];
+    assert periods == first + [z];
+    forall i | 0 <= i < |first|
+      ensures first[i] != z
+    {
+      assert first[i] == periods[i];
+    }
+    RemovedSum(v, first);
+    OpenUnion((o: Pledge) => (o.period in first), (o: Pledge) => (o.period == z), (o: Pledge) => (o.period in periods), v.pledges);
+    OpenOne(v, z);
+    ProofLib.FoldLeftAppend((t: int, period: int) => (t + (if pledgeOf(v, period).open then pledgeOf(v, period).amount else 0)), 0, first, z);
+  }
+}
+
+lemma AddedBySum(v: Vault, periods: seq<int>, amount: int)
+  ensures addedBy(v, periods, amount) == |periods| * amount
+    - Std.Collections.Seq.FoldLeft((t: int, period: int) => (t + (if pledgeOf(v, period).open then pledgeOf(v, period).amount else 0)), 0, periods)
+  decreases |periods|
+{
+  if |periods| > 0 {
+    var first := periods[..|periods| - 1];
+    var z := periods[|periods| - 1];
+    assert periods == first + [z];
+    AddedBySum(v, first, amount);
+    ProofLib.FoldLeftAppend((t: int, period: int) => (t + (if pledgeOf(v, period).open then pledgeOf(v, period).amount else 0)), 0, first, z);
+    ProofLib.FoldLeftAppend((t: int, period: int) => (t + raisedBy(v, period, amount)), 0, first, z);
+  }
+}
+
+lemma AppendedSum(f: (seq<Pledge>, int) -> seq<Pledge>, base: seq<Pledge>, periods: seq<int>, amount: int)
+  requires forall a, period :: f(a, period) == a + [Pledge(period, amount, true)]
+  ensures openPledged(Std.Collections.Seq.FoldLeft(f, base, periods)) == openPledged(base) + |periods| * amount
+  decreases |periods|
+{
+  if |periods| > 0 {
+    AppendedSum(f, f(base, periods[0]), periods[1..], amount);
+    ProofLib.FoldLeftAppend((t: int, p: Pledge) => (if p.open then (t + p.amount) else t), 0, base, Pledge(periods[0], amount, true));
+  }
+}
+
+lemma DistinctFromCount(xs: seq<Pledge>)
+  requires forall p :: p in xs ==> |ProofLib.Filter((o: Pledge) => (o.period == p.period), xs)| == 1
+  ensures forall i, j :: 0 <= i < j < |xs| ==> xs[i].period != xs[j].period
+{
+  forall i, j | 0 <= i < j < |xs|
+    ensures xs[i].period != xs[j].period
+  {
+    if xs[i].period == xs[j].period {
+      var p := xs[i];
+      assert p in xs;
+      ProofLib.FilterTwo((o: Pledge) => (o.period == p.period), xs, i, j);
+    }
+  }
+}
+
+lemma CountFromDistinct(xs: seq<Pledge>, x: Pledge)
+  requires forall i, j :: 0 <= i < j < |xs| ==> xs[i].period != xs[j].period
+  requires x in xs
+  ensures |ProofLib.Filter((o: Pledge) => (o.period == x.period), xs)| == 1
+  decreases |xs|
+{
+  ProofLib.FilterCons((o: Pledge) => (o.period == x.period), xs);
+  assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1];
+  if xs[0] == x {
+    ProofLib.FilterNone((o: Pledge) => (o.period == x.period), xs[1..]);
+  } else {
+    var k :| 0 <= k < |xs| && xs[k] == x;
+    assert xs[1..][k - 1] == x;
+    CountFromDistinct(xs[1..], x);
+  }
+}
+
+lemma FilterDistinct(k: Pledge -> bool, xs: seq<Pledge>)
+  requires forall i, j :: 0 <= i < j < |xs| ==> xs[i].period != xs[j].period
+  ensures forall i, j :: 0 <= i < j < |ProofLib.Filter(k, xs)| ==> ProofLib.Filter(k, xs)[i].period != ProofLib.Filter(k, xs)[j].period
+  decreases |xs|
+{
+  if |xs| == 0 {
+    ProofLib.FilterNil(k, xs);
+  } else {
+    ProofLib.FilterCons(k, xs);
+    assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1];
+    FilterDistinct(k, xs[1..]);
+    var r := ProofLib.Filter(k, xs[1..]);
+    forall y | y in r
+      ensures y.period != xs[0].period
+    {
+      ProofLib.FilterMember(k, xs[1..], y);
+      var i :| 0 <= i < |xs[1..]| && xs[1..][i] == y;
+    }
+    if k(xs[0]) {
+      var f := [xs[0]] + r;
+      forall i, j | 0 <= i < j < |f|
+        ensures f[i].period != f[j].period
+      {
+        assert f[j] == r[j - 1];
+        if i == 0 {
+          assert r[j - 1] in r;
+        } else {
+          assert f[i] == r[i - 1];
+        }
+      }
+    } else {
+      assert [] + r == r;
+    }
+  }
+}
+
+lemma AppendDistinct(f: (seq<Pledge>, int) -> seq<Pledge>, base: seq<Pledge>, periods: seq<int>, amount: int)
+  requires forall a, period :: f(a, period) == a + [Pledge(period, amount, true)]
+  requires forall i, j :: 0 <= i < j < |base| ==> base[i].period != base[j].period
+  requires forall x :: x in base ==> x.period !in periods
+  requires forall i, j :: 0 <= i < j < |periods| ==> periods[i] < periods[j]
+  ensures forall i, j :: 0 <= i < j < |Std.Collections.Seq.FoldLeft(f, base, periods)| ==>
+    Std.Collections.Seq.FoldLeft(f, base, periods)[i].period != Std.Collections.Seq.FoldLeft(f, base, periods)[j].period
+  decreases |periods|
+{
+  if |periods| > 0 {
+    var next := f(base, periods[0]);
+    assert next == base + [Pledge(periods[0], amount, true)];
+    assert periods[0] in periods;
+    forall x | x in next
+      ensures x.period !in periods[1..]
+    {
+      if x.period in periods[1..] {
+        var i :| 0 <= i < |periods[1..]| && periods[1..][i] == x.period;
+        assert periods[i + 1] == x.period;
+      }
+    }
+    forall i, j | 0 <= i < j < |next|
+      ensures next[i].period != next[j].period
+    {
+      if j == |base| {
+        assert base[i] in base;
+      }
+    }
+    forall i, j | 0 <= i < j < |periods[1..]|
+      ensures periods[1..][i] < periods[1..][j]
+    {
+      assert periods[1..][i] == periods[i + 1] && periods[1..][j] == periods[j + 1];
+    }
+    AppendDistinct(f, next, periods[1..], amount);
+  }
+}
+
+// Pledging months keeps the open pledges summed in pledged and one pledge per period.
+lemma PledgeMonthsCovers(e: Escrow, fromPeriod: int, count: int, amount: int, by_: string)
+  requires inv(e) && canPledgeMonths(e, fromPeriod, count, amount, by_)
+  ensures alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, by_))
+{
+  var after := pledgeMonths(e, fromPeriod, count, amount, by_);
+  var periods := pledgePeriods(fromPeriod, count);
+  var olds := e.vault.pledges;
+  var kept := ProofLib.Filter((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), olds);
+  PledgeMonthsView(e, fromPeriod, count, amount, by_);
+  PledgePeriodsIncrease(fromPeriod, count);
+  DistinctFromCount(olds);
+  FilterDistinct((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), olds);
+  forall x | x in kept
+    ensures x.period !in periods && x in olds
+  {
+    ProofLib.FilterMember((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), olds, x);
+  }
+  AppendPledges((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, periods, amount);
+  AppendDistinct((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, periods, amount);
+  forall x | x in after.vault.pledges
+    ensures x.amount > 0 && |ProofLib.Filter((o: Pledge) => (o.period == x.period), after.vault.pledges)| == 1
+  {
+    CountFromDistinct(after.vault.pledges, x);
+  }
+  OpenAll(olds);
+  OpenUnion((p: Pledge) => !((p.period in pledgePeriods(fromPeriod, count))), (o: Pledge) => (o.period in periods), (o: Pledge) => true, olds);
+  RemovedSum(e.vault, periods);
+  AddedBySum(e.vault, periods, amount);
+  AppendedSum((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, periods, amount);
+}
+
+lemma Initial_alwaysPledgesCovered()
+  ensures alwaysPledgesCovered(initial)
+{
+  var v := initial.vault;
+  assert v.pledges == [] && v.pledged == 0 && v.free == 0;
+}
+
+lemma Initial_alwaysPledgedMonthUnadmitted()
+  ensures alwaysPledgedMonthUnadmitted(initial)
+{
+  assert initial.vault.pledges == [];
+}
+
+lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, by_: string)
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysClockStarted(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysFactoryRolesSeparate(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysUninitializedEmpty(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysRotationEffective(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysOneVaultPerKey(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysCreatedVault(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysConserved(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBalanceCovers(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysFeesAccounted(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysNonnegative(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysReservedMatchesAwards(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPaidMatchesAwards(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysAwardsWellFormed(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysMonthsWellFormed(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPendingMatchesMonths(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBountyHasNoMonthly(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPledgedMonthUnadmitted(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBindingsWellFormed(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepAuthorityChanges(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepConfigurationFixed(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepAwardsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepMonthlyPolicyByOwner(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepMonthsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepPledgeIrrevocable(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepNewBindingAttested(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepPaidToLiveBinding(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
+{
+  if inv(e) && canPledgeMonths(e, fromPeriod, count, amount, by_) {
+    SameAwards(e, pledgeMonths(e, fromPeriod, count, amount, by_));
+    AwardsFrame(e, pledgeMonths(e, fromPeriod, count, amount, by_));    PledgeMonthsKeeps(e, fromPeriod, count, amount, by_);
+    PledgeMonthsCovers(e, fromPeriod, count, amount, by_);
+  }
+}
+
+lemma expirePledge_ensures(e: Escrow, period: int)
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysClockStarted(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysFactoryRolesSeparate(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysUninitializedEmpty(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysRotationEffective(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysOneVaultPerKey(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysCreatedVault(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysConserved(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBalanceCovers(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysFeesAccounted(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysNonnegative(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysReservedMatchesAwards(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPaidMatchesAwards(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysAwardsWellFormed(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysMonthsWellFormed(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPendingMatchesMonths(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBountyHasNoMonthly(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPledgesCovered(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPledgedMonthUnadmitted(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBindingsWellFormed(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepAuthorityChanges(e, "expirePledge", expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepConfigurationFixed(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepAwardsRetained(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepMonthlyPolicyByOwner(e, "expirePledge", expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepMonthsRetained(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepPledgeIrrevocable(e, "expirePledge", expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepNewBindingAttested(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepPaidToLiveBinding(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepFreeSpentByOwnerOrAttestation(e, "expirePledge", expirePledge(e, period)))
+{
+  if inv(e) && canExpirePledge(e, period) {
+    SameAwards(e, expirePledge(e, period));
+    AwardsFrame(e, expirePledge(e, period));
+    ClosePledgeCovers(e, period);
+    PledgedMonthAfterClose(e, period, expirePledge(e, period));
+  }
 }
 
 lemma tick_ensures(e: Escrow, timestamp: int)
@@ -1015,6 +1621,10 @@ lemma tick_ensures(e: Escrow, timestamp: int)
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepPaidToLiveBinding(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepFreeSpentByOwnerOrAttestation(e, "tick", tick(e, timestamp)))
 {
+  if inv(e) && canTick(e, timestamp) {
+    PledgesKept(e, "tick", tick(e, timestamp));
+  }
+
   if inv(e) && canTick(e, timestamp) {
     SameAwards(e, tick(e, timestamp));
     AwardsFrame(e, tick(e, timestamp));
@@ -1052,6 +1662,10 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
 {
   if inv(e) && canProposeUpgradeAuthority(e, successor, by_) {
+    PledgesKept(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_));
+  }
+
+  if inv(e) && canProposeUpgradeAuthority(e, successor, by_) {
     SameAwards(e, proposeUpgradeAuthority(e, successor, by_));
     AwardsFrame(e, proposeUpgradeAuthority(e, successor, by_));
   }
@@ -1087,6 +1701,10 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepPaidToLiveBinding(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
 {
+  if inv(e) && canAcceptUpgradeAuthority(e, by_) {
+    PledgesKept(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_));
+  }
+
   if inv(e) && canAcceptUpgradeAuthority(e, by_) {
     SameAwards(e, acceptUpgradeAuthority(e, by_));
     AwardsFrame(e, acceptUpgradeAuthority(e, by_));
@@ -1124,6 +1742,10 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
 {
   if inv(e) && canSetVaultImplementation(e, logic, uups, by_) {
+    PledgesKept(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_));
+  }
+
+  if inv(e) && canSetVaultImplementation(e, logic, uups, by_) {
     SameAwards(e, setVaultImplementation(e, logic, uups, by_));
     AwardsFrame(e, setVaultImplementation(e, logic, uups, by_));
   }
@@ -1159,6 +1781,10 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
 {
+  if inv(e) && canUpgradeFactory(e, logic, uups, by_) {
+    PledgesKept(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_));
+  }
+
   if inv(e) && canUpgradeFactory(e, logic, uups, by_) {
     SameAwards(e, upgradeFactory(e, logic, uups, by_));
     AwardsFrame(e, upgradeFactory(e, logic, uups, by_));
@@ -1196,6 +1822,10 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
 {
   if inv(e) && canUpgradeVault(e, logic, uups, by_) {
+    PledgesKept(e, "upgradeVault", upgradeVault(e, logic, uups, by_));
+  }
+
+  if inv(e) && canUpgradeVault(e, logic, uups, by_) {
     SameAwards(e, upgradeVault(e, logic, uups, by_));
     AwardsFrame(e, upgradeVault(e, logic, uups, by_));
   }
@@ -1231,6 +1861,10 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepPaidToLiveBinding(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
 {
+  if inv(e) && canProposeIdentityAuthority(e, successor, by_) {
+    PledgesKept(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_));
+  }
+
   if inv(e) && canProposeIdentityAuthority(e, successor, by_) {
     SameAwards(e, proposeIdentityAuthority(e, successor, by_));
     AwardsFrame(e, proposeIdentityAuthority(e, successor, by_));
@@ -1268,6 +1902,10 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
 {
   if inv(e) && canCancelIdentityAuthorityRotation(e, by_) {
+    PledgesKept(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_));
+  }
+
+  if inv(e) && canCancelIdentityAuthorityRotation(e, by_) {
     SameAwards(e, cancelIdentityAuthorityRotation(e, by_));
     AwardsFrame(e, cancelIdentityAuthorityRotation(e, by_));
   }
@@ -1303,6 +1941,10 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepPaidToLiveBinding(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepFreeSpentByOwnerOrAttestation(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
 {
+  if inv(e) && canExecuteIdentityAuthorityRotation(e) {
+    PledgesKept(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e));
+  }
+
   if inv(e) && canExecuteIdentityAuthorityRotation(e) {
     SameAwards(e, executeIdentityAuthorityRotation(e));
     AwardsFrame(e, executeIdentityAuthorityRotation(e));
@@ -1340,6 +1982,10 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepFreeSpentByOwnerOrAttestation(e, "deposit", deposit(e, amount, sent, transferExact)))
 {
   if inv(e) && canDeposit(e, amount, sent, transferExact) {
+    PledgesKept(e, "deposit", deposit(e, amount, sent, transferExact));
+  }
+
+  if inv(e) && canDeposit(e, amount, sent, transferExact) {
     SameAwards(e, deposit(e, amount, sent, transferExact));
     AwardsFrame(e, deposit(e, amount, sent, transferExact));
   }
@@ -1375,6 +2021,10 @@ lemma transferIn_ensures(e: Escrow, amount: int)
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepPaidToLiveBinding(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepFreeSpentByOwnerOrAttestation(e, "transferIn", transferIn(e, amount)))
 {
+  if inv(e) && canTransferIn(e, amount) {
+    PledgesKept(e, "transferIn", transferIn(e, amount));
+  }
+
   if inv(e) && canTransferIn(e, amount) {
     SameAwards(e, transferIn(e, amount));
     AwardsFrame(e, transferIn(e, amount));
@@ -1412,6 +2062,10 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
 {
   if inv(e) && canSetMonthlyCommitment(e, cap, on, by_) {
+    PledgesKept(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_));
+  }
+
+  if inv(e) && canSetMonthlyCommitment(e, cap, on, by_) {
     SameAwards(e, setMonthlyCommitment(e, cap, on, by_));
     AwardsFrame(e, setMonthlyCommitment(e, cap, on, by_));
   }
@@ -1447,6 +2101,11 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepPaidToLiveBinding(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
 {
+  if inv(e) && canWithdrawUnused(e, gross, transferOk, by_) {
+    PledgesKept(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_));
+    PledgedNonneg(e);
+  }
+
   if inv(e) && canWithdrawUnused(e, gross, transferOk, by_) {
     SameAwards(e, withdrawUnused(e, gross, transferOk, by_));
     AwardsFrame(e, withdrawUnused(e, gross, transferOk, by_));
@@ -1484,6 +2143,10 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepFreeSpentByOwnerOrAttestation(e, "claimFees", claimFees(e, transferOk)))
 {
   if inv(e) && canClaimFees(e, transferOk) {
+    PledgesKept(e, "claimFees", claimFees(e, transferOk));
+  }
+
+  if inv(e) && canClaimFees(e, transferOk) {
     SameAwards(e, claimFees(e, transferOk));
     AwardsFrame(e, claimFees(e, transferOk));
   }
@@ -1519,6 +2182,10 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepPaidToLiveBinding(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "create", create(e, project, token, purpose, tokenReady, by_)))
 {
+  if inv(e) && canCreate(e, project, token, purpose, tokenReady, by_) {
+    PledgesKept(e, "create", create(e, project, token, purpose, tokenReady, by_));
+  }
+
   if inv(e) && canCreate(e, project, token, purpose, tokenReady, by_) {
     var after := create(e, project, token, purpose, tokenReady, by_);
     if !e.created {
@@ -1562,6 +2229,10 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
 {
   if inv(e) && canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) {
+    PledgesKept(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_));
+  }
+
+  if inv(e) && canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) {
     var after := createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_);
     if !e.created {
       assert e.vault == emptyVault;
@@ -1603,6 +2274,11 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepPaidToLiveBinding(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "commitAward", commitAward(e, source, actor, gross, by_)))
 {
+  if inv(e) && canCommitAward(e, source, actor, gross, by_) {
+    PledgesKept(e, "commitAward", commitAward(e, source, actor, gross, by_));
+    PledgedNonneg(e);
+  }
+
   if inv(e) && canCommitAward(e, source, actor, gross, by_) {
     var after := commitAward(e, source, actor, gross, by_);
     RecordAward(e, after, contracts__ledger_newAward(source, actor, gross, contracts__ledger_awardFee(e.vault.key.purpose, gross), e.now));
@@ -1676,6 +2352,10 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepFreeSpentByOwnerOrAttestation(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
 {
   if inv(e) && canCommitMonthlyLeaf(e, period, leaf) {
+    PledgesKept(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf));
+  }
+
+  if inv(e) && canCommitMonthlyLeaf(e, period, leaf) {
     var after := commitMonthlyLeaf(e, period, leaf);
     var i := MonthForIndex(e, period);
     var m := e.vault.months[i];
@@ -1716,6 +2396,10 @@ lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: i
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepPaidToLiveBinding(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
 {
+  if inv(e) && canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) {
+    PledgesKept(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_));
+  }
+
   if inv(e) && canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) {
     var after := releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_);
     var i := MonthForIndex(e, period);
@@ -1763,6 +2447,8 @@ lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, s
     AwardsFrame(e, after);
     ClosePledgeFrame(e.vault, period);
     AppendMonth(e, after, Month(period, true, reservation.digest, reservation.root, reservation.wholeGross, reservation.remainingGross, reservation.remainingGross, reservation.count, 0, 0, e.now, capFor(e.vault, period), reservation.leaves));
+    ClosePledgeCovers(e, period);
+    PledgedMonthAfterClose(e, period, after);
   }
 }
 
@@ -1796,6 +2482,10 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepPaidToLiveBinding(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
 {
+  if inv(e) && canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) {
+    PledgesKept(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_));
+  }
+
   if inv(e) && canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) {
     var after := bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_);
     var old_ := bindingFor(e.vault.bindings, actor);
@@ -1842,6 +2532,10 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
 {
   if inv(e) && canCancelBinding(e, actor, expectedVersion, by_) {
+    PledgesKept(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_));
+  }
+
+  if inv(e) && canCancelBinding(e, actor, expectedVersion, by_) {
     var after := cancelBinding(e, actor, expectedVersion, by_);
     var b := bindingFor(e.vault.bindings, actor);
     BindingForFound(e.vault.bindings, actor);
@@ -1884,6 +2578,10 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepPaidToLiveBinding(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepFreeSpentByOwnerOrAttestation(e, "pay", pay(e, source, expectedVersion, transferOk)))
 {
+  if inv(e) && canPay(e, source, expectedVersion, transferOk) {
+    PledgesKept(e, "pay", pay(e, source, expectedVersion, transferOk));
+  }
+
   if inv(e) && canPay(e, source, expectedVersion, transferOk) {
     PayFacts(e, source, expectedVersion, transferOk);
   }
