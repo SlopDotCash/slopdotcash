@@ -1222,6 +1222,168 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await expectAccessible(page);
 });
 
+test("any wallet funds the vault from the public project page and is offered no withdrawal", async ({
+  page,
+}) => {
+  // Operator decision, 18 November 2026: a signed-out visitor's own wallet
+  // deposits from the project page. The wallet is not the vault owner.
+  const sends: string[] = [];
+  await page.exposeFunction(
+    "vaultWalletRequest",
+    async (method: string, params: unknown[]) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts")
+        return [donor];
+      // The account would first have to upgrade, so it is asked twice.
+      if (method === "wallet_getCapabilities")
+        return { "0x14a34": { atomic: { status: "ready" } } };
+      if (method === "eth_sendTransaction") {
+        const hash = await rpc(method, params);
+        sends.push(hash);
+        return hash;
+      }
+      return rpc(method, params);
+    },
+  );
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: ({
+          method,
+          params = [],
+        }: {
+          method: string;
+          params?: unknown[];
+        }) =>
+          (
+            window as unknown as {
+              vaultWalletRequest: (
+                method: string,
+                params: unknown[],
+              ) => Promise<unknown>;
+            }
+          ).vaultWalletRequest(method, params),
+      },
+    });
+  });
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const vault = deployment.vault as `0x${string}`;
+  const held = async () =>
+    BigInt(
+      await rpc("eth_call", [
+        {
+          to: deployment.asset,
+          data: encodeFunctionData({
+            abi,
+            functionName: "balanceOf",
+            args: [vault],
+          }),
+        },
+        "latest",
+      ]),
+    );
+  // The page shows the deposit control only beside counters on record.
+  await page.route("**/api/v1/payments/projects/eliza/vault", async (route) => {
+    const time = new Date().toISOString();
+    const free = (await held()).toString();
+    return route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [
+          {
+            projectId: "eliza",
+            network: deployment.network,
+            chain: "base",
+            vault: deployment.vault,
+            assetAddress: deployment.asset,
+            assetDecimals: 6,
+            totalDeposited: free,
+            totalPaid: "0",
+            totalPayoutFees: "0",
+            totalGrossWithdrawn: "0",
+            totalWithdrawalFees: "0",
+            freeBalance: free,
+            reservedPrincipal: "0",
+            reservedFees: "0",
+            accruedFees: "0",
+            reserved: null,
+            blockNumber: "1",
+            blockTime: time,
+            observedAt: time,
+          },
+        ],
+        staleAfterMs: 1_800_000,
+        servedAt: time,
+      },
+    });
+  });
+  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  const section = page.getByRole("region", { name: "Project escrow" });
+  await expect(section).toContainText("Depositors have no refund right.");
+  await expect(section).toContainText(
+    "The project owner can withdraw free funds, less a 2% fee.",
+  );
+  await expect(
+    page.getByRole("region", { name: /^Fund (?:or withdraw|this project)/u }),
+  ).toHaveCount(0);
+  await section.getByRole("button", { name: "Fund this project" }).click();
+  const form = page.getByRole("region", {
+    name: "Fund this project · Base Sepolia (test)",
+  });
+  await form
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(form.getByLabel("Deposit tokens")).toBeChecked();
+  await expect(form.getByLabel("Withdraw free funds")).toHaveCount(0);
+  const before = await held();
+  await form.getByLabel("Token amount", { exact: true }).fill("2");
+  await form
+    .getByRole("button", { name: "Review deposit", exact: true })
+    .click();
+  await expect(
+    form.getByRole("region", { name: "Review vault action" }),
+  ).toContainText("no refund right");
+  await expectAccessible(page);
+  await form
+    .getByRole("button", { name: "Approve exact token amount in wallet" })
+    .click();
+  // The approval moves on at inclusion and opens the deposit review.
+  const confirm = form.getByRole("button", {
+    name: "Confirm deposit in wallet",
+    exact: true,
+  });
+  await expect(confirm).toBeVisible();
+  await confirm.click();
+  await expect.poll(() => sends.length).toBe(2);
+  await expect(form.getByRole("status")).toContainText("Deposit received");
+  await expect(form.getByText("Deposit verified")).toHaveCount(0);
+  // A reload keeps the saved request: the form reopens by itself.
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(form).toContainText("Deposit awaiting verification");
+  await form
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await rpc("anvil_mine", ["0x40"]);
+  await expect(form.getByRole("status")).toContainText("Deposit verified");
+  expect(await held()).toBe(before + 2_000_000n);
+  await expect(form.getByLabel("Withdraw free funds")).toHaveCount(0);
+});
+
 test("owner creates, registers and funds a vault through the real API", async ({
   diagnostics,
   page,

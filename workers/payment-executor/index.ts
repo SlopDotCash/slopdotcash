@@ -29,7 +29,11 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
-import { runMonthlyCoordinator, syncRegistryVaults } from "../payments/index";
+import {
+  recordRegistryDeposits,
+  runMonthlyCoordinator,
+  syncRegistryVaults,
+} from "../payments/index";
 import {
   isBindingRecoveryInput,
   reconcileBindingWinner,
@@ -700,6 +704,8 @@ export async function runMonthlyAttester(env: Environment) {
     },
   });
   failures.push(...report.failures);
+  // Display evidence for "Funded by"; after every signing step, never fatal.
+  await recordRegistryDeposits(worker, sync.deployments, sync.rpcUrls);
   if (failures.length)
     throw new AggregateError(
       failures,

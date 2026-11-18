@@ -3,6 +3,8 @@ import {
   asShown,
   homePoolReward,
   listedThisMonth,
+  monthsCovered,
+  monthsCoveredLabel,
   type PoolFundingIndex,
   poolFunded,
   poolFundingStatus,
@@ -542,4 +544,36 @@ test("an open security program and other reward kinds stay listed", () => {
 test("unread funding lists every project as before", () => {
   expect(listedThisMonth(active("250000000"), null, NOW)).toBe(true);
   expect(listedThisMonth(active("0"), null, NOW)).toBe(true);
+});
+
+test("extra money covers more months of the owner's monthly amount", () => {
+  const vaults = (free: string | null, network = "base-mainnet") =>
+    index({ freeBalance: free, network }).get("demo");
+  const pool = project("250000000");
+  // TOON Plugins on 14 November 2026: 253 USDC against 250 a month.
+  expect(monthsCovered(pool, vaults("253000000"), NOW)).toBe(1);
+  expect(monthsCovered(pool, vaults("749999999"), NOW)).toBe(2);
+  expect(monthsCovered(pool, vaults("750000000"), NOW)).toBe(3);
+  expect(monthsCovered(pool, vaults("249999999"), NOW)).toBe(0);
+  expect(monthsCoveredLabel(3)).toBe("Covers 3 months");
+  expect(monthsCoveredLabel(1)).toBe("Covers 1 month");
+  expect(monthsCoveredLabel(0)).toBe("Covers less than one month");
+  // No monthly amount, no vault on record, or an unread balance: no claim.
+  expect(monthsCovered(project("0"), vaults("253000000"), NOW)).toBeNull();
+  expect(monthsCovered(pool, undefined, NOW)).toBeNull();
+  expect(monthsCovered(pool, vaults(null), NOW)).toBeNull();
+  // A vault the project did not record does not count toward its months.
+  expect(
+    monthsCovered(pool, vaults("900000000", "robinhood-mainnet"), NOW),
+  ).toBeNull();
+  // This month's amount is the one that applies to this month.
+  expect(
+    monthsCovered(
+      project("500000000", "base-mainnet", {
+        cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "100000000" }],
+      }),
+      vaults("253000000"),
+      NOW,
+    ),
+  ).toBe(2);
 });
