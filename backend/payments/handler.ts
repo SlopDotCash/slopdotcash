@@ -61,6 +61,7 @@ import {
   handleSolanaFunding,
 } from "./solana-funding";
 import { handleSolanaMonthLock } from "./solana-month-lock";
+import { projectVaultDeposits } from "./vault-deposits";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -451,6 +452,38 @@ export async function handlePaymentsApi(
                 (s) => deps.tier === "staging" || !isTestnetNetwork(s.network),
               ),
               staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
+              servedAt: now,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
+                "x-content-type-options": "nosniff",
+              },
+            },
+          ),
+      );
+    // Finalized deposits the payments worker recorded, for "Funded by"
+    // (operator decision, 18 November 2026). Same cache and tier rule as the
+    // vault totals; a page view never reaches a chain RPC.
+    const depositsRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/deposits$/.exec(
+      path,
+    );
+    if (depositsRoute && request.method === "GET")
+      return await cachedPublicResponse(
+        deps.edgeCache,
+        request,
+        async () =>
+          new Response(
+            JSON.stringify({
+              projectId: depositsRoute[1],
+              ...(await projectVaultDeposits(
+                deps.db,
+                depositsRoute[1],
+                deps.tier === "staging",
+                isTestnetNetwork,
+              )),
               servedAt: now,
             }),
             {

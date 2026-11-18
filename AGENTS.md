@@ -545,7 +545,12 @@ not an active funding route, balance or payment path. Each project has one
 network (Base, Robinhood Chain, Ethereum or Solana) and one asset. Anyone may
 deposit into a vault. All deposits share one bucket; there is no donor class.
 All free funds are refundable only to the owner's refund destination, and the
-deposit flow says so before signature. `paid` requires finalized evidence that
+deposit flow says so before signature. Operator decision, 18 November 2026:
+an active project's public page offers a deposit-only control to any wallet,
+states that depositors have no refund right and that the owner can withdraw
+free funds less the 2% fee, shows how many months the free funds cover, and lists each
+finalized deposit under "Funded by" with its address, amount and date (PRD
+section 6). That list is display evidence only. `paid` requires finalized evidence that
 reconciles the exact vault, obligation, recipient, principal and fee. Reject
 replay, wrong mint or token, wrong owner, partial, duplicate, failed, or
 overpaid state. Delta Star publishes external-prize shares only and never

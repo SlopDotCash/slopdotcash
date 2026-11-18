@@ -268,6 +268,30 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
           },
         }),
       );
+      // The preview server has no payments backend, and the pages server
+      // refuses payments reads from the test origin. A project page with a
+      // vault on record reads its recorded deposits ("Funded by"); that list
+      // is empty unless a spec routes its own records (page routes win).
+      if (
+        testInfo.config.metadata.server === "preview" ||
+        testInfo.config.metadata.server === "pages"
+      )
+        await context.route(
+          /\/api\/v1\/payments\/projects\/[a-z0-9-]+\/deposits$/u,
+          (route) => {
+            const projectId = new URL(route.request().url()).pathname.split(
+              "/",
+            )[5];
+            return route.fulfill({
+              json: {
+                projectId,
+                deposits: [],
+                total: 0,
+                servedAt: "2026-01-01T00:00:00.000Z",
+              },
+            });
+          },
+        );
       await use({
         allow: (...patterns) => allowed.push(...patterns),
         allowResponse: (status, method, path) => {

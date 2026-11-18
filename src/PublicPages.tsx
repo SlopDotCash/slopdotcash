@@ -27,6 +27,8 @@ import {
   asShown,
   listedThisMonth,
   loadPoolFunding,
+  monthsCovered,
+  monthsCoveredLabel,
   type PoolFundingIndex,
 } from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
@@ -569,6 +571,11 @@ export function SponsorsPage({
             Add a project
           </Link>
         </div>
+        <p>
+          Anyone can fund any project listed here: open it and deposit from your
+          own wallet. Deposits are public. Depositors have no refund right, and
+          the project owner can withdraw free funds, less a 2% fee.
+        </p>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.filter(
             (project) =>
@@ -583,6 +590,11 @@ export function SponsorsPage({
                 now,
               ),
           ).map((project) => {
+            const covered = monthsCovered(
+              project,
+              fundingIndex?.get(project.id),
+              now,
+            );
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link
@@ -602,6 +614,9 @@ export function SponsorsPage({
                   project={project}
                   className="route-sponsor-status"
                 />
+                {covered !== null && covered > 0 ? (
+                  <small>{monthsCoveredLabel(covered)}</small>
+                ) : null}
                 {project.status === "active" && merge.status === "ready"
                   ? (() => {
                       const line = mergeActivityCardLine(
