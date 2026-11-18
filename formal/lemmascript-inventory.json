@@ -16,11 +16,11 @@
     "build outputs"
   ],
   "counts": {
-    "files": 818,
-    "functions": 12831,
+    "files": 820,
+    "functions": 12834,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12643,
-    "nonTypeScriptFiles": 59
+    "unprovedFunctions": 12646,
+    "nonTypeScriptFiles": 60
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
@@ -5389,6 +5389,11 @@
 {"path":"scripts/quint-verification-step.mjs","sha256":"5a70825bef6bb148e408c9d39bf83566ce5e8e0a5b8b84b5d7ef76c0bb71b7b5","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"verificationTransition","kind":"FunctionDeclaration","line":8,"sha256":"5c7debe89e8b6b469858c31e7de52d135e52172ab0bc0db0314386342ae2aab0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
 ]},
+{"path":"scripts/read-local-leaderboard.ts","sha256":"b4a4a253c57cf25e73bc5e1fe654f82ae64ef7ae7a4cc57e04a4691b033e523e","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"bounded","kind":"FunctionDeclaration","line":12,"sha256":"f22d0c32e11de6784816518eb60c73cf7f1d661f27c1b89186d3aa537bf98899","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"readLocalLeaderboard","kind":"FunctionDeclaration","line":19,"sha256":"7607e8b15e1b772563df2c75d97d8826d25673838e4c173b6497b250d4a1421c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@24>","kind":"ArrowFunction","line":24,"sha256":"cf0eec57cfdc53bad382e342aed53f64489a42eeb7feea4941e334bc928623a7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
+]},
 {"path":"scripts/readme-proof-binding.ts","sha256":"8a05111c52cc8d8d8a855d4ab3a81be2e5fde5f29be892af8e5236a2dc38e9f2","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"isReadmeProof","kind":"FunctionDeclaration","line":128,"sha256":"7fcf0b5ab5d8a6698ca57779c4598f23828e458285d0b2277edbba807ce16869","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"priorReadmeProofs","kind":"FunctionDeclaration","line":137,"sha256":"f0c1dea95ed19cd54524243ba1593b791ce6c4b331623b4dc2d1f913051fc0f2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -5592,6 +5597,9 @@
 {"name":"<ArrowFunction@94>","kind":"ArrowFunction","line":94,"sha256":"79e340c33b9b1881e6ab6cb3dda441b97e9685df007019f46c7726acb0b1c820","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"scripts/renew-private-intake.mjs","sha256":"90447c198be71652be8de404703f087dca9631a4b833f3751e172ef13c981249","language":"javascript","disposition":"no-function-body","functions":[
+
+]},
+{"path":"scripts/restore-collected-data.py","sha256":"ff1265cf3edff3e899ed3da9ba8f0645c26d2b9ca3b7f5cdefa82ec820710492","language":"python","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"scripts/restore-leaderboard-discussions.py","sha256":"fbad1d73552db5cf098be1cd0365a8f58839fbdee92f92e5e1c14022ef817baa","language":"python","disposition":"outside-typescript-toolchain","functions":[

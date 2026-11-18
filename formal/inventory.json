@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "204bbeac5e92138e4262a85089ef9538dd58f846bc38666f726349e19dd60d7c",
+      "sha256": "67b6147ce06db0301d39741c11489652b3615b6b2870ded7cb3f9e136c0d0627",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,10 +24,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
-        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1205, 1296, 1404, 1406,
-        1407, 1611, 1694, 1847, 1849, 1879, 1988, 2010, 2081, 2092, 2117, 2188,
-        2201, 2214, 2223, 2224, 2225, 2242
+        40, 50, 164, 294, 332, 333, 390, 443, 500, 580, 585, 700, 706, 774, 777,
+        803, 804, 825, 837, 869, 907, 1137, 1165, 1257, 1270, 1361, 1469, 1471,
+        1472, 1676, 1759, 1912, 1914, 1944, 2053, 2075, 2146, 2157, 2182, 2253,
+        2266, 2279, 2288, 2289, 2290, 2307
       ],
       "review": "mapped-abstraction"
     },
@@ -4769,6 +4769,13 @@
       "statelessReason": "Pure exact-source selector for the independently reviewed owner delayed-input verification entry point. Returns fixed step/proof-kind metadata only after the complete pinned model hash matches; no own transition, storage, I/O or runtime behavior."
     },
     {
+      "path": "scripts/read-local-leaderboard.ts",
+      "sha256": "b4a4a253c57cf25e73bc5e1fe654f82ae64ef7ae7a4cc57e04a4691b033e523e",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [4, 35, 36],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/readme-proof-binding.ts",
       "sha256": "8a05111c52cc8d8d8a855d4ab3a81be2e5fde5f29be892af8e5236a2dc38e9f2",
       "models": ["formal/models/release/readme_proof_binding.qnt"],
@@ -4872,6 +4879,13 @@
       "sha256": "90447c198be71652be8de404703f087dca9631a4b833f3751e172ef13c981249",
       "models": ["formal/models/api/operator_intake_renewal.qnt"],
       "candidateLines": [23, 24, 25, 30, 33, 52, 53],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/restore-collected-data.py",
+      "sha256": "ff1265cf3edff3e899ed3da9ba8f0645c26d2b9ca3b7f5cdefa82ec820710492",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [64, 192, 205],
       "review": "mapped-abstraction"
     },
     {
@@ -15220,7 +15234,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "d043886d571fa5c0d26bcfddf0c2efea12db6b3eabeadbedb330f6678612f031",
+      "sha256": "69fd6cb5eeb668c65c22ee4b168ef449df48269edd98f386adef7dfdac530c47",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/check-retained-release-data.ts",
@@ -15228,8 +15242,10 @@
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
         "scripts/qualify-solana-rpc-pair.ts",
+        "scripts/read-local-leaderboard.ts",
         "scripts/release-notify.mjs",
         "scripts/release-robinhood-rpc.ts",
+        "scripts/restore-collected-data.py",
         "scripts/rotate-fee-solana-rpc.ts",
         "scripts/select-pages-deployment.mjs",
         "scripts/verify-staging-deployment.mjs",
