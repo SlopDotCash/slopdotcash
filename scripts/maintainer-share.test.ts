@@ -664,3 +664,101 @@ test("a month with a maintainer share distributes exactly its amount and stores 
     sqlite.close();
   }
 });
+
+test("a busy month's decision record is stored exactly through statements within D1's limit", () => {
+  // D1 refuses a statement over 100 KB, and the import is one transaction:
+  // one oversized statement would leave every project in the file unstored.
+  // elizaOS/eliza merged about 3,900 scored pull requests in 30 days of the
+  // public ledger; 1,200 decisions make a record of about 250 KB.
+  const ids = ["1001", "1002", "1003", "1004"];
+  const decisionBytes = maintainerDecisionBytes(
+    record(
+      Array.from({ length: 1200 }, (_, index) =>
+        decision(30_000 + index, ids[index % 4], `maintainer-${index % 4}`),
+      ),
+    ),
+  );
+  expect(decisionBytes.length).toBeGreaterThan(200_000);
+  const policyBytes = Buffer.from(JSON.stringify(sharedProject(2000)));
+  const base = buildMonthlyBase(
+    { projectId: "eliza", period: SEPTEMBER, generatedAt: GENERATED_AT },
+    snapshotBytes,
+    policyBytes,
+    decisionBytes,
+  );
+  const sql = monthlyBasesSql(
+    {
+      period: SEPTEMBER,
+      skipped: [],
+      bases: [{ ...base, manifest: policyBytes.toString() }],
+    },
+    "2026-10-01T00:11:00.000Z",
+  );
+  const statements = sql.trimEnd().split("\n");
+  expect(
+    Math.max(...statements.map((line) => Buffer.byteLength(line))),
+  ).toBeLessThanOrEqual(100_000);
+  // SQLite orders group_concat's input only by an ORDER BY inside the
+  // aggregate; the order of a subquery it reads from is not promised.
+  expect(
+    statements.find((line) =>
+      line.startsWith("INSERT INTO monthly_maintainer_shares("),
+    ),
+  ).toContain("group_concat(part,'' ORDER BY sequence)");
+
+  const { sqlite } = sqliteD1(
+    readdirSync("migrations")
+      .filter((name) => name.endsWith(".sql"))
+      .sort(),
+  );
+  // One transaction, like the D1 import. Statement by statement, because
+  // Bun's exec of several statements raises only the last one's error.
+  const apply = (lines: string[]) => {
+    sqlite.exec("BEGIN");
+    try {
+      for (const line of lines) sqlite.run(line);
+      sqlite.exec("COMMIT");
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  };
+  try {
+    // A lost part stores nothing: the share statement fails the import.
+    const first = statements.findIndex((line) => line.includes("_parts("));
+    expect(() =>
+      apply(statements.filter((_, index) => index !== first)),
+    ).toThrow("NOT NULL");
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM monthly_reward_bases").get(),
+    ).toEqual({ n: 0 });
+    // Parts written in reverse and scanned in reverse still join in order.
+    sqlite.exec("PRAGMA reverse_unordered_selects=ON");
+    const parts = statements.filter((line) => line.includes("_parts("));
+    apply([
+      ...statements.slice(0, first),
+      ...parts.toReversed(),
+      ...statements.slice(first + parts.length),
+    ]);
+    apply(statements);
+    expect(
+      sqlite
+        .query(
+          "SELECT decisions,decisions_sha256 digest FROM monthly_maintainer_shares",
+        )
+        .all(),
+    ).toEqual([
+      {
+        decisions: new TextDecoder().decode(decisionBytes),
+        digest: base.maintainerShare?.decisionsSha256 ?? "",
+      },
+    ]);
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM monthly_maintainer_share_parts")
+        .get(),
+    ).toEqual({ n: 0 });
+  } finally {
+    sqlite.close();
+  }
+});

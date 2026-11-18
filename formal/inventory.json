@@ -3617,6 +3617,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0139_monthly_maintainer_share_parts.sql",
+      "sha256": "aa9799429b77e4caf34abfa69167c9d647dd2d490ea2dd817b1fb288ac185197",
+      "models": ["formal/models/rewards/maintainer_share.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "cf9927f26d487b688d157a03c6d8278c55d21d98e44e1d37c7dbfbb898ad1ac7",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -4530,14 +4537,14 @@
     },
     {
       "path": "scripts/prepare-monthly-rewards.ts",
-      "sha256": "26feaebef23a39e59a654d35b32b337597a9487290967b7f0860e9de805f9700",
+      "sha256": "85144006d3eb6c34bcff72b537043a93a00c160220de575b64ba1a16a84aa2b0",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [
-        15, 109, 110, 111, 205, 216, 278, 293, 312, 316, 360, 365
+        15, 109, 110, 111, 205, 216, 300, 315, 341, 345, 348, 349, 353, 397, 402
       ],
       "review": "mapped-abstraction"
     },
@@ -15633,9 +15640,10 @@
     },
     {
       "path": "formal/models/rewards/maintainer_share.qnt",
-      "sha256": "429b3cca517a49c64671cda5688d86f72fc2bb6e8aa227abfc848490b6be300a",
+      "sha256": "e6bb99a2096cabd1fba44a572bcf4a6979818b1b696a8241ec818c0ead7d32ac",
       "sources": [
         "migrations/0137_monthly_maintainer_shares.sql",
+        "migrations/0139_monthly_maintainer_share_parts.sql",
         "scripts/maintainer-decisions.ts",
         "src/lib/maintainer-share.mjs",
         "src/lib/payments/maintainer-share.ts"
