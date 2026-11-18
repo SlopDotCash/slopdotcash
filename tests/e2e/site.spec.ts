@@ -30,6 +30,7 @@ import {
   expect,
   expectAccessible,
   expectAccessibleReflow,
+  failPoolFundingRead,
   servePublicProjectReads,
   test,
 } from "./fixtures";
@@ -662,6 +663,7 @@ test("shows agent setup and keeps contribution records available", async ({
 });
 
 test("community pagination keeps every project reachable and bounds discovery descriptions", async ({
+  diagnostics,
   page,
 }, info) => {
   const communityProject = PROJECTS.find(
@@ -725,6 +727,8 @@ test("community pagination keeps every project reachable and bounds discovery de
         },
       }),
   );
+  // These fixtures have no vaults; an unreadable funding read lists them all.
+  await failPoolFundingRead(page, diagnostics);
   await page.goto("/", { waitUntil: "networkidle" });
   const projects = page.locator("#projects");
   const featured = projects.getByRole("region", {
