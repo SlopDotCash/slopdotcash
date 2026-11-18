@@ -9418,9 +9418,9 @@
     },
     {
       "path": "workers/slopbot/value-review.ts",
-      "sha256": "0acf112863502b9dfd6baad420809af60a5bb277c2bcfa63508eecf7c879550b",
+      "sha256": "c41a3c95b7355024529f55dc2385e66443107973f30b936c086454c2781134e5",
       "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
-      "candidateLines": [100],
+      "candidateLines": [76, 82, 90, 124],
       "review": "mapped-abstraction"
     },
     {
