@@ -1,5 +1,11 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { isSameOriginJsonWrite } from "../http";
+import {
+  INTAKE_CORRELATION_HEADER,
+  isIntakeCorrelation,
+  MAX_INTAKE_BODY_BYTES,
+  pagesIntakeObserver,
+} from "./value-import-observation";
 
 /** This binding targets a named Worker RPC entrypoint, never a public URL. */
 export interface HistoricalValueBinding {
@@ -33,6 +39,8 @@ export async function handleHistoricalValueImport(
   )
     return respond(403, { error: "origin_forbidden" });
   const mediaType = request.headers.get("content-type")?.split(";")[0];
+  const correlation = request.headers.get(INTAKE_CORRELATION_HEADER);
+  const started = isIntakeCorrelation(correlation) ? performance.now() : null;
   let actor: { githubId: string } | null;
   try {
     actor = await deps.sessionActor(request);
@@ -44,20 +52,30 @@ export async function handleHistoricalValueImport(
   if (!deps.adminGithubIds.has(actor.githubId))
     return respond(403, { error: "forbidden" });
   if (!deps.publisher) return respond(503, { error: "intake_unavailable" });
+  const observe =
+    started === null || correlation === null
+      ? undefined
+      : pagesIntakeObserver(correlation, started);
+  observe?.("owner-admitted");
+  let received = 0;
+  const eof = () => {
+    if (received <= MAX_INTAKE_BODY_BYTES)
+      observe?.("body-eof", { bodyBytes: received });
+  };
   let input: unknown;
   let bundle: File | undefined;
   try {
     if (mediaType === "multipart/form-data") {
       if (!request.body) throw new Error("Missing request body");
-      let received = 0;
       const body = request.body.pipeThrough(
         new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             received += chunk.byteLength;
-            if (received > 33 * 1024 * 1024)
+            if (received > MAX_INTAKE_BODY_BYTES)
               throw new Error("Historical assessment body limit");
             controller.enqueue(chunk);
           },
+          flush: eof,
         }),
       );
       const form = await new Request(request, { body }).formData();
@@ -74,30 +92,52 @@ export async function handleHistoricalValueImport(
         throw new Error("Invalid historical assessment parts");
       input = await readBoundedJson(
         new Response(envelope.stream()),
-        33 * 1024 * 1024,
+        MAX_INTAKE_BODY_BYTES,
         "historical assessment",
       );
       bundle = objects;
-    } else
+    } else {
+      const inputBody =
+        observe && request.body
+          ? {
+              headers: request.headers,
+              body: request.body.pipeThrough(
+                new TransformStream<
+                  Uint8Array<ArrayBuffer>,
+                  Uint8Array<ArrayBuffer>
+                >({
+                  transform(chunk, controller) {
+                    received += chunk.byteLength;
+                    controller.enqueue(chunk);
+                  },
+                  flush: eof,
+                }),
+              ),
+            }
+          : request;
       input = await readBoundedJson(
-        request as unknown as Response,
-        33 * 1024 * 1024,
+        inputBody,
+        MAX_INTAKE_BODY_BYTES,
         "historical assessment",
       );
+    }
   } catch {
+    observe?.("terminal", { terminalStatus: 400 });
     return respond(400, { error: "invalid_request" });
   }
+  observe?.("parsed");
   const publisher = deps.publisher;
   const publish = async () => {
     try {
-      const receipt = await publisher.publishSubscription(
-        input,
-        bundle?.stream(),
-      );
+      const objects = bundle?.stream();
+      observe?.("rpc-dispatch");
+      const receipt = await publisher.publishSubscription(input, objects);
+      observe?.("terminal", { terminalStatus: 200 });
       return { status: 200, body: receipt };
     } catch {
       // Never return source bodies, provider declarations or upstream errors.
       console.error("historical value import failure");
+      observe?.("terminal", { terminalStatus: 409 });
       return { status: 409, body: { error: "assessment_not_published" } };
     }
   };
@@ -120,6 +160,7 @@ export async function handleHistoricalValueImport(
     start(controller) {
       const pending = encoder.encode('{"status":"pending"}\n');
       controller.enqueue(pending);
+      observe?.("heartbeat-queued");
       heartbeat = setInterval(() => {
         if ((controller.desiredSize ?? 0) > 0) controller.enqueue(pending);
       }, 15_000);

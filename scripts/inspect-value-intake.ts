@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  isIntakeCorrelation,
+  projectPagesIntakeMilestone,
+} from "../backend/slopbot/value-import-observation";
+import {
   type HistoricalIntakeFailure,
   projectHistoricalIntakeFailure,
 } from "../workers/slopbot/value-import-diagnostics";
@@ -122,7 +126,27 @@ export function intakeError(input: unknown): string {
   return "other";
 }
 
-export function sanitizeIntakeTail(value: any) {
+function decodeTailMessage(message: unknown) {
+  if (typeof message === "string" && message.length <= 8192) {
+    try {
+      return JSON.parse(message) as unknown;
+    } catch {
+      // A raw message never leaves the diagnostic.
+    }
+  }
+  return message;
+}
+
+function* tailMessages(logs: unknown) {
+  for (const entry of Array.isArray(logs) ? logs.slice(0, 50) : []) {
+    for (const message of Array.isArray(entry?.message)
+      ? entry.message.slice(0, 10)
+      : [])
+      yield message as unknown;
+  }
+}
+
+export function sanitizeIntakeTail(value: any, correlation?: string) {
   if (!value || typeof value !== "object") return null;
   const row: Record<string, unknown> = {};
   if (outcomes.has(value.outcome)) row.outcome = value.outcome;
@@ -132,6 +156,23 @@ export function sanitizeIntakeTail(value: any) {
   const status = event?.response?.status ?? value.httpStatus;
   if (Number.isInteger(status) && status >= 100 && status <= 599)
     row.httpStatus = status;
+  if (correlation !== undefined) {
+    const projected = Array.isArray(value.pagesIntakeMilestones)
+      ? value.pagesIntakeMilestones.slice(0, 20)
+      : [];
+    const milestones = [];
+    for (const message of [...projected, ...tailMessages(value.logs)]) {
+      const milestone = projectPagesIntakeMilestone(
+        decodeTailMessage(message),
+        correlation,
+      );
+      if (milestone) milestones.push(milestone);
+      if (milestones.length === 20) break;
+    }
+    return milestones.length
+      ? { ...row, pagesIntakeMilestones: milestones }
+      : null;
+  }
   const labels: string[] = [];
   const intakeFailures: HistoricalIntakeFailure[] = (
     Array.isArray(value.historicalIntakeFailures)
@@ -165,27 +206,14 @@ export function sanitizeIntakeTail(value: any) {
     const fingerprint = exceptionFingerprint(entry);
     if (fingerprint && fingerprints.length < 20) fingerprints.push(fingerprint);
   }
-  for (const entry of Array.isArray(value.logs)
-    ? value.logs.slice(0, 50)
-    : []) {
-    for (const message of Array.isArray(entry?.message)
-      ? entry.message.slice(0, 10)
-      : []) {
-      let structured: unknown = message;
-      if (typeof message === "string" && message.length <= 8192) {
-        try {
-          structured = JSON.parse(message);
-        } catch {
-          /* Raw text never retained. */
-        }
-      }
-      const failure = projectHistoricalIntakeFailure(structured);
-      if (failure) {
-        if (intakeFailures.length < 20) intakeFailures.push(failure);
-        continue;
-      }
-      if (typeof message === "string") labels.push(intakeError(message));
+  for (const message of tailMessages(value.logs)) {
+    const structured = decodeTailMessage(message);
+    const failure = projectHistoricalIntakeFailure(structured);
+    if (failure) {
+      if (intakeFailures.length < 20) intakeFailures.push(failure);
+      continue;
     }
+    if (typeof message === "string") labels.push(intakeError(message));
   }
   if (labels.length) row.categories = [...new Set(labels)];
   if (fingerprints.length) row.exceptionFingerprints = fingerprints;
@@ -229,7 +257,13 @@ async function boundedJson(response: Response) {
   }
 }
 
-export function readIntakeTail(url: string, seconds = 180): Promise<unknown[]> {
+const maximumTailRecords = 200;
+
+export function readIntakeTail(
+  url: string,
+  seconds = 180,
+  correlation?: string,
+): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
     const records: unknown[] = [];
     const socket = new WebSocket(url, "trace-v1");
@@ -260,8 +294,8 @@ export function readIntakeTail(url: string, seconds = 180): Promise<unknown[]> {
             ? message.data
             : new TextDecoder().decode(message.data as ArrayBuffer);
         if (raw.length > 1024 * 1024) return;
-        const record = sanitizeIntakeTail(JSON.parse(raw));
-        if (record && records.length < 200) records.push(record);
+        const record = sanitizeIntakeTail(JSON.parse(raw), correlation);
+        if (record && records.length < maximumTailRecords) records.push(record);
       } catch {
         /* No untrusted tail bytes are retained. */
       }
@@ -276,7 +310,11 @@ export async function inspectValueIntake(input: {
   token: string;
   request?: typeof fetch;
   tail?: (url: string) => Promise<unknown[]>;
+  correlation?: string;
 }) {
+  const correlation = input.correlation;
+  if (correlation !== undefined && !isIntakeCorrelation(correlation))
+    throw Error("Invalid intake correlation");
   if (!/^[a-f0-9]{32}$/u.test(input.account) || !input.token)
     throw Error("Diagnostic credentials unavailable");
   const request = input.request ?? fetch;
@@ -360,7 +398,9 @@ export async function inspectValueIntake(input: {
         stage,
         "POST",
         target === "pages"
-          ? {}
+          ? correlation === undefined
+            ? {}
+            : { filters: [{ query: correlation }] }
           : { filters: [{ scriptVersion: binding.versionId }] },
       );
       if (!/^[a-zA-Z0-9-]{1,128}$/u.test(tail?.id ?? ""))
@@ -378,11 +418,20 @@ export async function inspectValueIntake(input: {
           url.password
         )
           throw new DiagnosticFailure(stage);
-        const records = await (input.tail ?? readIntakeTail)(url.href);
+        const records = await (input.tail
+          ? input.tail(url.href)
+          : readIntakeTail(url.href, 180, correlation));
         // Injectable transport output goes through the same fixed projection.
-        for (const record of records.slice(0, 200)) {
-          const safe = sanitizeIntakeTail(record);
+        for (const record of correlation === undefined
+          ? records.slice(0, maximumTailRecords)
+          : records) {
+          const safe = sanitizeIntakeTail(record, correlation);
           if (safe) observations.push(safe);
+          if (
+            correlation !== undefined &&
+            observations.length === maximumTailRecords
+          )
+            throw new DiagnosticFailure("tail-limit");
         }
       } finally {
         await api(`${tailPath}/${tail.id}`, "tail-delete", "DELETE");
@@ -427,7 +476,13 @@ export async function inspectValueIntake(input: {
     checkedAt: new Date().toISOString(),
     tailSeconds: 180,
     rawLogsRetained: false,
-    targets: await Promise.all([...workers, "pages" as const].map(inspect)),
+    ...(correlation === undefined ? {} : { correlation }),
+    targets: await Promise.all(
+      (correlation === undefined
+        ? [...workers, "pages" as const]
+        : ["pages" as const]
+      ).map(inspect),
+    ),
   };
 }
 
@@ -437,6 +492,7 @@ if (import.meta.main) {
   const result = await inspectValueIntake({
     account: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
     token: process.env.CLOUDFLARE_API_TOKEN ?? "",
+    correlation: process.env.SLOP_INTAKE_CORRELATION || undefined,
   });
   writeFileSync(
     join(process.env.RUNNER_TEMP, "value-intake-diagnostic.json"),
