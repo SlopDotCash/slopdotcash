@@ -134,6 +134,41 @@ test("one exact failure is detached from all raw metadata and duplicated represe
   if (!projected) throw new Error("Expected fixed failure projection");
   expect(Object.keys(projected.failure)).toHaveLength(7);
 });
+test("retained source refusal projection accepts only fixed GitHub fields", () => {
+  const observed: HistoricalIntakeFailure = {
+    ...failure,
+    stage: "source-evidence",
+    sourceIndex: 0,
+    httpStatus: 403,
+    sourceReadRefusal: {
+      category: "primary-rate-limit",
+      remaining: 0,
+      resetAt: 1794960000,
+      retryAfterSeconds: null,
+    },
+  };
+  const stored = (message: unknown) => ({
+    timestamp: event.timestamp,
+    $metadata: { service: "slop-slopbot" },
+    source: { message: JSON.stringify(message) },
+  });
+  expect(storedIntakeFailure(stored(observed), window)).toEqual({
+    timestamp: event.timestamp,
+    failure: observed,
+  });
+  expect(
+    storedIntakeFailure(
+      stored({
+        ...observed,
+        sourceReadRefusal: {
+          ...observed.sourceReadRefusal,
+          body: "never-export",
+        },
+      }),
+      window,
+    ),
+  ).toBeNull();
+});
 for (const change of [
   { $metadata: { ...event.$metadata, service: "another-worker" } },
   { timestamp: window.from - 1 },

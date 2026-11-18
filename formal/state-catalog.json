@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1b1f19c3f1d6574014f6542582464500c632a9a0927fe9e76a1e7654509770ae",
+  "inventorySha256": "d29d6ffc80f63ffb2cde8d0feba9fd1e30ed35210228fc58be53ddac8f68273c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4441,12 +4441,13 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 199,
+      "line": 296,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "lexicallyUnmentionedValues": ["exempt", "not-exempt"],

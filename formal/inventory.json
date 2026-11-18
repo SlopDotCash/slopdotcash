@@ -8792,14 +8792,15 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "e40641d523e39c9a55a26fb79517ad3f431599399d0f81dbc9adada87685faf9",
+      "sha256": "d348fa259dc9e867be3008d0e13950f540511293cdb4ed80a95b7718e18deab3",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "candidateLines": [
-        46, 80, 91, 108, 117, 118, 119, 121, 125, 126, 129, 172, 175, 228, 229,
-        260
+        46, 82, 103, 119, 123, 132, 169, 180, 197, 206, 207, 208, 210, 217, 221,
+        222, 226, 269, 272, 325, 326, 357
       ],
       "review": "mapped-abstraction"
     },
@@ -9182,9 +9183,9 @@
     },
     {
       "path": "workers/slopbot/value-import-diagnostics.ts",
-      "sha256": "6f1d12a768600a1dc983712615462e87859d771df82c59366c7f25149f65ea41",
+      "sha256": "f1c285b86165ed5ef2ab9ebfa52a2005dd9b5b66e2509fdc8c68a98df2be7c19",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
-      "candidateLines": [136],
+      "candidateLines": [73, 76, 87, 88, 186],
       "review": "mapped-abstraction"
     },
     {
@@ -9199,12 +9200,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "9e6d64b76e3f697ee6e249c419d139dad45539f435cb77eb0dd7098b763242e6",
+      "sha256": "82fed066d046a5ea233752e08273d7bcbb36cec45fbbc55647fdc079785a368d",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [200],
+      "candidateLines": [201],
       "review": "mapped-abstraction"
     },
     {
@@ -15929,8 +15930,9 @@
     },
     {
       "path": "formal/models/slopbot/bot_historical_import.qnt",
-      "sha256": "47bbd2b340d5467810db24bd213a1065e2d03abc38625e949ccae5c2a8513f5a",
+      "sha256": "49bde8792504a47828fd257d7fc9974a0ee98ac01746985db0d2706f8d006f95",
       "sources": [
+        "workers/slopbot/github.ts",
         "workers/slopbot/value-import-diagnostics.ts",
         "workers/slopbot/value-import-service.ts",
         "workers/slopbot/value-import.ts",
