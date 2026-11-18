@@ -155,10 +155,27 @@ jobs:
           bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
 
+      # The repository's GITHUB_TOKEN quota is shared by every workflow and
+      # a full collection needs more than it allows, so a dedicated read-only
+      # GitHub App collects when it is configured. Without the App, or if
+      # minting fails, the steps below use GITHUB_TOKEN as before.
+      - name: Mint collector token
+        id: collector-token
+        if: vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
       - name: Generate complete cycle ledger
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
         run: bun run leaderboard:generate -- --cutoff "${{ steps.cycle.outputs.cutoff }}"
 
       - name: Propose private allocations
@@ -166,7 +183,7 @@ jobs:
         env:
           # A project with a maintainer share needs one public GitHub read of
           # who merged or closed each outside pull request in the month.
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
         run: bun run rewards:propose-month -- --cycle "${{ steps.cycle.outputs.cycle }}" --sql "$RUNNER_TEMP/monthly-allocations.sql"
 
       - name: Store proposals in D1
