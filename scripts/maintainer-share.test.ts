@@ -367,7 +367,8 @@ test("the read counts only outside pull requests merged or closed in the month b
   const graphql = async (query: string, variables: Record<string, unknown>) => {
     expect(query).toBe(DECISIONS_QUERY);
     requests.push(variables);
-    const index = requests.length - 1;
+    const after = variables.after as string | null;
+    const index = after === null ? 0 : Number(after.split("-")[1]) + 1;
     return {
       repository: {
         id: project.authority.repositoryNodeId,
@@ -389,6 +390,8 @@ test("the read counts only outside pull requests merged or closed in the month b
   expect(requests).toEqual([
     { owner: "elizaOS", name: "eliza", first: 50, after: null },
     { owner: "elizaOS", name: "eliza", first: 50, after: "cursor-0" },
+    // A second pass from the top finds no change, so the read is complete.
+    { owner: "elizaOS", name: "eliza", first: 50, after: null },
   ]);
   expect(collected.repositories).toEqual(["elizaOS/eliza"]);
   expect(
@@ -426,6 +429,110 @@ test("the read counts only outside pull requests merged or closed in the month b
       throw new Error("GitHub maintainer decision read failed: HTTP 502");
     }),
   ).rejects.toThrow("HTTP 502");
+});
+
+test("a pull request updated while the read runs still counts", async () => {
+  const project = sharedProject(2000);
+  // GitHub pages this order by a cursor on (updatedAt, id): a pull request
+  // updated after the read passed the top moves above the cursor, and the
+  // pages that follow never return it.
+  const nodes = [
+    pull(30, {
+      updatedAt: "2026-09-25T00:00:00Z",
+      ...mergedBy(user(11, "ana")),
+    }),
+    pull(31, {
+      updatedAt: "2026-09-24T00:00:00Z",
+      ...mergedBy(user(11, "ana")),
+    }),
+    pull(32, {
+      updatedAt: "2026-09-23T00:00:00Z",
+      ...closedBy(user(22, "ben")),
+    }),
+    pull(33, {
+      updatedAt: "2026-09-22T00:00:00Z",
+      ...mergedBy(user(33, "cal")),
+    }),
+    pull(34, {
+      updatedAt: "2026-08-20T00:00:00Z",
+      ...mergedBy(user(11, "ana"), "2026-08-19T00:00:00Z"),
+    }),
+  ];
+  const order = () =>
+    [...nodes].sort(
+      (left, right) =>
+        String(right.updatedAt).localeCompare(String(left.updatedAt)) ||
+        Number(right.number) - Number(left.number),
+    );
+  const key = (node: PullNode) => `${node.updatedAt}|${node.number}`;
+  let served = 0;
+  const graphql = async (
+    _query: string,
+    variables: Record<string, unknown>,
+  ) => {
+    const list = order();
+    const after = variables.after as string | null;
+    const start =
+      after === null
+        ? 0
+        : list.findIndex(
+            (node) =>
+              String(node.updatedAt) < after.split("|")[0] ||
+              (String(node.updatedAt) === after.split("|")[0] &&
+                Number(node.number) < Number(after.split("|")[1])),
+          );
+    const page = list.slice(start, start + 2);
+    served += 1;
+    // A comment on pull request 32 after the first page was served.
+    if (served === 1)
+      nodes[2] = { ...nodes[2], updatedAt: "2026-10-02T09:00:00Z" };
+    return {
+      repository: {
+        id: project.authority.repositoryNodeId,
+        pullRequests: {
+          pageInfo: {
+            hasNextPage: start + 2 < list.length,
+            endCursor: key(page[page.length - 1]),
+          },
+          nodes: page,
+        },
+      },
+    };
+  };
+  const collected = await collectMaintainerDecisions(
+    project,
+    SEPTEMBER,
+    graphql,
+  );
+  expect(
+    collected.decisions.map((entry) => [entry.number, entry.login]),
+  ).toEqual([
+    [30, "ana"],
+    [31, "ana"],
+    [32, "ben"],
+    [33, "cal"],
+  ]);
+  // A read that never settles is refused, never split from a partial record.
+  let minute = 0;
+  await expect(
+    collectMaintainerDecisions(project, SEPTEMBER, async () => {
+      minute += 1;
+      return {
+        repository: {
+          id: project.authority.repositoryNodeId,
+          pullRequests: {
+            pageInfo: { hasNextPage: false },
+            nodes: [
+              pull(40, {
+                updatedAt: `2026-10-02T09:${String(minute).padStart(2, "0")}:00Z`,
+                ...mergedBy(user(11, "ana")),
+              }),
+            ],
+          },
+        },
+      };
+    }),
+  ).rejects.toThrow("kept changing during the read");
 });
 
 test("the GitHub reader retries a refused answer and never returns a GraphQL error as data", async () => {

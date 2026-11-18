@@ -14,7 +14,8 @@
  * person's pull request, so the deciding account needs no separate permission
  * read. A close by the author, by a bot (Slopbot included) or by an actor
  * GitHub no longer names is not a decision. A pull request reopened and
- * closed again counts once, for its last close.
+ * closed again counts once, for its last close. A pull request updated while
+ * the read runs is read again from the top.
  *
  * Everything read is public GitHub data. Any failed or incomplete read
  * throws: a month's split is never computed from a partial record.
@@ -40,6 +41,8 @@ export type GraphqlRequest = (
 const PAGE = 50;
 /** A repository is refused past this many pages, far above any real month. */
 const MAX_PAGES = 400;
+/** Passes from the top after the first one before a changing read is refused. */
+const CATCH_UP_PASSES = 5;
 const MAINTAINER = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 export const DECISIONS_QUERY = `query($owner: String!, $name: String!, $first: Int!, $after: String) {
@@ -123,75 +126,98 @@ async function repositoryDecisions(
   if (!owner || !name || rest.length > 0)
     throw new TypeError(`Repository ${repositoryId} is not owner/name`);
   const identity = repositoryIdentity(project, repositoryId);
-  const decisions: MaintainerDecision[] = [];
-  // A pull request updated during the read can appear on two pages.
-  const seen = new Set<number>();
-  let after: string | null = null;
-  for (let page = 0; ; page += 1) {
-    if (page >= MAX_PAGES)
+  const decisions = new Map<number, MaintainerDecision>();
+  // The update time each pull request had when it was last read.
+  const versions = new Map<number, number>();
+  // GitHub pages this order with a cursor on the update time: a pull request
+  // updated after the read passed its position moves above the cursor, and
+  // the later pages never return it. Every update after a pass started has a
+  // time at or above that pass's newest one, so the next pass reads from the
+  // top down to it. The read is complete when a pass finds no change.
+  let floor = from;
+  for (let pass = 0; ; pass += 1) {
+    if (pass > CATCH_UP_PASSES)
       throw new RangeError(
-        `Repository ${repositoryId} has more closed pull requests than one read covers`,
+        `Repository ${repositoryId} kept changing during the read`,
       );
-    const data = object(
-      await graphql(DECISIONS_QUERY, { owner, name, first: PAGE, after }),
-      "data",
-    );
-    const repository = object(data.repository, `repository ${repositoryId}`);
-    // A renamed repository still resolves; another repository under the old
-    // name must not.
-    if (identity !== null && repository.id !== identity.nodeId)
-      throw new TypeError(
-        `Repository ${repositoryId} is not the registered repository`,
+    let newest: number | null = null;
+    let changed = false;
+    let after: string | null = null;
+    for (let page = 0; ; page += 1) {
+      if (page >= MAX_PAGES)
+        throw new RangeError(
+          `Repository ${repositoryId} has more closed pull requests than one read covers`,
+        );
+      const data = object(
+        await graphql(DECISIONS_QUERY, { owner, name, first: PAGE, after }),
+        "data",
       );
-    const connection = object(repository.pullRequests, "pull requests");
-    const pageInfo = object(connection.pageInfo, "page state");
-    if (!Array.isArray(connection.nodes))
-      throw new TypeError("GitHub returned no pull request list");
-    let older = false;
-    for (const entry of connection.nodes) {
-      const node = object(entry, "pull request");
-      // A pull request closed in the month was updated in or after it, so
-      // the first one last updated before the month ends the read.
-      if (instant(node.updatedAt, "update time") < from) {
-        older = true;
-        break;
+      const repository = object(data.repository, `repository ${repositoryId}`);
+      // A renamed repository still resolves; another repository under the old
+      // name must not.
+      if (identity !== null && repository.id !== identity.nodeId)
+        throw new TypeError(
+          `Repository ${repositoryId} is not the registered repository`,
+        );
+      const connection = object(repository.pullRequests, "pull requests");
+      const pageInfo = object(connection.pageInfo, "page state");
+      if (!Array.isArray(connection.nodes))
+        throw new TypeError("GitHub returned no pull request list");
+      let older = false;
+      for (const entry of connection.nodes) {
+        const node = object(entry, "pull request");
+        const updatedAt = instant(node.updatedAt, "update time");
+        // A pull request closed in the month was updated in or after it, so
+        // the first one last updated before the month, or before this pass's
+        // floor, ends the pass.
+        if (updatedAt < floor) {
+          older = true;
+          break;
+        }
+        newest ??= updatedAt;
+        if (!Number.isSafeInteger(node.number))
+          throw new TypeError("GitHub returned an invalid pull request number");
+        const number = node.number as number;
+        // The same version can repeat on a later page or pass.
+        if (versions.get(number) === updatedAt) continue;
+        versions.set(number, updatedAt);
+        decisions.delete(number);
+        changed = true;
+        const merged = node.mergedAt !== null && node.mergedAt !== undefined;
+        const decidedAt = instant(
+          merged ? node.mergedAt : node.closedAt,
+          "decision time",
+        );
+        if (decidedAt < from || decidedAt >= to) continue;
+        const author = (node.author ?? null) as Actor;
+        if (
+          author?.__typename === "Bot" ||
+          MAINTAINER.has(String(node.authorAssociation ?? ""))
+        )
+          continue;
+        const by = decider(node, merged);
+        const authorLogin =
+          typeof author?.login === "string" ? author.login : "ghost";
+        if (by === null || by.login.toLowerCase() === authorLogin.toLowerCase())
+          continue;
+        decisions.set(number, {
+          repository: repositoryId,
+          number,
+          outcome: merged ? "merged" : "closed",
+          decidedAt: new Date(decidedAt).toISOString(),
+          author: authorLogin,
+          ...by,
+        });
       }
-      const merged = node.mergedAt !== null && node.mergedAt !== undefined;
-      const decidedAt = instant(
-        merged ? node.mergedAt : node.closedAt,
-        "decision time",
-      );
-      if (decidedAt < from || decidedAt >= to) continue;
-      const author = (node.author ?? null) as Actor;
-      if (
-        author?.__typename === "Bot" ||
-        MAINTAINER.has(String(node.authorAssociation ?? ""))
-      )
-        continue;
-      const by = decider(node, merged);
-      const authorLogin =
-        typeof author?.login === "string" ? author.login : "ghost";
-      if (by === null || by.login.toLowerCase() === authorLogin.toLowerCase())
-        continue;
-      if (!Number.isSafeInteger(node.number))
-        throw new TypeError("GitHub returned an invalid pull request number");
-      if (seen.has(node.number as number)) continue;
-      seen.add(node.number as number);
-      decisions.push({
-        repository: repositoryId,
-        number: node.number as number,
-        outcome: merged ? "merged" : "closed",
-        decidedAt: new Date(decidedAt).toISOString(),
-        author: authorLogin,
-        ...by,
-      });
+      if (older || pageInfo.hasNextPage !== true) break;
+      if (typeof pageInfo.endCursor !== "string")
+        throw new TypeError("GitHub returned no next page");
+      after = pageInfo.endCursor;
     }
-    if (older || pageInfo.hasNextPage !== true) break;
-    if (typeof pageInfo.endCursor !== "string")
-      throw new TypeError("GitHub returned no next page");
-    after = pageInfo.endCursor;
+    if (pass > 0 && !changed) break;
+    if (newest !== null && newest > floor) floor = newest;
   }
-  return decisions;
+  return [...decisions.values()];
 }
 
 /** The complete decision record of one project month. */
