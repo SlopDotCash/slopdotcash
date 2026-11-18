@@ -146,7 +146,7 @@ test("old work stays dated and an empty queue does not claim availability", asyn
   await expect(work).toBeVisible();
   // One stale notice per page, whichever section shows it.
   await expect(
-    page.getByText(/^(Points|Projects|Cycles) stale · /u),
+    page.getByText(/^(?:Data last updated|Projects stale|Cycles stale) · /u),
   ).toHaveCount(1);
   await expect(work).toContainText("Nothing open");
   await expect(work.getByRole("link")).toHaveCount(0);
