@@ -207,6 +207,8 @@ export function githubIngestionReadTransport(
       const commitFilePage =
         /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
         /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
+      const commitFileGatewayRetry =
+        commitFilePage && !url.username && !url.password && !url.hash;
       const commitPulls =
         !url.username &&
         !url.password &&
@@ -257,6 +259,7 @@ export function githubIngestionReadTransport(
         return replay(cached);
       }
       let readRetries = 0;
+      let gatewayRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
         checkDeadline();
@@ -294,13 +297,17 @@ export function githubIngestionReadTransport(
         }
         // GitHub can fail to serve a known evidence page temporarily. Retry that
         // exact page without resetting the quota budget or changing pagination.
-        if (
+        const retryGateway =
+          commitFileGatewayRetry &&
+          response.status === 502 &&
+          gatewayRetries < 2;
+        const retryRead =
           readRetry &&
           response.status === readRetry.status &&
-          readRetries < readRetry.limit
-        ) {
-          readRetries += 1;
-          const delay = readRetries * 1_000;
+          readRetries < readRetry.limit;
+        if (retryGateway || retryRead) {
+          const retry = retryGateway ? ++gatewayRetries : ++readRetries;
+          const delay = retry * 1_000;
           await response.body?.cancel();
           checkDeadline(delay);
           await (callerSignal

@@ -4172,11 +4172,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "6c566a5b88d3c7cddf309c9489d90f7245d0e8a86ba9437bdf781a2d37ce8f80",
+      "sha256": "82c5ad993a8aec6048fc1c1e26007d0b2914253f7aa7628b09b25f9eb01cd5b2",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 218, 220, 255, 276, 286, 291, 295, 299,
-        313, 322, 344, 354, 363, 371
+        35, 53, 86, 107, 109, 127, 165, 220, 222, 257, 279, 289, 294, 298, 302,
+        306, 309, 310, 320, 329, 351, 361, 370, 378
       ],
       "review": "mapped-abstraction"
     },
@@ -14457,7 +14457,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "3f0b7659156d276320dde6054dc172f2b7f4ffc4421ce24b44968ac178964120",
+      "sha256": "048daf119ad7458ed921fbbc56bd70d0bf6df4fea952352b24eed45ef02d1bd0",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -14468,6 +14468,8 @@
         "authorizationDoesNotRetryTest",
         "commitFileErrorRecoversTest",
         "commitFileErrorRetriesOnceTest",
+        "commitFileGatewayRetriesAreIndependentTest",
+        "commitFileGatewayRetriesStayBoundedTest",
         "commitPullServerErrorRecoversTest",
         "commitPullServerErrorsStayBoundedTest",
         "commitPullServerRetryPreservesQuotaCountTest",
@@ -14484,6 +14486,7 @@
         "secondaryLimitMessageResumesTest",
         "serverRetryRespectsCheckpointTest",
         "timedOutCheckpointCannotPublishTest",
+        "unrelatedGatewayErrorNeverRetriesTest",
         "unrelatedServerErrorNeverRetriesTest",
         "unrelatedValidationErrorNeverRetriesTest",
         "writeDoesNotRetryTest"
