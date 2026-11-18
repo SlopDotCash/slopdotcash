@@ -16,11 +16,11 @@
     "build outputs"
   ],
   "counts": {
-    "files": 823,
+    "files": 830,
     "functions": 12882,
     "selectedContractTargets": 188,
     "unprovedFunctions": 12694,
-    "nonTypeScriptFiles": 60
+    "nonTypeScriptFiles": 67
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
@@ -2095,6 +2095,15 @@
 {"path":"contracts/evm/script/DeployRobinhoodTestnet.s.sol","sha256":"076b5b33a82a100d0fa7970efe10fe7372d5e87c8bdecf93180912cf60e02b42","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
+{"path":"contracts/evm/script/DeploySubmissionDeposits.sol","sha256":"9a2eb45c7c24d606ec2a8dbb8d8922b97caf03f92067786159e27ce3f7655521","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/script/DeploySubmissionDepositsBase.s.sol","sha256":"86724ccbe3dc0d9d41121787bece7cc11a070e5fd782eb631bccd88729b21114","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/script/DeploySubmissionDepositsRobinhood.s.sol","sha256":"45d09c025bba3c391e4f64327de871ce59c7feb70d06290a9c3c4de8bc45156c","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
 {"path":"contracts/evm/script/DeployUpgradeImplementations.s.sol","sha256":"d5259a20380b50621693c6cd205ed2bc245fc2c5d4209ceb27e69245d27624f5","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
@@ -2102,6 +2111,9 @@
 
 ]},
 {"path":"contracts/evm/src/ReferralDistributor.sol","sha256":"20d05115aee7a42cecbbf3acf5d86144feed2a5313494ca20e2d0e1177afe66f","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/src/SubmissionDeposits.sol","sha256":"7f8c69347c1292a8127aa591678386e2e22ad58fec31966076d74c01bf202c3e","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/test/AnyToken.t.sol","sha256":"0852da7497f82ebf9479d3ade9eeaed7f4a129e7d7085eca61b0c5ce479c270c","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
@@ -2165,6 +2177,15 @@
 
 ]},
 {"path":"contracts/evm/test/SonnetParity.t.sol","sha256":"de524c6f8f0b4499733debdcafa697c656ace3250b459f839f0b370864e94917","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/SubmissionDeposits.t.sol","sha256":"426ab237d0687d5be41e392ab2bc814163fcf218a9cbd59baf90a36441881578","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/SubmissionDepositsDeploy.t.sol","sha256":"9c314d29e61496f130fa5ffb51a20d32762c9f8719e673598fa138214d7e31a9","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/SubmissionDepositsInvariant.t.sol","sha256":"7ac1cde135fb5e53c2a9207f480d713601cf1c52990a73e1bbc47c2b74e33c5b","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/test/UpgradeLifecycle.t.sol","sha256":"69262b12bdda85fa4954349c18ea61425f1feb17057e9c0c1cf901b701fd1223","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
