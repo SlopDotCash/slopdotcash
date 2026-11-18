@@ -2,6 +2,7 @@
 // @source src/lib/payments/maintainer-share.ts
 // @source scripts/maintainer-decisions.ts
 // @source migrations/0137_monthly_maintainer_shares.sql
+// @source migrations/0139_monthly_maintainer_share_parts.sql
 // Maintainer share of a project month (PRD section 6, operator decision of
 // 18 November 2026).
 //
@@ -20,6 +21,10 @@
 // decisions with largest remainder, ties to the lower account (a). An
 // excluded account's decisions are not counted. With no counted decision the
 // share is zero and contributors keep the whole amount (maintainerShare).
+//
+// Store: the proposal writes the exact record once beside the month. The
+// import stages a large record in parts and joins them in the statement that
+// stores the share; a missing part stores nothing (monthlyBasesSql).
 //
 // Bounds: two deciding accounts with 0..2 decisions each, account a possibly
 // excluded, shares of 0%, 10%, 20% and 30%, and monthly amounts 0, 10 and 15.
