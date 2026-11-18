@@ -3617,6 +3617,20 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0141_submission_fee_items.sql",
+      "sha256": "7e813a368a55731043b786fc922df4b63f1fcbed708e56d934df037ea8eda498",
+      "models": ["formal/models/slopbot/bot_submission_fee.qnt"],
+      "candidateLines": [6],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0142_slopbot_fee_gates.sql",
+      "sha256": "cfa27513c0b59c452fb3c5cf5ba2312dbcd021ad9aaac34e1c137564bd21839e",
+      "models": ["formal/models/slopbot/bot_submission_fee.qnt"],
+      "candidateLines": [8, 23, 32, 33],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "cf9927f26d487b688d157a03c6d8278c55d21d98e44e1d37c7dbfbb898ad1ac7",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -5952,10 +5966,11 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "93ec14af67fc57fdc4c3ff436c01107add24305641f849620675c820b03b42b1",
+      "sha256": "fb72941347020674e084071ef32e12fe5aaf5dcf8c43a55953d4fe3cb5d3c26a",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -5970,20 +5985,20 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        23, 160, 483, 486, 487, 488, 489, 490, 491, 492, 494, 497, 501, 506,
-        522, 533, 541, 542, 559, 575, 579, 597, 605, 613, 620, 623, 643, 658,
-        659, 1009, 1020, 1021, 1031, 1042, 1045, 1050, 1053, 1062, 1065, 1066,
-        1068, 1069, 1074, 1102, 1106, 1109, 1119, 1120, 1179, 1181, 1185, 1190,
-        1199, 1209, 1214, 1271, 1284, 1292, 1295, 1302, 1377, 1402, 1410, 1411,
-        1413, 1418, 1422, 1431, 1446, 1453, 1547, 1548, 1549, 1551, 1557, 1567,
-        1574, 1590, 1603, 1635, 1645, 1652, 1657, 1660, 1671, 1693, 1694, 1696,
-        1697, 1793, 1796, 1823, 2244, 2246, 2331, 2369, 2418, 2421, 2427, 2428,
-        2430, 2440, 2442, 2446, 2457, 2471, 2483, 2500, 2510, 2514, 2515, 2518,
-        2521, 2522, 2523, 2524, 2525, 2526, 2527, 2528, 2529, 2530, 2533, 2534,
-        2535, 2536, 2538, 2544, 2624, 2634, 2648, 2679, 2690, 3056, 3080, 3085,
-        3114, 3139, 3146, 3159, 3180, 3184, 3198, 3206, 3216, 3229, 3234, 3239,
-        3240, 3243, 3270, 3317, 3318, 3322, 3327, 3453, 3485, 3493, 3494, 3502,
-        3504, 3589, 3597, 3598, 3635, 3640, 3646, 3652, 3666, 3679, 3680, 3695
+        23, 169, 494, 497, 498, 499, 500, 501, 502, 503, 505, 508, 512, 517,
+        533, 544, 552, 553, 570, 586, 590, 608, 616, 624, 631, 634, 654, 669,
+        670, 1083, 1094, 1095, 1105, 1116, 1119, 1124, 1127, 1136, 1139, 1140,
+        1142, 1143, 1148, 1176, 1180, 1183, 1193, 1194, 1253, 1255, 1259, 1264,
+        1273, 1283, 1288, 1345, 1358, 1366, 1369, 1376, 1451, 1476, 1484, 1485,
+        1487, 1492, 1496, 1505, 1520, 1527, 1631, 1632, 1633, 1635, 1641, 1651,
+        1658, 1674, 1687, 1719, 1729, 1736, 1741, 1744, 1755, 1777, 1778, 1780,
+        1781, 1877, 1880, 1907, 2342, 2344, 2432, 2472, 2521, 2524, 2530, 2531,
+        2533, 2543, 2545, 2549, 2560, 2574, 2586, 2603, 2613, 2617, 2618, 2621,
+        2624, 2625, 2626, 2627, 2628, 2629, 2630, 2631, 2632, 2633, 2636, 2637,
+        2638, 2639, 2641, 2647, 2732, 2742, 2756, 2787, 2798, 3187, 3211, 3216,
+        3245, 3270, 3277, 3290, 3311, 3315, 3329, 3337, 3347, 3360, 3365, 3370,
+        3371, 3374, 3401, 3448, 3449, 3453, 3458, 3595, 3627, 3635, 3636, 3644,
+        3646, 3731, 3739, 3740, 3777, 3782, 3788, 3794, 3808, 3821, 3822, 3837
       ],
       "review": "mapped-abstraction"
     },
@@ -7124,16 +7139,17 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "7f758285802100d8eccdb0a646376ded3829a9cbf1773455f2adad9ad5386801",
+      "sha256": "0ae3244ef583e16f644e7b735abc7c1d1f8ab043c5271399026f8f2548f43b86",
       "models": [
+        "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
       "candidateLines": [
-        132, 337, 348, 353, 357, 358, 417, 423, 429, 432, 436, 440, 541, 544,
-        551, 554, 572, 598, 699, 700, 702, 707, 717, 1333, 1334, 1337, 1345,
-        1348, 1358, 1359, 1361, 1363, 1476, 1477, 1478, 1482, 1485, 1487, 1497,
-        1498, 1500, 1610
+        133, 338, 349, 354, 358, 359, 418, 424, 430, 433, 437, 441, 542, 545,
+        552, 555, 573, 599, 700, 701, 703, 708, 718, 1340, 1341, 1344, 1352,
+        1355, 1365, 1366, 1368, 1370, 1483, 1484, 1485, 1489, 1492, 1494, 1504,
+        1505, 1507, 1617
       ],
       "review": "mapped-abstraction"
     },
@@ -7420,6 +7436,26 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static canonical source repository URL; no transitions."
+    },
+    {
+      "path": "src/lib/submission-fee-setting.mjs",
+      "sha256": "cad095dda37d9cc811eac03fa2d9b52168073f35beb25e541fcdf663e4d3a827",
+      "models": [
+        "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/submission-fee.mjs",
+      "sha256": "e514fa88d029ce804069456e7513dde88253cc20720d056cd1b1ac2d59512d18",
+      "models": [
+        "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
+      ],
+      "candidateLines": [56, 78, 337, 345],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/use-action.ts",
@@ -8849,7 +8885,7 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "sha256": "7be4926a664d9e8632fe44331ec0e68b7fafb693f52cb2a187faf90727354b5a",
+      "sha256": "a2321d1f660bedc8a9e329e433279ddfaf924bb48c4d79091862bc2aacc0a85c",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -8902,16 +8938,17 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "4ea4b8af5bdee2293ab7c210a8477f4dbb14108b5604b878f6af747857277c91",
+      "sha256": "2ec2e1be65a8b1e6aedc38680368c9b2d8dc783e1685741de0de8ab5b8e1f7b9",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_ready_label.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 244, 251, 252, 275, 281, 307, 336, 347, 386, 395, 407, 416, 421, 428,
-        438, 440, 450, 453, 456, 460, 528, 543, 552, 556, 582, 591, 642, 648,
-        658
+        3, 255, 262, 263, 286, 292, 318, 347, 358, 397, 406, 418, 427, 432, 439,
+        449, 451, 461, 464, 467, 471, 558, 573, 582, 586, 613, 622, 705, 711,
+        721
       ],
       "review": "mapped-abstraction"
     },
@@ -8995,13 +9032,16 @@
     },
     {
       "path": "workers/slopbot/ready-label.ts",
-      "sha256": "f0a901f542eb1fae8917d9ee422edf67496662b0bb8d5cd149c63c5b3ab7d5bf",
-      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
+      "sha256": "2d420bd06d561da7823c8bef8f4a93ae814e7f0b06c0c05242e7ad962358a2e9",
+      "models": [
+        "formal/models/slopbot/bot_ready_label.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
+      ],
       "candidateLines": [
-        25, 29, 303, 315, 323, 359, 368, 371, 420, 460, 474, 488, 495, 496, 512,
-        530, 535, 547, 549, 594, 612, 644, 647, 655, 666, 675, 677, 679, 690,
-        715, 720, 727, 730, 732, 784, 786, 787, 800, 803, 804, 825, 844, 854,
-        864, 871, 890, 904, 924, 931, 978
+        26, 30, 306, 318, 326, 364, 373, 376, 428, 468, 482, 496, 503, 504, 520,
+        538, 543, 555, 557, 602, 620, 652, 655, 663, 674, 683, 685, 687, 698,
+        723, 728, 735, 738, 740, 792, 794, 795, 808, 811, 812, 833, 852, 862,
+        872, 879, 903, 917, 937, 944, 991
       ],
       "review": "mapped-abstraction"
     },
@@ -9057,14 +9097,17 @@
     },
     {
       "path": "workers/slopbot/review-cap.ts",
-      "sha256": "25aa0729d15981de4002050e1a897d653292328216016b14f891f9abb3ade483",
-      "models": ["formal/models/slopbot/bot_review_monthly_cap.qnt"],
+      "sha256": "9ecb0fa5738544d23f83ce774a95a906cf8835fe5d0b2c8de40e30ebaff0a0c1",
+      "models": [
+        "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
+      ],
       "candidateLines": [22, 36],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "d3fda2a200dce3e516ae11dbc318e16bde1f471c2390d4494f63a658726533f8",
+      "sha256": "d7fc2f837eec76e5fe3b5842913712f6c211e321f54c163d8bf92e31b5e1c2be",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9074,17 +9117,18 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 156, 270, 285, 294, 304, 307, 499, 653, 800, 829, 839, 974, 979, 984,
-        986, 989, 991, 992, 1003, 1006, 1008, 1065, 1066, 1068, 1069, 1085,
-        1091, 1142, 1164, 1165, 1173, 1178, 1279, 1281, 1301, 1320, 1398, 1403,
-        1512, 1627, 1634, 1635, 1670, 1687, 1690, 1691, 1853, 1858, 1920, 1933,
-        1938, 1945, 1946, 1950, 1951, 1959, 1975, 2032, 2179, 2239, 2245, 2256,
-        2282, 2312, 2337, 2345, 2368, 2373, 2449, 2450, 2500, 2535, 2586, 2731,
-        2988, 3063, 3229, 3240, 3248, 3346, 3347, 3387, 3437, 3451, 3467
+        3, 167, 282, 297, 306, 316, 319, 511, 665, 812, 841, 851, 986, 991, 996,
+        998, 1001, 1003, 1004, 1015, 1018, 1020, 1077, 1078, 1080, 1081, 1097,
+        1103, 1154, 1176, 1177, 1185, 1190, 1291, 1293, 1313, 1332, 1415, 1420,
+        1573, 1688, 1695, 1696, 1731, 1748, 1751, 1752, 1914, 1919, 1981, 1994,
+        1999, 2006, 2007, 2011, 2012, 2020, 2036, 2093, 2240, 2300, 2306, 2317,
+        2343, 2373, 2398, 2406, 2429, 2434, 2510, 2511, 2561, 2596, 2647, 2792,
+        3049, 3124, 3290, 3301, 3309, 3407, 3408, 3448, 3498, 3512, 3528
       ],
       "review": "mapped-abstraction"
     },
@@ -9113,6 +9157,21 @@
         "formal/models/slopbot/bot_notice_delivery.qnt"
       ],
       "candidateLines": [11, 27, 31, 45, 65],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/submission-fee.ts",
+      "sha256": "156054fe1e6a47a705359497c0525d34567f32c569e2e2898d813163dcf129eb",
+      "models": [
+        "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
+      ],
+      "candidateLines": [
+        303, 323, 334, 343, 345, 347, 356, 412, 433, 438, 445, 448, 450, 484,
+        485, 487, 488, 499, 505, 530, 539, 540, 568, 657, 671, 704, 712, 720,
+        722, 724, 725, 726, 747, 749, 780, 781, 842, 868, 908, 912, 918, 942,
+        955, 971, 992, 1015, 1025, 1048, 1052, 1096, 1097, 1099, 1124
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -9641,7 +9700,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "6011bcf5967b63ccbdf938acefd49151a1c7866a4ca79091f3d3d9cb8eb33f46",
+      "sha256": "5104fec5023f0fcbb4a226e4a9a0c58bec202a8fd246f80397d9d10cad34eba8",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -10937,6 +10996,27 @@
         "personRequestHasNoClockTest",
         "routineAppealIsOnceTest",
         "routineAppealReturnsToOwnerTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_submission_fee_setting.qnt",
+      "sha256": "60a3af723367198e30088b789546543e714f9b4b4430259b3000a9e6f3fdb7d9",
+      "sources": [
+        "src/ProjectProposalPage.tsx",
+        "src/lib/project-schema.mjs",
+        "src/lib/submission-fee-setting.mjs",
+        "src/lib/submission-fee.mjs",
+        "workers/slopbot/submission-fee.ts"
+      ],
+      "scenarios": [
+        "amountChangeKeepsTheStartTest",
+        "amountOutsideTheRangeIsRefusedTest",
+        "laterChangeDoesNotMoveAnAskedAmountTest",
+        "newContributionProjectStartsOnTest",
+        "offThenOnMovesTheStartTest",
+        "openedBeforeTheSettingIsNeverAskedTest",
+        "ownerMayUntickTheDefaultTest",
+        "securityOnlyListingStartsWithoutItTest"
       ]
     },
     {
@@ -16334,7 +16414,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_ready_label.qnt",
-      "sha256": "8f9b1be1e021e550685251b7f2e82caa3ec7e6104dd6bcbcebfd240f0255120e",
+      "sha256": "77c12fb1b424ce1d84dfbb8e34c0fed5e5203c2b2e920831dffa9ec7e9bd1b4e",
       "sources": [
         "migrations/0130_slopbot_ready_labels.sql",
         "src/lib/slopbot-ready.mjs",
@@ -16347,8 +16427,10 @@
         "mergedPullRequestKeepsLabelTest",
         "offByDefaultNeverLabelsTest",
         "ownerTurningOffRemovesLabelTest",
+        "paidFeeIsLabelledTest",
         "pushRemovesLabelAtNextCheckTest",
-        "readOnlyApprovalIsIgnoredTest"
+        "readOnlyApprovalIsIgnoredTest",
+        "unpaidFeeIsNeverLabelledTest"
       ]
     },
     {
@@ -16436,7 +16518,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_review_monthly_cap.qnt",
-      "sha256": "b7cbd55e0bb2bde55f48ebe038849f473d8800a8a7b4729fef47551ba751f7be",
+      "sha256": "41aab9ca485eed59bf46a6ff9fcfbd116e4ef323463527b1889529b99d0a6548",
       "sources": [
         "migrations/0129_slopbot_review_month_starts.sql",
         "workers/slopbot/review-cap.ts",
@@ -16461,6 +16543,42 @@
         "expiredGroupCanBeReclaimedTest",
         "overlapBlocksSecondOwnerTest",
         "separateSourcesMayProceedTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/bot_submission_fee.qnt",
+      "sha256": "17b4680b2f1fe6ceacb9a98edd8a861d2ee99b3bfcf9ff7a580455892242e7c0",
+      "sources": [
+        "migrations/0141_submission_fee_items.sql",
+        "migrations/0142_slopbot_fee_gates.sql",
+        "src/lib/submission-fee-setting.mjs",
+        "src/lib/submission-fee.mjs",
+        "workers/slopbot/index.ts",
+        "workers/slopbot/ready-label.ts",
+        "workers/slopbot/review-cap.ts",
+        "workers/slopbot/review.ts",
+        "workers/slopbot/submission-fee.ts"
+      ],
+      "scenarios": [
+        "authorGainingAccessReleasesTest",
+        "closedIsKeptAfterTheWaitTest",
+        "crashDoesNotDuplicateTheCommentTest",
+        "dryRunRecordsAndReviewsTest",
+        "exemptAuthorIsNeverAskedTest",
+        "firstSightAsksOnceTest",
+        "fullMonthIsNotAskedTest",
+        "mergedIsDueBackTest",
+        "offDoesNothingTest",
+        "openedBeforeTheSettingIsReviewedTest",
+        "paidRunsHeldReviewTest",
+        "reopenedIsNotKeptTest",
+        "settingOffIsReviewedTest",
+        "settingTurnedOffReleasesTest",
+        "undecidedBeforeTheAgeWaitsTest",
+        "undecidedIsDueBackTest",
+        "unpaidIsNeverReadyTest",
+        "unpaidMergeHasNothingDueTest",
+        "withdrawnPaymentAsksAgainTest"
       ]
     },
     {
