@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "2b316922cc06b694dc85a74d0a505414eb72d0009a3ad931ce258278a65c83de",
+      "sha256": "fe400c0e3ee39afb35fd77d5e25a0ab57ddcad7d4e0b8eaa739597b352673198",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,10 +24,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        40, 50, 164, 294, 356, 357, 414, 467, 524, 604, 609, 724, 730, 798, 801,
-        827, 828, 849, 861, 893, 931, 1161, 1189, 1281, 1294, 1385, 1493, 1495,
-        1496, 1700, 1783, 1936, 1938, 1968, 2077, 2099, 2170, 2181, 2206, 2277,
-        2290, 2303, 2312, 2313, 2314, 2331
+        40, 50, 164, 294, 360, 361, 422, 475, 532, 612, 617, 732, 738, 806, 809,
+        835, 836, 857, 869, 901, 939, 1169, 1197, 1289, 1302, 1393, 1501, 1503,
+        1504, 1708, 1791, 1944, 1946, 1976, 2085, 2107, 2178, 2189, 2214, 2285,
+        2298, 2311, 2320, 2321, 2322, 2339
       ],
       "review": "mapped-abstraction"
     },
@@ -72,7 +72,7 @@
     },
     {
       "path": ".github/workflows/monthly-rewards.yml",
-      "sha256": "e4a1e2f866c81a10a0d77af0eb23fdfbc78d82d75510de4d8931fb65cb8f5555",
+      "sha256": "223e02c2ffebfeded0f378debb4e319def371a7ff242413dfccb787e8af867e0",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [52, 58, 61, 153],
       "review": "mapped-abstraction"
@@ -4200,6 +4200,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/github-app-token-refresh.ts",
+      "sha256": "8267b58d11a10d0b02fbb9a92b704cb24eca115a7580982477584a353d3076a0",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [34, 62, 88, 90, 111, 125, 127],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/github-discussion-cache.ts",
       "sha256": "cf3e5b0229723a69bc831ab6d4205f5b5cb8e1faea600e0db2b2835f3eb329a5",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
@@ -4226,7 +4233,7 @@
     },
     {
       "path": "scripts/github-token.ts",
-      "sha256": "96cd3b41a85caf5442d3fa7e84a52a7af67048307bdc30e53bfebc6145c8f85f",
+      "sha256": "65ba4d46209d50bf12335991dfac3153a72656c648646cc41399bb1f92ae0279",
       "models": ["formal/models/points/ingestion_retry.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4523,14 +4530,14 @@
     },
     {
       "path": "scripts/prepare-monthly-rewards.ts",
-      "sha256": "0ea9c79e84f46e934e939d94c098d8f12c0cdffaaa6ded5a76bd01483e026b2a",
+      "sha256": "26feaebef23a39e59a654d35b32b337597a9487290967b7f0860e9de805f9700",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [
-        15, 108, 109, 110, 204, 215, 277, 292, 311, 315, 357, 362
+        15, 109, 110, 111, 205, 216, 278, 293, 312, 316, 360, 365
       ],
       "review": "mapped-abstraction"
     },
@@ -15299,11 +15306,12 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "69fd6cb5eeb668c65c22ee4b168ef449df48269edd98f386adef7dfdac530c47",
+      "sha256": "d84a7cdda3362467ee1ee1daf8bf9a95451e02b345f4fcce8a486e278ca1730e",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/check-retained-release-data.ts",
         "scripts/dist-manifest.mjs",
+        "scripts/github-app-token-refresh.ts",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
         "scripts/qualify-solana-rpc-pair.ts",
