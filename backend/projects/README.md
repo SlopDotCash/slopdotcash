@@ -97,7 +97,7 @@ serves these public artifacts from the current D1 revision:
 
 | Path | Content |
 |---|---|
-| `/.well-known/slop/projects.json` | Repository-to-project routing for every active, cleared project that publishes skills, except an active monthly pool that is not funded this month (see below) |
+| `/.well-known/slop/projects.json` | Repository-to-project routing for active, cleared projects that publish skills and have an eligible reward |
 | `/projects/:id/terms.json` | Steward, authority and terms of the current revision |
 | `/projects/:id/skill.md` (alias `SKILL.md`) | Generated contributor skill |
 | `/projects/:id/review-skill.md` (alias `review/SKILL.md`) | Generated reviewer skill |
@@ -105,14 +105,11 @@ serves these public artifacts from the current D1 revision:
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
 
-Discovery reads the cached vault rows behind `GET /api/v1/pool-funding`
-(`readPoolFundingIndex` in `pool-funding.ts`) and applies `listedThisMonth`
-from `src/lib/pool-funding.ts`, the same rule the home page and /sponsors use
-(PRD section 7, operator decision of 16 November 2026). An open security
-program or a non-monthly reward stays listed. When the funding read fails,
-discovery lists every cleared project as before; the response is `no-store`,
-so the next request reads again. The per-project artifacts above keep serving
-by direct link.
+Discovery applies `listedThisMonth` from `src/lib/pool-funding.ts`, the same
+registry reward rule the home page and /sponsors use (PRD section 9). The
+current UTC month must have a positive configured amount, an open security
+program, or an external prize share. The response is `no-store` and direct
+links to per-project artifacts follow their existing access rules.
 
 Discovery also reads the stored open pull request counts
 (`readIntakeCounts` in `merge-activity.ts`) and leaves out an active project

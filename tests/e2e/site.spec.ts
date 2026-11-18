@@ -644,6 +644,11 @@ test("community pagination keeps every project reachable and bounds discovery de
       slug: id,
       name: `Community fixture ${number}`,
       listingTier: "community",
+      reward: {
+        ...communityProject.reward,
+        monthlyCapMinor: "10000000",
+        monthlyCapDisplay: "$10",
+      },
       description: number === 11 ? description : communityProject.description,
       authority: {
         ...communityProject.authority,
@@ -686,7 +691,7 @@ test("community pagination keeps every project reachable and bounds discovery de
         },
       }),
   );
-  // These fixtures have no vaults; an unreadable funding read lists them all.
+  // The configured pools remain visible when their funding read fails.
   await failPoolFundingRead(page, diagnostics);
   await page.goto("/", { waitUntil: "networkidle" });
   const projects = page.locator("#projects");

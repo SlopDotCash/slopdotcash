@@ -1,15 +1,10 @@
 import { expect, test } from "bun:test";
-import type { PoolFundingIndex } from "../../src/lib/pool-funding";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
-import {
-  handleProjectArtifactRequest,
-  type SkillPublicationDependencies,
-} from "./skill-publication";
+import { handleProjectArtifactRequest } from "./skill-publication";
 
 const NOW = new Date("2026-11-16T12:00:00Z");
-const VAULT = "0x4f891b8c3d3fab9150fcdc94176b96863cd02899";
 
 function record(
   id: string,
@@ -32,38 +27,26 @@ function record(
   };
 }
 
-const pool = record("pool-project", {
-  escrow: { deployments: [{ network: "base-mainnet", vault: VAULT }] },
+const pool = record("pool-project");
+const overridden = record("overridden-project", {
+  reward: {
+    ...pool.manifest.reward,
+    cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
+  },
 });
 const security = record("security-project", {
   securityBounty: { status: "open" },
+  reward: { ...pool.manifest.reward, monthlyCapMinor: "0" },
 });
+const paused = record("paused-project", { status: "paused" });
+const retired = record("retired-project", { listingTier: "retired" });
 
-function funded(freeBalance: string): PoolFundingIndex {
-  return new Map([
-    [
-      "pool-project",
-      [
-        {
-          network: "base-mainnet",
-          vault: VAULT,
-          freeBalance,
-          blockTime: "2026-11-16T11:00:00Z",
-          observedAt: "2026-11-16T11:05:00Z",
-        },
-      ],
-    ],
-  ]);
-}
-
-async function discovered(
-  poolFunding: SkillPublicationDependencies["poolFunding"],
-): Promise<string[]> {
+async function discovered(now: Date): Promise<string[]> {
   const response = await handleProjectArtifactRequest(
     new Request("https://slop.cash/.well-known/slop/projects.json"),
     {
       getProject: async () => null,
-      listProjects: async () => [pool, security],
+      listProjects: async () => [pool, overridden, security, paused, retired],
       listEnforcements: async () => [],
       loadTemplate: async () => ({
         index: { templateSha256: "a".repeat(64) } as never,
@@ -74,8 +57,7 @@ async function discovered(
         assessment: null,
         grandfathered: true,
       }),
-      poolFunding,
-      now: () => NOW,
+      now: () => now,
     },
   );
   expect(response?.status).toBe(200);
@@ -86,29 +68,11 @@ async function discovered(
   return body.projects.map((entry) => entry.project_id);
 }
 
-test("discovery leaves out a monthly pool that is not funded this month", async () => {
-  // November needs the $1,000 cap plus nothing owed for October.
-  expect(await discovered(async () => funded("999999999"))).toEqual([
-    "security-project",
-  ]);
-  expect(await discovered(async () => new Map())).toEqual(["security-project"]);
-});
-
-test("discovery lists the pool once its vault funds this month", async () => {
-  expect(await discovered(async () => funded("1000000000"))).toEqual([
+test("discovery lists active pools with a positive current UTC amount and open bounties", async () => {
+  expect(await discovered(NOW)).toEqual(["pool-project", "security-project"]);
+  expect(await discovered(new Date("2026-12-01T00:00:00Z"))).toEqual([
     "pool-project",
-    "security-project",
-  ]);
-});
-
-test("discovery lists every cleared project when funding cannot be read", async () => {
-  expect(
-    await discovered(async () => {
-      throw new Error("D1 unavailable");
-    }),
-  ).toEqual(["pool-project", "security-project"]);
-  expect(await discovered(async () => null)).toEqual([
-    "pool-project",
+    "overridden-project",
     "security-project",
   ]);
 });

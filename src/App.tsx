@@ -54,11 +54,10 @@ import {
 } from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
-  homePoolReward,
   listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
   monthName,
-  NOT_LISTED_NOTICE,
   poolFundingStatus,
   publicPoolReward,
 } from "./lib/pool-funding";
@@ -658,7 +657,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
 }
 
 type HomeProject = ProjectDefinition &
-  Pick<ReturnType<typeof homePoolReward>, "fundingTag" | "warning">;
+  Pick<ReturnType<typeof listingPoolReward>, "fundingTag" | "warning">;
 
 const fundingTagTone = {
   Vaulted: "success",
@@ -910,10 +909,6 @@ function HomePage() {
     window.history.pushState(window.history.state, "", destination);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
-  // An active monthly pool not funded this month is left off the homepage,
-  // as on /sponsors (operator decision, 18 November 2026). The list waits
-  // for the funding read so unfunded cards never flash in; a failed read
-  // lists every project as before.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -924,7 +919,7 @@ function HomePage() {
   // A project over its owner's intake cap has paused new contributors and
   // is left out. The counts are read only when a project has a cap; while
   // they load, and when they cannot be read, every project is listed.
-  const open = homeProjects();
+  const open = homeProjects(now);
   const [merge] = usePublicResource(
     open.some((project) => intakeCap(project) !== null),
     loadMergeActivity,
@@ -937,7 +932,6 @@ function HomePage() {
       .filter(
         (project) =>
           !fundingPending &&
-          listedThisMonth(project, fundingIndex, now) &&
           !intakePaused(project, mergeIndex?.get(project.id), now),
       )
       .map((project) => {
@@ -945,7 +939,7 @@ function HomePage() {
           project: shown,
           fundingTag,
           warning,
-        } = homePoolReward(project, fundingIndex, now);
+        } = listingPoolReward(project, fundingIndex, now);
         return { ...shown, fundingTag, warning };
       }),
   );
@@ -1226,17 +1220,7 @@ function InstallPanel({ audience }: { audience: HomeAudience }) {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
-  // Discovery leaves out an unfunded monthly pool this month; that is not a
-  // clearance problem, so the owner setup link does not apply.
-  const [funding] = usePublicResource(
-    project.reward.kind === "monthly-pool",
-    loadPoolFunding,
-    "Pool funding unavailable",
-  );
-  const unlisted =
-    funding.status === "ready" &&
-    !listedThisMonth(project, funding.index, new Date());
-  // Neither is a pause at the owner's intake cap.
+  const unlisted = !listedThisMonth(project, new Date());
   const [merge] = usePublicResource(
     project.status === "active" && intakeCap(project) !== null,
     loadMergeActivity,
@@ -1531,11 +1515,6 @@ function ProjectRewardSummary({
           <p className="project-reward-status">
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
-        ) : null}
-        {!promise &&
-        index !== null &&
-        !listedThisMonth(registered, index, now) ? (
-          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
         ) : null}
         {projectRewardSummaries(project, promise !== null).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
