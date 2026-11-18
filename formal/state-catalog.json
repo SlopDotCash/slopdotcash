@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1d1520c9560862d0690d82ef0277e4e7539402db29efd2253c092fe4b65ac224",
+  "inventorySha256": "d68ffe943ceb721fbca3685101865a82a22e9ce4424a01ca1d30ce55a29fb6c9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -148,7 +148,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2655,
+      "line": 2673,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -185,7 +185,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2859,
+      "line": 2877,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2705,7 +2705,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 494,
+      "line": 498,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2733,7 +2733,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1242,
+      "line": 1256,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2964,7 +2964,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1062,
+      "line": 1066,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2989,7 +2989,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1544,
+      "line": 1548,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -3014,7 +3014,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2496,
+      "line": 2523,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -3039,7 +3039,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2501,
+      "line": 2528,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3064,7 +3064,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2508,
+      "line": 2535,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3632,6 +3632,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/payments/maintainer-share.ts",
+      "line": 30,
+      "name": "outcome",
+      "kind": "string-union",
+      "values": ["closed", "merged"],
+      "models": ["formal/models/rewards/maintainer_share.qnt"],
+      "lexicallyUnmentionedValues": ["merged"],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/points-implementation-corrections.ts",
       "line": 345,
       "name": "status",
@@ -3867,7 +3877,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 100,
+      "line": 101,
       "name": "reason",
       "kind": "string-union",
       "values": [
@@ -3887,7 +3897,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 133,
+      "line": 134,
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],

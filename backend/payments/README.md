@@ -362,6 +362,20 @@ Points history. Replaying an identical batch remains valid.
    gets no proposal; the other projects still get theirs. If the project is
    active again before the last run, the next run proposes the month. No cycle
    file, public decision or review PR is created.
+   A project whose revision sets a maintainer share for the month (PRD
+   section 6, operator decision of 18 November 2026) needs one more input:
+   the script reads from public GitHub data who merged or closed each
+   outside pull request of the project's counted repositories in the month
+   (`scripts/maintainer-decisions.ts`). The share leaves the monthly amount
+   before the points split and is divided by those decisions
+   (`src/lib/payments/maintainer-share.ts`), so the rows still total at most
+   the monthly amount. An account with a points share and a part of the
+   maintainer share has one row. `monthly_maintainer_shares` keeps the exact
+   decision record and its digest and `monthly_maintainer_share_rows` each
+   account's part; both are written once, beside the proposal. If the read
+   fails for a project, that project's month is not proposed, the run still
+   stores the other projects and then fails, and a later run of the same
+   month proposes it.
 2. **Owner changes and public cuts.** The owner, the project steward or a
    current admin of the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
