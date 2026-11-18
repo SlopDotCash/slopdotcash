@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "d678509d0e202648f7befa3b40113f6eaec236376386b544e169b403ab2d5c03",
+      "sha256": "2b316922cc06b694dc85a74d0a505414eb72d0009a3ad931ce258278a65c83de",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,10 +24,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        40, 50, 164, 294, 354, 355, 412, 465, 522, 602, 607, 722, 728, 796, 799,
-        825, 826, 847, 859, 891, 929, 1159, 1187, 1279, 1292, 1383, 1491, 1493,
-        1494, 1698, 1781, 1934, 1936, 1966, 2075, 2097, 2168, 2179, 2204, 2275,
-        2288, 2301, 2310, 2311, 2312, 2329
+        40, 50, 164, 294, 356, 357, 414, 467, 524, 604, 609, 724, 730, 798, 801,
+        827, 828, 849, 861, 893, 931, 1161, 1189, 1281, 1294, 1385, 1493, 1495,
+        1496, 1700, 1783, 1936, 1938, 1968, 2077, 2099, 2170, 2181, 2206, 2277,
+        2290, 2303, 2312, 2313, 2314, 2331
       ],
       "review": "mapped-abstraction"
     },
@@ -72,7 +72,7 @@
     },
     {
       "path": ".github/workflows/monthly-rewards.yml",
-      "sha256": "68e31f20095dde448200a9c149ad0958a523eda6bd3308c4bc287cd8eba86ea9",
+      "sha256": "e4a1e2f866c81a10a0d77af0eb23fdfbc78d82d75510de4d8931fb65cb8f5555",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [52, 58, 61, 153],
       "review": "mapped-abstraction"
