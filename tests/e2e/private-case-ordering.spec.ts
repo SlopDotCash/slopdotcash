@@ -211,9 +211,7 @@ async function privateCase(
       await detail
         .getByRole("button", { name: "Run the analysis again", exact: true })
         .click();
-      await expect(detail.getByRole("alert")).toContainText(
-        "Showing the last loaded case",
-      );
+      await expect(detail.getByRole("alert")).toContainText("Stale");
       await (await refreshed).finished();
     },
     async change(value: string) {
@@ -293,9 +291,7 @@ test("an equal private case action joins its current fresh read", async ({
     const readCount = fixture.reads;
     await releaseAction(page, oldAction, 1);
     await expect(
-      fixture.detail
-        .getByRole("status")
-        .filter({ hasText: "Remediation: saved." }),
+      fixture.detail.getByRole("status").filter({ hasText: /^Saved$/u }),
     ).toBeVisible();
     fixture.project("Current live projection at revision 2");
     fresh.release();

@@ -199,6 +199,28 @@ export function githubIngestionReadTransport(
       const retryable =
         url.origin === "https://api.github.com" && method === "GET";
       if (!retryable) return transport(input, init);
+      const repositoryPath =
+        /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u.exec(
+          url.pathname,
+        )?.[1] ?? "";
+      const pullFiles = /^\/pulls\/[1-9]\d*\/files$/u.test(repositoryPath);
+      const commitFilePage =
+        /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
+        /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
+      const commitFileGatewayRetry =
+        commitFilePage && !url.username && !url.password && !url.hash;
+      const commitPulls =
+        !url.username &&
+        !url.password &&
+        !url.hash &&
+        /^\/commits\/[a-f0-9]{40}\/pulls$/u.test(repositoryPath) &&
+        /^\?per_page=100(?:&page=[1-9]\d*)?$/u.test(url.search);
+      const readRetry =
+        pullFiles || commitPulls
+          ? { status: 500, limit: 2 }
+          : commitFilePage
+            ? { status: 422, limit: 1 }
+            : null;
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
@@ -236,6 +258,8 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
+      let readRetries = 0;
+      let gatewayRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
         checkDeadline();
@@ -269,6 +293,26 @@ export function githubIngestionReadTransport(
           // A missing or different validator does not vouch for these bytes.
           // Retry once without a validator and let the caller check the reply.
           retainedDiscussion = null;
+          continue;
+        }
+        // GitHub can fail to serve a known evidence page temporarily. Retry that
+        // exact page without resetting the quota budget or changing pagination.
+        const retryGateway =
+          commitFileGatewayRetry &&
+          response.status === 502 &&
+          gatewayRetries < 2;
+        const retryRead =
+          readRetry &&
+          response.status === readRetry.status &&
+          readRetries < readRetry.limit;
+        if (retryGateway || retryRead) {
+          const retry = retryGateway ? ++gatewayRetries : ++readRetries;
+          const delay = retry * 1_000;
+          await response.body?.cancel();
+          checkDeadline(delay);
+          await (callerSignal
+            ? abortable(wait(delay), callerSignal)
+            : wait(delay));
           continue;
         }
         if (

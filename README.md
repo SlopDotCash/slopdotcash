@@ -60,6 +60,10 @@ flowchart LR
 
 ## Add your open-source project
 
+Choose **Maintainer** on [slop.cash](https://slop.cash/?audience=maintainer), or
+give your agent the [maintainer skill](https://slop.cash/maintain/SKILL.md), to
+add, resume or maintain a project through the existing GitHub and Slop workflows.
+
 Sign in with GitHub and create your project at
 [`slop.cash/projects/new`](https://slop.cash/projects/new). The form checks your
 GitHub authority, creates a paused project, and queues its first security scan.
@@ -382,6 +386,19 @@ files never select the source.
 and CI. The former checks source records; the latter checks types, lint and
 the local integration suites. Live chain verification and browser checks remain
 separate.
+
+`bun run audit:dependencies` runs the full Bun registry audit after a frozen
+install and prints its complete report. The locked Picomatch 2.3.2 and 4.0.5
+copies carry local backports for [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+The backports use Picomatch's literal fallback for repeated extglobs unless
+the parser can use its existing safe reduction or the alternatives are
+prefix-free ASCII literals. This also applies with `maxExtglobRecursion: false`.
+Bun reports the original npm versions. The release gate accepts that exact
+finding only if the lock identities, patch files, installed package bytes and
+consumer resolutions match the reviewed backports. Other findings, unreadable
+reports and mismatched bytes fail the gate. Remove the matching patch and its
+local audit proof in the same reviewed update that removes the affected copy
+or installs a registry version listed as fixed.
 
 Edit shared contributor and reviewer rules in the canonical generic
 project-skill templates. The contributor template's `scripts/` directory is the

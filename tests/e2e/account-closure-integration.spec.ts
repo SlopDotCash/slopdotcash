@@ -234,7 +234,7 @@ for (const withObligations of [false, true])
         page.getByRole("region", { name: "Wallets", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("region", { name: "Email preferences", exact: true }),
+        page.getByRole("region", { name: "Email", exact: true }),
       ).toBeVisible();
       await expect(page.getByText(/Telegram/i)).toHaveCount(0);
       await expect(page.locator('a[href^="https://t.me/"]')).toHaveCount(0);
@@ -315,21 +315,30 @@ for (const withObligations of [false, true])
         .getByRole("button", { name: "Continue with GitHub", exact: true })
         .click();
       const signInWindow = await signInPopup;
-      await expect(profile).toContainText("You closed this account.");
+      // The closed state is told by the reopen action replacing sign-in.
+      await expect(
+        profile.getByRole("button", { name: "Reopen account", exact: true }),
+      ).toBeVisible();
+      await expect(
+        profile.getByRole("button", {
+          name: "Continue with GitHub",
+          exact: true,
+        }),
+      ).toHaveCount(0);
       await expect.poll(() => signInWindow.isClosed()).toBe(true);
       expect(page.isClosed()).toBe(false);
       expect((await readState()).member.closed_at).not.toBeNull();
       const reopenPopup = page.waitForEvent("popup");
       await profile
         .getByRole("button", {
-          name: "Reopen account with GitHub",
+          name: "Reopen account",
           exact: true,
         })
         .click();
       const reopenWindow = await reopenPopup;
       await expect(profile).toHaveCount(0);
       await expect(
-        profile.getByRole("button", { name: /with GitHub$/u }),
+        profile.getByRole("button", { name: /with GitHub$|^Reopen account$/u }),
       ).toHaveCount(0);
       await expect(
         page.getByRole("region", { name: "Connections", exact: true }),
@@ -338,7 +347,7 @@ for (const withObligations of [false, true])
         page.getByRole("region", { name: "Wallets", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("region", { name: "Email preferences", exact: true }),
+        page.getByRole("region", { name: "Email", exact: true }),
       ).toBeVisible();
       await expect.poll(() => reopenWindow.isClosed()).toBe(true);
       expect(page.isClosed()).toBe(false);

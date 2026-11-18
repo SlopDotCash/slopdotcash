@@ -98,14 +98,9 @@ test("Verify found payment submits only the found transfer and shows the paid re
   const payment = page.getByRole("region", { name: "Private payment" });
   const recovery = payment.getByRole("group", { name: "Payment recovery" });
   await expect(
-    recovery.getByText(
-      "An existing payment was found. Verify it before continuing.",
-      { exact: true },
-    ),
+    recovery.getByRole("status").filter({ hasText: "Verify found payment" }),
   ).toBeVisible();
-  await recovery
-    .getByRole("button", { name: "Verify found payment", exact: true })
-    .click();
+  await recovery.getByRole("button", { name: "Verify", exact: true }).click();
   await expect(recovery).toHaveCount(0);
   expect(posted).toHaveLength(1);
   const [request] = posted;
@@ -124,9 +119,11 @@ test("Verify found payment submits only the found transfer and shows the paid re
     "idempotencyKey",
     "transactionIds",
   ]);
-  await expect(payment.getByText("Finalized transaction")).toBeVisible();
   await expect(
-    payment.getByRole("link", { name: "Review your payout wallet" }),
+    payment.getByRole("img", { name: "Finalized", exact: true }),
+  ).toBeVisible();
+  await expect(
+    payment.getByRole("link", { name: "Wallet", exact: true }),
   ).toHaveCount(0);
   await expectAccessible(page);
 });

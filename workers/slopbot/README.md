@@ -10,6 +10,31 @@ Deep value, quality and recovery detail lives in the modules named below and in
 [`QUALITY.md`](QUALITY.md). Do not treat older narrative in git history as
 current behavior.
 
+The production config declares `limits.cpu_ms = 300000`, a CPU ceiling per
+invocation on Workers Paid with Standard usage. Cloudflare enforces it on its
+network. It applies to HTTP and queue work, including historical validation;
+the cron that runs every five minutes retains its platform 30-second CPU cap.
+Network waits and wall-time caps are separate. After a protected release,
+verify the 100% active version, `cpu_ms = 300000`, Standard usage and a supported
+plan before retrying an import. This budget does not guarantee completion.
+
+The protected main `fee-worker-bindings.yml` workflow accepts an optional exact
+`slopbot_source` SHA for a separate read-only metadata job. Its
+selection skips the fee job and its publication concurrency group. Combining
+it with any fee probe, rotation or prior-proof input is refused in a
+credential-free step before the metadata read. With `slopbot_source` empty,
+the existing fee workflow keeps its original input behavior. The
+`slopbot-runtime.json` artifact retains only the matching source, active version,
+CPU limit, usage model and deployment stability. Missing, denied, malformed or
+changing metadata stays unavailable. The receipt does not verify Paid plan
+entitlement, execution success or the cause of an earlier import failure.
+
+Optional publication-local text sharing retains at most the existing 32 MiB
+cache budget, measured conservatively as two bytes per UTF-16 code unit.
+Overflow is returned intact without retaining it in that pool. This does not
+limit evidence size or admission. Recovered added-file patches enter sharing
+only after their line counts match the accepted file metadata.
+
 ## Flow
 
 1. **Webhook.** `POST /github/webhook` verifies `X-Hub-Signature-256`, records
@@ -179,6 +204,18 @@ an item already admitted this month (new pushes, a moved base, retries) runs
 and adds nothing. A new item over the cap makes no model call, writes nothing
 to GitHub and is recorded as skipped with the reason `monthly-review-cap`.
 
+A project owner may set an intake cap (operator decision, 17 November 2026;
+PRD section 5, `src/lib/intake-cap.mjs`): pause new contributors when this
+many outside pull requests are open. While the stored open count of one of the
+project's repositories (`repository_merge_activity.open_outside`, read by the
+scheduled merge activity job) is at or above the number, `intake-cap.ts`
+refuses the review of a pull request from an outside contributor that Slopbot
+has not completed a review of before. It makes no model call, writes nothing
+to GitHub, uses no monthly review and is recorded as skipped with the reason
+`intake-cap`. A pull request reviewed once keeps its reviews, a maintainer's
+own pull request is not refused, and a count that was never read or is older
+than three days refuses nothing. Value assessment and scoring are unchanged.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
 provider window opens. A Surplus spending denial skips the other Surplus model
 and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
@@ -228,6 +265,41 @@ index/count, allowlisted error name/HTTP status and bounded message SHA-256.
 It retains no message, body, stack, path or source identity and rethrows the
 original failure. The protected intake diagnostic reprojects only that exact
 structured shape; an observation is not a publication receipt.
+
+To inspect one authorized upload, generate a fresh lowercase 64-hex nonce
+locally and put it in the request's `X-Slop-Intake-Correlation` header. Start
+the protected diagnostic workflow with the same `correlation` before the
+upload. This selects only the live production Pages tail. Pages records
+authorized admission, bounded upload EOF, successful parse, the first
+queued heartbeat for NDJSON, RPC dispatch, and application status. Each event
+contains only its nonce, fixed phase, elapsed milliseconds, and the applicable
+body byte count or terminal status. The tail filters the nonce before its
+retained event cap and again when projecting the fixed event shape. A queued
+heartbeat or terminal status does not establish delivery to the client.
+
+For an earlier failure, the trusted-main `value-intake-diagnostic.yml` workflow
+accepts paired `history_from` and `history_to` UTC bounds. They must cover at
+most 15 minutes within the last 24 hours. The existing short live-tail path is
+available when both are absent. Use the live correlation mode separately.
+Retained inspection uses one dry Cloudflare
+query for this Worker, at most 200 events and 1 MiB, with no automatic retry or
+pagination. It checks the current deployment before and after reading. Only
+the existing seven-field failures and their event times are retained; raw
+messages, bodies, stacks, request IDs and query-run IDs are discarded. Missing,
+unprojectable, truncated or unavailable evidence does not establish a cause or
+prove that an import succeeded. Deployment stability now does not establish
+the version that produced an earlier observation.
+The provider's `$workers.truncated` flag and both reported ABR levels are also
+checked: a truncated/invalid event or sampled/invalid query cannot report a
+complete read. Absent ABR metadata follows the provider's documented default
+of 1. A bounded read still does not establish unsampled source coverage or the
+absence of failures.
+
+The Cloudflare query API requires the `Workers Observability Write` permission
+even for its dry read. Use only the existing protected credential. A refusal
+is reported with fixed stage and scalar status/code; this workflow does not
+grant permissions or create credentials. Keep observations and any subsequent
+publication attempt separate, and reconcile public history before a retry.
 
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and

@@ -114,6 +114,13 @@ discovery lists every cleared project as before; the response is `no-store`,
 so the next request reads again. The per-project artifacts above keep serving
 by direct link.
 
+Discovery also reads the stored open pull request counts
+(`readIntakeCounts` in `merge-activity.ts`) and leaves out an active project
+that is over its owner's intake cap (`intakePaused` in
+`src/lib/intake-cap.mjs`; PRD section 5, operator decision of 17 November
+2026). A count that cannot be read, was never read or is older than three
+days pauses nothing.
+
 ## Self-service setup
 
 A project starts without routine admin approval after complete setup,
@@ -522,6 +529,17 @@ the vault while it is confirmed; no revision, deployment or snapshot is
 written, and a replaced block answers plain `pending` again
 (`PROVISIONAL_VAULT_ANSWER` in `vault-setup.ts` turns this answer off). An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
+A register request answered `pending` is kept in `saved_vault_creations` with
+the account that made it (operator decision, 17 November 2026). Behind later
+project API requests, at most once a minute per isolate, the server repeats
+each due request through this same route as that account, so current access,
+restrictions, policy and finalized evidence are checked again; the appended
+revision's reason says Slop finished the saved registration. Checks run every
+2 minutes for 15 checks, then every 10 minutes. A request ends when the vault
+registers, when the creation is refused (`vault_creation_failed`,
+`vault_creation_invalid`, `vault_already_registered`), or after two days; any
+other refusal is recorded in `last_code` and asked again. At most three
+requests wait per project, and saving never changes the owner's answer.
 An owner with one current confirmed wallet on the selected network can review
 an existing vault and recover registration without a connected browser wallet.
 This path offers no creation transaction when no existing vault is found.

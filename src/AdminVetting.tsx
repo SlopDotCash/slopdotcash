@@ -15,7 +15,11 @@ import {
   CircleAlert,
   CircleCheck,
   ExternalLink,
+  Eye,
+  Flag,
   History,
+  LoaderCircle,
+  Recycle,
   RotateCcw,
   ScanSearch,
   ShieldCheck,
@@ -117,6 +121,24 @@ function clearanceLabel(clearance: Clearance): string {
     : clearance.state === "cleared" && clearance.basis === "admission"
       ? "Admitted"
       : LABELS[clearance.state];
+}
+
+function ClearanceBadge({ clearance }: { clearance: Clearance }) {
+  return (
+    <StatusBadge
+      className="admin-badge"
+      icon={clearance.state === "cleared" ? <ShieldCheck /> : <CircleAlert />}
+      tone={
+        clearance.state === "cleared"
+          ? "success"
+          : clearance.state === "banned" || clearance.state === "quarantined"
+            ? "danger"
+            : "warning"
+      }
+    >
+      {clearanceLabel(clearance)}
+    </StatusBadge>
+  );
 }
 
 const scanLabel = (value: string) => {
@@ -257,8 +279,9 @@ function AdmissionExemptionForm({
       >
         {repositoryField}
         <label>
-          {revoke ? "Reason for revocation" : "Reason for the exemption"}
+          Reason
           <textarea
+            aria-label="Exemption reason"
             minLength={8}
             maxLength={1000}
             required
@@ -267,7 +290,7 @@ function AdmissionExemptionForm({
           />
         </label>
         <label>
-          Owner decision reference
+          Decision link
           <input
             type="text"
             maxLength={500}
@@ -283,9 +306,7 @@ function AdmissionExemptionForm({
             checked={confirmed}
             onChange={(event) => setConfirmed(event.target.checked)}
           />
-          {revoke
-            ? "I confirm the human owner authorized this revocation."
-            : "I confirm the human owner explicitly authorized this exemption for this repository."}
+          Owner authorized this
         </label>
         {error ? (
           <p className="form-error" role="alert">
@@ -466,11 +487,14 @@ function AdmissionExemptionHistory({
 
 function QueueScan({
   actorId,
+  banned,
   project,
   onQueued,
   onAccessLost,
 }: {
   actorId: string;
+  /** A confirmed-malicious ban stays after any new scan. */
+  banned: boolean;
   project: Overview["projects"][number];
   onQueued: () => void;
   onAccessLost: () => void;
@@ -502,8 +526,13 @@ function QueueScan({
   return (
     <section className="admin-subsection">
       <h4 className="admin-subsection-heading">
-        <ScanSearch aria-hidden="true" /> Scan revision {project.revision}
+        <ScanSearch aria-hidden="true" /> Scan
       </h4>
+      {banned ? (
+        <p className="admin-status">
+          <StatusBadge tone="danger">Scan can’t lift a ban</StatusBadge>
+        </p>
+      ) : null}
       <form
         className="admin-actions"
         onSubmit={(event) => {
@@ -519,8 +548,9 @@ function QueueScan({
           />
         ) : null}
         <label>
-          Reason for the scan
+          Reason
           <textarea
+            aria-label="Scan reason"
             maxLength={1000}
             required
             onChange={(event) => setReason(event.target.value)}
@@ -539,7 +569,7 @@ function QueueScan({
             type="submit"
           >
             <ScanSearch aria-hidden="true" />
-            {busy ? "Queuing…" : `Queue scan of revision ${project.revision}`}
+            {busy ? "Queuing…" : "Queue scan"}
           </button>
         </div>
       </form>
@@ -598,7 +628,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
             >
               @{assessment.requestedBy.githubLogin}
             </a>{" "}
-            — {assessment.requestReason}
+            · {assessment.requestReason}
           </dd>
         </div>
         <div>
@@ -733,9 +763,23 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
                   </table>
                 </section>
               </div>
-              {result.reusedAssessmentId
-                ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)`
-                : ""}
+              {result.reusedAssessmentId ? (
+                run ? (
+                  <a
+                    href={`/vetting-evidence?assessmentId=${encodeURIComponent(run.assessmentId)}&runId=${encodeURIComponent(run.runId)}`}
+                    title={`Reused clean scan ${result.reusedAssessmentId}`}
+                  >
+                    <StatusBadge icon={<Recycle />}>Reused</StatusBadge>
+                  </a>
+                ) : (
+                  <StatusBadge
+                    icon={<Recycle />}
+                    title={`Reused clean scan ${result.reusedAssessmentId}`}
+                  >
+                    Reused
+                  </StatusBadge>
+                )
+              ) : null}
             </dd>
           </div>
         ) : null}
@@ -743,8 +787,33 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           <div>
             <dt>Visibility</dt>
             <dd>
-              {result.telemetry?.tamperDetected ? "Tampering detected. " : ""}
-              {gaps.length === 0 ? "No visibility gaps" : gaps.join("; ")}
+              {result.telemetry?.tamperDetected ? (
+                <>
+                  <StatusBadge
+                    icon={<CircleAlert />}
+                    title="Tampering detected"
+                    tone="danger"
+                  >
+                    Tampered
+                  </StatusBadge>{" "}
+                </>
+              ) : null}
+              {gaps.length === 0 ? (
+                <StatusBadge
+                  icon={<Eye />}
+                  title="No visibility gaps"
+                  tone="success"
+                >
+                  Full
+                </StatusBadge>
+              ) : (
+                <>
+                  <StatusBadge tone="warning">
+                    {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}
+                  </StatusBadge>{" "}
+                  {gaps.join("; ")}
+                </>
+              )}
             </dd>
           </div>
         ) : null}
@@ -884,7 +953,7 @@ export function VettingSection({
         <>
           {state.value.service.state === "unavailable" ? (
             <p className="form-error" role="alert">
-              <CircleAlert aria-hidden="true" /> Vetting service unavailable.{" "}
+              <CircleAlert aria-hidden="true" /> Vetting unavailable.{" "}
               {state.value.service.reason}
             </p>
           ) : null}
@@ -916,52 +985,63 @@ export function VettingSection({
                     key={project.id}
                   >
                     <header>
-                      <span>Current clearance</span>
-                      <StatusBadge
-                        className="admin-badge"
-                        icon={
-                          clearance.state === "cleared" ? (
-                            <ShieldCheck />
-                          ) : (
-                            <CircleAlert />
-                          )
-                        }
-                        tone={
-                          clearance.state === "cleared"
-                            ? "success"
-                            : clearance.state === "banned" ||
-                                clearance.state === "quarantined"
-                              ? "danger"
-                              : "warning"
-                        }
-                      >
-                        {clearanceLabel(clearance)}
-                      </StatusBadge>
+                      <ClearanceBadge clearance={clearance} />
                     </header>
                     <dl className="admin-facts">
                       <div>
                         <dt>Current revision</dt>
-                        <dd>
-                          {project.id} · revision {project.revision} ·{" "}
-                          {project.status}
-                        </dd>
+                        <dd>Rev {project.revision}</dd>
                       </div>
-                      <div>
-                        <dt>Decided by</dt>
-                        <dd>
-                          {clearance.state === "unscanned"
-                            ? "Awaiting admission scan"
-                            : clearance.state === "unverified"
-                              ? clearance.reason
-                              : clearance.assessment === null
-                                ? "exemption" in clearance
-                                  ? "Owner-approved exemption"
-                                  : "Existing-project exemption"
-                                : clearance.state === "stale"
-                                  ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
-                                  : `${clearance.state === "cleared" && clearance.basis === "admission" ? "Admission scan" : "Scan"} of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
-                        </dd>
-                      </div>
+                      {/* An exemption is already named by the badge above. */}
+                      {"assessment" in clearance &&
+                      clearance.assessment === null ? null : (
+                        <div>
+                          <dt>Decided by</dt>
+                          <dd>
+                            {clearance.state === "unscanned"
+                              ? "Awaiting admission scan"
+                              : clearance.state === "unverified"
+                                ? clearance.reason
+                                : clearance.assessment === null
+                                  ? null
+                                  : clearance.state === "stale"
+                                    ? "Head ≠ scanned"
+                                    : `Rev ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
+                          </dd>
+                        </div>
+                      )}
+                      {clearance.state === "stale" &&
+                      clearance.assessment !== null ? (
+                        <>
+                          <div>
+                            <dt>Live head</dt>
+                            <dd>
+                              <CopyIdentifier
+                                label="live head commit"
+                                value={clearance.live.commitSha}
+                              />
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Live template</dt>
+                            <dd>
+                              <CopyIdentifier
+                                label="live skill template digest"
+                                value={clearance.live.templateSha256}
+                              />
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Last scan</dt>
+                            <dd>
+                              <CopyIdentifier
+                                label="last scanned commit"
+                                value={clearance.assessment.commitSha}
+                              />
+                            </dd>
+                          </div>
+                        </>
+                      ) : null}
                       {"assessment" in clearance &&
                       clearance.assessment !== null ? (
                         <div>
@@ -984,24 +1064,19 @@ export function VettingSection({
                         </div>
                       ) : null}
                     </dl>
-                    {clearance.state === "banned" ? (
-                      <p className="form-error">
-                        <CircleAlert aria-hidden="true" /> Confirmed malicious.
-                        A new scan cannot lift the ban.
-                      </p>
-                    ) : null}
                     {(state.value.flags ?? []).some(
                       (flag) => flag.projectId === project.id,
                     ) ? (
                       <section className="admin-subsection">
                         <h4 className="admin-subsection-heading">
-                          <CircleAlert aria-hidden="true" /> Active contributor
-                          flags ·{" "}
-                          {
-                            (state.value.flags ?? []).filter(
-                              (flag) => flag.projectId === project.id,
-                            ).length
-                          }
+                          <Flag aria-hidden="true" /> Flags{" "}
+                          <StatusBadge>
+                            {
+                              (state.value.flags ?? []).filter(
+                                (flag) => flag.projectId === project.id,
+                              ).length
+                            }
+                          </StatusBadge>
                         </h4>
                         <ul className="operations-findings">
                           {(state.value.flags ?? [])
@@ -1033,12 +1108,11 @@ export function VettingSection({
                       !queued ? (
                         <QueueScan
                           actorId={actorId}
+                          banned={clearance.state === "banned"}
                           onAccessLost={onAccessLost}
                           onQueued={() => {
                             if (!mounted.current) return;
-                            setNote(
-                              `Queued a scan of ${project.id} revision ${project.revision}.`,
-                            );
+                            setNote("Scan queued.");
                             load();
                           }}
                           project={project}
@@ -1055,8 +1129,8 @@ export function VettingSection({
                             if (!mounted.current) return;
                             setNote(
                               revoked
-                                ? `Revoked the owner-approved exemption for ${project.id}.`
-                                : `Recorded the owner-approved exemption for ${project.id}.`,
+                                ? "Exemption revoked."
+                                : "Exemption recorded.",
                             );
                             load();
                           }}
@@ -1072,8 +1146,8 @@ export function VettingSection({
                             if (!mounted.current) return;
                             setNote(
                               activeExemption
-                                ? `Revoked the owner-approved exemption for ${project.id}.`
-                                : `Recorded the owner-approved exemption for ${project.id}.`,
+                                ? "Exemption revoked."
+                                : "Exemption recorded.",
                             );
                             load();
                           }}
@@ -1116,9 +1190,11 @@ export function ActivationClearance({
   revision: number;
   onAccessLost: () => void;
 }) {
-  const [clearance, setClearance] = useState<string>(
-    "Checking security clearance…",
-  );
+  const [clearance, setClearance] = useState<
+    | { status: "loading" }
+    | { status: "message"; text: string }
+    | { status: "ready"; clearance: Clearance }
+  >({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
@@ -1132,7 +1208,7 @@ export function ActivationClearance({
     let active = true;
     const current = generation.current;
     const owns = () => active && generation.current === current;
-    setClearance("Checking security clearance…");
+    setClearance({ status: "loading" });
     void ownedVettingRequest<Overview>(
       actorId,
       "GET",
@@ -1146,13 +1222,13 @@ export function ActivationClearance({
         const project = body.projects.find((entry) => entry.id === projectId);
         setClearance(
           !project || project.revision !== revision
-            ? "Revision changed. Reload the page."
-            : `Revision ${revision}: ${clearanceLabel(project.clearance)}.`,
+            ? { status: "message", text: "Revision changed. Reload the page." }
+            : { status: "ready", clearance: project.clearance },
         );
       },
       (error) => {
         if (!owns()) return;
-        setClearance(message(error));
+        setClearance({ status: "message", text: message(error) });
         if (isAdminActionAccessLoss(error)) onAccessLost();
       },
     );
@@ -1162,7 +1238,21 @@ export function ActivationClearance({
   }, [actorId, projectId, revision, attempt, onAccessLost]);
   return (
     <div className="admin-action-bar">
-      <p role="status">{clearance}</p>
+      <p role="status">
+        {clearance.status === "loading" ? (
+          <span
+            aria-label="Checking clearance"
+            role="img"
+            title="Checking clearance"
+          >
+            <LoaderCircle aria-hidden="true" className="wallet-spin" />
+          </span>
+        ) : clearance.status === "message" ? (
+          clearance.text
+        ) : (
+          <ClearanceBadge clearance={clearance.clearance} />
+        )}
+      </p>
       <button
         type="button"
         className="text-button"

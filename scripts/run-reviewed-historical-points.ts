@@ -568,7 +568,27 @@ export function historicalPointsSql(
   return `${guards}\n${pointsSql(candidate)}`;
 }
 
-async function main() {
+type PublicationPhase =
+  | "trusted invocation"
+  | "main source verification"
+  | "private packet read"
+  | "reviewed packet validation"
+  | "enforcement checkpoint read"
+  | "project and repository verification"
+  | "owner authority verification"
+  | "historical census verification"
+  | "accepted squash verification"
+  | "financial protection verification"
+  | "value record verification"
+  | "public Points read"
+  | "recipient and account restriction verification"
+  | "published checkpoint verification"
+  | "historical Points reconstruction"
+  | "import preparation"
+  | "apply authority recheck"
+  | "protected import and readback";
+
+async function main(setPhase: (phase: PublicationPhase) => void) {
   if (
     process.env.GITHUB_ACTIONS !== "true" ||
     process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
@@ -577,6 +597,7 @@ async function main() {
     throw Error(
       "Reviewed historical publication requires manual main workflow",
     );
+  setPhase("main source verification");
   const checkout = (await execute("git", ["rev-parse", "HEAD"])).stdout.trim();
   const verifyMain = async () => {
     const current = (
@@ -591,17 +612,20 @@ async function main() {
     .join("");
   const digest = process.env.REVIEWED_PACKET_SHA256 ?? "";
   const manifest = process.env.HISTORICAL_POINTS_OBJECT_MANIFEST;
-  const packet = manifest
-    ? decodeHistoricalPacketBytes(
-        await (
-          await reviewedPacketStorage(
-            process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-            process.env.CLOUDFLARE_API_TOKEN ?? "",
-          )
-        ).read(manifest),
-        digest,
-      )
-    : decodeHistoricalPacket(encoded, digest);
+  setPhase("private packet read");
+  const bytes = manifest
+    ? await (
+        await reviewedPacketStorage(
+          process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+          process.env.CLOUDFLARE_API_TOKEN ?? "",
+        )
+      ).read(manifest)
+    : null;
+  setPhase("reviewed packet validation");
+  const packet =
+    bytes === null
+      ? decodeHistoricalPacket(encoded, digest)
+      : decodeHistoricalPacketBytes(bytes, digest);
   const query: Query = async (sql) => {
     try {
       const { stdout } = await execute(
@@ -631,6 +655,7 @@ async function main() {
       throw Error("Private historical read failed");
     }
   };
+  setPhase("enforcement checkpoint read");
   const enforcement = await query(
     "SELECT COALESCE(MAX(rowid),0) AS generation FROM project_enforcements",
   );
@@ -641,6 +666,7 @@ async function main() {
     !Number.isSafeInteger(generation)
   )
     throw Error("Enforcement state unavailable");
+  setPhase("project and repository verification");
   const registry = await fetchProjectRegistry();
   const revisions = registry.revisions as {
     projectId: string;
@@ -666,14 +692,21 @@ async function main() {
   const identity = repositoryIdentity(policy, packet.sourceAudit.repository);
   if (identity?.nodeId !== packet.sourceAudit.repositoryNodeId)
     throw Error("Historical repository changed");
+  setPhase("owner authority verification");
   await currentOwnerVerifier()(policy, packet.reviewerGithubId);
+  setPhase("historical census verification");
   const github = GitHubClient.forToken(await resolveGitHubToken());
   await verifyHistoricalCensus(packet, github);
+  setPhase("accepted squash verification");
   await verifyHistoricalAcceptedSquashes(packet, github);
+  setPhase("financial protection verification");
   await verifyHistoricalProtection(packet, query);
+  setPhase("value record verification");
   await verifyHistoricalValueRecords(packet, query);
+  setPhase("public Points read");
   const baseline = await loadPublishedPoints();
   if (!baseline) throw Error("Public Points baseline unavailable");
+  setPhase("recipient and account restriction verification");
   const actors = new Set(
     [...latestPoints(baseline).values()]
       .filter((r) => r.award.projectId === packet.projectId)
@@ -696,6 +729,7 @@ async function main() {
         throw Error("Reviewed recipient account changed");
     }
   const bans = await loadParticipationBans(github, fetch, actors);
+  setPhase("published checkpoint verification");
   if (hash(baseline) === packet.candidateDigest) {
     const recorded = await query(
       `SELECT digest,revision_count,(SELECT COUNT(*) FROM points_staging WHERE batch_id=${quote(packet.candidateDigest)}) AS staged FROM points_batches WHERE digest=${quote(packet.candidateDigest)}`,
@@ -718,12 +752,14 @@ async function main() {
     );
     return;
   }
+  setPhase("historical Points reconstruction");
   const candidate = reconstructHistoricalPoints(
     packet,
     baseline,
     new Date().toISOString(),
     bans,
   );
+  setPhase("import preparation");
   const directory = join(
     process.env.RUNNER_TEMP ?? "",
     "reviewed-historical-points",
@@ -735,11 +771,14 @@ async function main() {
     flag: "wx",
   });
   if (process.env.HISTORICAL_POINTS_APPLY === "true") {
+    setPhase("protected import and readback");
     await recordCorrection(candidate, {
       verifyMain: async () => {
+        setPhase("apply authority recheck");
         await verifyMain();
         await currentOwnerVerifier()(policy, packet.reviewerGithubId);
         await verifyHistoricalProtection(packet, query);
+        setPhase("protected import and readback");
       },
       importBatch: async () => {
         await execute(
@@ -795,10 +834,15 @@ async function main() {
     }),
   );
 }
-if (import.meta.main)
-  await main().catch(() => {
+if (import.meta.main) {
+  let phase: PublicationPhase = "trusted invocation";
+  await main((next) => {
+    phase = next;
+  }).catch(() => {
+    // Error messages can contain command arguments or private responses.
     console.error(
-      "Reviewed historical Points publication refused; private inputs retained in runner",
+      `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner`,
     );
     process.exitCode = 1;
   });
+}

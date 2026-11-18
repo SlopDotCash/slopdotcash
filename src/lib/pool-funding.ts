@@ -3,16 +3,18 @@ import {
   mainnetExecutionEnabled,
 } from "../../workers/payment-executor/mainnet-execution.mjs";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import { monthlyAmountDisplay } from "./project-schema.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 
 /**
- * Only money in a vault is shown (operator decision, 15 November 2026). A
+ * A vault-backed amount requires verified funding. A
  * monthly pool shows its amount when a recorded vault on a paying network
  * holds at least this month's amount; every other pool shows as points only.
  * The balances come from `GET /api/v1/pool-funding`, cached finalized vault
  * counters (PRD section 9). While they load, or when they cannot be read,
- * no amount is shown.
+ * no vault-backed amount is shown. Explicit honor-system promises use a
+ * separate presentation and do not change this funding check.
  *
  * From December 2026 a month is promised only if it was funded on the 1st:
  * the first finalized read of the month must hold this month's amount plus
@@ -167,6 +169,14 @@ function networkPays(network: string): boolean {
   );
 }
 
+function payingVaultKeys(project: ProjectDefinition): Set<string> {
+  return new Set(
+    (project.escrow?.deployments ?? [])
+      .filter((deployment) => networkPays(deployment.network))
+      .map((deployment) => vaultKey(deployment.network, deployment.vault)),
+  );
+}
+
 function monthStartMs(period: string): number {
   return Date.parse(`${period}-01T00:00:00Z`);
 }
@@ -213,11 +223,7 @@ export function poolFundingStatus(
     prior >= FIRST_PAYING_PERIOD
       ? BigInt(resolveRewardCapMinor(project, prior))
       : 0n;
-  const recorded = new Set(
-    (project.escrow?.deployments ?? [])
-      .filter((deployment) => networkPays(deployment.network))
-      .map((deployment) => vaultKey(deployment.network, deployment.vault)),
-  );
+  const recorded = payingVaultKeys(project);
   const paying = (index.get(project.id) ?? []).filter((vault) =>
     recorded.has(vaultKey(vault.network, vault.vault)),
   );
@@ -282,8 +288,8 @@ export function poolFunded(
 }
 
 /**
- * The project as contributors should see it: an unfunded monthly pool reads
- * as points only everywhere the registry amount would otherwise appear.
+ * The vault-backed amount for this month. An unfunded pool reads as Points
+ * only in contexts that show verified funding exclusively.
  */
 export function asShown(
   project: ProjectDefinition,
@@ -291,32 +297,94 @@ export function asShown(
   now: Date,
 ): ProjectDefinition {
   if (project.reward.kind !== "monthly-pool") return project;
-  if (poolFunded(project, index, now)) return project;
-  if (project.reward.monthlyCapMinor === "0" && !project.reward.cycleCaps)
+  const amount = poolFunded(project, index, now)
+    ? resolveRewardCapMinor(project, utcMonth(now))
+    : "0";
+  return withDisplayedCap(project, amount);
+}
+
+function withDisplayedCap(
+  project: ProjectDefinition,
+  amount: string,
+): ProjectDefinition {
+  if (project.reward.monthlyCapMinor === amount && !project.reward.cycleCaps)
     return project;
   const { cycleCaps: _cycleCaps, ...reward } = project.reward;
   return {
     ...project,
     reward: {
       ...reward,
-      monthlyCapMinor: "0",
-      // A token pool's label swaps its last word for the token symbol.
-      monthlyCapDisplay:
-        project.rewardAsset && project.rewardAsset.kind !== "stablecoin"
-          ? "0 TOKEN"
-          : "$0",
+      monthlyCapMinor: amount,
+      monthlyCapDisplay: monthlyAmountDisplay(amount, project.rewardAsset),
     },
-  } as ProjectDefinition;
+  };
 }
 
-/** The project page line for a project `listedThisMonth` leaves out. */
+export function publicPoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+): { project: ProjectDefinition; promise: string | null } {
+  const display = displayedPoolReward(project, index, now, false);
+  return {
+    project: display.project,
+    promise: display.warning ? `Promised · ${display.warning}` : null,
+  };
+}
+
+type PoolRewardDisplay = {
+  project: ProjectDefinition;
+  fundingTag: "Vaulted" | "Promised" | "Configured" | null;
+  warning: "Vault funding unverified" | "Not vaulted" | null;
+};
+
+export function homePoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+): PoolRewardDisplay {
+  return displayedPoolReward(project, index, now, true);
+}
+
+function displayedPoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+  showConfigured: boolean,
+): PoolRewardDisplay {
+  const shown = asShown(project, index, now);
+  if (project.reward.kind !== "monthly-pool")
+    return { project: shown, fundingTag: null, warning: null };
+  if (shown.reward.monthlyCapMinor !== "0")
+    return { project: shown, fundingTag: "Vaulted", warning: null };
+  const optedIn = project.reward.honorSystem === true;
+  const amount =
+    showConfigured || optedIn
+      ? resolveRewardCapMinor(project, utcMonth(now))
+      : "0";
+  if (amount === "0")
+    return { project: shown, fundingTag: null, warning: null };
+  const unread = payingVaultKeys(project);
+  for (const vault of index?.get(project.id) ?? []) {
+    if (vault.freeBalance !== null || hasPledgeSupport(vault)) {
+      unread.delete(vaultKey(vault.network, vault.vault));
+    }
+  }
+  return {
+    project: withDisplayedCap(project, amount),
+    fundingTag: optedIn ? "Promised" : "Configured",
+    warning: unread.size ? "Vault funding unverified" : "Not vaulted",
+  };
+}
+
+/** The project page line for a pool that is not funded this month. */
 export const NOT_LISTED_NOTICE =
-  "This project's pool is not funded this month, so it is not listed. Accepted work still records points.";
+  "This project's pool is not funded this month. Accepted work still records points.";
 
 /**
  * Whether a project is listed this month (operator decision, 16 November
  * 2026). An active project whose monthly pool is not funded this month, by
- * `poolFunded`, is left out of the home page, /sponsors and agent discovery.
+ * `poolFunded`, is left out of /sponsors and agent discovery.
  * A project with an open security program and every other reward kind stay
  * listed, and paused projects keep their existing listing. Its page still
  * opens by direct link and its skills keep serving. A null index means the

@@ -494,7 +494,7 @@ test("wallet access loss prevents a retained account load from restoring the old
     await settle(page);
     await expect(card).toHaveCount(0);
     await expect(
-      page.getByRole("status").filter({ hasText: "Checking your payouts" }),
+      page.getByRole("status", { name: "Checking your payouts", exact: true }),
     ).toHaveCount(0);
     expect(state.writes).toEqual([]);
     expect(

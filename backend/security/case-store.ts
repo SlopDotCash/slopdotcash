@@ -80,6 +80,16 @@ export type SecurityApiDependencies = {
   intake?: IntakeConfig;
   repositoryAccess?: RepositoryAccessReader;
   /**
+   * Routine decisions on undecided reports (PRD section 8, operator decision
+   * of 17 November 2026; `routine-decisions.ts`). Absent or `off` runs
+   * nothing; `dry_run` records what a pass would decide and changes no case.
+   * Platform admins read the aggregate counts.
+   */
+  routineDecisions?: {
+    mode: "off" | "dry_run" | "live";
+    adminGithubIds: ReadonlySet<string>;
+  };
+  /**
    * Per-request memo of `currentReportingProject`. A list read sets it so
    * the viewer's cases share one project read instead of one per case; a
    * project's manifest does not change inside one request.
@@ -502,7 +512,7 @@ export async function termsAtReceipt(
 }
 
 export function eventStatement(
-  deps: SecurityApiDependencies,
+  deps: Pick<SecurityApiDependencies, "db">,
   input: {
     caseId: string;
     revision: number;
@@ -561,6 +571,8 @@ export function inboxStatements(
     terms: ReportingContext | undefined;
     /** The change proposes a related-party award for independent review. */
     relatedReview?: boolean;
+    /** An appeal of a routine close goes to the owner, not a moderator. */
+    returnedToOwner?: boolean;
   },
 ): D1Statement[] {
   // History pages are audited case events, not new actions for recipients.
@@ -590,7 +602,9 @@ export function inboxStatements(
     ...(["verify-payment", "recover-payment"].includes(input.kind)
       ? ids("financial")
       : []),
-    ...(input.kind === "appeal" || input.relatedReview
+    ...(input.returnedToOwner ? ids("technical") : []),
+    ...((input.kind === "appeal" && !input.returnedToOwner) ||
+    input.relatedReview
       ? [...(deps.moderatorGithubIds ?? [])]
       : []),
     ...(input.kind === "assign-triager" &&

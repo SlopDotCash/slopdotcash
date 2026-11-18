@@ -34,6 +34,8 @@ export interface ProjectReviewBudgetPolicy {
 }
 
 export interface ProjectRewardPolicy {
+  /** Owner opts to advertise the stated pool as a promise without vault funding. */
+  readonly honorSystem?: true;
   /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
   readonly cycleCaps?: readonly {
     readonly cycleId: string;
@@ -217,6 +219,11 @@ export interface ProjectDefinition {
     readonly automaticClosure: boolean;
     /** The slopbot:ready label (PRD section 5); absent means off. */
     readonly readyLabel?: ReadyLabelSettings;
+    /**
+     * Pause new contributors when this many outside pull requests are open
+     * (PRD section 5); absent means off.
+     */
+    readonly intakeCap?: number;
   };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;

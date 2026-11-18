@@ -1,5 +1,8 @@
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { SECURITY_DEFAULT_EXCLUSIONS } from "../../src/lib/security-bounty.mjs";
+import {
+  SECURITY_DEFAULT_EXCLUSIONS,
+  SECURITY_ROUTINE_DECISION_NOTICE,
+} from "../../src/lib/security-bounty.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
 
 /**
@@ -108,6 +111,11 @@ for (const excludedFindings of [OWNER_LINES, undefined]) {
         .getByRole("list", { name: "Does not qualify", exact: true })
         .getByRole("listitem"),
     ).toHaveText([...SECURITY_DEFAULT_EXCLUSIONS]);
+    // One sentence under the list says how such reports are handled
+    // (operator decision, 17 November 2026).
+    await expect(
+      scope.getByText(SECURITY_ROUTINE_DECISION_NOTICE, { exact: true }),
+    ).toBeVisible();
     const own = scope.getByRole("list", {
       name: "Also does not qualify for this program",
       exact: true,

@@ -1,16 +1,16 @@
 /**
- * An unfunded monthly pool is not listed this month (operator decision,
- * 16 November 2026): the home page and /sponsors leave it out, its page
- * still opens by direct link and says why, and a failed funding read lists
- * every project as before.
+ * Home discovery keeps active community projects visible as funding loads
+ * and after it resolves. The owner can publish a monthly promise independently
+ * of vault funding, but that promise never qualifies for the sponsor list.
  */
 
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { NOT_LISTED_NOTICE } from "../../src/lib/pool-funding";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import {
   expect,
+  expectAccessibleReflow,
   failPoolFundingRead,
   servePublicProjectReads,
   test,
@@ -18,9 +18,31 @@ import {
 
 const OBSERVED_AT = "2026-11-16T12:00:00.000Z";
 
-/** The frozen registry with Eliza's pool given a Base vault. */
+test.use({ video: "on" });
+
+async function expectFundingTag(
+  reward: Locator,
+  name: "Vaulted" | "Promised" | "Configured",
+  tone: "success" | "warning" | "neutral",
+) {
+  const tag = reward.locator(`.project-funding-tag.route-badge--${tone}`);
+  await expect(tag).toBeVisible();
+  await expect(tag).toHaveText(name);
+}
+
+async function expectFundingWarning(
+  reward: Locator,
+  text: "Not vaulted" | "Vault funding unverified",
+) {
+  const warning = reward.locator(".project-funding-warning");
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveText(text);
+}
+
+/** Registry fixtures distinguish a vault, a promise, and an unfunded budget. */
 async function serveRegistry(page: Page) {
   const eliza = stagingPaymentProject("base-mainnet");
+  eliza.reward.honorSystem = true;
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
@@ -28,7 +50,35 @@ async function serveRegistry(page: Page) {
         json: {
           schemaVersion: "1",
           projects: PROJECTS.map((entry) =>
-            entry.id === eliza.id ? eliza : entry,
+            entry.id === eliza.id
+              ? eliza
+              : entry.id === "asi"
+                ? {
+                    ...entry,
+                    listingTier: "community",
+                    reward: {
+                      ...entry.reward,
+                      honorSystem: true,
+                      cycleCaps: [
+                        ...(entry.reward.cycleCaps ?? []),
+                        { cycleId: "2026-11", monthlyCapMinor: "1250000000" },
+                      ],
+                    },
+                  }
+                : entry.id === "thenetwork"
+                  ? {
+                      ...entry,
+                      reward: {
+                        ...entry.reward,
+                        honorSystem: true,
+                        monthlyCapMinor: "500000000",
+                        monthlyCapDisplay: "$500",
+                        cycleCaps: [
+                          { cycleId: "2026-11", monthlyCapMinor: "0" },
+                        ],
+                      },
+                    }
+                  : entry,
           ),
         },
       }),
@@ -42,7 +92,7 @@ async function serveRegistry(page: Page) {
   return eliza;
 }
 
-test("only funded monthly pools are listed this month", async ({
+test("home keeps unfunded community projects and labels promises while sponsors list funded pools", async ({
   page,
 }, info) => {
   await page.clock.setFixedTime(new Date(OBSERVED_AT));
@@ -50,8 +100,37 @@ test("only funded monthly pools are listed this month", async ({
   const eliza = await serveRegistry(page);
   const vault = eliza.escrow?.deployments[0];
   if (!vault) throw new Error("The Eliza vault fixture is missing");
-  await page.route("**/api/v1/pool-funding", (route) =>
+  await page.route("**/api/v1/merge-activity", (route) =>
     route.fulfill({
+      json: {
+        schema: "slop-merge-activity-v1",
+        projects: [
+          {
+            projectId: eliza.id,
+            repositories: [
+              {
+                repository: eliza.repositories[0].id,
+                observedAt: OBSERVED_AT,
+                lastAttemptFailed: false,
+                lastMergedAt: OBSERVED_AT,
+                waitingOutside: 0,
+                waitingCapped: false,
+                mergedOutsideLast30Days: 1,
+                medianHoursToMerge: 312,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  let releaseFunding = () => {};
+  const fundingHeld = new Promise<void>((resolve) => {
+    releaseFunding = resolve;
+  });
+  await page.route("**/api/v1/pool-funding", async (route) => {
+    await fundingHeld;
+    await route.fulfill({
       json: {
         schema: "slop-pool-funding-v1",
         projects: [
@@ -69,37 +148,104 @@ test("only funded monthly pools are listed this month", async ({
           },
         ],
       },
-    }),
-  );
-  await page.goto("/", { waitUntil: "networkidle" });
+    });
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   const projects = page.locator("#projects");
-  await expect(projects.locator('a[href="/projects/eliza"]')).toBeVisible();
-  // Unfunded monthly pools, including a points-only pool, are not listed.
-  for (const id of ["asi", "slopdotcash", "thenetwork"])
-    await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
+  const featured = projects.getByRole("region", {
+    name: "Featured",
+    exact: true,
+  });
+  const community = projects.getByRole("region", {
+    name: "Community",
+    exact: true,
+  });
+  const promise = community.locator('a.project-row[href="/projects/asi"]');
+  const funded = featured.locator('a[href="/projects/eliza"]');
+  const configured = featured.locator('a[href="/projects/slopdotcash"]');
+  const promiseAmount = promise.locator(".project-row-amount");
+  const fundedAmount = funded.locator(".project-bounty");
+  const configuredAmount = configured.locator(".project-bounty");
+  try {
+    for (const id of ["eliza", "slopdotcash"])
+      await expect(featured.locator(`a[href="/projects/${id}"]`)).toBeVisible();
+    for (const id of ["asi", "thenetwork"])
+      await expect(
+        community.locator(`a[href="/projects/${id}"]`),
+      ).toBeVisible();
+    await expect(promiseAmount.locator("strong")).toHaveText("$1,250");
+    await expectFundingTag(promiseAmount, "Promised", "warning");
+    await expectFundingWarning(promiseAmount, "Not vaulted");
+    await expectFundingTag(fundedAmount, "Promised", "warning");
+    await expectFundingWarning(fundedAmount, "Vault funding unverified");
+  } finally {
+    releaseFunding();
+  }
+  // A successful funding read updates amounts without removing community work.
+  await expectFundingTag(fundedAmount, "Vaulted", "success");
+  await expect(fundedAmount.locator("strong")).toHaveText("$1k");
+  await expect(fundedAmount.locator(".project-funding-warning")).toHaveCount(0);
+  await expectFundingTag(promiseAmount, "Promised", "warning");
+  await expectFundingWarning(promiseAmount, "Not vaulted");
+  await expect(configuredAmount.locator("strong")).toHaveText("$1,000");
+  await expectFundingTag(configuredAmount, "Configured", "neutral");
+  await expectFundingWarning(configuredAmount, "Not vaulted");
+  const points = community.locator(
+    'a.project-row[href="/projects/thenetwork"] .project-row-amount',
+  );
+  await expect(points).toHaveText("Points only");
+  await expect(points.locator(".project-funding-tag")).toHaveCount(0);
+  // Funding changes amounts, while registry placement and ordering remain intact.
+  expect(
+    await featured
+      .locator("a.project-card")
+      .evaluateAll((cards) => cards.map((card) => card.getAttribute("href"))),
+  ).toEqual(["/projects/eliza", "/projects/slopdotcash"]);
+  expect(
+    await community
+      .locator("a.project-row")
+      .evaluateAll((cards) => cards.map((card) => card.getAttribute("href"))),
+  ).toEqual(["/projects/asi", "/projects/delta-star", "/projects/thenetwork"]);
+  await expect(projects).not.toContainText("Last merge");
+  await expect(projects).not.toContainText("outside PRs waiting");
+  await expect(projects).not.toContainText("median merge");
+  await expect(page.locator("main")).not.toContainText("Pledged");
   // An external prize share stays listed.
   await expect(
     projects.locator('a[href="/projects/delta-star"]'),
   ).toBeVisible();
   await page.screenshot({
-    path: info.outputPath("home-funded-only.png"),
+    path: info.outputPath("home-funded-and-community.png"),
     fullPage: true,
   });
+  await promise.focus();
+  await expect(promise).toBeFocused();
+  await expectAccessibleReflow(page, "home-funded-and-community");
 
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   const pools = page.getByRole("list", { name: "Project funding pools" });
   await expect(
     pools.getByRole("link", { name: "Eliza", exact: true }),
   ).toBeVisible();
-  for (const name of ["ASI", "The Network"])
+  for (const name of ["ASI", "Slop", "The Network"])
     await expect(pools.getByRole("link", { name, exact: true })).toHaveCount(0);
   // Paused projects keep their listing.
   await expect(
     pools.locator('a[href="/projects/canonry/funding"]'),
   ).toBeVisible();
 
-  // The page of a project that is not listed still opens and says why.
+  // The project page retains the current-month promise and its warning.
   await page.goto("/projects/asi", { waitUntil: "networkidle" });
+  const overview = page.locator(".project-state-summary");
+  await expect(overview).toContainText("$1,250");
+  await expect(overview).toContainText("Promised · Not vaulted");
+  await expect(overview).not.toContainText("Points only · no cash rewards");
+  await page.screenshot({
+    path: info.outputPath("project-honor-system.png"),
+    fullPage: true,
+  });
+  // Without opt-in, a budget does not display as a promise.
+  await page.goto("/projects/slopdotcash", { waitUntil: "networkidle" });
   await expect(
     page.getByText(NOT_LISTED_NOTICE, { exact: true }),
   ).toBeVisible();
@@ -108,8 +254,13 @@ test("only funded monthly pools are listed this month", async ({
     fullPage: true,
   });
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await expect(overview).not.toContainText("Promised");
   await expect(page.getByText(NOT_LISTED_NOTICE, { exact: true })).toHaveCount(
     0,
+  );
+  // Merge evidence remains available on the project page.
+  await expect(page.locator(".project-merge-activity")).toContainText(
+    "Merging: last merge today",
   );
 });
 
@@ -123,9 +274,23 @@ test("a failed funding read lists every project as before", async ({
   await failPoolFundingRead(page, diagnostics);
   await page.goto("/", { waitUntil: "networkidle" });
   const projects = page.locator("#projects");
-  for (const id of ["eliza", "asi", "slopdotcash", "thenetwork", "delta-star"])
-    await expect(projects.locator(`a[href="/projects/${id}"]`)).toBeVisible();
-  await page.goto("/projects/asi", { waitUntil: "networkidle" });
+  for (const [name, format, ids] of [
+    ["Featured", ".project-card", ["eliza", "slopdotcash"]],
+    ["Community", ".project-row", ["asi", "thenetwork", "delta-star"]],
+  ] as const) {
+    const section = projects.getByRole("region", { name, exact: true });
+    await expect(section.locator(format)).toHaveCount(ids.length);
+    for (const id of ids)
+      await expect(section.locator(`a[href="/projects/${id}"]`)).toBeVisible();
+  }
+  const reward = projects.locator('a[href="/projects/eliza"] .project-bounty');
+  await expect(reward.locator("strong")).toHaveText("$1,000");
+  await expectFundingTag(reward, "Promised", "warning");
+  await expectFundingWarning(reward, "Vault funding unverified");
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await expect(page.locator(".project-state-summary")).toContainText(
+    "Promised · Vault funding unverified",
+  );
   await expect(page.getByText(NOT_LISTED_NOTICE, { exact: true })).toHaveCount(
     0,
   );

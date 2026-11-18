@@ -38,8 +38,12 @@ function scrollToTarget(targetId: string): boolean {
  * A fragment can name content that is still loading on direct entry or
  * client navigation. Reuse the bounded observer for each destination.
  */
-export function useHashScroll(href: string): void {
+export function useHashScroll(href: string, alignmentKey = href): void {
   const positions = useRef(new Map<string, { left: number; top: number }>());
+  const previousLocation = useRef<{
+    href: string;
+    alignmentKey: string;
+  } | null>(null);
   const active = useRef<{ key: string; href: string } | null>(null);
   const restoring = useRef<{ left: number; top: number } | undefined>(
     undefined,
@@ -59,7 +63,13 @@ export function useHashScroll(href: string): void {
     };
   }, []);
   useEffect(() => {
-    const restore = restoring.current;
+    const keepPosition =
+      previousLocation.current?.href !== href &&
+      previousLocation.current?.alignmentKey === alignmentKey;
+    previousLocation.current = { href, alignmentKey };
+    const restore =
+      restoring.current ??
+      (keepPosition ? { left: scrollX, top: scrollY } : undefined);
     restoring.current = undefined;
     const targetId = hashTargetId(new URL(href).hash);
     if (!targetId) return;
@@ -74,6 +84,9 @@ export function useHashScroll(href: string): void {
       "",
     );
     active.current = entry;
+    // A presentation-only URL change still owns a distinct history entry.
+    // Seed it even if retaining the viewport produces no native scroll event.
+    if (restore) positions.current.set(entry.key, restore);
     let settling = true;
     const align = () => {
       if (!settling) return;
@@ -118,7 +131,7 @@ export function useHashScroll(href: string): void {
       stop();
       window.removeEventListener("scroll", remember);
     };
-  }, [href]);
+  }, [href, alignmentKey]);
 }
 
 export function Link({

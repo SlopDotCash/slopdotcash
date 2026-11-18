@@ -24,6 +24,8 @@ test("monthly targets remain distinct from verified payment records", async ({
   const project = {
     ...original,
     status: "active",
+    listingTier: "featured",
+    escrow: undefined,
     reward: { ...original.reward, paymentMode: "disabled" },
   };
   await page.route(
@@ -46,9 +48,14 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     card.getByText("Payments not active", { exact: true }),
   ).toHaveCount(0);
-  // Only money in a vault is shown (operator decision, 15 November 2026):
-  // a monthly amount with no funded vault reads as points only.
-  await expect(card.locator(".project-money-state")).toHaveText("Points only");
+  // An unvaulted target is shown as configured and never as a payment or promise.
+  await expect(card.locator(".project-bounty strong")).toHaveText("$1,000");
+  await expect(
+    card.locator(".project-funding-tag.route-badge--neutral"),
+  ).toHaveText("Configured");
+  await expect(card.locator(".project-funding-warning")).toHaveText(
+    "Not vaulted",
+  );
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),
     fullPage: true,
@@ -58,7 +65,7 @@ test("monthly targets remain distinct from verified payment records", async ({
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
   await expect(page.locator(".project-reward-status")).toContainText(
-    "Points only · no cash rewards",
+    "Points only",
   );
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),
@@ -76,12 +83,8 @@ test("monthly targets remain distinct from verified payment records", async ({
     .getByRole("list", { name: "Project funding pools" })
     .getByRole("listitem")
     .filter({ has: page.getByRole("link", { name: "Eliza", exact: true }) });
-  await expect(
-    pool.getByText("Payments: Disabled", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    pool.getByText("Vault: Not set up", { exact: true }),
-  ).toBeVisible();
+  await expect(pool.getByText("No vault", { exact: true })).toBeVisible();
+  await expect(pool.getByText("Live", { exact: true })).toHaveCount(0);
   await expectAccessible(page);
   expect(
     await page.evaluate(
@@ -104,9 +107,7 @@ test("a cycle record offers a funding check without inventing a vault balance", 
     waitUntil: "networkidle",
   });
   const notice = page.locator(".cycle-reminder");
-  await expect(notice).toContainText(
-    "does not verify the month's funding status",
-  );
+  await expect(notice).toHaveText("Check funding →");
   await expect(notice).not.toContainText("Unfunded");
   await expect(notice).not.toContainText("Underfunded");
   await page.screenshot({
@@ -114,7 +115,7 @@ test("a cycle record offers a funding check without inventing a vault balance", 
     fullPage: true,
   });
   await expectAccessible(page);
-  const link = notice.getByRole("link", { name: "View project funding" });
+  const link = notice.getByRole("link", { name: "Check funding →" });
   await expect(link).toHaveAttribute("href", "/projects/eliza/funding");
   await link.click();
   await expect(page).toHaveURL(/\/projects\/eliza#funding$/u);

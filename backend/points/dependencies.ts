@@ -12,6 +12,8 @@ export interface PointsDependencies {
   tier?: DeploymentTier;
   db: D1Database;
   rateLimitSecret: string;
+  /** The verified deployment owner eligible for a longer site session. */
+  ownerSessionGithubId?: string;
   identity: { fetch(request: Request): Promise<Response> };
   now?: () => Date;
   /** Trusted deployment origins; never request-supplied. */

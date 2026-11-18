@@ -1,3 +1,4 @@
+import { Clock, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { encodeBase58Bytes } from "./lib/base58";
 import { decodeBase64 } from "./lib/byte-encoding";
@@ -14,7 +15,7 @@ import {
 import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { NoWalletFound, WalletConnection } from "./Presentation";
+import { NoWalletFound, StatusBadge, WalletConnection } from "./Presentation";
 
 export type DirectSolanaPlan = { transaction: string; messageId: string };
 type Pending = PendingAttempt & {
@@ -33,9 +34,7 @@ function readPending(raw: string | null, transaction: string): Pending | null {
       (saved.candidate !== undefined &&
         !isSolanaTransactionId(saved.candidate)))
   )
-    throw new Error(
-      "The saved wallet request cannot be read. Check wallet activity before continuing.",
-    );
+    throw new Error("Saved request unreadable. Check wallet activity.");
   return saved;
 }
 
@@ -198,7 +197,7 @@ export function SolanaBountyPayment({
           throw new Error(
             cause instanceof Error && cause.message.startsWith("Submitted ")
               ? cause.message
-              : "The wallet result is uncertain. Check wallet activity and enter its signature; do not send again.",
+              : "Result unknown. Paste the signature; don't resend.",
           );
         }
       } finally {
@@ -238,7 +237,7 @@ export function SolanaBountyPayment({
       {pending ? (
         <>
           <label>
-            Transaction signature from your wallet
+            Transaction signature
             <input
               value={signature}
               onChange={(event) => setCandidate(event.target.value)}
@@ -246,9 +245,15 @@ export function SolanaBountyPayment({
             />
           </label>
           <p role="status">
-            {pending.signature
-              ? "Submitted. Verify finalized payment."
-              : "Wallet result uncertain. Enter its signature to continue."}
+            {pending.signature ? (
+              <StatusBadge tone="warning" icon={<Clock />}>
+                Submitted
+              </StatusBadge>
+            ) : (
+              <StatusBadge tone="warning" icon={<TriangleAlert />}>
+                Unknown result: paste signature
+              </StatusBadge>
+            )}
           </p>
         </>
       ) : null}

@@ -1,13 +1,40 @@
 import { enlargeText } from "../text-size";
+
 /**
  * First-visit discovery waits only for the project registry, which the site
  * reads from D1 at runtime; no other API or public data response may block it.
  */
 
+import type { Page } from "@playwright/test";
 import { homeProjects } from "../../src/lib/home-projects";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test.use({ video: "on" });
+
+async function expectProjectTiers(page: Page) {
+  const expected = homeProjects();
+  expect(expected.length).toBeGreaterThan(0);
+  const projects = page.locator("#projects");
+  for (const [tier, name, format] of [
+    ["featured", "Featured", ".project-card"],
+    ["community", "Community", ".project-row"],
+  ] as const) {
+    const section = projects.getByRole("region", { name, exact: true });
+    const members = expected.filter((project) => project.listingTier === tier);
+    const entries = section.locator(`a${format}`);
+    await expect(entries).toHaveCount(
+      tier === "featured" ? members.length : Math.min(members.length, 10),
+    );
+    const visible = await entries.evaluateAll((links) =>
+      links.map((link) => link.getAttribute("href")),
+    );
+    expect(new Set(visible).size).toBe(visible.length);
+    expect(members.map((project) => `/projects/${project.slug}`)).toEqual(
+      expect.arrayContaining(visible),
+    );
+  }
+  return expected;
+}
 
 test("renders bundled projects with data stalled and GitHub blocked", async ({
   diagnostics,
@@ -41,16 +68,7 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
   await page.route(/https:\/\/[^/]*github[^/]*\//, (route) => route.abort());
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const expected = homeProjects();
-    expect(expected.length).toBeGreaterThan(0);
-    await expect(page.locator("#projects .project-card")).toHaveCount(
-      expected.length,
-    );
-    for (const project of expected) {
-      await expect(
-        page.getByRole("heading", { name: project.name, exact: true }),
-      ).toBeVisible();
-    }
+    await expectProjectTiers(page);
     await page.keyboard.press("Tab");
     await expect(page.locator(":focus")).toBeVisible();
     await page.screenshot({
@@ -72,7 +90,7 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
     // Project owner avatars are optional decoration: a blocked avatar falls
     // back to the bundled initial and never delays the project list.
     // Offscreen lazy avatars do not exercise that failure until brought into view.
-    for (const card of await page.locator(".project-card").all())
+    for (const card of await page.locator(".project-card, .project-row").all())
       await card.scrollIntoViewIfNeeded();
     const avatar = /^https:\/\/avatars\.githubusercontent\.com\//u;
     expect(
@@ -155,11 +173,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
   await expect(notice.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(published).toEqual([200]);
   // The last good list is shown, never an outage page or an empty list.
-  const expected = homeProjects();
-  expect(expected.length).toBeGreaterThan(0);
-  await expect(page.locator("#projects .project-card")).toHaveCount(
-    expected.length,
-  );
+  const expected = await expectProjectTiers(page);
   await expect(
     page.getByRole("heading", { name: "Projects are unavailable" }),
   ).toHaveCount(0);

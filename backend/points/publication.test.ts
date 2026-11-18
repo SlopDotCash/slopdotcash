@@ -11,7 +11,10 @@ import { handlePointsApi } from "./handler";
 const NOW = "2026-10-26T12:00:00.000Z";
 const ASSERTION = `slop_assert_v1_${"a".repeat(48)}`;
 
-async function harness(identityService?: PointsDependencies["identity"]) {
+async function harness(
+  identityService?: PointsDependencies["identity"],
+  ownerSessionGithubId?: string,
+) {
   const { db, sqlite, tokens } = await seedAccountClosure();
   sqlite.exec(`
     UPDATE points_members SET public=0 WHERE actor_id='${ME.actor}';
@@ -19,9 +22,11 @@ async function harness(identityService?: PointsDependencies["identity"]) {
     UPDATE points_sessions SET expires_at='2026-10-26T13:00:00.000Z';
   `);
   const identity = { actor: ME.actor, github: ME.github, login: ME.login };
+  let now = NOW;
   const deps: PointsDependencies = {
     db,
-    now: () => new Date(NOW),
+    now: () => new Date(now),
+    ownerSessionGithubId,
     rateLimitSecret: "fixture-publication-secret".repeat(3),
     identity: identityService ?? {
       fetch: async () =>
@@ -74,7 +79,16 @@ async function harness(identityService?: PointsDependencies["identity"]) {
           sqlite.query(`SELECT * FROM "${name}" ORDER BY rowid`).all(),
         ]),
     );
-  return { sqlite, identity, call, raw, snapshot };
+  return {
+    sqlite,
+    identity,
+    call,
+    raw,
+    snapshot,
+    setNow: (at: string) => {
+      now = at;
+    },
+  };
 }
 
 test("an identity storage outage leaves publication untouched and does not expire the assertion", async () => {
@@ -232,6 +246,58 @@ test("only sign-in publishes an existing private membership and connected X link
     expect(
       await (await call(`x/profile?actor=${ME.actor}`, undefined, null)).json(),
     ).toMatchObject({ id: "77", username: "closing_x" });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a new owner session expires at seven days without extending prior sessions", async () => {
+  const { sqlite, call, setNow } = await harness(undefined, ME.github);
+  try {
+    const joined = await call(
+      "join",
+      { assertion: ASSERTION, public: true },
+      null,
+    );
+    expect(joined.status).toBe(200);
+    const cookie = joined.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("Max-Age=604800");
+    expect(cookie).toContain("Secure; HttpOnly; SameSite=Strict");
+    const token = cookie.split(";")[0].slice("__Host-slop_points=".length);
+    const expiresAt = "2026-11-02T12:00:00.000Z";
+    expect(
+      sqlite
+        .query("SELECT expires_at FROM points_sessions WHERE token_hash=?")
+        .get(await sha256Hex(token)),
+    ).toEqual({ expires_at: expiresAt });
+    setNow("2026-10-26T13:00:00.000Z");
+    expect(await (await call("me")).json()).toBeNull();
+    expect(await (await call("me", undefined, token)).json()).toMatchObject({
+      actor: { id: ME.actor },
+    });
+    setNow("2026-11-02T11:59:59.999Z");
+    expect(await (await call("me", undefined, token)).json()).toMatchObject({
+      actor: { id: ME.actor },
+    });
+    setNow(expiresAt);
+    const expired = await call("me", undefined, token);
+    expect(await expired.json()).toBeNull();
+    expect(expired.headers.get("set-cookie")).toContain("Max-Age=0");
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a different verified numeric GitHub identity keeps the one-hour site session", async () => {
+  const { sqlite, call } = await harness(undefined, "900000001");
+  try {
+    const joined = await call(
+      "join",
+      { assertion: ASSERTION, public: true },
+      null,
+    );
+    expect(joined.status).toBe(200);
+    expect(joined.headers.get("set-cookie")).toContain("Max-Age=3600");
   } finally {
     sqlite.close();
   }

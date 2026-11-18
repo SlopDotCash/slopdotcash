@@ -1,4 +1,4 @@
-import { Check, Clock, TriangleAlert, Wallet } from "lucide-react";
+import { Check, CircleAlert, Clock, TriangleAlert, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
 import {
@@ -19,12 +19,7 @@ const STATUS: Record<
   Parameters<typeof PayoutRow>[0]["status"]
 > = {
   sent: { label: "Sent", tone: "success", icon: Check },
-  scheduled: {
-    label: "Scheduled",
-    title: "Scheduled for the next transfer batch",
-    tone: "neutral",
-    icon: Clock,
-  },
+  scheduled: { label: "Scheduled", tone: "neutral", icon: Clock },
   "awaiting-wallet": {
     label: "Awaiting wallet",
     tone: "warning",
@@ -72,7 +67,9 @@ export function ContributorAllocationRow({
   if (error)
     return (
       <div role="alert">
-        <p>The contributor allocation could not load.</p>
+        <p>
+          <CircleAlert aria-hidden="true" size={15} /> Allocation unavailable
+        </p>
         <button
           className="button secondary-button button-small"
           type="button"
@@ -119,10 +116,8 @@ export function ContributorAllocationRow({
         >
           {state === "awaiting-wallet" ? (
             <p className="payout-consent">
-              <a href="/account#wallets">
-                Add or confirm your {network} wallet
-              </a>{" "}
-              by {formatDateTime(allocation.registrationClosesAt)}.
+              <a href="/account#wallets">Add {network} wallet</a> · by{" "}
+              {formatDateTime(allocation.registrationClosesAt)}
             </p>
           ) : null}
         </PayoutRow>

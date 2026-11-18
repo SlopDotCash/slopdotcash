@@ -136,11 +136,11 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
   await expect(page.getByText("Enter 12 to 500 characters.")).toBeVisible();
   expect(published).toEqual([]);
   await description.fill("Extra tooling the project ships beside its core.");
-  await expect(
-    page.getByText("Contribution changes need a new security scan."),
-  ).toBeVisible();
+  await expect(page.getByText(/^Rescan(?: · pauses)?$/u).first()).toBeVisible();
   // The pending repository is part of the draft saved on this device.
-  await expect(page.getByText("Draft saved on this device.")).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "Draft saved on this device", exact: true }),
+  ).toBeVisible();
   await page.reload({ waitUntil: "networkidle" });
   await summary.click();
   await expect(
@@ -168,7 +168,9 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
     ),
   ).toBeVisible();
   await publish.click();
-  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: /Rev 2(?!\d)/u }),
+  ).toBeVisible();
   expect(published).toHaveLength(2);
   const sent = published[1] as {
     manifest: typeof project;
@@ -259,7 +261,7 @@ test("a pending repository can be removed before publication", async ({
     .getByRole("button", { name: "Publish changes", exact: true })
     .click();
   await expect(
-    page.getByText("Change at least one field before you publish."),
+    page.getByText("Nothing changed.", { exact: true }),
   ).toBeVisible();
   expect(writes).toBe(0);
   // It can be added again.

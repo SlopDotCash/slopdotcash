@@ -404,6 +404,17 @@ Accept and retain the report privately before optional GitHub forwarding;
 show its receipt and status in Inbox. Screen with the approved Surplus route
 before owner notification. Missing evidence, suspected spam and unavailable
 analysis stay recoverable for human review. A model never approves an award.
+Operator decision, 17 November 2026 (PRD section 8): a bounded routine pass
+(`backend/security/routine-decisions.ts`) decides reports still in `received`.
+It closes a duplicate, a report on which two independent model calls name the
+same published "Does not qualify" line, and a report without proof once its
+14-day clock ends with no new version, each with a plain reason and one appeal
+that returns the report to the program owner. It acknowledges everything else
+and ranks it for the owner. It never closes on a plausible loss of funds, an
+unavailable or disagreeing reading, an open appeal or correction, or a report
+on GitHub. `SECURITY_ROUTINE_DECISIONS` is `off`, `dry_run` or `live`, set in
+`wrangler.toml` (production, `dry_run`) and `wrangler.staging.toml` (`off`);
+`dry_run` records decisions only, and `live` needs its own reviewed change.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report

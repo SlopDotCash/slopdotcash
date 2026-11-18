@@ -25,6 +25,7 @@ import {
   assertFundingAddresses,
   fundingAssetForNetwork,
 } from "./funding-address.mjs";
+import { assertIntakeCap } from "./intake-cap.mjs";
 import LEGACY_PROJECTS from "./legacy-projects.json" with { type: "json" };
 import { validatePayoutExclusions } from "./payout-exclusions.mjs";
 import {
@@ -1015,6 +1016,7 @@ function validateReward(
   const hasCycleCaps = Object.hasOwn(reward, "cycleCaps");
   const hasExternalEvaluations = Object.hasOwn(reward, "externalEvaluations");
   const hasPayoutExclusions = Object.hasOwn(reward, "payoutExclusions");
+  const hasHonorSystem = Object.hasOwn(reward, "honorSystem");
   exactKeys(
     reward,
     [
@@ -1027,6 +1029,7 @@ function validateReward(
       ...(hasCycleCaps ? ["cycleCaps"] : []),
       "feeBasisPoints",
       "fundingState",
+      ...(hasHonorSystem ? ["honorSystem"] : []),
       "kind",
       "monthlyCapDisplay",
       "monthlyCapMinor",
@@ -1057,6 +1060,15 @@ function validateReward(
     reward.committedMinor,
     `${field}.committedMinor`,
   );
+  if (
+    hasHonorSystem &&
+    (reward.honorSystem !== true ||
+      reward.kind !== "monthly-pool" ||
+      BigInt(monthlyCapMinor) === 0n)
+  )
+    throw new TypeError(
+      `${field}.honorSystem must be true on a positive monthly pool, or omitted`,
+    );
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") {
     throw new TypeError(`${field}.paymentMode is invalid`);
   }
@@ -1268,9 +1280,11 @@ function validateProjectDefinition(
     const slopbot = record(project.slopbot, "project.slopbot");
     exactKeys(
       slopbot,
-      slopbot.readyLabel === undefined
-        ? ["automaticClosure"]
-        : ["automaticClosure", "readyLabel"],
+      [
+        "automaticClosure",
+        ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
+        ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
+      ],
       "project.slopbot",
     );
     if (typeof slopbot.automaticClosure !== "boolean")
@@ -1280,6 +1294,8 @@ function validateProjectDefinition(
         slopbot.readyLabel,
         "project.slopbot.readyLabel",
       );
+    if (slopbot.intakeCap !== undefined)
+      assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&

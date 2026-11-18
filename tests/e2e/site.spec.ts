@@ -6,6 +6,7 @@ import { readLeaderboardResponse } from "./leaderboard-response";
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
@@ -28,6 +29,7 @@ import { enlargeText } from "../text-size";
 import {
   expect,
   expectAccessible,
+  expectAccessibleReflow,
   servePublicProjectReads,
   test,
 } from "./fixtures";
@@ -435,7 +437,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     });
   });
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
-  await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await expect(page.getByLabel("Amount / month")).toHaveValue("0.001");
   await page
     .getByLabel("Short description")
     .fill("A focused token project description");
@@ -447,12 +449,14 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     path: test.info().outputPath("token-project-edit.png"),
     fullPage: true,
   });
-  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await expect(
+    page.getByRole("status").getByText("Rev 2", { exact: true }),
+  ).toBeVisible();
   expect(published?.manifest.reward.monthlyCapMinor).toBe("1000000000000000");
   expect(published?.monthlyAmount).toBeUndefined();
-  await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await expect(page.getByLabel("Amount / month")).toHaveValue("0.001");
   await openOwnerSettings(page, "Monthly rewards");
-  await page.getByLabel("Monthly amount (TEST)").fill("0.0000000000000000001");
+  await page.getByLabel("Amount / month").fill("0.0000000000000000001");
   await page
     .getByRole("button", { name: "Publish changes", exact: true })
     .click();
@@ -501,35 +505,66 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     "href",
     "https://github.com/SlopDotCash/slopdotcash",
   );
-  // Every open project is one card in the single projects grid.
+  // Both registry tiers have named sections and keep every eligible project.
   const projects = page.locator("#projects");
-  for (const project of homeProjects())
+  for (const [tier, name] of [
+    ["featured", "Featured"],
+    ["community", "Community"],
+  ] as const) {
+    const section = projects.getByRole("region", { name, exact: true });
+    const expected = homeProjects().filter(
+      (project) => project.listingTier === tier,
+    );
     await expect(
-      projects.locator(`a.project-card[href="/projects/${project.id}"]`),
+      section.getByRole("heading", { name, exact: true }),
     ).toBeVisible();
-  await expect(page.locator("section.community-projects")).toHaveCount(0);
+    const format = tier === "featured" ? ".project-card" : ".project-row";
+    await expect(
+      section.locator(tier === "featured" ? ".project-grid" : ".project-rows"),
+    ).toHaveCount(1);
+    const entries = section.locator(`a${format}`);
+    await expect(entries).toHaveCount(
+      tier === "featured" ? expected.length : Math.min(expected.length, 10),
+    );
+    const visible = await entries.evaluateAll((links) =>
+      links.map((link) => link.getAttribute("href")),
+    );
+    expect(new Set(visible).size).toBe(visible.length);
+    expect(expected.map((project) => `/projects/${project.slug}`)).toEqual(
+      expect.arrayContaining(visible),
+    );
+  }
+  await expect(page.locator("main")).not.toContainText("Pledged");
+  await expect(projects).not.toContainText("Last merge");
+  await expect(projects).not.toContainText("outside PRs waiting");
+  await expect(projects).not.toContainText("median merge");
   for (const project of PROJECTS.filter(
     (project) => project.status === "paused",
   )) {
     await expect(
-      page.locator(`a.project-card[href="/projects/${project.id}"]`),
+      projects.locator(`a[href="/projects/${project.id}"]`),
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  // The frozen project has a pledge and no verified vault funding.
-  await expect(
-    elizaCard.getByText("Points only", { exact: true }),
-  ).toBeVisible();
-  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
+  // The configured amount has no verified vault and no owner promise.
+  await expect(elizaCard.locator(".project-bounty strong")).toHaveText(
+    "$1,000",
+  );
+  await expect(elizaCard.locator(".project-funding-tag")).toHaveText(
+    "Configured",
+  );
+  await expect(elizaCard.locator(".project-funding-warning")).toHaveText(
+    "Not vaulted",
+  );
   // An external prize leads with points; the card never headlines its amount.
   const deltaStar = projects.locator(
-    'a.project-card[href="/projects/delta-star"]',
+    'a.project-row[href="/projects/delta-star"]',
   );
   await expect(deltaStar).toContainText("Points + external prize");
   await expect(deltaStar).not.toContainText("$1m");
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
-  ).toContainText(`${new URL(page.url()).origin}/SKILL.md`);
+  ).toContainText(`${new URL(page.url()).origin}/contribute/SKILL.md`);
   for (const agent of ["Cursor", "ChatGPT", "Claude"])
     await expect(
       page.getByRole("link", { name: agent, exact: true }),
@@ -622,8 +657,131 @@ test("shows agent setup and keeps contribution records available", async ({
   expect(shareCells).toHaveLength(view.leaders.length);
   // No committed funds: every row is a share of payment weight, never dollars.
   for (const cell of shareCells) {
-    expect(cell).toMatch(/^\d+\.\d{2}% of payment weight$/u);
+    expect(cell).toMatch(/^\d+\.\d{2}%$/u);
   }
+});
+
+test("community pagination keeps every project reachable and bounds discovery descriptions", async ({
+  page,
+}, info) => {
+  const communityProject = PROJECTS.find(
+    (project) => project.id === "thenetwork",
+  );
+  const featuredProject = PROJECTS.find((project) => project.id === "eliza");
+  if (!communityProject || !featuredProject)
+    throw new Error("Missing discovery fixtures");
+  const atLimit = `${"A useful description. ".repeat(24).slice(0, 499)}🧭`;
+  const description = `${atLimit} Additional details remain on the project page.`;
+  const communityProjects = Array.from({ length: 21 }, (_, index) => {
+    const number = index + 1;
+    const id = `community-fixture-${String(number).padStart(2, "0")}`;
+    const repository = `e2e-home/${id}`;
+    const githubUrl = `https://github.com/${repository}`;
+    return {
+      ...communityProject,
+      id,
+      slug: id,
+      name: `Community fixture ${number}`,
+      listingTier: "community",
+      description: number === 11 ? description : communityProject.description,
+      authority: {
+        ...communityProject.authority,
+        repositoryId: String(980000000 + number),
+        repositoryNodeId: `R_e2e_home_${number}`,
+      },
+      repositories: [
+        {
+          ...communityProject.repositories[0],
+          id: repository,
+          displayName: repository,
+          githubUrl,
+        },
+      ],
+      skill: {
+        id: `contribute-to-${id}`,
+        publishAtRoot: false,
+        sourcePath: `skills/contribute-to-${id}`,
+        publicPath: `/projects/${id}/skill.md`,
+      },
+      reviewSkill: {
+        id: `review-${id}-contributions`,
+        sourcePath: `skills/review-${id}-contributions`,
+      },
+      funding: { ...communityProject.funding, recordsPath: `funding/${id}` },
+      links: { repository: githubUrl, issues: `${githubUrl}/issues` },
+    };
+  });
+  await servePublicProjectReads(page);
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/u,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: [
+            { ...featuredProject, listingTier: "featured", description },
+            ...communityProjects,
+          ],
+        },
+      }),
+  );
+  await page.goto("/", { waitUntil: "networkidle" });
+  const projects = page.locator("#projects");
+  const featured = projects.getByRole("region", {
+    name: "Featured",
+    exact: true,
+  });
+  await expect(featured.locator(".project-card .project-summary")).toHaveText(
+    `${atLimit}...`,
+  );
+  const community = projects.getByRole("region", {
+    name: "Community",
+    exact: true,
+  });
+  const rows = community.getByRole("list").getByRole("listitem");
+  const pagination = community.getByRole("navigation", {
+    name: "Community project pages",
+    exact: true,
+  });
+  const previous = pagination.getByRole("button", {
+    name: "Previous page",
+    exact: true,
+  });
+  const next = pagination.getByRole("button", {
+    name: "Next page",
+    exact: true,
+  });
+  const expectPage = async (number: number) => {
+    await expect(
+      pagination.getByText(`${number} / 3`, { exact: true }),
+    ).toBeVisible();
+    const expected = communityProjects.slice((number - 1) * 10, number * 10);
+    await expect(rows).toHaveCount(expected.length);
+    expect(
+      await rows
+        .getByRole("link")
+        .evaluateAll((links) => links.map((link) => link.getAttribute("href"))),
+    ).toEqual(expected.map((project) => `/projects/${project.slug}`));
+  };
+  await expectPage(1);
+  await expect(previous).toBeDisabled();
+  await next.focus();
+  await page.keyboard.press("Enter");
+  await expectPage(2);
+  await expect(rows.first()).toContainText(`${atLimit}...`);
+  await expect(rows.first()).not.toContainText("Additional details");
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeEnabled();
+  await next.click();
+  await expectPage(3);
+  await expect(next).toBeDisabled();
+  await previous.click();
+  await expectPage(2);
+  await page.screenshot({
+    path: info.outputPath("community-page-two.png"),
+    fullPage: true,
+  });
+  await expectAccessibleReflow(page, "community-page-two");
 });
 
 test("never presents Delta Star's external prize as platform money", async ({
@@ -748,7 +906,7 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
-    const history = page.locator("details.cycle-history");
+    const history = page.locator("details.cycle-breakdown");
     if (await history.count()) {
       await expect(history).not.toHaveAttribute("open", "");
       await history.locator(":scope > summary").focus();
@@ -834,7 +992,7 @@ test("shows the suggested amount for a walletless cycle still under review", asy
     .filter({ has: page.getByRole("link", { name: contributor.actor.login }) });
   await expect(row).toContainText("Awaiting wallet");
   await expect(row.locator(".cycle-current-amount")).toHaveText("Suggested $1");
-  await row.getByText("Amount history", { exact: true }).click();
+  await row.getByLabel("Amount history", { exact: true }).click();
   await expect(row.locator(".cycle-amount-history")).toContainText(
     "Approved$0",
   );
@@ -844,9 +1002,9 @@ test("project settings require a signed-in maintainer", async ({ page }) => {
   for (const id of ["eliza", "asi"]) {
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
     await expect(
-      page.getByText(
-        "Sign in with a maintainer account to change project settings.",
-      ),
+      page.locator(".sign-in-panel").getByText("Maintainers only", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Sign in with GitHub" }),
@@ -899,7 +1057,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     state: "waiting",
     nextAction: {
       kind: "wait_for_scan",
-      message: "The security scan is queued. Nothing is needed from you.",
+      message: "Scan queued.",
       href: null,
     },
     checks: {
@@ -909,11 +1067,11 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
       },
       installation: {
         state: "installed",
-        message: "Slopbot is installed on elizaOS/eliza.",
+        message: "Installed.",
       },
       scan: {
         state: "queued",
-        message: "The security scan is queued. Nothing is needed from you.",
+        message: "Scan queued.",
       },
     },
     funding: { mode: "none" },
@@ -986,15 +1144,19 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   revision = 2;
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
-    "saved against revision 1",
+    "Draft is from rev 1; now rev 2.",
   );
   await expect(
     page.getByRole("button", { name: "Publish changes" }),
   ).toBeDisabled();
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
-  await page.getByRole("button", { name: "Use this draft" }).click();
+  await page
+    .getByRole("alert")
+    .getByRole("button", { name: "Keep", exact: true })
+    .click();
   const review = page.getByRole("region", { name: "Changes" });
-  const proposed = review.getByText(scope, { exact: true });
+  // The proposed value shares its cell with the chip naming its effect.
+  const proposed = review.locator("dd").filter({ hasText: scope });
   await review.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: test.info().outputPath("criteria-reviewed-diff.png"),
@@ -1030,11 +1192,11 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
   await page.getByRole("button", { name: "Publish changes" }).click();
-  await expect(page.getByText("Published revision 3.")).toBeVisible();
   await expect(
-    page.getByRole("heading", {
-      name: "Setup status: Waiting for the security scan",
-    }),
+    page.getByRole("status").getByText("Rev 3", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /^Setup\s*Scanning$/u }),
   ).toBeVisible();
   expect(submission).toMatchObject({
     expectedRevision: 2,
@@ -1121,16 +1283,22 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   ).toHaveCount(0);
   await expect(page.locator(".inbox-item")).toHaveCount(100);
   await page
-    .getByRole("button", { name: "Mark shown as read", exact: true })
+    .getByRole("button", { name: "Mark page read", exact: true })
     .click();
-  await expect(page.locator(".inbox-summary")).toContainText("1 unread");
+  await expect(
+    page.locator(".route-page-header").getByText("1 unread", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Older notifications" }).click();
   await expect(page.locator(".inbox-item")).toHaveCount(1);
   await expect(page.locator(".inbox-item")).toContainText("project-100");
   await page
-    .getByRole("button", { name: "Mark shown as read", exact: true })
+    .getByRole("button", { name: "Mark page read", exact: true })
     .click();
-  await expect(page.locator(".inbox-summary")).toContainText("All read.");
+  await expect(page.locator(".route-page-header")).not.toContainText("unread");
+  await expect(page.locator(".inbox-summary")).toHaveCount(0);
+  await expect(
+    page.getByRole("img", { name: "Unread", exact: true }),
+  ).toHaveCount(0);
   await expect(page.locator(".inbox-item")).toContainText("project-100");
   await page.screenshot({
     path: test.info().outputPath("older-notification-read.png"),
@@ -1247,46 +1415,40 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
+  // A read notice carries no mark; an unread one carries the unread dot.
   const sent = item("delivery-1");
-  await expect(sent.locator(".inbox-state")).toHaveText("Read");
-
-  await expect(sent.getByText("Email: sent", { exact: true })).toBeVisible();
-  await expect(sent.getByText("Email: delivered", { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(sent.locator(".inbox-state")).toHaveCount(0);
+  // Only a failed or uncertain email is marked; a normal delivery is not.
+  await expect(sent.locator(".inbox-delivery")).toHaveCount(0);
   const delivered = item("delivery-2");
-  await expect(delivered.locator(".inbox-state")).toHaveText("Unread");
-
+  await expect(delivered.locator(".inbox-state")).toHaveAccessibleName(
+    "Unread",
+  );
+  await expect(delivered.locator(".inbox-delivery")).toHaveCount(0);
+  const failed = item("delivery-3");
   await expect(
-    delivered.getByText("Email: delivered", { exact: true }),
+    failed.getByRole("img", { name: "Email: failed", exact: true }),
   ).toBeVisible();
+  await expect(failed.locator(".inbox-delivery")).toHaveCount(1);
+  const uncertain = item("delivery-4");
   await expect(
-    item("delivery-3").getByText("Email: failed", { exact: true }),
+    uncertain.getByRole("img", { name: "Email: uncertain", exact: true }),
   ).toBeVisible();
-  await expect(
-    item("delivery-4").getByText("Email: uncertain", { exact: true }),
-  ).toBeVisible();
-  const queued = item("delivery-5");
-
-  await expect(
-    queued.getByText("Email: queued", { exact: true }),
-  ).toBeVisible();
+  await expect(uncertain.locator(".inbox-delivery")).toHaveCount(1);
+  await expect(item("delivery-5").locator(".inbox-delivery")).toHaveCount(0);
   await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
   // Reading a private notice or accepting its email does not acknowledge it.
   const security = item("case-0001");
-  await expect(security.locator(".inbox-state")).toHaveText("Read");
-
-  await expect(
-    security.getByText("Email: sent", { exact: true }),
-  ).toBeVisible();
+  await expect(security.locator(".inbox-state")).toHaveCount(0);
+  await expect(security.locator(".inbox-delivery")).toHaveCount(0);
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
-  await expect(security.getByText("Acknowledged", { exact: true })).toHaveCount(
-    0,
-  );
   await expect(
-    page.getByRole("region", { name: "Email preferences" }),
+    security.getByRole("img", { name: "Acknowledged", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Email", exact: true }),
   ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
@@ -1297,12 +1459,13 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     .getByRole("link", { name: "Email preferences", exact: true })
     .click();
   await expect(page).toHaveURL(/\/account#notifications$/u);
-  const preferences = page.getByRole("region", { name: "Email preferences" });
-  await expect(preferences).toContainText(
-    "No verified email address is on file.",
-  );
+  const preferences = page.getByRole("region", {
+    name: "Email",
+    exact: true,
+  });
+  await expect(preferences).toContainText("No verified email");
   await expect(
-    preferences.getByRole("button", { name: "Retry email preferences" }),
+    preferences.getByRole("button", { name: "Retry", exact: true }),
   ).toHaveCount(0);
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
@@ -1318,9 +1481,11 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   );
   await page.reload();
   const retry = preferences.getByRole("button", {
-    name: "Retry email preferences",
+    name: "Retry",
+    exact: true,
   });
   await expect(retry).toBeVisible();
+  await expect(preferences).toContainText("Email check failed");
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({
@@ -1338,7 +1503,8 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   await retry.click();
   await expect(preferences).toContainText("example@example.com");
   const activityEmail = preferences.getByRole("switch", {
-    name: "Activity email",
+    name: "Activity",
+    exact: true,
   });
   await expect(activityEmail).toBeEnabled();
   await expect(activityEmail).not.toBeChecked();
@@ -1414,7 +1580,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
     .fill("An updated description without a financial configuration change.");
   await expect(changes).toContainText("Short description");
   await expect(changes).not.toContainText("Reward asset");
-  await page.getByRole("button", { name: "Close and keep draft" }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\?project=asi$/u);
   await expect(
     page.getByRole("heading", { name: "ASI", exact: true }),
@@ -1428,13 +1594,13 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
     path: test.info().outputPath("admin-no-implicit-asset.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Use this reward asset" }).click();
+  await page.getByRole("button", { name: "Set asset", exact: true }).click();
   await expect(changes).toContainText("Reward asset");
   await page.getByRole("checkbox", { name: "Featured", exact: true }).uncheck();
   await expect(page.getByLabel("Project status")).toHaveValue(project.status);
   await expect(changes).toContainText("Discovery placement");
   await page
-    .getByLabel("Reason for revision (public)")
+    .getByLabel("Reason Public", { exact: true })
     .fill("Update the project description and selected reward asset.");
   let releaseSave: () => void = () => {};
   const pendingSave = new Promise<void>((resolve) => {
@@ -1551,6 +1717,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
+    skillManifestResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
     request.get("/.well-known/agent-skills/index.json"),
@@ -1560,6 +1727,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
+    request.get("/skill-manifest.json"),
   ]);
   for (const response of [
     bootstrapResponse,
@@ -1570,6 +1738,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
+    skillManifestResponse,
   ]) {
     expect(response.status()).toBe(200);
   }
@@ -1611,8 +1780,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     expect(rules).toContain("## Historical protocol record");
   }
   expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
-  const bootstrap = await bootstrapResponse.body();
-  const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");
   const discovery = (await discoveryResponse.json()) as {
     $schema: string;
     skills: Array<{
@@ -1622,19 +1789,71 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
       url: string;
     }>;
   };
-  expect(discovery).toEqual({
-    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-    skills: [
-      expect.objectContaining({
-        digest: `sha256:${bootstrapDigest}`,
-        name: "slop",
-        type: "skill-md",
-        url: "https://slop.cash/SKILL.md",
-      }),
-    ],
+  expect(discovery.$schema).toBe(
+    "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  );
+  const manifest = await skillManifestResponse.json();
+  expect(skillManifestResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(skillManifestResponse.headers()["access-control-allow-origin"]).toBe(
+    "*",
+  );
+  const globalSkills = [
+    { name: "slop", path: "/SKILL.md" },
+    { name: "slop-contributor", path: "/contribute/SKILL.md" },
+    { name: "slop-maintainer", path: "/maintain/SKILL.md" },
+  ];
+  expect(discovery.skills.map((skill) => skill.name)).toEqual(
+    globalSkills.map((skill) => skill.name),
+  );
+  expect(manifest.skills.map((skill: { name: string }) => skill.name)).toEqual(
+    globalSkills.map((skill) => skill.name),
+  );
+  expect(manifest).toMatchObject({
+    schemaVersion: "1",
+    repository: "SlopDotCash/slopdotcash",
+    revision: expect.stringMatching(/^[a-f0-9]{40}$/u),
   });
-  expect(await discoverySkillResponse.body()).toEqual(bootstrap);
-  expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
+  const llms = await llmsResponse.text();
+  for (const [index, skill] of globalSkills.entries()) {
+    const [response, alias] =
+      skill.name === "slop"
+        ? [bootstrapResponse, discoverySkillResponse]
+        : await Promise.all([
+            request.get(skill.path),
+            request.get(`/.well-known/agent-skills/${skill.name}/SKILL.md`),
+          ]);
+    for (const published of [response, alias]) {
+      expect(published.status()).toBe(200);
+      expect(published.headers()["content-type"]).toContain("text/markdown");
+      expect(published.headers()["access-control-allow-origin"]).toBe("*");
+      expect(published.headers()["cache-control"]).toContain("max-age=300");
+    }
+    const bytes = await response.body();
+    const source = `skills/${skill.name}/SKILL.md`;
+    expect(bytes).toEqual(
+      readFileSync(new URL(`../../${source}`, import.meta.url)),
+    );
+    expect(await alias.body()).toEqual(bytes);
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    expect(discovery.skills[index]).toMatchObject({
+      name: skill.name,
+      type: "skill-md",
+      url: `https://slop.cash${skill.path}`,
+      digest,
+    });
+    expect(manifest.skills[index]).toEqual({
+      name: skill.name,
+      source,
+      url: `https://slop.cash${skill.path}`,
+      digest,
+      revision: manifest.revision,
+      revisionStatus: expect.stringMatching(/^(committed|working-tree)$/u),
+    });
+    expect(llms).toContain(`https://slop.cash${skill.path}`);
+    expect(llms).toContain(`SHA-256: ${digest.slice("sha256:".length)}`);
+  }
 });
 
 test("shows an explicit error for invalid data and retries", async ({
@@ -1666,7 +1885,7 @@ test("shows an explicit error for invalid data and retries", async ({
   // The frozen fixture is older than eight hours: a retained snapshot shows
   // its stale label instead of passing as current (owner decision D2).
   await expect(
-    page.getByRole("status").filter({ hasText: "Points may be outdated" }),
+    page.getByRole("status").filter({ hasText: "Points stale ·" }),
   ).toBeVisible();
   // Clearing the error starts loading; wait for the loaded snapshot before
   // checking that the retry made exactly one additional request.
@@ -1804,22 +2023,9 @@ for (const route of [
         );
       } else if (project.participation?.state !== "permission-required") {
         const start = page.locator("#start");
+        await expect(start.getByText("Paused", { exact: true })).toBeVisible();
         await expect(
-          start.getByRole("heading", { name: "Project paused", exact: true }),
-        ).toBeVisible();
-        await expect(
-          start.getByText(
-            "Do not install this project's skill or start work.",
-            {
-              exact: true,
-            },
-          ),
-        ).toBeVisible();
-        await expect(
-          start.getByRole("link", {
-            name: "Project owner: review setup",
-            exact: true,
-          }),
+          start.getByRole("link", { name: "Owner setup", exact: true }),
         ).toHaveAttribute("href", `/projects/${project.slug}/manage`);
       }
 
@@ -1884,9 +2090,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await audience.focus();
   await page.keyboard.press("Enter");
   await expect(audience.locator("..")).toHaveAttribute("open", "");
-  const rules = page.getByText("Funding rules and fees", {
-    exact: true,
-  });
+  const rules = page.getByText("Fees & rules", { exact: true });
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
@@ -2004,7 +2208,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       .getByRole("link", { name: "How penalties work", exact: true })
       .click();
     await expect(
-      page.getByText("Loading page…", { exact: true }),
+      page.getByTitle("Loading page", { exact: true }),
     ).toBeVisible();
     releaseChunk();
     await expect(page.locator("#penalties")).toBeInViewport();
@@ -2119,9 +2323,7 @@ test("cycle filters drop unavailable selections while retaining a published mont
   await expect(page.getByLabel("Month", { exact: true })).toHaveValue(
     index.cycles[0].cycleId,
   );
-  await expect(
-    page.getByText("No cycles match these filters.", { exact: false }),
-  ).toHaveCount(0);
+  await expect(page.getByText("No matches", { exact: false })).toHaveCount(0);
   await expect(page).toHaveURL(
     new RegExp(`/cycles\\?month=${index.cycles[0].cycleId}$`, "u"),
   );
