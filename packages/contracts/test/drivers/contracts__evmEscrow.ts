@@ -42,15 +42,12 @@ const keyOtherThan = (address: Address): Hex => {
   return ready().accounts[role ?? "deployer"].privateKey;
 };
 
-async function attesterKey(attested: boolean): Promise<Hex> {
-  const f = ready();
-  if (walk.factory === undefined) return keyOtherThan(zeroAddress);
-  const identity = await f.client.readContract({ address: walk.factory, abi: factoryAbi, functionName: "identityAuthority" });
-  if (!attested) return keyOtherThan(identity);
-  const key = keyOf(identity);
-  if (key === undefined) throw new Error(`the identity authority ${identity} is not a fixture account`);
-  return key;
-}
+// The signer names a fixture account; "" signs nothing, so the vault receives an empty attestation and refuses it as not 65 bytes.
+const signerKey = (signer: string): Hex | undefined => {
+  if (signer === "") return undefined;
+  if (!isRole(signer)) throw new Error(`no fixture account signs as ${JSON.stringify(signer)}`);
+  return ready().accounts[signer].privateKey;
+};
 
 async function party(name: string): Promise<Address> {
   if (name === "") return zeroAddress;
@@ -135,9 +132,13 @@ async function commitMonthly(event: Extract<Event, { type: "commitMonthly" }>, f
   const period = small(event.period, 32);
   const entries = event.entries.map(entry);
   const root = event.entries.length > 0 ? allocationRoot(event.entries) : zeroHash;
-  const key = await attesterKey(event.attested);
+  const key = signerKey(event.signer);
   const accepted = await toVault(from, async (vault) =>
-    encodeFunctionData({ abi: vaultAbi, functionName: "commitMonthly", args: [period, entries, await signAllocation(key, vault, { period, allocationRoot: root })] }));
+    encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "commitMonthly",
+      args: [period, entries, key === undefined ? "0x" : await signAllocation(key, vault, { period, allocationRoot: root })],
+    }));
   if (accepted) walk.roots.set(period, { root, name: "legacy" });
   return accepted;
 }
@@ -151,9 +152,13 @@ async function reserveMonthly(event: Extract<Event, { type: "reserveMonthly" }>,
     remainingGross: uint(reservation.remainingGross, 128), count: small(reservation.count, 32), sourceSequence: uint(event.sequence, 256),
   };
   const { period: _period, ...admitted } = signed;
-  const key = await attesterKey(event.attested);
+  const key = signerKey(event.signer);
   const accepted = await toVault(from, async (vault) =>
-    encodeFunctionData({ abi: vaultAbi, functionName: "reserveMonthly", args: [period, admitted, await signReservation(key, vault, signed)] }));
+    encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "reserveMonthly",
+      args: [period, admitted, key === undefined ? "0x" : await signReservation(key, vault, signed)],
+    }));
   if (accepted) {
     walk.roots.set(period, { root, name: reservation.root });
     walk.leaves.set(period, reservation.leaves);
@@ -176,8 +181,9 @@ async function releaseMonthlyReserve(event: Extract<Event, { type: "releaseMonth
   const period = small(event.period, 32);
   const remainingGross = uint(event.expectedRemaining, 128);
   const releasedGross = uint(event.releasedGross, 128);
-  const key = await attesterKey(event.attested);
+  const key = signerKey(event.signer);
   return toVault(from, async (vault) => {
+    if (key === undefined) return encodeFunctionData({ abi: vaultAbi, functionName: "releaseMonthlyReserve", args: [period, remainingGross, releasedGross, "0x"] });
     const [[allocationDigest], allocationRoot] = await Promise.all([
       f.client.readContract({ address: vault, abi: vaultAbi, functionName: "monthlyReserves", args: [period] }),
       f.client.readContract({ address: vault, abi: vaultAbi, functionName: "monthlyRoots", args: [period] }),

@@ -22,8 +22,8 @@ lemma FreshView(v: Vault, entries: seq<contracts__ledger_Leaf>)
 {
 }
 
-lemma CommitMonthlyView(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, attested: bool)
-  ensures canCommitMonthly(e, period, entries, attested) == (var local_1 := freshEntries(e.vault, entries); ((((((admissionOpen(e, period) && (|entries| > 0)) && attested) && (contracts__ledger_leafTotal(entries) <= capFor(e.vault, period))) && !((exists l :: l in entries && !((!(contracts__ledger_hasSource(e.vault.awards, l.source)) || existingMatches(e.vault, l)))))) && !((exists l :: l in local_1 && !(((((l.actor > 0) && (l.gross > 0)) && (l.source > 0)) && (|ProofLib.Filter((o: contracts__ledger_Leaf) => (o.source == l.source), local_1)| == 1)))))) && (contracts__ledger_leafTotal(local_1) <= e.vault.free)) && (contracts__ledger_leafTotal(local_1) <= unpledged(closePledge(e.vault, period))))
+lemma CommitMonthlyView(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, signer: string)
+  ensures canCommitMonthly(e, period, entries, signer) == (var local_4 := freshEntries(e.vault, entries); (((((((admissionOpen(e, period) && (|entries| > 0)) && signedByAuthority(e, signer)) && (contracts__ledger_leafTotal(entries) <= capFor(e.vault, period))) && !((exists l :: l in entries && !((!(contracts__ledger_hasSource(e.vault.awards, l.source)) || existingMatches(e.vault, l)))))) && !((exists l :: l in local_4 && !(((((l.actor > 0) && (l.gross > 0)) && (l.source > 0)) && (|ProofLib.Filter((o: contracts__ledger_Leaf) => (o.source == l.source), local_4)| == 1)))))) && (contracts__ledger_leafTotal(local_4) <= e.vault.free)) && (contracts__ledger_leafTotal(local_4) <= unpledged(closePledge(e.vault, period)))))
 {
 }
 
@@ -866,6 +866,8 @@ lemma ChargeFold(e: Escrow, f: (Vault, contracts__ledger_Leaf) -> Vault, v: Vaul
   ensures alwaysPaidMatchesAwards(e.(vault := Std.Collections.Seq.FoldLeft(f, v, xs)))
   ensures forall a :: a in Std.Collections.Seq.FoldLeft(f, v, xs).awards ==> a in v.awards || !a.paid
   ensures forall a :: a in v.awards ==> a in Std.Collections.Seq.FoldLeft(f, v, xs).awards
+  ensures |Std.Collections.Seq.FoldLeft(f, v, xs).awards| == |v.awards| + |xs|
+  ensures Std.Collections.Seq.FoldLeft(f, v, xs).sourceSequence == v.sourceSequence + |xs|
   decreases |xs|
 {
   if |xs| > 0 {
@@ -874,6 +876,7 @@ lemma ChargeFold(e: Escrow, f: (Vault, contracts__ledger_Leaf) -> Vault, v: Vaul
     var n := contracts__ledger_newAward(first.source, first.actor, first.gross, contracts__ledger_awardFee(v.key.purpose, first.gross), e.now);
     assert w == charged(v, first.source, first.actor, first.gross, e.now);
     assert w.awards == v.awards + [n];
+    assert w.sourceSequence == v.sourceSequence + 1;
     assert first in xs;
     RecordAward(e.(vault := v), e.(vault := w), n);
     LeafTotalCons(xs);
@@ -919,34 +922,37 @@ lemma EntriesNonneg(e: Escrow, entries: seq<contracts__ledger_Leaf>)
   LeafTotalNonneg(entries);
 }
 
-lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, attested: bool)
-  requires inv(e) && canCommitMonthly(e, period, entries, attested)
-  ensures alwaysAwardsWellFormed(commitMonthly(e, period, entries, attested))
-  ensures alwaysReservedMatchesAwards(commitMonthly(e, period, entries, attested))
-  ensures alwaysPaidMatchesAwards(commitMonthly(e, period, entries, attested))
-  ensures alwaysMonthsWellFormed(commitMonthly(e, period, entries, attested))
-  ensures alwaysPendingMatchesMonths(commitMonthly(e, period, entries, attested))
-  ensures alwaysNonnegative(commitMonthly(e, period, entries, attested))
-  ensures alwaysConserved(commitMonthly(e, period, entries, attested))
-  ensures alwaysBalanceCovers(commitMonthly(e, period, entries, attested))
-  ensures alwaysFeesAccounted(commitMonthly(e, period, entries, attested))
-  ensures alwaysCreatedVault(commitMonthly(e, period, entries, attested))
-  ensures alwaysBountyHasNoMonthly(commitMonthly(e, period, entries, attested))
-  ensures alwaysBindingsWellFormed(commitMonthly(e, period, entries, attested))
-  ensures stepPaidToLiveBinding(e, commitMonthly(e, period, entries, attested))
-  ensures stepAwardsRetained(e, commitMonthly(e, period, entries, attested))
-  ensures stepMonthsRetained(e, commitMonthly(e, period, entries, attested))
-  ensures stepNewBindingAttested(e, commitMonthly(e, period, entries, attested))
-  ensures stepConfigurationFixed(e, commitMonthly(e, period, entries, attested))
-  ensures stepAuthorityChanges(e, "commitMonthly", commitMonthly(e, period, entries, attested))
-  ensures stepMonthlyPolicyByOwner(e, "commitMonthly", commitMonthly(e, period, entries, attested))
-  ensures alwaysPledgesCovered(commitMonthly(e, period, entries, attested))
-  ensures alwaysPledgedMonthUnadmitted(commitMonthly(e, period, entries, attested))
+lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, signer: string)
+  requires inv(e) && canCommitMonthly(e, period, entries, signer)
+  ensures alwaysAwardsWellFormed(commitMonthly(e, period, entries, signer))
+  ensures alwaysReservedMatchesAwards(commitMonthly(e, period, entries, signer))
+  ensures alwaysPaidMatchesAwards(commitMonthly(e, period, entries, signer))
+  ensures alwaysMonthsWellFormed(commitMonthly(e, period, entries, signer))
+  ensures alwaysPendingMatchesMonths(commitMonthly(e, period, entries, signer))
+  ensures alwaysNonnegative(commitMonthly(e, period, entries, signer))
+  ensures alwaysConserved(commitMonthly(e, period, entries, signer))
+  ensures alwaysBalanceCovers(commitMonthly(e, period, entries, signer))
+  ensures alwaysFeesAccounted(commitMonthly(e, period, entries, signer))
+  ensures alwaysCreatedVault(commitMonthly(e, period, entries, signer))
+  ensures alwaysBountyHasNoMonthly(commitMonthly(e, period, entries, signer))
+  ensures alwaysBindingsWellFormed(commitMonthly(e, period, entries, signer))
+  ensures stepPaidToLiveBinding(e, commitMonthly(e, period, entries, signer))
+  ensures stepAwardsRetained(e, commitMonthly(e, period, entries, signer))
+  ensures stepMonthsRetained(e, commitMonthly(e, period, entries, signer))
+  ensures stepNewBindingAttested(e, commitMonthly(e, period, entries, signer))
+  ensures stepConfigurationFixed(e, commitMonthly(e, period, entries, signer))
+  ensures stepAuthorityChanges(e, "commitMonthly", commitMonthly(e, period, entries, signer))
+  ensures stepMonthlyPolicyByOwner(e, "commitMonthly", commitMonthly(e, period, entries, signer))
+  ensures alwaysPledgesCovered(commitMonthly(e, period, entries, signer))
+  ensures alwaysPledgedMonthUnadmitted(commitMonthly(e, period, entries, signer))
+  ensures alwaysAdmittedInWindow(commitMonthly(e, period, entries, signer))
+  ensures stepFreeRisesOnlyByDepositOrRelease(e, "commitMonthly", commitMonthly(e, period, entries, signer))
+  ensures stepSourceSequenceCountsOrdinaryAwards(e, commitMonthly(e, period, entries, signer))
 {
-  var after := commitMonthly(e, period, entries, attested);
+  var after := commitMonthly(e, period, entries, signer);
   var newEntries := freshEntries(e.vault, entries);
   FreshView(e.vault, entries);
-  CommitMonthlyView(e, period, entries, attested);
+  CommitMonthlyView(e, period, entries, signer);
   forall k | k in newEntries
     ensures k.actor > 0 && k.gross > 0 && k.source > 0 && !contracts__ledger_hasSource(e.vault.awards, k.source)
   {
@@ -987,6 +993,18 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   }
   ClosePledgeCovers(e, period);
   PledgedMonthAfterClose(e, period, after);
+  assert after.vault.months == e.vault.months + [nm];
+  forall m | m in after.vault.months
+    ensures contracts__ledger_inWindow(m.period, m.admittedAt)
+  {
+    if m != nm {
+      assert m in e.vault.months;
+    }
+  }
+  EntriesNonneg(e, newEntries);
+  assert after.vault.free == e.vault.free - contracts__ledger_leafTotal(newEntries);
+  assert after.vault.sourceSequence == e.vault.sourceSequence + |newEntries|;
+  assert |after.vault.awards| == |e.vault.awards| + |newEntries|;
 }
 
 // ---- Month pledges -------------------------------------------------------------
@@ -1533,11 +1551,13 @@ lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, 
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysMonthsWellFormed(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPendingMatchesMonths(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBountyHasNoMonthly(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysAdmittedInWindow(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPledgedMonthUnadmitted(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBindingsWellFormed(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepAuthorityChanges(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepConfigurationFixed(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepAwardsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepMonthlyPolicyByOwner(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepMonthsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
@@ -1545,6 +1565,7 @@ lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, 
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepNewBindingAttested(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepPaidToLiveBinding(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
 {
   if inv(e) && canPledgeMonths(e, fromPeriod, count, amount, by_) {
     SameAwards(e, pledgeMonths(e, fromPeriod, count, amount, by_));
@@ -1570,11 +1591,13 @@ lemma expirePledge_ensures(e: Escrow, period: int)
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysMonthsWellFormed(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPendingMatchesMonths(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBountyHasNoMonthly(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysAdmittedInWindow(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPledgesCovered(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPledgedMonthUnadmitted(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBindingsWellFormed(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepAuthorityChanges(e, "expirePledge", expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepConfigurationFixed(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepSourceSequenceCountsOrdinaryAwards(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepAwardsRetained(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepMonthlyPolicyByOwner(e, "expirePledge", expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepMonthsRetained(e, expirePledge(e, period)))
@@ -1582,6 +1605,7 @@ lemma expirePledge_ensures(e: Escrow, period: int)
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepNewBindingAttested(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepPaidToLiveBinding(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepFreeSpentByOwnerOrAttestation(e, "expirePledge", expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepFreeRisesOnlyByDepositOrRelease(e, "expirePledge", expirePledge(e, period)))
 {
   if inv(e) && canExpirePledge(e, period) {
     SameAwards(e, expirePledge(e, period));
@@ -1608,11 +1632,13 @@ lemma tick_ensures(e: Escrow, timestamp: int)
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysMonthsWellFormed(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysPendingMatchesMonths(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysBountyHasNoMonthly(tick(e, timestamp)))
+  ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysAdmittedInWindow(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysPledgesCovered(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysPledgedMonthUnadmitted(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysBindingsWellFormed(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepAuthorityChanges(e, "tick", tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepConfigurationFixed(e, tick(e, timestamp)))
+  ensures (inv(e) ==> canTick(e, timestamp) ==> stepSourceSequenceCountsOrdinaryAwards(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepAwardsRetained(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepMonthlyPolicyByOwner(e, "tick", tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepMonthsRetained(e, tick(e, timestamp)))
@@ -1620,6 +1646,7 @@ lemma tick_ensures(e: Escrow, timestamp: int)
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepNewBindingAttested(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepPaidToLiveBinding(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepFreeSpentByOwnerOrAttestation(e, "tick", tick(e, timestamp)))
+  ensures (inv(e) ==> canTick(e, timestamp) ==> stepFreeRisesOnlyByDepositOrRelease(e, "tick", tick(e, timestamp)))
 {
   if inv(e) && canTick(e, timestamp) {
     PledgesKept(e, "tick", tick(e, timestamp));
@@ -1648,11 +1675,13 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysMonthsWellFormed(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysPendingMatchesMonths(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysBountyHasNoMonthly(proposeUpgradeAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysAdmittedInWindow(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysPledgesCovered(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysPledgedMonthUnadmitted(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysBindingsWellFormed(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepAuthorityChanges(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepConfigurationFixed(e, proposeUpgradeAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepAwardsRetained(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepMonthlyPolicyByOwner(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepMonthsRetained(e, proposeUpgradeAuthority(e, successor, by_)))
@@ -1660,6 +1689,7 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepNewBindingAttested(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepPaidToLiveBinding(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
 {
   if inv(e) && canProposeUpgradeAuthority(e, successor, by_) {
     PledgesKept(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_));
@@ -1688,11 +1718,13 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysMonthsWellFormed(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysPendingMatchesMonths(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysBountyHasNoMonthly(acceptUpgradeAuthority(e, by_)))
+  ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysAdmittedInWindow(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysPledgesCovered(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysPledgedMonthUnadmitted(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysBindingsWellFormed(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepAuthorityChanges(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepConfigurationFixed(e, acceptUpgradeAuthority(e, by_)))
+  ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepAwardsRetained(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepMonthlyPolicyByOwner(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepMonthsRetained(e, acceptUpgradeAuthority(e, by_)))
@@ -1700,6 +1732,7 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepNewBindingAttested(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepPaidToLiveBinding(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
+  ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
 {
   if inv(e) && canAcceptUpgradeAuthority(e, by_) {
     PledgesKept(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_));
@@ -1728,11 +1761,13 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysMonthsWellFormed(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysPendingMatchesMonths(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysBountyHasNoMonthly(setVaultImplementation(e, logic, uups, by_)))
+  ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysAdmittedInWindow(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysPledgesCovered(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysPledgedMonthUnadmitted(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysBindingsWellFormed(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepAuthorityChanges(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepConfigurationFixed(e, setVaultImplementation(e, logic, uups, by_)))
+  ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepAwardsRetained(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepMonthlyPolicyByOwner(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepMonthsRetained(e, setVaultImplementation(e, logic, uups, by_)))
@@ -1740,6 +1775,7 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepNewBindingAttested(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
+  ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
 {
   if inv(e) && canSetVaultImplementation(e, logic, uups, by_) {
     PledgesKept(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_));
@@ -1768,11 +1804,13 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysMonthsWellFormed(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysPendingMatchesMonths(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysBountyHasNoMonthly(upgradeFactory(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysAdmittedInWindow(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysPledgesCovered(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysPledgedMonthUnadmitted(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysBindingsWellFormed(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepAuthorityChanges(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepConfigurationFixed(e, upgradeFactory(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepAwardsRetained(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepMonthlyPolicyByOwner(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepMonthsRetained(e, upgradeFactory(e, logic, uups, by_)))
@@ -1780,6 +1818,7 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepNewBindingAttested(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
 {
   if inv(e) && canUpgradeFactory(e, logic, uups, by_) {
     PledgesKept(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_));
@@ -1808,11 +1847,13 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysMonthsWellFormed(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysPendingMatchesMonths(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysBountyHasNoMonthly(upgradeVault(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysAdmittedInWindow(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysPledgesCovered(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysPledgedMonthUnadmitted(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysBindingsWellFormed(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepAuthorityChanges(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepConfigurationFixed(e, upgradeVault(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepAwardsRetained(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepMonthlyPolicyByOwner(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepMonthsRetained(e, upgradeVault(e, logic, uups, by_)))
@@ -1820,6 +1861,7 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepNewBindingAttested(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
 {
   if inv(e) && canUpgradeVault(e, logic, uups, by_) {
     PledgesKept(e, "upgradeVault", upgradeVault(e, logic, uups, by_));
@@ -1848,11 +1890,13 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysMonthsWellFormed(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysPendingMatchesMonths(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysBountyHasNoMonthly(proposeIdentityAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysAdmittedInWindow(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysPledgesCovered(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysPledgedMonthUnadmitted(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysBindingsWellFormed(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepAuthorityChanges(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepConfigurationFixed(e, proposeIdentityAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepAwardsRetained(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepMonthlyPolicyByOwner(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepMonthsRetained(e, proposeIdentityAuthority(e, successor, by_)))
@@ -1860,6 +1904,7 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepNewBindingAttested(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepPaidToLiveBinding(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
 {
   if inv(e) && canProposeIdentityAuthority(e, successor, by_) {
     PledgesKept(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_));
@@ -1888,11 +1933,13 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysMonthsWellFormed(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysPendingMatchesMonths(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysBountyHasNoMonthly(cancelIdentityAuthorityRotation(e, by_)))
+  ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysAdmittedInWindow(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysPledgesCovered(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysPledgedMonthUnadmitted(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysBindingsWellFormed(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepAuthorityChanges(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepConfigurationFixed(e, cancelIdentityAuthorityRotation(e, by_)))
+  ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepAwardsRetained(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepMonthlyPolicyByOwner(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepMonthsRetained(e, cancelIdentityAuthorityRotation(e, by_)))
@@ -1900,6 +1947,7 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepNewBindingAttested(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepPaidToLiveBinding(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
+  ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
 {
   if inv(e) && canCancelIdentityAuthorityRotation(e, by_) {
     PledgesKept(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_));
@@ -1928,11 +1976,13 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysMonthsWellFormed(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysPendingMatchesMonths(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysBountyHasNoMonthly(executeIdentityAuthorityRotation(e)))
+  ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysAdmittedInWindow(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysPledgesCovered(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysPledgedMonthUnadmitted(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysBindingsWellFormed(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepAuthorityChanges(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepConfigurationFixed(e, executeIdentityAuthorityRotation(e)))
+  ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepSourceSequenceCountsOrdinaryAwards(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepAwardsRetained(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepMonthlyPolicyByOwner(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepMonthsRetained(e, executeIdentityAuthorityRotation(e)))
@@ -1940,6 +1990,7 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepNewBindingAttested(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepPaidToLiveBinding(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepFreeSpentByOwnerOrAttestation(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
+  ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepFreeRisesOnlyByDepositOrRelease(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
 {
   if inv(e) && canExecuteIdentityAuthorityRotation(e) {
     PledgesKept(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e));
@@ -1968,11 +2019,13 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysMonthsWellFormed(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysPendingMatchesMonths(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysBountyHasNoMonthly(deposit(e, amount, sent, transferExact)))
+  ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysAdmittedInWindow(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysPledgesCovered(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysPledgedMonthUnadmitted(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysBindingsWellFormed(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepAuthorityChanges(e, "deposit", deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepConfigurationFixed(e, deposit(e, amount, sent, transferExact)))
+  ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepSourceSequenceCountsOrdinaryAwards(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepAwardsRetained(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepMonthlyPolicyByOwner(e, "deposit", deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepMonthsRetained(e, deposit(e, amount, sent, transferExact)))
@@ -1980,6 +2033,7 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepNewBindingAttested(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepPaidToLiveBinding(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepFreeSpentByOwnerOrAttestation(e, "deposit", deposit(e, amount, sent, transferExact)))
+  ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepFreeRisesOnlyByDepositOrRelease(e, "deposit", deposit(e, amount, sent, transferExact)))
 {
   if inv(e) && canDeposit(e, amount, sent, transferExact) {
     PledgesKept(e, "deposit", deposit(e, amount, sent, transferExact));
@@ -2008,11 +2062,13 @@ lemma transferIn_ensures(e: Escrow, amount: int)
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysMonthsWellFormed(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysPendingMatchesMonths(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysBountyHasNoMonthly(transferIn(e, amount)))
+  ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysAdmittedInWindow(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysPledgesCovered(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysPledgedMonthUnadmitted(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysBindingsWellFormed(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepAuthorityChanges(e, "transferIn", transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepConfigurationFixed(e, transferIn(e, amount)))
+  ensures (inv(e) ==> canTransferIn(e, amount) ==> stepSourceSequenceCountsOrdinaryAwards(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepAwardsRetained(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepMonthlyPolicyByOwner(e, "transferIn", transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepMonthsRetained(e, transferIn(e, amount)))
@@ -2020,6 +2076,7 @@ lemma transferIn_ensures(e: Escrow, amount: int)
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepNewBindingAttested(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepPaidToLiveBinding(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepFreeSpentByOwnerOrAttestation(e, "transferIn", transferIn(e, amount)))
+  ensures (inv(e) ==> canTransferIn(e, amount) ==> stepFreeRisesOnlyByDepositOrRelease(e, "transferIn", transferIn(e, amount)))
 {
   if inv(e) && canTransferIn(e, amount) {
     PledgesKept(e, "transferIn", transferIn(e, amount));
@@ -2048,11 +2105,13 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysMonthsWellFormed(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysPendingMatchesMonths(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysBountyHasNoMonthly(setMonthlyCommitment(e, cap, on, by_)))
+  ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysAdmittedInWindow(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysPledgesCovered(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysPledgedMonthUnadmitted(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysBindingsWellFormed(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepAuthorityChanges(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepConfigurationFixed(e, setMonthlyCommitment(e, cap, on, by_)))
+  ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepAwardsRetained(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepMonthlyPolicyByOwner(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepMonthsRetained(e, setMonthlyCommitment(e, cap, on, by_)))
@@ -2060,6 +2119,7 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepNewBindingAttested(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepPaidToLiveBinding(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
+  ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
 {
   if inv(e) && canSetMonthlyCommitment(e, cap, on, by_) {
     PledgesKept(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_));
@@ -2088,11 +2148,13 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysMonthsWellFormed(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysPendingMatchesMonths(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysBountyHasNoMonthly(withdrawUnused(e, gross, transferOk, by_)))
+  ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysAdmittedInWindow(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysPledgesCovered(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysPledgedMonthUnadmitted(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysBindingsWellFormed(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepAuthorityChanges(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepConfigurationFixed(e, withdrawUnused(e, gross, transferOk, by_)))
+  ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepAwardsRetained(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepMonthlyPolicyByOwner(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepMonthsRetained(e, withdrawUnused(e, gross, transferOk, by_)))
@@ -2100,6 +2162,7 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepNewBindingAttested(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepPaidToLiveBinding(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
+  ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
 {
   if inv(e) && canWithdrawUnused(e, gross, transferOk, by_) {
     PledgesKept(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_));
@@ -2129,11 +2192,13 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysMonthsWellFormed(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysPendingMatchesMonths(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysBountyHasNoMonthly(claimFees(e, transferOk)))
+  ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysAdmittedInWindow(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysPledgesCovered(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysPledgedMonthUnadmitted(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysBindingsWellFormed(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepAuthorityChanges(e, "claimFees", claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepConfigurationFixed(e, claimFees(e, transferOk)))
+  ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepSourceSequenceCountsOrdinaryAwards(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepAwardsRetained(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepMonthlyPolicyByOwner(e, "claimFees", claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepMonthsRetained(e, claimFees(e, transferOk)))
@@ -2141,6 +2206,7 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepNewBindingAttested(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepPaidToLiveBinding(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepFreeSpentByOwnerOrAttestation(e, "claimFees", claimFees(e, transferOk)))
+  ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepFreeRisesOnlyByDepositOrRelease(e, "claimFees", claimFees(e, transferOk)))
 {
   if inv(e) && canClaimFees(e, transferOk) {
     PledgesKept(e, "claimFees", claimFees(e, transferOk));
@@ -2169,11 +2235,13 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysMonthsWellFormed(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysPendingMatchesMonths(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysBountyHasNoMonthly(create(e, project, token, purpose, tokenReady, by_)))
+  ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysAdmittedInWindow(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysPledgesCovered(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysPledgedMonthUnadmitted(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysBindingsWellFormed(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepAuthorityChanges(e, "create", create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepConfigurationFixed(e, create(e, project, token, purpose, tokenReady, by_)))
+  ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepAwardsRetained(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepMonthlyPolicyByOwner(e, "create", create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepMonthsRetained(e, create(e, project, token, purpose, tokenReady, by_)))
@@ -2181,6 +2249,7 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepNewBindingAttested(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepPaidToLiveBinding(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "create", create(e, project, token, purpose, tokenReady, by_)))
+  ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "create", create(e, project, token, purpose, tokenReady, by_)))
 {
   if inv(e) && canCreate(e, project, token, purpose, tokenReady, by_) {
     PledgesKept(e, "create", create(e, project, token, purpose, tokenReady, by_));
@@ -2215,11 +2284,13 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysMonthsWellFormed(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysPendingMatchesMonths(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysBountyHasNoMonthly(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
+  ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysAdmittedInWindow(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysPledgesCovered(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysPledgedMonthUnadmitted(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysBindingsWellFormed(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepAuthorityChanges(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepConfigurationFixed(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
+  ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepAwardsRetained(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepMonthlyPolicyByOwner(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepMonthsRetained(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
@@ -2227,6 +2298,7 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepNewBindingAttested(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepPaidToLiveBinding(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
+  ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
 {
   if inv(e) && canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) {
     PledgesKept(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_));
@@ -2261,11 +2333,13 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysMonthsWellFormed(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysPendingMatchesMonths(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysBountyHasNoMonthly(commitAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysAdmittedInWindow(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysPledgesCovered(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysPledgedMonthUnadmitted(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysBindingsWellFormed(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepAuthorityChanges(e, "commitAward", commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepConfigurationFixed(e, commitAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepAwardsRetained(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepMonthlyPolicyByOwner(e, "commitAward", commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepMonthsRetained(e, commitAward(e, source, actor, gross, by_)))
@@ -2273,6 +2347,7 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepNewBindingAttested(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepPaidToLiveBinding(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "commitAward", commitAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "commitAward", commitAward(e, source, actor, gross, by_)))
 {
   if inv(e) && canCommitAward(e, source, actor, gross, by_) {
     PledgesKept(e, "commitAward", commitAward(e, source, actor, gross, by_));
@@ -2302,11 +2377,13 @@ lemma commitBountyAward_ensures(e: Escrow, source: int, actor: int, gross: int, 
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysMonthsWellFormed(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysPendingMatchesMonths(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysBountyHasNoMonthly(commitBountyAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysAdmittedInWindow(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysPledgesCovered(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysPledgedMonthUnadmitted(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysBindingsWellFormed(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepAuthorityChanges(e, "commitBountyAward", commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepConfigurationFixed(e, commitBountyAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepAwardsRetained(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepMonthlyPolicyByOwner(e, "commitBountyAward", commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepMonthsRetained(e, commitBountyAward(e, source, actor, gross, by_)))
@@ -2314,6 +2391,7 @@ lemma commitBountyAward_ensures(e: Escrow, source: int, actor: int, gross: int, 
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepNewBindingAttested(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepPaidToLiveBinding(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "commitBountyAward", commitBountyAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "commitBountyAward", commitBountyAward(e, source, actor, gross, by_)))
 {
   if inv(e) && canCommitBountyAward(e, source, actor, gross, by_) {
     var after := commitBountyAward(e, source, actor, gross, by_);
@@ -2338,11 +2416,13 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysMonthsWellFormed(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysPendingMatchesMonths(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysBountyHasNoMonthly(commitMonthlyLeaf(e, period, leaf)))
+  ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysAdmittedInWindow(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysPledgesCovered(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysPledgedMonthUnadmitted(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysBindingsWellFormed(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepAuthorityChanges(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepConfigurationFixed(e, commitMonthlyLeaf(e, period, leaf)))
+  ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepSourceSequenceCountsOrdinaryAwards(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepAwardsRetained(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepMonthlyPolicyByOwner(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepMonthsRetained(e, commitMonthlyLeaf(e, period, leaf)))
@@ -2350,6 +2430,7 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepNewBindingAttested(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepPaidToLiveBinding(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepFreeSpentByOwnerOrAttestation(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
+  ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepFreeRisesOnlyByDepositOrRelease(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
 {
   if inv(e) && canCommitMonthlyLeaf(e, period, leaf) {
     PledgesKept(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf));
@@ -2366,42 +2447,45 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
   }
 }
 
-lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, attested: bool, by_: string)
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysClockStarted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysFactoryRolesSeparate(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysUninitializedEmpty(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysRotationEffective(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysOneVaultPerKey(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysCreatedVault(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysConserved(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysBalanceCovers(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysFeesAccounted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysNonnegative(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysReservedMatchesAwards(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysPaidMatchesAwards(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysAwardsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysMonthsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysPendingMatchesMonths(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysBountyHasNoMonthly(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysPledgesCovered(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysPledgedMonthUnadmitted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> alwaysBindingsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepAuthorityChanges(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepConfigurationFixed(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepAwardsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepMonthlyPolicyByOwner(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepMonthsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepPledgeIrrevocable(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepNewBindingAttested(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepPaidToLiveBinding(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
-  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_)))
+lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, signer: string, by_: string)
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysClockStarted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysFactoryRolesSeparate(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysUninitializedEmpty(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysRotationEffective(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysOneVaultPerKey(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysCreatedVault(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysConserved(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysBalanceCovers(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysFeesAccounted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysNonnegative(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysReservedMatchesAwards(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPaidMatchesAwards(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysAwardsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysMonthsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPendingMatchesMonths(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysBountyHasNoMonthly(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysAdmittedInWindow(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPledgesCovered(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPledgedMonthUnadmitted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysBindingsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepAuthorityChanges(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepConfigurationFixed(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepAwardsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepMonthlyPolicyByOwner(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepMonthsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepPledgeIrrevocable(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepNewBindingAttested(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepPaidToLiveBinding(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
 {
-  if inv(e) && canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) {
-    PledgesKept(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_));
+  if inv(e) && canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) {
+    PledgesKept(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_));
   }
 
-  if inv(e) && canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_) {
-    var after := releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, attested, by_);
+  if inv(e) && canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) {
+    var after := releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_);
     var i := MonthForIndex(e, period);
     var m := e.vault.months[i];
     assert m.committedGross == 0 && m.released == 0;
@@ -2411,38 +2495,41 @@ lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: i
   }
 }
 
-lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, sequence: int, attested: bool)
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysClockStarted(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysFactoryRolesSeparate(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysUninitializedEmpty(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysRotationEffective(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysOneVaultPerKey(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysCreatedVault(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysConserved(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysBalanceCovers(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysFeesAccounted(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysNonnegative(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysReservedMatchesAwards(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysPaidMatchesAwards(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysAwardsWellFormed(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysMonthsWellFormed(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysPendingMatchesMonths(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysBountyHasNoMonthly(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysPledgesCovered(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysPledgedMonthUnadmitted(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> alwaysBindingsWellFormed(reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepAuthorityChanges(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepConfigurationFixed(e, reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepAwardsRetained(e, reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepMonthlyPolicyByOwner(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepMonthsRetained(e, reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepPledgeIrrevocable(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepNewBindingAttested(e, reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepPaidToLiveBinding(e, reserveMonthly(e, period, reservation, sequence, attested)))
-  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, attested) ==> stepFreeSpentByOwnerOrAttestation(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, attested)))
+lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, sequence: int, signer: string)
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysClockStarted(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysFactoryRolesSeparate(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysUninitializedEmpty(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysRotationEffective(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysOneVaultPerKey(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysCreatedVault(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysConserved(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysBalanceCovers(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysFeesAccounted(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysNonnegative(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysReservedMatchesAwards(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPaidMatchesAwards(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysAwardsWellFormed(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysMonthsWellFormed(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPendingMatchesMonths(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysBountyHasNoMonthly(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysAdmittedInWindow(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPledgesCovered(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPledgedMonthUnadmitted(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysBindingsWellFormed(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepAuthorityChanges(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepConfigurationFixed(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepSourceSequenceCountsOrdinaryAwards(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepAwardsRetained(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepMonthlyPolicyByOwner(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepMonthsRetained(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepPledgeIrrevocable(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepNewBindingAttested(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepPaidToLiveBinding(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepFreeSpentByOwnerOrAttestation(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepFreeRisesOnlyByDepositOrRelease(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
 {
-  if inv(e) && canReserveMonthly(e, period, reservation, sequence, attested) {
-    var after := reserveMonthly(e, period, reservation, sequence, attested);
+  if inv(e) && canReserveMonthly(e, period, reservation, sequence, signer) {
+    var after := reserveMonthly(e, period, reservation, sequence, signer);
     SameAwards(e, after);
     AwardsFrame(e, after);
     ClosePledgeFrame(e.vault, period);
@@ -2469,11 +2556,13 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysMonthsWellFormed(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysPendingMatchesMonths(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysBountyHasNoMonthly(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
+  ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysAdmittedInWindow(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysPledgesCovered(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysPledgedMonthUnadmitted(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysBindingsWellFormed(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepAuthorityChanges(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepConfigurationFixed(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
+  ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepAwardsRetained(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepMonthlyPolicyByOwner(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepMonthsRetained(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
@@ -2481,6 +2570,7 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepNewBindingAttested(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepPaidToLiveBinding(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
+  ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
 {
   if inv(e) && canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) {
     PledgesKept(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_));
@@ -2518,11 +2608,13 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysMonthsWellFormed(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysPendingMatchesMonths(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysBountyHasNoMonthly(cancelBinding(e, actor, expectedVersion, by_)))
+  ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysAdmittedInWindow(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysPledgesCovered(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysPledgedMonthUnadmitted(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysBindingsWellFormed(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepAuthorityChanges(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepConfigurationFixed(e, cancelBinding(e, actor, expectedVersion, by_)))
+  ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepSourceSequenceCountsOrdinaryAwards(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepAwardsRetained(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepMonthlyPolicyByOwner(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepMonthsRetained(e, cancelBinding(e, actor, expectedVersion, by_)))
@@ -2530,6 +2622,7 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepNewBindingAttested(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepPaidToLiveBinding(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepFreeSpentByOwnerOrAttestation(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
+  ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepFreeRisesOnlyByDepositOrRelease(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
 {
   if inv(e) && canCancelBinding(e, actor, expectedVersion, by_) {
     PledgesKept(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_));
@@ -2565,11 +2658,13 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysMonthsWellFormed(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysPendingMatchesMonths(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysBountyHasNoMonthly(pay(e, source, expectedVersion, transferOk)))
+  ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysAdmittedInWindow(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysPledgesCovered(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysPledgedMonthUnadmitted(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysBindingsWellFormed(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepAuthorityChanges(e, "pay", pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepConfigurationFixed(e, pay(e, source, expectedVersion, transferOk)))
+  ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepSourceSequenceCountsOrdinaryAwards(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepAwardsRetained(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepMonthlyPolicyByOwner(e, "pay", pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepMonthsRetained(e, pay(e, source, expectedVersion, transferOk)))
@@ -2577,6 +2672,7 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepNewBindingAttested(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepPaidToLiveBinding(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepFreeSpentByOwnerOrAttestation(e, "pay", pay(e, source, expectedVersion, transferOk)))
+  ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepFreeRisesOnlyByDepositOrRelease(e, "pay", pay(e, source, expectedVersion, transferOk)))
 {
   if inv(e) && canPay(e, source, expectedVersion, transferOk) {
     PledgesKept(e, "pay", pay(e, source, expectedVersion, transferOk));
@@ -2587,38 +2683,41 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
   }
 }
 
-lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, attested: bool)
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysClockStarted(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysFactoryRolesSeparate(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysUninitializedEmpty(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysRotationEffective(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysOneVaultPerKey(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysCreatedVault(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysConserved(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysBalanceCovers(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysFeesAccounted(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysNonnegative(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysReservedMatchesAwards(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysPaidMatchesAwards(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysAwardsWellFormed(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysMonthsWellFormed(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysPendingMatchesMonths(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysBountyHasNoMonthly(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysPledgesCovered(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysPledgedMonthUnadmitted(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> alwaysBindingsWellFormed(commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepAuthorityChanges(e, "commitMonthly", commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepConfigurationFixed(e, commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepAwardsRetained(e, commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepMonthlyPolicyByOwner(e, "commitMonthly", commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepMonthsRetained(e, commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepPledgeIrrevocable(e, "commitMonthly", commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepNewBindingAttested(e, commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepPaidToLiveBinding(e, commitMonthly(e, period, entries, attested)))
-  ensures (inv(e) ==> canCommitMonthly(e, period, entries, attested) ==> stepFreeSpentByOwnerOrAttestation(e, "commitMonthly", commitMonthly(e, period, entries, attested)))
+lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, signer: string)
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysClockStarted(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysFactoryRolesSeparate(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysUninitializedEmpty(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysRotationEffective(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysOneVaultPerKey(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysCreatedVault(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysConserved(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysBalanceCovers(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysFeesAccounted(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysNonnegative(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysReservedMatchesAwards(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPaidMatchesAwards(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysAwardsWellFormed(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysMonthsWellFormed(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPendingMatchesMonths(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysBountyHasNoMonthly(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysAdmittedInWindow(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPledgesCovered(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPledgedMonthUnadmitted(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysBindingsWellFormed(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepAuthorityChanges(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepConfigurationFixed(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepSourceSequenceCountsOrdinaryAwards(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepAwardsRetained(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepMonthlyPolicyByOwner(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepMonthsRetained(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepPledgeIrrevocable(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepNewBindingAttested(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepPaidToLiveBinding(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepFreeSpentByOwnerOrAttestation(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepFreeRisesOnlyByDepositOrRelease(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
 {
-  if inv(e) && canCommitMonthly(e, period, entries, attested) {
-    CommitMonthlyFacts(e, period, entries, attested);
+  if inv(e) && canCommitMonthly(e, period, entries, signer) {
+    CommitMonthlyFacts(e, period, entries, signer);
   }
 }
 

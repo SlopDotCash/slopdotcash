@@ -273,7 +273,8 @@ still has uncommitted leaves (`MonthlyLeavesPending`).
 `commitBountyAward` is for a bounty vault and needs a gross divisible by
 four. Both reserve the whole gross from the free balance and refuse a zero
 actor, gross or source and a source already consumed. Every award in an
-ordinary vault advances the source sequence. Both spend only unpledged free
+ordinary vault advances the source sequence, so it makes a reservation
+signed at the earlier sequence stale. Both spend only unpledged free
 funds, and the owner commits by hand nothing while the period whose window is
 open is pledged, since each award would make its pledged reservation stale.
 
@@ -297,6 +298,18 @@ pure def canCommitBountyAward(e: Escrow, source: int, actor: int, gross: int, by
     and recordable(e.vault, source, actor, gross) and gross <= unpledged(e.vault)
 pure def commitBountyAward(e: Escrow, source: int, actor: int, gross: int, by: str): Escrow =
   { ...e, vault: charged(e.vault, source, actor, gross, e.now) }
+pure def stepSourceSequenceCountsOrdinaryAwards(before: Escrow, after: Escrow): bool =
+  if (before.vault.key.purpose == L::Ordinary)
+    after.vault.sourceSequence == before.vault.sourceSequence + (after.vault.awards.length() - before.vault.awards.length())
+  else after.vault.sourceSequence == before.vault.sourceSequence
+pure def lawRecordedAwardStalesReservation(e: Escrow, period: int, reservation: Reservation, sequence: int, signer: str,
+  source: int, actor: int, gross: int): bool =
+  (canReserveMonthly(e, period, reservation, sequence, signer) and canCommitAward(e, source, actor, gross, e.vault.key.owner))
+    implies not(canReserveMonthly(commitAward(e, source, actor, gross, e.vault.key.owner), period, reservation, sequence, signer))
+pure def lawCommittedLeafStalesReservation(e: Escrow, period: int, reservation: Reservation, sequence: int, signer: str,
+  leafPeriod: int, leaf: L::Leaf): bool =
+  (canReserveMonthly(e, period, reservation, sequence, signer) and canCommitMonthlyLeaf(e, leafPeriod, leaf))
+    implies not(canReserveMonthly(commitMonthlyLeaf(e, leafPeriod, leaf), period, reservation, sequence, signer))
 ```
 
 ### Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards
@@ -361,6 +374,7 @@ pure def hasMonth(ms: List[Month], period: int): bool = ms.some(m => m.period ==
 pure def monthFor(ms: List[Month], period: int): Month = ms.foldl(noMonth, (found, m) => if (m.period == period) m else found)
 pure def withMonth(ms: List[Month], m: Month): List[Month] = ms.listMap(x => if (x.period == m.period) m else x)
 pure def sumRemaining(ms: List[Month]): int = ms.foldl(0, (t, m) => t + m.remaining)
+pure def signedByAuthority(e: Escrow, signer: str): bool = signer != "" and signer == e.identityAuthority
 pure def admissionOpen(e: Escrow, period: int): bool = e.created and e.vault.key.purpose == L::Ordinary
   and (e.vault.monthlyEnabled or pledgeOf(e.vault, period).open) and L::inWindow(period, e.now)
   and not(hasMonth(e.vault.months, period))
@@ -376,13 +390,14 @@ pure def existingMatches(v: Vault, l: L::Leaf): bool =
   val a = L::awardFor(v.awards, l.source)
   a.actor == l.actor and a.gross == l.gross and (a.fee == M::ordinaryFee(l.gross) or a.fee == l.gross / 50)
 pure def freshEntries(v: Vault, entries: List[L::Leaf]): List[L::Leaf] = entries.select(l => not(L::hasSource(v.awards, l.source)))
-pure def canCommitMonthly(e: Escrow, period: int, entries: List[L::Leaf], attested: bool): bool =
+pure def canCommitMonthly(e: Escrow, period: int, entries: List[L::Leaf], signer: str): bool =
   val fresh = freshEntries(e.vault, entries)
-  admissionOpen(e, period) and entries.length() > 0 and attested and L::leafTotal(entries) <= capFor(e.vault, period)
+  admissionOpen(e, period) and entries.length() > 0 and signedByAuthority(e, signer)
+    and L::leafTotal(entries) <= capFor(e.vault, period)
     and entries.every(l => not(L::hasSource(e.vault.awards, l.source)) or existingMatches(e.vault, l))
     and fresh.every(l => l.actor > 0 and l.gross > 0 and l.source > 0 and fresh.select(o => o.source == l.source).length() == 1)
     and L::leafTotal(fresh) <= e.vault.free and L::leafTotal(fresh) <= unpledged(closePledge(e.vault, period))
-pure def commitMonthly(e: Escrow, period: int, entries: List[L::Leaf], attested: bool): Escrow =
+pure def commitMonthly(e: Escrow, period: int, entries: List[L::Leaf], signer: str): Escrow =
   val funded = freshEntries(e.vault, entries).foldl(closePledge(e.vault, period), (v, l) => charged(v, l.source, l.actor, l.gross, e.now))
   { ...e, vault: { ...funded, months: funded.months.append({ ...noMonth, period: period, root: "legacy",
     wholeGross: L::leafTotal(entries), count: entries.length(), admittedAt: e.now, cap: capFor(e.vault, period), leaves: entries }) } }
@@ -397,17 +412,21 @@ positive whole gross within the cap, a remaining gross no larger than the
 whole and positive exactly when its leaf count is, and the source sequence
 it was built at: any award committed since then makes it stale
 (`MonthlySourceChanged`). The free balance must cover the remaining gross,
-which moves to the pending monthly reserve.
+which moves to the pending monthly reserve. Anyone may submit an admission;
+its signer must be the identity authority in force, so a rotated-out or
+pending authority refuses. The signature is EIP-712 over this vault's
+domain (chain id and vault address) and must be a canonical 65-byte
+signature by an externally owned account.
 
 ```quint
-pure def canReserveMonthly(e: Escrow, period: int, reservation: Reservation, sequence: int, attested: bool): bool =
+pure def canReserveMonthly(e: Escrow, period: int, reservation: Reservation, sequence: int, signer: str): bool =
   admissionOpen(e, period) and sequence == e.vault.sourceSequence
     and reservation.digest != "" and reservation.root != "" and reservation.wholeGross > 0
     and reservation.remainingGross >= 0 and reservation.remainingGross <= reservation.wholeGross
     and (reservation.count == 0) == (reservation.remainingGross == 0) and reservation.count >= 0
-    and reservation.wholeGross <= capFor(e.vault, period) and attested
+    and reservation.wholeGross <= capFor(e.vault, period) and signedByAuthority(e, signer)
     and reservation.remainingGross <= e.vault.free and reservation.remainingGross <= unpledged(closePledge(e.vault, period))
-pure def reserveMonthly(e: Escrow, period: int, reservation: Reservation, sequence: int, attested: bool): Escrow =
+pure def reserveMonthly(e: Escrow, period: int, reservation: Reservation, sequence: int, signer: str): Escrow =
   val v = closePledge(e.vault, period)
   { ...e, vault: { ...v, free: v.free - reservation.remainingGross,
     pendingMonthly: v.pendingMonthly + reservation.remainingGross,
@@ -415,6 +434,10 @@ pure def reserveMonthly(e: Escrow, period: int, reservation: Reservation, sequen
       wholeGross: reservation.wholeGross, total: reservation.remainingGross, remaining: reservation.remainingGross,
       count: reservation.count, committedGross: 0, released: 0, admittedAt: e.now, cap: capFor(e.vault, period),
       leaves: reservation.leaves }) } }
+pure def lawRotatedAuthorityRefuses(e: Escrow, period: int, reservation: Reservation, sequence: int, signer: str): bool =
+  (canReserveMonthly(e, period, reservation, sequence, signer) and canExecuteIdentityAuthorityRotation(e)
+    and signer != e.pendingIdentityAuthority)
+    implies not(canReserveMonthly(executeIdentityAuthorityRotation(e), period, reservation, sequence, signer))
 ```
 
 ### Anyone commits a proved leaf from its period's reserve without charging the free balance again
@@ -439,6 +462,8 @@ pure def commitMonthlyLeaf(e: Escrow, period: int, leaf: L::Leaf): Escrow =
   { ...e, vault: { ...v, pendingMonthly: v.pendingMonthly - leaf.gross,
     months: withMonth(v.months, { ...m, remaining: m.remaining - leaf.gross, committedGross: m.committedGross + leaf.gross }) } }
 pure def sometimesLeafCommitted(e: Escrow): bool = e.vault.months.some(m => m.version2 and m.committedGross > 0)
+pure def sometimesLeafPendingInNextWindow(e: Escrow): bool =
+  e.vault.months.some(m => m.version2 and m.remaining > 0 and L::closesAt(m.period) <= e.now)
 pure def sometimesOrdinaryPaid(e: Escrow): bool = e.vault.key.purpose == L::Ordinary and e.vault.paid > 0
 ```
 
@@ -454,12 +479,12 @@ change, and the period stays admitted. The deployed source before that
 upgrade also accepted partial and repeated releases.
 
 ```quint
-pure def canReleaseMonthlyReserve(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, attested: bool, by: str): bool =
+pure def canReleaseMonthlyReserve(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, signer: str, by: str): bool =
   val m = monthFor(e.vault.months, period)
   e.created and by == e.vault.key.owner and hasMonth(e.vault.months, period) and m.version2 and m.digest != ""
     and releasedGross > 0 and m.remaining == expectedRemaining and m.remaining == m.total
-    and releasedGross == expectedRemaining and attested
-pure def releaseMonthlyReserve(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, attested: bool, by: str): Escrow =
+    and releasedGross == expectedRemaining and signedByAuthority(e, signer)
+pure def releaseMonthlyReserve(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, signer: str, by: str): Escrow =
   val m = monthFor(e.vault.months, period)
   { ...e, vault: { ...e.vault, free: e.vault.free + releasedGross, pendingMonthly: e.vault.pendingMonthly - releasedGross,
     months: withMonth(e.vault.months, { ...m, remaining: 0, released: releasedGross }) } }
@@ -469,7 +494,9 @@ pure def sometimesWholeReserveReleased(e: Escrow): bool = e.vault.months.some(m 
 ### Each period has one root, its gross stays within the cap at admission, and the pending reserve is the sum of remainders
 
 A released period settled nothing, and a settled period released nothing.
-Only an ordinary vault holds monthly state.
+Only an ordinary vault holds monthly state. Each period keeps the time it
+was admitted, inside its window. A version-2 whole gross is read from the
+`MonthlyReserved` event, since storage keeps only the reserved total.
 
 ```quint
 pure def alwaysMonthsWellFormed(e: Escrow): bool = e.vault.months.every(m =>
@@ -481,10 +508,11 @@ pure def alwaysMonthsWellFormed(e: Escrow): bool = e.vault.months.every(m =>
 pure def alwaysPendingMatchesMonths(e: Escrow): bool = e.vault.pendingMonthly == sumRemaining(e.vault.months)
 pure def alwaysBountyHasNoMonthly(e: Escrow): bool = e.vault.key.purpose == L::Bounty implies
   e.vault.months.length() == 0 and not(e.vault.monthlyEnabled) and e.vault.monthlyCap == 0 and e.vault.pledges.length() == 0
+pure def alwaysAdmittedInWindow(e: Escrow): bool = e.vault.months.every(m => L::inWindow(m.period, m.admittedAt))
 pure def stepMonthsRetained(before: Escrow, after: Escrow): bool = before.vault.months.every(m =>
   after.vault.months.some(o => o.period == m.period and o.version2 == m.version2 and o.digest == m.digest and o.root == m.root
     and o.wholeGross == m.wholeGross and o.total == m.total and o.leaves == m.leaves and o.released >= m.released
-    and o.committedGross >= m.committedGross))
+    and o.committedGross >= m.committedGross and o.admittedAt == m.admittedAt))
 ```
 
 ## Story: Pledge free funds to future months irrevocably
@@ -652,7 +680,8 @@ pure def stepPaidToLiveBinding(before: Escrow, after: Escrow): bool = after.vaul
 `withdrawUnused` refuses a zero gross and a gross above the unpledged free
 balance; pledged, reserved, pending and accrued funds cannot be withdrawn. The fee is
 `ceil(gross / 50)` and stays in the vault as accrued fees; the rest goes
-only to the owner.
+only to the owner. Only a deposit or a whole reserve release raises the
+free balance; closing a pledge raises only the unpledged balance.
 
 ```quint
 pure def canWithdrawUnused(e: Escrow, gross: int, transferOk: bool, by: str): bool =
@@ -666,6 +695,8 @@ pure def withdrawUnused(e: Escrow, gross: int, transferOk: bool, by: str): Escro
 pure def stepFreeSpentByOwnerOrAttestation(before: Escrow, via: str, after: Escrow): bool =
   after.vault.free < before.vault.free implies (via == "commitAward" or via == "commitBountyAward"
     or via == "withdrawUnused" or via == "commitMonthly" or via == "reserveMonthly")
+pure def stepFreeRisesOnlyByDepositOrRelease(before: Escrow, via: str, after: Escrow): bool =
+  after.vault.free > before.vault.free implies (via == "deposit" or via == "releaseMonthlyReserve")
 pure def sometimesWithdrawn(e: Escrow): bool = e.vault.grossWithdrawn > 0
 ```
 
@@ -721,6 +752,8 @@ pure val reservationValues = Set(
 pure val sequenceValues = Set(0, 1)
 pure val leafValues = Set({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 },
   { actor: 1, gross: 50, source: 12 }, { actor: 2, gross: 4, source: 13 })
+pure val signerValues = Set("attester", "nextAttester", "registrar", "other", "")
+pure val leafPeriodValues = Set(202611, 202612)
 pure val expectedRemainingValues = Set(4, 54, 60)
 pure val releasedGrossValues = Set(4, 54, 60)
 pure val destinationValues = Set("wallet", "vault", "")
