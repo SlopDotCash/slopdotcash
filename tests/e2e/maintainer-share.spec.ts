@@ -84,7 +84,7 @@ test("a published maintainer share shows on the project page, the home card and 
   await expect(card).toContainText("Maintainer share 20%");
   // A project without the setting shows nothing more than before.
   await expect(
-    page.locator('#projects a[href="/projects/slopdotcash"]'),
+    page.locator('#projects a[href="/projects/delta-star"]'),
   ).not.toContainText("Maintainer share");
   await page.screenshot({
     path: info.outputPath("home-maintainer-share.png"),
