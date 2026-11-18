@@ -49,6 +49,10 @@ import {
   intakeCap,
   intakePaused,
 } from "./lib/intake-cap.mjs";
+import {
+  maintainerShareCardLine,
+  maintainerShareNotice,
+} from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
   homePoolReward,
@@ -724,6 +728,14 @@ function HomeReviewBudget({ project }: { project: HomeProject }) {
   ) : null;
 }
 
+/** The owner's published maintainer share, only beside a shown monthly amount. */
+function HomeMaintainerShare({ project }: { project: HomeProject }) {
+  const line = monthlyPoolPointsOnly(project.reward)
+    ? null
+    : maintainerShareCardLine(project, new Date());
+  return line ? <small className="project-review-budget">{line}</small> : null;
+}
+
 function ProjectCard({ project }: { project: HomeProject }) {
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
@@ -740,6 +752,7 @@ function ProjectCard({ project }: { project: HomeProject }) {
           <HomeReward project={project} />
         </p>
         <HomeReviewBudget project={project} />
+        <HomeMaintainerShare project={project} />
       </div>
     </Link>
   );
@@ -770,6 +783,7 @@ function CommunityProjects({ projects }: { projects: HomeProject[] }) {
                   <HomeReward project={project} />
                 </span>
                 <HomeReviewBudget project={project} />
+                <HomeMaintainerShare project={project} />
               </span>
               <ChevronRight aria-hidden="true" />
             </Link>
@@ -1516,6 +1530,7 @@ function ProjectRewardSummary({
   const now = new Date();
   const { project, promise } = publicPoolReward(registered, index, now);
   const status = poolFundingStatus(registered, index, now);
+  const shareNotice = maintainerShareNotice(registered, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
@@ -1572,6 +1587,9 @@ function ProjectRewardSummary({
           <p className="project-reward-status">
             Promised by the project owner; Slop does not guarantee payment.
           </p>
+        ) : null}
+        {shareNotice ? (
+          <p className="project-reward-status">{shareNotice}</p>
         ) : null}
       </div>
     </div>

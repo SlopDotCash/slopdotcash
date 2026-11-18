@@ -27,6 +27,10 @@ import {
 } from "./funding-address.mjs";
 import { assertIntakeCap } from "./intake-cap.mjs";
 import LEGACY_PROJECTS from "./legacy-projects.json" with { type: "json" };
+import {
+  assertMaintainerShare,
+  assertMaintainerShareHistory,
+} from "./maintainer-share.mjs";
 import { validatePayoutExclusions } from "./payout-exclusions.mjs";
 import {
   assertRewardAsset,
@@ -1017,6 +1021,11 @@ function validateReward(
   const hasExternalEvaluations = Object.hasOwn(reward, "externalEvaluations");
   const hasPayoutExclusions = Object.hasOwn(reward, "payoutExclusions");
   const hasHonorSystem = Object.hasOwn(reward, "honorSystem");
+  const hasMaintainerShare = Object.hasOwn(reward, "maintainerShare");
+  const hasMaintainerShareHistory = Object.hasOwn(
+    reward,
+    "maintainerShareHistory",
+  );
   exactKeys(
     reward,
     [
@@ -1031,6 +1040,8 @@ function validateReward(
       "fundingState",
       ...(hasHonorSystem ? ["honorSystem"] : []),
       "kind",
+      ...(hasMaintainerShare ? ["maintainerShare"] : []),
+      ...(hasMaintainerShareHistory ? ["maintainerShareHistory"] : []),
       "monthlyCapDisplay",
       "monthlyCapMinor",
       ...(hasPayoutExclusions ? ["payoutExclusions"] : []),
@@ -1068,6 +1079,20 @@ function validateReward(
   )
     throw new TypeError(
       `${field}.honorSystem must be true on a positive monthly pool, or omitted`,
+    );
+  if (
+    (hasMaintainerShare || hasMaintainerShareHistory) &&
+    reward.kind !== "monthly-pool"
+  )
+    throw new TypeError(
+      `${field}.maintainerShare applies to a monthly pool only`,
+    );
+  if (hasMaintainerShare)
+    assertMaintainerShare(reward.maintainerShare, `${field}.maintainerShare`);
+  if (hasMaintainerShareHistory)
+    assertMaintainerShareHistory(
+      reward.maintainerShareHistory,
+      `${field}.maintainerShareHistory`,
     );
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") {
     throw new TypeError(`${field}.paymentMode is invalid`);

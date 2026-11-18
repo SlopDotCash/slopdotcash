@@ -23,6 +23,10 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { INTAKE_CAP_LIMITS } from "./lib/intake-cap.mjs";
 import {
+  MAINTAINER_SHARE_LIMITS,
+  maintainerShareLabel,
+} from "./lib/maintainer-share.mjs";
+import {
   type ProjectDraftStore,
   useProjectDraftSave,
   useProjectDraftStore,
@@ -2285,6 +2289,26 @@ function intakeCapSummary(cap: number | undefined): string {
     : `At ${cap} open outside pull request${cap === 1 ? "" : "s"}`;
 }
 
+/** The owner's maintainer share as typed: a whole percent, or empty for none. */
+function maintainerShareDraft(text: string): {
+  basisPoints: number | undefined;
+  error: string | undefined;
+} {
+  const typed = text.trim().replace(/%$/u, "").trim();
+  if (typed === "") return { basisPoints: undefined, error: undefined };
+  const percent = /^\d{1,2}$/u.test(typed) ? Number(typed) : Number.NaN;
+  const maximum = MAINTAINER_SHARE_LIMITS.max / 100;
+  return Number.isSafeInteger(percent) && percent <= maximum
+    ? {
+        basisPoints: percent === 0 ? undefined : percent * 100,
+        error: undefined,
+      }
+    : {
+        basisPoints: undefined,
+        error: `Enter a whole number from 0 to ${maximum}, or leave it empty.`,
+      };
+}
+
 type UpdateDraft = ReadyDraft & {
   image: string;
   automaticClosure: string;
@@ -2302,6 +2326,8 @@ type UpdateDraft = ReadyDraft & {
   tokenSymbol: string;
   monthlyAmount: string;
   honorSystem: string;
+  /** Whole percent of the monthly amount, or "" for none. */
+  maintainerShare: string;
   /** Pending added repositories as JSON, or "" when there are none. */
   repositories: string;
 } & Record<SkillRuleField, string>;
@@ -2328,6 +2354,7 @@ const DRAFT_FIELDS = [
   "tokenSymbol",
   "monthlyAmount",
   "honorSystem",
+  "maintainerShare",
   "note",
   "repositories",
 ] as const;
@@ -2582,6 +2609,10 @@ function ProjectUpdateForm({
         ? ""
         : formatBaseUnits(capMinor, decimals, { grouping: false }),
     honorSystem: String(reward.honorSystem === true),
+    maintainerShare:
+      reward.maintainerShare === undefined
+        ? ""
+        : String(reward.maintainerShare / 100),
     repositories: "",
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
@@ -2705,9 +2736,11 @@ function ProjectUpdateForm({
   const intake = intakeCapDraft(value.intakeCap);
   // An invalid entry keeps the published number until it is corrected.
   const nextIntakeCap = intake.error ? current.slopbot?.intakeCap : intake.cap;
+  const share = maintainerShareDraft(value.maintainerShare);
   const errors: Record<string, string | undefined> = {
     ...(readyOn ? ready.errors : {}),
     intakeCap: intake.error,
+    maintainerShare: share.error,
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
     website: websiteInput.ok ? undefined : websiteInput.error,
@@ -2783,12 +2816,21 @@ function ProjectUpdateForm({
           source.rewardAsset,
         ),
       };
-      const { honorSystem: _honorSystem, ...rewardWithoutPromise } =
-        source.reward;
-      const promise =
-        choice.mode === "monthly" && choice.honorSystem === true
+      const {
+        honorSystem: _honorSystem,
+        maintainerShare: publishedShare,
+        ...rewardWithoutPromise
+      } = source.reward;
+      // An invalid entry keeps the published share until it is corrected.
+      const nextShare = share.error ? publishedShare : share.basisPoints;
+      const promise = {
+        ...(choice.mode === "monthly" && choice.honorSystem === true
           ? { honorSystem: true }
-          : {};
+          : {}),
+        ...(choice.mode === "monthly" && nextShare !== undefined
+          ? { maintainerShare: nextShare }
+          : {}),
+      };
       if (assetFixed || choice.mode === "none" || !assetTouched) {
         // The asset, network and vault stay; only the amount changes.
         fundingFields = {
@@ -2975,6 +3017,12 @@ function ProjectUpdateForm({
             label: "Honor-system promise",
             before: current.reward.honorSystem === true ? "On" : "Off",
             after: next.reward.honorSystem === true ? "On" : "Off",
+          },
+          {
+            field: "maintainerShare",
+            label: "Maintainer share",
+            before: maintainerShareLabel(current.reward.maintainerShare),
+            after: maintainerShareLabel(next.reward.maintainerShare),
           },
         ]
       : []),
@@ -3208,7 +3256,7 @@ function ProjectUpdateForm({
   /** What publishing one changed field does, shown as a chip on its row. */
   type ChangeEffect = "live" | "rescan" | "next-month";
   const changeEffect = (field: string): ChangeEffect =>
-    field === "vault" || field === "monthly"
+    field === "vault" || field === "monthly" || field === "maintainerShare"
       ? "next-month"
       : ["slopbot", "image", "headline", "description"].includes(field) ||
           executableCleared
@@ -3488,6 +3536,17 @@ function ProjectUpdateForm({
                 )(entry)
               }
             />
+            {choice.mode === "monthly" ? (
+              <TextField
+                error={shown("maintainerShare")}
+                hint="Percent of the monthly amount for the people who merge or close outside pull requests. Starts next UTC month."
+                inputMode="numeric"
+                label={`Maintainer share (%, 0 to ${MAINTAINER_SHARE_LIMITS.max / 100}, optional)`}
+                name="maintainerShare"
+                onChange={set("maintainerShare")}
+                value={value.maintainerShare}
+              />
+            ) : null}
           </details>
         ) : null}
         {monthly &&

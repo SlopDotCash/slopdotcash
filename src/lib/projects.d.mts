@@ -36,6 +36,16 @@ export interface ProjectReviewBudgetPolicy {
 export interface ProjectRewardPolicy {
   /** Owner opts to advertise the stated pool as a promise without vault funding. */
   readonly honorSystem?: true;
+  /**
+   * Basis points of the monthly amount that go to the accounts that decide
+   * outside pull requests (1 to 3000). Absent means no maintainer share.
+   */
+  readonly maintainerShare?: number;
+  /** Server-written: the share every month through `throughCycle` had. */
+  readonly maintainerShareHistory?: readonly {
+    readonly throughCycle: string;
+    readonly basisPoints: number;
+  }[];
   /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
   readonly cycleCaps?: readonly {
     readonly cycleId: string;

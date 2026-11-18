@@ -34,6 +34,7 @@ import {
   assertEscrowPolicy,
   type EscrowDeployment,
 } from "../src/lib/escrow-policy.mjs";
+import { maintainerShareBasisPoints } from "../src/lib/maintainer-share.mjs";
 import type {
   ProjectEnforcement,
   RepositoryAccess,
@@ -958,6 +959,75 @@ test("an owner explicitly publishes and removes an honor-system promise in immut
   expect(
     history.find((entry) => entry.revision === changed.revision)?.manifest,
   ).toEqual(changed.manifest);
+});
+
+test("an owner's maintainer share starts with the next UTC month and its history is server-written", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  expect(
+    (await call("POST", "projects", OWNER, { manifest: initial })).status,
+  ).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  const set = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: created.revision,
+    manifest: {
+      ...created.manifest,
+      reward: { ...created.manifest.reward, maintainerShare: 2000 },
+    },
+  });
+  expect(set.status).toBe(200);
+  const shared = await persistence.getProject("open-registry");
+  if (!shared) throw new Error("project expected");
+  // The open month (October) and every earlier month keep no share.
+  expect(shared.manifest.reward).toEqual({
+    ...created.manifest.reward,
+    maintainerShare: 2000,
+    maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 0 }],
+  });
+  expect(maintainerShareBasisPoints(shared.manifest, "2026-10")).toBe(0);
+  expect(maintainerShareBasisPoints(shared.manifest, "2026-11")).toBe(2000);
+  // A second change in the same month keeps October's recorded share.
+  const lowered = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: shared.revision,
+    manifest: {
+      ...shared.manifest,
+      reward: { ...shared.manifest.reward, maintainerShare: 1000 },
+    },
+  });
+  expect(lowered.status).toBe(200);
+  const second = await persistence.getProject("open-registry");
+  if (!second) throw new Error("project expected");
+  expect(second.manifest.reward.maintainerShareHistory).toEqual([
+    { throughCycle: "2026-10", basisPoints: 0 },
+  ]);
+  expect(maintainerShareBasisPoints(second.manifest, "2026-11")).toBe(1000);
+  for (const reward of [
+    // Above the 30% limit.
+    { ...second.manifest.reward, maintainerShare: 3001 },
+    // Zero is written by omitting the field.
+    { ...second.manifest.reward, maintainerShare: 0 },
+    // The owner cannot rewrite what earlier months had.
+    {
+      ...second.manifest.reward,
+      maintainerShare: 1500,
+      maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 3000 }],
+    },
+    {
+      ...second.manifest.reward,
+      maintainerShare: 1500,
+      maintainerShareHistory: undefined,
+    },
+  ]) {
+    const refused = await call("PUT", "projects/open-registry", OWNER, {
+      expectedRevision: second.revision,
+      manifest: { ...second.manifest, reward },
+    });
+    expect(refused.status).toBe(422);
+  }
+  expect((await persistence.getProject("open-registry"))?.revision).toBe(
+    second.revision,
+  );
 });
 
 test("honor-system changes require current authority and cannot rewrite reward history", async () => {

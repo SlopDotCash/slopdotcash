@@ -509,6 +509,17 @@ New project setup uses one monthly pool. Preserve historical committed review
 budgets and their terms; do not offer a second review budget for new projects.
 Review credit follows the canonical scoring policy.
 
+A project owner may set a maintainer share of 0 to 30% of the monthly amount
+(`reward.maintainerShare`, basis points; operator decision, 18 November 2026;
+PRD section 6). It comes out of the monthly amount before the Points split, so
+a month never distributes more than its amount. It is split among the GitHub
+users who merged or closed another person's outside pull request in that UTC
+month, in proportion to the number each decided. A month with no such decision
+has no maintainer share. Accounts on the payout exclusion list receive none.
+A change starts with the next UTC month. The monthly workflow reads the
+decisions from public GitHub data and stores the record with the proposal;
+never compute a split from a partial read.
+
 Automatic monthly payment is the PRD default for every project with funds
 committed in its vault. The owner sets the monthly amount during setup, can
 adjust allocations before execution, and can turn the default off. Only cuts
