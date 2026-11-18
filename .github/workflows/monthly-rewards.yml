@@ -157,11 +157,13 @@ jobs:
 
       # The repository's GITHUB_TOKEN quota is shared by every workflow and
       # a full collection needs more than it allows, so a dedicated read-only
-      # GitHub App collects when it is configured. Without the App, or if
-      # minting fails, the steps below use GITHUB_TOKEN as before.
+      # GitHub App collects when it is configured, on main only. Without the
+      # App, or if minting fails, the steps below use GITHUB_TOKEN as before.
       - name: Mint collector token
         id: collector-token
-        if: vars.COLLECTOR_APP_CLIENT_ID != ''
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
