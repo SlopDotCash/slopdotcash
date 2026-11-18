@@ -102,8 +102,10 @@ alias only.
     the accrual job may run only in off or dry_run until the program
     token exists, the funding line is agreed, an independent root watcher is
     operating, and the owner explicitly activates posting. Counsel review is
-    not required (owner decision, 26 October 2026). Root
-    posting stays on Robinhood Chain Testnet until that activation. This
+    not required (owner decision, 26 October 2026). No root is
+    posted until that activation; production accrual is dry_run against the
+    mainnet distributor, which holds the 2,000,000 tokens since 12 November
+    2026 (PRD section 11). This
     exception grants no authority over project vaults or contributor payments.
     The whole-root growth limit is 2,000,000 program tokens; each project still
     has a 250,000-token lifetime cap. The separate poster gas ceilings are
