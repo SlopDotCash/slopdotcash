@@ -1,5 +1,6 @@
 // spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
 import type { D1Database, Fetcher, RateLimit } from "@repo/platform/bindings"
+import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { Caller, Unauthenticated, outbound, preflight } from "@repo/platform/http"
@@ -27,6 +28,7 @@ const noSessions = Layer.succeed(Caller, {
 export default worker({
   services: (env: Env) => Layer.mergeAll(
     d1(env.IDENTITY_DB),
+    deploymentTier(env.SLOP_ENVIRONMENT),
     webCrypto,
     outbound,
     noSessions,

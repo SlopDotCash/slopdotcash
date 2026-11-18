@@ -13,11 +13,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { createBuilder } from "vite"
 import { SKILL_AUTHORITY_PYTHON } from "../../../skills/project-contributor-template/scripts/skill-authority.mjs"
 import { incompleteDocumentDetail } from "../src/artifacts/media.ts"
-import { evidenceArtifacts } from "../src/artifacts/live.vibe"
 import { requiredEvidenceRows } from "../src/artifacts/policy.ts"
 import { IDENTITY_RECORD, SIGNED_ATTRIBUTION_MARKER, identityRecordText, validateIdentityRecord } from "../src/client/identity/record.schema.ts"
 import { type ReceiptPolicyProject, type ReceiptRegistry, joinPolicy, markerOf, parseRunMarker } from "../src/client/receipts/receipt.ts"
 import { verifyRunReceipt } from "../src/client/receipts/verify.vibe"
+import { EvidenceArtifactsLive, githubReadToken } from "../src/live.vibe"
 import { storedZip } from "../src/render/archive.ts"
 import { type Role, templatePaths } from "../src/render/fields.ts"
 import { type GuideRequest, installClients, renderInstallGuide } from "../src/render/installGuide.ts"
@@ -92,8 +92,8 @@ module node {
 }
 import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles } from node
 
-const frozenTemplateSha256 = "3c0d93f9fc6b574e09422b89c1fa312ccae9926fdc1e104ec933e4e1b8a0c476"
-const frozenCommit = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+const frozenTemplateSha256 = "2f5b6490e2a6b2d6262b35283f202c8118143d67db83b4b99b787ff442b81d2b"
+const pinnedCommit = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -121,7 +121,7 @@ function indexText(contributor: TemplateGroup, reviewer: TemplateGroup, sources:
   return `${JSON.stringify({
     schemaVersion: "1",
     repository: sourceRepository,
-    commit: frozenCommit,
+    commit: pinnedCommit,
     templateSha256: digest,
     revisionStatus: "committed",
     contributor,
@@ -497,7 +497,7 @@ it.effect('A published project carries guides the bootstrap rebuilds from the fr
   }
   const tampered = new Map(fetched)
   tampered.set(`${templatePaths.reviewer}/SKILL.md`, encoder.encode("tampered\n"))
-  const guide = { rebuilt: true, digest: true, contract: [frozenCommit, "committed", [...guideRendererPaths], true] }
+  const guide = { rebuilt: true, digest: true, contract: [pinnedCommit, "committed", [...guideRendererPaths], true] }
   const artifact = { checksum: true, archive: true, claudeAlias: true, mission: true }
   try Effect.try(() => assert.deepStrictEqual(
     {
@@ -684,10 +684,12 @@ const ActiveRegistry = Layer.succeed(Registry, {
   byRepository: (repositoryId) => effect { return repositoryId === "acme/widget" ? widget : undefined },
   byPath: () => effect { return undefined },
   active: () => effect { return [widget] },
+  pausedProjects: () => effect { return [] },
   fence: () => effect { return sql`SELECT 1 AS fenced` },
+  appendVaultRegistration: () => Effect.die(new Error("the artifact journeys register no vault")),
 })
 
-const Verifier = Layer.provideMerge(evidenceArtifacts({ credential: Redacted.make(credential) }), Layer.mergeAll(outboundVia(net.fetcher), webCrypto, ActiveRegistry))
+const Verifier = Layer.provideMerge(EvidenceArtifactsLive, Layer.mergeAll(githubReadToken(credential), outboundVia(net.fetcher), webCrypto, ActiveRegistry))
 
 function evidenceBody(entries: ReadonlyArray<readonly [string, string]>) {
   return entries.map(([id, text]) => `<!-- evidence-row:${id} -->\n${text}`).join("\n\n")
@@ -896,17 +898,25 @@ function pointsDocument(name: string): string {
   return `# Slop Points\n\nCurrent rules are published from [the canonical PRD, section 7](https://github.com/SlopDotCash/slopdotcash/blob/development/docs/slop-product-requirements.md#7-points-discovery-and-clear-pages).\n\nPoints reward accepted work.\n\n## 7.1 Scoring\n\nEach merged pull request scores once.\n\n## Historical protocol record\n\n[The former ${name} document](https://github.com/SlopDotCash/slopdotcash/blob/ebf468873147a7ec119858915deca6cb3177eb0d/protocol/${name}) is retained at an immutable source revision for historical rules and record formats. Current policy and historical preservation follow the PRD above.\n`
 }
 
-const legacyOutputs: Readonly<Record<string, string>> = {
-  ".well-known/agent-skills/index.json": "e123cd1b36d35b6dce1d937ec8b6210fd3c0c1d7898886d348139755d0cbe2fb",
-  ".well-known/agent-skills/slop/SKILL.md": "f3518d58c13d301c2a39884711134a7e60f6438c1858ed6fe37d47d551bec464",
-  "SKILL.md": "f3518d58c13d301c2a39884711134a7e60f6438c1858ed6fe37d47d551bec464",
-  "llms.txt": "5e064fda766258afdd6743d8ce5d525abfcbae200afa25a127e8b48b5e6ebe45",
+interface GlobalSkill {
+  readonly name: string
+  readonly path: string
+  readonly label: string
+}
+
+const globalSkills: ReadonlyArray<GlobalSkill> = [
+  { name: "slop", path: "SKILL.md", label: "Slop entry skill" },
+  { name: "slop-contributor", path: "contribute/SKILL.md", label: "Contributor skill" },
+  { name: "slop-maintainer", path: "maintain/SKILL.md", label: "Maintainer skill" },
+]
+
+const invalidSkill = utf8Bytes("---\nname: Not Valid\ndescription: A global skill the validator refuses.\n---\n\n# Not valid\n")
+
+const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/identity-v1.json": "5f78f4edc91349a8574c1049ec70c4791d97c52ed7a024e19ed12bc310684346",
   "protocol/points-v1.md": sha256Hex(utf8Bytes(pointsDocument("points-v1.md"))),
   "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
-  "skill-manifest.json": "a245a9987271300a5da1be5b835eb533a3d8e974eb0209623638feed489a5f14",
-  "skill-templates/index.json": "c572dac26cecea240094fc30c3da74f8f3732cbd6523ca4dde4569a9251f0144",
   "skill-templates/skills/project-contributor-template/SKILL.md": "04a5f7e352c686f10f42f19bf1fad9ff2977877fb9d44e61f1cfbf40e72f2acb",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
   "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "37f9a68890c23eb6a1988e57fe465df1c7ec4b7c80729f5bf9477e24b5270fa7",
@@ -938,6 +948,42 @@ const SiteBuilt = Layer.effect(SiteProgram, effect {
   return { program: path.join(scratch, "dist/programs/main.js"), repository, out: path.join(scratch, "site") }
 })
 
+effect function globalOutputs() {
+  const published = [] as Array<{ readonly skill: GlobalSkill; readonly url: string; readonly description: string; readonly digest: string }>
+  for (const skill of globalSkills) {
+    const bytes = try orDie(Effect.try(() => repositoryBytes(repoRoot, `skills/${skill.name}/SKILL.md`)))
+    const quoted = /^description:\s*(.+)$/mu.exec(decoder.decode(bytes))?.[1]?.trim() ?? ""
+    const description = try orDie(Effect.try(() => JSON.parse(quoted) as string))
+    published.push({ skill, url: `https://slop.cash/${skill.path}`, description, digest: sha256Hex(bytes) })
+  }
+  const index = `${JSON.stringify({
+    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    skills: published.map(({ skill, url, description, digest }) => ({ name: skill.name, type: "skill-md", description, url, digest: `sha256:${digest}` })),
+  }, null, 2)}\n`
+  const llms = `# Slop\n\n> Contribute to or maintain open source with your agent. GitHub remains the authority for repository work.\n\n## Agent onboarding\n\n${published.map(({ skill, url, description, digest }) => `- [${skill.label}](${url}): ${description} SHA-256: ${digest}. Source revision: ${pinnedCommit} (committed).`).join("\n")}\n- [Agent Skills discovery index](https://slop.cash/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n- [Skill source manifest](https://slop.cash/skill-manifest.json): Source paths and revision status for each global skill.\n\nChecksums detect corruption; they do not prove source identity or grant authority. Skills never authorize credential, private-key, private trace, or raw conversation disclosure.\n`
+  const manifest = `${JSON.stringify({
+    schemaVersion: "1",
+    name: null,
+    repository: sourceRepository,
+    revision: pinnedCommit,
+    revisionStatus: "committed",
+    skills: published.map(({ skill, url, digest }) => ({ name: skill.name, source: `skills/${skill.name}/SKILL.md`, url, digest: `sha256:${digest}`, revision: pinnedCommit, revisionStatus: "committed" })),
+    generatedAt: fixedGeneratedAt,
+  }, null, 2)}\n`
+  const outputs: Record<string, string> = {
+    ...carriedOutputs,
+    "skill-templates/index.json": sha256Hex(utf8Bytes((try frozenTemplates()).text)),
+    ".well-known/agent-skills/index.json": sha256Hex(utf8Bytes(index)),
+    "llms.txt": sha256Hex(utf8Bytes(llms)),
+    "skill-manifest.json": sha256Hex(utf8Bytes(manifest)),
+  }
+  for (const { skill, digest } of published) {
+    outputs[skill.path] = digest
+    outputs[`.well-known/agent-skills/${skill.name}/SKILL.md`] = digest
+  }
+  return outputs
+}
+
 effect function runSite() {
   const { program, repository, out } = try SiteProgram
   return try scoped(effect {
@@ -959,11 +1005,11 @@ effect function published() {
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
   const commit = (try utf8Text(try git(repository, ["rev-parse", "HEAD"]), "the fixture commit")).trim()
-  const legacy = (text: string) => text.replaceAll(commit, frozenCommit).replace(/"generatedAt": "[^"]*"/u, `"generatedAt": "${fixedGeneratedAt}"`)
+  const pinned = (text: string) => text.replaceAll(commit, pinnedCommit).replace(/"generatedAt": "[^"]*"/u, `"generatedAt": "${fixedGeneratedAt}"`)
   const digests: Record<string, string> = {}
   for (const file of (try regularFiles(out, ".")).paths) {
     const bytes = try fs.readFile(path.join(out, file))
-    digests[file] = ["llms.txt", "skill-manifest.json", "skill-templates/index.json"].includes(file) ? sha256Hex(utf8Bytes(legacy(try outputText(file)))) : sha256Hex(bytes)
+    digests[file] = ["llms.txt", "skill-manifest.json", "skill-templates/index.json"].includes(file) ? sha256Hex(utf8Bytes(pinned(try outputText(file)))) : sha256Hex(bytes)
   }
   return digests
 }
@@ -972,9 +1018,9 @@ effect function statuses() {
   const indexJson = try outputText("skill-templates/index.json")
   const manifestText = try outputText("skill-manifest.json")
   const index = try Effect.try(() => JSON.parse(indexJson) as { readonly revisionStatus: string; readonly renderer: { readonly revisionStatus: string } })
-  const manifest = try Effect.try(() => JSON.parse(manifestText) as { readonly revisionStatus: string })
-  const llms = /\((committed|working-tree)\)\./u.exec(try outputText("llms.txt"))?.[1]
-  return { templates: index.revisionStatus, renderer: index.renderer.revisionStatus, manifest: manifest.revisionStatus, llms }
+  const manifest = try Effect.try(() => JSON.parse(manifestText) as { readonly revisionStatus: string; readonly skills: ReadonlyArray<{ readonly revisionStatus: string }> })
+  const llms = [...(try outputText("llms.txt")).matchAll(/\((committed|working-tree)\)\./gu)].map((match) => match[1])
+  return { templates: index.revisionStatus, renderer: index.renderer.revisionStatus, manifest: manifest.revisionStatus, skills: manifest.skills.map((skill) => skill.revisionStatus), llms }
 }
 
 effect function edited(file: string, bytes: Uint8Array) {
@@ -995,7 +1041,8 @@ effect function restored() {
 }
 
 layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('The site program publishes the bootstrap skill, discovery files, template trees and protocol documents with the bytes of cc7cc3200, labels working-tree edits and refuses an invalid bootstrap (spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required")', () => effect {
+  it.effect('The site program publishes the three global skills with their discovery copies, index, llms.txt and manifest, the template trees and protocol documents, labels working-tree edits per skill, and a refused role publishes nothing (spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required")', () => effect {
+    const expected = try globalOutputs()
     const committedRun = try runSite()
     const committedOutputs = try published()
     const committedStatuses = try statuses()
@@ -1011,21 +1058,32 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
     const untrackedRun = try runSite()
     try restored()
 
-    try edited("skills/slop/SKILL.md", utf8Bytes("---\nname: Not Valid\ndescription: A bootstrap the validator refuses.\n---\n\n# Not valid\n"))
-    const invalidRun = try runSite()
+    try edited("skills/slop/SKILL.md", invalidSkill)
+    const invalidEntryRun = try runSite()
+    try restored()
+
+    try edited("skills/slop-maintainer/SKILL.md", invalidSkill)
+    const invalidMaintainerRun = try runSite()
+    try restored()
+
+    try edited("skills/slop-contributor/notes.md", utf8Bytes("a second file\n"))
+    const twoFileRun = try runSite()
     const afterRefusals = try published()
     try restored()
 
+    const committed = ["committed", "committed", "committed"]
     try Effect.try(() => assert.deepStrictEqual(
-      { committedRun, committedOutputs, committedStatuses, editedRun, editedStatuses, untrackedRun, invalidRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs) },
+      { committedRun, committedOutputs, committedStatuses, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs) },
       {
         committedRun: { code: 0, refusal: undefined },
-        committedOutputs: legacyOutputs,
-        committedStatuses: { templates: "committed", renderer: "committed", manifest: "committed", llms: "committed" },
+        committedOutputs: expected,
+        committedStatuses: { templates: "committed", renderer: "committed", manifest: "committed", skills: committed, llms: committed },
         editedRun: { code: 0, refusal: undefined },
-        editedStatuses: { templates: "working-tree", renderer: "committed", manifest: "working-tree", llms: "working-tree" },
+        editedStatuses: { templates: "working-tree", renderer: "committed", manifest: "working-tree", skills: ["working-tree", "committed", "committed"], llms: ["working-tree", "committed", "committed"] },
         untrackedRun: { code: 1, refusal: "SiteRefused: [Slop] skill template skills/project-reviewer-template must be a bounded, tracked, exact file tree" },
-        invalidRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop" },
+        invalidEntryRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop" },
+        invalidMaintainerRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop-maintainer" },
+        twoFileRun: { code: 1, refusal: "SiteRefused: [Slop] slop-contributor must remain one reviewable SKILL.md" },
         refusalsWroteNothing: true,
       },
     ))
@@ -1231,7 +1289,7 @@ effect function planFunding(plan: ReturnType<typeof funding>) {
   return answer.body as FundingSeen
 }
 
-effect function underFunding<A>(plan: ReturnType<typeof funding>, step: Effect.Effect<A, never, World>) {
+effect function underFunding<A>(plan: ReturnType<typeof funding>, step: A!!World) {
   try planFunding(plan)
   const result = try step
   const seen = try planFunding(plan)

@@ -1,6 +1,6 @@
 // spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/wallets.md, "Story: Recover a wallet through the operator without giving the operator authority"
 import { type AnyRoute, route } from "@repo/platform/route"
-import { deploymentOrigins } from "./identity.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 
 export schema WalletClaimView {
   readonly schemaVersion: number
@@ -85,8 +85,8 @@ export const OperatorClaimFields = Schema.Struct({
 export type OperatorClaimFields = typeof OperatorClaimFields.Type
 
 const traceBrowserOrigins = {
-  production: [...deploymentOrigins.production.browserOrigins, "https://www.slop.cash", "https://www.slop.tech"],
-  staging: deploymentOrigins.staging.browserOrigins,
+  production: [...deploymentOrigins("production").traceBrowserOrigins],
+  staging: [...deploymentOrigins("staging").traceBrowserOrigins],
 } satisfies Readonly<Record<"production" | "staging", ReadonlyArray<string>>>
 
 const traceCors = [...new Set(Object.values(traceBrowserOrigins).flat())]

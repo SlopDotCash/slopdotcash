@@ -1,6 +1,6 @@
 // spec/contributor/installation.md, "Story: Install, update, and roll back a verified project skill"
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -125,6 +125,45 @@ export function unboundedOrIrregularContentsRefuse(): void {
     revisions: { [revisionA]: { files: archiveFiles } },
   });
   refused(run(command(writeArtifact(symlink, revisionA, archiveFiles), symlinkAuthority), join(symlink, "install")), "non-regular");
+
+  const entryLimit = 1_048_576;
+  const atLimit = (index: number) => Buffer.alloc(entryLimit, 97 + index);
+  const references = (count: number, contents: (index: number) => Buffer): Record<string, Buffer> =>
+    Object.fromEntries(Array.from({ length: count }, (_, index) => [`references/file-${index.toString().padStart(2, "0")}.md`, contents(index)]));
+  const withoutRevision = (files: Readonly<Record<string, Buffer>>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== "references/revision.txt"));
+  const contentsKey = `/repos/SlopDotCash/slopdotcash/contents/skills/${staticSkill}?ref=${revisionA}`;
+  refusedLeavingNothing("archive-extra-file", "archive files do not exactly match the canonical skill file list", (files) => ({ archive: { ...files, "references/extra.md": Buffer.from("not in the tree\n") } }));
+  refusedLeavingNothing("archive-missing-file", "archive files do not exactly match the canonical skill file list", (files) => ({ archive: withoutRevision(files) }));
+  refusedLeavingNothing("archive-entry-count", "unsafe archive entry count", (files) => ({ archive: { ...files, ...references(31, (index) => Buffer.from(`archived file ${index}\n`)) } }));
+  refusedLeavingNothing("archive-entry-size", "declared entry size exceeds limit", (files) => ({ archive: { ...files, "references/large.md": Buffer.alloc(entryLimit + 1, 97) } }));
+  refusedLeavingNothing("archive-total-size", "declared archive size exceeds limit", (files) => ({ archive: { ...files, ...references(4, atLimit) } }));
+  refusedLeavingNothing("archive-bytes", "remote response exceeds its declared size limit", () => ({ archiveBytes: 10_485_761 }));
+  refusedLeavingNothing("tree-directory-count", "canonical skill directory count exceeds its bound", (files) => ({
+    tree: { ...files, ...Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`directory-${index.toString().padStart(2, "0")}/file.md`, `directory ${index}\n`])) },
+  }));
+  refusedLeavingNothing("tree-entry-size", "canonical skill contains a non-regular or oversized entry", (files) => ({ tree: { ...files, "references/large.md": Buffer.alloc(entryLimit + 1, 97) } }));
+  refusedLeavingNothing("tree-total-size", "canonical skill bytes exceed their aggregate bound", (files) => ({ tree: { ...files, ...references(4, atLimit) } }));
+  refusedLeavingNothing("api-response-size", "remote response exceeds its declared size limit", () => ({ responseOverrides: { [contentsKey]: "x".repeat(2_097_152) } }));
+}
+
+interface BoundShape {
+  readonly tree?: Readonly<Record<string, Buffer | string>>;
+  readonly archive?: Readonly<Record<string, Buffer>>;
+  readonly archiveBytes?: number;
+  readonly responseOverrides?: Readonly<Record<string, unknown>>;
+}
+
+function refusedLeavingNothing(label: string, message: string, shape: (files: Readonly<Record<string, Buffer>>) => BoundShape): void {
+  const root = freshRoot(label);
+  const files = baseFiles(label);
+  const { tree = files, archive, archiveBytes, responseOverrides } = shape(files);
+  const authority = configureAuthority(root, { developHead: revisionA, revisions: { [revisionA]: { files: tree } }, ...responseOverrides === undefined ? {} : { responseOverrides } });
+  const artifact = writeArtifact(root, revisionA, files, archive === undefined ? {} : { archiveFiles: archive });
+  if (archiveBytes !== undefined) writeFileSync(join(artifact, "downloads", `${staticSkill}.skill`), Buffer.alloc(archiveBytes));
+  const installRoot = join(root, "install");
+  refused(run(command(artifact, authority), installRoot), message);
+  expect(readdirSync(skillsDirectory(installRoot)).filter((name) => name === staticSkill || name.startsWith(`.${staticSkill}-stage-`))).toEqual([]);
+  expect(readdirSync(join(skillsDirectory(installRoot), `.${staticSkill}-versions`))).toEqual([]);
 }
 
 function pythonShim(bin: string, name: string, artifact: string, authority: { readonly apiOrigin: string; readonly rawOrigin: string }, probe: string): void {
@@ -583,6 +622,14 @@ function generatedFixture(label: string, notes = "Prefer small PRs.", revision =
   return { root, manifest, binding, rendered: generated.rendered, artifact: generated.artifact, authority: generatedAuthority(root), installRoot: join(root, "install") };
 }
 
+function closedStatuses(manifest: ReturnType<typeof manifestFor>) {
+  return [
+    [{ error: "project_restricted", restriction: { state: "quarantined" } }, "paused or restricted this project"],
+    [{ schemaVersion: "1", project: { ...manifest, status: "active" }, skillsPublished: false }, "skills or repository admission are unavailable"],
+    [{ schemaVersion: "1", project: { ...manifest, status: "paused" }, skillsPublished: true }, "this project is paused"],
+  ] as const;
+}
+
 function installedFiles(directory: string, files: Readonly<Record<string, Buffer>>): void {
   for (const [path, contents] of Object.entries(files)) expect(readFileSync(join(directory, path)), path).toEqual(contents);
 }
@@ -633,6 +680,12 @@ export function exactRenderingInstallsAdvancesAndRollsBack(): void {
   expect(currentLink(f.installRoot, generatedSkill)).toBe(versionLink(`${revisionA}-r4`, generatedSkill));
   refused(run(generatedCommand(fileOrigin(f.artifact), f.authority, f.root), f.installRoot), "refusing downgrade of the project registry revision");
   expect(currentLink(f.installRoot, generatedSkill)).toBe(versionLink(`${revisionA}-r4`, generatedSkill));
+  for (const [status, message] of closedStatuses(newer)) {
+    publishStatus(f.root, newer.id, status);
+    refused(run(generatedCommand(fileOrigin(f.artifact), f.authority, f.root), f.installRoot, rollbackTo(`${revisionA}-r3`)), message);
+    expect(currentLink(f.installRoot, generatedSkill)).toBe(versionLink(`${revisionA}-r4`, generatedSkill));
+  }
+  publishRevision(f.root, newer, 4);
   succeeded(run(generatedCommand(fileOrigin(f.artifact), f.authority, f.root), f.installRoot, rollbackTo(`${revisionA}-r3`)));
   expect(currentLink(f.installRoot, generatedSkill)).toBe(versionLink(`${revisionA}-r3`, generatedSkill));
 }
@@ -737,12 +790,7 @@ export function closedProjectsRefuseContributorsButNotReviewers(): void {
   const script = join(installedSkill, "scripts", "run-receipt.mjs");
   const review = generatedArtifact(f.root, f.manifest, f.binding, undefined, "reviewer");
   const reviewAuthority = generatedAuthority(f.root, reviewerTemplate);
-  const statuses = [
-    [{ error: "project_restricted", restriction: { state: "quarantined" } }, "paused or restricted this project"],
-    [{ schemaVersion: "1", project: { ...f.manifest, status: "active" }, skillsPublished: false }, "skills or repository admission are unavailable"],
-    [{ schemaVersion: "1", project: { ...f.manifest, status: "paused" }, skillsPublished: true }, "this project is paused"],
-  ] as const;
-  for (const [status, message] of statuses) {
+  for (const [status, message] of closedStatuses(f.manifest)) {
     publishStatus(f.root, f.manifest.id, status);
     expect(authorizeJson(script, { XDG_CONFIG_HOME: join(f.root, "state") }).revision).toBe(revisionA);
     refused(run(generatedCommand(fileOrigin(f.artifact), f.authority, f.root), join(f.root, `install-${message.length}`)), message);

@@ -2,9 +2,8 @@
 import type { Fetcher } from "@repo/platform/bindings"
 import { type Outcome, exchanged } from "@repo/platform/browser"
 import { nowSeconds } from "@repo/platform/clock"
-import { localDevelopmentOrigin, tierOf } from "@repo/platform/config"
+import { deploymentOrigins, localDevelopmentOrigin, tierOf } from "@repo/platform/config"
 import { json, outboundVia, sameOriginWrite } from "@repo/platform/http"
-import { deploymentOrigins } from "../../client/identity.vibe"
 import { postPointsJoin } from "../../client/refusals.vibe"
 import { challengeOf } from "../../identity/pkce.vibe"
 import { countRequest, retryAfterSeconds, windowKey } from "../../identity/rateWindow.vibe"
@@ -55,7 +54,7 @@ export function accountSettings(vars: AccountVars) {
     const clientId = vars.X_CLIENT_ID ?? ""
     const clientSecret = vars.X_CLIENT_SECRET ?? ""
     return {
-      browserOrigins: new Set([...deploymentOrigins[tier].browserOrigins, ...extraOrigins(vars.PAYMENTS_ALLOWED_ORIGIN)]),
+      browserOrigins: new Set([...(tier === "local" ? [] : deploymentOrigins(tier).browserOrigins), ...extraOrigins(vars.PAYMENTS_ALLOWED_ORIGIN)]),
       limiterSecret: secretText.length >= 32 ? Redacted.make(secretText) : undefined,
       pkceKey: Redacted.make(try challengeOf(`slop-x-pkce:${secretText}`)),
       x: clientId !== "" && clientSecret !== "" ? { clientId, clientSecret: Redacted.make(clientSecret) } : undefined,

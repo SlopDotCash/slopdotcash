@@ -2,10 +2,10 @@
 import type { Fetcher } from "@repo/platform/bindings"
 import { type ServiceClient, serviceClient } from "@repo/platform/binding"
 import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { deploymentOrigins } from "@repo/platform/config"
 import { D1, sql } from "@repo/platform/d1"
 import type { CronJobs } from "@repo/platform/worker"
 import { Rejected, identityCron } from "../../gen/backend__identity.effect.vibe"
-import { deploymentOrigins } from "../client/identity.vibe"
 import { IdentitySettings } from "./config.vibe"
 import { purge } from "./store.vibe"
 
@@ -68,7 +68,7 @@ export effect function refreshMergeActivity() {
 schema IntakeRenewed { result: string }
 
 export effect function renewIntake() {
-  if ((try IdentitySettings).publicOrigin !== deploymentOrigins.production.identity) return
+  if ((try IdentitySettings).publicOrigin !== deploymentOrigins("production").identity) return
   const { client } = try IntakeRenewal
   const renewed = client === undefined ? undefined : client.call("POST", "/v1/intake/renew", undefined, IntakeRenewed, 4 * 1024) catch () => undefined
   if (renewed !== undefined) return

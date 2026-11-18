@@ -1,7 +1,6 @@
 // spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
-import { ConfigInvalid, localDevelopmentOrigin, secret, tierOf } from "@repo/platform/config"
+import { ConfigInvalid, deploymentOrigins, localDevelopmentOrigin, secret, tierOf } from "@repo/platform/config"
 import { fromBase64url } from "@repo/platform/crypto"
-import { deploymentOrigins } from "../client/identity.vibe"
 
 export interface IdentityVars {
   readonly SLOP_ENVIRONMENT?: string
@@ -30,17 +29,19 @@ effect function identityKey(name: string, text: string | undefined) {
   return value
 }
 
+effect function publicOrigins(vars: IdentityVars) {
+  const tier = try tierOf(vars.SLOP_ENVIRONMENT)
+  const configured = vars.IDENTITY_PUBLIC_ORIGIN
+  if (configured !== undefined && vars.IDENTITY_ALLOW_LOOPBACK === "1" && localDevelopmentOrigin(configured)) return { publicOrigin: configured, site: `${configured}/login`, browserOrigins: new Set([configured]), loopback: true }
+  const canonical = tier === "local" ? undefined : deploymentOrigins(tier)
+  if (canonical === undefined || (configured ?? canonical.identity) !== canonical.identity) throw new ConfigInvalid({ name: "IDENTITY_PUBLIC_ORIGIN", issue: "neither the tier's identity origin nor an enabled loopback origin" })
+  return { publicOrigin: canonical.identity, site: canonical.site, browserOrigins: new Set(canonical.browserOrigins), loopback: false }
+}
+
 export function identitySettings(vars: IdentityVars) {
   return Layer.effect(IdentitySettings, effect {
-    const canonical = deploymentOrigins[try tierOf(vars.SLOP_ENVIRONMENT)]
-    const configured = vars.IDENTITY_PUBLIC_ORIGIN ?? canonical.identity
-    const loopback = configured !== canonical.identity && vars.IDENTITY_ALLOW_LOOPBACK === "1" && localDevelopmentOrigin(configured)
-    if (configured !== canonical.identity && !loopback) throw new ConfigInvalid({ name: "IDENTITY_PUBLIC_ORIGIN", issue: "neither the tier's identity origin nor an enabled loopback origin" })
     return {
-      publicOrigin: configured,
-      site: loopback ? `${configured}/login` : canonical.site,
-      browserOrigins: new Set(loopback ? [configured] : canonical.browserOrigins),
-      loopback,
+      ...(try publicOrigins(vars)),
       clientId: try secret("GITHUB_APP_CLIENT_ID", vars.GITHUB_APP_CLIENT_ID),
       clientSecret: try secret("GITHUB_APP_CLIENT_SECRET", vars.GITHUB_APP_CLIENT_SECRET),
       stateKey: try identityKey("IDENTITY_STATE_KEY", vars.IDENTITY_STATE_KEY),

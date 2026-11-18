@@ -3,18 +3,21 @@ import { PLEDGED_FUNDS_SELECTOR, escrowAbi, evmAddress, factoryAbi } from "@repo
 import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
 import { Effect, Layer, ManagedRuntime } from "effect";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { type Hex, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, pad, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { PoolFacts } from "../../gen/frontend__projections.ts";
 import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
 import { unreadLocks } from "../../src/kernels/poolFunding.ts";
+import { useFollowed } from "../../src/screens/funding/vault/VaultActions.tsx";
 import { WalletChoice, walletChoiceServices } from "../../src/wallets/core/discovery.vibe";
 import { connectEvm } from "../../src/wallets/core/evm.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
-import { type Answer, type Saved, ownerVaultPage, vaultNotice } from "../../src/wallets/owner/ownerVault.vibe";
+import { type Answer, type OwnerVaultPage, type Saved, ownerVaultPage } from "../../src/wallets/owner/ownerVault.vibe";
 import { provisionalMessages, provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe";
 
 const account = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
@@ -37,10 +40,20 @@ const quietPool: PoolFacts = { read: "PoolCurrent", monthlyPool: false, period: 
 const hash = (byte: string) => `0x${byte.repeat(64)}`;
 const quantity = (value: bigint) => `0x${value.toString(16)}`;
 
+const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+const previousActEnvironment = environment.IS_REACT_ACT_ENVIRONMENT;
+beforeAll(() => {
+  environment.IS_REACT_ACT_ENVIRONMENT = true;
+});
+afterAll(() => {
+  environment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+});
+
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   sessionStorage.clear();
+  document.body.replaceChildren();
 });
 
 interface Mined {
@@ -159,6 +172,21 @@ function announce(uuid: string, provider: unknown) {
   window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail: Object.freeze({ info: { uuid, name: "Owner wallet", rdns: "test.owner", icon: "data:image/svg+xml,<svg/>" }, provider }) }));
 }
 
+function Follower({ runtime, page, account }: { runtime: ReturnType<typeof started>; page: OwnerVaultPage; account: number }) {
+  useFollowed(runtime, `follow:${account}`, () => page.follow(account));
+  return null;
+}
+
+async function followAs(runtime: ReturnType<typeof started>, page: OwnerVaultPage) {
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  cleanups.push(() => root.unmount());
+  return async (account: number) => {
+    await act(() => Promise.resolve(root.render(<Follower runtime={runtime} page={page} account={account} />)));
+    await expect.poll(async () => (await runtime.runPromise(page.machine.get())).owner).toBe(account);
+    return runtime.runPromise(page.machine.get());
+  };
+}
+
 const connected = Effect.gen(function* () {
   const choice = yield* WalletChoice;
   const id = (yield* choice.current()).find((offer) => offer.name === "Owner wallet")?.id ?? 0;
@@ -166,10 +194,10 @@ const connected = Effect.gen(function* () {
 });
 
 describe('Create and register the vault without asking the wallet twice (spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => {
-  it('the owner deposits into the registered vault once, the slot is saved before the prompt, an included transfer counts nothing, a tab-return recheck naming the same account keeps the request and its automatic check, and only the finalized exact deposit clears the slot (spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
+  it('the owner deposits into the registered vault once, the slot is saved before the prompt, an included transfer counts nothing, a sign-out and the same account signing in again on the page bring back the request and its automatic check, and only the finalized exact deposit clears the slot (spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
-    const result = await runtime.runPromise(Effect.gen(function* () {
+    const { page, check, ...result } = await runtime.runPromise(Effect.gen(function* () {
       announce("6f8a1f3e-5a2b-4c7d-8e9f-0a1b2c3d4e5f", chain.provider);
       const connection = yield* connected;
       const page = yield* ownerVaultPage(sessionSlots(), keys, true);
@@ -180,22 +208,28 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
         sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", (plan) => Effect.tap(beforePrompt(plan), () => Effect.sync(() => { savedBeforePrompt = sessionStorage.getItem(keys.transfer); }))));
       const check = (saved: Saved) => Effect.map(checkTransfer(connection, nativeVault, "deposit", "send", 5n * 10n ** 18n, saved.plan, saved.attempt.hash), (status): Answer => (status === "finalized" ? "FinalRead" : status === "received" ? "IncludedRead" : status === "failed" || status === "noVault" ? "Reverted" : "StillPending")).pipe(Effect.orElseSucceed((): Answer => "ReadFailed"));
       const included = yield* page.ask("Transfer", "OwnerCheck", check);
-      const shown = vaultNotice(included.notice, { operation: "deposit", network: nativeVault.network, hash: sent });
-      const keptWhileIncluded = sessionStorage.getItem(keys.transfer);
-      const recheck = yield* page.follow(actor);
-      chain.finalize();
-      const final = yield* page.autoCheck("Transfer", 0, check);
-      return { sent, savedBeforePrompt, included: [included.notice, included.transfer.phase], shown, kept: keptWhileIncluded !== null, recheck: [recheck.transfer.phase, recheck.transfer.slot.hash === sent], final: [final.notice, final.transfer.phase], after: sessionStorage.getItem(keys.transfer), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+      return { page, check, sent, savedBeforePrompt, included: [included.notice, included.transfer.phase], kept: sessionStorage.getItem(keys.transfer) !== null };
     }));
+    const follow = await followAs(runtime, page);
+    const shown = await follow(actor);
+    const signedOut = await follow(0);
+    const back = await follow(actor);
+    chain.finalize();
+    const final = await runtime.runPromise(page.autoCheck("Transfer", 0, check));
     expect(result.sent).toBe(chain.mined[0]?.hash);
     const savedRecord = JSON.parse(String(result.savedBeforePrompt));
     expect(savedRecord).toMatchObject({ account: actor, request: "transfer" });
     expect(JSON.parse(savedRecord.plan)).toEqual({ kind: "evmCall", from: owner, chainId: quantity(BigInt(chainId)), to: nativeVault.vault, data: chain.mined[0]?.input, value: quantity(5n * 10n ** 18n) });
-    expect(result).toMatchObject({
+    expect({
+      ...result,
+      followed: [shown.transfer.phase, signedOut.transfer.phase, back.transfer.phase, back.transfer.slot.hash === result.sent],
+      final: [final.notice, final.transfer.phase],
+      after: sessionStorage.getItem(keys.transfer),
+      sends: chain.seen.filter((method) => method === "eth_sendTransaction").length,
+    }).toMatchObject({
       included: ["Received", "Sent"],
-      shown: `Deposit received in a Base block. It counts once Base finalizes that block, usually within 20 minutes; you can leave this page. ${result.sent}`,
       kept: true,
-      recheck: ["Sent", true],
+      followed: ["Sent", "Idle", "Sent", true],
       final: ["Counted", "Done"],
       after: null,
       sends: 1,

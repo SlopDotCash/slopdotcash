@@ -1,6 +1,6 @@
-// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import type { AccountPayment, PaymentsAccount } from "@repo/settlement/client";
-import { Alert, Button, PageHeader, Spinner, Status } from "@repo/ui";
+import { Alert, Button, DataState, PageHeader, Spinner } from "@repo/ui";
 import { Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
@@ -14,7 +14,7 @@ import { netAmountProps } from "./PayoutAmount.tsx";
 import { PayoutConsent } from "./PayoutConsent.tsx";
 import { followPayouts, type PayoutsShown } from "./payoutDesk.vibe";
 import { PayoutRow } from "./PayoutRow.tsx";
-import { awardStatus, paymentStatus, receivedStatus, staleStatus } from "./status.ts";
+import { awardStatus, paymentStatus, receivedStatus } from "./status.ts";
 
 const cycleMonth = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC", year: "numeric" });
 
@@ -145,11 +145,10 @@ export function PayoutsView({ loading, signedOut, loginHref, problem, account, o
         </Alert>
       ) : null}
       {account ? (
-        <>
-          {problem ? <Status presentation={staleStatus} className="self-start" /> : null}
+        <DataState status={problem ? "Stale" : "Current"}>
           <AwardsAndPayments account={account} consent={consent} />
           <DirectTransfers account={account} />
-        </>
+        </DataState>
       ) : null}
     </main>
   );

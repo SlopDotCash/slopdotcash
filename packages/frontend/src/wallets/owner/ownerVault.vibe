@@ -1,6 +1,5 @@
 // spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
 import { toAmount } from "@repo/settlement/kernels/amounts"
-import { networkLabel } from "../../kernels/assetText.ts"
 import type { PoolFacts } from "../../../gen/frontend__projections.ts"
 import { type VaultLocks, lockedFundsText } from "../../../gen/frontend__vaultLocks.ts"
 import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canSend, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, server, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
@@ -8,7 +7,6 @@ import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.ef
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { SlotStorage } from "../core/slots.ts"
 import { type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
-import { type ReceivedOperation, receivedNotice } from "./receivedNotice.ts"
 import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
 
 export type { Answer, Notice, Origin, OwnerVault, Target }
@@ -48,16 +46,6 @@ const noticeMessages: Readonly<Record<Exclude<Notice, "Received">, string>> = {
   Counted: vaultMessages.counted,
   TransferFailed: vaultMessages.failed,
   LockedFundsRefused: lockedFundsText,
-}
-
-export interface ReceivedTransfer {
-  readonly operation: ReceivedOperation
-  readonly network: string
-  readonly hash: string
-}
-
-export function vaultNotice(notice: Notice, transfer: ReceivedTransfer): string {
-  return notice === "Received" ? receivedNotice(transfer.operation, networkLabel(transfer.network), transfer.hash, false) : noticeMessages[notice]
 }
 
 const targets: ReadonlyArray<Target> = ["Creation", "Transfer"]

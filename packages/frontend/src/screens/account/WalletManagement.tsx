@@ -1,12 +1,11 @@
-// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"
-import { Address, Alert, Button, Card, CardTitle, Dialog, DialogContent, DialogTitle, ExternalLink, NetworkMark, Spinner, Status, WalletChooser } from "@repo/ui";
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
+import { Address, Alert, Button, Card, CardTitle, DataState, Dialog, DialogContent, DialogTitle, ExternalLink, NetworkMark, Spinner, WalletChooser } from "@repo/ui";
 import { Check, Eye, Pencil, Plus, TriangleAlert, Wallet } from "lucide-react";
 import { useState } from "react";
 import { type Chain, NETWORKS } from "@repo/settlement/kernels/networks";
 import { CHAIN_NAMES, formatAssetAmount, networkLabel } from "../../kernels/assetText.ts";
 import type { Family, WalletOffer } from "../../wallets/core/discovery.vibe";
 import { familyChains, familyLabels, type SavedWallet } from "../../wallets/core/registration.vibe";
-import { staleStatus } from "../payouts/status.ts";
 import type { PaymentsAccount, WalletPanel } from "./walletPanel.vibe";
 
 export type WalletManagementProps = {
@@ -240,14 +239,13 @@ export function WalletManagement({ panel, offers, signInHref, onReload, onConnec
       ) : null}
       {panel.message ? <p role="status">{panel.message}</p> : null}
       {account ? (
-        <>
-          {failure.length > 0 ? <Status presentation={staleStatus} className="self-start" /> : null}
+        <DataState status={failure.length > 0 ? "Stale" : "Current"}>
           <section aria-label="Payout wallets" className="flex flex-col gap-4">
             {families.map(({ id }) => (
               <FamilyCard key={id} account={account} family={id} panel={panel} onPick={() => setPicker(id)} onConfirmChange={onConfirmChange} onKeepSaved={onKeepSaved} onCopy={onCopy} />
             ))}
           </section>
-        </>
+        </DataState>
       ) : null}
     </div>
   );

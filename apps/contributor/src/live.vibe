@@ -1,20 +1,32 @@
-// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "The author's own pull_request_opened event is the only closure run evidence"
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "The author's own pull_request_opened event is the only closure run evidence"; spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
 import { area } from "@repo/platform/worker"
+import { evidenceArtifacts } from "./artifacts/live.vibe"
 import { api } from "./client/index.vibe"
 import { publicationRoutes } from "./publication/routes.vibe"
 import { runRoutes } from "./runs/routes.vibe"
 import { sessionRoutes } from "./session/routes.vibe"
 import { RunEvidenceLive } from "./traces/runEvidence.vibe"
 
-export { evidenceArtifacts } from "./artifacts/live.vibe"
 export { siteAssets } from "./publication/templates.vibe"
 export { traceServices } from "./session/tokens.vibe"
 export { traceObjects } from "./traces/objects.vibe"
 export { RunEvidenceLive }
 
+export service GithubReadToken {
+  readonly credential: Redacted.Redacted<string> | undefined
+}
+
+export function githubReadToken(text: string | undefined) {
+  return Layer.succeed(GithubReadToken, { credential: text === undefined || text === "" ? undefined : Redacted.make(text) })
+}
+
+export const EvidenceArtifactsLive = Layer.unwrap(effect {
+  return evidenceArtifacts({ credential: (try GithubReadToken).credential })
+})
+
 export const contributor = area({
   name: "contributor",
   api,
   routes: Layer.mergeAll(publicationRoutes, sessionRoutes, runRoutes),
-  provides: RunEvidenceLive,
+  provides: Layer.mergeAll(RunEvidenceLive, EvidenceArtifactsLive),
 })
