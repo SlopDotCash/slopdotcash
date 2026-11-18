@@ -145,6 +145,7 @@ const commitPath = `/repos/owner/repo/commits/${commitSha}`;
 const commitFilesPath = `${commitPath}?per_page=100&page=1`;
 const commitReadError = () =>
   Response.json({ message: "Validation Failed" }, { status: 422 });
+const commitGatewayError = () => new Response("Bad Gateway", { status: 502 });
 
 for (const path of [
   commitFilesPath,
@@ -186,6 +187,113 @@ for (const path of [
 }
 
 const commitPullsPath = `${commitPath}/pulls?per_page=100`;
+
+test("commit file gateway and validation retries keep their separate budgets on the same page", async () => {
+  const commit = { sha: commitSha, files: [{ filename: "source.ts" }] };
+  for (const [path, failures, waits] of [
+    [
+      commitFilesPath,
+      [commitGatewayError, commitReadError, commitGatewayError],
+      [1_000, 1_000, 2_000],
+    ],
+    [
+      `/repositories/42/commits/${commitSha}?per_page=100&page=2`,
+      [commitReadError, commitGatewayError, commitGatewayError],
+      [1_000, 1_000, 2_000],
+    ],
+  ] as const) {
+    const f = fixture([...failures, () => Response.json(commit)]);
+    expect(await f.client.get<typeof commit>(path)).toEqual(commit);
+    expect(f.urls).toEqual(Array(4).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([...waits]);
+  }
+});
+
+test("persistent commit file gateway failures return the complete third response", async () => {
+  const body = "GitHub still cannot serve the commit file page";
+  const f = fixture([
+    commitGatewayError,
+    commitGatewayError,
+    () => new Response(body, { status: 502, statusText: "Still unavailable" }),
+  ]);
+  const response = await f.read(`https://api.github.com${commitFilesPath}`);
+  expect(response.status).toBe(502);
+  expect(response.statusText).toBe("Still unavailable");
+  expect(await response.text()).toBe(body);
+  expect(f.urls).toEqual(
+    Array(3).fill(`https://api.github.com${commitFilesPath}`),
+  );
+  expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+test("commit file gateway and validation retries preserve the quota retry budget", async () => {
+  const limited = () =>
+    new Response("limited", { status: 429, headers: { "retry-after": "3" } });
+  const f = fixture([
+    commitGatewayError,
+    limited,
+    commitReadError,
+    commitGatewayError,
+    limited,
+  ]);
+  await expect(f.client.get(commitFilesPath)).rejects.toMatchObject({
+    status: 429,
+  });
+  expect(f.urls).toEqual(
+    Array(8).fill(`https://api.github.com${commitFilesPath}`),
+  );
+  expect(f.waits).toEqual([1_000, 3_000, 1_000, 2_000, 3_000, 3_000, 3_000]);
+});
+
+test("HTTP 502 retries are limited to canonical immutable GitHub commit file reads", async () => {
+  const url = `https://api.github.com${commitFilesPath}`;
+  for (const [input, init] of [
+    [`https://api.github.com${commitPath}`, undefined],
+    [`https://api.github.com${commitPullsPath}`, undefined],
+    [`https://api.github.com${pullFilesPath}`, undefined],
+    [url.replace(commitSha, "main"), undefined],
+    [url.replace(commitSha, commitSha.slice(1)), undefined],
+    [url.replace("page=1", "page=01"), undefined],
+    [`${url}&extra=1`, undefined],
+    [`${url}#fragment`, undefined],
+    [url.replace("api.github.com", "user:pass@api.github.com"), undefined],
+    [url.replace("api.github.com", "example.com"), undefined],
+    [url, { method: "POST" }],
+  ] as const) {
+    const f = fixture([commitGatewayError]);
+    expect((await f.read(input, init)).status).toBe(502);
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  }
+});
+
+test("commit file gateway backoff respects the collection checkpoint", async () => {
+  const f = fixture([commitGatewayError], { quotaDeadlineMs: 1_001_000 });
+  await expect(f.client.get(commitFilesPath)).rejects.toMatchObject({
+    name: "GitHubIngestionCheckpointError",
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
+});
+
+test("caller cancellation during commit file gateway backoff prevents another read", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller stopped commit file collection");
+  const f = fixture([commitGatewayError], {
+    wait: () => {
+      queueMicrotask(() => controller.abort(reason));
+      return new Promise(() => {});
+    },
+  });
+  await expect(
+    f.read(`https://api.github.com${commitFilesPath}`, {
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(reason);
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([1_000]);
+});
+
 for (const path of [
   commitPullsPath,
   `${commitPullsPath}&page=2`,
