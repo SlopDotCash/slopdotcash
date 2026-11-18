@@ -643,6 +643,11 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       ...stagingOrigins,
       rateLimitSecret: env.TRACE_AUTH_SECRET,
       identity: env.SLOP_IDENTITY,
+      ownerSessionGithubId:
+        env.OWNER_SESSION_GITHUB_ID &&
+        adminGithubIds.has(env.OWNER_SESSION_GITHUB_ID)
+          ? env.OWNER_SESSION_GITHUB_ID
+          : undefined,
       disputes: {
         moderators: moderatorGithubIds,
         waitUntil,

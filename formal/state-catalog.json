@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "b756d4719d6216b9df828a2e5df3c539b4128808b80826195fe54400cb81a1d3",
+  "inventorySha256": "10337883355ede39415d49daf104a9da400ac683294443dcb0ea1681723047fc",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -154,6 +154,7 @@
       "values": ["apply", "preview"],
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -190,6 +191,7 @@
       "values": ["apply", "preview"],
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -747,7 +749,8 @@
       ],
       "models": [
         "formal/models/api/api_accounts.qnt",
-        "formal/models/api/api_identity.qnt"
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/api_points_session_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "assertion_issued",
@@ -2574,6 +2577,35 @@
         "published Points validation",
         "reviewed packet"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/run-reviewed-historical-points.ts",
+      "line": 572,
+      "name": "PublicationPhase",
+      "kind": "string-union",
+      "values": [
+        "accepted squash verification",
+        "apply authority recheck",
+        "enforcement checkpoint read",
+        "financial protection verification",
+        "historical Points reconstruction",
+        "historical census verification",
+        "import preparation",
+        "main source verification",
+        "owner authority verification",
+        "private packet read",
+        "project and repository verification",
+        "protected import and readback",
+        "public Points read",
+        "published checkpoint verification",
+        "recipient and account restriction verification",
+        "reviewed packet validation",
+        "trusted invocation",
+        "value record verification"
+      ],
+      "models": ["formal/models/points/source_import.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

@@ -18,6 +18,8 @@ import { handlePointsDisputes } from "./disputes";
 import { handleX } from "./x";
 
 const SESSION_COOKIE = "__Host-slop_points";
+const MEMBER_SESSION_SECONDS = 60 * 60;
+const OWNER_SESSION_SECONDS = 7 * 24 * 60 * 60;
 function json(status: number, body: unknown, cookie?: string) {
   return jsonResponse(status, body, {
     cacheControl: "no-store",
@@ -210,7 +212,13 @@ export async function handlePointsApi(
       const actor = existing?.actor_id ?? node;
       const token = randomToken(32);
       const hash = await sha256Hex(token);
-      const expires = new Date(Date.parse(now) + 60 * 60 * 1000).toISOString();
+      const sessionSeconds =
+        id === deps.ownerSessionGithubId
+          ? OWNER_SESSION_SECONDS
+          : MEMBER_SESSION_SECONDS;
+      const expires = new Date(
+        Date.parse(now) + sessionSeconds * 1000,
+      ).toISOString();
       // A unique actor/numeric identity and one atomic batch make retries safe.
       // Sign-in and explicit reopening publish this membership and any
       // existing X link together. A disconnected link is never recreated.
@@ -257,7 +265,11 @@ export async function handlePointsApi(
         .bind(actor)
         .first<Member>();
       if (!member) throw new Error("Missing joined member");
-      return json(200, publicMember(member), sessionCookie(token, 3600));
+      return json(
+        200,
+        publicMember(member),
+        sessionCookie(token, sessionSeconds),
+      );
     }
     if (
       route === "/me" ||
