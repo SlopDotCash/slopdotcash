@@ -303,6 +303,28 @@ jobs:
           artifact-ids: ${{ needs.restore_discussions.outputs.artifact_id }}
           path: ${{ runner.temp }}/leaderboard-discussions
 
+      # Every workflow in this repository shares one GITHUB_TOKEN request
+      # quota (1,000 REST requests an hour), and a full collection needs
+      # more than that, so it stalled behind releases, scans and checks. A
+      # dedicated read-only GitHub App has its own, larger quota. It reads
+      # only public data. Without the App, or if minting fails, the steps
+      # below use GITHUB_TOKEN as before.
+      - name: Mint collector token
+        id: collector-token
+        if: >-
+          github.event_name != 'pull_request' &&
+          inputs.use_published_data != true &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
       - name: Generate live contribution data
         id: live_ledger
         # Pull-request code is untrusted, so this step never explicitly injects
@@ -310,8 +332,8 @@ jobs:
         # ledger before producing a deployable build.
         if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
           leaderboard_origin="https://slop.cash"
@@ -368,8 +390,8 @@ jobs:
       - name: Generate live contributor profiles
         if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
           set -euo pipefail
