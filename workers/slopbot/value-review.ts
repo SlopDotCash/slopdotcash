@@ -46,7 +46,8 @@ export async function assessValue(
   const result = await runValueInference(
     env,
     {
-      system: VALUE_SYSTEM_PROMPT + source.systemSuffix,
+      system:
+        VALUE_SYSTEM_PROMPT + source.systemSuffix + valueOutcomeRules(evidence),
       policy: `Project policy at ${policy.sha}:\n${policy.text}`,
       item: source.item,
     },
@@ -70,6 +71,29 @@ export async function assessValue(
       "inferredAt" in result ? result.inferredAt : new Date().toISOString(),
     ...result,
   };
+}
+
+/** The tier rules for this pull request's merge state, stated plainly so the
+ * model does not give a tier the validator must refuse. Operator decision,
+ * 18 November 2026. */
+export function valueOutcomeRules(evidence: ValueEvidence): string {
+  const merged = evidence.pull.merged_at !== null;
+  const closed =
+    evidence.pull.state === "closed" &&
+    Number.isFinite(
+      Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? ""),
+    );
+  const lines = [
+    merged
+      ? "This pull request was merged."
+      : `This pull request was not merged${closed ? "" : " and is still open"}. Set tier to null whatever its value; only its retained review findings may matter.`,
+    "If status is unresolved, set tier to null and give every review tier none.",
+  ];
+  if (!closed)
+    lines.push(
+      "Because the pull request is still open, give every review tier none.",
+    );
+  return `\n\nRules for this pull request:\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }
 
 /** Receipt timestamps do not create a new source revision. */
