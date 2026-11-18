@@ -180,7 +180,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   await revisit();
   const failedRefresh = page
     .locator("main > .data-notice")
-    .filter({ hasText: "Stale" });
+    .filter({ hasText: "Data last updated ·" });
   await expect(
     failedRefresh.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
