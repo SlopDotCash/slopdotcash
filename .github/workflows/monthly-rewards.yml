@@ -159,9 +159,19 @@ jobs:
         run: bun run leaderboard:generate -- --cutoff "${{ steps.cycle.outputs.cutoff }}"
 
       - name: Propose private allocations
+        id: propose
+        env:
+          # A project with a maintainer share needs one public GitHub read of
+          # who merged or closed each outside pull request in the month.
+          GH_TOKEN: ${{ github.token }}
         run: bun run rewards:propose-month -- --cycle "${{ steps.cycle.outputs.cycle }}" --sql "$RUNNER_TEMP/monthly-allocations.sql"
 
       - name: Store proposals in D1
+        # When that read fails for one project, the step above writes the
+        # other projects' proposals and then fails. They are still stored;
+        # the failed run reports the project, and a later run of the same
+        # month proposes it. A run that wrote no file stores nothing.
+        if: ${{ !cancelled() && (steps.propose.outcome == 'success' || steps.propose.outcome == 'failure') }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

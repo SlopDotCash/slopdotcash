@@ -240,6 +240,105 @@ test("a month closed before vault setup is proposed by the rerun after the vault
   }
 });
 
+test("a project with a maintainer share is proposed only from a complete decision read; a failed read holds back that project alone", async () => {
+  const root = mkdtempSync(join(tmpdir(), "slop-monthly-share-"));
+  try {
+    const snapshotPath = join(root, "leaderboard.json");
+    writeFileSync(snapshotPath, closedSeptemberLedger());
+    mkdirSync(join(root, "src/lib"), { recursive: true });
+    const shared = fundedProject();
+    shared.escrow?.deployments.push(DEVNET_VAULT);
+    shared.reward.maintainerShare = 2000;
+    const plain = fundedProject("asi");
+    plain.escrow?.deployments.push({
+      ...DEVNET_VAULT,
+      vault: "Stake11111111111111111111111111111111111111",
+      projectPda: "Config1111111111111111111111111111111111111",
+      deploymentTransaction: `${"1".repeat(63)}2`,
+    });
+    writeFileSync(
+      join(root, "src/lib/project-revisions.generated.json"),
+      JSON.stringify(
+        [plain, shared].map((project) => {
+          const manifest = JSON.parse(JSON.stringify(project));
+          return {
+            projectId: project.id,
+            revision: 1,
+            manifest,
+            manifestSha256: sha256Hex(JSON.stringify(manifest)),
+          };
+        }),
+      ),
+    );
+    const run = (
+      graphql?: Parameters<typeof prepareMonthlyBases>[0]["graphql"],
+    ) =>
+      prepareMonthlyBases({
+        period: "2026-09",
+        generatedAt: "2026-10-01T00:11:00.000Z",
+        snapshotPath,
+        root,
+        ...(graphql ? { graphql } : {}),
+      });
+    // No reader, then a failing reader: the other project is still proposed.
+    for (const graphql of [
+      undefined,
+      async () => {
+        throw new Error("GitHub maintainer decision read failed: HTTP 502");
+      },
+    ]) {
+      const held = await run(graphql);
+      expect(held.bases.map((base) => base.projectId)).toEqual(["asi"]);
+      expect(held.failed?.map((entry) => entry.projectId)).toEqual(["eliza"]);
+      expect(held.bases[0].maintainerShare).toBeUndefined();
+    }
+    const maintainer = {
+      __typename: "User",
+      login: "only-maintains",
+      id: btoa("04:User987654321"),
+      databaseId: 987654321,
+    };
+    const read = await run(async () => ({
+      repository: {
+        id: shared.authority.repositoryNodeId,
+        pullRequests: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            {
+              number: 7,
+              updatedAt: "2026-09-12T00:00:00Z",
+              closedAt: "2026-09-11T00:00:00Z",
+              mergedAt: "2026-09-11T00:00:00Z",
+              authorAssociation: "FIRST_TIME_CONTRIBUTOR",
+              author: { __typename: "User", login: "outside-author" },
+              mergedBy: maintainer,
+              timelineItems: { nodes: [] },
+            },
+          ],
+        },
+      },
+    }));
+    expect(read.failed).toBeUndefined();
+    expect(read.bases.map((base) => base.projectId)).toEqual(["asi", "eliza"]);
+    const eliza = read.bases[1];
+    expect(eliza.maintainerShare).toMatchObject({
+      basisPoints: 2000,
+      poolBase: "1000000000",
+      rows: [
+        { githubUserId: "987654321", decisions: 1, grossBase: "1000000000" },
+      ],
+    });
+    // This ledger scored nobody on the project, so only the maintainer's
+    // part is proposed and the rest of the amount is not distributed.
+    expect(eliza.capBase).toBe("5000000000");
+    expect(
+      eliza.rows.reduce((sum, row) => sum + BigInt(row.grossBase), 0n),
+    ).toBe(1_000_000_000n);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 /** Runs one command of the scheduled monthly job in a copied checkout. */
 async function workflowCommand(
   cwd: string,

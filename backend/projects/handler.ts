@@ -1,6 +1,7 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { prospectiveMaintainerShare } from "../../src/lib/maintainer-share.mjs";
 import {
   shiftPeriod,
   utcPeriodOf,
@@ -572,12 +573,22 @@ function prospectiveFinancialChange(
       feeBasisPoints: _fee,
       // A published promise changes display only, never amounts or payments.
       honorSystem: _honorSystem,
+      // The share changes prospectively below; its history is compared
+      // separately because only the server writes it.
+      maintainerShare: _maintainerShare,
+      maintainerShareHistory: _maintainerShareHistory,
       // Checked for every revision by assertPayoutExclusionTransition.
       payoutExclusions: _exclusions,
       ...rest
     } = reward;
     return rest;
   };
+  if (!sameValue(before.maintainerShareHistory, after.maintainerShareHistory))
+    fail(
+      422,
+      "financial_change_restricted",
+      "The maintainer share history cannot change",
+    );
   const assetChanged =
     !sameValue(previous.rewardAsset, next.rewardAsset) ||
     before.chain !== after.chain ||
@@ -591,9 +602,14 @@ function prospectiveFinancialChange(
     fail(
       422,
       "financial_change_restricted",
-      "Only the monthly amount, network, asset and honor-system promise change through owner self-service",
+      "Only the monthly amount, network, asset, honor-system promise and maintainer share change through owner self-service",
     );
   const cycleId = utcPeriodOf(now);
+  // A changed maintainer share starts with the next UTC month (operator
+  // decision, 18 November 2026): every month through the open one keeps the
+  // share it had.
+  const shared = <T extends typeof after>(reward: T): T =>
+    prospectiveMaintainerShare(before, reward, cycleId);
   if (assetChanged) {
     // Old caps remain in immutable revisions of the old asset. The new
     // asset starts next month: every month from the reward start through
@@ -606,26 +622,28 @@ function prospectiveFinancialChange(
     const { cycleCaps: _none, ...reward } = after;
     return {
       ...next,
-      reward:
+      reward: shared(
         zeroCaps.length === 0 ? reward : { ...reward, cycleCaps: zeroCaps },
+      ),
     };
   }
-  if (before.monthlyCapMinor === after.monthlyCapMinor) return next;
+  if (before.monthlyCapMinor === after.monthlyCapMinor)
+    return { ...next, reward: shared(after) };
   // An unlisted month used the previous default amount; it keeps it.
   const caps = before.cycleCaps ?? [];
   const listed = new Set(caps.map((cap) => cap.cycleId));
   const kept = monthsThrough(before.rewardStartAt, cycleId)
     .filter((id) => !listed.has(id))
     .map((id) => ({ cycleId: id, monthlyCapMinor: before.monthlyCapMinor }));
-  if (kept.length === 0) return next;
+  if (kept.length === 0) return { ...next, reward: shared(after) };
   return {
     ...next,
-    reward: {
+    reward: shared({
       ...after,
       cycleCaps: [...caps, ...kept].sort((left, right) =>
         left.cycleId.localeCompare(right.cycleId),
       ),
-    },
+    }),
   };
 }
 

@@ -190,6 +190,13 @@ and listing tier, then classifies the change (`src/lib/project-revision-changes.
   verify the vault, and the funding page offers a deposit for every recorded
   vault. Owners use the separate vault setup route below.
 
+`reward.maintainerShare` is the owner's maintainer share in basis points of
+the monthly amount, 1 to 3000, or omitted for none (PRD section 6, operator
+decision of 18 November 2026). It changes through the same owner revision as
+the monthly amount and starts with the next UTC month: the server appends the
+previous share to `reward.maintainerShareHistory` as the share of every month
+through the open one. An owner revision that edits the history is refused.
+
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub
 `actorId` and `nodeId`, the login, the `relationship` and the UTC months it
