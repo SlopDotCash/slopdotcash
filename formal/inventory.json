@@ -5390,7 +5390,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "185f07740ab8ac5e7eeb8beaddcb0c83831fd3aea4bc6e10a6e9bbe185f63382",
+      "sha256": "07c65e321280b3cd45cc663e3bc1a765fec4ae77502287ac566e4710f4735e86",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5411,14 +5411,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 332, 342, 352, 363, 372, 373, 374, 375, 376, 378, 379, 440, 496,
-        497, 498, 501, 524, 590, 621, 658, 764, 832, 910, 911, 924, 934, 935,
-        1165, 1180, 1198, 1244, 1248, 1253, 1255, 1258, 1325, 1328, 1330, 1334,
-        1335, 1340, 1357, 1361, 1369, 1370, 1373, 1375, 1383, 1414, 1460, 1463,
-        1478, 1479, 1529, 1532, 1536, 1537, 1538, 1539, 1545, 1548, 1568, 1570,
-        1587, 1592, 1654, 1655, 1660, 1661, 1666, 1672, 1713, 1714, 1717, 1718,
-        1721, 1722, 1743, 1744, 1750, 1755, 1757, 1761, 1762, 1801, 1824, 1834,
-        1865, 1867, 1892, 1893, 1909, 1910, 1921, 1923, 1936, 1939
+        21, 23, 331, 341, 351, 362, 371, 372, 373, 374, 375, 377, 378, 439, 495,
+        496, 497, 500, 523, 589, 620, 657, 763, 831, 909, 910, 923, 933, 934,
+        1158, 1173, 1191, 1237, 1241, 1246, 1248, 1251, 1318, 1321, 1323, 1327,
+        1328, 1333, 1350, 1354, 1362, 1363, 1366, 1368, 1376, 1407, 1453, 1456,
+        1471, 1472, 1522, 1525, 1529, 1530, 1531, 1532, 1538, 1541, 1561, 1563,
+        1580, 1585, 1647, 1648, 1653, 1654, 1659, 1665, 1706, 1707, 1710, 1711,
+        1714, 1715, 1736, 1737, 1743, 1748, 1750, 1754, 1755, 1794, 1817, 1827,
+        1858, 1860, 1885, 1886, 1902, 1903, 1914, 1916, 1929, 1932
       ],
       "review": "mapped-abstraction"
     },
@@ -5559,13 +5559,6 @@
       "sha256": "2dcce1db496dbcd8b11f0e491f92cb3804029cd892c78c3ec4e7e5fbcdb0662b",
       "models": ["formal/models/ui/ui_artifacts.qnt"],
       "candidateLines": [2, 35, 36, 37, 39, 44, 74, 77, 184],
-      "review": "mapped-abstraction"
-    },
-    {
-      "path": "src/HomeStandings.tsx",
-      "sha256": "1005f4706dd870ecb99d25230d521ab03a651a627453519a1fb5ab99844ef604",
-      "models": ["formal/models/ui/ui_resources.qnt"],
-      "candidateLines": [33, 52, 54, 55, 58, 62],
       "review": "mapped-abstraction"
     },
     {
@@ -6026,7 +6019,7 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "a828d02e0b5411bbb320088404017d6011aa53410609ae17b82050442e1a1b84",
+      "sha256": "013c4ccaa48f0923da45550b4a3984a000fc9609a83d3bfe5a1777e279bf6f00",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
@@ -19401,10 +19394,9 @@
     },
     {
       "path": "formal/models/ui/ui_resources.qnt",
-      "sha256": "70e6616453049d72f099cf4fcf0c99f7b66cd2646a54e9dd1be161c603e7cbcd",
+      "sha256": "18f308835000a093e3a84e5c409fe539546530eb823c94360b11767735c75336",
       "sources": [
         "src/EscrowFunding.tsx",
-        "src/HomeStandings.tsx",
         "src/ProfilePage.tsx",
         "src/Profiles.tsx",
         "src/lib/paged-history.ts",
