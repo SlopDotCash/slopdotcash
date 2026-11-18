@@ -52,9 +52,10 @@ test("a vault holding the monthly amount shows the money", () => {
   expect(asShown(project("250000000"), index({}), NOW).reward).toMatchObject({
     monthlyCapMinor: "250000000",
   });
-  expect(
-    homePoolReward(project("250000000"), index({}), NOW).warning,
-  ).toBeNull();
+  expect(homePoolReward(project("250000000"), index({}), NOW)).toMatchObject({
+    fundingTag: "Vaulted",
+    warning: null,
+  });
 });
 
 test("a vault short of the monthly amount reads as points only", () => {
@@ -74,8 +75,13 @@ test("a pledge with no vault, or balances not loaded, shows no amount", () => {
 
 test("an owner promise distinguishes a short vault from an unread vault", () => {
   const optedIn = project("250000000", "base-mainnet", { honorSystem: true });
-  const unread = publicPoolReward(optedIn, index({ freeBalance: null }), NOW);
+  const missing = index({ freeBalance: null });
+  const unread = publicPoolReward(optedIn, missing, NOW);
   expect(unread.promise).toBe("Promised · Vault funding unverified");
+  expect(homePoolReward(optedIn, missing, NOW)).toMatchObject({
+    fundingTag: "Promised",
+    warning: "Vault funding unverified",
+  });
   const short = index({ freeBalance: "249999999" });
   const promised = publicPoolReward(optedIn, short, NOW);
   expect(promised.promise).toBe("Promised · Not vaulted");
@@ -84,18 +90,29 @@ test("an owner promise distinguishes a short vault from an unread vault", () => 
   expect(publicPoolReward(optedIn, index({}), NOW).promise).toBeNull();
   expect(homePoolReward(optedIn, short, NOW)).toEqual({
     project: promised.project,
-    warning: promised.promise,
+    fundingTag: "Promised",
+    warning: "Not vaulted",
+  });
+  expect(homePoolReward(optedIn, index({}), NOW)).toMatchObject({
+    fundingTag: "Vaulted",
+    warning: null,
   });
 });
 
 test("home shows a configured amount without treating it as an owner promise or verified funding", () => {
   const configured = project("250000000");
   const unread = homePoolReward(configured, null, NOW);
-  expect(unread.warning).toBe("Configured · Vault funding unverified");
+  expect(unread).toMatchObject({
+    fundingTag: "Configured",
+    warning: "Vault funding unverified",
+  });
   expect(unread.project.reward.monthlyCapMinor).toBe("250000000");
   const short = index({ freeBalance: "249999999" });
   const shown = homePoolReward(configured, short, NOW);
-  expect(shown.warning).toBe("Configured · Not vaulted");
+  expect(shown).toMatchObject({
+    fundingTag: "Configured",
+    warning: "Not vaulted",
+  });
   expect(shown.project.reward.monthlyCapDisplay).toBe("$250");
   expect(poolFunded(configured, short, NOW)).toBe(false);
   const details = publicPoolReward(configured, short, NOW);
@@ -106,10 +123,11 @@ test("home shows a configured amount without treating it as an owner promise or 
 
 test("home does not replace a zero current-month override with the positive base cap", () => {
   const capped = project("250000000", "base-mainnet", {
+    honorSystem: true,
     cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
   });
-  const home = homePoolReward(capped, null, NOW);
-  expect(home.warning).toBeNull();
+  const home = homePoolReward(capped, index({}), NOW);
+  expect(home).toMatchObject({ fundingTag: null, warning: null });
   expect(home.project.reward.monthlyCapMinor).toBe("0");
   expect(home.project.reward.monthlyCapDisplay).toBe("$0");
   const details = publicPoolReward(capped, null, NOW);
@@ -150,7 +168,8 @@ test("this month's amount comes from the month's own cap when one is listed", ()
   expect(asShown(capped, index({}), NOW).reward.cycleCaps).toBeUndefined();
   expect(homePoolReward(capped, index({}), NOW)).toMatchObject({
     project: { reward: { monthlyCapMinor: "500000000" } },
-    warning: "Configured · Not vaulted",
+    fundingTag: "Configured",
+    warning: "Not vaulted",
   });
 });
 
@@ -162,6 +181,11 @@ test("a points-only pool and other reward kinds pass through unchanged", () => {
     reward: { kind: "external-prize-share" },
   } as unknown as ProjectDefinition;
   expect(asShown(prize, null, NOW)).toBe(prize);
+  expect(homePoolReward(prize, null, NOW)).toEqual({
+    project: prize,
+    fundingTag: null,
+    warning: null,
+  });
 });
 
 const DEC = (iso: string) => new Date(`2026-12-${iso}Z`);
@@ -282,6 +306,13 @@ test("a vault with pledge support is funded by the month pledged on chain", () =
   expect(
     poolFundingStatus(project("250000000"), locked, DEC("20T00:00:00")).state,
   ).toBe("funded");
+  expect(
+    homePoolReward(
+      project("250000000", "base-mainnet", { honorSystem: true }),
+      locked,
+      DEC("20T00:00:00"),
+    ),
+  ).toMatchObject({ fundingTag: "Vaulted", warning: null });
   // A pledge above the monthly amount counts in full.
   expect(
     poolFundingStatus(

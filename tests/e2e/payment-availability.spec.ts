@@ -50,10 +50,12 @@ test("monthly targets remain distinct from verified payment records", async ({
   ).toHaveCount(0);
   // An unvaulted target is shown as configured and never as a payment or promise.
   await expect(card.locator(".project-bounty strong")).toHaveText("$1,000");
-  await expect(card.locator(".project-bounty")).toContainText(
-    "Configured · Not vaulted",
+  await expect(
+    card.locator(".project-funding-tag.route-badge--neutral"),
+  ).toHaveText("Configured");
+  await expect(card.locator(".project-funding-warning")).toHaveText(
+    "Not vaulted",
   );
-  await expect(card.locator(".project-bounty")).not.toContainText("Promised");
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),
     fullPage: true,

@@ -326,14 +326,23 @@ export function publicPoolReward(
   now: Date,
 ): { project: ProjectDefinition; promise: string | null } {
   const display = displayedPoolReward(project, index, now, false);
-  return { project: display.project, promise: display.warning };
+  return {
+    project: display.project,
+    promise: display.warning ? `Promised · ${display.warning}` : null,
+  };
 }
+
+type PoolRewardDisplay = {
+  project: ProjectDefinition;
+  fundingTag: "Vaulted" | "Promised" | "Configured" | null;
+  warning: "Vault funding unverified" | "Not vaulted" | null;
+};
 
 export function homePoolReward(
   project: ProjectDefinition,
   index: PoolFundingIndex | null,
   now: Date,
-): { project: ProjectDefinition; warning: string | null } {
+): PoolRewardDisplay {
   return displayedPoolReward(project, index, now, true);
 }
 
@@ -342,16 +351,19 @@ function displayedPoolReward(
   index: PoolFundingIndex | null,
   now: Date,
   showConfigured: boolean,
-): { project: ProjectDefinition; warning: string | null } {
+): PoolRewardDisplay {
   const shown = asShown(project, index, now);
-  if (
-    project.reward.kind !== "monthly-pool" ||
-    (!showConfigured && project.reward.honorSystem !== true) ||
-    shown.reward.monthlyCapMinor !== "0"
-  )
-    return { project: shown, warning: null };
-  const amount = resolveRewardCapMinor(project, utcMonth(now));
-  if (amount === "0") return { project: shown, warning: null };
+  if (project.reward.kind !== "monthly-pool")
+    return { project: shown, fundingTag: null, warning: null };
+  if (shown.reward.monthlyCapMinor !== "0")
+    return { project: shown, fundingTag: "Vaulted", warning: null };
+  const optedIn = project.reward.honorSystem === true;
+  const amount =
+    showConfigured || optedIn
+      ? resolveRewardCapMinor(project, utcMonth(now))
+      : "0";
+  if (amount === "0")
+    return { project: shown, fundingTag: null, warning: null };
   const unread = payingVaultKeys(project);
   for (const vault of index?.get(project.id) ?? []) {
     if (vault.freeBalance !== null || hasPledgeSupport(vault)) {
@@ -360,7 +372,8 @@ function displayedPoolReward(
   }
   return {
     project: withDisplayedCap(project, amount),
-    warning: `${project.reward.honorSystem === true ? "Promised" : "Configured"} · ${unread.size ? "Vault funding unverified" : "Not vaulted"}`,
+    fundingTag: optedIn ? "Promised" : "Configured",
+    warning: unread.size ? "Vault funding unverified" : "Not vaulted",
   };
 }
 

@@ -4,7 +4,7 @@
  * of vault funding, but that promise never qualifies for the sponsor list.
  */
 
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { NOT_LISTED_NOTICE } from "../../src/lib/pool-funding";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
@@ -19,6 +19,25 @@ import {
 const OBSERVED_AT = "2026-11-16T12:00:00.000Z";
 
 test.use({ video: "on" });
+
+async function expectFundingTag(
+  reward: Locator,
+  name: "Vaulted" | "Promised" | "Configured",
+  tone: "success" | "warning" | "neutral",
+) {
+  const tag = reward.locator(`.project-funding-tag.route-badge--${tone}`);
+  await expect(tag).toBeVisible();
+  await expect(tag).toHaveText(name);
+}
+
+async function expectFundingWarning(
+  reward: Locator,
+  text: "Not vaulted" | "Vault funding unverified",
+) {
+  const warning = reward.locator(".project-funding-warning");
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveText(text);
+}
 
 /** Registry fixtures distinguish a vault, a promise, and an unfunded budget. */
 async function serveRegistry(page: Page) {
@@ -144,6 +163,9 @@ test("home keeps unfunded community projects and labels promises while sponsors 
   const promise = community.locator('a.project-row[href="/projects/asi"]');
   const funded = featured.locator('a[href="/projects/eliza"]');
   const configured = featured.locator('a[href="/projects/slopdotcash"]');
+  const promiseAmount = promise.locator(".project-row-amount");
+  const fundedAmount = funded.locator(".project-bounty");
+  const configuredAmount = configured.locator(".project-bounty");
   try {
     for (const id of ["eliza", "slopdotcash"])
       await expect(featured.locator(`a[href="/projects/${id}"]`)).toBeVisible();
@@ -151,38 +173,28 @@ test("home keeps unfunded community projects and labels promises while sponsors 
       await expect(
         community.locator(`a[href="/projects/${id}"]`),
       ).toBeVisible();
-    await expect(promise.locator(".project-row-amount")).toContainText(
-      "$1,250",
-    );
-    await expect(promise.locator(".project-row-amount")).toContainText(
-      "Promised · Not vaulted",
-    );
-    await expect(funded.locator(".project-bounty")).toContainText(
-      "Promised · Vault funding unverified",
-    );
+    await expect(promiseAmount.locator("strong")).toHaveText("$1,250");
+    await expectFundingTag(promiseAmount, "Promised", "warning");
+    await expectFundingWarning(promiseAmount, "Not vaulted");
+    await expectFundingTag(fundedAmount, "Promised", "warning");
+    await expectFundingWarning(fundedAmount, "Vault funding unverified");
   } finally {
     releaseFunding();
   }
   // A successful funding read updates amounts without removing community work.
-  await expect(funded).not.toContainText("Promised");
-  await expect(funded.locator(".project-bounty strong")).toHaveText("$1k");
-  await expect(promise.locator(".project-row-amount")).toContainText(
-    "Promised · Not vaulted",
+  await expectFundingTag(fundedAmount, "Vaulted", "success");
+  await expect(fundedAmount.locator("strong")).toHaveText("$1k");
+  await expect(fundedAmount.locator(".project-funding-warning")).toHaveCount(0);
+  await expectFundingTag(promiseAmount, "Promised", "warning");
+  await expectFundingWarning(promiseAmount, "Not vaulted");
+  await expect(configuredAmount.locator("strong")).toHaveText("$1,000");
+  await expectFundingTag(configuredAmount, "Configured", "neutral");
+  await expectFundingWarning(configuredAmount, "Not vaulted");
+  const points = community.locator(
+    'a.project-row[href="/projects/thenetwork"] .project-row-amount',
   );
-  await expect(configured.locator(".project-bounty strong")).toHaveText(
-    "$1,000",
-  );
-  await expect(configured.locator(".project-bounty")).toContainText(
-    "Configured · Not vaulted",
-  );
-  await expect(configured.locator(".project-bounty")).not.toContainText(
-    "Promised",
-  );
-  await expect(
-    community.locator(
-      'a.project-row[href="/projects/thenetwork"] .project-row-amount',
-    ),
-  ).toHaveText("Points only");
+  await expect(points).toHaveText("Points only");
+  await expect(points.locator(".project-funding-tag")).toHaveCount(0);
   // Funding changes amounts, while registry placement and ordering remain intact.
   expect(
     await featured
@@ -271,12 +283,10 @@ test("a failed funding read lists every project as before", async ({
     for (const id of ids)
       await expect(section.locator(`a[href="/projects/${id}"]`)).toBeVisible();
   }
-  const eliza = projects.locator('a[href="/projects/eliza"]');
-  await expect(eliza.locator(".project-bounty strong")).toHaveText("$1,000");
-  await expect(eliza.locator(".project-bounty")).toContainText(
-    "Promised · Vault funding unverified",
-  );
-  await expect(eliza).not.toContainText("Not vaulted");
+  const reward = projects.locator('a[href="/projects/eliza"] .project-bounty');
+  await expect(reward.locator("strong")).toHaveText("$1,000");
+  await expectFundingTag(reward, "Promised", "warning");
+  await expectFundingWarning(reward, "Vault funding unverified");
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.locator(".project-state-summary")).toContainText(
     "Promised · Vault funding unverified",
