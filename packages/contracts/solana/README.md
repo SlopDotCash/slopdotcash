@@ -441,8 +441,9 @@ platform tools v1.52 (see [the package README](../README.md) for the
 as upgrade authority, and runs `integration/production-delay.e2e.mjs` against a
 fresh validator. It proves that only the upgrade authority creates the Config,
 through the unsigned `scripts/config-plan.mjs` transaction, exactly once, and
-that `initialize` rejects 3,599 seconds and accepts 3,600 seconds. It uses
-local test funds only.
+that `initialize` accepts zero award and rotation delays and rejects a
+negative award or rotation delay, an award delay above 30 days and a rotation
+delay above 90 days. It uses local test funds only.
 
 The validator is `solana-test-validator` 2.1.21 when that exact version is on
 `PATH`; otherwise it is the pinned Agave 2.1.21 container of
