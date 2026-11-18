@@ -459,14 +459,14 @@ services (`workers/payment-executor`, `workers/payments`, `backend/payments`,
 `scripts/payment-keeper`). Those are not on this branch, so `test-e2e.sh` prints
 `SKIP` with what each suite needs instead of running it: `escrow`, `executor`,
 `keeper`, `native`, `owner-instructions`, `owner-plan`, `pledge` and
-`token-2022`. The client cannot be copied alone: `adapter.ts`, which every
-suite loads, imports the payment fee policy (`acceptsPayoutFee` from
-`src/lib/payments/contracts.ts`, and `normalizedNativeDelta` from
-`src/lib/verified-money.ts` through `native.ts`), and `funding.ts` and
-`commitment.ts` call `ordinaryFee` and `acceptsPayoutFee`. The suites return
+`token-2022`. Every suite loads `adapter.ts`, and it and the client files that
+import it carry payment and fee policy: `adapter.ts` imports `acceptsPayoutFee`
+from `src/lib/payments/contracts.ts` and the `PaymentChainAdapter` type from
+`backend/payments/ledger.ts`, `funding.ts` and `commitment.ts` also import
+`ordinaryFee`, and `owner-instructions.ts` imports `PayoutPolicy`. The suites return
 with that business logic.
 
-`test-e2e.sh` refuses to start when the RPC port already answers, and in native
+`test-e2e.sh` refuses to start when anything listens on the RPC port, and in native
 mode checks that the validator's `getIdentity` is the key in
 `.local/ledger/validator-keypair.json` before any test runs.
 

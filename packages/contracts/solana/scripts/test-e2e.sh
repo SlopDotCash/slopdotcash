@@ -9,13 +9,13 @@ rpc_port=${SLOP_TEST_RPC_PORT:-18899}
 faucet_port=$((rpc_port + 41))
 dynamic_ports="$((rpc_port + 2))-$((rpc_port + 31))"
 export ANCHOR_PROVIDER_URL="http://127.0.0.1:$rpc_port"
-# Any answer on the RPC port means another process owns it; the tests would run against it.
-rpc_answers() {
-  node -e 'fetch(process.argv[1], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getHealth" }), signal: AbortSignal.timeout(2000) }).then(() => process.exit(0), () => process.exit(1))' "$ANCHOR_PROVIDER_URL"
+# Any TCP listener on the RPC port means another process owns it, even one that never replies.
+rpc_port_taken() {
+  node -e 'const s = require("net").connect(+process.argv[1], "127.0.0.1"); s.on("connect", () => process.exit(0)); s.on("error", () => process.exit(1)); setTimeout(() => process.exit(1), 2000)' "$rpc_port"
 }
 refuse_occupied_port() {
-  if rpc_answers; then
-    printf '%s\n' "Refusing to start: $ANCHOR_PROVIDER_URL already answers. Stop that process or set SLOP_TEST_RPC_PORT." >&2
+  if rpc_port_taken; then
+    printf '%s\n' "Refusing to start: $ANCHOR_PROVIDER_URL already has a listener. Stop that process or set SLOP_TEST_RPC_PORT." >&2
     return 1
   fi
 }
@@ -107,9 +107,10 @@ start_validator() {
   if [[ "$validator" == native ]]; then
     local expected actual
     expected=$(solana-keygen pubkey "$PWD/.local/ledger/validator-keypair.json")
-    actual=$(node -e 'fetch(process.argv[1], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getIdentity" }), signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((b) => process.stdout.write(b.result?.identity ?? ""), () => process.exit(1))' "$ANCHOR_PROVIDER_URL")
+    actual=$(node -e 'fetch(process.argv[1], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getIdentity" }), signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((b) => process.stdout.write(b.result?.identity ?? ""), () => process.exit(1))' "$ANCHOR_PROVIDER_URL" || true)
     if [[ -z "$expected" || "$actual" != "$expected" ]]; then
       printf '%s\n' "The validator at $ANCHOR_PROVIDER_URL is not the one this run started." >&2
+      cat .local/validator.log >&2
       return 1
     fi
   fi
@@ -137,7 +138,7 @@ stop_validator
 skip_suite() {
   printf 'SKIP integration/%s: needs %s, not on this branch\n' "$1" "$2"
 }
-printf '%s\n' 'SKIP reason shared by every suite below: adapter.ts imports acceptsPayoutFee from src/lib/payments/contracts.ts and, through native.ts, normalizedNativeDelta from src/lib/verified-money.ts; funding.ts and commitment.ts call ordinaryFee and acceptsPayoutFee. That payment fee policy is business logic.'
+printf '%s\n' 'SKIP reason shared by every suite below: they load adapter.ts, and it and the client files that import it carry payment and fee policy from src/lib/payments and backend/payments (acceptsPayoutFee, ordinaryFee, PayoutPolicy, PaymentChainAdapter). That is business logic.'
 skip_suite escrow.e2e.mjs 'adapter.ts, monthly-reserve.ts and workers/payment-executor (monthly-release.ts, solana-monthly.ts)'
 skip_suite executor.e2e.mjs 'adapter.ts, workers/payment-executor, workers/payments and backend/payments'
 skip_suite keeper.e2e.mjs 'adapter.ts, transactions.ts, scripts/payment-keeper (budget.ts, keeper.ts, store.ts), functions/api/v1/[[path]].ts, src/lib (escrow-policy.mjs, payments/monthly-allocation.ts, project-schema.mjs), tests/project-application-manifest.ts, tests/sqlite-d1.ts and workers/payment-executor/solana-monthly.ts'
