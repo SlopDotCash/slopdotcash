@@ -8,7 +8,8 @@
 // later review (new pushes, a moved base, retries) without a new row; a new
 // item gets a row only below the cap. A refused new item records the skip and
 // makes no model call or GitHub action. Value assessment never reads this
-// state.
+// state. `monthlyReviewOpen` only reads whether `admits` holds, reserving
+// nothing, so that no submission fee is asked for a review the cap refuses.
 module bot_review_monthly_cap {
   pure val CAP = 1
   type Item = { repo: int, month: int, item: int }

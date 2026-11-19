@@ -471,6 +471,17 @@ export type Job =
       number: number;
     }
   | {
+      /** Re-check the submission fee of a pull request (PRD section 5). */
+      kind: "submission_fee";
+      deliveryId: string;
+      installationId: number;
+      repositoryId: number;
+      owner: string;
+      repo: string;
+      itemKind: "pull_request";
+      number: number;
+    }
+  | {
       kind: "maintainer_hold";
       reviewKey: string;
       deliveryId: string;

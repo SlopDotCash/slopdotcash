@@ -38,6 +38,7 @@ import {
 } from "./reward-asset.mjs";
 import { assertSecurityBountyTerms } from "./security-bounty.mjs";
 import { assertReadyLabelSettings } from "./slopbot-ready.mjs";
+import { assertSubmissionFeeSetting } from "./submission-fee-setting.mjs";
 
 /**
  * The canonical generic templates every generated project skill renders from
@@ -1309,6 +1310,7 @@ function validateProjectDefinition(
         "automaticClosure",
         ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
         ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
+        ...(slopbot.submissionFee === undefined ? [] : ["submissionFee"]),
       ],
       "project.slopbot",
     );
@@ -1321,6 +1323,11 @@ function validateProjectDefinition(
       );
     if (slopbot.intakeCap !== undefined)
       assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
+    if (slopbot.submissionFee !== undefined)
+      assertSubmissionFeeSetting(
+        slopbot.submissionFee,
+        "project.slopbot.submissionFee",
+      );
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&

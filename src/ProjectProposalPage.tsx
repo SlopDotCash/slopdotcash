@@ -37,6 +37,15 @@ import {
   READY_LABEL_LIMITS,
   type ReadyLabelSettings,
 } from "./lib/slopbot-ready.mjs";
+import { SUBMISSION_FEE_CONTRACTS } from "./lib/submission-fee.mjs";
+import {
+  SUBMISSION_FEE_HINT,
+  SUBMISSION_FEE_SETTING_LIMITS,
+  type SubmissionFeeSetting,
+  submissionFeeAmountDraft,
+  submissionFeeAmountText,
+  submissionFeeSetting,
+} from "./lib/submission-fee-setting.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -195,6 +204,8 @@ const EMPTY_PROPOSAL = {
   securityContact: "",
   closurePolicy: "",
   automaticClosure: "true",
+  // On for every new project that takes contributions (PRD section 5).
+  submissionFee: "true",
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
@@ -698,6 +709,69 @@ function ClosureConsent({
         />{" "}
         Slopbot may close Slop-skill PRs · authors can appeal
       </label>
+    </div>
+  );
+}
+
+/** True until Slop has published a deposit contract for the fee. */
+const SUBMISSION_FEE_NOT_ACTIVE = Object.values(SUBMISSION_FEE_CONTRACTS).every(
+  (address) => address === null,
+);
+
+function submissionFeeSummary(
+  setting: SubmissionFeeSetting | undefined,
+): string {
+  const fee = submissionFeeSetting({ slopbot: { submissionFee: setting } });
+  return fee === null
+    ? "Off"
+    : `On: ${submissionFeeAmountText(fee.amountMinor)} USDC or USDG`;
+}
+
+/**
+ * The refundable submission fee (PRD section 5). The amount field appears
+ * only where the owner can set it, on the settings page.
+ */
+function SubmissionFeeFields({
+  value,
+  onChange,
+  amount,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  amount?: {
+    value: string;
+    onChange: (value: string) => void;
+    error: string | undefined;
+  };
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="submission-fee-hint"
+          checked={value === "true"}
+          name="submissionFee"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        Ask outside contributors for a refundable submission fee
+      </label>
+      <p className="field-hint" id="submission-fee-hint">
+        {SUBMISSION_FEE_HINT}
+        {SUBMISSION_FEE_NOT_ACTIVE
+          ? " Slop has not switched the fee on yet; this choice applies once it does."
+          : ""}
+      </p>
+      {amount && value === "true" ? (
+        <TextField
+          error={amount.error}
+          inputMode="decimal"
+          label="Submission fee in USDC or USDG"
+          name="submissionFeeAmount"
+          onChange={amount.onChange}
+          value={amount.value}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1507,8 +1581,18 @@ function ProjectProposalForm({
           SKILL_RULE_FIELDS.map((field) => [field, p[field].trim()]),
         ) as Record<SkillRuleField, string>),
       },
-      ...(p.automaticClosure === "true" && p.fundingMode !== "bounty"
-        ? { slopbot: { automaticClosure: true } }
+      // A listing that is only a security program takes no contributions,
+      // so it carries neither closure consent nor a submission fee.
+      ...(p.fundingMode !== "bounty" &&
+      (p.automaticClosure === "true" || p.submissionFee === "true")
+        ? {
+            slopbot: {
+              automaticClosure: p.automaticClosure === "true",
+              ...(p.submissionFee === "true"
+                ? { submissionFee: { enabled: true } }
+                : {}),
+            },
+          }
         : {}),
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
@@ -1907,10 +1991,16 @@ function ProjectProposalForm({
               ))}
             </div>
             {p.fundingMode === "bounty" ? null : (
-              <ClosureConsent
-                onChange={set("automaticClosure")}
-                value={p.automaticClosure}
-              />
+              <>
+                <ClosureConsent
+                  onChange={set("automaticClosure")}
+                  value={p.automaticClosure}
+                />
+                <SubmissionFeeFields
+                  onChange={set("submissionFee")}
+                  value={p.submissionFee}
+                />
+              </>
             )}
             {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
               <section className="setup-legal" aria-label="Saved legal terms">
@@ -2109,12 +2199,20 @@ function ProjectProposalForm({
                   </dd>
                 </div>
                 {p.fundingMode === "bounty" ? null : (
-                  <div>
-                    <dt>Auto-close</dt>
-                    <dd>
-                      <AutoCloseMark on={p.automaticClosure === "true"} />
-                    </dd>
-                  </div>
+                  <>
+                    <div>
+                      <dt>Auto-close</dt>
+                      <dd>
+                        <AutoCloseMark on={p.automaticClosure === "true"} />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Submission fee</dt>
+                      <dd>
+                        <AutoCloseMark on={p.submissionFee === "true"} />
+                      </dd>
+                    </div>
+                  </>
                 )}
                 {bounty || p.fundingMode === "monthly" ? (
                   <div>
@@ -2312,6 +2410,9 @@ function maintainerShareDraft(text: string): {
 type UpdateDraft = ReadyDraft & {
   image: string;
   automaticClosure: string;
+  submissionFee: string;
+  /** The stablecoin amount as typed, for example "2" or "2.50". */
+  submissionFeeAmount: string;
   intakeCap: string;
   headline: string;
   goal: string;
@@ -2340,6 +2441,8 @@ const DRAFT_FIELDS = [
   "readyMaxLines",
   "readyMaxFiles",
   "readyProtectedPaths",
+  "submissionFee",
+  "submissionFeeAmount",
   "intakeCap",
   "headline",
   "goal",
@@ -2576,6 +2679,7 @@ function ProjectUpdateForm({
       BigInt(reward.committedMinor) > 0n ||
       (current.escrow?.deployments.length ?? 0) > 0);
   const currentReady = current.slopbot?.readyLabel;
+  const currentFee = current.slopbot?.submissionFee;
   const initial: UpdateDraft = {
     automaticClosure: String(current.slopbot?.automaticClosure === true),
     readyLabel: String(currentReady?.enabled === true),
@@ -2589,6 +2693,10 @@ function ProjectUpdateForm({
       currentReady?.maxChangedFiles ?? READY_LABEL_DEFAULTS.maxChangedFiles,
     ),
     readyProtectedPaths: (currentReady?.protectedPaths ?? []).join("\n"),
+    submissionFee: String(currentFee?.enabled === true),
+    submissionFeeAmount: submissionFeeAmountText(
+      currentFee?.amountMinor ?? SUBMISSION_FEE_SETTING_LIMITS.defaultMinor,
+    ),
     intakeCap: String(current.slopbot?.intakeCap ?? ""),
     headline: current.headline,
     image: current.image ?? "",
@@ -2736,10 +2844,25 @@ function ProjectUpdateForm({
   const intake = intakeCapDraft(value.intakeCap);
   // An invalid entry keeps the published number until it is corrected.
   const nextIntakeCap = intake.error ? current.slopbot?.intakeCap : intake.cap;
+  const feeOn = value.submissionFee === "true";
+  const feeAmount = submissionFeeAmountDraft(value.submissionFeeAmount);
+  // Off keeps the owner's last amount so turning it back on restores it. An
+  // invalid amount keeps the published setting until it is corrected.
+  const nextFee: SubmissionFeeSetting | undefined = feeOn
+    ? feeAmount.error !== undefined ||
+      (currentFee?.enabled === true &&
+        (currentFee.amountMinor ??
+          SUBMISSION_FEE_SETTING_LIMITS.defaultMinor) === feeAmount.amountMinor)
+      ? currentFee
+      : { enabled: true, amountMinor: feeAmount.amountMinor }
+    : currentFee?.enabled === true
+      ? { ...currentFee, enabled: false }
+      : currentFee;
   const share = maintainerShareDraft(value.maintainerShare);
   const errors: Record<string, string | undefined> = {
     ...(readyOn ? ready.errors : {}),
     intakeCap: intake.error,
+    submissionFeeAmount: feeOn ? feeAmount.error : undefined,
     maintainerShare: share.error,
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
@@ -2867,7 +2990,8 @@ function ProjectUpdateForm({
       ...(source.slopbot !== undefined ||
       value.automaticClosure === "true" ||
       nextReady !== undefined ||
-      nextIntakeCap !== undefined
+      nextIntakeCap !== undefined ||
+      nextFee !== undefined
         ? {
             slopbot: {
               automaticClosure: value.automaticClosure === "true",
@@ -2875,6 +2999,7 @@ function ProjectUpdateForm({
               ...(nextIntakeCap !== undefined
                 ? { intakeCap: nextIntakeCap }
                 : {}),
+              ...(nextFee ? { submissionFee: nextFee } : {}),
             },
           }
         : {}),
@@ -2932,6 +3057,12 @@ function ProjectUpdateForm({
       label: "Pause new contributors",
       before: intakeCapSummary(current.slopbot?.intakeCap),
       after: intakeCapSummary(next.slopbot?.intakeCap),
+    },
+    {
+      field: "submissionFee",
+      label: "Submission fee",
+      before: submissionFeeSummary(current.slopbot?.submissionFee),
+      after: submissionFeeSummary(next.slopbot?.submissionFee),
     },
     ...(current.image !== next.image
       ? [
@@ -3383,6 +3514,17 @@ function ProjectUpdateForm({
           onChange={set("automaticClosure")}
           value={value.automaticClosure}
         />
+        {bountyOnly ? null : (
+          <SubmissionFeeFields
+            amount={{
+              error: shown("submissionFeeAmount"),
+              onChange: set("submissionFeeAmount"),
+              value: value.submissionFeeAmount,
+            }}
+            onChange={set("submissionFee")}
+            value={value.submissionFee}
+          />
+        )}
         <details className="proposal-advanced">
           <summary>Contribution rules</summary>
           <TextField

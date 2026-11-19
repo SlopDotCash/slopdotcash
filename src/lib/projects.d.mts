@@ -7,6 +7,7 @@ import type { ContributionField } from "./project-schema.mjs";
 import type { RewardAsset } from "./reward-asset.mjs";
 import type { SecurityBountyTerms } from "./security-bounty.mjs";
 import type { ReadyLabelSettings } from "./slopbot-ready.mjs";
+import type { SubmissionFeeSetting } from "./submission-fee-setting.mjs";
 
 export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
@@ -234,6 +235,10 @@ export interface ProjectDefinition {
      * (PRD section 5); absent means off.
      */
     readonly intakeCap?: number;
+    /**
+     * The refundable submission fee (PRD section 5); absent means off.
+     */
+    readonly submissionFee?: SubmissionFeeSetting;
   };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
