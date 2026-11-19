@@ -58,8 +58,8 @@ library MonthlyCalendar {
         uint256 yearOfEra = y % 400;
         uint256 leapDays = yearOfEra / 4 - yearOfEra / 100;
         unchecked {
-            return (yearsAfter2000 * 365 + (marchBased ? 10532 : 10167) + (y / 400) * 97 + leapDays + dayOfYear)
-                * 1 days;
+            return
+                (yearsAfter2000 * 365 + (marchBased ? 10532 : 10167) + (y / 400) * 97 + leapDays + dayOfYear) * 1 days;
         }
     }
 }

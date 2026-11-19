@@ -187,7 +187,8 @@ contract MonthlyCommitmentTest {
             for (uint32 year = firstYears[range]; year < firstYears[range] + 900 && year <= 9999; ++year) {
                 for (uint32 month = 1; month <= 12; ++month) {
                     (uint64 opensAt, uint64 closesAt) = vault.monthlyWindow(year * 100 + month);
-                    (uint64 developmentOpensAt, uint64 developmentClosesAt) = development.monthlyWindow(year * 100 + month);
+                    (uint64 developmentOpensAt, uint64 developmentClosesAt) =
+                        development.monthlyWindow(year * 100 + month);
                     require(opensAt == developmentOpensAt && closesAt == developmentClosesAt, "as on development");
                 }
             }

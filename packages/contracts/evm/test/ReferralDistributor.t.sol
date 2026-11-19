@@ -654,24 +654,26 @@ contract ReferralDistributorTest is ReferralBase {
         vm.store(address(distributor), keccak256(abi.encode(ALICE, uint256(9))), bytes32(already));
     }
 
-    function testFuzz_claimableIsTheDevelopmentAmount(uint256 cumulative, uint256 already, uint256 claimedTotal, uint256 total)
-        public
-    {
+    function testFuzz_claimableIsTheDevelopmentAmount(
+        uint256 cumulative,
+        uint256 already,
+        uint256 claimedTotal,
+        uint256 total
+    ) public {
         claimState(cumulative, already, claimedTotal, total);
-        (bool ok, bytes memory answer) = address(distributor).staticcall(
-            abi.encodeCall(ReferralDistributor.claimable, (ALICE, cumulative, new bytes32[](0)))
-        );
-        (bool developmentOk, bytes memory developmentAnswer) = address(development).staticcall(
-            abi.encodeCall(DevelopmentClaims.claimable, (cumulative, already, claimedTotal, total))
-        );
+        (bool ok, bytes memory answer) = address(distributor)
+            .staticcall(abi.encodeCall(ReferralDistributor.claimable, (ALICE, cumulative, new bytes32[](0))));
+        (bool developmentOk, bytes memory developmentAnswer) = address(development)
+            .staticcall(abi.encodeCall(DevelopmentClaims.claimable, (cumulative, already, claimedTotal, total)));
         require(ok == developmentOk && keccak256(answer) == keccak256(developmentAnswer), "as on development");
     }
 
-    function claimMatchesDevelopment(uint256 cumulative, uint256 already, uint256 claimedTotal, uint256 total) internal {
+    function claimMatchesDevelopment(uint256 cumulative, uint256 already, uint256 claimedTotal, uint256 total)
+        internal
+    {
         claimState(cumulative, already, claimedTotal, total);
-        (bool developmentOk, bytes memory developmentAnswer) = address(development).staticcall(
-            abi.encodeCall(DevelopmentClaims.claim, (cumulative, already, claimedTotal, total))
-        );
+        (bool developmentOk, bytes memory developmentAnswer) = address(development)
+            .staticcall(abi.encodeCall(DevelopmentClaims.claim, (cumulative, already, claimedTotal, total)));
         uint256 paid = developmentOk ? abi.decode(developmentAnswer, (uint256)) : 0;
         token.mint(address(distributor), paid);
         uint256 balance = token.balanceOf(ALICE);
@@ -681,15 +683,21 @@ contract ReferralDistributorTest is ReferralBase {
         require(ok == developmentOk, "as on development");
         if (ok) {
             require(token.balanceOf(ALICE) == balance + paid, "pays the difference");
-            require(distributor.claimed(ALICE) == cumulative && distributor.totalClaimed() == claimedTotal + paid, "records it");
+            require(
+                distributor.claimed(ALICE) == cumulative && distributor.totalClaimed() == claimedTotal + paid,
+                "records it"
+            );
         } else {
             require(keccak256(answer) == keccak256(developmentAnswer), "refuses as on development");
         }
     }
 
-    function testFuzz_claimIsTheDevelopmentClaim(uint128 cumulative, uint128 already, uint128 claimedTotal, uint128 total)
-        public
-    {
+    function testFuzz_claimIsTheDevelopmentClaim(
+        uint128 cumulative,
+        uint128 already,
+        uint128 claimedTotal,
+        uint128 total
+    ) public {
         claimMatchesDevelopment(cumulative, already, claimedTotal, total);
     }
 

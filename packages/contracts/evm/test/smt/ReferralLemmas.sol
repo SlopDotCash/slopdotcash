@@ -13,8 +13,7 @@ contract ReferralLemmas {
         external
         pure
     {
-        (ReferralClaims.Outcome outcome, uint256 amount) =
-            ReferralClaims.next(cumulative, already, totalClaimed, total);
+        (ReferralClaims.Outcome outcome, uint256 amount) = ReferralClaims.next(cumulative, already, totalClaimed, total);
         if (outcome != ReferralClaims.Outcome.Payable) return;
         assert(amount > 0 && already + amount == cumulative && totalClaimed + amount <= total);
     }
@@ -25,8 +24,7 @@ contract ReferralLemmas {
         external
         pure
     {
-        (ReferralClaims.Outcome outcome, uint256 amount) =
-            ReferralClaims.next(cumulative, already, totalClaimed, total);
+        (ReferralClaims.Outcome outcome, uint256 amount) = ReferralClaims.next(cumulative, already, totalClaimed, total);
         if (outcome != ReferralClaims.Outcome.Payable) return;
         uint256 remaining = total - (totalClaimed + amount);
         assert(remaining + totalClaimed + amount == total);
@@ -38,8 +36,7 @@ contract ReferralLemmas {
         external
         pure
     {
-        (ReferralClaims.Outcome outcome, uint256 amount) =
-            ReferralClaims.next(cumulative, already, totalClaimed, total);
+        (ReferralClaims.Outcome outcome, uint256 amount) = ReferralClaims.next(cumulative, already, totalClaimed, total);
         if (cumulative <= already) {
             assert(outcome == ReferralClaims.Outcome.Nothing && amount == 0);
         } else {
