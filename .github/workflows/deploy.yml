@@ -28,6 +28,10 @@ on:
       discussion_resume_run:
         description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
         type: string
+      full_collection:
+        description: "Manual main release only: recompute every commit attribution live instead of reusing the previous collection's fenced answers"
+        type: boolean
+        default: false
       rotate_robinhood_rpc_from:
         description: "Manual main only: rotate the fee-converter Robinhood RPC from this active Worker version UUID"
         type: string
@@ -142,13 +146,60 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  # Incremental collection (PRD section 9): the newest trusted main
+  # collection's memo lets this one reuse immutable commit statistics and
+  # fenced commit attributions. A missing or unverifiable memo means a full
+  # collection, never a failed release.
+  restore_memo:
+    name: Restore the previous trusted collection memo
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.use_published_data != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+      memo: ${{ steps.restore.outputs.memo }}
+      discussions: ${{ steps.restore.outputs.discussions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Load the newest trusted collection memo
+        id: restore
+        # The memo only saves reads; failing to restore it means a full
+        # collection, never a failed release.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESTORE_OUTPUT: ${{ runner.temp }}/restored-collection
+          # An explicit discussion resume keeps its own restore job.
+          RESTORE_DISCUSSIONS: ${{ (github.event_name != 'workflow_dispatch' || !inputs.discussion_resume_run) && 'true' || 'false' }}
+        run: python3 scripts/restore-collection-memo.py
+      - name: Pass the verified memo to preparation
+        id: retained
+        if: steps.restore.outputs.memo == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-collection-memo-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/restored-collection
+          if-no-files-found: error
+          retention-days: 2
+
   prepare:
     name: Prepare checked browser bundle
-    needs: [restore_discussions, restore_collection]
+    needs: [restore_discussions, restore_collection, restore_memo]
     if: >-
       !cancelled() &&
       (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped') &&
-      (needs.restore_collection.result == 'success' || needs.restore_collection.result == 'skipped')
+      (needs.restore_collection.result == 'success' || needs.restore_collection.result == 'skipped') &&
+      (needs.restore_memo.result == 'success' || needs.restore_memo.result == 'skipped')
     outputs:
       browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
       sandbox: ${{ steps.scope.outputs.sandbox }}
@@ -303,6 +354,22 @@ jobs:
           artifact-ids: ${{ needs.restore_discussions.outputs.artifact_id }}
           path: ${{ runner.temp }}/leaderboard-discussions
 
+      - name: Copy the restored collection memo
+        if: needs.restore_memo.outputs.memo == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_memo.outputs.artifact_id }}
+          path: ${{ runner.temp }}/restored-collection
+
+      - name: Place the restored discussion reads
+        if: needs.restore_memo.outputs.discussions == 'true'
+        run: |
+          set -euo pipefail
+          # An explicit resume already placed its own checkpoint.
+          if [ ! -e "$RUNNER_TEMP/leaderboard-discussions" ]; then
+            mv "$RUNNER_TEMP/restored-collection/leaderboard-discussions" "$RUNNER_TEMP/leaderboard-discussions"
+          fi
+
       # Every workflow in this repository shares one GITHUB_TOKEN request
       # quota (1,000 REST requests an hour), and a full collection needs
       # more than that, so it stalled behind releases, scans and checks. A
@@ -340,6 +407,7 @@ jobs:
           COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
           GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
         run: |
           set -euo pipefail
           leaderboard_origin="https://slop.cash"
@@ -351,6 +419,12 @@ jobs:
             export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
             mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
             export SLOP_DISCUSSION_DEADLINE_MS="$(( $(date +%s) * 1000 + 18000000 ))"
+            # Incremental collection: reuse the previous trusted memo when
+            # one was restored, and always write this collection's memo.
+            if [ -f "$RUNNER_TEMP/restored-collection/collection-memo.json" ]; then
+              export SLOP_COLLECTION_MEMO="$RUNNER_TEMP/restored-collection/collection-memo.json"
+            fi
+            export SLOP_COLLECTION_MEMO_OUT="$RUNNER_TEMP/collection-memo/collection-memo.json"
             # Reserve time to retain the latest journal of public reads before
             # the job limit, even when an unrelated live endpoint stalls.
             collect=(timeout --signal=TERM --kill-after=10s 18100 "${collect[@]}")
@@ -381,6 +455,19 @@ jobs:
           elif [ "$feed_status" -ne 0 ]; then
             exit "$feed_status"
           fi
+
+      - name: Save the collection memo for the next trusted collection
+        # Written only after a complete snapshot, so only a successful
+        # collection seeds the next incremental one.
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main' &&
+          steps.live_ledger.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: collection-memo-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collection-memo/collection-memo.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Save public discussion reads for a subsequent trusted run
         if: >-
