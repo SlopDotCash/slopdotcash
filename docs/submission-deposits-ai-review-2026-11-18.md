@@ -3,7 +3,9 @@
 This is an AI-assisted internal review of `contracts/evm/src/SubmissionDeposits.sol`
 by the same agent session that wrote it, plus one independent agent pass that was
 given only the source and the specification. It is not an audit, and nobody
-independent of the project has reviewed the contract. The contract is not deployed.
+independent of the project has reviewed the contract. The contract was not
+deployed when this note was written; it was deployed on 19 November 2026
+(`contracts/DEPLOY-MAINNET.md`).
 
 Source reviewed: SHA-256
 `7f8c69347c1292a8127aa591678386e2e22ad58fec31966076d74c01bf202c3e`, solc 0.8.30,
