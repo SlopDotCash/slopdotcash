@@ -139,10 +139,11 @@ owner, no deposits, deposits not paused. The resolver address holds a little
 ETH for gas on each chain and has sent no transaction.
 
 A deployment collects no fee. Both addresses and start blocks are in
-`src/lib/submission-fee.mjs`; `SUBMISSION_FEE_MODE` is `off` in the
-submission-fee Worker and in Slopbot, so nothing reads the contracts and no
-contributor is asked for a fee. Record-only and live are each their own
-reviewed change (PRD section 6, FEE-06).
+`src/lib/submission-fee.mjs`. Since 19 November 2026 `SUBMISSION_FEE_MODE` is
+`dry_run` in the submission-fee Worker and in Slopbot: the Worker reads the
+contracts and records what it would send, loads no key and signs nothing, and
+no contributor is asked for a fee. Live is its own reviewed change (PRD
+section 6, FEE-06).
 
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 

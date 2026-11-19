@@ -651,8 +651,9 @@ refundable submission deposits, built for the platform submission fee (operator
 decision, 18 November 2026). **It was deployed on Base and Robinhood Chain on
 19 November 2026 at `0xDe40B32A4156ABC2A05987367966d994BcFbf8D8` (the same
 address on both). The owner named the submission-fee Worker's resolver,
-`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, the same day. No Slop service
-reads or calls it yet:** the fee switch is `off`. The transactions, blocks and
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, the same day. The
+submission-fee Worker reads it in record-only mode and nothing calls it yet:**
+the fee switch is `dry_run`. The transactions, blocks and
 read-back values are in
 [the deployment record](../DEPLOY-MAINNET.md#submission-fee-deposit-contracts-19-november-2026).
 The product rule is in PRD sections 5 and 6; the Worker that settles deposits

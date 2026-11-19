@@ -9794,7 +9794,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "5104fec5023f0fcbb4a226e4a9a0c58bec202a8fd246f80397d9d10cad34eba8",
+      "sha256": "2c3681bc3cc149808537d03f923664058ca767d0475e821d26fccf7537780bb1",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -9816,7 +9816,7 @@
     },
     {
       "path": "workers/submission-fee/config.ts",
-      "sha256": "5c18cff7cdc8917b1c05cccdf79c7e770f13fc71a1d9d7e87d6a314ab2fe76ad",
+      "sha256": "f3597c37ab5398e05a683752578ab490ff130063431f62f526061dd51193dc61",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -9871,7 +9871,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "801d2c73dcb18eff2b037363aa6c235399afd5eb04903faee80a694828645300",
+      "sha256": "99843013a379bb4ed7daff481941b2bdad72f7c410e60ace128792d91bebdfa1",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
