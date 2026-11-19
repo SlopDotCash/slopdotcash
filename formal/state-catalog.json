@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "7989f0a395605933b6808188d239458a42b47bd9c4658108b4e62573335366df",
+  "inventorySha256": "2e628886b96c4a743cb3bd5783b17896ea37ad0ca4f9aa41d4f136d352ced117",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3033,7 +3033,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1140,
+      "line": 1138,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -3059,7 +3059,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1632,
+      "line": 1630,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -3085,7 +3085,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2626,
+      "line": 2624,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -3111,7 +3111,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2631,
+      "line": 2629,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3137,7 +3137,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2638,
+      "line": 2636,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -4969,7 +4969,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 338,
+      "line": 413,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
@@ -4982,7 +4982,7 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 51,
+      "line": 58,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],

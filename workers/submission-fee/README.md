@@ -11,8 +11,36 @@ The Worker reads the contract, records each deposit, judges whether it pays
 for its pull request, marks that pull request paid, and sends what Slopbot's
 row says is due. It decides nothing about merges or closes.
 
-**It ships `off`.** The contracts are not deployed, so their addresses in
-`src/lib/submission-fee.mjs` are `null` and no network is served.
+**It is `off`.** Record-only (`dry_run`) was switched on at 18:06 UTC on
+19 November 2026 and off again the same hour: each scheduled run on Cloudflare
+reported `submission_fee_operation_failed` on both networks (Base after its
+finalized scan had advanced, Robinhood Chain before it recorded a position),
+while the same run reads both chains cleanly from outside Cloudflare. The
+cause is not known yet. A failed network's run result now carries a `reason`
+naming the step that failed and the error classes, HTTP status and JSON-RPC
+code behind it (`failureReason` in `core.ts`), never an error message or a
+URL, so the next record-only run says where it fails. The contracts were deployed on 19 November 2026 and their
+addresses and start blocks are in `src/lib/submission-fee.mjs`
+(`contracts/DEPLOY-MAINNET.md`). Their resolver is this Worker's address,
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, and the Worker holds its key as
+`SUBMISSION_FEE_RESOLVER_KEY`. In `dry_run` both networks are read and the key
+is not loaded.
+
+**Endpoints.** From Cloudflare both public endpoints refuse this Worker's
+log reads: one record-only pass run as a preview on Cloudflare's network on
+19 November 2026 reported `chain.events/LimitExceededRpcError:code--32005`
+for Base and `chain.events/RpcRequestError:code-429` for Robinhood Chain.
+The release therefore binds the two optional secrets
+`RPC_URL_SUBMISSION_FEE_BASE` and `RPC_URL_SUBMISSION_FEE_ROBINHOOD` from the
+`PAYMENT_RPC_URLS` map the payment Workers already read
+(`scripts/release-submission-fee.ts`), once, when the Worker does not hold
+them. To replace one, delete the Worker secret and release again.
+
+The default Base endpoint is `https://base-rpc.publicnode.com`:
+`mainnet.base.org` refuses `eth_getLogs`. On 19 November 2026 a local
+record-only run of this Worker read both real chains cleanly with it and
+failed on Base with `mainnet.base.org`. The defaults are a fallback for a
+run outside Cloudflare only.
 
 ## What runs
 
@@ -204,22 +232,22 @@ with its resolve transaction, whose `kept_to` is that fee wallet and whose
 token is the asset asked about. Kept SLOP goes to the burn address and is not
 income. Refunds and reclaims are not income.
 
-## Going live (not done; each step is the operator's)
+## Going live (steps 1 to 3 done 19 November 2026; each step is the operator's)
 
-1. Deploy `SubmissionDeposits` on Base and Robinhood Chain
-   (`contracts/evm/README.md`), with a new resolver address that is not the
-   owner.
-2. Put both addresses and their deployment blocks in
+1. Done. `SubmissionDeposits` is deployed on Base and Robinhood Chain
+   (`contracts/DEPLOY-MAINNET.md`).
+2. Done. Both addresses and their deployment blocks are in
    `SUBMISSION_FEE_CONTRACTS` and `SUBMISSION_FEE_START_BLOCKS`
    (`src/lib/submission-fee.mjs`).
-3. Install the resolver key as the Worker secret
-   `SUBMISSION_FEE_RESOLVER_KEY` (`wrangler secret put
-   SUBMISSION_FEE_RESOLVER_KEY --config workers/submission-fee/wrangler.toml`,
-   hidden prompt). Never pass it to CI. Fund its address with a little ETH on
-   each network.
-4. Set the mode to `dry_run` in a reviewed change and read a few days of
-   `submission_fee_sends` rows.
-5. Set the mode to `live` in its own reviewed change. The release refuses
+3. Done. The resolver key is the Worker secret
+   `SUBMISSION_FEE_RESOLVER_KEY`, set through a hidden prompt and never
+   passed to CI. Its address `0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`
+   holds a little ETH on each network, and the owner named it with
+   `setResolver` on both contracts.
+4. Set the mode to `dry_run` once its reads work from Cloudflare (see the
+   top of this file), and read a few days of `submission_fee_sends` rows.
+5. Set the mode to `live` in its own reviewed change, together with
+   Slopbot's mode and `SUBMISSION_FEE_SWITCHED_ON`. The release refuses
    `live` unless both contracts and start blocks are set and the Worker holds
    the key.
 

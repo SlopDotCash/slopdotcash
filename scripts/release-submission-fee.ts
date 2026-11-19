@@ -32,6 +32,41 @@ const OPTIONAL_SECRETS = [
 ];
 
 /**
+ * The Worker's keyed chain endpoints, taken from the release's
+ * `PAYMENT_RPC_URLS` map (network name to https URL), which the payment
+ * Workers already read. The public endpoints refuse the Worker's log reads
+ * from Cloudflare (Base "limit exceeded", Robinhood Chain HTTP 429, both read
+ * on 19 November 2026). A network the map does not name gets no secret and
+ * keeps the public default. Returns secret name to URL.
+ */
+export function endpointSecrets(
+  raw: string | undefined,
+): Record<string, string> {
+  if (raw === undefined || raw.trim() === "") return {};
+  let map: unknown;
+  try {
+    map = JSON.parse(raw);
+  } catch {
+    // Never echo the value: it holds endpoint keys.
+    throw new Error("PAYMENT_RPC_URLS is not JSON");
+  }
+  if (typeof map !== "object" || map === null || Array.isArray(map))
+    throw new Error("PAYMENT_RPC_URLS is not a JSON object");
+  const secrets: Record<string, string> = {};
+  for (const [network, name] of [
+    ["base-mainnet", OPTIONAL_SECRETS[0]],
+    ["robinhood-mainnet", OPTIONAL_SECRETS[1]],
+  ] as const) {
+    const url = (map as Record<string, unknown>)[network];
+    if (url === undefined) continue;
+    if (typeof url !== "string" || !/^https:\/\/[^\s]+$/u.test(url))
+      throw new Error(`PAYMENT_RPC_URLS has no https URL for ${network}`);
+    secrets[name] = url;
+  }
+  return secrets;
+}
+
+/**
  * What the reviewed configuration must be before a release. `secretNames` is
  * read only for `live`. Returns the mode it found.
  */
@@ -136,12 +171,36 @@ if (import.meta.main) {
   const wrangler = "./node_modules/.bin/wrangler";
   const read = (args: string[]) =>
     JSON.parse(execFileSync(wrangler, args, { encoding: "utf8" }));
-  const mode = assertSubmissionFeeRelease(config, production, () => {
+  const secretNames = () => {
     const inventory = read(["secret", "list", "--config", configPath]);
     if (!Array.isArray(inventory))
       throw new Error("Submission fee secret inventory is unreadable");
     return inventory.map((entry) => String(entry.name));
-  });
+  };
+  // Bind a keyed endpoint the Worker does not hold yet, before the tagged
+  // deploy so the deployed version is still the one this release tags. The
+  // value goes to wrangler on stdin and is never printed. To replace one,
+  // delete the Worker secret; the next release binds it again.
+  const held = secretNames();
+  for (const [name, url] of Object.entries(
+    endpointSecrets(process.env.PAYMENT_RPC_URLS),
+  )) {
+    if (held.includes(name)) {
+      console.log(`${config.name} already holds ${name}`);
+      continue;
+    }
+    execFileSync(wrangler, ["secret", "put", name, "--config", configPath], {
+      input: url,
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+    console.log(`Bound ${name} for ${config.name}`);
+  }
+  for (const name of OPTIONAL_SECRETS)
+    if (!secretNames().includes(name))
+      console.log(
+        `${config.name} has no ${name}; it reads the public endpoint`,
+      );
+  const mode = assertSubmissionFeeRelease(config, production, secretNames);
   execFileSync(
     wrangler,
     [

@@ -249,8 +249,8 @@ A project owner may turn on the refundable submission fee (operator decision,
 18 November 2026; PRD section 5, `src/lib/submission-fee-setting.mjs`).
 `submission-fee.ts` holds Slopbot's part; it moves no money and reads no chain.
 
-`SUBMISSION_FEE_MODE` in `wrangler.toml` is `off`, `dry_run` or `live` and
-ships `off`. Any other value is `off`. While no deposit contract address is
+`SUBMISSION_FEE_MODE` in `wrangler.toml` is `off`, `dry_run` or `live`; it is
+`dry_run` since 19 November 2026. Any other value is `off`. While no deposit contract address is
 published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
 
 - **Who is asked.** A pull request of a project open to contributor work,

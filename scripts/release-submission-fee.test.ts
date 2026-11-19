@@ -1,7 +1,11 @@
 // The release check of the submission-fee Worker, on the checked-in file.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { assertSubmissionFeeRelease } from "./release-submission-fee";
+import { SUBMISSION_FEE_SWITCHED_ON } from "../src/lib/submission-fee.mjs";
+import {
+  assertSubmissionFeeRelease,
+  endpointSecrets,
+} from "./release-submission-fee";
 
 type Config = Parameters<typeof assertSubmissionFeeRelease>[0];
 const checkedIn = () =>
@@ -17,6 +21,10 @@ const deployed = {
     "robinhood-mainnet": `0x${"2".repeat(40)}`,
   },
   startBlocks: { "base-mainnet": 10, "robinhood-mainnet": 20 },
+};
+const unpublished = {
+  contracts: { "base-mainnet": null, "robinhood-mainnet": null },
+  startBlocks: { "base-mainnet": null, "robinhood-mainnet": null },
 };
 const never = () => {
   throw new Error("the secret inventory must not be read");
@@ -38,10 +46,9 @@ test("live is refused until every contract, start block and the key are in place
   const config = checkedIn();
   config.vars.SUBMISSION_FEE_MODE = "live";
   const key = () => ["SUBMISSION_FEE_RESOLVER_KEY"];
-  // The reviewed tables still hold null addresses.
-  expect(() => assertSubmissionFeeRelease(config, production, key)).toThrow(
-    "every contract address and start block",
-  );
+  expect(() =>
+    assertSubmissionFeeRelease(config, production, key, unpublished),
+  ).toThrow("every contract address and start block");
   expect(() =>
     assertSubmissionFeeRelease(config, production, key, {
       ...deployed,
@@ -68,6 +75,28 @@ test("live is refused until every contract, start block and the key are in place
       deployed,
     ),
   ).toBe("live");
+});
+
+test("the reviewed tables hold both deployed contracts, so live waits only for the key", () => {
+  const config = checkedIn();
+  config.vars.SUBMISSION_FEE_MODE = "live";
+  expect(() =>
+    assertSubmissionFeeRelease(config, production, () => []),
+  ).toThrow("secret inventory is not ready");
+  expect(
+    assertSubmissionFeeRelease(config, production, () => [
+      "SUBMISSION_FEE_RESOLVER_KEY",
+    ]),
+  ).toBe("live");
+});
+
+test("the settings page says the fee is switched on only while Slopbot asks for it", () => {
+  const slopbot = Bun.TOML.parse(
+    readFileSync("workers/slopbot/wrangler.toml", "utf8"),
+  ) as { vars: { SUBMISSION_FEE_MODE?: string } };
+  expect(SUBMISSION_FEE_SWITCHED_ON).toBe(
+    slopbot.vars.SUBMISSION_FEE_MODE === "live",
+  );
 });
 
 test("another database, a route, a missing schedule, a key in the file or a bad value is refused", () => {
@@ -102,4 +131,40 @@ test("another database, a route, a missing schedule, a key in the file or a bad 
   refused((config) => {
     config.vars.SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI = "1";
   }, "daily native limit");
+});
+
+test("keyed endpoints come from the release map by network, and a bad map is refused without echoing it", () => {
+  expect(endpointSecrets(undefined)).toEqual({});
+  expect(endpointSecrets("  ")).toEqual({});
+  expect(
+    endpointSecrets(
+      JSON.stringify({
+        "base-mainnet": "https://base.example/v2/key-a",
+        "robinhood-mainnet": "https://rc.example/v2/key-b",
+        "solana-mainnet": "https://sol.example/key-c",
+      }),
+    ),
+  ).toEqual({
+    RPC_URL_SUBMISSION_FEE_BASE: "https://base.example/v2/key-a",
+    RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://rc.example/v2/key-b",
+  });
+  // A network the map does not name keeps the public default.
+  expect(
+    endpointSecrets(JSON.stringify({ "base-mainnet": "https://b.example/k" })),
+  ).toEqual({ RPC_URL_SUBMISSION_FEE_BASE: "https://b.example/k" });
+  for (const bad of [
+    "https://b.example/secret-key",
+    JSON.stringify(["https://b.example/secret-key"]),
+    JSON.stringify({ "base-mainnet": "http://b.example/secret-key" }),
+    JSON.stringify({ "robinhood-mainnet": 7 }),
+  ]) {
+    let thrown = "";
+    try {
+      endpointSecrets(bad);
+    } catch (error) {
+      thrown = String(error);
+    }
+    expect(thrown).toContain("PAYMENT_RPC_URLS");
+    expect(thrown).not.toContain("secret-key");
+  }
 });

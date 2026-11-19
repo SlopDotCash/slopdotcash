@@ -322,6 +322,81 @@ export function message(error: unknown): string {
     : "submission_fee_operation_failed";
 }
 
+const STEP = Symbol("submission-fee-step");
+const SAFE_NAME = /^[A-Za-z][A-Za-z0-9]{0,39}$/u;
+
+/**
+ * Wraps a chain reader or store so an error from one of its methods carries
+ * that method's name, as `<label>.<method>`. Nothing else about the object
+ * changes.
+ */
+export function labelled<T extends object>(target: T, label: string): T {
+  const mark = (error: unknown, step: string) => {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      !(STEP in error) &&
+      Object.isExtensible(error)
+    )
+      Object.defineProperty(error, STEP, { value: step });
+    return error;
+  };
+  return new Proxy(target, {
+    get(object, key) {
+      const value = Reflect.get(object, key, object);
+      if (typeof value !== "function" || typeof key !== "string") return value;
+      const step = `${label}.${key}`;
+      return (...args: unknown[]) => {
+        try {
+          const result = value.apply(object, args);
+          return result instanceof Promise
+            ? result.catch((error: unknown) => {
+                throw mark(error, step);
+              })
+            : result;
+        } catch (error) {
+          throw mark(error, step);
+        }
+      };
+    },
+  });
+}
+
+/**
+ * Where and how a network's run failed, for logs: the labelled step, then
+ * for up to four errors down the cause chain the error class name and any
+ * numeric HTTP status or JSON-RPC code. It never copies an error message,
+ * a URL or request data, which can hold a key or signed bytes.
+ */
+export function failureReason(error: unknown): string {
+  const parts: string[] = [];
+  let step = "unlabelled";
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (typeof current !== "object") break;
+    const item = current as {
+      name?: unknown;
+      status?: unknown;
+      code?: unknown;
+      cause?: unknown;
+      [STEP]?: unknown;
+    };
+    if (typeof item[STEP] === "string" && step === "unlabelled")
+      step = item[STEP];
+    const name =
+      typeof item.name === "string" && SAFE_NAME.test(item.name)
+        ? item.name
+        : "Error";
+    const status = Number.isSafeInteger(item.status)
+      ? `:status-${item.status}`
+      : "";
+    const code = Number.isSafeInteger(item.code) ? `:code-${item.code}` : "";
+    parts.push(`${name}${status}${code}`);
+    current = item.cause;
+  }
+  return [step, ...parts].join("/").slice(0, 240);
+}
+
 export interface NetworkDependencies {
   mode: Exclude<Mode, "off">;
   network: NetworkConfig;
