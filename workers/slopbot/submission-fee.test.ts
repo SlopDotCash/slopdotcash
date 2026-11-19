@@ -59,6 +59,7 @@ const DEPLOYED = {
   "base-mainnet": BASE_CONTRACT,
   "robinhood-mainnet": ROBINHOOD_CONTRACT,
 };
+const UNPUBLISHED = { "base-mainnet": null, "robinhood-mainnet": null };
 const SETTING_ON_AT = "2026-11-01T00:00:00.000Z";
 const OPENED_AFTER = "2026-11-10T00:00:00Z";
 const APP_USER_ID = "999";
@@ -80,7 +81,7 @@ type WorldOptions = {
   mode?: string;
   /** The project setting; null leaves `slopbot` out of the project. */
   fee?: { enabled: boolean; amountMinor?: string } | null;
-  contracts?: typeof DEPLOYED | typeof SUBMISSION_FEE_CONTRACTS;
+  contracts?: typeof DEPLOYED | typeof UNPUBLISHED;
   permission?: "read" | "write";
   author?: { id: number; type: string };
   draft?: boolean;
@@ -965,9 +966,9 @@ test("a pull request only recorded in a dry run is asked once the switch is live
 });
 
 test("while no deposit contract is published the fee does nothing at all", async () => {
-  expect(feeWays("2000000", [], NOW_ISO, SUBMISSION_FEE_CONTRACTS)).toEqual([]);
+  expect(feeWays("2000000", [], NOW_ISO, UNPUBLISHED)).toEqual([]);
   for (const mode of ["live", "dry_run"]) {
-    const w = world({ mode, contracts: SUBMISSION_FEE_CONTRACTS });
+    const w = world({ mode, contracts: UNPUBLISHED });
     try {
       expect(await w.review()).not.toBe(FEE_NEEDED_REASON);
       expect(w.prompts.length).toBeGreaterThan(0);
