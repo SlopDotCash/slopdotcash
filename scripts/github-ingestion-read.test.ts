@@ -280,16 +280,9 @@ test("commit file gateway and validation retries preserve the quota retry budget
   expect(f.waits).toEqual([1_000, 3_000, 1_000, 2_000, 3_000, 3_000, 3_000]);
 });
 
-test("HTTP 502 retries are limited to canonical immutable GitHub commit file reads", async () => {
+test("HTTP 502 retries need an exact GitHub GET", async () => {
   const url = `https://api.github.com${commitFilesPath}`;
   for (const [input, init] of [
-    [`https://api.github.com${commitPath}`, undefined],
-    [`https://api.github.com${commitPullsPath}`, undefined],
-    [`https://api.github.com${pullFilesPath}`, undefined],
-    [url.replace(commitSha, "main"), undefined],
-    [url.replace(commitSha, commitSha.slice(1)), undefined],
-    [url.replace("page=1", "page=01"), undefined],
-    [`${url}&extra=1`, undefined],
     [`${url}#fragment`, undefined],
     [url.replace("api.github.com", "user:pass@api.github.com"), undefined],
     [url.replace("api.github.com", "example.com"), undefined],
@@ -301,6 +294,27 @@ test("HTTP 502 retries are limited to canonical immutable GitHub commit file rea
     expect(f.waits).toEqual([]);
   }
 });
+
+for (const path of [
+  "/repos/owner/repo/pulls/2321/commits?per_page=100&page=1",
+  "/repos/owner/repo/pulls/7",
+  `/repos/owner/repo/commits/${"a".repeat(40)}`,
+  "/repositories/42/issues/7/timeline?per_page=100&page=3",
+]) {
+  for (const status of [502, 503, 504]) {
+    test(`GitHub reads recover from two HTTP ${status} responses at ${path}`, async () => {
+      const page = [{ id: 1 }];
+      const f = fixture([
+        () => new Response("gateway", { status }),
+        () => new Response("gateway", { status }),
+        () => Response.json(page),
+      ]);
+      expect(await f.client.get<typeof page>(path)).toEqual(page);
+      expect(f.calls()).toBe(3);
+      expect(f.waits).toEqual([1_000, 2_000]);
+    });
+  }
+}
 
 test("commit file gateway backoff respects the collection checkpoint", async () => {
   const f = fixture([commitGatewayError], { quotaDeadlineMs: 1_001_000 });
@@ -398,7 +412,7 @@ test("commit-associated PR retry scope excludes mutable refs and noncanonical qu
     expect(f.calls()).toBe(1);
     expect(f.waits).toEqual([]);
   }
-  for (const status of [403, 404, 422, 502]) {
+  for (const status of [403, 404, 422]) {
     const f = fixture([
       () => Response.json({ message: "unavailable" }, { status }),
     ]);
