@@ -897,7 +897,7 @@ function SecurityBounties() {
   );
 }
 
-function HomePage() {
+function HomeHero() {
   const audience: HomeAudience =
     new URLSearchParams(window.location.search).get("audience") === "maintainer"
       ? "maintainer"
@@ -910,6 +910,31 @@ function HomePage() {
     window.history.pushState(window.history.state, "", destination);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
+  return (
+    <section className="hero shell">
+      <fieldset
+        aria-label="Choose your Slop journey"
+        className="home-audience-switch"
+      >
+        {(["contributor", "maintainer"] as const).map((option) => (
+          <button
+            aria-pressed={audience === option}
+            className="button"
+            key={option}
+            onClick={() => selectAudience(option)}
+            type="button"
+          >
+            {option === "contributor" ? "Contributor" : "Maintainer"}
+          </button>
+        ))}
+      </fieldset>
+      <HeroHeading audience={audience} key={audience} />
+      <InstallPanel audience={audience} />
+    </section>
+  );
+}
+
+function HomePage() {
   // An active monthly pool not funded this month is left off the homepage,
   // as on /sponsors (operator decision, 18 November 2026). The list waits
   // for the funding read so unfunded cards never flash in; a failed read
@@ -957,26 +982,7 @@ function HomePage() {
   );
   return (
     <main>
-      <section className="hero shell">
-        <fieldset
-          aria-label="Choose your Slop journey"
-          className="home-audience-switch"
-        >
-          {(["contributor", "maintainer"] as const).map((option) => (
-            <button
-              aria-pressed={audience === option}
-              className="button"
-              key={option}
-              onClick={() => selectAudience(option)}
-              type="button"
-            >
-              {option === "contributor" ? "Contributor" : "Maintainer"}
-            </button>
-          ))}
-        </fieldset>
-        <HeroHeading audience={audience} key={audience} />
-        <InstallPanel audience={audience} />
-      </section>
+      <HomeHero />
 
       <SecurityBounties />
       <section className="section shell home-projects-section" id="projects">
@@ -1787,6 +1793,36 @@ export function App() {
   );
 }
 
+function ProjectRegistryUnavailable({
+  message,
+  onHome = false,
+}: {
+  message: string;
+  onHome?: boolean;
+}) {
+  const Container = onHome ? "section" : "main";
+  const Heading = onHome ? "h2" : "h1";
+  return (
+    <Container className={onHome ? "section shell" : "shell route-main"}>
+      <Heading>Projects are unavailable</Heading>
+      <div role="alert">
+        <p>{message}</p>
+        <button
+          className="button primary-button"
+          type="button"
+          onClick={() => window.location.reload()}
+        >
+          Try again
+        </button>
+      </div>
+      <p>
+        <Link href="/login">Sign in</Link> ·{" "}
+        <Link href="/account">Account</Link>
+      </p>
+    </Container>
+  );
+}
+
 function AppContent({ route }: { route: Route }) {
   const scrollLocation = new URL(window.location.href);
   // Switching the homepage journey keeps the reader at the hero, even when
@@ -1802,7 +1838,7 @@ function AppContent({ route }: { route: Route }) {
     (staleRegistry && registry === "current"
       ? "This page needs current project data."
       : undefined);
-  const blocked = Boolean(registryError) && !registryIndependent;
+  const blocked = !registryIndependent && registryError;
   const project =
     route.kind === "project" ? findProject(route.projectId) : undefined;
   const [archive, retryArchive] = useCycleIndex(
@@ -1827,25 +1863,15 @@ function AppContent({ route }: { route: Route }) {
   const [state, retry] = useSnapshot(needsSnapshot);
   let content: ReactNode;
   if (blocked)
-    content = (
-      <main className="shell route-main">
-        <h1>Projects are unavailable</h1>
-        <div role="alert">
-          <p>{registryError}</p>
-          <button
-            className="button primary-button"
-            type="button"
-            onClick={() => window.location.reload()}
-          >
-            Try again
-          </button>
-        </div>
-        <p>
-          <Link href="/login">Sign in</Link> ·{" "}
-          <Link href="/account">Account</Link>
-        </p>
-      </main>
-    );
+    content =
+      route.kind === "home" ? (
+        <main>
+          <HomeHero />
+          <ProjectRegistryUnavailable message={blocked} onHome />
+        </main>
+      ) : (
+        <ProjectRegistryUnavailable message={blocked} />
+      );
   else if (route.kind === "home") content = <HomePage />;
   else if (route.kind === "points") content = <PointsPage />;
   else if (route.kind === "account") content = <AccountPage />;

@@ -116,7 +116,7 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
   }
 });
 
-test("an unavailable registry with no last good copy shows an error, never an empty list", async ({
+test("an unavailable registry keeps generic agent setup without exposing project data", async ({
   diagnostics,
   page,
 }) => {
@@ -125,9 +125,18 @@ test("an unavailable registry with no last good copy shows an error, never an em
     /^console Failed to load resource: the server responded with a status of (?:503|404) .*\/data\/(?:fixture-)?project-registry\.json$/u,
     /^(?:503 GET http:\/\/[^ ]+\/data\/fixture-project-registry|404 GET http:\/\/[^ ]+\/data\/project-registry)\.json$/u,
   );
+  let registryReady = false;
+  const discoveryRequests: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/api\/v1\/(?:pool-funding|merge-activity)$/u.test(path))
+      discoveryRequests.push(path);
+  });
   // The fixture build reads its live registry from this file.
   await page.route("**/data/fixture-project-registry.json", (route) =>
-    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+    registryReady
+      ? route.fallback()
+      : route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
   // A pull-request build publishes no last good registry.
   await page.route("**/data/project-registry.json", (route) =>
@@ -138,9 +147,54 @@ test("an unavailable registry with no last good copy shows an error, never an em
   // a list.
   const alert = page.getByRole("alert");
   await expect(alert).toBeVisible();
-  await expect(alert.getByRole("button")).toBeVisible();
+  const retry = alert.getByRole("button", { name: "Try again", exact: true });
+  await expect(retry).toBeVisible();
   await expect(page.locator("#projects")).toHaveCount(0);
+  await expect(page.getByText("No projects yet.")).toHaveCount(0);
+
+  const origin = new URL(page.url()).origin;
+  const prompt = page.getByRole("status", { name: "Agent prompt" });
+  const hermes = page.getByRole("link", { name: "Hermes Agent", exact: true });
+  for (const [name, skill] of [
+    ["Contributor", "/contribute/SKILL.md"],
+    ["Maintainer", "/maintain/SKILL.md"],
+  ]) {
+    const journey = page.getByRole("button", { name, exact: true });
+    await expect(journey).toBeVisible();
+    await journey.click();
+    await expect(journey).toHaveAttribute("aria-pressed", "true");
+    await expect(prompt).toHaveText(`Read ${origin}${skill} and follow it.`);
+    await expect(hermes).toHaveAttribute(
+      "href",
+      `hermes://skill/install?identifier=${encodeURIComponent(`${origin}${skill}`)}`,
+    );
+  }
+  expect(discoveryRequests).toEqual([]);
   await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("registry-outage-setup.png"),
+  });
+
+  // A project route must still fail closed. The generic prompt is home only.
+  await page.goto("/projects/eliza");
+  await expect(
+    page.getByRole("heading", { name: "Projects are unavailable", level: 1 }),
+  ).toBeVisible();
+  await expect(prompt).toHaveCount(0);
+  await page.goto("/?audience=maintainer");
+  await expect(retry).toBeVisible();
+  expect(discoveryRequests).toEqual([]);
+
+  // Restore only the authoritative registry, then use the visible recovery action.
+  await failPoolFundingRead(page, diagnostics);
+  registryReady = true;
+  await retry.click();
+  await expect(page).toHaveURL("/?audience=maintainer");
+  await expect(prompt).toHaveText(
+    `Read ${origin}/maintain/SKILL.md and follow it.`,
+  );
+  await expectProjectTiers(page);
+  await expect(alert).toHaveCount(0);
   for (const [path, heading] of [
     ["/account", "Settings"],
     ["/login", "Log in"],
