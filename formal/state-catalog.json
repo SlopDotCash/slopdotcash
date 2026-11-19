@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "b8bc73776e887f1ed1e8dc668fe6dc172e879db342fa4231cee1571947a72c97",
+  "inventorySha256": "81163905ba80889fe598ceab00333961d9a48e753baf124c21e7c3b80e7e88da",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2754,7 +2754,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 497,
+      "line": 507,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2782,7 +2782,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1249,
+      "line": 1259,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -3487,8 +3487,30 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/evm-fee-deposit.ts",
+      "line": 322,
+      "name": "FeeDepositStatus",
+      "kind": "string-union",
+      "values": [
+        "approval-confirmed",
+        "failed",
+        "finalized",
+        "not-sent",
+        "pending",
+        "received"
+      ],
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "lexicallyUnmentionedValues": [
+        "approval-confirmed",
+        "finalized",
+        "not-sent",
+        "pending"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 388,
+      "line": 390,
       "name": "status",
       "kind": "string-union",
       "values": [
@@ -3978,6 +4000,21 @@
       "values": ["approved", "proposed"],
       "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/submission-fee-page.ts",
+      "line": 49,
+      "name": "FeeOutcome",
+      "kind": "string-union",
+      "values": ["kept", "kept_due", "refund_due", "refunded"],
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "lexicallyUnmentionedValues": [
+        "kept",
+        "kept_due",
+        "refund_due",
+        "refunded"
+      ],
       "review": "candidate-only"
     },
     {
