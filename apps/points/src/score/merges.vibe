@@ -1,5 +1,5 @@
 // spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
-import { type CommitAttribution, type CommitLines, canAttribute, canCreditCommit, completeLines, eligibleKind, initial as attributionInitial, recipientLines } from "../../gen/points__authorship.effect.vibe"
+import { type CommitAttribution, type PathClaim, canAttribute, canCreditCommit, completeLines, eligibleKind, initial as attributionInitial, recipientLines } from "../../gen/points__authorship.effect.vibe"
 import { type PointShare, type Recipient, allocatePoints, canWriteAllocation, eligibleAllocation, lineTotal } from "../../gen/points__allocation.effect.vibe"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
 import { type Units, accept as acceptUnit, canAccept as canAcceptUnit, canForm, form, initial as unitsInitial } from "../../gen/points__workUnits.effect.vibe"
@@ -86,7 +86,7 @@ effect function attributed(key: string, pull: Source, commit: Commit, owner: Mer
   if (commit.author !== null) try book.send(key, { type: "observePrimary", actor: actors.of(commit.author), kind: commitActorKind(commit.author), linked: true })
   if (pull.author !== null) try book.send(key, { type: "observeSource", actor: actors.of(pull.author), kind: commitActorKind(pull.author) })
   if (commit.retained !== null) try book.send(key, { type: "observeCopy", copy: { tag: "VerifiedCopy", actor: actors.of(commit.retained.actor), kind: commitActorKind(commit.retained.actor) } })
-  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge: commit.parentCount > 1, units: owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial })
+  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge: commit.parentCount > 1, resolutions: 0, units: owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial })
   if (commit.additions >= 0 && commit.deletions >= 0) try book.send(key, { type: "recordLines", additions: commit.additions, deletions: commit.deletions })
   if (canAttribute(try book.get(key))) try book.send(key, { type: "attribute" })
   if (canCreditCommit(try book.get(key))) try book.send(key, { type: "creditCommit" })
@@ -111,16 +111,28 @@ effect function observed(scope: string, pulls: ReadonlyArray<Source>, only: Read
   return observations
 }
 
-function linesOf(state: CommitAttribution): CommitLines {
+// One claim per observed commit. The collected facts carry whole-commit line counts, not per-file claims, so each
+// commit is its own claimed file (no rename de-duplication applies), and no merge resolution is collected, so a merge
+// commit claims nothing and adds no lines. A non-merge commit not credited in an earlier source claims its lines for
+// its attributed actor; missing attribution or line evidence makes the unit's weights incomplete.
+function claimOf(state: CommitAttribution, position: number): PathClaim {
   const lines = state.lines.tag === "CompleteLines" ? state.lines : undefined
   const acceptance = state.acceptance.tag === "AcceptedCommit" ? state.acceptance : undefined
+  const merge = acceptance?.merge ?? false
+  const claimed = !merge && acceptance?.earlierSource !== true
   return {
-    recipient: state.recipient,
+    claim: position + 1,
+    actor: state.recipient,
+    creditedActors: claimed ? 1 : 0,
+    actorsKnown: true,
+    file: position + 1,
+    merge,
+    resolutions: acceptance?.resolutions ?? 0,
+    attributed: state.recipient > 0,
+    limited: false,
+    fileFound: lines !== undefined && acceptance !== undefined,
     additions: lines?.additions ?? 0,
     deletions: lines?.deletions ?? 0,
-    merge: acceptance?.merge ?? false,
-    earlierSource: acceptance?.earlierSource ?? false,
-    complete: lines !== undefined && acceptance !== undefined,
   }
 }
 
@@ -132,8 +144,8 @@ function recipientsOf(observations: ReadonlyArray<Observation>, fallback: number
   if (observations.length === 0) return { recipients: fallback > 0 ? [{ actor: fallback, lines: 0 }] : [], complete: true }
   if (observations.every(({ commit }) => commit.parentCount > 1)) return "synchronization-only"
   if (observations.some(({ state }) => state.phase === "ConflictHeld")) return "attribution-conflict"
-  const lines = observations.map(({ state }) => linesOf(state))
-  return { recipients: recipientLines(lines), complete: completeLines(lines) }
+  const claims = observations.map(({ state }, position) => claimOf(state, position))
+  return { recipients: recipientLines(claims), complete: completeLines(claims) }
 }
 
 function unresolved(found: Found): HoldReason | null {

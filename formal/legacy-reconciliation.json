@@ -34745,13 +34745,8 @@
           "note": "No Checked without proof receipts."
         },
         "retainedSnapshotIsExplicitTest": {
-          "status": "rule",
-          "spec": "spec/operations/release.md",
-          "defs": [
-            "canRetainSnapshot",
-            "alwaysRetainedOnlyManual"
-          ],
-          "note": "A retained snapshot is chosen only by a manual run outside a checkpoint resume and still passes every gate; the successor lets a run retain the last verified snapshot its own environment published, so the legacy production-only restriction is no longer carried."
+          "status": "abstraction",
+          "note": "The legacy scenario required a retained snapshot to come only from a manual production run. The successor carries the manual-only part (spec/operations/release.md canRetainSnapshot and alwaysRetainedOnlyManual: only a manual run outside a checkpoint resume retains, and the snapshot still passes every gate), but deliberately lets a manual main or development run retain the last verified snapshot its own environment published (use_published_data, operator decision of 13 November 2026), so the production-only restriction is superseded rather than modeled."
         },
         "retainedSnapshotNeedsManualTest": {
           "status": "rule",
@@ -42650,13 +42645,9 @@
           "note": "historicalImport.md has no notion of a merge bundle; add a rule that a bundle is joint-only, binds one repository, the complete ordered reconstruction result and each exact merge-recipe digest, and that an invalid recipe or a single-mode bundle refuses without writing."
         },
         "invalidProducerEnvelopeRefusedTest": {
-          "status": "rule",
+          "status": "gap",
           "spec": "spec/slopbot/historicalImport.md",
-          "defs": [
-            "acceptable",
-            "lawApiProducerNeverImported"
-          ],
-          "note": "An invalid or non-subscription producer envelope is refused and nothing is written. The legacy Codex-needs-Sol restriction is not carried: development accepts only its ChatGPT and Claude subscription channels and has no Codex channel (historicalImport.md)."
+          "note": "The refusal of an invalid or non-subscription producer envelope, with nothing written, is carried by acceptable and lawApiProducerNeverImported. The legacy Codex-needs-Sol restriction (lawCodexNeedsSol) is not: historicalImport.md records that the PRD's Codex channel and its Slop-slice restriction are not in development's code, which knows only its ChatGPT and Claude subscription channels. That part stays open until the channel exists or the PRD drops it."
         },
         "jointMigrationPreventsSingleForkTest": {
           "status": "rule",

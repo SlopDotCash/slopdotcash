@@ -101,6 +101,15 @@ effect function active() {
   return views
 }
 
+effect function pausedProjects() {
+  const views: ProjectView[] = []
+  for (const { id } of try rows(ProjectId, sql`SELECT id FROM projects WHERE status = 'paused' ORDER BY id`)) {
+    const view = try projectView(id)
+    if (view !== undefined) views.push(view)
+  }
+  return views
+}
+
 export function registryFence(pin: RegistryPin): Statement {
   const [head, ...rest] = [...new Set(pin.repositoryKeys.map((key) => key.toLowerCase()))]
   const present = head === undefined ? sql`1` : sql`(SELECT count(DISTINCT k.repository_key) FROM project_repositories k WHERE k.project_id = p.id AND k.repository_key IN (${list([head, ...rest])})) = ${rest.length + 1}`
@@ -114,6 +123,7 @@ export const RegistryLive = Layer.effect(Registry, effect {
     byRepository: (repositoryId) => provideService(byRepository(repositoryId), D1, db),
     byPath: (fullName) => provideService(byPath(fullName), D1, db),
     active: () => provideService(active(), D1, db),
+    pausedProjects: () => provideService(pausedProjects(), D1, db),
     fence: (pin) => effect { return registryFence(pin) },
   } satisfies Registry.Shape
 })

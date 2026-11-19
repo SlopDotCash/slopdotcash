@@ -72,6 +72,8 @@ effect function modelRevision(row: Row, id: number, workUnit: number) {
     recipients: [],
     completeLines: false,
     shares: category === "MergedWork" ? [{ actor: actorNumber, points: row.award.amount }] : [],
+    debit: row.penalty?.debit ?? 0,
+    reversed: row.penalty !== undefined && row.penalty.reversedAt !== null,
   } satisfies Revision
 }
 

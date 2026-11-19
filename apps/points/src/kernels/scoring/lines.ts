@@ -1,6 +1,6 @@
 //@ backend dafny
-// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"
-import { type ActorKind, type CommitLines, commitWeight, eligibleKind } from "../../../gen/points__authorship.ts";
+// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"
+import { type ActorKind, eligibleKind, linesFor } from "../../../gen/points__authorship.ts";
 
 export interface CommitActor { id: string; kind: string }
 
@@ -50,7 +50,8 @@ export function eligibleAuthorKind(actor: CommitActor): boolean {
 /** @throws {never} */
 export function lineWeight(additions: number, deletions: number): number {
   //@ requires additions >= 0 && deletions >= 0
-  //@ ensures \result === commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: false, earlierSource: false, complete: true })
+  //@ ensures \result === additions + deletions
+  //@ ensures \result === linesFor([{ claim: 1, actor: 1, creditedActors: 1, actorsKnown: true, file: 7, merge: false, resolutions: 0, attributed: true, limited: false, fileFound: true, additions: additions, deletions: deletions }], 1)
   return additions + deletions;
 }
 
@@ -213,19 +214,4 @@ export function mergeCreditLineWeights(pullAuthor: CommitActor | null, commits: 
   }
   if (owned.length === 0) return { kind: "incomplete" };
   return implementationLineWeights(pullAuthor, owned);
-}
-
-/** @throws {never} */
-export function commitLines(recipient: number, commit: MergedCommit, earlierSource: boolean): CommitLines {
-  //@ ensures \result.recipient === recipient && \result.merge === (commit.parentCount > 1)
-  //@ ensures \result.complete ==> \result.additions >= 0 && \result.deletions >= 0
-  const complete = completeCount(commit.additions) && completeCount(commit.deletions) && commit.parentCount >= 0;
-  return {
-    recipient: recipient,
-    additions: complete ? commit.additions : 0,
-    deletions: complete ? commit.deletions : 0,
-    merge: commit.parentCount > 1,
-    earlierSource: earlierSource,
-    complete: complete,
-  };
 }

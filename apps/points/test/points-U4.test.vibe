@@ -56,7 +56,7 @@ it.live('Census with a count change mid-pass retries once then completes; a seco
     const counted = try observe(published, bounds, ids, { nodeId: "IC_counted", sourceNodeId: nodeIdOf(first.fake, 1), kind: "CommentEvent", actorId: "U_grace", actorKind: "Human", pullRequestAuthorId: null, atMs: start - day, mergedAtMs: null, repeatLowValue: false })
     const botComment = try observe(published, bounds, ids, { nodeId: "IC_bot", sourceNodeId: nodeIdOf(first.fake, 1), kind: "CommentEvent", actorId: "B_helper", actorKind: "Bot", pullRequestAuthorId: null, atMs: start - 3_600_000, mergedAtMs: null, repeatLowValue: false })
     const written = `${directory}/leaderboard.json`
-    try publishRefresh(published, Effect.succeed(open.issues.census), () => atomicWrite(written, new TextEncoder().encode("{}\n")))
+    try publishRefresh(published, Effect.succeed([open.issues.census]), () => atomicWrite(written, new TextEncoder().encode("{}\n")))
     const publishedWindow = try published.get()
     const previous = { from: bounds.from, to: bounds.to, count: publishedWindow.publishedCount }
 
@@ -72,7 +72,7 @@ it.live('Census with a count change mid-pass retries once then completes; a seco
     const kept = `${directory}/refused.json`
     const refreshed = effect {
       const again = try collectOpen(input(second, nextDay, bounds.lowerDay))
-      return again.issues.census
+      return [again.issues.census]
     }
     const failure = publishRefresh(refused, Effect.provide(refreshed, githubLayer(second)), () => atomicWrite(kept, new TextEncoder().encode("{}\n"))) catch (error) => ({ tag: error._tag, message: "message" in error ? error.message : "" })
     const failedWindow = try refused.get()

@@ -247,6 +247,8 @@ function revisionOf(id: number, key: AwardKey, rows: ReadonlyArray<Row>, actors:
     recipients,
     completeLines: merged,
     shares: recipients.map((recipient) => ({ actor: recipient.actor, points: recipient.lines })),
+    debit: first?.penalty?.debit ?? 0,
+    reversed: first?.penalty !== undefined && first.penalty.reversedAt !== null,
   }
 }
 

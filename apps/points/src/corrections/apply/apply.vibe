@@ -281,11 +281,14 @@ function componentsOf(plans: ReadonlyArray<Plan>) {
 effect function startOf(plan: Plan, collection: Collection, source: number, applied: boolean) {
   const actors = interned([...plan.previous, ...plan.current].map((revision) => revision.award.actor.id))
   const occurredAt = instantOf(plan.candidate.occurredAt) ?? -1
-  const entry = (shares: PointShare[]): JournalEntry => ({ source, occurredAt, shares, revoked: false })
+  const entry = (shares: PointShare[]): JournalEntry => ({ source, occurredAt, shares })
   const history = [entry(sharesOf(plan.previous, actors))]
   const currentTotal = plan.current.reduce((sum, revision) => sum + revision.award.amount, 0)
   if (!sameRows(plan.previous, plan.current)) {
-    history.push(currentTotal === plan.total ? entry(sharesOf(plan.current, actors)) : { source, occurredAt, shares: [], revoked: true })
+    // No correction is revoked (spec/points/corrections.md): a later change of the unit's total is an ordinary
+    // journal revision that moves the predecessor, so the selected baseline is stale.
+    if (currentTotal !== plan.total) throw correctionFailure("selected predecessors changed after the baseline")
+    history.push(entry(sharesOf(plan.current, actors)))
   }
   const digest = collection.manifestDigest
   return {
@@ -381,7 +384,7 @@ effect function appendComponent(store: Store, component: ReadonlyArray<Plan>, in
     if (unitId === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key))) return false
     const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
     const recipients = plan.recipients.map((recipient) => ({ actor: actors.get(recipient.id) ?? 0, lines: recipient.lines })).sort((left, right) => left.actor - right.actor)
-    const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: reallocationReason, digest: input.collection.manifestDigest }])
+    const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: reallocationReason, digest: input.collection.manifestDigest, pullRequest: candidate.sourceId }])
     if (refused !== "") return false
     const valueSource = [...plan.previous].sort((left, right) => right.recordedAt.localeCompare(left.recordedAt)).find((revision) => revision.decision?.sourceId.startsWith("value:") === true)?.decision?.sourceId
     const decided = new Map(plan.previous.map((revision) => [revision.award.key, revision.decision?.sourceId] as const))

@@ -24,13 +24,14 @@ lemma CreatedStarts(p: Project, after: Project)
 lemma create_ensures(p: Project, by_: int, creation: Creation)
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysHistoryNumbered(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysCurrentRevisionIsState(create(p, by_, creation)))
-  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysCreatedFacts(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysPublishedApplicationCreated(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysCreatedFacts(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysActiveRequirements(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysEconomicTermsPrecedeNothing(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysClockStarted(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRepositoryBound(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRepositoryStarts(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysOrdinaryVaultFunds(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRestrictedParticipationPaused(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRetirementConsistent(create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepHistoryRetained(p, create(p, by_, creation)))
@@ -42,10 +43,12 @@ lemma create_ensures(p: Project, by_: int, creation: Creation)
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepFundedAssetFixed(p, create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRepositoryStartsRetained(p, create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRepositoriesRetained(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepConsentChangesOnlyByOwnerRevision(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepOwnerRemovalPermanent(p, "create", create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRemovalReplayAppendsNothing(p, "create", create(p, by_, creation)))
-  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepOwnerRemovalPermanent(p, create(p, by_, creation)))
-  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRestorationIsPausedCommunity(p, "create", create(p, by_, creation)))
-  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepOnlyReinstatementUnretires(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRemovalAlwaysRetires(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepVaultRecordsRetained(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepNoRegistryEventUnretires(p, "create", create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepEveryManifestChangeAppendsRevision(p, create(p, by_, creation)))
   ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepClockMonotone(p, create(p, by_, creation)))
 {
@@ -57,13 +60,14 @@ lemma create_ensures(p: Project, by_: int, creation: Creation)
 lemma publishApplication_ensures(p: Project, by_: int, creation: Creation)
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysHistoryNumbered(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysCurrentRevisionIsState(publishApplication(p, by_, creation)))
-  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysCreatedFacts(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysPublishedApplicationCreated(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysCreatedFacts(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysActiveRequirements(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysEconomicTermsPrecedeNothing(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysClockStarted(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRepositoryBound(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRepositoryStarts(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysOrdinaryVaultFunds(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRestrictedParticipationPaused(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRetirementConsistent(publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepHistoryRetained(p, publishApplication(p, by_, creation)))
@@ -75,62 +79,17 @@ lemma publishApplication_ensures(p: Project, by_: int, creation: Creation)
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepFundedAssetFixed(p, publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRepositoryStartsRetained(p, publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRepositoriesRetained(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepConsentChangesOnlyByOwnerRevision(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepOwnerRemovalPermanent(p, "publishApplication", publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRemovalReplayAppendsNothing(p, "publishApplication", publishApplication(p, by_, creation)))
-  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepOwnerRemovalPermanent(p, publishApplication(p, by_, creation)))
-  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRestorationIsPausedCommunity(p, "publishApplication", publishApplication(p, by_, creation)))
-  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepOnlyReinstatementUnretires(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRemovalAlwaysRetires(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepVaultRecordsRetained(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepNoRegistryEventUnretires(p, "publishApplication", publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepEveryManifestChangeAppendsRevision(p, publishApplication(p, by_, creation)))
   ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepClockMonotone(p, publishApplication(p, by_, creation)))
 {
   if inv(p) && canPublishApplication(p, by_, creation) {
     CreatedStarts(p, publishApplication(p, by_, creation));
-  }
-}
-
-lemma appendRepository_ensures(p: Project, by_: int, appendEvidence: Append)
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysHistoryNumbered(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysCurrentRevisionIsState(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysCreatedFacts(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysPublishedApplicationCreated(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysActiveRequirements(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysEconomicTermsPrecedeNothing(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysClockStarted(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRepositoryBound(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRepositoryStarts(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRestrictedParticipationPaused(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRetirementConsistent(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepHistoryRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRevisionAdvancesByOne(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCreatorFixed(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCancellationFinal(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCancellationAppendsNothing(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepEconomicTermsRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepFundedAssetFixed(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRepositoryStartsRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRepositoriesRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRemovalReplayAppendsNothing(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepOwnerRemovalPermanent(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRestorationIsPausedCommunity(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepOnlyReinstatementUnretires(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepEveryManifestChangeAppendsRevision(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepClockMonotone(p, appendRepository(p, by_, appendEvidence)))
-{
-  if inv(p) && canAppendRepository(p, by_, appendEvidence) {
-    StartsMeaning(p);
-    var added := RepositoryStart(appendEvidence.facts.repository, p.month + 1);
-    var after := appendRepository(p, by_, appendEvidence);
-    assert after.starts == p.starts + [added];
-    assert after.repositories == p.repositories + [appendEvidence.facts.repository];
-    assert primary(after) == primary(p);
-    forall id | id in after.repositories
-      ensures |ProofLib.Filter((start: RepositoryStart) => (start.repositoryId == id), after.starts)| == 1
-    {
-      ProofLib.FilterAppend((start: RepositoryStart) => (start.repositoryId == id), p.starts, added);
-      if id == appendEvidence.facts.repository {
-        ProofLib.FilterNone((start: RepositoryStart) => (start.repositoryId == id), p.starts);
-      }
-    }
-    StartsMeaning(after);
   }
 }
 
