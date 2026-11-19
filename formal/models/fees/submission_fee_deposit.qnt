@@ -12,18 +12,20 @@
 // the confirmation count is on top (`row == "seen"`), final once its block is
 // finalized. `counts` abstracts the pure rule of section 3 (token, kept
 // destination, amount, rate at the block time), fixed when the deposit is
-// made. `asked` is Slopbot's row for the pull request and `outcome` is
+// made. `known` says whether its token is in the table: a deposit of any
+// other token never counts and is never resolved by the Worker, so only its
+// payer's reclaim ends it. `asked` is Slopbot's row for the pull request and `outcome` is
 // Slopbot's decision; the Worker never sets `refund_due` or `kept_due`. One
 // deposit, one pull request, one other deposit that may have paid it first
 // (`otherPaid`). The send journal is a separate model
 // (submission_fee_send); here `resolve` is a mined resolver transaction.
 // The public reads serve `paid` and `outcome` and change nothing.
 module submission_fee_deposit {
-  var s: { chain: str, counts: bool, confirmed: bool, final: bool,
+  var s: { chain: str, counts: bool, known: bool, confirmed: bool, final: bool,
     row: str, accepted: int, asked: bool, otherPaid: bool, paid: bool,
     outcome: str, state: str, eventFinal: bool, waited: bool, income: bool,
     refundsSent: int, keptSent: int }
-  action init = s' = { chain: "none", counts: false, confirmed: false, final: false,
+  action init = s' = { chain: "none", counts: false, known: true, confirmed: false, final: false,
     row: "none", accepted: -1, asked: false, otherPaid: false, paid: false,
     outcome: "none", state: "none", eventFinal: false, waited: false, income: false,
     refundsSent: 0, keptSent: 0 }
@@ -32,8 +34,11 @@ module submission_fee_deposit {
   action ask = all { not(s.asked), s' = s.with("asked", true) }
   action payElsewhere = all { s.asked, not(s.paid), not(s.otherPaid), s.outcome == "none",
     s' = s.with("otherPaid", true) }
-  // A payer deposits. Whether it satisfies the rule is fixed here.
-  action deposit(counts) = all { s.chain == "none", s' = s.with("chain", "open").with("counts", counts) }
+  // A payer deposits. Whether it satisfies the rule is fixed here. A token
+  // outside the table never counts.
+  action depositOf(counts, known) = all { s.chain == "none", counts implies known,
+    s' = s.with("chain", "open").with("counts", counts).with("known", known) }
+  action deposit(counts) = depositOf(counts, true)
   action confirm = all { s.chain == "open", not(s.confirmed), s' = s.with("confirmed", true) }
   action finalize = all { s.chain != "none", s.chain != "gone", s.confirmed, not(s.final),
     s' = s.with("final", true) }
@@ -70,6 +75,7 @@ module submission_fee_deposit {
 
   // What the pure rule allows for this deposit: refund, keep, or nothing.
   val action_ = if (s.row != "final" or not(Set("open", "refund_due", "kept_due").contains(s.state))) "none"
+    else if (not(s.known)) "none"
     else if (s.accepted == 0) "refund"
     else if (s.accepted == 1 and s.paid and s.outcome == "refund_due") "refund"
     else if (s.accepted == 1 and s.paid and s.outcome == "kept_due") "keep"
@@ -94,7 +100,7 @@ module submission_fee_deposit {
       .with("income", s.chain == "kept") }
 
   action step = { nondet b = Set(true, false).oneOf() nondet o = Set("refund_due", "kept_due").oneOf()
-    any { ask, payElsewhere, deposit(b), confirm, finalize, reorg, grace, scanSeen, scanFinal, scanGone,
+    any { ask, payElsewhere, deposit(b), depositOf(false, false), confirm, finalize, reorg, grace, scanSeen, scanFinal, scanGone,
       judgeAccept, judgeRefuse, judgeUnknown, decide(o), markDue, resolve, reclaim, eventFinalized,
       scanResolved, s' = s } }
 
@@ -106,6 +112,8 @@ module submission_fee_deposit {
     s.chain == "kept" implies s.keptSent == 1,
     // A deposit that does not count is never accepted and never kept.
     not(s.counts) implies (s.accepted != 1 and s.keptSent == 0),
+    // The Worker never resolves a deposit of a token outside the table.
+    not(s.known) implies (s.refundsSent + s.keptSent == 0 and s.accepted != 1),
     // Nothing is sent for a deposit that is not finalized.
     (s.refundsSent + s.keptSent == 1) implies s.final,
     // Two deposits never both pay one pull request.
@@ -150,6 +158,15 @@ module submission_fee_deposit {
   run reclaimRecordedTest = init.then(ask).then(deposit(true)).then(confirm).then(finalize).then(scanFinal)
     .then(judgeAccept).then(reclaim).then(eventFinalized).then(scanResolved)
     .expect(s.state == "reclaimed" and s.outcome == "refunded" and not(s.income) and invariant)
+  run unknownTokenIsNeverResolvedTest = init.then(ask).then(depositOf(false, false)).then(confirm)
+    .then(finalize).then(scanFinal).then(judgeRefuse)
+    .expect(s.accepted == 0 and action_ == "none" and invariant)
+    .then(markDue.fail())
+  run unknownTokenNotResolvedTest = init.then(ask).then(depositOf(false, false)).then(confirm)
+    .then(finalize).then(scanFinal).then(judgeRefuse).then(resolve.fail())
+  run unknownTokenReclaimedByPayerTest = init.then(depositOf(false, false)).then(confirm).then(finalize)
+    .then(scanFinal).then(judgeRefuse).then(reclaim).then(eventFinalized).then(scanResolved)
+    .expect(s.state == "reclaimed" and s.refundsSent == 0 and not(s.income) and invariant)
   run undecidedSendsNothingTest = init.then(ask).then(deposit(true)).then(confirm).then(finalize)
     .then(scanFinal).then(judgeAccept).then(resolve.fail())
 }

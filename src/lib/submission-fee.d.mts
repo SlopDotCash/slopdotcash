@@ -129,11 +129,13 @@ export declare function submissionResolveAction(
   network: string,
   deposit: {
     readonly depositId: number | string;
+    readonly token: string;
     readonly finalizedAt: string | null;
     readonly state: string;
     readonly accepted: number | boolean | null;
   },
   item: Omit<SubmissionFeeItemView, "stableMinor"> | null,
+  terms?: SubmissionFeeTerms,
 ): "refund" | "keep" | null;
 export declare function slopFeeShareBps(
   rateInForce: string,

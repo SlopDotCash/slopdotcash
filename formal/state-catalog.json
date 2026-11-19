@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6824f612cb58747d7093d31493e67bfbebd58539f3ba1fa6149808f13bb3fc13",
+  "inventorySha256": "43ace7e15484231b9972f678c90426461cc71cd2bd9cfa8783b152cea954f50e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2222,6 +2222,19 @@
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0139_submission_fee_deposits.sql",
+      "line": 105,
+      "name": "reason",
+      "kind": "sql-check",
+      "values": ["payout_failed", "reverted_alone"],
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["payout_failed", "reverted_alone"],
       "review": "candidate-only"
     },
     {
@@ -4782,7 +4795,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 99,
+      "line": 106,
       "name": "SendState",
       "kind": "string-union",
       "values": ["failed", "finalized", "recorded", "submitted", "unknown"],
@@ -4795,7 +4808,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 113,
+      "line": 120,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4808,7 +4821,33 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 189,
+      "line": 152,
+      "name": "ParkReason",
+      "kind": "string-union",
+      "values": ["payout_failed", "reverted_alone"],
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["payout_failed", "reverted_alone"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/submission-fee/core.ts",
+      "line": 155,
+      "name": "ProbeResult",
+      "kind": "string-union",
+      "values": ["ok", "payout_failed", "reverted"],
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["ok", "payout_failed"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/submission-fee/core.ts",
+      "line": 215,
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
@@ -4821,7 +4860,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 231,
+      "line": 257,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
@@ -4834,7 +4873,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 283,
+      "line": 338,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
@@ -4860,7 +4899,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 107,
+      "line": 108,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4874,7 +4913,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 465,
+      "line": 531,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],

@@ -89,3 +89,27 @@ WHEN OLD.state IN ('recorded', 'finalized', 'failed')
 BEGIN SELECT RAISE(ABORT, 'submission fee send state is final'); END;
 CREATE TRIGGER submission_fee_sends_no_delete BEFORE DELETE ON submission_fee_sends
 BEGIN SELECT RAISE(ABORT, 'submission fee sends are permanent'); END;
+
+-- Deposits the resolver has set aside because their payout cannot go through:
+-- the contract's simulation reverted with PayoutFailed for that deposit (a
+-- refund to a payer the token has blacklisted, for one). A parked deposit is
+-- left out of every batch, so the deposits behind it are still resolved. It
+-- is simulated again once a day and returns to the queue when the payout
+-- would succeed. Its payer can still reclaim it from the contract after 30
+-- days where the token allows the transfer. The row stays as a record;
+-- `released_at` is null while the deposit is parked.
+CREATE TABLE submission_fee_parked (
+  network TEXT NOT NULL,
+  deposit_id INTEGER NOT NULL,
+  refund INTEGER NOT NULL CHECK (refund IN (0, 1)),
+  reason TEXT NOT NULL CHECK (reason IN ('payout_failed', 'reverted_alone')),
+  parked_at TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  checks INTEGER NOT NULL CHECK (checks >= 1),
+  released_at TEXT,
+  PRIMARY KEY (network, deposit_id)
+) STRICT;
+CREATE INDEX submission_fee_parked_open
+  ON submission_fee_parked(network, checked_at) WHERE released_at IS NULL;
+CREATE TRIGGER submission_fee_parked_no_delete BEFORE DELETE ON submission_fee_parked
+BEGIN SELECT RAISE(ABORT, 'submission fee parked rows are permanent'); END;
