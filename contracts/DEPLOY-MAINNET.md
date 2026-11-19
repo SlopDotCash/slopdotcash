@@ -120,17 +120,30 @@ a local build with the pinned `foundry.toml` settings gives. The deployer
 Sourcify has a match for the contract on each chain. The Etherscan-family
 explorers are not verified.
 
-**The resolver is the unusable address
-`0x000000000000000000000000000000000000dEaD` on both chains.** Until the owner
-names the Worker's resolver with `setResolver`, nobody can settle a deposit; a
-payer can still take one back after 30 days. That change, when made, is
-recorded here.
+Both were deployed with the unusable address
+`0x000000000000000000000000000000000000dEaD` as resolver. On 19 November 2026
+the owner named the submission-fee Worker's resolver,
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, with `setResolver` on each
+chain. Its key exists only as the Worker secret `SUBMISSION_FEE_RESOLVER_KEY`
+and was never shown or stored anywhere else. It can only mark an open deposit
+refunded to its payer or kept at the destination fixed at deposit time.
+
+| Network                | `setResolver` transaction                                            | Block     | Block time (UTC)     |
+| ---------------------- | -------------------------------------------------------------------- | --------- | -------------------- |
+| Base (8453)            | `0xa02965d3ba5720b9eb8553bc644045651d1fa9af00171a1c13f75f288194c250` | 59589931  | 2026-11-19T17:12:41Z |
+| Robinhood Chain (4663) | `0x3eb5b206e41934f482542ac3d0d03775cb057b78c421201a766008ee3cf7e220` | 118384715 | 2026-11-19T17:13:23Z |
+
+Read back on both chains afterwards: resolver
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, owner unchanged, no pending
+owner, no deposits, deposits not paused. The resolver address holds a little
+ETH for gas on each chain and has sent no transaction.
 
 A deployment collects no fee. Both addresses and start blocks are in
-`src/lib/submission-fee.mjs`; `SUBMISSION_FEE_MODE` is `off` in the
-submission-fee Worker and in Slopbot, so nothing reads the contracts and no
-contributor is asked for a fee. Record-only and live are each their own
-reviewed change (PRD section 6, FEE-06).
+`src/lib/submission-fee.mjs`. Since 19 November 2026 `SUBMISSION_FEE_MODE` is
+`dry_run` in the submission-fee Worker and in Slopbot: the Worker reads the
+contracts and records what it would send, loads no key and signs nothing, and
+no contributor is asked for a fee. Live is its own reviewed change (PRD
+section 6, FEE-06).
 
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
