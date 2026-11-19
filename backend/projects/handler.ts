@@ -1911,18 +1911,11 @@ async function publishOwnerRevision(
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
   if (body.integrationBranch !== undefined)
-    return publishIntegrationBranch(
-      request,
-      deps,
-      current,
-      actor,
-      checked.access,
-      {
-        selection: body.integrationBranch,
-        contribution: body.contribution,
-        note,
-      },
-    );
+    return publishIntegrationBranch(request, deps, current, actor, checked, {
+      selection: body.integrationBranch,
+      contribution: body.contribution,
+      note,
+    });
   // An appended repository's permanent GitHub id must be new to the registry.
   const submittedRepositories = (body.manifest as Record<string, unknown>)
     .repositories;
@@ -2127,9 +2120,10 @@ async function publishIntegrationBranch(
   deps: ProjectApiDependencies,
   current: ProjectRecord,
   actor: GithubActor,
-  access: AccessCheck,
+  checked: Awaited<ReturnType<typeof currentAuthority>>,
   input: { selection: unknown; contribution: unknown; note: string | null },
 ): Promise<Response> {
+  const { access } = checked;
   const project = current.manifest;
   const [primary, ...additional] = project.repositories;
   if (
@@ -2209,7 +2203,24 @@ async function publishIntegrationBranch(
     },
     reason: `Owner integration branch change by @${actor.githubLogin}: ${primary.integrationBranch} to ${name} at ${commitSha}.${input.note ? ` ${input.note}` : ""}`,
   });
-  return json(200, { project: adminProject(updated) });
+  const setup = await runSetupCheck(request, deps, updated, actor, {
+    authority: checked,
+    allowActivation: false,
+  });
+  return json(200, {
+    project: adminProject(updated),
+    changes: {
+      presentation: [],
+      executable: [
+        "repositories",
+        ...(!sameValue(project.contribution, manifest.contribution)
+          ? ["contribution"]
+          : []),
+      ],
+      financial: [],
+    },
+    setup,
+  });
 }
 
 /** Removes public participation while preserving registry and financial history. */

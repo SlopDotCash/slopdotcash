@@ -76,7 +76,9 @@ answers HTTP 410 for a restricted project.
 
 Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
 
-To change the primary integration branch, commit an updated
+In Settings, open **Repositories**, choose **Change integration branch**, and select a live GitHub branch. Review and publish the change. The same revision can include edits to the contribution rules.
+
+For the underlying request, commit an updated
 `.github/slop-project.json` to that branch. The declaration must name the
 registered project, repository, steward, terms revision, and new branch.
 Send a same-origin JSON `PUT /api/v1/projects/:id` from the signed-in GitHub
