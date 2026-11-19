@@ -51,6 +51,7 @@ contract MonthlyCommitmentTest {
     EscrowFactory internal factory;
     ProjectEscrow internal vault;
     ProjectEscrow internal bountyVault;
+    DevelopmentCalendar internal development = new DevelopmentCalendar();
 
     function setUp() public {
         vm.warp(NOVEMBER_OPENS - 30 days);
@@ -172,6 +173,53 @@ contract MonthlyCommitmentTest {
         // February 2028 has 29 days: it closes at 00:00 UTC on 4 March 2028.
         (opensAt,) = vault.monthlyWindow(202802);
         require(opensAt == 1_835_740_800, "leap February");
+    }
+
+    function sameAnswer(bytes memory call) internal view {
+        (bool vaultOk, bytes memory vaultAnswer) = address(vault).staticcall(call);
+        (bool developmentOk, bytes memory developmentAnswer) = address(development).staticcall(call);
+        require(vaultOk == developmentOk && keccak256(vaultAnswer) == keccak256(developmentAnswer), "as on development");
+    }
+
+    function test_windowsOfYears2000To2899And9100To9999AreTheDevelopmentWindows() public view {
+        uint32[2] memory firstYears = [uint32(2000), 9100];
+        for (uint256 range; range < 2; ++range) {
+            for (uint32 year = firstYears[range]; year < firstYears[range] + 900 && year <= 9999; ++year) {
+                for (uint32 month = 1; month <= 12; ++month) {
+                    (uint64 opensAt, uint64 closesAt) = vault.monthlyWindow(year * 100 + month);
+                    (uint64 developmentOpensAt, uint64 developmentClosesAt) = development.monthlyWindow(year * 100 + month);
+                    require(opensAt == developmentOpensAt && closesAt == developmentClosesAt, "as on development");
+                }
+            }
+        }
+        uint32[8] memory invalid = [uint32(0), 199912, 200000, 200013, 202600, 999913, 1000001, type(uint32).max];
+        for (uint256 i; i < invalid.length; ++i) {
+            sameAnswer(abi.encodeCall(ProjectEscrow.monthlyWindow, (invalid[i])));
+        }
+    }
+
+    function testFuzz_windowIsTheDevelopmentWindow(uint32 period) public view {
+        sameAnswer(abi.encodeCall(ProjectEscrow.monthlyWindow, (period)));
+    }
+
+    function samePeriodAt(uint64 time) internal {
+        vm.warp(time);
+        require(vault.currentPeriod() == development.periodAt(time), "as on development");
+    }
+
+    function test_currentPeriodIsTheDevelopmentPeriodAroundEveryMonthStart() public {
+        for (uint32 year = 1970; year <= 2800; ++year) {
+            for (uint32 month = 1; month <= 12; ++month) {
+                uint64 start = development.monthStart(year, month);
+                if (start > 0) samePeriodAt(start - 1);
+                samePeriodAt(start);
+                samePeriodAt(start + 1 days);
+            }
+        }
+    }
+
+    function testFuzz_currentPeriodIsTheDevelopmentPeriod(uint64 time) public {
+        samePeriodAt(time);
     }
 
     function test_invalidPeriodsAreRejected() public {
@@ -535,5 +583,43 @@ contract MonthlyCommitmentTest {
         ProjectEscrow.MonthlyAward[] memory one = new ProjectEscrow.MonthlyAward[](1);
         one[0] = entries[0];
         require(vault.allocationRoot(one) == leaves[0], "one-leaf root is the leaf");
+    }
+}
+
+/// @dev ProjectEscrow's calendar on development (5268ca066), before MonthlyCalendar replaced its loop.
+contract DevelopmentCalendar {
+    error InvalidInput();
+
+    function monthlyWindow(uint32 period) external pure returns (uint64 opensAt, uint64 closesAt) {
+        uint256 year = period / 100;
+        uint256 month = period % 100;
+        if (year < 2000 || year > 9999 || month == 0 || month > 12) revert InvalidInput();
+        (uint256 nextYear, uint256 nextMonth) = month == 12 ? (year + 1, uint256(1)) : (year, month + 1);
+        (uint256 afterYear, uint256 afterMonth) =
+            nextMonth == 12 ? (nextYear + 1, uint256(1)) : (nextYear, nextMonth + 1);
+        opensAt = uint64(start(nextYear, nextMonth)) + 72 hours;
+        closesAt = uint64(start(afterYear, afterMonth)) + 72 hours;
+    }
+
+    function monthStart(uint256 year, uint256 month) external pure returns (uint64) {
+        return uint64(start(year, month));
+    }
+
+    function periodAt(uint256 time) external pure returns (uint32) {
+        uint256 year = 1970 + time / 31_556_952;
+        if (start(year, 1) > time) --year;
+        else if (start(year + 1, 1) <= time) ++year;
+        uint256 month = 12;
+        while (start(year, month) > time) --month;
+        return uint32(year * 100 + month);
+    }
+
+    function start(uint256 year, uint256 month) private pure returns (uint256) {
+        uint256 y = month <= 2 ? year - 1 : year;
+        uint256 era = y / 400;
+        uint256 yearOfEra = y - era * 400;
+        uint256 dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
+        uint256 dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+        return (era * 146097 + dayOfEra - 719468) * 1 days;
     }
 }
