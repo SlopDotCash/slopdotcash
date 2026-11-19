@@ -48,6 +48,12 @@ export const SUBMISSION_FEE_MAX_MINOR = "10000000";
 export const SUBMISSION_FEE_SLOP_SHARE_BPS = 5000; // SLOP fee is half the stablecoin fee
 export const SUBMISSION_FEE_REFUND_UNDECIDED_DAYS = 14;
 export const SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS = 7;
+/**
+ * The contracts' immutable reclaim delay (`RECLAIM_DELAY` in
+ * `contracts/evm/script/DeploySubmissionDeposits.sol`): the payer can take an
+ * open deposit back from the contract this long after making it.
+ */
+export const SUBMISSION_FEE_RECLAIM_DAYS = 30;
 
 /**
  * The block of each contract's deployment, where its event scan starts. A

@@ -341,6 +341,13 @@ makes the deposit due back; a pull request closed without a merge for 7 days
 keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned). Slopbot
 moves no money, never closes a pull request for an unpaid fee, and never
 blocks a maintainer's own review or merge; scoring does not read the fee.
+The comment links the pay page
+`/fee/<owner>/<repo>/<number>` (`src/SubmissionFeePage.tsx`; operator
+decision, 19 November 2026). The page needs no sign-in, takes the repository
+id from the project registry, and offers a way to pay only when the stored
+record's contract, chain, token and kept-to address equal the tables in
+`src/lib/submission-fee.mjs`; it takes none of them from the address bar or
+from input, and offers nothing while `SUBMISSION_FEE_SWITCHED_ON` is false.
 `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `off`, `dry_run`
 or `live` and ships `off`; `live` needs its own reviewed change after the
 deposit contracts are deployed. Automatic closure is limited to verified

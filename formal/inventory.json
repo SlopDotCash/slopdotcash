@@ -34,7 +34,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "d4511b0022fc3d756adcdc7556b02531faa1c2830914957d9718c03525635a6d",
+      "sha256": "0c9cbe8991ea8f0dbb529b9e96bc3f78a491d9f61d2bf44ab83a293adb19b0b5",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -4567,7 +4567,7 @@
     },
     {
       "path": "scripts/prepare-e2e-fixture.mjs",
-      "sha256": "035f2c6761df7bbc92455a9573c789356577741b90f593732c403df844f7f04c",
+      "sha256": "5497e97e22e7e14287e7891d6108f15d499c6f043d1ad5bffa74238cd225ce89",
       "models": [
         "formal/models/tooling/dev_server_lifecycle.qnt",
         "formal/models/tooling/runner_cancellation.qnt"
@@ -5498,7 +5498,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "ae8f47adc2ccf9de7a728d0b6e5db8e3d924184e4f39a3e2bae6291955948746",
+      "sha256": "7ce21f30b705666ca58b98fd763066386c0ea5975344408849925841b005b37c",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5519,14 +5519,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 330, 340, 350, 361, 370, 371, 372, 373, 374, 376, 377, 438, 494,
-        495, 496, 499, 522, 588, 619, 656, 762, 830, 908, 909, 918, 928, 929,
-        1152, 1167, 1185, 1225, 1230, 1232, 1235, 1302, 1305, 1307, 1311, 1312,
-        1317, 1334, 1338, 1346, 1347, 1350, 1352, 1360, 1391, 1437, 1440, 1455,
-        1456, 1506, 1509, 1513, 1514, 1515, 1516, 1520, 1540, 1542, 1559, 1564,
-        1626, 1627, 1632, 1633, 1638, 1644, 1685, 1686, 1689, 1690, 1693, 1694,
-        1715, 1716, 1722, 1727, 1729, 1733, 1734, 1773, 1796, 1806, 1837, 1839,
-        1864, 1865, 1881, 1882, 1893, 1895, 1908, 1911
+        21, 23, 337, 347, 357, 368, 377, 378, 379, 380, 381, 383, 384, 448, 504,
+        505, 506, 509, 532, 598, 629, 666, 772, 840, 918, 919, 928, 938, 939,
+        1162, 1177, 1195, 1235, 1240, 1242, 1245, 1312, 1315, 1317, 1321, 1322,
+        1327, 1344, 1348, 1356, 1357, 1360, 1362, 1370, 1401, 1447, 1450, 1465,
+        1466, 1516, 1519, 1523, 1524, 1525, 1526, 1530, 1550, 1552, 1569, 1574,
+        1636, 1637, 1642, 1643, 1648, 1654, 1695, 1696, 1699, 1700, 1703, 1704,
+        1725, 1726, 1732, 1737, 1739, 1743, 1744, 1783, 1806, 1816, 1847, 1849,
+        1874, 1875, 1891, 1892, 1903, 1905, 1927, 1930
       ],
       "review": "mapped-abstraction"
     },
@@ -6283,6 +6283,29 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/SubmissionFeePage.tsx",
+      "sha256": "57b906cf3cc15b67f0e4416eadab07ced74ecc7d524b52a1efe15fe1bded6fd9",
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "candidateLines": [
+        2, 70, 126, 220, 312, 325, 333, 334, 335, 337, 338, 341, 344, 345, 354,
+        387, 389, 393, 399, 409, 410
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/SubmissionFeePay.tsx",
+      "sha256": "d739ed0f8e783df74f35df53219507a053155c23679e656b184e55143650a911",
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "candidateLines": [
+        1, 24, 36, 42, 65, 66, 158, 164, 169, 170, 171, 174, 175, 176, 182, 184,
+        187, 200, 209, 210, 213, 227, 236, 265, 313, 314, 317, 323, 325, 327,
+        329, 331, 332, 337, 341, 345, 346, 356, 362, 368, 371, 375, 385, 387,
+        394, 395, 417, 430, 434, 443, 444, 448, 450, 470, 476, 477, 478, 479,
+        483, 485, 515, 516, 527, 544, 551, 557, 560, 567, 570, 577, 583, 711
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/VaultActions.tsx",
       "sha256": "da964ffc6b573317ca26ea7252ac5f099fe4db23677dd8574da1983e25851e8a",
       "models": [
@@ -6545,6 +6568,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/evm-fee-deposit.ts",
+      "sha256": "2c31a08031ecbbff25e16cc832ab39bd85834f4daba0c76a49848a183aeb194e",
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "candidateLines": [
+        10, 322, 327, 332, 348, 366, 372, 374, 378, 380, 384, 394, 402, 405,
+        408, 410, 412, 429, 434, 436, 437, 441, 445
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/evm-month-lock.ts",
       "sha256": "8e85c2e4346dadd824b0f7436b0c866e10ba5aec673bc08ec451e285695715e9",
       "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
@@ -6555,7 +6588,7 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "e07f005927f95289e682098b43d8e342f6ac1a746c2ae21d8abd646098e45249",
+      "sha256": "397466e1b8909015a4d378c3576da11569316a29c48dc394e5c7164c9e9501ad",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
@@ -6565,10 +6598,10 @@
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        22, 25, 69, 137, 145, 243, 309, 374, 375, 387, 388, 393, 405, 408, 411,
-        413, 415, 432, 437, 439, 440, 454, 461, 470, 510, 512, 513, 525, 529,
-        530, 552, 557, 558, 567, 578, 595, 603, 604, 605, 606, 607, 611, 626,
-        632, 637, 638, 640, 641, 642, 645, 656, 657, 661, 662, 663, 664, 665
+        22, 25, 71, 139, 147, 245, 311, 376, 377, 389, 390, 395, 407, 410, 413,
+        415, 417, 434, 439, 441, 442, 456, 463, 472, 512, 514, 515, 527, 531,
+        532, 554, 559, 560, 569, 580, 597, 605, 606, 607, 608, 609, 613, 628,
+        639, 644, 645, 647, 648, 649, 652, 663, 664, 668, 669, 670, 671, 672
       ],
       "review": "mapped-abstraction"
     },
@@ -7511,6 +7544,13 @@
       "statelessReason": "Static canonical source repository URL; no transitions."
     },
     {
+      "path": "src/lib/submission-fee-page.ts",
+      "sha256": "7caa19f124bb84dfefb5a90a98ab08652435029fe30b8fe8ae57f7b28031294d",
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "candidateLines": [61, 329, 341],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/submission-fee-setting.mjs",
       "sha256": "cad095dda37d9cc811eac03fa2d9b52168073f35beb25e541fcdf663e4d3a827",
       "models": [
@@ -7521,15 +7561,22 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/submission-fee-setup.ts",
+      "sha256": "24a968fe638971f42dfa4aeb93705fd0726483e9fc74ed366e6cda2f09a6ebe2",
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "234812b30928cc3736209e090c3a4368095b8f7a53c427152765194afb5e145e",
+      "sha256": "6fdccd92b2118eec14abce4f3da1f0f6fccd66f2d393c877b6c04de78faa6a3c",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [67, 89, 349, 360],
+      "candidateLines": [73, 95, 355, 366],
       "review": "mapped-abstraction"
     },
     {
@@ -20180,6 +20227,33 @@
         "terminalFailureHasNoResendTest",
         "uncertainUsesReconcileNotResendTest",
         "unsavedLegacyDraftCannotLeaveForGithubTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_submission_fee_pay.qnt",
+      "sha256": "99cd7ffc466913ec10e13dec251c23a64ddbc9ede7cb579740b9cc662d616d16",
+      "sources": [
+        "src/SubmissionFeePage.tsx",
+        "src/SubmissionFeePay.tsx",
+        "src/lib/evm-fee-deposit.ts",
+        "src/lib/submission-fee-page.ts",
+        "src/lib/submission-fee-setup.ts"
+      ],
+      "scenarios": [
+        "declinedTest",
+        "eventlessTransactionTest",
+        "noSecondDepositBeforeRecordTest",
+        "notAskedTest",
+        "oneRequestTest",
+        "paidElsewhereTest",
+        "replacedBlockTest",
+        "revertedDepositTest",
+        "switchedOffStillShowsPaymentTest",
+        "switchedOffTest",
+        "tamperedRecordTest",
+        "twoRequestsTest",
+        "unlistedRepositoryTest",
+        "unrecordedAfterAnHourTest"
       ]
     },
     {
