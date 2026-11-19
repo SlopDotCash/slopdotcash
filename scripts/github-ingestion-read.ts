@@ -213,8 +213,10 @@ export function githubIngestionReadTransport(
       const commitFilePage =
         /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
         /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
-      const commitFileGatewayRetry =
-        commitFilePage && !url.username && !url.password && !url.hash;
+      // A gateway error (502, 503, 504) is never GitHub's answer for the
+      // page, so any exact GET retries it twice (19 Nov: one 502 on a pull
+      // request's commit list ended a five-hour collection).
+      const gatewayRetry = !url.username && !url.password && !url.hash;
       const commitPulls =
         !url.username &&
         !url.password &&
@@ -304,8 +306,10 @@ export function githubIngestionReadTransport(
         // GitHub can fail to serve a known evidence page temporarily. Retry that
         // exact page without resetting the quota budget or changing pagination.
         const retryGateway =
-          commitFileGatewayRetry &&
-          response.status === 502 &&
+          gatewayRetry &&
+          (response.status === 502 ||
+            response.status === 503 ||
+            response.status === 504) &&
           gatewayRetries < 2;
         const retryRead =
           readRetry &&
