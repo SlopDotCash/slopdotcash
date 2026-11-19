@@ -27,13 +27,10 @@ const never = () => {
   throw new Error("the secret inventory must not be read");
 };
 
-test("the checked-in Worker is record-only, on the private production database, and reads no secret names", () => {
+test("the checked-in Worker ships off, on the private production database, and reads no secret names", () => {
   expect(assertSubmissionFeeRelease(checkedIn(), production, never)).toBe(
-    "dry_run",
+    "off",
   );
-  const off = checkedIn();
-  off.vars.SUBMISSION_FEE_MODE = "off";
-  expect(assertSubmissionFeeRelease(off, production, never)).toBe("off");
 });
 
 test("dry_run needs no key and no deployed contract", () => {

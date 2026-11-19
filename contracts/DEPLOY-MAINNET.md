@@ -140,10 +140,11 @@ ETH for gas on each chain and has sent no transaction.
 
 A deployment collects no fee. Both addresses and start blocks are in
 `src/lib/submission-fee.mjs`. Since 19 November 2026 `SUBMISSION_FEE_MODE` is
-`dry_run` in the submission-fee Worker and in Slopbot: the Worker reads the
-contracts and records what it would send, loads no key and signs nothing, and
-no contributor is asked for a fee. Live is its own reviewed change (PRD
-section 6, FEE-06).
+`dry_run` in Slopbot, which records what it would ask and writes nothing to
+GitHub. The submission-fee Worker is `off`: its record-only runs failed their
+chain reads from Cloudflare the same day (`workers/submission-fee/README.md`),
+so nothing reads the contracts. No contributor is asked for a fee. Live is its
+own reviewed change (PRD section 6, FEE-06).
 
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
