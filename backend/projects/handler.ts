@@ -884,6 +884,46 @@ function assertReviewBudgetTransition(
 }
 
 /**
+ * A new project whose repository or id is already listed would only fail the
+ * registry check with an internal message. Say which listing holds it (by
+ * repository name or alias, the registry's own rule), so an
+ * owner who already created the project continues its setup instead.
+ */
+function assertNotAlreadyListed(
+  projects: ProjectRecord[],
+  candidate: ProjectDefinition,
+  origin: string,
+): void {
+  const names = new Set(
+    candidate.repositories.flatMap((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].map((name) =>
+        name.toLowerCase(),
+      ),
+    ),
+  );
+  const repositoryName = candidate.repositories[0]?.id ?? "This repository";
+  for (const project of projects) {
+    const listsRepository = project.manifest.repositories.some((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].some((name) =>
+        names.has(name.toLowerCase()),
+      ),
+    );
+    if (listsRepository)
+      fail(
+        409,
+        "registry_conflict",
+        `${repositoryName} is already listed on Slop as ${project.id}. Open ${origin}/projects/${project.id}/manage to continue its setup instead of creating it again.`,
+      );
+  }
+  if (projects.some((project) => project.id === candidate.id))
+    fail(
+      409,
+      "registry_conflict",
+      `The project id ${candidate.id} is already used by another project. Choose a different project id.`,
+    );
+}
+
+/**
  * Checks the candidate against the live registry. Only a manifest revision or a reviewed update application
  * replaces the listed project with the same id; a new application or an
  * approval must conflict with a listed project that already has that id.
@@ -1298,6 +1338,7 @@ async function createProject(
   assertRepositoryUnrestricted(manifest, enforcements);
   const referrer = await resolveReferrer(body.referrer, manifest, actor, deps);
   const listed = await deps.persistence.listProjects();
+  assertNotAlreadyListed(listed, manifest, new URL(request.url).origin);
   assertRegistryWith(listed, manifest, { replaces: false });
   assertNewRepositoryIdentityUnlisted(listed, manifest);
   const checked = await currentAuthority(deps, manifest, actor);
