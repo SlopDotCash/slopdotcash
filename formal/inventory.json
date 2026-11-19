@@ -9871,7 +9871,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "99843013a379bb4ed7daff481941b2bdad72f7c410e60ace128792d91bebdfa1",
+      "sha256": "328fe5615e9c8a21caf6f890a1ada31c8f0367550ea844e741bd2816932a93e1",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
