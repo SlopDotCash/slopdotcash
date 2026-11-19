@@ -486,20 +486,20 @@ async function reserveBindingConsentBudget(
   // Request-path attempts live under `bind:<idempotencyKey>`; a legacy one
   // for the same actor must hold a new admission exactly like a legacy
   // stored one. The `bind:` prefix also matches consent-budget and
-  // test-nonce records, which are not attempts and are skipped here.
+  // test-nonce records, which are not attempts: only attempt keys count
+  // toward the 1,000-entry bound, so the scan window is doubled — one
+  // budget record per admitted attempt — and the filter runs before the
+  // size check. A truncated read still refuses: unseen entries past the
+  // window could be attempts.
   const requested = await store.list<Attempt | null>({
     prefix: "bind:",
-    limit: 1000,
+    limit: 2000,
   });
-  if (!(requested instanceof Map) || requested.size >= 1000)
+  if (!(requested instanceof Map) || requested.size >= 2000)
     throw new Error("Binding consent history exceeds review bound");
   const prior = new Map<string, Attempt | null>(stored);
   for (const [key, attempt] of requested) {
-    if (
-      key.startsWith("bind:consent-nonce:") ||
-      key.startsWith("bind:test-nonce:")
-    )
-      continue;
+    if (!isBindingAttemptKey(key)) continue;
     if (!prior.has(key)) prior.set(key, attempt);
   }
   if (prior.size >= 1000)

@@ -1549,6 +1549,35 @@ try {
       assert.equal(active.signatures(), 0);
     },
   );
+  await run(
+    "500 bindings plus 500 consent budgets still admit a new binding",
+    async () => {
+      // TrapLord review on #2451: each admitted binding writes one
+      // attempt and one `bind:consent-nonce:*` budget record, so the old
+      // `bind:` list counted 500 bindings as 1000 entries and refused
+      // the next scheduled binding. Only attempt keys count toward the
+      // 1,000-entry bound; budget records do not. The seeded attempts
+      // name another network, so the per-attempt budget checks skip
+      // them exactly as in the review reproduction.
+      active = await fixture("139", "consent");
+      for (let index = 0; index < 500; index++) {
+        await active.env.JOURNAL.put(`${STORED_BINDING}review-${index}`, {
+          network: "ethereum",
+          vault: "0x0000000000000000000000000000000000000000",
+        });
+        await active.env.JOURNAL.put(
+          `bind:consent-nonce:review-${index}`,
+          null,
+        );
+      }
+      const submitted = await bindStoredDestination(
+        active.env,
+        active.candidate,
+      );
+      assert.equal(submitted.state, "submitted");
+      assert.equal(active.signatures(), 1);
+    },
+  );
   console.log(
     JSON.stringify({
       passed: cases.length,
