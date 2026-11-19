@@ -2044,6 +2044,18 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   diagnostics,
 }, testInfo) => {
   await servePublicProjectReads(page);
+  const navigateWithFunding = async (navigate: () => Promise<unknown>) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/v1/pool-funding" &&
+          response.request().method() === "GET",
+      ),
+      navigate(),
+    ]);
+    expect(response.ok()).toBe(true);
+    expect(await response.finished()).toBeNull();
+  };
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
@@ -2095,28 +2107,18 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  // Finish the remounted Sponsors page's funding read before leaving for Home.
-  const [fundingResponse] = await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/v1/pool-funding" &&
-        response.request().method() === "GET",
-    ),
-    page.goBack({ waitUntil: "networkidle" }),
-  ]);
-  expect(fundingResponse.ok()).toBe(true);
-  expect(await fundingResponse.finished()).toBeNull();
+  await navigateWithFunding(() => page.goBack({ waitUntil: "networkidle" }));
   await expect(page).toHaveURL(/\/sponsors$/u);
 
   await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
-  await page.keyboard.press("Enter");
+  await navigateWithFunding(() => page.keyboard.press("Enter"));
   await expect(page).toHaveURL(/\/$/);
   // Let the home records finish loading so going back aborts no request.
   await expect(page.locator("#projects")).toBeVisible({ timeout: 60_000 });
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  await navigateWithFunding(() => page.goBack({ waitUntil: "networkidle" }));
   await expect(page).toHaveURL(/\/sponsors$/u);
 });
 
