@@ -5441,7 +5441,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "07c65e321280b3cd45cc663e3bc1a765fec4ae77502287ac566e4710f4735e86",
+      "sha256": "91480ecee50487fea5fefc71b9ffa9d939ed05adc0f2a9e3e9dac9e7f14848d7",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5462,14 +5462,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 331, 341, 351, 362, 371, 372, 373, 374, 375, 377, 378, 439, 495,
-        496, 497, 500, 523, 589, 620, 657, 763, 831, 909, 910, 923, 933, 934,
-        1158, 1173, 1191, 1237, 1241, 1246, 1248, 1251, 1318, 1321, 1323, 1327,
-        1328, 1333, 1350, 1354, 1362, 1363, 1366, 1368, 1376, 1407, 1453, 1456,
-        1471, 1472, 1522, 1525, 1529, 1530, 1531, 1532, 1538, 1541, 1561, 1563,
-        1580, 1585, 1647, 1648, 1653, 1654, 1659, 1665, 1706, 1707, 1710, 1711,
-        1714, 1715, 1736, 1737, 1743, 1748, 1750, 1754, 1755, 1794, 1817, 1827,
-        1858, 1860, 1885, 1886, 1902, 1903, 1914, 1916, 1929, 1932
+        21, 23, 332, 342, 352, 363, 372, 373, 374, 375, 376, 378, 379, 440, 511,
+        512, 513, 516, 538, 617, 648, 685, 791, 859, 937, 938, 951, 961, 962,
+        1186, 1201, 1219, 1265, 1269, 1274, 1276, 1279, 1346, 1349, 1351, 1355,
+        1356, 1361, 1378, 1382, 1390, 1391, 1394, 1396, 1404, 1435, 1481, 1484,
+        1499, 1500, 1550, 1553, 1557, 1558, 1559, 1560, 1566, 1569, 1589, 1591,
+        1608, 1613, 1675, 1676, 1681, 1682, 1687, 1693, 1734, 1735, 1738, 1739,
+        1742, 1743, 1764, 1765, 1771, 1776, 1778, 1782, 1783, 1822, 1845, 1855,
+        1886, 1888, 1913, 1914, 1930, 1931, 1942, 1944, 1957, 1960
       ],
       "review": "mapped-abstraction"
     },
@@ -18306,14 +18306,16 @@
     },
     {
       "path": "formal/models/ui/ui_hero_animation.qnt",
-      "sha256": "8becd9c4d72866f72c143719b4292455e9daa00ce9fc21015c925a853400841c",
+      "sha256": "8a07bd4ae6bc3073493a27ffc281e0681300209392d59d962669a26d99acc460",
       "sources": ["src/App.tsx"],
       "scenarios": [
         "deleteBeforeChangingWordTest",
         "departedTimerCannotRemainTest",
         "finishTypingBeforeHoldingTest",
-        "initialReducedMotionDoesNotScheduleTest",
-        "pendingTimerMayFinishAfterMediaChangeTest"
+        "initialReducedMotionCanLaterAnimateTest",
+        "journeyChangeResetsWithoutChangingPreferenceTest",
+        "mediaChangeReplacesPartialTextAndCancelsTimerTest",
+        "remountReadsPreferenceAgainTest"
       ]
     },
     {
