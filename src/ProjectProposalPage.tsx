@@ -37,7 +37,7 @@ import {
   READY_LABEL_LIMITS,
   type ReadyLabelSettings,
 } from "./lib/slopbot-ready.mjs";
-import { SUBMISSION_FEE_CONTRACTS } from "./lib/submission-fee.mjs";
+import { SUBMISSION_FEE_SWITCHED_ON } from "./lib/submission-fee.mjs";
 import {
   SUBMISSION_FEE_HINT,
   SUBMISSION_FEE_SETTING_LIMITS,
@@ -713,10 +713,8 @@ function ClosureConsent({
   );
 }
 
-/** True until Slop has published a deposit contract for the fee. */
-const SUBMISSION_FEE_NOT_ACTIVE = Object.values(SUBMISSION_FEE_CONTRACTS).every(
-  (address) => address === null,
-);
+/** True until Slopbot asks contributors for the fee. */
+const SUBMISSION_FEE_NOT_ACTIVE = !SUBMISSION_FEE_SWITCHED_ON;
 
 function submissionFeeSummary(
   setting: SubmissionFeeSetting | undefined,

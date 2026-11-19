@@ -95,6 +95,43 @@ that check was not completed (PRD section 11). These records do not prove
 project activation, wallet binding or a first payment; continue those under
 #904 without repeating the program upgrade.
 
+### Submission fee deposit contracts (19 November 2026)
+
+`SubmissionDeposits` (`contracts/evm/src/SubmissionDeposits.sol`, not
+upgradeable, separate from the escrow) was deployed on Base and Robinhood Chain
+on 19 November 2026 by the steps in
+[`docs/submission-deposits-deploy-runbook.md`](../docs/submission-deposits-deploy-runbook.md),
+from `main` at `3e42b20a` (contract source unchanged since `839399ad`). The
+deployer sent each from the same nonce, so both chains use one address:
+`0xDe40B32A4156ABC2A05987367966d994BcFbf8D8`.
+
+| Network                | Deployment transaction                                               | Block     | Block time (UTC)     |
+| ---------------------- | -------------------------------------------------------------------- | --------- | -------------------- |
+| Base (8453)            | `0x6bff20e1262df06beb043345004a58b3076210653d0d7431a53dc3a2e342a211` | 59572869  | 2026-11-19T16:15:49Z |
+| Robinhood Chain (4663) | `0x1b6e2e97b92c58935d952dc4cffea679ca5df7dcf1d5ac0a75c76c8c37f01020` | 118349901 | 2026-11-19T16:15:03Z |
+
+Read back on both chains the same day: owner
+`0xbCA4736F59d03F07cFac9415A5936fECb06b2eA7` (the S.P. operating wallet), no
+pending owner, reclaim delay 2,592,000 seconds (30 days), no deposits, deposits
+not paused, and runtime code hash (keccak-256)
+`0xe4c13bf58d547617ad10f4ee7bf4a43fb47ab68a4f6e841f5c22acd3874c55ef`, the hash
+a local build with the pinned `foundry.toml` settings gives. The deployer
+`0x5d9823205961809c02ddeb9e736254367706eEDe` paid gas and holds no role.
+Sourcify has a match for the contract on each chain. The Etherscan-family
+explorers are not verified.
+
+**The resolver is the unusable address
+`0x000000000000000000000000000000000000dEaD` on both chains.** Until the owner
+names the Worker's resolver with `setResolver`, nobody can settle a deposit; a
+payer can still take one back after 30 days. That change, when made, is
+recorded here.
+
+A deployment collects no fee. Both addresses and start blocks are in
+`src/lib/submission-fee.mjs`; `SUBMISSION_FEE_MODE` is `off` in the
+submission-fee Worker and in Slopbot, so nothing reads the contracts and no
+contributor is asked for a fee. Record-only and live are each their own
+reviewed change (PRD section 6, FEE-06).
+
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
 The owner approved this exact program upgrade.
