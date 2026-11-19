@@ -102,8 +102,17 @@ import {
   confirmReopen,
   reopenSource,
 } from "./reopen-source";
-import { admitMonthlyReview, MONTHLY_REVIEW_CAP_REASON } from "./review-cap";
+import {
+  admitMonthlyReview,
+  MONTHLY_REVIEW_CAP_REASON,
+  monthlyReviewOpen,
+} from "./review-cap";
 import { route } from "./routing";
+import {
+  gateSubmissionFee,
+  releaseExemptFee,
+  SubmissionFeeGateError,
+} from "./submission-fee";
 import {
   affectedValueActor,
   currentValueDispute,
@@ -125,6 +134,8 @@ export type ReviewEnv = ModelEnv &
     SLOPBOT_APP_USER_ID: string;
     // Global switch, off until the owner approves Slopbot v2 closures.
     SLOPBOT_CLOSURE_ENABLED?: string;
+    // The submission fee switch: off, dry_run or live. Absent means off.
+    SUBMISSION_FEE_MODE?: string;
     // Slop moderators (immutable GitHub IDs) who decide escalated appeals.
     // Unset means no moderator decision is possible; escalation still records.
     PROJECT_MODERATOR_GITHUB_IDS?: string;
@@ -166,6 +177,7 @@ type Issue = {
 type Pull = {
   draft: boolean;
   merged: boolean;
+  created_at?: string | null;
   head: { sha: string };
   base: { sha: string; ref: string; repo: { id: number } };
   additions: number;
@@ -1382,8 +1394,13 @@ export async function reviewItem(
   } catch (error) {
     // A provider failure must not leave an apparently untouched submission.
     // Only publish while this attempt still owns the exact current source.
-    // Do not echo provider errors, which may contain request data.
-    if (routing.review && context.registration.scope === "contributor") {
+    // Do not echo provider errors, which may contain request data. A failed
+    // submission fee step is not a review attempt and posts no review comment.
+    if (
+      routing.review &&
+      context.registration.scope === "contributor" &&
+      !(error instanceof SubmissionFeeGateError)
+    ) {
       try {
         const fresh = await loadContext(env, job, context.registration);
         if (await sameReviewEvidence(job, fresh, context))
@@ -1427,6 +1444,18 @@ async function runReview(
   const claim = { reviewKey, token: claimToken };
   await store.assertReviewClaim(db, claim);
   await requireScope(db, job, scope);
+  // An author who was asked a submission fee and is now a maintainer or
+  // member is skipped below as exempt; the ask is taken back first.
+  if (
+    scope === "contributor" &&
+    job.itemKind === "pull_request" &&
+    exemption === "exempt"
+  )
+    try {
+      await releaseExemptFee(env, { job, github: context.github });
+    } catch (error) {
+      throw new SubmissionFeeGateError(error);
+    }
   if (!routing.review) {
     await reconcileConfirmedReopen(env, job, context);
     await store.finishReview(db, reviewKey, claimToken, "skipped", {
@@ -1457,6 +1486,38 @@ async function runReview(
       skipReason: INTAKE_CAP_REASON,
     });
     return INTAKE_CAP_REASON;
+  }
+  // A project that asks a submission fee has Slopbot wait for an outside
+  // contributor's deposit before it reviews (operator decision, 18 November
+  // 2026; PRD section 5). The first sight posts one comment and one label and
+  // records the skip; a paid pull request is reviewed as usual. Nothing is
+  // closed, and no fee is asked for a review the monthly cap would refuse.
+  // Value assessment and scoring are a separate pipeline and unchanged.
+  if (scope === "contributor" && job.itemKind === "pull_request") {
+    let waits: string | null;
+    try {
+      waits = await gateSubmissionFee(env, {
+        job,
+        github: context.github,
+        projectId: context.registration.projectId,
+        exemption,
+        openedAt: context.pull?.created_at,
+        mayAsk: await monthlyReviewOpen(
+          db,
+          job.repositoryId,
+          job.itemKind,
+          job.number,
+        ),
+      });
+    } catch (error) {
+      throw new SubmissionFeeGateError(error);
+    }
+    if (waits !== null) {
+      await store.finishReview(db, reviewKey, claimToken, "skipped", {
+        skipReason: waits,
+      });
+      return waits;
+    }
   }
   // Free advisory reviews are capped at a number of distinct pull requests or
   // issues per repository and UTC month (operator decision, 16 November 2026).

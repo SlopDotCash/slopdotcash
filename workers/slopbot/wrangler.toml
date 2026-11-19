@@ -40,6 +40,11 @@ crons = ["*/5 * * * *"]
 [vars]
 # Off until the owner approves Slopbot v2 closures (PRD BOT-06, BOT-12).
 SLOPBOT_CLOSURE_ENABLED = "false"
+# The refundable submission fee (PRD section 5): off, dry_run or live. Off
+# until its own reviewed change, after the deposit contracts are deployed and
+# their addresses are in src/lib/submission-fee.mjs. dry_run records what
+# Slopbot would ask and writes nothing to GitHub.
+SUBMISSION_FEE_MODE = "off"
 # Slop moderators who decide escalated appeals (owner decision, PRD section 11):
 # lalalune and drew-dot-com, by immutable GitHub ID.
 PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
