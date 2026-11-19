@@ -43,25 +43,23 @@ library MonthlyCalendar {
     }
 
     /// @dev Unix time of 00:00 UTC on the first day of the month `monthsAfterJanuary2000` months after January
-    /// 2000 (days from civil, with March-based years).
+    /// 2000: days from civil with March-based years, 365 * year + 97 * era + leap days of the era + day of the
+    /// year - 719468, with 365 * 2000 - 719468 = 10532 folded in so that no step subtracts.
     function monthStart(uint32 monthsAfterJanuary2000) private pure returns (uint256) {
+        uint256 yearsAfter2000 = monthsAfterJanuary2000 / 12;
+        uint256 month = monthsAfterJanuary2000 % 12 + 1;
+        bool marchBased = month > 2;
         uint256 y;
-        uint256 month;
         uint256 dayOfYear;
-        uint256 yearOfEra;
-        uint256 leapDays;
         unchecked {
-            month = monthsAfterJanuary2000 % 12 + 1;
-            y = 2000 + monthsAfterJanuary2000 / 12 - (month <= 2 ? 1 : 0);
-            dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
-            yearOfEra = y % 400;
-            leapDays = yearOfEra / 4;
+            y = 1999 + yearsAfter2000 + (marchBased ? 1 : 0);
+            dayOfYear = (153 * (marchBased ? month - 3 : month + 9) + 2) / 5;
         }
-        leapDays -= yearOfEra / 100;
-        uint256 daysFromCivilOrigin;
+        uint256 yearOfEra = y % 400;
+        uint256 leapDays = yearOfEra / 4 - yearOfEra / 100;
         unchecked {
-            daysFromCivilOrigin = (y / 400) * 146097 + yearOfEra * 365 + leapDays + dayOfYear;
+            return (yearsAfter2000 * 365 + (marchBased ? 10532 : 10167) + (y / 400) * 97 + leapDays + dayOfYear)
+                * 1 days;
         }
-        return (daysFromCivilOrigin - 719468) * 1 days;
     }
 }
