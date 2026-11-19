@@ -1724,6 +1724,27 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "contracts/evm/script/DeploySubmissionDeposits.sol",
+      "sha256": "9a2eb45c7c24d606ec2a8dbb8d8922b97caf03f92067786159e27ce3f7655521",
+      "models": ["formal/models/contracts/submission_deposits_deployment.qnt"],
+      "candidateLines": [45, 47],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/evm/script/DeploySubmissionDepositsBase.s.sol",
+      "sha256": "86724ccbe3dc0d9d41121787bece7cc11a070e5fd782eb631bccd88729b21114",
+      "models": ["formal/models/contracts/submission_deposits_deployment.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/evm/script/DeploySubmissionDepositsRobinhood.s.sol",
+      "sha256": "45d09c025bba3c391e4f64327de871ce59c7feb70d06290a9c3c4de8bc45156c",
+      "models": ["formal/models/contracts/submission_deposits_deployment.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "contracts/evm/script/DeployUpgradeImplementations.s.sol",
       "sha256": "d5259a20380b50621693c6cd205ed2bc245fc2c5d4209ceb27e69245d27624f5",
       "models": ["formal/models/contracts/evm_proxy_lifecycle.qnt"],
@@ -1754,6 +1775,15 @@
         "formal/models/referrals/referral_root_history.qnt"
       ],
       "candidateLines": [155, 267, 280],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/evm/src/SubmissionDeposits.sol",
+      "sha256": "7f8c69347c1292a8127aa591678386e2e22ad58fec31966076d74c01bf202c3e",
+      "models": ["formal/models/contracts/submission_deposits.qnt"],
+      "candidateLines": [
+        18, 22, 37, 113, 121, 154, 164, 168, 199, 221, 232, 235, 236
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -12748,6 +12778,61 @@
         "setupFailureClosesOwnedValidatorTest",
         "startupFailureRetainsInputsWithoutHandleTest",
         "uncertainCleanupRetainsInputsTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/submission_deposits.qnt",
+      "sha256": "45aec22f4d761ec6a66ee8fb30b47c4f7837d6919e508f0c63d55178e4763a15",
+      "sources": ["contracts/evm/src/SubmissionDeposits.sol"],
+      "scenarios": [
+        "cancelledOwnershipCannotBeAcceptedTest",
+        "earlyReclaimRefusedTest",
+        "failedRefundCanStillBeKeptTest",
+        "failedTransferLeavesTheDepositOpenTest",
+        "keptGoesToTheKeptAddressTest",
+        "missingKeptAddressRefusedTest",
+        "newResolverStillHasOnlyTheTwoOutcomesTest",
+        "onlyTheResolverSettlesTest",
+        "ownerCannotBecomeResolverTest",
+        "ownerCannotReclaimTest",
+        "pauseNeverBlocksReclaimTest",
+        "pauseNeverBlocksSettlementTest",
+        "pausedDepositRefusedTest",
+        "payerCannotSettleTest",
+        "pendingOwnerCannotBecomeResolverTest",
+        "reclaimAfterDelayTest",
+        "reclaimedCannotBeSettledTest",
+        "reentrantDepositRefusedTest",
+        "reentrantReclaimRefusedTest",
+        "reentrantSettleRefusedTest",
+        "refundGoesToThePayerTest",
+        "replacedResolverLosesPowerTest",
+        "resolverCannotBeNamedOwnerTest",
+        "resolvesOnceTest",
+        "secondDepositHasItsOwnClockTest",
+        "settledCannotBeReclaimedTest",
+        "shortDeliveryRefusedTest",
+        "twoDepositsSettleIndependentlyTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/submission_deposits_deployment.qnt",
+      "sha256": "b95994506e14f0d61ddfb3d025a0063bf125e84c03248a9ca1296307ba1e0299",
+      "sources": [
+        "contracts/evm/script/DeploySubmissionDeposits.sol",
+        "contracts/evm/script/DeploySubmissionDepositsBase.s.sol",
+        "contracts/evm/script/DeploySubmissionDepositsRobinhood.s.sol"
+      ],
+      "scenarios": [
+        "baseScriptRefusesRobinhoodTest",
+        "deployedEmptyAndInactiveOnBaseTest",
+        "deployedEmptyAndInactiveOnRobinhoodTest",
+        "mismatchedDeploymentRefusedTest",
+        "missingOrSharedRolesRefusedTest",
+        "otherChainRefusedTest",
+        "robinhoodScriptRefusesBaseTest",
+        "secondDeploymentRefusedTest",
+        "unreadDeploymentNotReportedTest"
       ]
     },
     {
