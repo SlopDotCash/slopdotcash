@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c4d1a3b7bc09f25ff5690643a07353c8ff207341f25231b86a56e86e628f50c1",
+  "inventorySha256": "aeb1f5e16c505894c7e0f5102b5a6612ce85da068f1547f884172750d097ab39",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2669,7 +2669,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 440,
+      "line": 514,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2692,7 +2692,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 449,
+      "line": 523,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
