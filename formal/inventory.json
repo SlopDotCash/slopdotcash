@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "0888cf2524320969f76f305b67fe669c475d4c81f9c33e697324e09f77a9090d",
+      "sha256": "10ba5601511788bc24c6bd60910af1b1b0bda23e6e98d986c2f5a8b3eae4e8b0",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 54, 215, 348, 437, 438, 512, 565, 622, 702, 707, 822, 828, 896, 899,
-        925, 926, 947, 959, 991, 1029, 1259, 1287, 1379, 1392, 1483, 1591, 1593,
-        1594, 1798, 1881, 2034, 2036, 2066, 2181, 2203, 2274, 2285, 2310, 2381,
-        2394, 2407, 2416, 2417, 2418, 2435
+        44, 54, 215, 348, 414, 440, 441, 515, 568, 625, 705, 710, 825, 831, 899,
+        902, 928, 929, 950, 962, 994, 1032, 1262, 1290, 1382, 1395, 1486, 1594,
+        1596, 1597, 1801, 1884, 2037, 2039, 2069, 2184, 2206, 2277, 2288, 2313,
+        2384, 2397, 2410, 2419, 2420, 2421, 2438
       ],
       "review": "mapped-abstraction"
     },
@@ -80,9 +80,9 @@
     },
     {
       "path": ".github/workflows/monthly-rewards.yml",
-      "sha256": "a3830744712cd0b8120c181fd785f8206a9b006f62a1b661704e8a3300f62791",
+      "sha256": "d264c7c90a5db1e595d10d2becc773a4ccd0b6762c88ca0771170faa3643b937",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [57, 63, 66, 160],
+      "candidateLines": [57, 63, 66, 160, 207],
       "review": "mapped-abstraction"
     },
     {
@@ -5315,7 +5315,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "e7a5a062fcac8629efae74aa0a5087ec89f6a12a341be7d167a22b72e342ef89",
+      "sha256": "47f02ee4a8b547e9619c352772cbbe7b9f368a11e53d374bae7033cd2e21637d",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5325,8 +5325,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        80, 91, 138, 139, 140, 141, 143, 144, 211, 212, 213, 215, 216, 868, 888,
-        1178, 1214, 1253, 1277
+        80, 91, 131, 190, 191, 192, 193, 195, 196, 285, 286, 287, 289, 290, 942,
+        962, 1252, 1288, 1327, 1351
       ],
       "review": "mapped-abstraction"
     },

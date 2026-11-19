@@ -411,6 +411,9 @@ jobs:
           GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
+          # Retry one value-feed read after a temporary outage instead of
+          # restarting the whole collection (19 November 2026).
+          SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
         run: |
           set -euo pipefail
           leaderboard_origin="https://slop.cash"
