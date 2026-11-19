@@ -375,7 +375,7 @@
     },
     {
       "path": "backend/payments/direct-history.ts",
-      "sha256": "0464e06585b1407864e7a6e3cec1384a2b8e055a1168031ff9190845299deb4e",
+      "sha256": "a8ee9baeae22d413240d457e9df2c9d98b2fc779e44f89fd9f308421f89ea77a",
       "models": ["formal/models/payments/payment_history.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -403,7 +403,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "554632b03ba589882d68fabd466d516e86425bd442702397237bf29fa2e0a2fb",
+      "sha256": "58085da24456201d0a8944e41959b7c354bd7dc4f24c5630fc0df595620a6e34",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -423,8 +423,8 @@
         "formal/models/ui/ui_public_vault_funding.qnt"
       ],
       "candidateLines": [
-        112, 217, 296, 355, 360, 407, 429, 435, 458, 467, 490, 512, 690, 711,
-        725, 849, 905, 943, 952, 967, 1106, 1169, 1177, 1200, 1287, 1288, 1342
+        112, 217, 296, 355, 360, 407, 429, 435, 458, 467, 490, 512, 699, 720,
+        734, 858, 914, 952, 961, 976, 1115, 1178, 1186, 1209, 1296, 1297, 1365
       ],
       "review": "mapped-abstraction"
     },
