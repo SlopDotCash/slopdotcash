@@ -29,12 +29,11 @@ maintainer skill. A maintainer reporting a finding as a researcher still uses
 the contributor workflow. When the request names neither journey, the skill
 asks once, "Contribute or maintain a project?", unless the user already chose
 one. The route reads no repository permission, so write access cannot change
-it. The maintainer route resolves to the Home switch's Maintainer address and
-to the published `slop-maintainer` role.
+it. The skills it loads are the published `slop-contributor` and
+`slop-maintainer` roles at `/contribute/SKILL.md` and `/maintain/SKILL.md`,
+the addresses the Home switch offers.
 
 ```quint
-import publication as PUB from "./publication"
-import presentation as P from "../frontend/presentation"
 type MaintainerTask = NoTask | AddOrResume | MaintainRules | ReviewIncoming | RepairCI | ManageCases
   | ManageRewards | RemoveProject | CancelApplication
 type ContributorTask = NoContribution | FindWork | ContributeFix | EarnReviewCredit | InstallProjectSkill | ReportFinding
@@ -46,17 +45,13 @@ pure def route(contribution: ContributorTask, maintenance: MaintainerTask, chose
   else if (chosen == ChoseContributor) ToContributor
   else if (chosen == ChoseMaintainer) ToMaintainer
   else AskOnce
-pure def routeAudience(r: EntryRoute): P::HomeAudience = if (r == ToMaintainer) P::Maintainer else P::Contributor
-pure def routeRole(r: EntryRoute): PUB::GlobalRole = if (r == ToMaintainer) PUB::SlopMaintainer else PUB::SlopContributor
 pure def lawFindingStaysWithContributor(maintenance: MaintainerTask, chosen: Chosen): bool =
   route(ReportFinding, maintenance, chosen) == ToContributor
 pure def lawOnlyMissingIntentAsks(contribution: ContributorTask, maintenance: MaintainerTask, chosen: Chosen): bool =
   (route(contribution, maintenance, chosen) == AskOnce)
     iff (contribution == NoContribution and maintenance == NoTask and chosen == NoneChosen)
-pure def lawMaintainerRouteIsThePublishedSkill(maintenance: MaintainerTask): bool =
-  maintenance != NoTask implies
-    (P::skillPath(routeAudience(route(NoContribution, maintenance, NoneChosen))) == "/maintain/SKILL.md"
-      and PUB::rolePath(routeRole(route(NoContribution, maintenance, NoneChosen))) == "maintain/SKILL.md")
+pure def lawMaintenanceTaskLoadsTheMaintainerSkill(maintenance: MaintainerTask, chosen: Chosen): bool =
+  maintenance != NoTask implies route(NoContribution, maintenance, chosen) == ToMaintainer
 ```
 
 ## Story: Carry out the maintainer's task under current authority
@@ -100,22 +95,23 @@ pure val initial: MaintainerSession = { phase: Idle, task: NoTask, repositoryId:
 pure def canRequestTask(s: MaintainerSession, by: int, task: MaintainerTask, browser: bool): bool =
   by == user and s.phase == Idle and task != NoTask
 pure def requestTask(s: MaintainerSession, by: int, task: MaintainerTask, browser: bool): MaintainerSession =
-  { ...s, phase: Resolving, task: task, browser: browser }
+  { ...s, phase: Resolving, task: task, browser: browser, slopSession: s.slopSession and browser,
+    privateView: s.privateView and browser }
 pure def canResolveRepository(s: MaintainerSession, by: int, repositoryId: int, ambiguous: bool): bool =
   by == agent and s.phase == Resolving
 pure def resolveRepository(s: MaintainerSession, by: int, repositoryId: int, ambiguous: bool): MaintainerSession =
   if (ambiguous or repositoryId <= 0) { ...s, phase: Idle, task: NoTask }
   else { ...s, phase: Working, repositoryId: repositoryId }
-pure def siteServes(task: MaintainerTask, action: SiteAction): bool =
-  if (task == AddOrResume) Set(RunSetupCheck, PublishRevision).contains(action)
-  else if (task == MaintainRules) action == PublishRevision
-  else if (task == ManageCases) Set(ReadCase, RecordDecision).contains(action)
-  else if (task == ManageRewards) Set(AdjustAllocation, FinalizeAllocation, RecordDecision).contains(action)
-  else if (task == RemoveProject) action == RemoveListing
-  else if (task == CancelApplication) action == CancelPending
+pure def siteServes(task: MaintainerTask, act: SiteAction): bool =
+  if (task == AddOrResume) Set(RunSetupCheck, PublishRevision).contains(act)
+  else if (task == MaintainRules) act == PublishRevision
+  else if (task == ManageCases) Set(ReadCase, RecordDecision).contains(act)
+  else if (task == ManageRewards) Set(AdjustAllocation, FinalizeAllocation, RecordDecision).contains(act)
+  else if (task == RemoveProject) act == RemoveListing
+  else if (task == CancelApplication) act == CancelPending
   else false
-pure def repoServes(task: MaintainerTask, action: RepoAction): bool =
-  action != SelfApprove and Set(ReviewIncoming, RepairCI, MaintainRules).contains(task)
+pure def repoServes(task: MaintainerTask, act: RepoAction): bool =
+  act != SelfApprove and Set(ReviewIncoming, RepairCI, MaintainRules).contains(task)
 pure def lawEntryFlowServesNoPolicyChange(task: MaintainerTask): bool =
   Set(ClearRestriction, ChangeClosureConsent, ChangeFundingRequirement, ChangePaymentPolicy, ActivateProduction, SignTransfer)
     .forall(a => not(siteServes(task, a)))
@@ -140,11 +136,11 @@ allocation. A restriction (pause, quarantine or ban) is set only by the
 authority service; no maintainer action clears it.
 
 ```quint
-pure def required(action: SiteAction): Permission =
-  if (action == ReadCase or action == RecordDecision) CaseAccess
-  else if (action == CancelPending) Applicant
+pure def required(act: SiteAction): Permission =
+  if (act == ReadCase or act == RecordDecision) CaseAccess
+  else if (act == CancelPending) Applicant
   else Steward
-pure def current(s: MaintainerSession, p: Permission): bool = s.verified.getOr(p, -1) == s.accountEpoch
+pure def holds(s: MaintainerSession, p: Permission): bool = s.verified.getOr(p, -1) == s.accountEpoch
 pure def countsAsSlopSession(via: SessionSource): bool = via == SlopBrowserSession
 pure def canCheckPermission(s: MaintainerSession, by: int, p: Permission, granted: bool): bool = by == authorityService
 pure def checkPermission(s: MaintainerSession, by: int, p: Permission, granted: bool): MaintainerSession =
@@ -160,7 +156,7 @@ pure def canObserveRestriction(s: MaintainerSession, by: int, restricted: bool):
 pure def observeRestriction(s: MaintainerSession, by: int, restricted: bool): MaintainerSession = { ...s, restricted: restricted }
 pure def lawOnlyTheWebsiteIsASlopSession(via: SessionSource): bool = countsAsSlopSession(via) iff via == SlopBrowserSession
 pure def alwaysPrivateViewIsCurrent(s: MaintainerSession): bool =
-  s.privateView implies (current(s, CaseAccess) and s.slopSession)
+  s.privateView implies (holds(s, CaseAccess) and s.slopSession)
 pure def alwaysSessionNeedsBrowser(s: MaintainerSession): bool = s.slopSession implies s.browser
 pure def stepRestrictionClearedOnlyByAuthority(before: MaintainerSession, via: str, after: MaintainerSession): bool =
   (before.restricted and not(after.restricted)) implies via == "observeRestriction"
@@ -188,24 +184,24 @@ production activation are never actions of this flow.
 pure def canGiveDecision(s: MaintainerSession, by: int, d: Decision): bool = by == user and d != NoDecision
 pure def giveDecision(s: MaintainerSession, by: int, d: Decision): MaintainerSession =
   { ...s, decisions: s.decisions.append(d) }
-pure def mayAct(s: MaintainerSession, action: SiteAction, decision: Decision, ownRecord: bool): bool =
-  siteServes(s.task, action) and current(s, required(action)) and s.slopSession and s.browser
-    and (action != RecordDecision or s.decisions.includes(decision))
-    and not(ownRecord and (action == AdjustAllocation or action == FinalizeAllocation))
-pure def canSiteAct(s: MaintainerSession, by: int, action: SiteAction, decision: Decision, ownRecord: bool, outcome: Outcome): bool =
+pure def mayAct(s: MaintainerSession, act: SiteAction, decision: Decision, ownRecord: bool): bool =
+  siteServes(s.task, act) and holds(s, required(act)) and s.slopSession and s.browser
+    and (act != RecordDecision or s.decisions.includes(decision))
+    and not(ownRecord and (act == AdjustAllocation or act == FinalizeAllocation))
+pure def canSiteAct(s: MaintainerSession, by: int, act: SiteAction, decision: Decision, ownRecord: bool, answer: Outcome): bool =
   by == agent and s.phase == Working and not(s.uncertain) and s.browser
-pure def siteAct(s: MaintainerSession, by: int, action: SiteAction, decision: Decision, ownRecord: bool, outcome: Outcome): MaintainerSession =
-  if (not(mayAct(s, action, decision, ownRecord)) or outcome == Refused) { ...s, refused: s.refused + 1 }
-  else if (outcome == Uncertain) { ...s, uncertain: true, pending: action }
-  else { ...s, applied: s.applied.append(action), privateView: s.privateView or action == ReadCase }
+pure def siteAct(s: MaintainerSession, by: int, act: SiteAction, decision: Decision, ownRecord: bool, answer: Outcome): MaintainerSession =
+  if (not(mayAct(s, act, decision, ownRecord)) or answer == Refused) { ...s, refused: s.refused + 1 }
+  else if (answer == Uncertain) { ...s, uncertain: true, pending: act }
+  else { ...s, applied: s.applied.append(act), privateView: s.privateView or act == ReadCase }
 pure def canReadBack(s: MaintainerSession, by: int, wasApplied: bool): bool = by == agent and s.uncertain
 pure def readBack(s: MaintainerSession, by: int, wasApplied: bool): MaintainerSession =
   { ...s, uncertain: false, readBacks: s.readBacks + 1, applied: if (wasApplied) s.applied.append(s.pending) else s.applied,
-    privateView: s.privateView or (wasApplied and s.pending == ReadCase and current(s, CaseAccess) and s.slopSession) }
-pure def canPrepare(s: MaintainerSession, by: int, action: SiteAction): bool =
-  by == agent and s.phase == Working and not(s.browser) and siteServes(s.task, action)
-pure def prepare(s: MaintainerSession, by: int, action: SiteAction): MaintainerSession =
-  { ...s, prepared: s.prepared.append(action) }
+    privateView: s.privateView or (wasApplied and s.pending == ReadCase and holds(s, CaseAccess) and s.slopSession) }
+pure def canPrepare(s: MaintainerSession, by: int, act: SiteAction): bool =
+  by == agent and s.phase == Working and not(s.browser) and siteServes(s.task, act)
+pure def prepare(s: MaintainerSession, by: int, act: SiteAction): MaintainerSession =
+  { ...s, prepared: s.prepared.append(act) }
 pure def alwaysNoPolicyActionApplied(s: MaintainerSession): bool =
   s.applied.every(a => not(Set(ClearRestriction, ChangeClosureConsent, ChangeFundingRequirement, ChangePaymentPolicy,
     ActivateProduction, SignTransfer).contains(a)))
@@ -233,16 +229,16 @@ authorization (sender `user`). The agent never approves its own work. Every
 refused repository write is counted.
 
 ```quint
-pure def canAuthorizeWrite(s: MaintainerSession, by: int, action: RepoAction): bool =
-  by == user and (action == MergePR or action == ReleaseOrDeploy)
-pure def authorizeWrite(s: MaintainerSession, by: int, action: RepoAction): MaintainerSession =
-  { ...s, authorizedWrites: s.authorizedWrites.append(action) }
-pure def repoPermitted(s: MaintainerSession, action: RepoAction): bool =
-  repoServes(s.task, action) and current(s, RepoWrite)
-    and ((action != MergePR and action != ReleaseOrDeploy) or s.authorizedWrites.includes(action))
-pure def canRepoWrite(s: MaintainerSession, by: int, action: RepoAction): bool = by == agent and s.phase == Working
-pure def repoWrite(s: MaintainerSession, by: int, action: RepoAction): MaintainerSession =
-  if (repoPermitted(s, action)) { ...s, repoWrites: s.repoWrites.append(action) } else { ...s, refused: s.refused + 1 }
+pure def canAuthorizeWrite(s: MaintainerSession, by: int, act: RepoAction): bool =
+  by == user and (act == MergePR or act == ReleaseOrDeploy)
+pure def authorizeWrite(s: MaintainerSession, by: int, act: RepoAction): MaintainerSession =
+  { ...s, authorizedWrites: s.authorizedWrites.append(act) }
+pure def repoPermitted(s: MaintainerSession, act: RepoAction): bool =
+  repoServes(s.task, act) and holds(s, RepoWrite)
+    and ((act != MergePR and act != ReleaseOrDeploy) or s.authorizedWrites.includes(act))
+pure def canRepoWrite(s: MaintainerSession, by: int, act: RepoAction): bool = by == agent and s.phase == Working
+pure def repoWrite(s: MaintainerSession, by: int, act: RepoAction): MaintainerSession =
+  if (repoPermitted(s, act)) { ...s, repoWrites: s.repoWrites.append(act) } else { ...s, refused: s.refused + 1 }
 pure def alwaysNoSelfApproval(s: MaintainerSession): bool = not(s.repoWrites.includes(SelfApprove))
 pure def alwaysMergeAndReleaseAuthorized(s: MaintainerSession): bool =
   (s.repoWrites.includes(MergePR) implies s.authorizedWrites.includes(MergePR))

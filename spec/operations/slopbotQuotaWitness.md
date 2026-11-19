@@ -55,11 +55,11 @@ leaves no grant; a mint whose response is lost leaves an unknown grant that
 only expiry ends.
 
 ```quint
-pure def canIssue(w: QuotaWitness, outcome: MintOutcome): bool = w.phase == Minting
-pure def issue(w: QuotaWitness, outcome: MintOutcome): QuotaWitness =
-  if (outcome == MintScoped) { ...w, grant: ScopedGrant, metadataOnly: true, phase: Reading }
-  else if (outcome == MintWrongGrant) { ...w, grant: WrongGrant, phase: Cleaning }
-  else if (outcome == MintLost) { ...w, grant: UnknownGrant, phase: WitnessDone }
+pure def canIssue(w: QuotaWitness, answer: MintOutcome): bool = w.phase == Minting
+pure def issue(w: QuotaWitness, answer: MintOutcome): QuotaWitness =
+  if (answer == MintScoped) { ...w, grant: ScopedGrant, metadataOnly: true, phase: Reading }
+  else if (answer == MintWrongGrant) { ...w, grant: WrongGrant, phase: Cleaning }
+  else if (answer == MintLost) { ...w, grant: UnknownGrant, phase: WitnessDone }
   else { ...w, phase: WitnessDone }
 pure def alwaysReadOnlyWithMetadataGrant(w: QuotaWitness): bool =
   (w.verified implies w.authorized and w.metadataOnly) and (w.phase == Reading implies w.grant == ScopedGrant)
