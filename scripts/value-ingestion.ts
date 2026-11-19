@@ -91,6 +91,48 @@ export class ValueFeedUnavailableError extends Error {
 /** Process exit status for a value feed outage (EX_TEMPFAIL). */
 export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
 
+/**
+ * Waits between attempts of one feed read after an outage, from
+ * SLOP_VALUE_FEED_RETRY_DELAYS_MS (comma-separated milliseconds). Unset means
+ * one attempt. The release collector sets it: a single 503 among thousands of
+ * history pages otherwise restarts a five-hour collection (19 November 2026).
+ * Only an outage is retried; an integrity failure still stops at once.
+ */
+function feedRetryDelays(): number[] {
+  const raw = process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS?.trim();
+  if (!raw) return [];
+  const delays = raw.split(",").map((part) => Number(part.trim()));
+  if (
+    delays.length > 10 ||
+    delays.some((delay) => !Number.isSafeInteger(delay) || delay < 0)
+  )
+    throw new Error("SLOP_VALUE_FEED_RETRY_DELAYS_MS is invalid");
+  return delays;
+}
+
+async function withFeedRetry<T>(read: () => Promise<T>): Promise<T> {
+  const delays = feedRetryDelays();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await read();
+    } catch (error) {
+      if (
+        !(error instanceof ValueFeedUnavailableError) ||
+        attempt >= delays.length
+      )
+        throw error;
+      console.warn(
+        JSON.stringify({
+          event: "value_feed_retry",
+          attempt: attempt + 1,
+          delayMs: delays[attempt],
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+}
+
 /** A native fetch body may fulfill with a prefix after its request expires. */
 function assertFeedDeadline(signal: AbortSignal): void {
   if (signal.aborted) throw new ValueFeedUnavailableError(signal.reason);
@@ -117,7 +159,17 @@ async function readFeedJson<T>(
  * 404 (a release without the route), 408, 429 or 5xx is an outage that keeps
  * the last published snapshot; any other non-200 answer or a redirect is an
  * integrity failure reported as `unavailable`. */
-async function fetchAuthoritativeFeed<T>(
+function fetchAuthoritativeFeed<T>(
+  url: URL | string,
+  transport: Fetch,
+  unavailable: string,
+): Promise<T> {
+  return withFeedRetry(() =>
+    fetchAuthoritativeFeedOnce<T>(url, transport, unavailable),
+  );
+}
+
+async function fetchAuthoritativeFeedOnce<T>(
   url: URL | string,
   transport: Fetch,
   unavailable: string,
@@ -149,7 +201,29 @@ async function fetchAuthoritativeFeed<T>(
 /** The fixed HTTPS origin, not a digest supplied by an arbitrary URL, is the
  * publication authority. Test callers can inject a transport, never a new URL.
  */
-async function fetchHistoryPage(
+function fetchHistoryPage(
+  kind: "single" | "joint",
+  repository: string,
+  pull: number,
+  after: number,
+  transport: Fetch,
+  through: number | null = null,
+  repositoryNodeId?: string,
+) {
+  return withFeedRetry(() =>
+    fetchHistoryPageOnce(
+      kind,
+      repository,
+      pull,
+      after,
+      transport,
+      through,
+      repositoryNodeId,
+    ),
+  );
+}
+
+async function fetchHistoryPageOnce(
   kind: "single" | "joint",
   repository: string,
   pull: number,
