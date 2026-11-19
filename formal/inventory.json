@@ -403,7 +403,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "554632b03ba589882d68fabd466d516e86425bd442702397237bf29fa2e0a2fb",
+      "sha256": "cda3d69a4e5c7252bfbf69176e952a68a2f71268bf2c1c7077c14e4d75890e67",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -424,7 +424,8 @@
       ],
       "candidateLines": [
         112, 217, 296, 355, 360, 407, 429, 435, 458, 467, 490, 512, 690, 711,
-        725, 849, 905, 943, 952, 967, 1106, 1169, 1177, 1200, 1287, 1288, 1342
+        725, 849, 905, 943, 952, 967, 1106, 1169, 1177, 1200, 1304, 1347, 1348,
+        1402
       ],
       "review": "mapped-abstraction"
     },
@@ -3524,6 +3525,13 @@
       "sha256": "43a7a5a6d521b4aa3e26c3cfb7294fd88130e36d3bbf374657dc56ef07f390d3",
       "models": ["formal/models/api/api_project_removal.qnt"],
       "candidateLines": [3, 4, 7, 13, 14, 16, 17, 19, 20, 24, 25],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0121_solana_binding_transaction.sql",
+      "sha256": "276b5769e2cf4cf966560c95191d5c5d3e35d811949f9e43ed4d0360b1e549b8",
+      "models": ["formal/models/payments/payment_dispatch.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -8704,7 +8712,7 @@
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "ecaad1f002172c3327d2b2fe91540191e7785d4900d80cf02178e04d60312bfd",
+      "sha256": "e135042d60b7f1d57a51966425ae1815510bdbdcf88e930b9f8426003b207be0",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -8712,9 +8720,10 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        168, 190, 226, 279, 355, 356, 358, 359, 361, 364, 367, 369, 377, 386,
-        395, 452, 462, 463, 464, 466, 467, 468, 469, 471, 473, 474, 481, 482,
-        483, 484, 493, 508, 561, 567, 673, 684, 694, 762, 763, 777, 790, 801
+        168, 190, 226, 279, 320, 359, 360, 365, 366, 368, 371, 374, 376, 379,
+        385, 394, 403, 453, 481, 491, 492, 493, 495, 496, 497, 498, 500, 502,
+        503, 510, 511, 512, 513, 522, 537, 601, 607, 721, 732, 742, 810, 811,
+        825, 838, 849
       ],
       "review": "mapped-abstraction"
     },
@@ -8751,7 +8760,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "44bc8615ec1ae9045f8f7817ddab53fc08729b965d01eba2d17b4fd711ee3dd7",
+      "sha256": "a464656f2eeaf3dd8252191690ec1a786585335c65b7fe9b120744cb9538a0db",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -8762,18 +8771,18 @@
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        73, 109, 126, 129, 135, 136, 140, 167, 177, 181, 183, 187, 189, 200,
-        201, 203, 205, 207, 213, 216, 219, 223, 235, 236, 238, 239, 244, 294,
-        341, 352, 373, 381, 384, 415, 494, 592, 593, 666, 711, 712, 785
+        73, 109, 126, 129, 135, 136, 140, 167, 177, 183, 185, 189, 191, 202,
+        203, 205, 207, 209, 215, 218, 221, 225, 237, 238, 240, 241, 246, 296,
+        343, 354, 375, 383, 386, 417, 496, 594, 595, 668, 713, 714, 787
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payments/reconcile.ts",
-      "sha256": "3d3298580b59b74dbc1bad1bcd0f90ff2b8519396791d8d2056562969f0e7570",
+      "sha256": "9b3ab54006531683f42a6d3a779a9614386e076dc3e6c0f332caa6ce5e1b1295",
       "models": ["formal/models/payments/payment_dispatch.qnt"],
       "candidateLines": [
-        7, 22, 27, 28, 47, 48, 52, 71, 110, 118, 124, 134, 142
+        7, 22, 27, 28, 47, 48, 52, 75, 114, 122, 128, 138, 146
       ],
       "review": "mapped-abstraction"
     },
@@ -14253,7 +14262,7 @@
     },
     {
       "path": "formal/models/payments/payment_dispatch.qnt",
-      "sha256": "ce74d4658ec2030dcde4c7127ec0c91f410dcd10168731ad6e9bd35ab1899149",
+      "sha256": "3461c774fd7c123c573b366aa9a2deeaaa658a06dd1d07b5c6da5341a9ff4059",
       "sources": [
         "backend/payments/dispatch.ts",
         "backend/payments/handler.ts",
@@ -14264,6 +14273,7 @@
         "migrations/0017_robinhood_chain.sql",
         "migrations/0021_multi_asset_vault_snapshots.sql",
         "migrations/0057_private_security_payments.sql",
+        "migrations/0121_solana_binding_transaction.sql",
         "workers/payments/reconcile.ts",
         "workers/payments/scanner.ts",
         "workers/security-payments/index.ts"
