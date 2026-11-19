@@ -26,6 +26,7 @@ trace evidence remain separate and never change a payment share.
 - [Source census](./census.md)
 - [Rolling 35-day ledger](./window.md)
 - [GitHub ingestion reads and transport](./ingestion.md)
+- [Collector App token](./collectorToken.md)
 - [Recovery across verified publication copies](./recovery.md)
 - [Exact-prefix publication](./publication.md)
 - [Published model attribution assessment](./modelAttribution.md)
