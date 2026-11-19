@@ -16,7 +16,10 @@ row says is due. It decides nothing about merges or closes.
 reported `submission_fee_operation_failed` on both networks (Base after its
 finalized scan had advanced, Robinhood Chain before it recorded a position),
 while the same run reads both chains cleanly from outside Cloudflare. The
-cause is not known yet. The contracts were deployed on 19 November 2026 and their
+cause is not known yet. A failed network's run result now carries a `reason`
+naming the step that failed and the error classes, HTTP status and JSON-RPC
+code behind it (`failureReason` in `core.ts`), never an error message or a
+URL, so the next record-only run says where it fails. The contracts were deployed on 19 November 2026 and their
 addresses and start blocks are in `src/lib/submission-fee.mjs`
 (`contracts/DEPLOY-MAINNET.md`). Their resolver is this Worker's address,
 `0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, and the Worker holds its key as
