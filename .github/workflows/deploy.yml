@@ -1986,6 +1986,12 @@ jobs:
           # No additional rollout flag or manual Worker shell is required.
           bun scripts/release-referral.ts
 
+          # Submission-fee Worker (workers/submission-fee, PRD section 6). Its
+          # reviewed mode ships off: it reads no chain and loads no key, and
+          # deployment activates nothing. The release refuses live mode
+          # unless both contracts are recorded and the Worker holds its key.
+          bun scripts/release-submission-fee.ts
+
           # Fee-wallet converter (workers/fee-converter, PRD MVP-07c). The owner
           # creates the Worker shell and its secrets once, then sets the
           # SLOP_FEE_CONVERTER_RELEASE repository variable to "enabled". The
