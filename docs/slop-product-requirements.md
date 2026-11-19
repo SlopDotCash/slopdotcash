@@ -604,6 +604,15 @@ Use Surplus Claude Sonnet 5.5 first. Use GPT-6.1 Terra or specialist investigati
 
 A passed scan means every defined check ran on the bound revision and found no malicious result. Record checks and coverage gaps. It is not a guarantee of safety. Uncovered executable content makes the scan incomplete unless a check, isolated execution, or specialist review covers it.
 
+Operator decision, 19 November 2026: admission clearance follows the scanner's own evidence, not a reviewer's hedge.
+
+- Agent-instruction checks match wording that conceals something from the user, sends a secret to a destination, overrides instructions, or hides text. Protective guidance such as "do not tell the user to buy tokens" or "never paste your token" does not match.
+- An image whose name and complete byte structure agree on PNG, JPEG, GIF or WebP is listed by digest and is not a quarantined binary. Any other undecodable or binary content stays quarantined.
+- Slop's queued canonical skill template is Slop's own code at the template digest the queue assigned. Every deterministic check reads it; it is listed by digest and is not sent to the models. Only the controller can mark a file as template input. A repository file under the reserved template prefix is a scanner gap.
+- A reviewer that marks a threat partial or missing must name what stopped it. The scanner checks each reason against what it supplied: content supplied to that call and not reviewed, a partial area without a reason, and any missing area keep the scan incomplete; content another completed batch reviewed or a deterministic check covered resolves the reason; content outside the acquired revision is recorded as `outside-revision` and is advisory. Install-time downloads the scanner finds stay scanner gaps.
+- Info, low and medium model findings are advisory and recorded. A high or critical finding from either review, suspected malice, a deterministic high or critical finding, a scanner gap, an unreleased artifact, or a review that did not complete keeps the scan incomplete. An escalated result still needs the specialist review.
+- Results recorded before this decision keep their disposition and meaning; a historical `<reviewer>:<threat>:partial` gap still blocks. The rule is qualified with real Surplus calls (`scripts/qualify-vetting-review.ts`).
+
 ### Exemptions and restrictions
 
 Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. The exemption covers each project's original repositories; a repository appended later needs its own admission scan or owner-approved exemption. Display an exemption, never a passed scan.

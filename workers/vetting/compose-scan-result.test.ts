@@ -77,6 +77,7 @@ function inspection(input: {
     ),
     deterministic: [],
     riskSignals: [],
+    media: [],
   };
 }
 

@@ -264,10 +264,17 @@ with a repository-level synthesis (`workers/vetting/ACQUISITION.md`,
 run size limit: objects are stored once by SHA-256 in private R2 in 8 MiB
 parts and referenced by every run that declares them
 (`backend/vetting/EVIDENCE.md`). Never reintroduce an entry, file, total or
-evidence size refusal, and never record a partly reviewed repository as passed. Record the
-existing-project exemption explicitly, never as a passed scan; its project-ID
-scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
-reinstatement requirements still apply.
+evidence size refusal, and never record a partly reviewed repository as passed.
+Operator decision, 19 November 2026: clearance follows the scanner's own
+evidence. Info, low and medium model findings and reviewer coverage reasons the
+scanner verifies as outside the acquired revision are advisory; unreviewed
+supplied content, a missing or unexplained coverage area, a high or critical
+finding, suspected malice and scanner gaps still block. Slop's queued template
+is checked deterministically and not sent to the models; well-formed images are
+listed by digest (PRD section 8). Record the existing-project exemption
+explicitly, never as a passed scan; its project-ID scope is unchanged. Flags,
+pauses, confirmed-malicious bans and fresh-scan reinstatement requirements
+still apply.
 
 Owner decision, 27 October 2026: the registered Umia Protocol fork may receive
 an explicit, audited normal-admission exemption through the administrator

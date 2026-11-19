@@ -1234,6 +1234,7 @@ async function retainedNativeFixture(
     files.push({
       path: `${TEMPLATE_PREFIX}/${file.path}`,
       bytes: await readAcquiredObject(acquired.directory, file.sha256),
+      templateInput: true as const,
     });
   const inspection = inspectRepository({ files });
   if (inventoryMode === "legacy" || inventoryMode === "pre-policy") {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "dca3270b10e82a24655d2d927ea5960cb75d39a013a1c8903f3d3b9fec354af4",
+  "inventorySha256": "e3617065518c62a9ce97d9fe5d1c72c3bdde52eb1ccbcc12367c9e115aa78421",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -5054,7 +5054,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 701,
+      "line": 880,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
@@ -5062,7 +5062,8 @@
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
         "formal/models/vetting/vetting_local_helpers.qnt",
-        "formal/models/vetting/vetting_path_coverage.qnt"
+        "formal/models/vetting/vetting_path_coverage.qnt",
+        "formal/models/vetting/vetting_scan_clearance_rule.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "cdata",
@@ -5116,12 +5117,13 @@
     },
     {
       "path": "workers/vetting/scanners.ts",
-      "line": 353,
+      "line": 381,
       "name": "phase",
       "kind": "string-union",
       "values": ["invalid-response", "invalid-review"],
       "models": [
         "formal/models/vetting/vetting_review_batches.qnt",
+        "formal/models/vetting/vetting_scan_clearance_rule.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "lexicallyUnmentionedValues": ["invalid-response", "invalid-review"],

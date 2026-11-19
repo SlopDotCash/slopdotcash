@@ -268,6 +268,7 @@ async function acquiredInputs(directory: string) {
     templates.push({
       path: `${TEMPLATE_PREFIX}/${input.path}`,
       bytes: await readAcquiredObject(directory, input.sha256),
+      templateInput: true,
     });
   return {
     // The result names the registered repository id the queue assigned, as
