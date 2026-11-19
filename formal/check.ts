@@ -62,6 +62,26 @@ for (const section of requirements.sections) {
   }
 }
 
+const generic = new Set(["init", "step"])
+const words = new Map<string, Set<string>>()
+const wordsOf = (spec: string) => words.get(spec) ?? words.set(spec, new Set(read(spec).toString("utf8").match(/\w+/g))).get(spec)!
+for (const model of models) {
+  const name = model.sourcePath
+  if (!exists(model.retainedPath)) gap("formal/model-map.json", `${name} retained copy ${model.retainedPath} does not exist`)
+  else if (sha256(model.retainedPath) !== model.sha256) gap("formal/model-map.json", `${name} retained copy sha256 does not match the recorded digest`)
+  for (const area of model.targetAreas) if (!exists(area)) gap("formal/model-map.json", `${name} target area ${area} does not exist`)
+  const candidates = model.candidateSuccessorSpecs ?? []
+  for (const spec of candidates) if (!exists(spec)) gap("formal/model-map.json", `${name} candidate successor ${spec} does not exist`)
+  const actions = model.actions.filter((action) => !generic.has(action))
+  const mentions = candidates.filter(exists).some((spec) => actions.some((action) => wordsOf(spec).has(action)))
+  const reason = typeof model.noSuccessor === "string" && /\S/.test(model.noSuccessor)
+  if (mentions && model.noSuccessor !== undefined) gap("formal/model-map.json", `${name} has a successor and also records noSuccessor`)
+  if (!mentions && !reason) gap("formal/model-map.json", `${name} has no candidate successor that mentions one of its actions and no noSuccessor reason`)
+}
+
+// Each retained model's action (but init and step) and scenario names the successor rule that carries it, the reason the
+// successor abstracts it away, or the gap still open in the spec that should own it.
+const reconciliation = json<{ models: Record<string, { actions: Record<string, Reconciled>; scenarios: Record<string, Reconciled> }> }>("formal/legacy-reconciliation.json").models
 const definitions = new Map<string, Set<string>>()
 /** The names a spec's Quint defines: definitions, and each sum type with its constructors (also on continued `|` lines). */
 const definedIn = (spec: string) => {
@@ -83,28 +103,6 @@ const definedIn = (spec: string) => {
   definitions.set(spec, names)
   return names
 }
-const generic = new Set(["init", "step"])
-const words = new Map<string, Set<string>>()
-const wordsOf = (spec: string) => words.get(spec) ?? words.set(spec, new Set(read(spec).toString("utf8").match(/\w+/g))).get(spec)!
-for (const model of models) {
-  const name = model.sourcePath
-  if (!exists(model.retainedPath)) gap("formal/model-map.json", `${name} retained copy ${model.retainedPath} does not exist`)
-  else if (sha256(model.retainedPath) !== model.sha256) gap("formal/model-map.json", `${name} retained copy sha256 does not match the recorded digest`)
-  for (const area of model.targetAreas) if (!exists(area)) gap("formal/model-map.json", `${name} target area ${area} does not exist`)
-  const candidates = model.candidateSuccessorSpecs ?? []
-  for (const spec of candidates) if (!exists(spec)) gap("formal/model-map.json", `${name} candidate successor ${spec} does not exist`)
-  const actions = model.actions.filter((action) => !generic.has(action))
-  const mentions = candidates.filter(exists).some((spec) => actions.some((action) => wordsOf(spec).has(action)))
-  // Prose can share a word with an action name by coincidence; only a successor whose Quint defines an action contradicts noSuccessor.
-  const defines = candidates.filter(exists).some((spec) => actions.some((action) => definedIn(spec).has(action)))
-  const reason = typeof model.noSuccessor === "string" && /\S/.test(model.noSuccessor)
-  if (defines && model.noSuccessor !== undefined) gap("formal/model-map.json", `${name} has a successor and also records noSuccessor`)
-  if (!mentions && !reason) gap("formal/model-map.json", `${name} has no candidate successor that mentions one of its actions and no noSuccessor reason`)
-}
-
-// Each retained model's action (but init and step) and scenario names the successor rule that carries it, the reason the
-// successor abstracts it away, or the gap still open in the spec that should own it.
-const reconciliation = json<{ models: Record<string, { actions: Record<string, Reconciled>; scenarios: Record<string, Reconciled> }> }>("formal/legacy-reconciliation.json").models
 const openGaps: string[] = []
 for (const name of Object.keys(reconciliation)) if (!models.some((model) => model.sourcePath === name)) gap("formal/legacy-reconciliation.json", `${name} is no model of formal/model-map.json`)
 for (const model of models) {

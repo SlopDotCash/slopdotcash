@@ -286,9 +286,11 @@ effect function startOf(plan: Plan, collection: Collection, source: number, appl
   const currentTotal = plan.current.reduce((sum, revision) => sum + revision.award.amount, 0)
   if (!sameRows(plan.previous, plan.current)) {
     // No correction is revoked (spec/points/corrections.md): a later change of the unit's total is an ordinary
-    // journal revision that moves the predecessor, so the selected baseline is stale.
-    if (currentTotal !== plan.total) throw correctionFailure("selected predecessors changed after the baseline")
-    history.push(entry(sharesOf(plan.current, actors)))
+    // journal revision that moves the predecessor. classify checks Replayed before Stale, so an applied digest
+    // stays a no-op replay (lawReplayAppendsNothing). An unapplied run is stale; its entry cannot be recorded
+    // because alwaysSourceHistory requires every row of the source history to carry the selected pool.
+    if (currentTotal === plan.total) history.push(entry(sharesOf(plan.current, actors)))
+    else if (!applied) throw correctionFailure("selected predecessors changed after the baseline")
   }
   const digest = collection.manifestDigest
   return {

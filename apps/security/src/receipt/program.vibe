@@ -144,8 +144,11 @@ effect function atReceipt(read: { readonly projectId: string; readonly receivedA
   const { manifest, raw } = try parsed(row.manifest, "project revision manifest")
   const bounty = manifest.securityBounty
   const open = bounty !== undefined && bounty.status === "open" && (bounty.capacity.closesAt === null || !(millisOf(bounty.capacity.closesAt) <= millisOf(read.receivedAt)))
-  if (!open) return { revision: row.revision, publishedAt: row.created_at, terms: undefined } satisfies ProgramAtReceipt
-  return { revision: row.revision, publishedAt: row.created_at, terms: try frozenTerms(bounty, raw), excludedFindings: exclusionLengths(scopeExclusions(member(raw, "securityBounty"))) } satisfies ProgramAtReceipt
+  // A published revision in force at receipt is a scope (spec/security/program.md receiptTerms): its owner exclusion
+  // lines are frozen whether or not the offer is open. An unpublished program (no bounty) gives none.
+  const excludedFindings = bounty === undefined ? undefined : exclusionLengths(scopeExclusions(member(raw, "securityBounty")))
+  if (!open) return { revision: row.revision, publishedAt: row.created_at, terms: undefined, excludedFindings } satisfies ProgramAtReceipt
+  return { revision: row.revision, publishedAt: row.created_at, terms: try frozenTerms(bounty, raw), excludedFindings } satisfies ProgramAtReceipt
 }
 
 function unbanned(githubId: string): Statement {
@@ -182,7 +185,11 @@ function assetOf(terms: FrozenTerms) {
 
 export function receiptTermsOf(program: ProgramAtReceipt, publishedAtMs: number, receivedAtMs: number): ReceiptTerms {
   const terms = program.terms
-  if (terms === undefined) return unpaidTerms(program.revision, receivedAtMs)
+  if (terms === undefined) {
+    const unpaid = unpaidTerms(program.revision, receivedAtMs)
+    // Pending approval, paused and closed revisions are published: unpaid terms scoped by their exclusion lines.
+    return program.excludedFindings === undefined ? unpaid : { ...unpaid, scoped: true, excludedFindings: [...program.excludedFindings] }
+  }
   return {
     revision: program.revision,
     publishedAt: publishedAtMs,
