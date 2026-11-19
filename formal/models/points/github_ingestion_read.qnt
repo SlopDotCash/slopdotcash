@@ -2,6 +2,7 @@
 // @source scripts/github-discussion-cache.ts
 // @source scripts/restore-leaderboard-discussions.py
 // @source workers/slopbot/github.ts
+// @source .github/workflows/deploy.yml
 // @evidence scripts/github-ingestion-read.test.ts
 // @evidence scripts/github-discussion-cache.test.ts
 // Reads may wait for an observed rate limit: an exhausted primary window,
@@ -13,6 +14,12 @@
 // preserve the quota retry count. Tests cover URLs, delays, and caller signals.
 module github_ingestion_read {
   pure val limitSignals = Set("primary","retryAfter","status429","secondaryMessage")
+  pure def collectionDeadline(setupSeconds: int): int =
+    if (setupSeconds + 20700 < 20820) setupSeconds + 20700 else 20820
+  pure def quotaResetFits(setupSeconds: int, resetSeconds: int): bool =
+    setupSeconds < collectionDeadline(setupSeconds) and resetSeconds < collectionDeadline(setupSeconds)
+  pure def hardStop(setupSeconds: int, attemptSeconds: int): int =
+    attemptSeconds + (collectionDeadline(setupSeconds) - attemptSeconds) + 110
   var s: {phase:str,read:bool,attempt:int,limited:bool,success:bool,
     cache:bool,conditional:bool,confirmed:bool,replayed:bool,signal:str,
     filePage:str,fileRetries:int,gatewayRetries:int}
@@ -130,4 +137,11 @@ module github_ingestion_read {
     .then(validatorMismatch).then(revalidate.fail())
   run timedOutCheckpointCannotPublishTest = init.then(restore).then(request).then(limit)
     .then(checkpoint).expect(not(s.success) and invariant).then(request.fail())
+  run additionalQuotaResetLeavesBundleTimeTest = init
+    .expect(quotaResetFits(157, 20184) and 21600 - collectionDeadline(157) - 110 == 670)
+  run quotaWaitAtAbsoluteDeadlineRefusesTest = init
+    .expect(not(quotaResetFits(157, 20820)) and not(quotaResetFits(20820, 20819)))
+  run feedRetryDoesNotExtendPreparationWindowTest = init
+    .expect(hardStop(157, 157) == 20930 and hardStop(157, 217) == 20930
+      and not(quotaResetFits(157, 20760 + 60)))
 }
