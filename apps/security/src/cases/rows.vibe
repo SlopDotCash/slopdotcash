@@ -173,7 +173,6 @@ function triageOf(events: ReadonlyArray<EventRow>, triages: ReadonlyArray<Triage
     belowFloor: reasons.includes("confidence-below-floor"),
     returnDraft: latest.proposed_outcome === "return",
     exclusions: latest.state === "complete" ? receiptExclusions(terms) : noTriage.exclusions,
-    matchedLine: 0,
   }
 }
 
