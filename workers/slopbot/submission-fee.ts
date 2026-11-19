@@ -761,20 +761,42 @@ export async function gateSubmissionFee(
     .run();
   if (!(await scopeAllowed(db, job, "contributor")))
     throw new Error("Repository is not active in the Slop project registry");
-  const commentId = await writeFeeComment(
-    env,
-    github,
-    job,
-    gate?.comment_id ?? null,
-    feeNeededComment(
-      commentFacts(
-        job,
-        { item, stable_minor: fee.amountMinor },
-        feeWays(fee.amountMinor, await feeRates(db), at),
+  let commentId: number;
+  try {
+    commentId = await writeFeeComment(
+      env,
+      github,
+      job,
+      gate?.comment_id ?? null,
+      feeNeededComment(
+        commentFacts(
+          job,
+          { item, stable_minor: fee.amountMinor },
+          feeWays(fee.amountMinor, await feeRates(db), at),
+        ),
       ),
-    ),
-  );
-  await addLabel(github, job, FEE_NEEDED_LABEL);
+    );
+    await addLabel(github, job, FEE_NEEDED_LABEL);
+  } catch (error) {
+    // The queue retries this job a minute later, inside its own lease, and
+    // nothing else asks again. Hand the lease back as run out, so the retry
+    // takes the ask; a comment already posted is found again by its marker.
+    // If this write fails too, the lease runs out as before.
+    await db
+      .prepare(
+        `UPDATE slopbot_fee_gates SET updated_at = ?
+         WHERE repository_id = ? AND pull_number = ? AND state = 'asking' AND updated_at = ?`,
+      )
+      .bind(
+        new Date(Date.parse(at) - FEE_ASK_LEASE_MS).toISOString(),
+        job.repositoryId,
+        job.number,
+        at,
+      )
+      .run()
+      .catch(() => undefined);
+    throw error;
+  }
   await db
     .prepare(
       `UPDATE slopbot_fee_gates SET state = 'asked', comment_id = ?, updated_at = ?

@@ -9232,7 +9232,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "156054fe1e6a47a705359497c0525d34567f32c569e2e2898d813163dcf129eb",
+      "sha256": "4b637a9d015bb29d045fa80da43925c66b3f0f769a75931a08cc6fb0881b8661",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
@@ -9240,8 +9240,9 @@
       "candidateLines": [
         303, 323, 334, 343, 345, 347, 356, 412, 433, 438, 445, 448, 450, 484,
         485, 487, 488, 499, 505, 530, 539, 540, 568, 657, 671, 704, 712, 720,
-        722, 724, 725, 726, 747, 749, 780, 781, 842, 868, 908, 912, 918, 942,
-        955, 971, 992, 1015, 1025, 1048, 1052, 1096, 1097, 1099, 1124
+        722, 724, 725, 726, 747, 749, 781, 782, 784, 787, 788, 802, 803, 864,
+        890, 930, 934, 940, 964, 977, 993, 1014, 1037, 1047, 1070, 1074, 1118,
+        1119, 1121, 1146
       ],
       "review": "mapped-abstraction"
     },
@@ -16846,7 +16847,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "17b4680b2f1fe6ceacb9a98edd8a861d2ee99b3bfcf9ff7a580455892242e7c0",
+      "sha256": "d2dee86df3047b80920ffa25759b8c141d022e4f73949d2594fca86187fe66aa",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
