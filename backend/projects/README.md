@@ -76,6 +76,32 @@ answers HTTP 410 for a restricted project.
 
 Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
 
+To change the primary integration branch, commit an updated
+`.github/slop-project.json` to that branch. The declaration must name the
+registered project, repository, steward, terms revision, and new branch.
+Send a same-origin JSON `PUT /api/v1/projects/:id` from the signed-in GitHub
+repository administrator's Slop.cash session. Use the current registry
+revision and the exact GitHub branch head.
+
+```json
+{
+  "expectedRevision": 8,
+  "integrationBranch": {
+    "name": "vibestack",
+    "commitSha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "reason": "The maintainers moved integration to vibestack."
+}
+```
+
+An optional `contribution` object updates the full contribution instructions
+in the same revision. Slop verifies the administrator and repository through
+the current Slopbot installation, reads the declaration at the exact commit,
+and checks that commit still heads the requested branch. Reload after a
+conflict. The revision preserves project status, repository identity,
+admission requirements, terms, funding, and previous revisions. Verify the
+public project and both generated skill manifests after publication.
+
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
 changes only status and listing tier, and never invokes setup activation.

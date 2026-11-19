@@ -25,7 +25,10 @@ import {
   type RepositoryIdentity,
   validRepositoryPath,
 } from "../../src/lib/project-contracts";
-import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import {
+  assertProjectPolicyTransition,
+  type VerifiedBranchChange,
+} from "../../src/lib/project-policy.mjs";
 import { appendedRepositories } from "../../src/lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
@@ -34,6 +37,7 @@ import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
+  validIntegrationBranch,
 } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
@@ -107,10 +111,12 @@ import {
   listOwnedRepositories,
   lookupGitHubActor,
   lookupGitHubRepository,
+  readIntegrationBranchAuthority,
   validGithubLogin,
 } from "./github-lookup";
 import {
   type AccessCheck,
+  manifestMatchesRepository,
   projectSetupStatus,
   type RepositoryAccessReader,
   readListedRepositoryAccess,
@@ -1854,11 +1860,18 @@ async function publishOwnerRevision(
   const actor = stored?.actor ?? actorOf(await requireSession(request, deps));
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
   const body = stored?.body ?? (await readStrictJsonObject(request));
-  exactKeys(
-    body,
-    ["manifest", "expectedRevision"],
-    ["reason", "monthlyAmount", "bountyAmount"],
-  );
+  if (body.integrationBranch === undefined)
+    exactKeys(
+      body,
+      ["manifest", "expectedRevision"],
+      ["reason", "monthlyAmount", "bountyAmount"],
+    );
+  else
+    exactKeys(
+      body,
+      ["integrationBranch", "expectedRevision"],
+      ["reason", "contribution"],
+    );
   const expectedRevision = positiveInteger(
     body.expectedRevision,
     "expectedRevision",
@@ -1868,9 +1881,10 @@ async function publishOwnerRevision(
       ? null
       : boundedText(body.reason, "reason", 1, 500);
   if (
-    typeof body.manifest !== "object" ||
-    body.manifest === null ||
-    Array.isArray(body.manifest)
+    body.integrationBranch === undefined &&
+    (typeof body.manifest !== "object" ||
+      body.manifest === null ||
+      Array.isArray(body.manifest))
   )
     fail(422, "invalid_manifest", "Project manifest is invalid");
   const current = await deps.persistence.getProject(projectId);
@@ -1896,6 +1910,19 @@ async function publishOwnerRevision(
   // never authorize private funding reads or a revision of another project.
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
+  if (body.integrationBranch !== undefined)
+    return publishIntegrationBranch(
+      request,
+      deps,
+      current,
+      actor,
+      checked.access,
+      {
+        selection: body.integrationBranch,
+        contribution: body.contribution,
+        note,
+      },
+    );
   // An appended repository's permanent GitHub id must be new to the registry.
   const submittedRepositories = (body.manifest as Record<string, unknown>)
     .repositories;
@@ -2061,6 +2088,128 @@ async function publishOwnerRevision(
     },
     setup,
   });
+}
+
+function branchDeclarationMatches(
+  value: unknown,
+  current: ProjectDefinition,
+  repository: string,
+  branch: string,
+): boolean {
+  if (!value || typeof value !== "object") return false;
+  const declaration = value as Record<string, unknown>;
+  const target = declaration.repository;
+  const steward = declaration.steward;
+  if (
+    !target ||
+    typeof target !== "object" ||
+    !steward ||
+    typeof steward !== "object"
+  )
+    return false;
+  const targetFields = target as Record<string, unknown>;
+  const stewardFields = steward as Record<string, unknown>;
+  return (
+    declaration.kind === "slop-project-authority" &&
+    declaration.schemaVersion === "1" &&
+    declaration.projectId === current.id &&
+    declaration.policyRevision === current.terms.revision &&
+    targetFields.fullName === repository &&
+    targetFields.id === current.authority.repositoryId &&
+    targetFields.integrationBranch === branch &&
+    stewardFields.actorId === current.steward.github.actorId &&
+    stewardFields.nodeId === current.steward.github.nodeId
+  );
+}
+
+async function publishIntegrationBranch(
+  request: Request,
+  deps: ProjectApiDependencies,
+  current: ProjectRecord,
+  actor: GithubActor,
+  access: AccessCheck,
+  input: { selection: unknown; contribution: unknown; note: string | null },
+): Promise<Response> {
+  const project = current.manifest;
+  const [primary, ...additional] = project.repositories;
+  if (
+    access.state !== "read" ||
+    access.access.installation !== "installed" ||
+    access.access.permission !== "admin" ||
+    !access.access.repository ||
+    !manifestMatchesRepository(project, access.access.repository)
+  )
+    fail(
+      403,
+      "authority_required",
+      "The integration branch requires current GitHub repository admin permission.",
+    );
+  const facts = access.access.repository;
+  const repository = facts.full_name;
+  if (
+    !input.selection ||
+    typeof input.selection !== "object" ||
+    Array.isArray(input.selection)
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Expected an integration branch and its GitHub commit.",
+    );
+  const selection = input.selection as Record<string, unknown>;
+  exactKeys(selection, ["name", "commitSha"]);
+  const { name, commitSha } = selection;
+  if (
+    typeof name !== "string" ||
+    !validIntegrationBranch(name) ||
+    typeof commitSha !== "string" ||
+    !/^[0-9a-f]{40}$/u.test(commitSha)
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Expected an integration branch and its GitHub commit.",
+    );
+  if (primary.integrationBranch === name)
+    fail(422, "no_change", "The integration branch is unchanged.");
+  if (project.listingTier === "retired")
+    fail(
+      409,
+      "project_restricted",
+      "A retired project cannot change integration branches.",
+    );
+  const { manifest } = canonicalManifest({
+    ...project,
+    repositories: [{ ...primary, integrationBranch: name }, ...additional],
+    ...(input.contribution === undefined
+      ? {}
+      : { contribution: input.contribution }),
+  });
+  const proof = await readIntegrationBranchAuthority(
+    deps.github,
+    { numericId: facts.id, nodeId: facts.node_id },
+    name,
+    commitSha,
+  );
+  if (!branchDeclarationMatches(proof, project, repository, name))
+    fail(
+      422,
+      "branch_proof_required",
+      "The selected commit must contain a matching .github/slop-project.json declaration.",
+    );
+  const updated = await appendRevision(request, deps, {
+    current,
+    manifest,
+    actor,
+    ownerParticipation: true,
+    verifiedBranchChange: {
+      repositoryId: primary.id,
+      from: primary.integrationBranch,
+      to: name,
+    },
+    reason: `Owner integration branch change by @${actor.githubLogin}: ${primary.integrationBranch} to ${name} at ${commitSha}.${input.note ? ` ${input.note}` : ""}`,
+  });
+  return json(200, { project: adminProject(updated) });
 }
 
 /** Removes public participation while preserving registry and financial history. */
@@ -2414,6 +2563,7 @@ async function appendRevision(
     applicationId?: string;
     /** Recheck owner eligibility within the guarded enforcement snapshot. */
     ownerParticipation?: true;
+    verifiedBranchChange?: VerifiedBranchChange;
     /** Recheck a maintainer removal within the same snapshot. */
     removal?: true;
   },
@@ -2451,7 +2601,11 @@ async function appendRevision(
       enforcements.filter((record) => record.projectId !== projectId),
     );
   try {
-    assertProjectPolicyTransition(current.manifest, manifest);
+    assertProjectPolicyTransition(
+      current.manifest,
+      manifest,
+      input.verifiedBranchChange,
+    );
     assertPayoutExclusionTransition(current.manifest, manifest, deps.now());
   } catch (error) {
     invalidManifest(error);
