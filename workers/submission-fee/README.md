@@ -11,11 +11,19 @@ The Worker reads the contract, records each deposit, judges whether it pays
 for its pull request, marks that pull request paid, and sends what Slopbot's
 row says is due. It decides nothing about merges or closes.
 
-**It ships `off`.** The contracts were deployed on 19 November 2026 and their
+**It runs record-only (`dry_run`) since 19 November 2026.** The contracts were deployed on 19 November 2026 and their
 addresses and start blocks are in `src/lib/submission-fee.mjs`
-(`contracts/DEPLOY-MAINNET.md`). Their resolver is still the unusable address
-`0x000000000000000000000000000000000000dEaD`, and while the mode is `off` no
-network is read.
+(`contracts/DEPLOY-MAINNET.md`). Their resolver is this Worker's address,
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, and the Worker holds its key as
+`SUBMISSION_FEE_RESOLVER_KEY`. In `dry_run` both networks are read and the key
+is not loaded.
+
+The default Base endpoint is `https://base-rpc.publicnode.com`:
+`mainnet.base.org` refuses `eth_getLogs`. On 19 November 2026 a local
+record-only run of this Worker read both real chains cleanly with it and
+failed on Base with `mainnet.base.org`. A public endpoint is enough for
+record-only. Before `live`, set a keyed Base endpoint as the optional secret
+`RPC_URL_SUBMISSION_FEE_BASE`: the Worker acts on what its endpoint reports.
 
 ## What runs
 
@@ -207,21 +215,23 @@ with its resolve transaction, whose `kept_to` is that fee wallet and whose
 token is the asset asked about. Kept SLOP goes to the burn address and is not
 income. Refunds and reclaims are not income.
 
-## Going live (steps 1 and 2 done 19 November 2026; each step is the operator's)
+## Going live (steps 1 to 4 done 19 November 2026; each step is the operator's)
 
 1. Done. `SubmissionDeposits` is deployed on Base and Robinhood Chain
-   (`contracts/DEPLOY-MAINNET.md`), with the unusable address as resolver.
+   (`contracts/DEPLOY-MAINNET.md`).
 2. Done. Both addresses and their deployment blocks are in
    `SUBMISSION_FEE_CONTRACTS` and `SUBMISSION_FEE_START_BLOCKS`
    (`src/lib/submission-fee.mjs`).
-3. Install the resolver key as the Worker secret
-   `SUBMISSION_FEE_RESOLVER_KEY` (`wrangler secret put
-   SUBMISSION_FEE_RESOLVER_KEY --config workers/submission-fee/wrangler.toml`,
-   hidden prompt). Never pass it to CI. Fund its address with a little ETH on
-   each network.
-4. Set the mode to `dry_run` in a reviewed change and read a few days of
-   `submission_fee_sends` rows.
-5. Set the mode to `live` in its own reviewed change. The release refuses
+3. Done. The resolver key is the Worker secret
+   `SUBMISSION_FEE_RESOLVER_KEY`, set through a hidden prompt and never
+   passed to CI. Its address `0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`
+   holds a little ETH on each network, and the owner named it with
+   `setResolver` on both contracts.
+4. Done. The mode is `dry_run`. Read a few days of `submission_fee_sends`
+   rows before the next step.
+5. Set a keyed Base endpoint as `RPC_URL_SUBMISSION_FEE_BASE`, then set the
+   mode to `live` in its own reviewed change, together with Slopbot's mode
+   and `SUBMISSION_FEE_SWITCHED_ON`. The release refuses
    `live` unless both contracts and start blocks are set and the Worker holds
    the key.
 

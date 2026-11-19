@@ -342,8 +342,8 @@ keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned). Slopbot
 moves no money, never closes a pull request for an unpaid fee, and never
 blocks a maintainer's own review or merge; scoring does not read the fee.
 `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `off`, `dry_run`
-or `live` and ships `off`; `live` needs its own reviewed change after the
-deposit contracts are deployed. Automatic closure is limited to verified
+or `live`. It is `dry_run` since 19 November 2026: Slopbot records what it
+would ask and writes nothing to GitHub. `live` needs its own reviewed change. Automatic closure is limited to verified
 Slop-skill participants, excluding maintainers: a slop.cash member whose own
 authenticated Slop run records a `pull_request_opened` event for that exact PR
 (PRD section 11). A copied marker is never proof. An uncertain finding goes to
