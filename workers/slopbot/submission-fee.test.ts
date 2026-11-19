@@ -187,6 +187,8 @@ function world(options: WorldOptions = {}) {
     draft: options.draft ?? false,
     head: "b".repeat(40),
     labels: [] as string[],
+    /** Runs when Slopbot removes a label, before GitHub answers. */
+    onLabelRemoved: null as (() => void) | null,
     comments: [] as Comment[],
     permission: options.permission ?? ("read" as "read" | "write"),
   };
@@ -342,6 +344,7 @@ function world(options: WorldOptions = {}) {
       }
       const labelPath = /\/issues\/5\/labels\/(.+)$/u.exec(path);
       if (labelPath && method === "DELETE") {
+        github.onLabelRemoved?.();
         if (!github.labels.includes(labelPath[1]))
           return new Response(null, { status: 404 });
         github.labels = github.labels.filter((name) => name !== labelPath[1]);
@@ -954,6 +957,25 @@ test.each([
       expect(await w.review()).toBe(FEE_NEEDED_REASON);
       expect(w.item()).toMatchObject({ item, paid_at: null });
     }
+  } finally {
+    w.close();
+  }
+});
+
+test("a deposit accepted while the ask is taken back keeps its paid row", async () => {
+  const w = world();
+  try {
+    await w.review();
+    // The submission-fee Worker marks the row paid after Slopbot read it as
+    // unpaid and while it takes the ask back.
+    w.github.onLabelRemoved = () => w.pay("2026-11-15T00:00:00.000Z");
+    w.github.permission = "write";
+    await w.review();
+    expect(w.gate()).toMatchObject({
+      state: "released",
+      reason: "author-exempt",
+    });
+    expect(w.item()).toMatchObject({ paid_at: "2026-11-15T00:00:00.000Z" });
   } finally {
     w.close();
   }
