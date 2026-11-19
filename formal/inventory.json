@@ -4290,11 +4290,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "82c5ad993a8aec6048fc1c1e26007d0b2914253f7aa7628b09b25f9eb01cd5b2",
+      "sha256": "5966d5d312df8cf9f5a1cf7575e36ecc2d1138c7c1d92af5c6df648e33c83928",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 220, 222, 257, 279, 289, 294, 298, 302,
-        306, 309, 310, 320, 329, 351, 361, 370, 378
+        35, 53, 86, 107, 109, 127, 165, 226, 228, 263, 285, 295, 300, 304, 308,
+        312, 315, 316, 326, 335, 357, 367, 376, 384
       ],
       "review": "mapped-abstraction"
     },
