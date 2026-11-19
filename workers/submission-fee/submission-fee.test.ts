@@ -1240,7 +1240,13 @@ describe("the switch", () => {
   test("with the contract addresses still unset it reads nothing and says so", async () => {
     const t = setup();
     let chains = 0;
+    const unpublished = (config: SubmissionFeeConfig): SubmissionFeeConfig => ({
+      ...config,
+      networks: [],
+      unset: ["base-mainnet", "robinhood-mainnet"],
+    });
     const result = await runDeposits(env("dry_run", t.db), undefined, {
+      config: unpublished,
       chain: () => {
         chains += 1;
         return t.chain;
@@ -1254,7 +1260,9 @@ describe("the switch", () => {
     });
     expect(chains).toBe(0);
     // Live with no deployed contract needs no key and does nothing either.
-    expect(await runDeposits(env("live", t.db))).toMatchObject({
+    expect(
+      await runDeposits(env("live", t.db), undefined, { config: unpublished }),
+    ).toMatchObject({
       status: "ran",
       networks: [],
     });

@@ -26,10 +26,22 @@ export const SUBMISSION_FEE_TOKENS = {
     slop: "0xfeb4E36FA4a2A494FF25ae4a63491e4c584A67AE",
   },
 };
+/**
+ * The `SubmissionDeposits` contracts, deployed 19 November 2026 by the same
+ * deployer at the same nonce, so both chains share one address
+ * (`contracts/DEPLOY-MAINNET.md`, "Submission fee deposit contracts").
+ */
 export const SUBMISSION_FEE_CONTRACTS = {
-  "base-mainnet": null,
-  "robinhood-mainnet": null,
-}; // set after deploy
+  "base-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
+  "robinhood-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
+};
+/**
+ * True only while Slopbot asks contributors for the fee, which is while
+ * `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `live`. The
+ * owner's settings page says the fee is not switched on while this is false.
+ * A test holds the two together; change them in the same reviewed change.
+ */
+export const SUBMISSION_FEE_SWITCHED_ON = false;
 export const SUBMISSION_FEE_DEFAULT_MINOR = "2000000"; // 2.00, six decimals
 export const SUBMISSION_FEE_MIN_MINOR = "1000000";
 export const SUBMISSION_FEE_MAX_MINOR = "10000000";
@@ -38,13 +50,12 @@ export const SUBMISSION_FEE_REFUND_UNDECIDED_DAYS = 14;
 export const SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS = 7;
 
 /**
- * The block of each contract's deployment, where its event scan starts. Set
- * with the address after deploy; a network with an address and no start
- * block is refused.
+ * The block of each contract's deployment, where its event scan starts. A
+ * network with an address and no start block is refused.
  */
 export const SUBMISSION_FEE_START_BLOCKS = {
-  "base-mainnet": null,
-  "robinhood-mainnet": null,
+  "base-mainnet": 59572869,
+  "robinhood-mainnet": 118349901,
 };
 export const SUBMISSION_FEE_CHAIN_IDS = {
   "base-mainnet": 8453,
@@ -430,8 +441,8 @@ export function nextSlopRate({ current, at, week, day }) {
 
 /**
  * Every way to pay a stablecoin fee at `at`: one entry per network and
- * accepted token, with the amount in base units, the contract (null until it
- * is deployed) and where a kept fee goes. SLOP is listed only while a rate is
+ * accepted token, with the amount in base units, the contract (null for a
+ * network without one) and where a kept fee goes. SLOP is listed only while a rate is
  * in force.
  */
 export function submissionFeeOptions(stableMinor, rates, at, terms = {}) {

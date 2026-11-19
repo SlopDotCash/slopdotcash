@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import {
   SUBMISSION_FEE_BURN,
+  SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_KEPT_TO,
   SUBMISSION_FEE_TOKENS,
   submissionFeeItem,
@@ -118,7 +119,7 @@ test("an unpaid pull request lists each way to pay what was asked", async () => 
       {
         network: "base-mainnet",
         chainId: 8453,
-        contract: null,
+        contract: SUBMISSION_FEE_CONTRACTS["base-mainnet"],
         token: SUBMISSION_FEE_TOKENS["base-mainnet"].usdc,
         symbol: "USDC",
         decimals: 6,
@@ -129,7 +130,7 @@ test("an unpaid pull request lists each way to pay what was asked", async () => 
       {
         network: "robinhood-mainnet",
         chainId: 4663,
-        contract: null,
+        contract: SUBMISSION_FEE_CONTRACTS["robinhood-mainnet"],
         token: SUBMISSION_FEE_TOKENS["robinhood-mainnet"].usdg,
         symbol: "USDG",
         decimals: 6,
@@ -140,7 +141,7 @@ test("an unpaid pull request lists each way to pay what was asked", async () => 
       {
         network: "robinhood-mainnet",
         chainId: 4663,
-        contract: null,
+        contract: SUBMISSION_FEE_CONTRACTS["robinhood-mainnet"],
         token: SUBMISSION_FEE_TOKENS["robinhood-mainnet"].slop,
         symbol: "SLOP",
         decimals: 18,
