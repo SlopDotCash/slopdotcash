@@ -57,6 +57,7 @@ export declare const SUBMISSION_FEE_TOKENS: SubmissionFeeTokenTable;
 export declare const SUBMISSION_FEE_CONTRACTS: Readonly<
   Record<SubmissionFeeNetwork, string | null>
 >;
+export declare const SUBMISSION_FEE_SWITCHED_ON: boolean;
 export declare const SUBMISSION_FEE_DEFAULT_MINOR: string;
 export declare const SUBMISSION_FEE_MIN_MINOR: string;
 export declare const SUBMISSION_FEE_MAX_MINOR: string;
