@@ -10,13 +10,13 @@ const workflow = await readFile(
   new URL("../.github/workflows/deploy.yml", import.meta.url),
   "utf8",
 );
-test("retained and fresh preparation have separate lanes with one production lock", () => {
+test("retained and fresh preparation have separate lanes, fresh main collections share one, with one production lock", () => {
   const prepare = workflow
     .split("  prepare:\n")[1]
     .split("    # The public elizaOS")[0];
   const group =
     // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
-    "group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}";
+    "group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || 'collect') || github.event_name }}";
   const cancellation =
     // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
     "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
