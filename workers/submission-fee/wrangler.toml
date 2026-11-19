@@ -25,9 +25,11 @@ migrations_dir = "../../migrations"
 # requests paid and records the list it would send; it loads no key and signs
 # nothing. live also signs and sends the resolver's transactions, and is
 # refused by the release unless both contracts and the key are in place.
-# Going live is its own reviewed change. Record-only since 19 November 2026
-# (operator decision).
-SUBMISSION_FEE_MODE = "dry_run"
+# Going live is its own reviewed change. Record-only was switched on at
+# 18:06 UTC on 19 November 2026 and off again the same hour: every scheduled
+# run reported a failed read on both networks from Cloudflare, although the
+# same run reads both chains from outside it. Off until that is understood.
+SUBMISSION_FEE_MODE = "off"
 # Resolver gas ceilings: 0.0002 ETH for one transaction, 0.002 ETH in one UTC
 # day on each network. A transaction that would pass either is not signed.
 SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI = "200000000000000"
