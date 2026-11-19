@@ -4282,9 +4282,9 @@
     },
     {
       "path": "scripts/github-discussion-cache.ts",
-      "sha256": "cf3e5b0229723a69bc831ab6d4205f5b5cb8e1faea600e0db2b2835f3eb329a5",
+      "sha256": "fa4c85dee437214e4e1d243c4e16f8601b5e1105975cf0d6a92c9d06f0c06e3f",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
-      "candidateLines": [8, 10, 31, 69, 91, 189, 282, 287, 292, 295],
+      "candidateLines": [8, 10, 37, 75, 97, 132, 271, 276, 281, 284, 367],
       "review": "mapped-abstraction"
     },
     {
@@ -5007,7 +5007,7 @@
     },
     {
       "path": "scripts/restore-leaderboard-discussions.py",
-      "sha256": "fbad1d73552db5cf098be1cd0365a8f58839fbdee92f92e5e1c14022ef817baa",
+      "sha256": "1d1b7a6e3815a85212f775653c1cf8cc6283d3a0dc15448108319c00e2d83926",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [56, 160, 173],
       "review": "mapped-abstraction"
