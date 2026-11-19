@@ -4980,9 +4980,9 @@
     },
     {
       "path": "scripts/release-submission-fee.ts",
-      "sha256": "e489e8076bc009b6035d0e24f23e6166549dcb4badbeaaeeb863e12065dfb8e5",
+      "sha256": "c7f6f70aef18786e2098911c1f40f17a06eb38075083598a9f99167c9b7e21e9",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
-      "candidateLines": [158, 160, 167],
+      "candidateLines": [183, 217, 219, 226],
       "review": "mapped-abstraction"
     },
     {

@@ -26,12 +26,21 @@ addresses and start blocks are in `src/lib/submission-fee.mjs`
 `SUBMISSION_FEE_RESOLVER_KEY`. In `dry_run` both networks are read and the key
 is not loaded.
 
+**Endpoints.** From Cloudflare both public endpoints refuse this Worker's
+log reads: one record-only pass run as a preview on Cloudflare's network on
+19 November 2026 reported `chain.events/LimitExceededRpcError:code--32005`
+for Base and `chain.events/RpcRequestError:code-429` for Robinhood Chain.
+The release therefore binds the two optional secrets
+`RPC_URL_SUBMISSION_FEE_BASE` and `RPC_URL_SUBMISSION_FEE_ROBINHOOD` from the
+`PAYMENT_RPC_URLS` map the payment Workers already read
+(`scripts/release-submission-fee.ts`), once, when the Worker does not hold
+them. To replace one, delete the Worker secret and release again.
+
 The default Base endpoint is `https://base-rpc.publicnode.com`:
 `mainnet.base.org` refuses `eth_getLogs`. On 19 November 2026 a local
 record-only run of this Worker read both real chains cleanly with it and
-failed on Base with `mainnet.base.org`. A public endpoint is enough for
-record-only. Before `live`, set a keyed Base endpoint as the optional secret
-`RPC_URL_SUBMISSION_FEE_BASE`: the Worker acts on what its endpoint reports.
+failed on Base with `mainnet.base.org`. The defaults are a fallback for a
+run outside Cloudflare only.
 
 ## What runs
 
@@ -237,9 +246,8 @@ income. Refunds and reclaims are not income.
    `setResolver` on both contracts.
 4. Set the mode to `dry_run` once its reads work from Cloudflare (see the
    top of this file), and read a few days of `submission_fee_sends` rows.
-5. Set a keyed Base endpoint as `RPC_URL_SUBMISSION_FEE_BASE`, then set the
-   mode to `live` in its own reviewed change, together with Slopbot's mode
-   and `SUBMISSION_FEE_SWITCHED_ON`. The release refuses
+5. Set the mode to `live` in its own reviewed change, together with
+   Slopbot's mode and `SUBMISSION_FEE_SWITCHED_ON`. The release refuses
    `live` unless both contracts and start blocks are set and the Worker holds
    the key.
 
