@@ -6,7 +6,9 @@ import {
   averageSlopRate,
   nextSlopRate,
   SUBMISSION_FEE_BURN,
+  SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_KEPT_TO,
+  SUBMISSION_FEE_START_BLOCKS,
   SUBMISSION_FEE_TOKENS,
   slopFeeBase,
   slopFeeDueAt,
@@ -687,7 +689,7 @@ describe("the ways to pay", () => {
     expect(options[0]).toEqual({
       network: BASE,
       chainId: 8453,
-      contract: null,
+      contract: SUBMISSION_FEE_CONTRACTS[BASE],
       token: USDC,
       symbol: "USDC",
       decimals: 6,
@@ -704,6 +706,29 @@ describe("the ways to pay", () => {
       minimumAccepted: slop("100"),
       keptTo: SUBMISSION_FEE_BURN,
     });
+  });
+
+  test("each network's deployed contract and its start block are published", () => {
+    for (const network of [BASE, RC] as const) {
+      expect(SUBMISSION_FEE_CONTRACTS[network]).toBe(
+        "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
+      );
+      expect(
+        submissionFeeOptions("2000000", [], AT).find(
+          (option) => option.network === network,
+        )?.contract,
+      ).toBe(SUBMISSION_FEE_CONTRACTS[network]);
+    }
+    expect(SUBMISSION_FEE_START_BLOCKS).toEqual({
+      [BASE]: 59572869,
+      [RC]: 118349901,
+    });
+    // A network without a contract is listed with none.
+    expect(
+      submissionFeeOptions("2000000", [], AT, {
+        contracts: { [BASE]: null, [RC]: null },
+      }).map((option) => option.contract),
+    ).toEqual([null, null]);
   });
 
   test("every listed option is one a deposit of that amount satisfies", () => {
