@@ -75,7 +75,7 @@ import { signedVettingFetch, vettingServiceSigner } from "./service";
  * runtime is not required (PRD section 8). Every other acquisition gap
  * (submodules, links, LFS objects) still keeps the source surface partial.
  */
-const COVERED_BY_BOUNDED_SCAN = new Set([
+export const COVERED_BY_BOUNDED_SCAN = new Set([
   "execution-dependencies-and-release-assets-not-acquired",
   "skill-template-inputs-not-acquired",
   "runtime-and-model-review-not-performed",

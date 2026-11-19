@@ -4838,9 +4838,9 @@
     },
     {
       "path": "scripts/qualify-vetting-review.ts",
-      "sha256": "733dafca06efc2860e2b859adcb2155355f42299760df84322da69e2672ae708",
+      "sha256": "0be6232f3ccc9a7c6139291931a4c03ca06f343fce279862b38cd0fbdb882e92",
       "models": ["formal/models/vetting/vetting_scan_clearance_rule.qnt"],
-      "candidateLines": [80, 98, 179, 203, 228],
+      "candidateLines": [81, 99, 180, 205, 230],
       "review": "mapped-abstraction"
     },
     {
@@ -10182,7 +10182,7 @@
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "a1d4c84081f321f12e939209912f3ab9c577a548609895319e5c2eaf8b5defba",
+      "sha256": "522e21329e79682cd3b6209077c26103e3b9234b34de8d90927cf2a8e668f0f7",
       "models": [
         "formal/models/vetting/pr_review_retry.qnt",
         "formal/models/vetting/vetting_acquisition.qnt",
@@ -10192,14 +10192,14 @@
         "formal/models/vetting/vetting_scan_clearance_rule.qnt"
       ],
       "candidateLines": [
-        14, 124, 514, 574, 591, 594, 595, 604, 611, 612, 657, 682, 774, 781,
-        801, 823, 851, 881
+        14, 124, 514, 574, 591, 594, 595, 604, 611, 612, 657, 676, 681, 685,
+        693, 785, 792, 812, 834, 862, 892
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "6be5990ea377e92d6541e6faaf1bad48382753acb5b689379cd89d9901d359c7",
+      "sha256": "f517275eb9be4075947bee5b80268cfe3dff81cd139bf0e86d5abdd8ac7b624c",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",

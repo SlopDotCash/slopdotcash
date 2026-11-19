@@ -673,7 +673,18 @@ function combine(
     findings,
     usage,
     cost,
-    visibilityGaps: [...new Set(results.flatMap((r) => r.visibilityGaps))],
+    // One reviewer entry per threat: the combined verified state.
+    visibilityGaps: [
+      ...new Set(results.flatMap((r) => r.visibilityGaps)),
+    ].filter((gap) => {
+      if (!verifiedCoverage) return true;
+      const [reviewer, area, state] = gap.split(":");
+      return (
+        reviewer !== last.review.reviewer ||
+        !Object.hasOwn(verifiedCoverage, area) ||
+        verifiedCoverage[area] === state
+      );
+    }),
     passes,
   };
 }

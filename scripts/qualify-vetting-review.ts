@@ -35,6 +35,7 @@ import {
   type ScanInputFile,
 } from "../workers/vetting/bounded-scan";
 import { reviewInventory } from "../workers/vetting/review-plan";
+import { COVERED_BY_BOUNDED_SCAN } from "../workers/vetting/run";
 import {
   PINNED_SCANNER_PROFILES,
   type ScannerEvidence,
@@ -194,9 +195,10 @@ async function scan(
   repository: string,
   commitSha: string,
   env: Record<string, string | undefined>,
+  acquisitionGaps: string[] = [],
 ) {
   const { primary, specialist } = profiles(env);
-  const inspection = inspectRepository({ files });
+  const inspection = inspectRepository({ files, acquisitionGaps });
   const review = async (profile: ScannerProfile) =>
     (await reviewInventory({ inspection, profile })).evidence;
   const first = await review(primary);
@@ -270,7 +272,16 @@ async function main(argv: string[], env: Record<string, string | undefined>) {
         directory: root,
       });
       const source = await readAcquiredSource(acquired.directory);
-      const report = await scan(source.files, repository, commit, env);
+      // The same acquisition gaps the controller carries into a scan.
+      const report = await scan(
+        source.files,
+        repository,
+        commit,
+        env,
+        source.acquisitionGaps.filter(
+          (gap) => !COVERED_BY_BOUNDED_SCAN.has(gap),
+        ),
+      );
       console.log(
         JSON.stringify({
           repository,
