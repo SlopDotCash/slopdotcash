@@ -13,21 +13,29 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/daily-collection.yml",
+      "sha256": "aba6f909a80280844881291fc37ac9a783e9bc2e52f040cc118a09710327f22b",
+      "models": ["formal/models/release/daily_collection.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "021aaf202a429455427626e7cd18197b20b7b994125ef36359ca0b7997eabdf1",
+      "sha256": "f35c9aa3aec327ee875ddffbd8df0c00ef5c604537c8a062a43df3b3e73e61d8",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt",
+        "formal/models/release/daily_collection.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        40, 50, 164, 294, 360, 361, 422, 475, 532, 612, 617, 732, 738, 806, 809,
-        835, 836, 857, 869, 901, 939, 1169, 1197, 1289, 1302, 1393, 1501, 1503,
-        1504, 1708, 1791, 1944, 1946, 1976, 2091, 2113, 2184, 2195, 2220, 2291,
-        2304, 2317, 2326, 2327, 2328, 2345
+        40, 50, 164, 297, 363, 364, 425, 478, 535, 615, 620, 735, 741, 809, 812,
+        838, 839, 860, 872, 904, 942, 1172, 1200, 1292, 1305, 1396, 1504, 1506,
+        1507, 1711, 1794, 1947, 1949, 1979, 2094, 2116, 2187, 2198, 2223, 2294,
+        2307, 2320, 2329, 2330, 2331, 2348
       ],
       "review": "mapped-abstraction"
     },
@@ -3927,6 +3935,15 @@
       "sha256": "b70fb5e11a3b35889942e4533a2cf6f87a7bc6734494feaa9e5e9961c6ad0faa",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [10, 106, 115, 117, 121],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/daily-collection.ts",
+      "sha256": "522e0702b36f19b5112b1804b5c4013308203626be4ebc5034da5513d0cabcd4",
+      "models": ["formal/models/release/daily_collection.qnt"],
+      "candidateLines": [
+        40, 46, 52, 117, 163, 164, 165, 172, 178, 205, 208, 213, 279, 447, 477
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -15564,6 +15581,25 @@
         "modelSourceSelectsAffectedModelsTest",
         "pushCannotSkipTest",
         "releaseCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/daily_collection.qnt",
+      "sha256": "5f91b952854fb62b5b8af6f655bbaeaec5f224ce5cc07f98e402575115f13dcd",
+      "sources": [
+        ".github/workflows/daily-collection.yml",
+        ".github/workflows/deploy.yml",
+        "scripts/daily-collection.ts"
+      ],
+      "scenarios": [
+        "failedCollectionResumesOnceTest",
+        "newDayStartsNewResumeChainTest",
+        "noCheckpointNoResumeTest",
+        "olderDataNeverReplacesNewerTest",
+        "resumeWaitsForRunningCollectionTest",
+        "supersededCollectionPublishesTest",
+        "supersededPublishRetriesThenStopsTest",
+        "tickSkipsWhileCollectingTest"
       ]
     },
     {

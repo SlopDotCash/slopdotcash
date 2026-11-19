@@ -162,8 +162,11 @@ jobs:
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
-      # Manual retained-data production can prepare beside live collection.
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}
+      # Every fresh main collection, push or manual, shares one lane: they
+      # spend one collector App allowance, so a second waits for the first
+      # (operator decision, 19 November 2026). Manual retained-data
+      # production can prepare beside live collection.
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || 'collect') || github.event_name }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.

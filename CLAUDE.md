@@ -706,7 +706,11 @@ the complete browser lanes, and every other check still runs. A push release
 cannot skip them. A release that skipped either set is not evidence that
 the skipped checks passed.
 To publish new data without a commit, run the release workflow by hand
-(`workflow_dispatch`) with the `use_published_data` option off. Every production release requires current main equivalence. Every
+(`workflow_dispatch`) with the `use_published_data` option off. The
+`daily-collection.yml` workflow does this every day at 07:17 UTC unless a
+collection is already running, publishes a superseded collection through a
+`data_from_run` release, and resumes a failed collection once (operator
+decision, 19 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
