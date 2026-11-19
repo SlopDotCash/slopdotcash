@@ -2,8 +2,12 @@
  * The submission-fee Worker against a real local chain and the compiled
  * SubmissionDeposits contract. On Anvil it deposits fees, lets the Worker
  * read and judge them, and lets it send what is due: a refund for a short
- * deposit, a refund for a merge, a kept fee for a close. It checks token
- * balances on the chain, not the Worker's own record.
+ * deposit, a refund for a merge, a kept fee for a close. It then blocks one
+ * payer in the token, as a stablecoin blacklist would, and checks that the
+ * deposit that can no longer be refunded is parked while the one behind it is
+ * refunded, and that a deposit of a token outside the table is never resolved
+ * and is reclaimed by its payer after 30 days. It checks token balances on
+ * the chain, not the Worker's own record.
  *
  * Default: one plain local chain with test tokens. Public Anvil fixture keys
  * only; no hosted database, no public chain.
@@ -47,6 +51,8 @@ const resolver = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const resolverKey =
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 const payer = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+// Account 3: the payer the token later refuses to pay.
+const blockedPayer = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 const REPOSITORY = 4242;
 const FEE = 2_000_000n;
 const ETHER = `0x${(10n ** 18n).toString(16)}`;
@@ -224,7 +230,7 @@ async function rehearse(target: Target) {
       ).deployedTo as string
     ).toLowerCase();
 
-  for (const account of [owner, resolver, payer])
+  for (const account of [owner, resolver, payer, blockedPayer])
     await rpc("anvil_setBalance", [account, ETHER]);
 
   // The tokens: the real ones on a fork, test tokens on a plain chain.
@@ -325,8 +331,14 @@ async function rehearse(target: Target) {
     log: (event) => logs.push(event),
     onError: (error) => console.error(error),
   };
+  // The Worker's clock runs ahead of the machine's by this much.
+  let ahead = 0;
   const run = async (mode: "dry_run" | "live") => {
-    const result = await runDeposits(env(mode), undefined, overrides);
+    const result = await runDeposits(
+      env(mode),
+      () => new Date(Date.now() + ahead),
+      overrides,
+    );
     assert.equal(result.status, "ran");
     const [outcome] = (result as { networks: Record<string, unknown>[] })
       .networks;
@@ -374,12 +386,13 @@ async function rehearse(target: Target) {
     token: string,
     amount: bigint,
     keptTo: string,
+    from = payer,
   ) => {
-    await send(payer, token, "approve(address,uint256)", [
+    await send(from, token, "approve(address,uint256)", [
       contract,
       amount.toString(),
     ]);
-    await send(payer, contract, "deposit(bytes32,address,uint128,address)", [
+    await send(from, contract, "deposit(bytes32,address,uint128,address)", [
       submissionFeeItem(REPOSITORY, pull(index)),
       token,
       amount.toString(),
@@ -563,6 +576,133 @@ async function rehearse(target: Target) {
       `${due} SLOP base units burned; a misdirected SLOP deposit refunded; no SLOP income`,
     );
   }
+
+  // A payer the token will not pay, and a token outside the table. On a
+  // plain chain the test token blocks the payer; on a Base fork USDC's own
+  // blacklister does.
+  const block = async (account: string, value: boolean) => {
+    if (!target.forkUrl)
+      return send(owner, stable, "setBlocked(address,bool)", [
+        account,
+        String(value),
+      ]);
+    const blacklister = cast([
+      "call",
+      "--rpc-url",
+      rpcUrl,
+      stable,
+      "blacklister()(address)",
+    ]);
+    await rpc("anvil_setBalance", [blacklister, ETHER]);
+    return send(
+      blacklister,
+      stable,
+      value ? "blacklist(address)" : "unBlacklist(address)",
+      [account],
+    );
+  };
+  const canBlock = !target.forkUrl || target.network === "base-mainnet";
+  const journalOf = (id: number) =>
+    (
+      sqlite
+        .query(
+          `SELECT deposits FROM submission_fee_sends WHERE network = '${target.network}'`,
+        )
+        .all() as { deposits: string }[]
+    ).filter(({ deposits }) =>
+      (JSON.parse(deposits) as { id: number }[]).some(
+        (entry) => entry.id === id,
+      ),
+    ).length;
+  const parkedRow = (id: number) =>
+    row(
+      "submission_fee_parked",
+      `network = '${target.network}' AND deposit_id = ${id}`,
+    );
+  const other = create("src/FeeTestToken.sol:FeeTestToken", [], fixtureRoot);
+  await send(owner, other, "mint(address,uint256)", [payer, FEE.toString()]);
+  await send(payer, stable, "transfer(address,uint256)", [
+    blockedPayer,
+    FEE.toString(),
+  ]);
+  for (const index of [6, 7, 8]) ask(index);
+  const stuck = await pay(6, stable, FEE, feeWallet, blockedPayer);
+  const behind = await pay(7, stable, FEE, feeWallet);
+  const unknown = await pay(8, other, FEE, feeWallet);
+  await mine(2);
+  await finalize();
+  outcome = await run("live");
+  assert.equal(depositRow(stuck)?.accepted, 1);
+  assert.equal(depositRow(behind)?.accepted, 1);
+  assert.equal(depositRow(unknown)?.reject_reason, "token_not_accepted");
+  assert.equal(outcome.send, "none");
+  decide(6, "refund_due");
+  decide(7, "refund_due");
+  if (canBlock) {
+    await block(blockedPayer, true);
+    const signedBefore = signedSends;
+    outcome = await run("live");
+    // The contract named the deposit it could not pay; the rest went out.
+    assert.equal(outcome.parked, 1);
+    assert.equal(outcome.send, "sent");
+    assert.equal(signedSends, signedBefore + 1);
+    assert.equal(parkedRow(stuck)?.reason, "payout_failed");
+    assert.equal(parkedRow(stuck)?.released_at, null);
+    assert.equal(journalOf(stuck), 0);
+    assert.equal(journalOf(behind), 1);
+    await mine(1);
+    await finalize();
+    outcome = await run("live");
+    assert.equal(depositRow(behind)?.state, "refunded");
+    assert.equal(depositRow(stuck)?.state, "refund_due");
+    assert.equal(balance(stable, contract), FEE);
+    // Inside a day the parked deposit is not looked at again.
+    outcome = await run("live");
+    assert.equal(outcome.send, "none");
+    assert.equal(outcome.released, 0);
+    // The block is lifted. A day later the deposit returns and is refunded.
+    await block(blockedPayer, false);
+    ahead += 25 * 60 * 60 * 1000;
+    outcome = await run("live");
+    assert.equal(outcome.released, 1);
+    assert.equal(outcome.send, "sent");
+    assert.equal(journalOf(stuck), 1);
+    await mine(1);
+    await finalize();
+    outcome = await run("live");
+    assert.equal(depositRow(stuck)?.state, "refunded");
+    assert.equal(balance(stable, blockedPayer), FEE);
+    say(
+      "a payer the token refused was parked and the deposit behind it refunded; unblocked, it was refunded a day later",
+    );
+  } else {
+    outcome = await run("live");
+    assert.equal(outcome.send, "sent");
+    await mine(1);
+    await finalize();
+    outcome = await run("live");
+    assert.equal(depositRow(stuck)?.state, "refunded");
+    assert.equal(depositRow(behind)?.state, "refunded");
+    say("payer blocking not rehearsed with this network's stablecoin");
+  }
+  assert.equal(balance(stable, contract), 0n);
+  // The other token was never touched: no call, no send, still in the contract.
+  assert.equal(journalOf(unknown), 0);
+  assert.equal(parkedRow(unknown), null);
+  assert.equal(depositRow(unknown)?.state, "open");
+  assert.equal(balance(other, contract), FEE);
+  // After 30 days its payer takes it back, and the Worker records that.
+  await rpc("evm_increaseTime", [30 * 24 * 3600 + 1]);
+  await mine(1);
+  await send(payer, contract, "reclaim(uint256)", [String(unknown)]);
+  await finalize();
+  outcome = await run("live");
+  assert.equal(depositRow(unknown)?.state, "reclaimed");
+  assert.equal(balance(other, payer), FEE);
+  assert.equal(journalOf(unknown), 0);
+  say(
+    "a deposit of a token outside the table was never resolved; its payer reclaimed it after 30 days",
+  );
 
   // Settled: another run reads the chain and sends nothing.
   const before = signedSends;

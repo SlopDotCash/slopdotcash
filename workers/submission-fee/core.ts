@@ -11,7 +11,10 @@
  *
  * It decides nothing about merges or closes: `submission_fee_items.outcome`
  * is Slopbot's. It never keeps a deposit that does not count, and it never
- * signs a second transaction while one is unsettled.
+ * signs a second transaction while one is unsettled. A deposit of a token
+ * outside the table is never resolved: its payer reclaims it from the
+ * contract. A deposit whose payout the token refuses is parked, so the
+ * deposits behind it are still resolved.
  */
 
 import {
@@ -32,6 +35,10 @@ export const CONFIRMED_PAGES_PER_RUN = 10;
 export const JUDGED_PER_RUN = 200;
 /** Deposits one `resolveMany` transaction carries. */
 export const MAX_BATCH = 20;
+/** Parked deposits simulated again for one network in one run. */
+export const PARKED_CHECKS_PER_RUN = 5;
+/** How long a parked deposit waits before it is simulated again. */
+export const PARKED_RECHECK_MS = 24 * 60 * 60 * 1000;
 
 export type ChainEvent =
   | {
@@ -137,6 +144,16 @@ export interface ChainDeposit {
   state: number;
 }
 
+/**
+ * Why a deposit was parked. `payout_failed`: the contract's own error named
+ * it. `reverted_alone`: the batch reverted without naming a deposit, and this
+ * one reverted when simulated by itself while another went through.
+ */
+export type ParkReason = "payout_failed" | "reverted_alone";
+
+/** What simulating one deposit's resolution by itself showed. */
+export type ProbeResult = "ok" | "payout_failed" | "reverted";
+
 export interface PreparedSend {
   txId: string;
   rawTx: string;
@@ -168,7 +185,16 @@ export interface FeeChain {
   deposit(depositId: number): Promise<ChainDeposit>;
   /** The resolver key's address, or null when no key is loaded. */
   address(): string | null;
-  /** Simulates, then signs. `authorize` runs before the signature. */
+  /**
+   * Simulates one deposit's resolution from the resolver's address. Signs
+   * and sends nothing. A provider failure throws; only a revert is a result.
+   */
+  probe(entry: SendEntry): Promise<ProbeResult>;
+  /**
+   * Simulates, then signs. `authorize` runs before the signature. A
+   * simulation that reverts throws PayoutFailedError when the contract names
+   * the deposit it could not pay, and SendRevertedError otherwise.
+   */
   prepare(
     entries: readonly SendEntry[],
     authorize: (maximumNativeWei: string) => Promise<void>,
@@ -230,6 +256,27 @@ export interface FeeStore {
     depositId: number,
     state: "open" | "refund_due" | "kept_due",
   ): Promise<void>;
+  /** The deposits set aside because their payout cannot go through. */
+  parked(network: string): Promise<Set<number>>;
+  park(
+    network: string,
+    entry: SendEntry,
+    reason: ParkReason,
+    at: string,
+  ): Promise<void>;
+  /** Parked deposits last simulated at or before `before`, oldest first. */
+  parkedToCheck(
+    network: string,
+    before: string,
+    limit: number,
+  ): Promise<SendEntry[]>;
+  /** Records a new simulation of a parked deposit, releasing it or not. */
+  checkedParked(
+    network: string,
+    depositId: number,
+    released: boolean,
+    at: string,
+  ): Promise<void>;
   openSend(network: string): Promise<SendRow | null>;
   latestDryRun(network: string): Promise<SendRow | null>;
   /** Throws GasBudgetError when the day's native limit would be passed. */
@@ -254,6 +301,14 @@ export interface FeeStore {
 }
 
 export class GasBudgetError extends Error {}
+/** The simulation reverted and the contract named the deposit it could not pay. */
+export class PayoutFailedError extends Error {
+  constructor(readonly depositId: number) {
+    super("The contract could not pay out a deposit");
+  }
+}
+/** The simulation reverted without naming a deposit. Nothing was signed. */
+export class SendRevertedError extends Error {}
 /** Another run recorded a send for this network first. */
 export class SendConflictError extends Error {}
 
@@ -293,7 +348,15 @@ export interface NetworkResult {
     | "recorded"
     | "unchanged"
     | "gas_budget"
-    | "no_resolver_key";
+    | "no_resolver_key"
+    /** Every deposit of the batch was parked; nothing was signed. */
+    | "parked"
+    /** The simulation reverted and no single deposit explains it. */
+    | "reverted";
+  /** Deposits parked in this run. */
+  parked: number;
+  /** Parked deposits returned to the queue in this run. */
+  released: number;
 }
 
 const lower = (value: string) => value.toLowerCase();
@@ -367,9 +430,10 @@ export async function scan(
       if (!source || ("finalizedAt" in source && source.finalizedAt === null))
         throw new Error("Resolved event for an unknown deposit");
       // The accepted tokens emit the standard Transfer event, and only they
-      // can ever be income. Another token's deposit is only ever refunded;
-      // its contract event is recorded as it stands, so a token that emits
-      // nothing cannot hold up the scan.
+      // can ever be income. The Worker never resolves another token's
+      // deposit; if the resolver role is used by hand for one, the contract
+      // event is recorded as it stands, so a token that emits nothing
+      // cannot hold up the scan.
       if (
         submissionFeeTokenKind(network.network, source.token, deps.terms) !==
         null
@@ -497,8 +561,14 @@ export async function judge(
 export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
   const { store, network } = deps;
   const entries: SendEntry[] = [];
+  const parked = await store.parked(network.network);
   for (const { deposit, item } of await store.resolvable(network.network)) {
-    const action = submissionResolveAction(network.network, deposit, item);
+    const action = submissionResolveAction(
+      network.network,
+      deposit,
+      item,
+      deps.terms,
+    );
     const state =
       action === "refund"
         ? "refund_due"
@@ -507,10 +577,50 @@ export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
           : "open";
     if (state !== deposit.state)
       await store.setDue(network.network, deposit.depositId, state);
-    if (action !== null)
+    // A parked deposit keeps what is due on its row and stays out of the
+    // batch until a later simulation shows its payout would go through.
+    if (action !== null && !parked.has(deposit.depositId))
       entries.push({ id: deposit.depositId, refund: action === "refund" });
   }
   return entries.sort((left, right) => left.id - right.id);
+}
+
+/**
+ * Simulates a few parked deposits again, the ones not looked at for a day,
+ * and returns to the queue those whose payout would now go through (a token
+ * unpaused, a payer taken off a blacklist) or that are no longer open on
+ * chain (reclaimed by their payer). Signs nothing.
+ */
+export async function recheck(deps: NetworkDependencies): Promise<number> {
+  const { store, chain, network } = deps;
+  if (chain.address() === null) return 0;
+  const before = new Date(
+    deps.now().getTime() - PARKED_RECHECK_MS,
+  ).toISOString();
+  let released = 0;
+  for (const entry of await store.parkedToCheck(
+    network.network,
+    before,
+    PARKED_CHECKS_PER_RUN,
+  )) {
+    const open = (await chain.deposit(entry.id)).state === 1;
+    const free = !open || (await chain.probe(entry)) === "ok";
+    await store.checkedParked(
+      network.network,
+      entry.id,
+      free,
+      deps.now().toISOString(),
+    );
+    if (!free) continue;
+    released += 1;
+    deps.log({
+      event: "submission_fee_unparked",
+      network: network.network,
+      depositId: entry.id,
+      reason: open ? "payout_would_succeed" : "no_longer_open",
+    });
+  }
+  return released;
 }
 
 /** Reconciles the send in flight. True while one is still unsettled. */
@@ -585,11 +695,18 @@ function sameEntries(left: readonly SendEntry[], right: readonly SendEntry[]) {
  * `dry_run` the list is recorded and nothing is signed. In `live` the signed
  * bytes are recorded before they are broadcast, so a run that dies after
  * signing leaves a row the next run resends unchanged.
+ *
+ * `resolveMany` is all or nothing, so one deposit whose payout the token
+ * refuses would fail every batch it is in. When the simulation reverts, the
+ * deposit the contract names is parked and the rest are simulated again. When
+ * the revert names none, each deposit is simulated alone: those that fail
+ * are parked as long as another goes through, so a fault of the whole
+ * contract or key parks nothing.
  */
 export async function send(
   deps: NetworkDependencies,
   planned: readonly SendEntry[],
-): Promise<NetworkResult["send"]> {
+): Promise<{ send: NetworkResult["send"]; parked: number }> {
   const { store, chain, network, mode } = deps;
   const entries: SendEntry[] = [];
   for (const entry of planned) {
@@ -610,7 +727,7 @@ export async function send(
     if (onChain.state !== 1) continue;
     entries.push(entry);
   }
-  if (entries.length === 0) return "none";
+  if (entries.length === 0) return { send: "none", parked: 0 };
   const at = deps.now().toISOString();
   const row: SendRow = {
     id: `sfs_${deps.randomId()}`,
@@ -637,56 +754,119 @@ export async function send(
       last.contract === row.contract &&
       sameEntries(last.deposits, entries)
     )
-      return "unchanged";
+      return { send: "unchanged", parked: 0 };
     await store.insertSend(row, network.gas);
     deps.log({
       event: "submission_fee_would_send",
       network: network.network,
       deposits: entries,
     });
-    return "recorded";
+    return { send: "recorded", parked: 0 };
   }
   const resolver = chain.address();
-  if (resolver === null) return "no_resolver_key";
-  let prepared: PreparedSend;
-  try {
-    prepared = await chain.prepare(entries, (maximumNativeWei) =>
-      store.assertGasBudget(
-        network.network,
-        maximumNativeWei,
-        network.gas,
-        deps.now(),
-      ),
-    );
-    // Durable before broadcast. The insert repeats the day's limit and holds
-    // the one-in-flight index, so a losing concurrent signer never
-    // broadcasts its bytes.
-    await store.insertSend(
-      {
-        ...row,
-        resolver,
-        txId: prepared.txId,
-        rawTx: prepared.rawTx,
-        evmNonce: prepared.evmNonce,
-        maximumNativeWei: prepared.maximumNativeWei,
-        state: "submitted",
-      },
-      network.gas,
-    );
-  } catch (error) {
-    // Its bytes were never recorded, so they are never broadcast.
-    if (error instanceof SendConflictError) return "in_flight";
-    if (!(error instanceof GasBudgetError)) throw error;
+  if (resolver === null) return { send: "no_resolver_key", parked: 0 };
+  let batch = entries;
+  let parked = 0;
+  let probed = false;
+  const park = async (entry: SendEntry, reason: ParkReason) => {
+    await store.park(network.network, entry, reason, deps.now().toISOString());
+    parked += 1;
     deps.log({
-      event: "submission_fee_gas_budget",
+      event: "submission_fee_parked",
       network: network.network,
+      depositId: entry.id,
+      refund: entry.refund,
+      reason,
     });
-    return "gas_budget";
+  };
+  const reverted = () => {
+    deps.log({
+      event: "submission_fee_send_reverted",
+      network: network.network,
+      deposits: batch,
+    });
+    return { send: "reverted" as const, parked };
+  };
+  let prepared: PreparedSend | null = null;
+  // Every pass signs, stops, or sets at least one deposit aside, so the loop
+  // ends within one batch's length.
+  while (prepared === null) {
+    if (batch.length === 0) return { send: "parked", parked };
+    try {
+      const signed = await chain.prepare(batch, (maximumNativeWei) =>
+        store.assertGasBudget(
+          network.network,
+          maximumNativeWei,
+          network.gas,
+          deps.now(),
+        ),
+      );
+      // Durable before broadcast. The insert repeats the day's limit and
+      // holds the one-in-flight index, so a losing concurrent signer never
+      // broadcasts its bytes.
+      await store.insertSend(
+        {
+          ...row,
+          deposits: batch,
+          resolver,
+          txId: signed.txId,
+          rawTx: signed.rawTx,
+          evmNonce: signed.evmNonce,
+          maximumNativeWei: signed.maximumNativeWei,
+          state: "submitted",
+        },
+        network.gas,
+      );
+      prepared = signed;
+    } catch (error) {
+      // Its bytes were never recorded, so they are never broadcast.
+      if (error instanceof SendConflictError)
+        return { send: "in_flight", parked };
+      if (error instanceof GasBudgetError) {
+        deps.log({
+          event: "submission_fee_gas_budget",
+          network: network.network,
+        });
+        return { send: "gas_budget", parked };
+      }
+      const failedId =
+        error instanceof PayoutFailedError ? error.depositId : null;
+      const named = batch.find((entry) => entry.id === failedId);
+      if (named) {
+        await park(named, "payout_failed");
+        batch = batch.filter((entry) => entry !== named);
+        continue;
+      }
+      if (
+        !(error instanceof SendRevertedError) &&
+        !(error instanceof PayoutFailedError)
+      )
+        throw error;
+      if (probed) return reverted();
+      probed = true;
+      // The revert names no deposit of this batch: try each one alone.
+      const alone: { entry: SendEntry; result: ProbeResult }[] = [];
+      for (const entry of batch) {
+        // Resolved or reclaimed since it was read: nothing to send or park.
+        if ((await chain.deposit(entry.id)).state !== 1) continue;
+        alone.push({ entry, result: await chain.probe(entry) });
+      }
+      const through = alone.filter(({ result }) => result === "ok");
+      for (const { entry, result } of alone) {
+        if (result === "payout_failed") await park(entry, "payout_failed");
+        else if (result === "reverted" && through.length > 0)
+          await park(entry, "reverted_alone");
+      }
+      // Nothing goes through alone either, and the contract blames no
+      // deposit: the fault is not one deposit's, so none is parked for it.
+      if (through.length === 0 && parked === 0) return reverted();
+      batch = through.map(({ entry }) => entry);
+    }
   }
   const sent = {
     network: network.network,
     txId: prepared.txId,
-    deposits: entries,
+    deposits: batch,
   };
   try {
     await chain.broadcast(prepared.rawTx);
@@ -699,10 +879,10 @@ export async function send(
       updatedAt: deps.now().toISOString(),
     });
     deps.log({ event: "submission_fee_send_unknown", ...sent });
-    return "in_flight";
+    return { send: "in_flight", parked };
   }
   deps.log({ event: "submission_fee_send_submitted", ...sent });
-  return "sent";
+  return { send: "sent", parked };
 }
 
 /** One network, one run. */
@@ -719,6 +899,8 @@ export async function runNetwork(
     judged: 0,
     paid: 0,
     send: "none",
+    parked: 0,
+    released: 0,
   };
   // Authenticate the chain before reading or advancing anything.
   if ((await chain.chainId()) !== network.chainId) {
@@ -727,11 +909,12 @@ export async function runNetwork(
   }
   Object.assign(result, await scan(deps));
   Object.assign(result, await judge(deps));
+  if (deps.mode === "live") result.released = await recheck(deps);
   const inFlight = deps.mode === "live" ? await reconcile(deps) : false;
   if (inFlight) {
     result.send = "in_flight";
     return result;
   }
-  result.send = await send(deps, await plan(deps));
+  Object.assign(result, await send(deps, await plan(deps)));
   return result;
 }

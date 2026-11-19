@@ -17,8 +17,12 @@ import {
   GasBudgetError,
   MAX_BATCH,
   type NetworkDependencies,
+  PARKED_RECHECK_MS,
+  PayoutFailedError,
+  type ProbeResult,
   runNetwork,
   type SendEntry,
+  SendRevertedError,
   type SendRow,
   type SendStatus,
 } from "./core";
@@ -80,6 +84,13 @@ class Chain implements FeeChain {
   gasCost = "400";
   transfersProven = true;
   eventReads: [number, number][] = [];
+  /** Deposits whose payout the token refuses (a blacklisted payer, say). */
+  unpayable = new Set<number>();
+  /** False for an endpoint that returns a revert without its data. */
+  namesFailure = true;
+  /** The loaded key is not the contract's resolver. */
+  notResolver = false;
+  simulations = 0;
 
   private push(event: Record<string, unknown>, block: number) {
     this.events_.push({
@@ -134,6 +145,12 @@ class Chain implements FeeChain {
           logIndex: this.events_.length,
         });
       }
+    this.latest = Math.max(this.latest, block);
+  }
+  /** A resolution the Worker did not send (the resolver role used by hand). */
+  resolveByHand(id: number, refunded: boolean, block: number) {
+    (this.records.get(id) as ChainDeposit).state = refunded ? 2 : 3;
+    this.push({ kind: "resolved", depositId: id, refunded }, block);
     this.latest = Math.max(this.latest, block);
   }
   reclaim(id: number, block: number) {
@@ -192,13 +209,35 @@ class Chain implements FeeChain {
     );
   }
   address = () => this.key;
+  /** The contract's own simulation: the first deposit it cannot settle. */
+  private simulate(entries: readonly SendEntry[]) {
+    this.simulations += 1;
+    if (this.notResolver) throw new SendRevertedError("NotResolver");
+    for (const entry of entries) {
+      if (this.records.get(entry.id)?.state !== 1)
+        throw new SendRevertedError("NotOpen");
+      if (this.unpayable.has(entry.id)) {
+        if (this.namesFailure) throw new PayoutFailedError(entry.id);
+        throw new SendRevertedError("execution reverted");
+      }
+    }
+  }
+  async probe(entry: SendEntry): Promise<ProbeResult> {
+    try {
+      this.simulate([entry]);
+      return "ok";
+    } catch (error) {
+      if (error instanceof PayoutFailedError) return "payout_failed";
+      if (error instanceof SendRevertedError) return "reverted";
+      throw error;
+    }
+  }
   async prepare(
     entries: readonly SendEntry[],
     authorize: (wei: string) => Promise<void>,
   ) {
     if (!this.key) throw new Error("no key");
-    if (!entries.every((entry) => this.records.get(entry.id)?.state === 1))
-      throw new Error("simulation reverted");
+    this.simulate(entries);
     if (BigInt(this.gasCost) > BigInt(network.gas.perTransactionWei))
       throw new GasBudgetError("over the transaction limit");
     await authorize(this.gasCost);
@@ -290,6 +329,12 @@ function setup() {
     sqlite
       .query("SELECT * FROM submission_fee_sends ORDER BY rowid")
       .all() as Record<string, unknown>[];
+  const parked = () =>
+    sqlite
+      .query(
+        "SELECT deposit_id, refund, reason, checks, released_at FROM submission_fee_parked ORDER BY deposit_id",
+      )
+      .all() as Record<string, unknown>[];
   const cursor = () =>
     (
       sqlite
@@ -311,6 +356,7 @@ function setup() {
     item,
     deposit,
     sends,
+    parked,
     cursor,
     run: (mode: "dry_run" | "live" = "live") => runNetwork(deps(mode)),
   };
@@ -540,6 +586,47 @@ describe("judging deposits", () => {
       accepted: 0,
       reject_reason: "token_not_accepted",
     });
+  });
+
+  test("a deposit of another token is never resolved: no call, no gas, no batch", async () => {
+    const t = setup();
+    t.ask(7);
+    t.chain.pay(1, 7, 110, { token: `0x${"9".repeat(40)}` });
+    t.chain.pay(2, 99, 111, { token: `0x${"9".repeat(40)}` });
+    t.chain.latest = 130;
+    t.chain.finalized = 130;
+    // Whatever the pull request's row says, and however long it waits.
+    t.decide(7, "refund_due");
+    for (let run = 0; run < 3; run += 1) {
+      expect(await t.run()).toMatchObject({ send: "none", parked: 0 });
+      t.clock.at += 40 * 24 * 60 * 60 * 1000;
+    }
+    expect(t.chain.simulations).toBe(0);
+    expect(t.chain.signed).toEqual([]);
+    expect(t.sends()).toEqual([]);
+    expect(t.parked()).toEqual([]);
+    for (const id of [1, 2])
+      expect(t.deposit(id)).toMatchObject({
+        accepted: 0,
+        reject_reason: "token_not_accepted",
+        state: "open",
+      });
+    expect(t.item(7).paid_at).toBe(null);
+    // Its payer takes it back from the contract after 30 days.
+    t.chain.reclaim(1, 140);
+    t.chain.latest = 150;
+    t.chain.finalized = 150;
+    await t.run();
+    expect(t.deposit(1)).toMatchObject({ state: "reclaimed", accepted: 0 });
+  });
+
+  test("a dry run does not list a deposit of another token", async () => {
+    const t = setup();
+    t.chain.pay(1, 99, 110, { token: `0x${"9".repeat(40)}` });
+    t.chain.latest = 130;
+    t.chain.finalized = 130;
+    expect(await t.run("dry_run")).toMatchObject({ send: "none" });
+    expect(t.sends()).toEqual([]);
   });
 
   test("only the first of two deposits pays a pull request; the second is refunded", async () => {
@@ -775,21 +862,229 @@ describe("sending what is due", () => {
     expect(t.item(7).outcome).toBe("kept_due");
   });
 
-  test("a refunded deposit of another token is recorded without a transfer proof", async () => {
+  test("a Resolved event of another token is recorded without a transfer proof", async () => {
     const t = setup();
     t.chain.pay(1, 99, 110, { token: `0x${"9".repeat(40)}` });
     t.chain.latest = 120;
     t.chain.finalized = 120;
     await t.run();
-    await t.run();
-    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
-    t.chain.mine(t.chain.signed[0].rawTx, 130);
+    expect(t.chain.signed).toEqual([]);
+    // The Worker never resolves it. If the resolver role is ever used by
+    // hand to refund one, the event is recorded as it stands: that token may
+    // emit no Transfer event, and the scan must not stop on it.
+    t.chain.resolveByHand(1, true, 130);
     t.chain.latest = 140;
     t.chain.finalized = 140;
-    // That token emits no Transfer event; the scan must not stop on it.
     t.chain.transfersProven = false;
     await t.run();
     expect(t.deposit(1)).toMatchObject({ state: "refunded", accepted: 0 });
+  });
+
+  test("a deposit that can never be paid out does not hold up the ones behind it", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    await paidAndFinal(t, 2, 8);
+    await paidAndFinal(t, 3, 9);
+    t.decide(7, "refund_due");
+    t.decide(8, "refund_due");
+    t.decide(9, "kept_due");
+    // The token refuses the refund of deposit 1 (its payer is blacklisted).
+    t.chain.unpayable.add(1);
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 1 });
+    const rest = [
+      { id: 2, refund: true },
+      { id: 3, refund: false },
+    ];
+    expect(t.chain.signed.map((tx) => tx.entries)).toEqual([rest]);
+    expect(JSON.parse(t.sends()[0].deposits as string)).toEqual(rest);
+    expect(t.parked()).toEqual([
+      {
+        deposit_id: 1,
+        refund: 1,
+        reason: "payout_failed",
+        checks: 1,
+        released_at: null,
+      },
+    ]);
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_parked",
+      network: NETWORK,
+      depositId: 1,
+      refund: true,
+      reason: "payout_failed",
+    });
+    // What is due stays on the row; the deposit is open on chain.
+    expect(t.deposit(1)).toMatchObject({ state: "refund_due", accepted: 1 });
+    t.chain.mine(t.chain.signed[0].rawTx, t.chain.latest + 1);
+    t.chain.latest += 20;
+    t.chain.finalized = t.chain.latest;
+    const simulated = t.chain.simulations;
+    for (let run = 0; run < 3; run += 1)
+      expect(await t.run()).toMatchObject({ send: "none", parked: 0 });
+    // Inside a day the parked deposit costs no further call.
+    expect(t.chain.simulations).toBe(simulated);
+    expect(t.chain.signed).toHaveLength(1);
+    expect(t.deposit(2)).toMatchObject({ state: "refunded" });
+    expect(t.deposit(3)).toMatchObject({ state: "kept" });
+  });
+
+  test("a failed batch that names no deposit is tried one deposit at a time", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    await paidAndFinal(t, 2, 8);
+    await paidAndFinal(t, 3, 9);
+    for (const pull of [7, 8, 9]) t.decide(pull, "refund_due");
+    t.chain.unpayable.add(2);
+    // An endpoint that returns the revert without the contract's error.
+    t.chain.namesFailure = false;
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 1 });
+    expect(t.chain.signed.map((tx) => tx.entries)).toEqual([
+      [
+        { id: 1, refund: true },
+        { id: 3, refund: true },
+      ],
+    ]);
+    expect(t.parked()).toMatchObject([
+      { deposit_id: 2, reason: "reverted_alone", released_at: null },
+    ]);
+  });
+
+  test("a revert that no single deposit explains parks nothing", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    await paidAndFinal(t, 2, 8);
+    t.decide(7, "refund_due");
+    t.decide(8, "refund_due");
+    // The loaded key is not the contract's resolver: every call reverts.
+    t.chain.notResolver = true;
+    for (let run = 0; run < 2; run += 1)
+      expect(await t.run()).toMatchObject({ send: "reverted", parked: 0 });
+    expect(t.parked()).toEqual([]);
+    expect(t.chain.signed).toEqual([]);
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_send_reverted",
+      network: NETWORK,
+      deposits: [
+        { id: 1, refund: true },
+        { id: 2, refund: true },
+      ],
+    });
+    // Once the key is the resolver, both are sent.
+    t.chain.notResolver = false;
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 0 });
+    expect(t.chain.signed[0].entries).toHaveLength(2);
+  });
+
+  test("unnamed failures alone are not parked until another deposit goes through", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    t.decide(7, "refund_due");
+    t.chain.unpayable.add(1);
+    t.chain.namesFailure = false;
+    expect(await t.run()).toMatchObject({ send: "reverted", parked: 0 });
+    expect(t.parked()).toEqual([]);
+    // A payable deposit joins the queue behind it and is not held up.
+    await paidAndFinal(t, 2, 8);
+    t.decide(8, "refund_due");
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 1 });
+    expect(t.chain.signed.map((tx) => tx.entries)).toEqual([
+      [{ id: 2, refund: true }],
+    ]);
+  });
+
+  test("when every deposit of the batch is parked, nothing is signed", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    await paidAndFinal(t, 2, 8);
+    t.decide(7, "refund_due");
+    t.decide(8, "refund_due");
+    t.chain.unpayable.add(1).add(2);
+    expect(await t.run()).toMatchObject({ send: "parked", parked: 2 });
+    expect(t.chain.signed).toEqual([]);
+    expect(t.sends()).toEqual([]);
+    expect(await t.run()).toMatchObject({ send: "none", parked: 0 });
+  });
+
+  test("a send that reverts on chain parks the deposit at the next run and sends the rest", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    await paidAndFinal(t, 2, 8);
+    t.decide(7, "refund_due");
+    t.decide(8, "refund_due");
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 0 });
+    // The payer of deposit 1 is blacklisted after the simulation passed.
+    t.chain.unpayable.add(1);
+    t.chain.mine(t.chain.signed[0].rawTx, t.chain.latest + 1, false);
+    t.chain.latest += 20;
+    t.chain.finalized = t.chain.latest;
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 1 });
+    expect(t.sends().map((row) => row.state)).toEqual(["failed", "submitted"]);
+    expect(t.chain.signed[1].entries).toEqual([{ id: 2, refund: true }]);
+  });
+
+  test("a parked deposit is simulated again after a day and returns when it can be paid", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    t.decide(7, "refund_due");
+    t.chain.unpayable.add(1);
+    expect(await t.run()).toMatchObject({ send: "parked", parked: 1 });
+    t.clock.at += PARKED_RECHECK_MS;
+    expect(await t.run()).toMatchObject({ send: "none", released: 0 });
+    expect(t.parked()).toMatchObject([{ checks: 2, released_at: null }]);
+    // The payer is taken off the blacklist.
+    t.chain.unpayable.clear();
+    expect(await t.run()).toMatchObject({ send: "none", released: 0 });
+    t.clock.at += PARKED_RECHECK_MS;
+    expect(await t.run()).toMatchObject({ send: "sent", released: 1 });
+    expect(t.chain.signed.map((tx) => tx.entries)).toEqual([
+      [{ id: 1, refund: true }],
+    ]);
+    expect(t.parked()).toMatchObject([{ checks: 3 }]);
+    expect(t.parked()[0].released_at).not.toBe(null);
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_unparked",
+      network: NETWORK,
+      depositId: 1,
+      reason: "payout_would_succeed",
+    });
+  });
+
+  test("a parked deposit its payer reclaims is recorded and leaves the parked list", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    t.decide(7, "refund_due");
+    t.chain.unpayable.add(1);
+    await t.run();
+    t.chain.reclaim(1, t.chain.latest + 1);
+    t.chain.latest += 20;
+    t.chain.finalized = t.chain.latest;
+    await t.run();
+    expect(t.deposit(1)).toMatchObject({ state: "reclaimed" });
+    t.clock.at += PARKED_RECHECK_MS;
+    const simulated = t.chain.simulations;
+    expect(await t.run()).toMatchObject({ send: "none", released: 1 });
+    // Its on-chain state was enough; nothing was simulated.
+    expect(t.chain.simulations).toBe(simulated);
+    expect(t.parked()[0].released_at).not.toBe(null);
+  });
+
+  test("a deposit parked again after its release keeps one row", async () => {
+    const t = setup();
+    await paidAndFinal(t, 1, 7);
+    t.decide(7, "refund_due");
+    t.chain.unpayable.add(1);
+    await t.run();
+    t.chain.unpayable.clear();
+    t.clock.at += PARKED_RECHECK_MS;
+    // Released, then refused again before the send is signed.
+    t.chain.gasCost = "5000";
+    expect(await t.run()).toMatchObject({ send: "gas_budget", released: 1 });
+    t.chain.gasCost = "400";
+    t.chain.unpayable.add(1);
+    expect(await t.run()).toMatchObject({ send: "parked", parked: 1 });
+    expect(t.parked()).toMatchObject([
+      { deposit_id: 1, checks: 3, released_at: null },
+    ]);
   });
 
   test("one transaction carries at most twenty deposits, oldest first", async () => {

@@ -3658,13 +3658,14 @@
     },
     {
       "path": "migrations/0139_submission_fee_deposits.sql",
-      "sha256": "0c6afe3259e9313fe65912c373541bb5daa70fa6c5a842a07e88112b0ec1e4e2",
+      "sha256": "7371e185d7e0a7e556fa9168e2a27f2b945547e42f1536bd7c8a364f0ccb5c43",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
-        9, 11, 12, 30, 38, 45, 59, 66, 68, 69, 72, 74, 78, 79, 87, 88, 89, 90
+        9, 11, 12, 30, 38, 45, 59, 66, 68, 69, 72, 74, 78, 79, 87, 88, 89, 90,
+        114
       ],
       "review": "mapped-abstraction"
     },
@@ -7489,12 +7490,12 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "e514fa88d029ce804069456e7513dde88253cc20720d056cd1b1ac2d59512d18",
+      "sha256": "ab5ad3ba0d0e49de7d52685e52c157d7fe201c1f16d96e11238f86f223519919",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt"
       ],
-      "candidateLines": [56, 78, 337, 345],
+      "candidateLines": [56, 78, 338, 349],
       "review": "mapped-abstraction"
     },
     {
@@ -9727,15 +9728,15 @@
     },
     {
       "path": "workers/submission-fee/chain.ts",
-      "sha256": "eabc5d05b91e94a59eaaf6626bcc33668bbac20a58e09ed3826e9acdb99c8ce2",
+      "sha256": "bdbdad6818adfe979048aef888cbbf302e0b6ed924b5205f144282426d837931",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
-        44, 94, 100, 126, 131, 225, 230, 275, 287, 293, 348, 358, 362, 368, 370,
-        372, 378, 381, 383, 389
+        49, 102, 108, 174, 179, 273, 278, 323, 346, 352, 407, 417, 421, 427,
+        429, 431, 437, 440, 442, 448
       ],
       "review": "mapped-abstraction"
     },
@@ -9748,16 +9749,16 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "sha256": "32decdef80c1e5c0c0f08c0da38757575e2ed26fe31ea88ef3010fc44da18a5f",
+      "sha256": "27106dd12c7cfffa139c2e4e7ebd9cb6a44a9526f68b2e8a509ae33637540ab6",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
-        5, 27, 85, 102, 121, 137, 148, 149, 155, 161, 177, 189, 200, 224, 231,
-        247, 283, 320, 321, 329, 330, 337, 340, 357, 384, 401, 404, 434, 494,
-        502, 508, 509, 523, 526, 527, 529, 531, 533, 541, 542, 548, 557, 563,
-        609, 610, 626, 661, 672, 697, 715, 725
+        5, 30, 92, 109, 128, 144, 165, 166, 172, 178, 203, 215, 226, 250, 257,
+        294, 338, 383, 384, 392, 393, 400, 403, 420, 448, 465, 468, 498, 558,
+        572, 578, 579, 606, 633, 636, 637, 639, 641, 643, 651, 652, 658, 667,
+        673, 726, 727, 743, 804, 816, 851, 877, 895, 907
       ],
       "review": "mapped-abstraction"
     },
@@ -9780,16 +9781,17 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "sha256": "10865bf7953d2fb6dd6d587229ccf32d46b0879413ce743754b1f29abd642c72",
+      "sha256": "ff1e7040ffbd402cc255148eb583c35d57e98e396e0f8be38c4d78884b4c86b6",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
-        38, 58, 86, 115, 149, 166, 168, 170, 185, 275, 277, 280, 289, 294, 305,
-        314, 320, 321, 344, 351, 399, 426, 449, 450, 465, 469, 471, 473, 480,
-        529, 536, 538, 546, 553, 557, 582, 591, 592, 596, 630, 663
+        39, 59, 87, 116, 150, 167, 169, 171, 186, 276, 278, 281, 290, 295, 306,
+        315, 321, 322, 345, 352, 400, 427, 452, 453, 484, 487, 519, 531, 535,
+        537, 539, 546, 595, 602, 604, 612, 619, 623, 648, 657, 658, 662, 696,
+        729
       ],
       "review": "mapped-abstraction"
     },
@@ -13590,7 +13592,7 @@
     },
     {
       "path": "formal/models/fees/submission_fee_deposit.qnt",
-      "sha256": "91bbcd65583c27588baff1d56280682d96656880ae0c6099ee31bfe01e609e84",
+      "sha256": "34439242440a19a80355c15dd2c32ca40a139f592230ba5263791d8040791be9",
       "sources": [
         "backend/submission-fee/handler.ts",
         "migrations/0139_submission_fee_deposits.sql",
@@ -13613,7 +13615,10 @@
         "shortDepositRefundedNeverKeptTest",
         "undecidedSendsNothingTest",
         "unknownItemRefundedAfterWaitTest",
-        "unknownItemWaitsTest"
+        "unknownItemWaitsTest",
+        "unknownTokenIsNeverResolvedTest",
+        "unknownTokenNotResolvedTest",
+        "unknownTokenReclaimedByPayerTest"
       ]
     },
     {
@@ -13643,7 +13648,7 @@
     },
     {
       "path": "formal/models/fees/submission_fee_send.qnt",
-      "sha256": "0fabdf5140372094061fa8f239c688bb727e8f214f7e377d797522e4c44444f1",
+      "sha256": "3425fbbd07dc91a3e199e1cd9e19b06289d0ed395bf193524c6e8ed364b2d1e4",
       "sources": [
         "migrations/0139_submission_fee_deposits.sql",
         "scripts/release-submission-fee.ts",
@@ -13657,6 +13662,7 @@
       "scenarios": [
         "diedAfterRecordingResendsSameBytesTest",
         "diedBeforeRecordingSendsNothingTest",
+        "dryRunNeverParksTest",
         "dryRunNeverPreparesTest",
         "dryRunRecordsOnceAndNeverSignsTest",
         "failedSendIsSentForAgainTest",
@@ -13665,10 +13671,19 @@
         "missingItemsTableIsInertTest",
         "offIsInertTest",
         "oneInFlightTest",
+        "parkedOnceNotAgainTest",
+        "parkedReleasedAfterUnblockTest",
+        "parkedReturnsWhenPayableTest",
         "resendKeepsOneSignatureTest",
         "resolvedOnChainIsNotSentAgainTest",
         "secondBatchWaitsForFirstTest",
         "sentThenSettledTest",
+        "stuckAfterSigningFailsOnChainTest",
+        "stuckAfterSigningIsParkedNextRunTest",
+        "stuckDepositBlocksUntilParkedTest",
+        "stuckDepositParkedAndRestSentTest",
+        "systemicRevertParksNothingTest",
+        "systemicRevertSignsNothingTest",
         "unsetContractIsInertTest"
       ]
     },

@@ -37,9 +37,10 @@ There is no HTTP route. The public reads are served by the site:
    request's outcome. A `Resolved` event of an accepted token is recorded
    only after its finalized receipt shows the token's own `Transfer` of the
    deposit's exact amount from the contract to the payer (refund) or to the
-   deposit's `keptTo` (kept). A deposit of any other token is only ever
-   refunded and is never income; its event is recorded as the contract
-   emitted it.
+   deposit's `keptTo` (kept). The Worker never resolves a deposit of any
+   other token, and such a deposit is never income; if the resolver role is
+   ever used by hand for one, its event is recorded as the contract emitted
+   it.
 3. **Confirmed deposits.** `Deposited` events above the finalized block that
    already have the network's confirmation count on top (30 blocks on Base,
    1,200 on Robinhood Chain) are recorded with `finalized_at` null. If a
@@ -50,11 +51,14 @@ There is no HTTP route. The public reads are served by the site:
    marks its pull request paid (`paid_at`, `paid_network`,
    `paid_deposit_id`), then is recorded as accepted. Anything else is
    recorded as refused with a reason.
-5. **Send.** Only for finalized deposits. A refused deposit is refunded. An
-   accepted one is refunded when its pull request's row says `refund_due`,
-   and kept only when that row says `kept_due` and names this deposit as the
-   one that paid. One `resolveMany` transaction carries at most twenty
-   deposits.
+5. **Parked deposits.** In `live`, up to five deposits parked more than a
+   day ago are simulated again (see "A payout the token refuses" below).
+6. **Send.** Only for finalized deposits of an accepted token. A refused
+   deposit is refunded. An accepted one is refunded when its pull request's
+   row says `refund_due`, and kept only when that row says `kept_due` and
+   names this deposit as the one that paid. One `resolveMany` transaction
+   carries at most twenty deposits. A deposit of a token outside the table
+   is never resolved.
 
 ## When a deposit counts
 
@@ -73,8 +77,15 @@ Refusal reasons: `token_not_accepted`, `wrong_kept_to`, `unknown_item`,
 `item_fee_invalid`, `no_slop_rate`, `amount_below_due`, `item_already_paid`,
 `item_already_decided`. A deposit for a pull request with no row waits 24
 hours after it is finalized, in case the request is still on its way, and is
-then refused as `unknown_item`. A refused deposit is always refunded, never
-kept. Paying more than the fee counts; the whole deposit is refunded or kept.
+then refused as `unknown_item`. A refused deposit of an accepted token is
+always refunded, never kept. Paying more than the fee counts; the whole
+deposit is refunded or kept.
+
+**A token outside the table is never resolved.** Such a deposit is recorded
+as refused with `token_not_accepted` and left alone: the resolver makes no
+call into a token nobody reviewed, spends no gas on it and never puts it in a
+batch. Its row stays `open`. Its payer takes it back from the contract with
+`reclaim` after 30 days, and the Worker records that as `reclaimed`.
 
 ## Sending
 
@@ -99,13 +110,43 @@ never the contract's owner.
   again before the next send.
 - Final states come from the contract's finalized events, never from the
   Worker's own send.
+
+### A payout the token refuses
+
+`resolveMany` is all or nothing: one deposit whose payout cannot go through
+would fail every batch it is in, and every later deposit on that network
+would wait behind it. USDC refuses a transfer to a blacklisted address, for
+one, so a refund to such a payer can never succeed while the block stands.
+
+- When the simulation reverts with the contract's `PayoutFailed(id)`, that
+  deposit is **parked** (`submission_fee_parked`, reason `payout_failed`,
+  log event `submission_fee_parked`) and the rest of the batch is simulated
+  again and sent. Nothing is signed for a batch that fails its simulation.
+- When the revert names no deposit (an endpoint that drops the revert data),
+  each deposit of the batch is simulated alone. Those that fail are parked
+  (`reverted_alone`) as long as at least one other goes through. When none
+  goes through and the contract blames none, nothing is parked: that is a
+  fault of the key or the contract, not of a deposit (a key that is not the
+  resolver, say). The run reports `reverted` and logs
+  `submission_fee_send_reverted`.
+- A send that passed its simulation and then reverted on chain is recorded
+  as `failed`; the next run simulates again and parks the deposit then.
+- A parked deposit keeps what is due on its row (`refund_due` or `kept_due`)
+  and is left out of every batch. Once a day it is simulated alone, at most
+  five parked deposits a run. It returns to the queue when its payout would
+  go through, or leaves the list when it is no longer open on chain (log
+  event `submission_fee_unparked`). Its payer can reclaim it from the
+  contract after 30 days where the token allows that transfer.
+- `dry_run` holds no key and simulates nothing, so it parks nothing.
 - Gas: a transaction whose signed maximum fee is above
   `SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI`, or that would take the UTC day's
   signed total above `SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI`, is not signed.
   On Base the separate L1 data fee is outside the signed maximum.
 
-Anyone can make a deposit that does not count, and the resolver then spends
-gas to refund it. The daily ceiling bounds that cost. A deposit that is not
+Anyone can make a deposit of an accepted token that does not count (a wrong
+amount, a wrong destination, a pull request nobody asked a fee for), and the
+resolver then spends gas to refund it. The daily ceiling bounds that cost. A
+deposit of any other token costs the resolver nothing. A deposit that is not
 refunded can be reclaimed by its payer after the contract's 30 days.
 
 ## The SLOP rate

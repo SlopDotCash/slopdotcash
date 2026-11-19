@@ -9,10 +9,13 @@
 
 import {
   type Address,
+  BaseError,
   type Chain,
+  ContractFunctionRevertedError,
   createPublicClient,
   decodeEventLog,
   defineChain,
+  ExecutionRevertedError,
   encodeFunctionData,
   erc20Abi,
   type Hex,
@@ -32,7 +35,9 @@ import {
   type ChainEvent,
   type FeeChain,
   GasBudgetError,
+  PayoutFailedError,
   type SendEntry,
+  SendRevertedError,
   type SendRow,
   type SendStatus,
 } from "./core";
@@ -43,6 +48,9 @@ export const SUBMISSION_DEPOSITS_ABI = parseAbi([
   "event Reclaimed(uint256 indexed id)",
   "function deposits(uint256 id) view returns ((address payer,address token,uint128 amount,address keptTo,bytes32 item,uint64 depositedAt,uint8 state))",
   "function resolveMany(uint256[] ids, bool[] refunds)",
+  "error PayoutFailed(uint256 id)",
+  "error NotOpen(uint256 id)",
+  "error NotResolver()",
 ]);
 
 const MAX_ID = BigInt(Number.MAX_SAFE_INTEGER);
@@ -118,6 +126,46 @@ export function createEvmFeeChain(options: EvmFeeChainOptions): FeeChain {
         entries.map((entry) => entry.refund),
       ],
     });
+
+  /**
+   * Runs `resolveMany` for these entries as a call from the resolver's
+   * address at the latest block. A revert becomes PayoutFailedError when the
+   * contract names the deposit it could not pay, and SendRevertedError
+   * otherwise. A provider failure is thrown as it is: it says nothing about
+   * any deposit.
+   */
+  const simulate = async (entries: readonly SendEntry[]) => {
+    if (!account)
+      throw new Error(
+        "Signing is disabled without SUBMISSION_FEE_RESOLVER_KEY",
+      );
+    try {
+      await client.simulateContract({
+        account: account.address,
+        address: contract,
+        abi: SUBMISSION_DEPOSITS_ABI,
+        functionName: "resolveMany",
+        args: [
+          entries.map((entry) => BigInt(entry.id)),
+          entries.map((entry) => entry.refund),
+        ],
+      });
+    } catch (error) {
+      if (!(error instanceof BaseError)) throw error;
+      const revert = error.walk(
+        (cause) => cause instanceof ContractFunctionRevertedError,
+      );
+      if (revert instanceof ContractFunctionRevertedError) {
+        const id = revert.data?.args?.[0];
+        if (revert.data?.errorName === "PayoutFailed" && typeof id === "bigint")
+          throw new PayoutFailedError(safeId(id));
+        throw new SendRevertedError("The resolve simulation reverted");
+      }
+      if (error.walk((cause) => cause instanceof ExecutionRevertedError))
+        throw new SendRevertedError("The resolve simulation reverted");
+      throw error;
+    }
+  };
 
   return {
     chainId: () => client.getChainId(),
@@ -278,6 +326,17 @@ export function createEvmFeeChain(options: EvmFeeChainOptions): FeeChain {
 
     address: () => account?.address.toLowerCase() ?? null,
 
+    async probe(entry) {
+      try {
+        await simulate([entry]);
+        return "ok";
+      } catch (error) {
+        if (error instanceof PayoutFailedError) return "payout_failed";
+        if (error instanceof SendRevertedError) return "reverted";
+        throw error;
+      }
+    },
+
     async prepare(entries, authorize) {
       if (!account)
         throw new Error(
@@ -285,8 +344,8 @@ export function createEvmFeeChain(options: EvmFeeChainOptions): FeeChain {
         );
       const data = calldata(entries);
       // The simulation runs the contract's own checks (resolver, open state)
-      // at the latest block before anything is signed.
-      await client.call({ account: account.address, to: contract, data });
+      // and every payout at the latest block before anything is signed.
+      await simulate(entries);
       const [nonce, gas, fees] = await Promise.all([
         client.getTransactionCount({
           address: account.address,

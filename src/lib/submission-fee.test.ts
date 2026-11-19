@@ -441,6 +441,7 @@ describe("whether a deposit counts", () => {
 describe("what may be sent for a deposit", () => {
   const deposit = (overrides = {}) => ({
     depositId: 7,
+    token: USDC,
     finalizedAt: "2026-11-21T00:30:00.000Z",
     state: "open",
     accepted: 1,
@@ -485,6 +486,37 @@ describe("what may be sent for a deposit", () => {
         BASE,
         deposit({ accepted: 0 }),
         paying("kept_due"),
+      ),
+    ).toBe("refund");
+  });
+
+  test("a deposit of a token outside the table is never resolved", () => {
+    const junk = `0x${"9".repeat(40)}`;
+    for (const item of [null, paying("refund_due"), paying("kept_due")])
+      expect(
+        submissionResolveAction(
+          BASE,
+          deposit({ token: junk, accepted: 0 }),
+          item,
+        ),
+      ).toBe(null);
+    // SLOP is accepted on Robinhood Chain only.
+    expect(
+      submissionResolveAction(
+        BASE,
+        deposit({ token: SLOP, accepted: 0 }),
+        null,
+      ),
+    ).toBe(null);
+    // A rehearsal's own token table decides, when one is given.
+    expect(
+      submissionResolveAction(
+        BASE,
+        deposit({ token: junk, accepted: 0 }),
+        null,
+        {
+          tokens: { [BASE]: { usdc: junk } },
+        },
       ),
     ).toBe("refund");
   });

@@ -15,6 +15,7 @@ import {
   type FinalizedPage,
   GasBudgetError,
   type ItemRow,
+  type ParkReason,
   SendConflictError,
   type SendEntry,
   type SendRow,
@@ -439,6 +440,8 @@ export class D1FeeStore implements FeeStore {
       .run();
   }
 
+  // A deposit of a token outside the table is never resolved, so it is not
+  // read again every run.
   async resolvable(network: string) {
     const { results } = await this.db
       .prepare(
@@ -449,6 +452,7 @@ export class D1FeeStore implements FeeStore {
             AND d.state IN ('open', 'refund_due', 'kept_due')
             AND (d.accepted = 0 OR d.state <> 'open'
                  OR i.outcome IN ('refund_due', 'kept_due'))
+            AND (d.reject_reason IS NULL OR d.reject_reason <> 'token_not_accepted')
           ORDER BY d.deposit_id`,
       )
       .bind(network)
@@ -457,6 +461,68 @@ export class D1FeeStore implements FeeStore {
       deposit: depositOf(row),
       item: itemOf(row),
     }));
+  }
+
+  async parked(network: string) {
+    const { results } = await this.db
+      .prepare(
+        "SELECT deposit_id FROM submission_fee_parked WHERE network = ? AND released_at IS NULL",
+      )
+      .bind(network)
+      .all<{ deposit_id: number }>();
+    return new Set(results.map((row) => row.deposit_id));
+  }
+
+  async park(
+    network: string,
+    entry: SendEntry,
+    reason: ParkReason,
+    at: string,
+  ) {
+    await this.db
+      .prepare(
+        `INSERT INTO submission_fee_parked
+           (network, deposit_id, refund, reason, parked_at, checked_at, checks, released_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, NULL)
+         ON CONFLICT (network, deposit_id) DO UPDATE SET
+           refund = excluded.refund, reason = excluded.reason,
+           parked_at = CASE WHEN released_at IS NULL THEN parked_at ELSE excluded.parked_at END,
+           checked_at = excluded.checked_at, checks = checks + 1, released_at = NULL`,
+      )
+      .bind(network, entry.id, entry.refund ? 1 : 0, reason, at, at)
+      .run();
+  }
+
+  async parkedToCheck(network: string, before: string, limit: number) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT deposit_id, refund FROM submission_fee_parked
+          WHERE network = ? AND released_at IS NULL AND checked_at <= ?
+          ORDER BY checked_at, deposit_id LIMIT ?`,
+      )
+      .bind(network, before, limit)
+      .all<{ deposit_id: number; refund: number }>();
+    return results.map((row) => ({
+      id: row.deposit_id,
+      refund: row.refund === 1,
+    }));
+  }
+
+  async checkedParked(
+    network: string,
+    depositId: number,
+    released: boolean,
+    at: string,
+  ) {
+    await this.db
+      .prepare(
+        `UPDATE submission_fee_parked
+            SET checked_at = ?, checks = checks + 1,
+                released_at = CASE WHEN ? = 1 THEN ? ELSE NULL END
+          WHERE network = ? AND deposit_id = ? AND released_at IS NULL`,
+      )
+      .bind(at, released ? 1 : 0, at, network, depositId)
+      .run();
   }
 
   async setDue(
