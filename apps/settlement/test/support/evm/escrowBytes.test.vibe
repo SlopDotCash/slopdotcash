@@ -2,7 +2,7 @@ import { assert, layer } from "@effect/vitest"
 import { anvil } from "@repo/platform/testing/chains"
 import { type Address, encodeFunctionData } from "viem"
 import { type AwardState, type Bytes32, type EvmAddress, type Hex, awardCall, awardId, bindingCall, decodeAward, decodeBinding, decodeBytes32, decodeUint, escrowAbi, escrowGetter, evmAddress, factoryAbi } from "../../../src/chain/evm/abi.ts"
-import { CURRENT_PERIOD_CALL, OPEN_PLEDGED_GROSS_CALL, commitAwardCalldata, decodeCurrentPeriod, decodeMonthPledge, decodeOpenPledgedGross, expirePledgeCalldata, monthPledgeCall, payCalldata, pledgeMonthsCalldata } from "../../../src/chain/evm/actions.ts"
+import { CURRENT_PERIOD_CALL, OPEN_PLEDGED_GROSS_CALL, claimFeesCalldata, commitAwardCalldata, depositCalldata, decodeCurrentPeriod, decodeMonthPledge, decodeOpenPledgedGross, expirePledgeCalldata, monthPledgeCall, payCalldata, pledgeMonthsCalldata, withdrawCalldata } from "../../../src/chain/evm/actions.ts"
 import { type DecodedLog, EVM_PLEDGE_EVENT_TOPICS, decodeEscrowLogs } from "../../../src/chain/evm/events.ts"
 import { vaultKey } from "../../../src/chain/evm/factories.ts"
 import {
@@ -30,7 +30,7 @@ import {
 import { DECIMALS_CALL, PENDING_MONTHLY_CALL, TOKEN_CALL, TOTALS_CALL, conservedTotals, needsPendingMonthly, readTotals } from "../../../src/chain/evm/totals.ts"
 import { contractSignature, readSignedType2, transactionId } from "../../../src/chain/evm/transactions.ts"
 import { type BindingInput, bindCalldata, bindingDigest, bindingTypedData, domainSeparator, walletTypedData } from "../../../src/chain/evm/typedData.ts"
-import { type EscrowStack, NOVEMBER_2026 as november, entriesFrom, escrowStack, word } from "./deploy.ts"
+import { type EscrowStack, FEE_RECIPIENT, NOVEMBER_2026 as november, entriesFrom, escrowStack, word } from "./deploy.ts"
 
 service Stack {
   readonly escrow: EscrowStack
@@ -100,11 +100,18 @@ effect function attested(typedData: unknown) {
   return try promise(() => escrow.signTypedData(escrow.roles.authority.address, typedData))
 }
 
+effect function nativeBalance(account: EvmAddress) {
+  const { escrow } = try Stack
+  const answer = try promise(() => escrow.chain.rpc("eth_getBalance", [account, "latest"]))
+  if (typeof answer !== "string") return try die(new Error("eth_getBalance answered no quantity"))
+  return BigInt(answer)
+}
+
 effect function totals(vault: EvmAddress) {
   const read0 = readTotals({ totals: try read(vault, TOTALS_CALL), token: try read(vault, TOKEN_CALL), decimals: try read(vault, DECIMALS_CALL) })
   if (typeof read0 === "string") return { kind: "Refused" as const, refusal: read0 }
   const pendingMonthly = needsPendingMonthly(read0.counters) ? try read(vault, PENDING_MONTHLY_CALL) : undefined
-  return conservedTotals(read0, { pendingMonthly, nativeBalance: undefined })
+  return conservedTotals(read0, { pendingMonthly, nativeBalance: read0.native ? try nativeBalance(vault) : undefined })
 }
 
 effect function reserved(vault: EvmAddress) {
@@ -346,5 +353,35 @@ layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
       released: { name: "MonthlyReserveReleased", period: november, allocationDigest: word(0xd3n), remainingGross: 3_000_007n, releasedGross: 3_000_007n },
     }))
   })
-})
 
+  it.effect('A native ETH vault takes a deposit with its value, returns free funds to the owner less ceil(gross / 50), moves the accrued fee to the fee recipient, and its totals conserve against the vault\'s ETH balance (spec/contracts/evmEscrow.md, "Anyone deposits the exact amount, and only credited deposits enter the free balance"; spec/contracts/evmEscrow.md, "The owner withdraws free funds to itself less the 2% fee"; spec/contracts/evmEscrow.md, "Anyone moves all accrued fees to the fee recipient"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals")', () => effect {
+    const { escrow } = try Stack
+    const owner = try address(escrow.roles.owner.address)
+    const donor = escrow.roles.donor.address
+    const ether = try address("0x0000000000000000000000000000000000000000")
+    const vault = try promise(() => escrow.createVault({ owner, projectId: word(5n), asset: ether, purpose: "OrdinaryPurpose", monthlyCap: 10n ** 17n, monthlyEnabled: true }))
+    const from = (try promise(() => escrow.head())) + 1n
+    const feesBefore = try nativeBalance(FEE_RECIPIENT)
+    try promise(() => escrow.send(donor, vault, depositCalldata(10n ** 18n), 10n ** 18n))
+    try sent(escrow.roles.owner.address, vault, Effect.try(() => withdrawCalldata(10n ** 17n + 1n)))
+    const withdrawn = try totals(vault)
+    try sent(donor, vault, Effect.sync(() => claimFeesCalldata()))
+    const claimed = try totals(vault)
+    const fee = 2n * 10n ** 15n + 1n
+    try Effect.try(() => assert.deepStrictEqual({
+      withdrawn: withdrawn.kind === "Totals" ? { native: withdrawn.totals.native, decimals: withdrawn.totals.decimals, free: withdrawn.totals.counters.free, accrued: withdrawn.totals.counters.accruedFees, balance: withdrawn.totals.counters.balance } : withdrawn,
+      claimed: claimed.kind === "Totals" ? { accrued: claimed.totals.counters.accruedFees, withdrawalFees: claimed.totals.counters.withdrawalFees, balance: claimed.totals.counters.balance } : claimed,
+      fees: (try nativeBalance(FEE_RECIPIENT)) - feesBefore,
+      events: try events(vault, from),
+    }, {
+      withdrawn: { native: true, decimals: 18, free: 9n * 10n ** 17n - 1n, accrued: fee, balance: 9n * 10n ** 17n - 1n + fee },
+      claimed: { accrued: 0n, withdrawalFees: fee, balance: 9n * 10n ** 17n - 1n },
+      fees: fee,
+      events: [
+        { name: "Deposited", depositor: try address(donor), amount: 10n ** 18n },
+        { name: "UnusedWithdrawn", destination: owner, gross: 10n ** 17n + 1n, net: 10n ** 17n + 1n - fee, fee },
+        { name: "FeesClaimed", recipient: FEE_RECIPIENT, amount: fee },
+      ],
+    }))
+  })
+})
