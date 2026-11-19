@@ -14,7 +14,9 @@ import {
   type ChainDeposit,
   type ChainEvent,
   type FeeChain,
+  failureReason,
   GasBudgetError,
+  labelled,
   MAX_BATCH,
   type NetworkDependencies,
   PARKED_RECHECK_MS,
@@ -1215,6 +1217,59 @@ const local = (config: SubmissionFeeConfig): SubmissionFeeConfig => ({
   ...config,
   networks: [network],
   unset: [],
+});
+
+describe("a failed step is named without its message", () => {
+  test("the reason carries the step and error classes, never text or a URL", async () => {
+    class HttpRequestError extends Error {
+      status = 429;
+      url = "https://rpc.example/secret-key";
+    }
+    const cause = Object.assign(
+      new Error("rate limited at https://rpc.example/secret-key"),
+      {
+        name: "RpcRequestError",
+        code: -32011,
+      },
+    );
+    const chain = labelled(
+      {
+        async events() {
+          throw new HttpRequestError(
+            "POST https://rpc.example/secret-key failed",
+            {
+              cause,
+            },
+          );
+        },
+        heads() {
+          return 7;
+        },
+      },
+      "chain",
+    );
+    expect(chain.heads()).toBe(7);
+    let caught: unknown;
+    try {
+      await chain.events();
+    } catch (error) {
+      caught = error;
+    }
+    const reason = failureReason(caught);
+    expect(reason).toBe(
+      "chain.events/Error:status-429/RpcRequestError:code--32011",
+    );
+    expect(reason).not.toContain("secret");
+    expect(reason).not.toContain("http");
+    // An error from outside a labelled object still gets a bounded reason.
+    expect(failureReason(new TypeError("x"))).toBe("unlabelled/TypeError");
+    expect(failureReason("text")).toBe("unlabelled");
+    expect(
+      failureReason(
+        Object.assign(new Error("m"), { name: "bad name <script>" }),
+      ),
+    ).toBe("unlabelled/Error");
+  });
 });
 
 describe("the switch", () => {

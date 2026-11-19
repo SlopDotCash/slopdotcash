@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8d1b701d74faf939da52ec136b7ad40bd0519c0f239dde63768e1a03e733c7fb",
+  "inventorySha256": "6e5957af8d335a0f6245476df31657523ad07e45bddf682c03d1c77f56f0c4f1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4949,7 +4949,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 338,
+      "line": 413,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
@@ -4962,7 +4962,7 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 51,
+      "line": 58,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
