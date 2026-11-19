@@ -126,6 +126,41 @@ for (const path of [
   });
 }
 
+for (const path of [
+  "/repos/owner/repo/pulls/7/reviews?per_page=100&page=1",
+  "/repos/owner/repo/pulls/7/comments?per_page=100&page=2",
+  "/repos/owner/repo/pulls/7/commits?per_page=100",
+  "/repos/owner/repo/issues/7/comments?per_page=100&page=1",
+  "/repos/owner/repo/issues/7/events?per_page=100",
+  "/repositories/42/issues/7/timeline?per_page=100&page=3",
+]) {
+  test(`PR and issue list pages recover from two HTTP 500 responses at ${path}`, async () => {
+    const page = [{ id: 1 }];
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(page),
+    ]);
+    expect(await f.client.get<typeof page>(path)).toEqual(page);
+    expect(f.calls()).toBe(3);
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+for (const path of [
+  "/repos/owner/repo/pulls/7",
+  "/repos/owner/repo/pulls/7/reviews/9",
+  "/repos/owner/repo/issues/7",
+  "/repos/owner/repo/issues/comments?per_page=100",
+]) {
+  test(`other HTTP 500 responses return immediately at ${path}`, async () => {
+    const f = fixture([fileReadError]);
+    await expect(f.client.get(path)).rejects.toMatchObject({ status: 500 });
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  });
+}
+
 test("persistent PR file failures return the complete third HTTP 500 response", async () => {
   const finalBody = { message: "still unavailable", documentation_url: "help" };
   const f = fixture([
