@@ -3,21 +3,18 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { ExperimentalNodeProcess } from "vibelang-runtime/experimental/platform-node"
 import { CallerLive } from "@repo/backend/caller"
-import { isoNow } from "@repo/platform/clock"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { Caller, outbound, outboundVia } from "@repo/platform/http"
 import { bundle } from "@repo/platform/testing"
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
-import { Notices } from "@repo/ports/operations"
 import { supervise } from "../src/local/command/supervisor.vibe"
 import { identityBridge, productionIdentity } from "../src/local/dev/identity.vibe"
 import { captureMail } from "../src/local/dev/mail.vibe"
 import { dataDirectory, privateDirectory } from "../src/local/dev/paths.vibe"
-import { type Local, answer, assertions, localVars, mailDesk, mailDispatch, mailSink, migrated } from "../src/local/dev/serve.vibe"
+import { type Local, answer, assertions, localVars, mailDesk, mailSink, migrated } from "../src/local/dev/serve.vibe"
 import { type Deployable, forward, startLocal, stopLocal } from "../src/local/dev/workers.ts"
 import { runStages } from "../src/local/validator/stages.vibe"
-import { noticePorts } from "../src/notifications/statements.vibe"
 import { startStage, validatorMachine } from "../src/local/validator/steps.vibe"
 
 const audience = "slop-points-web"
@@ -26,9 +23,6 @@ const sessionCookie = /__Host-slop_points=([^;,\s]+)/u
 schema Handed { flowId: string; pollCapability: string; authorizationUrl: string }
 schema Issued { status: "complete"; assertion: string }
 schema Consumption { consumed_at: string | null }
-schema Outboxed { state: string }
-
-error MailPending
 
 const Services = Layer.mergeAll(NodeServices.layer, ExperimentalNodeProcess.layer, outbound, webCrypto)
 
@@ -131,12 +125,6 @@ effect function devRouteHolders() {
   return holders.sort()
 }
 
-effect function capturedCount(mail: string, waiting: number) {
-  const count = (try (try FileSystem.FileSystem).readDirectory(mail)).filter((name) => name.endsWith(".json")).length
-  if (count <= waiting) throw new MailPending()
-  return count
-}
-
 effect function siteConfig(file: string, database: string) {
   try (try FileSystem.FileSystem).writeFileString(file, JSON.stringify({
     name: "slop-site-local-journey",
@@ -210,7 +198,7 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
     })
   }))
 
-  it.effect('Sign into local development without creating production authority (spec/backend/local.md, "Story: Sign into local development without creating production authority"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one")', () => scoped(effect {
+  it.effect('Sign into local development without creating production authority (spec/backend/local.md, "Story: Sign into local development without creating production authority"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const path = try Path.Path
     const home = try (try Experimental.Process.Process).homeDirectory
@@ -224,9 +212,8 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
     try privateDirectory(data)
     const modes = [try modeOf(data), try modeOf(path.join(data, "local-secrets.json")), try modeOf(path.join(data, "mail-capture")), try modeOf(path.join(data, "mail-capture", "old", "note.json"))]
     const backend = path.join(repoRoot, "apps", "backend")
-    const [siteScript, identityScript, notifyScript] = try promise(() => Promise.all([bundle(backend, { entry: "worker" }), bundle(backend, { entry: "identity" }), bundle(path.join(repoRoot, "apps", "app"), { entry: "notify" })]))
+    const [siteScript, identityScript] = try promise(() => Promise.all([bundle(backend, { entry: "worker" }), bundle(backend, { entry: "identity" })]))
     const identity: Deployable = { name: "identity", config: path.join(backend, "wrangler", "identity.staging.jsonc"), script: identityScript }
-    const notify: Deployable = { name: "notify", config: path.join(repoRoot, "apps", "operations", "wrangler", "notify.staging.jsonc"), script: notifyScript }
     const site: Deployable = { name: "site", config: try siteConfig(path.join(scratch, "site.jsonc"), "slop-staging"), script: siteScript }
     const stray: Deployable = { ...site, config: try siteConfig(path.join(scratch, "stray.jsonc"), "slop-other") }
     const desk = mailDesk(path.join(data, "mail-capture"))
@@ -239,7 +226,7 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
         try: () => startLocal({ deployables: [stray, identity], vars, persistence, sink: mailSink(mailDesk(path.join(scratch, "stray-mail"))), assertions }),
         catch: (cause) => cause instanceof Error ? cause.message : String(cause),
       }) catch (reason) => reason
-      const workers = try acquireRelease(promise(() => startLocal({ deployables: [site, identity, notify], vars, persistence, sink: mailSink(desk), assertions })), (started) => promise(() => stopLocal(started.mf)))
+      const workers = try acquireRelease(promise(() => startLocal({ deployables: [site, identity], vars, persistence, sink: mailSink(desk), assertions })), (started) => promise(() => stopLocal(started.mf)))
       provide Layer.provideMerge(CallerLive, d1(workers.database)) {
         const db = try D1
         const applied = try migrated(migrationsDir)
@@ -335,20 +322,6 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
           bridge: [[403, { error: "origin_forbidden" }], [400, { error: "invalid_audience" }], [410, { error: "flow_expired" }], 404],
           privacy: ["apps/operations/src/local/dev/serve.vibe"],
         })
-        const version = "7".repeat(64)
-        const queuedAt = try isoNow()
-        try db.batch([
-          sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES ('7', 'seven@example.test', ${version}, ${queuedAt})`,
-          sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES ('7', 1, 1, ${version}, ${queuedAt})`,
-        ])
-        provide noticePorts {
-          try db.batch(try (try Notices).statements({ notices: [{ eventKey: "wallet-claim:local-journey", recipientGithubId: "7", kind: "WalletChanged", subject: "base", actionPath: "/account#wallets", sourceAt: queuedAt }] }))
-        }
-        try mailDispatch(workers)
-        const delivered = try retry(capturedCount(mail, captured.length), { schedule: Schedule.spaced("500 millis"), times: 60 })
-        const [queued] = try rows(Outboxed, sql`SELECT state FROM activity_notification_outbox WHERE event_key = 'wallet-claim:local-journey' AND recipient_github_id = '7'`)
-        const listed = try asked("/__dev/mail", { headers: cookie })
-        try same([delivered, queued?.state, listed.status], [captured.length + 1, "provider-accepted", 200])
       }
     }
     const linked = try fs.symlink(path.join(scratch, "elsewhere"), path.join(data, "link"))

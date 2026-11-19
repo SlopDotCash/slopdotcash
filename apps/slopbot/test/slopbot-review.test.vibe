@@ -14,6 +14,8 @@ const installationId = 9200
 const repositoryId = 8001
 const repo = "ada/widgets"
 const orbioModel = "anthropic/claude-sonnet-5.5"
+const sonnetModel = "claude-sonnet-5.5"
+const terraModel = "gpt-6.1-terra"
 const marker = "<!-- slopbot:review -->"
 const policy = { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": "Every change must link an approved issue before review.\n" }
 const project = { projectId: "review-project", path: repo, repositoryId: String(repositoryId), rowStatus: "Active", restriction: "Clear" }
@@ -34,7 +36,7 @@ async function seed() {
   const fake = githubFake()
   const world = fake.world
   world.addUser({ id: 100, login: "ada" })
-  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat"]
+  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat", "terra", "backstop", "blocked", "capped", "admitted"]
   authors.forEach((login, index) => world.addUser({ id: 300 + index, login }))
   world.addRepo({ id: repositoryId, owner: "ada", name: "widgets", files: policy })
   const items = {
@@ -43,6 +45,11 @@ async function seed() {
     spam: world.addIssue({ repo, author: "spammer", title: "SPAM-TOKEN offer", body: "Buy cheap tokens at spam-shop today and get rich." }),
     offTopic: world.addIssue({ repo, author: "offtopic", title: "OFFTOPIC-TOKEN rename everything", body: "Rename every file to upper case for style." }),
     blank: world.addIssue({ repo, author: "blank", title: "", body: "" }),
+    terra: world.addIssue({ repo, author: "terra", title: "TERRA-TOKEN export loses rows", body: "Exporting a sheet drops the last row." }),
+    backstop: world.addIssue({ repo, author: "backstop", title: "BACKSTOP-TOKEN undo is missing", body: "Undo does nothing after a paste." }),
+    blocked: world.addIssue({ repo, author: "blocked", title: "BLOCKED-TOKEN print is blank", body: "Printing gives an empty page." }),
+    capped: world.addIssue({ repo, author: "capped", title: "CAPPED-TOKEN zoom resets", body: "Zoom resets on every reload." }),
+    admitted: world.addIssue({ repo, author: "admitted", title: "ADMITTED-TOKEN tabs reorder", body: "Tabs reorder themselves after a save." }),
     binary: await pullWith(world, "binary", "BINARY-TOKEN logo", { "logo.bin": "\u0000binary" }),
     large: await pullWith(world, "large", "LARGE-TOKEN data", { "big.txt": `${"x".repeat(130_000)}\n` }),
     wide: await pullWith(world, "wide", "WIDE-TOKEN notes", wideFiles),
@@ -93,8 +100,16 @@ const Review = Layer.unwrap(effect {
   )
 })
 
+function asked(route: ProviderCall["route"], model: string, token: string) {
+  return (call: ProviderCall) => call.route === route && call.model === model && call.messages.some((message) => message.content.includes(token))
+}
+
 function about(token: string) {
-  return (call: ProviderCall) => call.route === "orbio" && call.messages.some((message) => message.content.includes(token))
+  return asked("surplus-anthropic", sonnetModel, token)
+}
+
+function mentions(call: ProviderCall, token: string) {
+  return call.messages.some((message) => message.content.includes(token))
 }
 
 function jobOf(number: number, itemKind: "issue" | "pull_request" = "issue") {
@@ -165,7 +180,7 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       headline: body.split("\n").slice(0, 2),
       neutral: ["Thanks @​maintainer", "https:​//evil.example", "[docs] (https:​//x.test)", "&lt;b>bold&lt;/b>"].every((part) => body.includes(part)),
       raw: body.includes("@maintainer") || body.includes("https://evil.example"),
-      disclosure: body.includes(`- Triage: orbio / ${orbioModel} (route step 1, served model unverified)`),
+      disclosure: body.includes(`- Triage: surplus / ${sonnetModel} (route step 1, served model unverified)`),
       copied,
       reviews,
       actions,
@@ -186,8 +201,8 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       reviews: [{ status: "completed", action: "comment" }],
       actions: [{ action: "comment", detail: "no finding" }],
       costs: [
-        { call_kind: "triage", route_step: 1, provider: "orbio", outcome: "ok", billed_micro_usdc: 0 },
-        { call_kind: "triage", route_step: 1, provider: "orbio", outcome: "ok", billed_micro_usdc: 0 },
+        { call_kind: "triage", route_step: 1, provider: "surplus", outcome: "ok", billed_micro_usdc: 0 },
+        { call_kind: "triage", route_step: 1, provider: "surplus", outcome: "ok", billed_micro_usdc: 0 },
       ],
       labels: [],
     })
@@ -275,12 +290,117 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       written: try each([items.spam, items.offTopic, items.blank], (number) => effect { return [(try botComments(fake, number)).length, (try labels(fake, number)).length] }),
       unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
     }, {
-      spam: { kind: "finding", category: "spam", deterministic: false, grounded: true, related: false, uncertain: false, mode: "close", scope: "contributor", triage: ["orbio", orbioModel, 1] },
-      offTopic: { kind: "finding", category: "out_of_scope", deterministic: false, grounded: false, related: false, uncertain: true, mode: "label", scope: "contributor", triage: ["orbio", orbioModel, 1] },
+      spam: { kind: "finding", category: "spam", deterministic: false, grounded: true, related: false, uncertain: false, mode: "close", scope: "contributor", triage: ["surplus", sonnetModel, 1] },
+      offTopic: { kind: "finding", category: "out_of_scope", deterministic: false, grounded: false, related: false, uncertain: true, mode: "label", scope: "contributor", triage: ["surplus", sonnetModel, 1] },
       blank: { kind: "finding", category: "empty", deterministic: true, grounded: true, related: false, uncertain: false, mode: "close", scope: "contributor", triage: null },
       modelCalls: 2,
       written: [[0, 0], [0, 0], [0, 0]],
       unexpected: [0, 0, 0],
+    })
+  })
+
+  it.effect('The route asks Surplus Sonnet first, a failure falls to Surplus Terra, and a Surplus spending denial skips Terra for Orbio and blocks only when Orbio fails (spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    const resetsAt = "2099-01-01T00:00:00.000Z"
+    const useful = { text: verdict("none", 0.95, "This report is useful.") }
+    try Effect.try(() => {
+      providers.reply(asked("surplus-anthropic", sonnetModel, "TERRA-TOKEN"), { text: "{}" })
+      providers.reply(asked("surplus-anthropic", terraModel, "TERRA-TOKEN"), useful)
+      providers.reply(asked("surplus-anthropic", sonnetModel, "BACKSTOP-TOKEN"), { failure: "spendDenied", resetsAt })
+      providers.reply(asked("orbio", orbioModel, "BACKSTOP-TOKEN"), useful)
+      providers.reply(asked("surplus-anthropic", sonnetModel, "BLOCKED-TOKEN"), { failure: "spendDenied", resetsAt })
+      providers.reply(asked("orbio", orbioModel, "BLOCKED-TOKEN"), { text: "{}" })
+    })
+    const start = providers.calls.length
+    const outcomes = [try reviewed(area, items.terra), try reviewed(area, items.backstop), try reviewed(area, items.blocked)]
+    const afterBlock = providers.calls.length
+    const beforeReset = try reviewed(area, items.blocked)
+    const costsOf = (number: number) => effect {
+      return try area.sql("SELECT route_step, provider, requested_model, outcome, (failure IS 'provider budget exhausted') AS denied, billed_micro_usdc FROM slopbot_costs WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?) ORDER BY id", try nodeOf(fake, number))
+    }
+    const blocksOf = (number: number) => effect {
+      return try area.sql("SELECT retry_at FROM slopbot_budget_blocks WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?)", try nodeOf(fake, number))
+    }
+    const row = (route_step: number, provider: string, requested_model: string, outcome: string, denied: number) => ({ route_step, provider, requested_model, outcome, denied, billed_micro_usdc: 0 })
+    try same({
+      outcomes,
+      beforeReset,
+      askedAgain: providers.calls.length - afterBlock,
+      calls: providers.calls.slice(start).map((call) => [call.route, call.model]),
+      costs: try each([items.terra, items.backstop, items.blocked], costsOf),
+      blocks: try each([items.terra, items.backstop, items.blocked], blocksOf),
+      published: try each([items.terra, items.backstop, items.blocked], (number) => effect { return (try botComments(fake, number)).length }),
+    }, {
+      outcomes: [
+        { kind: "settled", result: "review published (no finding)" },
+        { kind: "settled", result: "review published (no finding)" },
+        { kind: "settled", result: `blocked: provider budget until ${resetsAt}` },
+      ],
+      beforeReset: { kind: "settled", result: `blocked: provider budget until ${resetsAt}` },
+      askedAgain: 0,
+      calls: [
+        ["surplus-anthropic", sonnetModel], ["surplus-anthropic", terraModel],
+        ["surplus-anthropic", sonnetModel], ["orbio", orbioModel],
+        ["surplus-anthropic", sonnetModel], ["orbio", orbioModel],
+      ],
+      costs: [
+        [row(1, "surplus", sonnetModel, "failed", 0), row(2, "surplus", terraModel, "ok", 0)],
+        [row(1, "surplus", sonnetModel, "failed", 1), row(3, "orbio", orbioModel, "ok", 0)],
+        [row(1, "surplus", sonnetModel, "failed", 1), row(3, "orbio", orbioModel, "failed", 0)],
+      ],
+      blocks: [[], [], [{ retry_at: resetsAt }]],
+      published: [1, 1, 0],
+    })
+  })
+
+  it.effect('Past the month\'s free-review cap a new item is skipped before any call or GitHub write, while an admitted item is reviewed again and other repositories and months do not count (spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A bound review of a new item over the month\'s free-review cap is skipped before any call")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    const now = try isoNow()
+    const month = now.slice(0, 7)
+    const countOf = (repository: number, during: string) => effect {
+      const [found] = try area.sql("SELECT COUNT(*) AS n FROM slopbot_review_month_starts WHERE repository_id = ? AND month = ?", repository, during)
+      return Number(found?.n)
+    }
+    const fill = (repository: number, during: string, count: number) => area.sql("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) SELECT ?, ?, 'pull_request', 100000 + i, ? FROM n", count, repository, during, now)
+    try fill(repositoryId, month, 1999 - (try countOf(repositoryId, month)))
+    try fill(repositoryId + 1, month, 2000)
+    try fill(repositoryId, "2000-01", 2000)
+    try Effect.try(() => {
+      providers.reply(about("ADMITTED-TOKEN"), { text: verdict("none", 0.95, "This report is useful.") })
+      providers.reply(about("ADMITTED-TOKEN"), { text: verdict("none", 0.95, "This report is useful.") })
+    })
+    const admitted = try reviewed(area, items.admitted)
+    const atCap = try countOf(repositoryId, month)
+    const start = providers.calls.length
+    const capped = try reviewed(area, items.capped)
+    const cappedCalls = providers.calls.slice(start).filter((call) => mentions(call, "CAPPED-TOKEN")).length
+    try Effect.try(() => { fake.world.item(repo, items.admitted).body = "Tabs reorder themselves after a save, and after a reload." })
+    const again = try reviewed(area, items.admitted)
+    const cappedReview = try area.sql("SELECT status, skip_reason, action FROM slopbot_reviews WHERE item_node_id = ?", try nodeOf(fake, items.capped))
+    try same({
+      admitted,
+      atCap,
+      capped,
+      cappedCalls,
+      cappedReview,
+      cappedWrites: [(try botComments(fake, items.capped)).length, (try labels(fake, items.capped)).length, (try itemOf(fake, items.capped)).state],
+      again,
+      afterAgain: try countOf(repositoryId, month),
+      untouched: [try countOf(repositoryId + 1, month), try countOf(repositoryId, "2000-01")],
+    }, {
+      admitted: { kind: "settled", result: "review published (no finding)" },
+      atCap: 2000,
+      capped: { kind: "settled", result: "monthly-review-cap" },
+      cappedCalls: 0,
+      cappedReview: [{ status: "skipped", skip_reason: "monthly-review-cap", action: null }],
+      cappedWrites: [0, 0, "open"],
+      again: { kind: "settled", result: "review published (no finding)" },
+      afterAgain: 2000,
+      untouched: [2000, 2000],
     })
   })
 })

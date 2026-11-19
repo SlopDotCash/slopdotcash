@@ -1,4 +1,4 @@
-// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
+// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
 import { toAmount } from "@repo/settlement/kernels/amounts";
 import type { PoolFacts } from "../../../gen/frontend__projections.ts";
 import type { LifetimeTotal } from "./standings.ts";
@@ -30,6 +30,8 @@ export const funded = (amountMinor: bigint): PoolFacts => ({ ...pointsOnly, amou
 export const withdrawn = (amountMinor: bigint): PoolFacts => ({ ...funded(amountMinor), freeNow: toAmount(0n), withdrawnSince: true });
 
 export const unread = (amountMinor: bigint): PoolFacts => ({ ...funded(amountMinor), read: "PoolFailed" });
+
+export const pledged = (amountMinor: bigint): PoolFacts => ({ ...pointsOnly, amount: toAmount(amountMinor), pledgeSupport: true, pledged: toAmount(amountMinor) });
 
 const base = {
   status: "active",

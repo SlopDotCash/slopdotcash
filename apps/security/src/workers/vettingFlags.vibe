@@ -1,0 +1,12 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { worker } from "@repo/platform/worker"
+import { FlagsFixture, flagsMessage } from "../qualification/flags/fixture.vibe"
+import type { FixtureEnv } from "../qualification/flags/site.vibe"
+
+export default worker({
+  services: (env: FixtureEnv) => Layer.mergeAll(d1(env.EVIDENCE_DATABASE), webCrypto, Layer.succeed(FlagsFixture, { env })),
+  routes: Layer.empty,
+  queue: (message) => flagsMessage(message),
+})

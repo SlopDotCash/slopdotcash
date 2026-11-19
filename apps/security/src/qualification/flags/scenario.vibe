@@ -1,0 +1,219 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, first, sql } from "@repo/platform/d1"
+import { type FixtureActor, fixtureKeys, githubFixture } from "./transport.ts"
+import { type FixtureEnv, fixtureSite, publicReadToken } from "./site.vibe"
+import { FixtureRefused, type Session, ask, counted, isoNow, promised, session, signedAsk, status, verify } from "./requests.vibe"
+
+schema AssessmentRow { id: string; project_id: string; revision: number; manifest_sha256: string; commit_sha: string; template_sha256: string; repository_id: string; requested_at: string }
+schema Identified { id: string }
+schema Restriction { state_after: string }
+
+const encoder = new TextEncoder()
+const actors = {
+  alice: { id: "900000010", login: "qualification-alice" },
+  bob: { id: "900000011", login: "qualification-bob" },
+  carol: { id: "900000012", login: "qualification-carol" },
+  admin: { id: "900000001", login: "qualification-admin" },
+} as const satisfies Readonly<Record<string, FixtureActor>>
+
+type Actor = keyof typeof actors
+
+const policyVersion = "slop-scan-policy-v2"
+const scanRun = "scan-run"
+const surfaces = ["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"] as const
+const threats = ["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection"] as const
+
+function manifestOf(id: string, repository: string, repositoryId: number) {
+  return JSON.stringify({
+    id,
+    name: "Flag qualification fixture",
+    status: "active",
+    listingTier: "community",
+    steward: { github: { type: "User", actorId: "987654321", login: "example", nodeId: "U_example" } },
+    authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
+    terms: { repositoryLicense: { state: "verified", spdx: "MIT", url: "https://example.invalid/license", commitSha: "a".repeat(40), fileSha256: "b".repeat(64) } },
+    repositories: [{ id: repository, integrationBranch: "main" }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "none" },
+    funding: {},
+  })
+}
+
+function scanResult(row: AssessmentRow, disposition: "clean" | "malicious", evidence: { readonly report: string; readonly inputs: string }, at: string) {
+  const malicious = disposition === "malicious"
+  return {
+    schemaVersion: "slop-vetting-result-v2",
+    assessmentId: row.id,
+    projectId: row.project_id,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    disposition,
+    policyVersion,
+    assessed: { repository: row.repository_id, commitSha: row.commit_sha, templateSha256: row.template_sha256, inputManifestSha256: evidence.inputs, dependencyLocks: [] },
+    scan: { runId: scanRun, startedAt: row.requested_at, completedAt: at, reportSha256: evidence.report },
+    coverage: Object.fromEntries(surfaces.map((surface) => [surface, { state: "complete", items: 1 }])),
+    checks: Object.fromEntries(threats.map((threat) => [threat, malicious && threat === "credential-theft" ? "flagged" : "passed"])),
+    visibilityGaps: [],
+    execution: null,
+    reusedAssessmentId: null,
+    primaryReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-1", inputManifestSha256: evidence.inputs, runId: "review-1", status: "completed", verdict: "no-findings", risk: "low", findingCount: 0 },
+    specialistReview: null,
+    artifacts: [],
+    findings: [],
+    confirmation: malicious ? { basis: "verified-source-evidence", rule: "fixture-credential-read", evidence: ["Harmless synthetic credential-read finding"] } : null,
+  }
+}
+
+export effect function twoFlagPause(env: FixtureEnv) {
+  const db = try D1
+  const keys = try promised("Fixture keys were not generated", () => fixtureKeys())
+  const key = Redacted.make(keys.jwk)
+  const github = githubFixture(Object.values(actors), publicReadToken)
+  const site = fixtureSite(env, { keys, github, templateSha256: try sha256Hex(env.QUALIFICATION_RUN), administrator: actors.admin.id })
+  const sessions = new Map<Actor, Session>()
+  for (const name of Object.keys(actors) as Actor[]) sessions.set(name, try session({ actorId: `qualification-${name}`, githubId: actors[name].id, login: actors[name].login }))
+
+  function cookieOf(actor: Actor) {
+    return sessions.get(actor)?.cookie
+  }
+
+  effect function flag(id: string, actor: Actor) {
+    return try status(site, `/api/v1/project-flags/${id}`, { as: cookieOf(actor), body: { category: "credential-theft", evidence: `Harmless fixture ${actor}: synthetic credential-read finding.` } })
+  }
+
+  effect function restriction(id: string) {
+    return (try first(Restriction, sql`SELECT state_after FROM project_enforcements WHERE project_id=${id} ORDER BY sequence DESC LIMIT 1`))?.state_after ?? "clear"
+  }
+
+  effect function latest(id: string, pending: boolean) {
+    const found = try first(Identified, pending
+      ? sql`SELECT id FROM vetting_assessments WHERE project_id=${id} AND state='pending' ORDER BY requested_at DESC, rowid DESC LIMIT 1`
+      : sql`SELECT id FROM vetting_assessments WHERE project_id=${id} ORDER BY requested_at DESC, rowid DESC LIMIT 1`)
+    if (found === undefined) throw new FixtureRefused({ issue: pending ? "Pause did not automatically queue scan" : "Missing queued assessment" })
+    return found.id
+  }
+
+  effect function queue(id: string) {
+    const queued = try status(site, "/api/v1/admin/vetting/assessments", { as: cookieOf("admin"), body: { projectId: id, revision: 1, reason: "Harmless isolated qualification" } })
+    try verify(queued === 201, `Queue failed (${queued})`)
+    return try latest(id, false)
+  }
+
+  effect function publish(body: unknown) {
+    return (try signedAsk(site, key, "POST", "/api/v1/vetting/results", encoder.encode(JSON.stringify(body)), "application/json")).status
+  }
+
+  effect function result(id: string, disposition: "clean" | "malicious" = "clean") {
+    const row = try first(AssessmentRow, sql`SELECT id,project_id,revision,manifest_sha256,commit_sha,template_sha256,repository_id,requested_at FROM vetting_assessments WHERE id=${id}`)
+    if (row === undefined) throw new FixtureRefused({ issue: "Missing queued assessment" })
+    const report = encoder.encode(JSON.stringify({ report: id }))
+    const inputs = encoder.encode(JSON.stringify({ inputs: id }))
+    const evidence = { report: try sha256Hex(report), inputs: try sha256Hex(inputs) }
+    const body = scanResult(row, disposition, evidence, try isoNow())
+    if (disposition === "clean") {
+      try verify((try publish(body)) === 422, "Missing evidence established clearance")
+      try verify((try publish({ ...body, assessed: { ...body.assessed, commitSha: "c".repeat(40) } })) === 422, "Wrong source pin accepted")
+    }
+    const path = `/api/v1/vetting/evidence/${id}/${scanRun}`
+    const objects = [
+      { bytes: report, sha256: evidence.report, kind: "trace", label: "Harmless qualification report" },
+      { bytes: inputs, sha256: evidence.inputs, kind: "manifest", label: "Harmless qualification inputs" },
+    ]
+    const registration = { traceSha256: evidence.report, objects: objects.map(({ bytes, ...object }) => ({ ...object, sizeBytes: bytes.length, contentType: "application/json" })) }
+    const registered = try signedAsk(site, key, "POST", path, encoder.encode(JSON.stringify(registration)), "application/json")
+    try verify(registered.status >= 200 && registered.status < 300, "Evidence manifest refused")
+    for (const object of objects) {
+      const stored = try signedAsk(site, key, "PUT", `${path}/${object.sha256}`, object.bytes, "application/json")
+      try verify(stored.status >= 200 && stored.status < 300, "Evidence bytes refused")
+    }
+    const published = try publish(body)
+    try verify(published === 200, `Result refused (${published})`)
+  }
+
+  effect function seed(name: string) {
+    const id = `qual-${name}`
+    const repository = `example/${id}`
+    github.repositories.add(repository)
+    const text = manifestOf(id, repository, 800000000 + github.repositories.size)
+    const sha = try sha256Hex(text)
+    const at = try isoNow()
+    try db.batch([
+      sql`INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(${id},1,${text},${sha},'Harmless fixture seed','987654321','example',${at})`,
+      sql`INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(${id},'active',1,${text},${sha},${at},${at})`,
+      sql`INSERT INTO project_repositories(repository_key,project_id) VALUES(${repository},${id})`,
+    ])
+    try result(try queue(id))
+    try verify((try restriction(id)) === "clear", "Baseline project is restricted")
+    return id
+  }
+
+  const assertions: string[] = []
+  const basic = try seed("fresh")
+  try verify((try flag(basic, "alice")) === 201, "First flag refused")
+  try verify((try flag(basic, "alice")) === 409, "Duplicate flag counted")
+  try verify((try restriction(basic)) === "clear", "One flag paused project")
+  try verify((try flag(basic, "bob")) === 201, "Second flag refused")
+  try verify((try restriction(basic)) === "quarantined", "Project survived pause")
+  const own = try ask(site, `/api/v1/project-flags/${basic}`, { as: cookieOf("bob") })
+  try verify(own.status === 200 && !JSON.stringify(own.body).includes("fixture alice"), "Other reporter evidence disclosed")
+  try verify((try status(site, `/api/v1/project-flags/${basic}/withdraw`, { as: cookieOf("bob"), body: {} })) === 200, "Withdrawal refused")
+  try verify((try restriction(basic)) === "quarantined", "Withdrawal lifted quarantine")
+  try result(try latest(basic, true))
+  try verify((try restriction(basic)) === "clear", "Fresh scan did not restore project")
+  try verify((try flag(basic, "alice")) === 201 && (try restriction(basic)) === "clear", "Resolved flag repaused project")
+  assertions.push("distinct-flags", "duplicate-refused", "pause-restricts", "own-evidence", "withdrawal-keeps-pause", "automatic-fresh-scan", "fresh-restores", "resolved-flags-do-not-count")
+
+  const stale = try seed("stale")
+  const old = try queue(stale)
+  try verify((try flag(stale, "alice")) === 201 && (try flag(stale, "bob")) === 201, "Stale fixture flags failed")
+  try result(old)
+  try verify((try restriction(stale)) === "quarantined", "Pre-pause scan cleared pause")
+  assertions.push("pre-pause-scan-refused")
+
+  const newer = try seed("newer")
+  try verify((try flag(newer, "alice")) === 201 && (try flag(newer, "bob")) === 201, "Newer fixture flags failed")
+  const prior = try latest(newer, true)
+  try verify((try flag(newer, "carol")) === 201, "Third flag refused")
+  try result(prior)
+  try verify((try restriction(newer)) === "quarantined", "Newer evidence was cleared")
+  try result(try queue(newer))
+  try verify((try restriction(newer)) === "clear", "Covering scan did not restore")
+  assertions.push("newer-evidence-preserved", "covering-scan-restores")
+
+  const banned = try seed("banned")
+  try verify((try flag(banned, "alice")) === 201 && (try flag(banned, "bob")) === 201, "Ban fixture flags failed")
+  try result(try latest(banned, true), "malicious")
+  try result(try queue(banned))
+  try verify((try restriction(banned)) === "banned", "Clean scan cleared ban")
+  assertions.push("ban-preserved")
+
+  const pause = try first(Identified, sql`SELECT id FROM project_enforcements WHERE project_id=${basic} AND action='quarantine' ORDER BY sequence LIMIT 1`)
+  if (pause === undefined) throw new FixtureRefused({ issue: "Missing pause" })
+  try verify((try counted(sql`SELECT count(*) n FROM notifications WHERE event_key=${`project-enforcement:${pause.id}`} AND recipient_github_id=${actors.admin.id}`)) === 1, "Duplicate moderator notice")
+
+  const concurrent = try seed("concurrent")
+  const raced = try Effect.all([flag(concurrent, "alice"), flag(concurrent, "bob")], { concurrency: 2 })
+  try verify(raced.every((code) => code === 201), "Concurrent flags did not both commit")
+  try verify((try restriction(concurrent)) === "quarantined", "Concurrent flags missed pause")
+  try verify((try counted(sql`SELECT count(*) n FROM project_enforcements WHERE project_id=${concurrent} AND action='quarantine'`)) === 1, "Concurrent flags duplicated pause")
+  assertions.push("concurrent-flags-pause-once", "missing-evidence-refused", "wrong-source-pin-refused")
+
+  try verify(github.counts.unexpectedRequests === 0, "Unexpected transport request was swallowed")
+  try verify(github.counts.publicBranchReads > 0, "The routes did not use the public-token branch read")
+  const counts = (try db.all(sql`SELECT (SELECT count(*) FROM projects) projects,(SELECT count(*) FROM project_flags) flags,(SELECT count(*) FROM vetting_assessments) assessments,(SELECT count(*) FROM project_enforcements) enforcements,(SELECT count(*) FROM points_sessions) sessions,(SELECT count(*) FROM notifications) notifications,(SELECT count(*) FROM vetting_evidence_objects) evidenceObjects`))[0]
+  return {
+    actualRoutes: true,
+    actualD1Sessions: true,
+    actualRetainedEvidence: true,
+    externalProviderFacts: "fixed-harmless-fixtures",
+    publicHttpEdge: false,
+    browser: false,
+    liveScanner: false,
+    productionTouched: false,
+    assertions: [...assertions, "one-moderator-notice", "public-token-branch-read"],
+    githubFixtureReads: github.counts.calls,
+    publicBranchReads: github.counts.publicBranchReads,
+    unexpectedTransportRequests: github.counts.unexpectedRequests,
+    counts,
+  }
+}

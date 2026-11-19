@@ -1,5 +1,8 @@
-// spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+// spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/solanaRpcRotation.md, "A rotation starts only from protected manual main, the exact pinned active version and byte-identical fee source"; spec/fees/solanaRpcRotation.md, "A prior failed run's witness supplies history only, never authority"
 import type { JsonRpc } from "@repo/platform/chain/rpc"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type PriorWitness, independentPair } from "../../gen/fees__solanaRpcRotation.effect.vibe"
+import type { Names } from "../journal/codec.vibe"
 import { expiryBlocksPerRun } from "../kernels/expiryCoverage.ts"
 import { ScanJson } from "../journal/codec.vibe"
 import { solanaGenesis } from "../runtime/pins.ts"
@@ -9,6 +12,10 @@ import { type CoverageStore, type Proven, proveExpiry } from "../expiry/prove.vi
 import { CoverageBlock, type Cursor, type Target, advanced, initialCursor, slotNumber } from "../expiry/scan.vibe"
 
 export const solanaPublicPair = ["https://api.mainnet-beta.solana.com", "https://public.rpc.solanavibestation.com"] as const
+
+export type SolanaPair = readonly [Redacted.Redacted<string>, Redacted.Redacted<string>]
+
+export const publicPair: SolanaPair = [Redacted.make(solanaPublicPair[0]), Redacted.make(solanaPublicPair[1])]
 
 export const witness = {
   txId: "5EdudYMmXJMqUo5t65PtnZYeVETfaPVL7VBd8fsqqhorDsEaVHQw43oGboxBYfnYeAmRg7BC8r3qSJtLWGTWYJ6e",
@@ -39,15 +46,23 @@ interface Retained {
   proof: unknown
 }
 
-function publicOperator(endpoint: string) {
-  return recoveryOperator(endpoint, solanaGenesis) ?? ""
+const sourceSha = /^[a-f0-9]{40}$/u
+const versionId = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const proofDigest = /^[a-f0-9]{64}$/u
+const notStopped = "Prior rotation was not stopped before activation"
+
+export function pairOperators(pair: SolanaPair) {
+  return { primary: recoveryOperator(Redacted.value(pair[0]), solanaGenesis) ?? "", recovery: recoveryOperator(Redacted.value(pair[1]), solanaGenesis) ?? "" }
 }
 
-function initialCoverage(): Map<string, Cursor> {
-  return new Map(solanaPublicPair.map((endpoint) => {
-    const operator = publicOperator(endpoint)
-    return [operator, initialCursor(witnessTarget, operator, witness.tipSlot, witness.tipHash)] as const
-  }))
+effect function independentOperators(pair: SolanaPair) {
+  const operators = pairOperators(pair)
+  if (!independentPair(operators)) throw new PairUnqualified({ issue: "Solana qualification requires two independent operators" })
+  return operators
+}
+
+function initialCoverage(operators: ReadonlyArray<string>): Map<string, Cursor> {
+  return new Map(operators.map((operator) => [operator, initialCursor(witnessTarget, operator, witness.tipSlot, witness.tipHash)] as const))
 }
 
 function consistentBlock(cursor: Cursor, block: CoverageBlock) {
@@ -60,10 +75,10 @@ function sameCursor(saved: Cursor, expected: Cursor) {
   return (Object.keys(expected) as Array<keyof Cursor>).every((key) => saved[key] === expected[key])
 }
 
-export effect function retainedRecord(value: unknown) {
+export effect function retainedRecord(value: unknown, operators: ReadonlyArray<string>) {
   const saved = Schema.decodeUnknownEffect(ProofRecord)(value) catch effect () => { throw new WitnessInconsistent() }
   if (saved.coverage.length !== 2) throw new WitnessInconsistent()
-  const reconstructed = initialCoverage()
+  const reconstructed = initialCoverage(operators)
   for (const page of saved.pages) {
     const start = reconstructed.get(page.operator)
     if (start === undefined || start.complete || page.blocks.length === 0 || page.blocks.length > expiryBlocksPerRun) throw new WitnessInconsistent()
@@ -116,11 +131,11 @@ function spaced(rpc: JsonRpc, last: { at: number }): JsonRpc {
   }
 }
 
-effect function publicPair() {
+effect function pairProviders(pair: SolanaPair, operators: ReadonlyArray<string>) {
   const last = { at: 0 }
   const providers: Array<ExpiryProvider> = []
-  for (const endpoint of solanaPublicPair) {
-    const provider = try expiryProvider(endpoint, publicOperator(endpoint))
+  for (const [index, endpoint] of pair.entries()) {
+    const provider = try expiryProvider(Redacted.value(endpoint), operators[index] ?? "")
     providers.push({ operator: provider.operator, rpc: spaced(provider.rpc, last) })
   }
   return providers
@@ -133,10 +148,16 @@ function reviewed(proven: Proven) {
 export effect function qualifySolanaRpcPair(args: ReadonlyArray<string>) {
   const [directory] = args
   if (directory === undefined || directory === "") throw new PairUnqualified({ issue: "usage: qualify-solana-rpc-pair <directory>" })
+  try qualifyPair(directory, publicPair)
+}
+
+export effect function qualifyPair(directory: string, pair: SolanaPair) {
+  const named = try independentOperators(pair)
+  const operators = [named.primary, named.recovery]
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
   const file = path.join(directory, recordFile)
-  const retained: Retained = (try fs.exists(file)) ? try retainedRecord(jsonValue(try fs.readFileString(file))) : { coverage: initialCoverage(), pages: [], proof: null }
+  const retained: Retained = (try fs.exists(file)) ? try retainedRecord(jsonValue(try fs.readFileString(file)), operators) : { coverage: initialCoverage(operators), pages: [], proof: null }
   const store: CoverageStore<PairUnqualified | PlatformError, FileSystem.FileSystem> = {
     read: (operator) => retained.coverage.get(operator),
     save: (previous, next, page) => effect {
@@ -147,7 +168,7 @@ export effect function qualifySolanaRpcPair(args: ReadonlyArray<string>) {
       return true
     },
   }
-  const providers = try publicPair()
+  const providers = try pairProviders(pair, operators)
   const deadline = (try Clock.currentTimeMillis) + deadlineMs
   let proven: Proven | undefined = undefined
   while (proven === undefined) {
@@ -172,4 +193,44 @@ export effect function qualifySolanaRpcPair(args: ReadonlyArray<string>) {
     blocks: reviewedBlocks,
     operators: proven.providers.map((observation) => observation.operator),
   }))
+}
+
+schema PriorReceipt {
+  readonly schemaVersion?: number
+  readonly phase?: string
+  readonly checkout?: string
+  readonly deployedSource?: string
+  readonly previousVersion?: string
+  readonly runId?: string
+  readonly candidateVersion?: string
+  readonly verifiedAt?: string
+  readonly proofSha256?: string
+}
+
+export effect function validatePriorRotationProof(receipt: unknown, proofBytes: Uint8Array, pair: SolanaPair, priorSource: string, names: Names) {
+  const named = try independentOperators(pair)
+  const prior = Schema.decodeUnknownEffect(PriorReceipt)(receipt) catch effect () => { throw new PairUnqualified({ issue: notStopped }) }
+  const stopped = prior.schemaVersion === 1 && prior.phase === "qualification" && sourceSha.test(priorSource) && prior.checkout === priorSource
+    && sourceSha.test(prior.deployedSource ?? "") && versionId.test(prior.previousVersion ?? "")
+    && prior.runId === undefined && prior.candidateVersion === undefined && prior.verifiedAt === undefined && proofDigest.test(prior.proofSha256 ?? "")
+  if (!stopped) throw new PairUnqualified({ issue: notStopped })
+  const digestMatches = (try sha256Hex(proofBytes)) === prior.proofSha256
+  if (!digestMatches) throw new PairUnqualified({ issue: "Prior rotation proof digest differs from its receipt" })
+  const text = new TextDecoder().decode(proofBytes)
+  const retained = retainedRecord(jsonValue(text), [named.primary, named.recovery]) catch effect () => {
+    throw new PairUnqualified({ issue: "Retained Solana witness is inconsistent" })
+  }
+  const historyComplete = [...retained.coverage.values()].every((cursor) => cursor.complete && cursor.blocks === reviewedBlocks && cursor.digest === reviewedDigest)
+  if (!historyComplete) throw new PairUnqualified({ issue: "Prior rotation history is incomplete" })
+  return {
+    phase: "Qualifying",
+    checkout: names.number("source", prior.checkout ?? ""),
+    priorSource: names.number("source", priorSource),
+    tookLease: false,
+    candidate: 0,
+    verified: false,
+    digestMatches,
+    historyComplete,
+    pair: named,
+  } satisfies PriorWitness
 }

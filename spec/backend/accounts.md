@@ -57,7 +57,6 @@ import identity as I from "./identity"
 import email as E from "./email"
 import xConnection as X from "./xConnection"
 import notifications as N from "../operations/notifications"
-import participation as PT from "../points/participation"
 type Membership = Open | Closed
 type Member = { actor: int, githubId: int, login: str, membership: Membership, public: bool,
   joinedAt: int, closedAt: int, xLink: X::XLink, telegramLinked: bool, email: E::Enrollment }

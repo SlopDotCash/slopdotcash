@@ -39,6 +39,7 @@ obligation C8.
 import allocation as A from "./allocation"
 import workUnits as W from "./workUnits"
 import corrections as CO from "./corrections"
+import referenceDiscussion as RD from "./referenceDiscussion"
 type ActorKind = User | Bot | VendorAgent
 type AttributionPhase = Gathering | Attributed | Credited | ConflictHeld | ClaimHeld | Repaired
 type CarryBinding = NoCarry | VerifiedCarry({ original: int, followup: bool, parentEdges: bool }) | AmbiguousCarry
@@ -65,7 +66,9 @@ parent edges descend from an original contributor's commit, is credited to
 the verified original contributor; an unproved carrier commit keeps the
 ordinary rule. Outside October 2026 or the five projects the carry binding
 changes nothing. An ambiguous claim holds the commit for review. The absence
-of an eligible recipient holds attribution.
+of an eligible recipient holds attribution. A retained-copy binding is
+observed only from a [reference discussion](./referenceDiscussion.md) read
+from the census source with complete comment counts.
 
 ```quint
 pure def primaryRecipient(o: Observed): int = match o { | Seen(x) => if (x.linked and eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
@@ -105,8 +108,9 @@ pure def observeSource(a: CommitAttribution, actor: int, kind: ActorKind): Commi
   if (isUnknown(a.source)) { ...a, source: Seen({ actor: actor, kind: kind, linked: false }) }
   else if (sameSeen(a.source, actor, kind, false)) a
   else { ...a, phase: ConflictHeld }
-pure def canObserveCopy(a: CommitAttribution, copy: CopyBinding): bool = a.phase == Gathering and not(isNoCopy(copy))
-pure def observeCopy(a: CommitAttribution, copy: CopyBinding): CommitAttribution =
+pure def canObserveCopy(a: CommitAttribution, copy: CopyBinding, discussion: RD::ReferenceDiscussion): bool =
+  a.phase == Gathering and not(isNoCopy(copy)) and RD::discussionVerdict(discussion) == RD::DiscussionComplete
+pure def observeCopy(a: CommitAttribution, copy: CopyBinding, discussion: RD::ReferenceDiscussion): CommitAttribution =
   if (isNoCopy(a.copy) or isDescriptionOnly(a.copy)) { ...a, copy: copy }
   else if (sameCopy(a.copy, copy) or isDescriptionOnly(copy)) a
   else { ...a, phase: ConflictHeld }
@@ -154,7 +158,9 @@ pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int): b
   a.phase == Gathering and additions >= 0 and deletions >= 0 and not(hasLines(a.lines))
 pure def recordLines(a: CommitAttribution, additions: int, deletions: int): CommitAttribution =
   { ...a, lines: CompleteLines({ additions: additions, deletions: deletions }) }
-pure def contributes(a: CommitAttribution): bool = match a.acceptance {
+pure def contributes(a: CommitAttribution): bool =
+  val acceptance = a.acceptance
+  match acceptance {
   | AcceptedCommit(x) => not(x.earlierSource) and (not(x.merge) or x.resolutions == 1)
   | _ => false }
 pure def canAttribute(a: CommitAttribution): bool = a.phase == Gathering and contributes(a) and recipientFor(a) > 0

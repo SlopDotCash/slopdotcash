@@ -1,4 +1,6 @@
-// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"
+import { Status } from "@repo/ui";
+import { type ListingFacts, notListedInstallText, showsNotListed } from "../../../gen/frontend__poolListing.ts";
 import { bootstrapPrompt } from "../home/agentLinks.ts";
 import { AgentPrompt } from "../home/AgentPrompt.tsx";
 import type { Shown } from "../home/listing.ts";
@@ -11,6 +13,8 @@ export type InstallPanelProps = {
   project: Pick<ShownProject, "slug" | "repositories">;
   /** Whether agent discovery lists the project as cleared. */
   clearance: Clearance;
+  /** This month's listing facts; a project the funding read leaves out is not listed, which is not a clearance problem. */
+  listing: ListingFacts;
   /** The origin the page was reached at, which the prompt names the skill by. */
   origin: string;
   /** Writes the prompt to the clipboard; a rejection is reported as a failed copy. */
@@ -31,22 +35,29 @@ const notices = {
 } as const;
 
 /** The project's agent setup: its own prompt once discovery lists it as cleared, else the generic prompt, which picks only cleared projects. */
-export function InstallPanel({ project, clearance, origin, onCopy }: InstallPanelProps) {
+export function InstallPanel({ project, clearance, listing, origin, onCopy }: InstallPanelProps) {
   const ready = clearance === "ready";
+  const unlisted = clearance === "blocked" && showsNotListed(listing);
   return (
     <div id="start" className="flex min-w-0 flex-col gap-3">
       <h2 className="text-xl font-semibold text-foreground">Copy this into your agent.</h2>
       {ready ? null : (
         <p role="status" className="text-muted-foreground">
-          {notices[clearance]}
-          {clearance === "blocked" ? (
+          {unlisted ? (
+            <Status presentation={{ tone: "Caution", icon: "Alert", label: notListedInstallText }} />
+          ) : (
             <>
-              {" "}
-              <a href={`/projects/${project.slug}/manage`} className={linkClass}>
-                Project owner: review setup
-              </a>
+              {notices[clearance]}
+              {clearance === "blocked" ? (
+                <>
+                  {" "}
+                  <a href={`/projects/${project.slug}/manage`} className={linkClass}>
+                    Project owner: review setup
+                  </a>
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
         </p>
       )}
       <AgentPrompt openIn prompt={ready ? projectPrompt(project, origin) : bootstrapPrompt(origin)} origin={origin} onCopy={onCopy} />

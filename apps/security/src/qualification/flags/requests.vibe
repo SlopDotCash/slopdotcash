@@ -1,0 +1,96 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { randomToken, sha256Hex } from "@repo/platform/crypto"
+import { D1, first, sql } from "@repo/platform/d1"
+import { signedHeaders } from "@repo/platform/signed"
+import { fixtureOrigin } from "./site.vibe"
+import type { InProcessSite, SiteResponse } from "./transport.ts"
+
+export error FixtureRefused { issue: string }
+
+export interface Ask {
+  readonly method?: "GET" | "POST" | "HEAD"
+  readonly body?: unknown
+  readonly as?: string
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+export interface Session {
+  readonly cookie: string
+  readonly hash: string
+  readonly actorId: string
+}
+
+export interface Answer {
+  readonly status: number
+  readonly headers: Headers
+  readonly body: unknown
+}
+
+schema Counted { n: number }
+
+const hour = 3_600_000
+
+export effect function verify(condition: boolean, issue: string) {
+  if (!condition) throw new FixtureRefused({ issue })
+}
+
+export effect function now() {
+  return try Clock.currentTimeMillis
+}
+
+export effect function isoNow(offset = 0) {
+  return new Date((try now()) + offset).toISOString()
+}
+
+export effect function promised<A>(issue: string, run: () => Promise<A>) {
+  return try tryPromise({ try: run, catch: () => new FixtureRefused({ issue }) })
+}
+
+export effect function respond(site: InProcessSite, path: string, ask: Ask = {}) {
+  const method = ask.method ?? (ask.body === undefined ? "GET" : "POST")
+  const headers: Record<string, string> = {
+    ...(ask.as === undefined ? {} : { cookie: ask.as }),
+    ...(ask.body === undefined ? {} : { origin: fixtureOrigin, "content-type": "application/json" }),
+    ...ask.headers,
+  }
+  return try promised("The fixture site did not answer", () => site.send(`${fixtureOrigin}${path}`, { method, headers, ...(ask.body === undefined ? {} : { body: JSON.stringify(ask.body) }) }))
+}
+
+export effect function answered(site: InProcessSite, response: SiteResponse) {
+  const text = try promised("The fixture answer was not readable", () => response.text())
+  try promised("The fixture background work failed", () => site.settle())
+  const json = (response.headers.get("content-type") ?? "").startsWith("application/json") && text !== ""
+  const body = json ? try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new FixtureRefused({ issue: "The fixture answer was not JSON" }) }) : text
+  return { status: response.status, headers: response.headers, body } satisfies Answer
+}
+
+export effect function ask(site: InProcessSite, path: string, options: Ask = {}) {
+  return try answered(site, try respond(site, path, options))
+}
+
+export effect function status(site: InProcessSite, path: string, options: Ask = {}) {
+  return (try ask(site, path, options)).status
+}
+
+export effect function signedAsk(site: InProcessSite, key: Redacted.Redacted<string>, method: "POST" | "PUT", path: string, body: Uint8Array, contentType: string) {
+  const headers = try signedHeaders({ key, method, path, body })
+  const response = try promised("The fixture site did not answer", () => site.send(`${fixtureOrigin}${path}`, { method, headers: { ...headers, "content-type": contentType }, body }))
+  return try answered(site, response)
+}
+
+export effect function session(member: { readonly actorId: string; readonly githubId: string; readonly login: string }) {
+  const db = try D1
+  const token = try randomToken()
+  const hash = try sha256Hex(token)
+  try db.run(sql`INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(${member.actorId},${member.githubId},${member.login},${try isoNow()},0)`)
+  try db.run(sql`INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(${hash},${member.actorId},${try isoNow(hour)})`)
+  return { cookie: `__Host-slop_points=${token}`, hash, actorId: member.actorId } satisfies Session
+}
+
+export effect function endSessions(sessions: ReadonlyArray<Session>) {
+  for (const ended of sessions) try (try D1).run(sql`DELETE FROM points_sessions WHERE token_hash=${ended.hash}`)
+}
+
+export effect function counted(statement: ReturnType<typeof sql>) {
+  return (try first(Counted, statement))?.n ?? 0
+}

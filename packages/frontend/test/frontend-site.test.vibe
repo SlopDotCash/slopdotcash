@@ -1,0 +1,268 @@
+import { assert, describe, it, layer } from "@effect/vitest"
+import { api as backendApi } from "@repo/backend/client"
+import { api as contributorApi } from "@repo/contributor/client"
+import { api as feesApi } from "@repo/fees/client"
+import { api as operationsApi } from "@repo/operations/client"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { bundle } from "@repo/platform/testing"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { api as pointsApi } from "@repo/points/client"
+import { api as securityApi } from "@repo/security/client"
+import { api as settlementApi } from "@repo/settlement/client"
+import { api as slopbotApi } from "@repo/slopbot/client"
+import { Request, Response } from "miniflare"
+
+const appRoot = new URL("../../../apps/app/", import.meta.url).pathname
+const roles = { ADMIN_GITHUB_IDS: "18633264,202660855", PROJECT_MODERATOR_GITHUB_IDS: "18633264,202660855" }
+const shellTitle = "Slop: ship and maintain open source"
+const shellDescription = "Contribute to open source or maintain your project with your coding agent."
+const shellAlt = "MAKE MONEY SHIPPING OPEN SOURCE."
+const sponsorDescription = "Fund a monthly pool for an open-source project. It pays contributors for the work the project's maintainers accept."
+const beacon = "https://static.cloudflareinsights.com/beacon.min.js"
+const workerLimitBytes = 10 * 1024 * 1024
+
+module subtle {
+  import { gzipSync } from "node:zlib"
+  /** @throws {never} */
+  export function compressedBytes(script: string): number {
+    return gzipSync(script).byteLength
+  }
+}
+import { compressedBytes } from subtle
+
+const shell = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta name="description" content="${shellDescription}" />
+    <link rel="canonical" href="https://slop.cash/" />
+    <meta property="og:site_name" content="slop.cash" />
+    <meta property="og:url" content="https://slop.cash/" />
+    <meta property="og:title" content="${shellTitle}" />
+    <meta property="og:description" content="${shellDescription}" />
+    <meta property="og:image" content="https://slop.cash/og-slop-cash.png" />
+    <meta property="og:image:alt" content="${shellAlt}" />
+    <meta name="twitter:title" content="${shellTitle}" />
+    <meta name="twitter:description" content="${shellDescription}" />
+    <meta name="twitter:image" content="https://slop.cash/og-slop-cash.png" />
+    <meta name="twitter:image:alt" content="${shellAlt}" />
+    <title>${shellTitle}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+`
+
+const drifted = shell.replace(`<title>${shellTitle}</title>`, "<title>Slop</title>")
+
+const served: { html: string } = { html: shell }
+
+function assets(request: Request) {
+  const { pathname } = new URL(request.url)
+  if (pathname.endsWith(".png")) return new Response("png", { headers: { "content-type": "image/png" } })
+  return new Response(served.html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=0" } })
+}
+
+const built: { script?: Promise<string> } = {}
+
+function workerScript() {
+  built.script ??= bundle(appRoot, { entry: "_worker" })
+  return built.script
+}
+
+function site(origin: string, environment: string, config: Readonly<Record<string, string>> = {}) {
+  return Layer.unwrap(effect {
+    const script = try Effect.promise(workerScript)
+    return areaLayer({
+      script,
+      origin,
+      d1: { SLOP_DB: "slop-private" },
+      r2: ["PRIVATE_TRACES", "VETTING_EVIDENCE"],
+      vars: { ...roles, SLOP_ENVIRONMENT: environment, PUBLIC_SITE_URL: "https://slop.cash", PAYMENT_NETWORKS: "[]", ...config },
+      services: { ASSETS: assets, SLOP_IDENTITY: () => new Response(null, { status: 404 }) },
+    })
+  })
+}
+
+function tag(html: string, attribute: string, name: string) {
+  return new RegExp(`<meta ${attribute}="${name}" content="([^"]*)"`, "u").exec(html)?.[1]
+}
+
+function head(answer: Answer) {
+  const html = String(answer.body)
+  return {
+    title: /<title>([^<]*)<\/title>/u.exec(html)?.[1],
+    canonical: /<link rel="canonical" href="([^"]*)"/u.exec(html)?.[1],
+    siteName: tag(html, "property", "og:site_name"),
+    url: tag(html, "property", "og:url"),
+    ogTitle: tag(html, "property", "og:title"),
+    twitterTitle: tag(html, "name", "twitter:title"),
+    description: tag(html, "name", "description"),
+    ogDescription: tag(html, "property", "og:description"),
+    image: tag(html, "property", "og:image"),
+    twitterImage: tag(html, "name", "twitter:image"),
+    alt: tag(html, "property", "og:image:alt"),
+    beacon: html.includes(beacon),
+  }
+}
+
+const shellHead = {
+  title: shellTitle,
+  canonical: "https://slop.cash/",
+  siteName: "slop.cash",
+  url: "https://slop.cash/",
+  ogTitle: shellTitle,
+  twitterTitle: shellTitle,
+  description: shellDescription,
+  ogDescription: shellDescription,
+  image: "https://slop.cash/og-slop-cash.png",
+  twitterImage: "https://slop.cash/og-slop-cash.png",
+  alt: shellAlt,
+  beacon: false,
+}
+
+const sponsorHead = {
+  title: "Fund a project · Slop",
+  canonical: "https://slop.cash/sponsors",
+  siteName: "slop.cash",
+  url: "https://slop.cash/sponsors",
+  ogTitle: "Fund a project. Pay for accepted work.",
+  twitterTitle: "Fund a project. Pay for accepted work.",
+  description: sponsorDescription,
+  ogDescription: sponsorDescription,
+  image: "https://slop.cash/og-slop-cash-sponsors.png",
+  twitterImage: "https://slop.cash/og-slop-cash-sponsors.png",
+  alt: "Fund a project. Pay for accepted work.",
+  beacon: false,
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && key in value ? (value as Readonly<Record<string, unknown>>)[key] : undefined
+}
+
+function isJson(answer: Answer) {
+  return (answer.headers["content-type"] ?? "").startsWith("application/json")
+}
+
+effect function member() {
+  const area = try Area
+  const session = "frontend-site-session-".padEnd(48, "x")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public) VALUES (?, ?, ?, ?, 0)", "actor", "42", "member", "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${session}`, actorId: "actor", githubId: "42", login: "member" } satisfies Session
+}
+
+effect function sessions() {
+  return try (try Area).sql("SELECT count(*) AS n FROM points_sessions")
+}
+
+describe('The composed site answers each API route once (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => {
+  it("Every area's routes share one origin without a repeated method and path", () => {
+    const keys = [backendApi, operationsApi, slopbotApi, securityApi, contributorApi, pointsApi, settlementApi, feesApi].flat().map((route) => `${route.method} ${route.path}`)
+    assert.deepStrictEqual(keys.filter((key, index) => keys.indexOf(key) !== index), [])
+    assert.includeMembers(keys, ["GET /api/v1/notifications/incomplete-assessments", "GET /api/v1/admin/fee-conversions"])
+  })
+
+  it("The bundled Pages worker stays under the Pages _worker.js size limit", async () => {
+    const script = await workerScript()
+    assert.isBelow(compressedBytes(script), workerLimitBytes)
+  })
+})
+
+layer(site("https://slop.test", "staging"), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The bare referral path opens Settings through the composed site before any project route (spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read")', () => effect {
+    const area = try Area
+    for (const path of ["/referral", "/referral/"]) {
+      const answer = try area.get(path)
+      try same([answer.status, answer.headers.location], [302, "https://slop.test/account#referral"])
+    }
+    const posted = try area.request("/referral", { method: "POST", body: "" })
+    try same(posted.status === 302, false)
+    const named = try area.get("/referral/nobody-here")
+    try same([named.status, named.headers.location, named.headers["cache-control"]], [302, "https://slop.test/projects/new", "no-store"])
+  })
+
+  it.effect('Every area answers its API through the composed worker, an unknown API path answers JSON, and project artifacts come before the shell (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project")', () => effect {
+    const area = try Area
+    served.html = shell
+    const paths = ["/api/v1/points/people", "/api/v1/notifications", "/api/v1/vetting/sandbox", "/api/v1/private-request-intake", "/api/v1/points/journal", "/api/v1/slopbot/summary", "/api/v1/payments/received", "/api/v1/admin/fee-conversions"]
+    const answers: Array<readonly [string, boolean, boolean]> = []
+    for (const path of paths) {
+      const answer = try area.get(path)
+      answers.push([path, isJson(answer), answer.status !== 500])
+    }
+    try same(answers, paths.map((path) => [path, true, true]))
+    const unknown = try area.get("/api/v1/does-not-exist")
+    try same([unknown.status, isJson(unknown), unknown.body], [404, true, { error: "not_found" }])
+    const discovery = try area.get("/.well-known/slop/projects.json")
+    try same([discovery.status, isJson(discovery), String(discovery.body).includes(shellTitle)], [200, true, false])
+  })
+
+  it.effect('A test host previews the sponsor offer only on /sponsors and keeps the shell elsewhere, with no beacon outside production (spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host")', () => effect {
+    const area = try Area
+    served.html = shell
+    for (const path of ["/sponsors", "/sponsors/"]) {
+      const answer = try area.get(path)
+      try same([answer.status, head(answer)], [200, sponsorHead])
+      try same([answer.headers["cache-control"], answer.headers.vary], ["public, max-age=0, no-transform", undefined])
+    }
+    const home = try area.get("/")
+    try same([home.status, head(home), home.headers["cache-control"]], [200, shellHead, "public, max-age=0, no-transform"])
+    const project = try area.get("/projects/example")
+    try same(head(project).ogTitle, shellTitle)
+    const posted = try area.request("/sponsors", { method: "POST", body: "" })
+    try same(String(posted.body).includes("Fund a project · Slop"), false)
+  })
+
+  it.effect('A shell the sponsor rewrite does not recognise is served unchanged (spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host")', () => effect {
+    const area = try Area
+    served.html = drifted
+    const answer = try area.get("/sponsors")
+    served.html = shell
+    try same([answer.status, answer.body], [200, drifted])
+  })
+})
+
+layer(Layer.merge(site("https://slop.cash", "production", { PAYMENT_RPC_URLS: "{malformed", TRACE_AUTH_SECRET: "test-only-trace-rate-limit-secret-long-enough" }), webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Invalid payment RPC configuration leaves account reads and sign-out working and refuses funding without touching sessions (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => effect {
+    const area = try Area
+    const session = try member()
+    const read = try area.request("/api/v1/points/me", { as: session })
+    try same([read.status, field(field(read.body, "actor"), "id")], [200, "actor"])
+    const funding = try area.request("/api/v1/payments/projects/no-vault/solana-funding", { method: "POST", as: session, json: { step: "review", operation: "deposit", network: "solana-mainnet", vault: "11111111111111111111111111111111", wallet: "11111111111111111111111111111111", amount: "1" } })
+    try same([funding.status >= 400, field(funding.body, "error"), try sessions()], [true, "payments_unavailable", [{ n: 1 }]])
+    const signedOut = try area.request("/api/v1/points/signout", { method: "POST", as: session, json: {} })
+    try same([signedOut.status, signedOut.body, try sessions()], [200, { signedOut: true }, [{ n: 0 }]])
+  })
+})
+
+layer(site("https://slop.tech", "production"), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('slop.tech serves its own social head per host, never the beacon or the sponsor head (spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"; spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon")', () => effect {
+    const area = try Area
+    served.html = shell
+    const techHead = { ...shellHead, canonical: "https://slop.tech/", siteName: "slop.tech", url: "https://slop.tech/", image: "https://slop.tech/og-slop-tech.png", twitterImage: "https://slop.tech/og-slop-tech.png" }
+    for (const path of ["/", "/sponsors"]) {
+      const answer = try area.get(path)
+      try same([answer.status, head(answer), answer.headers.vary, answer.headers["cache-control"]], [200, techHead, "Host", "public, max-age=0, no-transform"])
+    }
+    const image = try area.get("/og-slop-tech.png")
+    try same([image.headers["content-type"], image.headers.vary], ["image/png", undefined])
+  })
+})
+
+layer(site("https://slop.cash", "production"), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Production slop.cash adds the first-party beacon once, on the sponsor head too, and stays unvaried by host (spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/frontend/presentation.md, "A blocked or failed beacon cannot block the page or its actions")', () => effect {
+    const area = try Area
+    served.html = shell
+    const home = try area.get("/")
+    try same([home.status, head(home), home.headers.vary], [200, { ...shellHead, beacon: true }, undefined])
+    try same(String(home.body).split(beacon).length - 1, 1)
+    try same(String(home.body).includes(`"send":{"to":"/cdn-cgi/rum"}`), true)
+    const sponsors = try area.get("/sponsors")
+    try same(head(sponsors), { ...sponsorHead, beacon: true })
+  })
+})

@@ -1,5 +1,5 @@
-// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"
-import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
+// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
+import { D1, RowMismatch, type Statement, sql } from "@repo/platform/d1"
 import { isoAt } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
@@ -54,6 +54,16 @@ export interface Facts {
 }
 
 export interface Sent { readonly state: Fee; readonly instance: Instance }
+
+type RotationEvent = Extract<Event, { readonly type: "acquireRotationLease" | "renewRotationLease" | "releaseRotationLease" }>
+type JournalEvent = Exclude<Event, RotationEvent>
+
+const rotationRefusals = {
+  acquireRotationLease: "Solana fee activity prevents RPC rotation",
+  renewRotationLease: "Solana rotation lease or quiet journal changed",
+  releaseRotationLease: "Fee rotation database operation unavailable",
+} as const
+const rotationUnavailable = "Fee rotation database operation unavailable"
 
 function scoped(instance: Instance) {
   return W.inScope(networkNames[instance.network], instance.scope)
@@ -196,7 +206,7 @@ effect function evaluated(journal: Journal, instance: Instance, event: Event, ne
   return { intent: row.live && row.state === "Quoted", evaluated: { evaluation, row } } satisfies Evaluated
 }
 
-effect function writesFor(journal: Journal, instance: Instance, names: Names, event: Event, next: Fee, facts: Facts, created: Evaluated | undefined) {
+effect function writesFor(journal: Journal, instance: Instance, names: Names, event: JournalEvent, next: Fee, facts: Facts, created: Evaluated | undefined) {
   const current = journal.state
   const network = networkNames[current.network]
   const epoch = instance.epoch
@@ -423,10 +433,6 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
         }),
       ]
     }
-    case "acquireRotationLease":
-    case "renewRotationLease":
-    case "releaseRotationLease":
-      throw new JournalRefused({ event: event.type, issue: "the operator rotation lease is not stored by this journal" })
     default: {
       const _exhaustive: never = event
       return _exhaustive
@@ -454,7 +460,7 @@ effect function observe(instance: Instance, journal: Journal, names: Names, even
   return { ...rest, network: next.network, held: { ...instance.held, runtime: next.runtime }, tokens, receipts, vaults, ...intent === undefined ? {} : { intent } } satisfies Instance
 }
 
-effect function decide(journal: Journal, instance: Instance, names: Names, event: Event, by: Sender, facts: Facts) {
+effect function decide(journal: Journal, instance: Instance, names: Names, event: JournalEvent, by: Sender, facts: Facts) {
   const next = try apply(journal.state, event, by)
   const created = try evaluated(journal, instance, event, next, facts)
   const writes: ReadonlyArray<Statement> = try writesFor(journal, instance, names, event, next, facts, created)
@@ -466,7 +472,44 @@ export effect function journal(instance: Instance, names: Names) {
   return (try load(aggregate(instance, names))).state
 }
 
+function isRotation(event: Event): event is RotationEvent {
+  return event.type === "acquireRotationLease" || event.type === "renewRotationLease" || event.type === "releaseRotationLease"
+}
+
+effect function readEach(instance: Instance, names: Names) {
+  const db = try D1
+  const found = aggregate(instance, names)
+  const rows: Array<Rows> = []
+  for (const statement of found.reads) rows.push(try db.all(statement))
+  return try found.decode(rows)
+}
+
+effect function rotationWrite(journal: Journal, instance: Instance, names: Names, event: RotationEvent, next: Fee) {
+  const runId = `${W.rotationPrefix}${instance.scope}${try named(names, "rotation", event.rotationId, event)}`
+  const now = try isoAt(journal.state.clock + instance.epoch)
+  switch (event.type) {
+    case "acquireRotationLease": return W.acquireRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
+    case "renewRotationLease": return W.renewRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
+    case "releaseRotationLease": return W.releaseRotationLease(runId)
+  }
+}
+
+effect function sendRotation(instance: Instance, names: Names, event: RotationEvent, by: Sender) {
+  const loaded = readEach(instance, names) catch effect (error) => {
+    if (error._tag === "NotAState" || error._tag === "RowMismatch") throw error
+    throw new JournalRefused({ event: event.type, issue: rotationUnavailable })
+  }
+  const next = try apply(loaded.state, event, by)
+  const statement = try rotationWrite(loaded, instance, names, event, next)
+  const changed = (try D1).run(statement) catch effect () => {
+    throw new JournalRefused({ event: event.type, issue: rotationUnavailable })
+  }
+  if (event.type !== "releaseRotationLease" && changed !== 1) throw new JournalRefused({ event: event.type, issue: rotationRefusals[event.type] })
+  return { state: next, instance } satisfies Sent
+}
+
 export effect function send(instance: Instance, names: Names, event: Event, by: Sender, facts: Facts = {}) {
+  if (isRotation(event)) return try sendRotation(instance, names, event, by)
   return try update(aggregate(instance, names), (current) => decide(current, instance, names, event, by, facts))
 }
 

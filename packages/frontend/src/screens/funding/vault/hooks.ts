@@ -1,7 +1,8 @@
-// spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+// spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"
 import { Cause, Effect, Exit, type ManagedRuntime } from "effect";
 import { useState, useSyncExternalStore } from "react";
-import { type TotalsRuntime, type VaultRuntime, type VaultServices, type VaultTotals, type WalletOffer, followTotals, reloadTotals, watchOffers } from "./funding.vibe";
+import { type TotalsRuntime, type VaultRuntime, type VaultServices, type VaultTotals, type WalletOffer, followTotals, reloadTotals, tabHidden, watchOffers } from "./funding.vibe";
+import { pageHidden } from "./pageVisibility.ts";
 
 export type Settled<A> = { readonly status: "running" } | { readonly status: "done"; readonly value: A } | { readonly status: "failed"; readonly message: string };
 
@@ -175,4 +176,41 @@ export function useTotals(runtime: TotalsRuntime, projectId: string): VaultTotal
 /** Reads a project's vault totals again now. */
 export function reloadTotalsOf(runtime: TotalsRuntime, projectId: string): void {
   totalsOf(runtime, projectId).reload();
+}
+
+interface Visibility {
+  readonly subscribe: (notify: () => void) => () => void;
+}
+
+const visibilityStores = new WeakMap<VaultRuntime, Visibility>();
+
+function visibilityOf(runtime: VaultRuntime): Visibility {
+  const known = visibilityStores.get(runtime);
+  if (known) return known;
+  const listeners = new Set<() => void>();
+  const changed = () => {
+    void run(runtime, tabHidden(pageHidden()));
+    for (const listener of listeners) listener();
+  };
+  const store: Visibility = {
+    subscribe: (notify) => {
+      if (listeners.size === 0 && typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", changed);
+        void run(runtime, tabHidden(pageHidden()));
+      }
+      listeners.add(notify);
+      return () => {
+        listeners.delete(notify);
+        if (listeners.size === 0 && typeof document !== "undefined") document.removeEventListener("visibilitychange", changed);
+      };
+    },
+  };
+  visibilityStores.set(runtime, store);
+  return store;
+}
+
+/** Whether the page is in a hidden tab, told to the vault's machine once per page on each change so its timer stops asking a transfer there. */
+export function useTabHidden(runtime: VaultRuntime): boolean {
+  const store = visibilityOf(runtime);
+  return useSyncExternalStore(store.subscribe, pageHidden, () => false);
 }

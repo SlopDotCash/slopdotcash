@@ -8,4 +8,4 @@ export { type RewardAssetSelection, type RewardNetwork, rewardChains, rewardNetw
 export { type RegistryBinding, type SkillPreviews, type SkillRole, skillPreviews } from "./skillFiles.ts";
 export { SkillPreview, type SkillPreviewProps, type SkillProvenance } from "./SkillPreview.tsx";
 export { draftRegistry } from "./skills.vibe";
-export { slopbotInstallScopeNote, slopbotInstallUrl } from "./slopbot.ts";
+export { slopbotInstallUrl } from "./slopbot.ts";

@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"
 import { Alert, Button, DataState, NotFound, PageHeader } from "@repo/ui";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
@@ -20,11 +20,12 @@ import { MergeActivity } from "./MergeActivity.tsx";
 import { Participation } from "./Participation.tsx";
 import { PaymentHistory } from "./PaymentHistory.tsx";
 import { ProjectHeader } from "./ProjectHeader.tsx";
+import { ProjectLinks } from "./ProjectLinks.tsx";
 import { ProjectWork, type WorkShown } from "./ProjectWork.tsx";
 import type { ShownProject } from "./project.schema.ts";
 import { loadProject, loadWork, type ProjectRuntime, projectName, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "./reads.vibe";
 import { RewardSummary } from "./RewardSummary.tsx";
-import { awardMonths, projectCycles, projectFunding, suggestedWork } from "./summary.ts";
+import { awardMonths, projectCycles, projectFunding, projectListing, suggestedWork } from "./summary.ts";
 
 export type ProjectPageProps = PageProps & {
   /** Whether payments run on a network: only vaults on paying networks hold a pool's monthly amount. */
@@ -105,9 +106,11 @@ function MergeLine({ project, reads }: Pick<Found, "project" | "reads">) {
   return <MergeActivity projectId={project.id} merge={merge} nowMs={Date.now()} />;
 }
 
-function Install({ runtime, project, reads }: Pick<Found, "runtime" | "project" | "reads">) {
+function Install({ runtime, project, reads, networkPays }: Pick<Found, "runtime" | "project" | "reads" | "networkPays">) {
   const discovery = useShownRead(reads.discovery, "all");
-  return <InstallPanel key={project.id} project={project} clearance={clearanceOf(discovery, project.id)} origin={pageOrigin()} onCopy={(text) => runtime.runPromise(copyText(text))} />;
+  const pool = useShownRead(reads.pool, "all");
+  const funding = projectFunding({ project, read: { status: pool.status, vaults: pool.value?.get(project.id) }, networkPays, nowMs: Date.now() });
+  return <InstallPanel key={project.id} project={project} clearance={clearanceOf(discovery, project.id)} listing={projectListing({ project, funding })} origin={pageOrigin()} onCopy={(text) => runtime.runPromise(copyText(text))} />;
 }
 
 function workOf(read: Settled<Work>, project: ShownProject): WorkShown {
@@ -156,6 +159,7 @@ function BountyOverview({ runtime, project, reads, networkPays }: Pick<Found, "r
           <>
             <ProjectHeader project={project} />
             <PoolSummary project={project} reads={reads} networkPays={networkPays} />
+            <ProjectLinks record={project.record} />
           </>
         }
         origin={pageOrigin()}
@@ -176,9 +180,10 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
       <section className="flex flex-col gap-6">
         <ProjectHeader project={project} />
         <PoolSummary project={project} reads={reads} networkPays={networkPays} />
+        <ProjectLinks record={project.record} />
         {active ? <MergeLine project={project} reads={reads} /> : null}
         {budget ? <p>{reviewBudgetLabel(budget)}</p> : null}
-        <Participation project={project} successorName={successor} install={<Install runtime={runtime} project={project} reads={reads} />} />
+        <Participation project={project} successorName={successor} install={<Install runtime={runtime} project={project} reads={reads} networkPays={networkPays} />} />
       </section>
       {active ? <SuggestedWork section={section} project={project} boot={boot} repositoryRegistry={repositoryRegistry} /> : null}
       <History runtime={runtime} project={project} reads={reads} networkPays={networkPays} />

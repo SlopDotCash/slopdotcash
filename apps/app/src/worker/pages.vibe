@@ -1,0 +1,102 @@
+// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"
+import { CallerLive } from "@repo/backend/caller"
+import { type BackendVars, backend, backendServices } from "@repo/backend/live"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import { contributor, githubReadToken, siteAssets, traceObjects, traceServices } from "@repo/contributor/live"
+import { fees } from "@repo/fees/live"
+import { IntakeHealthLive, noticePorts, operations } from "@repo/operations/live"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { edgeCache } from "@repo/platform/cache"
+import { deploymentTier } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { json, outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { type Area, type Execution, area, pages } from "@repo/platform/worker"
+import { contributorAudience, disputeTriage, points } from "@repo/points/live"
+import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
+import { settlement } from "@repo/settlement/live"
+import { type HistoricalValueBinding, ReportingReadinessLive, historicalValueImport, repositoryAccessReader, slopbot } from "@repo/slopbot/live"
+import { documents } from "./document.vibe"
+import { workerCaches } from "./edgeCaches.ts"
+
+export interface PagesEnv extends BackendVars, SecurityEnv, RoleVars {
+  readonly SLOP_DB: D1Database
+  readonly SLOP_IDENTITY: Fetcher
+  readonly SLOPBOT_VALUE_IMPORT?: HistoricalValueBinding
+}
+
+interface Served extends PagesEnv {
+  readonly DOCUMENTS: Fetcher
+}
+
+type Needs<A> = A extends Area<infer _P, infer R> ? (R extends HttpRouter.Request<"Requires", infer S> ? S : never) : never
+type Gives<A> = A extends Area<infer P, infer _R> ? P : never
+
+function platform(env: PagesEnv) {
+  return Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env), edgeCache(workerCaches()), deploymentTier(env.SLOP_ENVIRONMENT))
+}
+
+function bindings(env: PagesEnv) {
+  return Layer.mergeAll(
+    backendServices(env),
+    securityBindings(env),
+    traceServices(env),
+    traceObjects(env.PRIVATE_TRACES),
+    siteAssets(env.ASSETS),
+    githubReadToken(env.SLOP_GITHUB_READ_TOKEN),
+    repositoryAccessReader(env.SLOPBOT),
+    historicalValueImport(env.SLOPBOT_VALUE_IMPORT),
+    disputeTriage(env.SLOPBOT),
+  )
+}
+
+const audiences = Layer.provideMerge(enforcementPorts, contributorAudience)
+
+const shared = Layer.mergeAll(
+  Layer.provideMerge(RestrictionsLive, audiences),
+  IntakeHealthLive,
+  ReportingReadinessLive,
+  ClearanceLive,
+  EnforcementLive,
+  AccessJournalLive,
+  PublicSecurityLive,
+  CallerLive,
+  RegistryLive,
+  RegistryManifestsLive,
+)
+
+function services(env: Served) {
+  return Layer.provideMerge(shared, Layer.provideMerge(noticePorts, Layer.provideMerge(bindings(env), platform(env))))
+}
+
+type Provided = Layer.Success<ReturnType<typeof services>> | Execution
+
+function closed<A extends Area<never, any>>(areas: ReadonlyArray<A>, unmet: [Exclude<Needs<A>, Gives<A> | Provided>] extends [never] ? "closed" : Exclude<Needs<A>, Gives<A> | Provided>) {
+  return { areas, unmet }
+}
+
+const unmatchedApi = area({
+  name: "unmatchedApi",
+  api: [],
+  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
+  provides: Layer.empty,
+})
+
+const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, fees, unmatchedApi], "closed")
+
+const site = pages({ areas: composition.areas, services, assets: "DOCUMENTS" })
+
+const served = new WeakMap<PagesEnv, Served>()
+
+function servedOf(env: PagesEnv) {
+  const found = served.get(env)
+  if (found !== undefined) return found
+  const made = { ...env, DOCUMENTS: documents(env.ASSETS, env.SLOP_ENVIRONMENT) }
+  served.set(env, made)
+  return made
+}
+
+export default {
+  fetch: (request: globalThis.Request, env: PagesEnv, context: ExecutionContext) => site.fetch(request, servedOf(env), context),
+}

@@ -12,10 +12,9 @@ export const meta: ComponentMeta<ProgramEditorProps> = {
     // spec/security/program.md, "A program revision needs current owner authority and exact split rules"
     Default: async () => {
       onPublish.mockClear();
-      await expect(screen.getByLabelText("Published gross award (USDC)")).toHaveValue("10000");
-      await expect(screen.getByText("You decide each award: 75% to the researcher, 25% to Slop.", { exact: false })).toBeTruthy();
+      await expect(screen.getByLabelText(/^Award \(USDC\)/u)).toHaveValue("10000");
       await userEvent.click(screen.getByRole("button", { name: "Review bounty terms" }));
-      await expect(await screen.findByText("Review before publishing")).toBeTruthy();
+      await expect(await screen.findByRole("region", { name: "Review bounty terms" })).toBeTruthy();
       await userEvent.click(screen.getByRole("button", { name: "Publish bounty terms" }));
       await expect(onPublish).toHaveBeenCalledTimes(1);
     },

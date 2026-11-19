@@ -1,10 +1,10 @@
-// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project's network"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor's latest unvetoed binding"
+// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project's network"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor's latest unvetoed binding"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/contracts/solanaEscrow.md, "Anyone closes an open pledge once its period is committed or the period's window has closed"
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Address, type Decoded, type FetchedTransaction, ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM } from "@repo/platform/chain/solana";
-import type { Period } from "../../kernels/calendar.ts";
+import { type Period, isPeriod } from "../../kernels/calendar.ts";
 import { type AllocationNode, encodeProof } from "./allocationRoot.ts";
-import { type Digest, type I64, type U64, concat, digestBytes, digestOf, hex, i64le, isZeroDigest, readI64, readU32, readU64, sameBytes, u32le, u64le, utf8 } from "./bytes.ts";
-import { type Purpose, type TokenProgram, awardAddress, awardId, bindingAddress, keyBytes, monthAddress, monthlySourceAddress, originAddress, settledAddress, tokenAccountAddress, vaultAddress, vetoAddress } from "./pda.ts";
+import { type Digest, type I64, type U64, concat, digestBytes, digestOf, hex, i64le, isZeroDigest, readI64, readU32, readU64, sameBytes, u32le, u64, u64le, utf8 } from "./bytes.ts";
+import { type Purpose, type TokenProgram, awardAddress, awardId, bindingAddress, keyBytes, monthAddress, monthPledgeAddress, monthlySourceAddress, originAddress, settledAddress, tokenAccountAddress, vaultAddress, vetoAddress } from "./pda.ts";
 import { type AccountMeta, type Instruction, type ResolvedInstruction, resolveInstruction, resolvedKeys } from "./transactions.ts";
 
 export const ED25519_PROGRAM = "Ed25519SigVerify111111111111111111111111111" as Address;
@@ -41,7 +41,17 @@ export interface LeafArguments {
   readonly proof: ReadonlyArray<AllocationNode>;
 }
 
-export type InstructionIssue = "invalidIdentity" | "zeroMonthlyCap" | "invalidLeafPosition";
+export type PledgeIssue = "nonPositivePledge" | "pledgeOutsideU64" | "pledgePeriodCount" | "repeatedPledgePeriod" | "invalidPledgePeriod";
+
+export type InstructionIssue = "invalidIdentity" | "zeroMonthlyCap" | "invalidLeafPosition" | PledgeIssue;
+
+export const PLEDGE_REFUSALS: Readonly<Record<PledgeIssue, string>> = {
+  nonPositivePledge: "A pledge must be positive",
+  pledgeOutsideU64: "Amount outside u64",
+  pledgePeriodCount: "Pledge 1 to 12 periods",
+  repeatedPledgePeriod: "Each period may be pledged once per transaction",
+  invalidPledgePeriod: "Period must be YYYYMM",
+};
 
 export type Built<A> = { readonly kind: "built"; readonly value: A } | { readonly kind: "refused"; readonly issue: InstructionIssue };
 
@@ -167,6 +177,33 @@ export function setMonthlyCommitment(input: { readonly program: Address; readonl
     program: input.program,
     accounts: [meta(input.owner, false, true), meta(input.project, true)],
     data: anchorData("set_monthly_commitment", u64le(input.cap), Uint8Array.of(input.enabled ? 1 : 0)),
+  });
+}
+
+/** @throws {never} */
+export function pledgeMonthInstructions(input: { readonly program: Address; readonly project: Address; readonly owner: Address; readonly periods: ReadonlyArray<number>; readonly amount: bigint }): Built<ReadonlyArray<Instruction>> {
+  if (input.amount <= 0n) return refused("nonPositivePledge");
+  const amount = u64(input.amount);
+  if (amount === undefined) return refused("pledgeOutsideU64");
+  if (input.periods.length < 1 || input.periods.length > 12) return refused("pledgePeriodCount");
+  const periods = input.periods.filter(isPeriod);
+  if (periods.length !== input.periods.length) return refused("invalidPledgePeriod");
+  if (new Set(periods).size !== periods.length) return refused("repeatedPledgePeriod");
+  return built(periods.map((period) => ({
+    program: input.program,
+    accounts: [meta(input.owner, true, true), meta(input.project, true), meta(monthPledgeAddress(input.program, input.project, period), true), meta(SYSTEM_PROGRAM, false)],
+    data: anchorData("pledge_month", u32le(period), u64le(amount)),
+  })));
+}
+
+/** @throws {never} */
+export function expirePledgeInstruction(input: { readonly program: Address; readonly project: Address; readonly period: number }): Built<Instruction> {
+  if (!isPeriod(input.period)) return refused("invalidPledgePeriod");
+  const { program, project, period } = input;
+  return built({
+    program,
+    accounts: [meta(project, true), meta(monthPledgeAddress(program, project, period), true), meta(monthAddress(program, project, period), false)],
+    data: anchorData("expire_pledge", u32le(period)),
   });
 }
 

@@ -32,7 +32,7 @@ import {
   unreadableSaved,
   clearUnreadableSaved,
 } from "./funding.vibe";
-import { type Settled, run, useAction, useSettled, useWalletOffers } from "./hooks.ts";
+import { type Settled, run, useAction, useSettled, useTabHidden, useWalletOffers } from "./hooks.ts";
 import { PendingCheck } from "./PendingCheck.tsx";
 import type { FundingDeployment, FundingProject } from "./project.schema.ts";
 
@@ -49,6 +49,10 @@ export type VaultActionsProps = {
   loginHref: string;
   /** The pool's funding facts that a withdrawal must keep; a monthly pool without them offers deposits only. */
   pool?: PoolFacts;
+  /** Whether the cached pool-funding read shows month locks on this vault, so its contract guards locked funds. */
+  pledgeSupport?: boolean;
+  /** Called with the wallet connected here, which the vault's month lock card shares. */
+  onWallet?: (connection: Connection | undefined) => void;
   /** Called once a deposit or withdrawal is verified on the finalized chain. */
   onFinalized: () => void;
 };
@@ -100,9 +104,10 @@ export function NetworkName({ network }: { network: string }) {
 }
 
 /** Deposits and withdrawals on one registered vault, each sent by the person's own wallet after the request is saved. */
-export function VaultActions({ project, deployment, period, account, loginHref, pool, onFinalized }: VaultActionsProps) {
+export function VaultActions({ project, deployment, period, account, loginHref, pool, pledgeSupport = false, onWallet, onFinalized }: VaultActionsProps) {
   const runtime = vaultRuntime(project, deployment, period);
   useFollowed(runtime, `follow:${account}`, () => followVault(account));
+  useTabHidden(runtime);
   const vault = useVault(runtime);
   const batch = useBatch(runtime);
   const offers = useWalletOffers(runtime);
@@ -117,7 +122,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const solana = family === "solana";
   const network = networkLabel(deployment.network);
   const isOwner = wallet !== undefined && wallet.address.toLowerCase() === deployment.owner.toLowerCase();
-  const promiseUnread = project.reward.kind === "monthly-pool" && pool === undefined;
+  const promiseUnread = project.reward.kind === "monthly-pool" && pool === undefined && !pledgeSupport;
   const transfer = vault.state?.transfer;
   const batched = batch.state;
   const pendingTransfer = transfer !== undefined && live.has(transfer.phase) && transfer.slotOwner === account;
@@ -137,6 +142,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const connect = (id: number) =>
     act(connectWallet(id, true), (connection) => {
       setWallet(connection);
+      onWallet?.(connection);
       setReview(undefined);
       if (connection.address.toLowerCase() !== deployment.owner.toLowerCase()) setOperation("deposit");
       watch(connection);
@@ -231,7 +237,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
               className="flex flex-col gap-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                void act(reviewAction(wallet, operation, amount, pool, account), setReview);
+                void act(reviewAction(wallet, operation, amount, pool, account, pledgeSupport), setReview);
               }}
             >
               <RadioGroup
@@ -290,6 +296,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
               disabled={busy}
               onClick={() => {
                 setWallet(undefined);
+                onWallet?.(undefined);
                 setReview(undefined);
               }}
             >

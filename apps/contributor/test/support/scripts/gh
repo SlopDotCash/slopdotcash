@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+// spec/contributor/workflow.md, "Work selection records blockers, the project projection and live observation epochs"
+"use strict";
+
+const api = process.env.SLOP_TEST_GH_API;
+const token = process.env.GH_TOKEN;
+
+function refuse(message) {
+  process.stderr.write(`gh: ${message}\n`);
+  process.exit(1);
+}
+
+function splitTop(text, separator) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if ("{[(".includes(character)) depth += 1;
+    else if ("}])".includes(character)) depth -= 1;
+    else if (character === separator && depth === 0) {
+      parts.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts.map((part) => part.trim());
+}
+
+function iterate(value) {
+  if (Array.isArray(value)) return value;
+  if (value !== null && typeof value === "object") return Object.values(value);
+  throw new Error(`Cannot iterate over ${value === null ? "null" : typeof value}`);
+}
+
+function term(text, input) {
+  if (text.startsWith("{") && text.endsWith("}")) {
+    const built = {};
+    for (const entry of splitTop(text.slice(1, -1), ",")) {
+      const colon = entry.indexOf(":");
+      const key = colon === -1 ? entry : entry.slice(0, colon).trim();
+      const [first = null] = evaluate(colon === -1 ? `.${entry}` : entry.slice(colon + 1), input);
+      built[key] = first;
+    }
+    return [built];
+  }
+  if (text === ".") return [input];
+  const segment = /\.([A-Za-z_][A-Za-z0-9_]*)?(\[\])?/uy;
+  let values = [input];
+  let index = 0;
+  while (index < text.length) {
+    segment.lastIndex = index;
+    const match = segment.exec(text);
+    if (match === null || match[0].length === 1) throw new Error(`unsupported jq selector: ${text}`);
+    const [, name, all] = match;
+    if (name !== undefined) values = values.map((value) => (value === null ? null : value[name] ?? null));
+    if (all !== undefined) values = values.flatMap(iterate);
+    index += match[0].length;
+  }
+  return values;
+}
+
+function evaluate(expression, input) {
+  return splitTop(expression.trim(), "|").reduce((inputs, stage) => inputs.flatMap((value) => term(stage, value)), [input]);
+}
+
+function typed(value) {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value === "null") return null;
+  return /^-?[0-9]+$/u.test(value) ? Number(value) : value;
+}
+
+function parse(argv) {
+  if (argv[0] !== "api") refuse(`the test gh answers only \`gh api\`, not \`gh ${argv.join(" ")}\``);
+  const request = { method: undefined, paginate: false, jq: undefined, fields: [], endpoint: undefined };
+  for (let index = 1; index < argv.length; index += 1) {
+    const argument = argv[index];
+    const value = () => {
+      index += 1;
+      if (index >= argv.length) refuse(`${argument} needs a value`);
+      return argv[index];
+    };
+    if (argument === "--method" || argument === "-X") request.method = value().toUpperCase();
+    else if (argument === "--paginate") request.paginate = true;
+    else if (argument === "--jq" || argument === "-q") request.jq = value();
+    else if (argument === "--hostname") value();
+    else if (argument === "-f" || argument === "--raw-field" || argument === "-F" || argument === "--field") {
+      const field = value();
+      const equals = field.indexOf("=");
+      if (equals < 1) refuse(`invalid field ${field}`);
+      const raw = field.slice(equals + 1);
+      request.fields.push([field.slice(0, equals), argument === "-f" || argument === "--raw-field" ? raw : typed(raw)]);
+    } else if (argument.startsWith("-")) refuse(`unsupported flag ${argument}`);
+    else if (request.endpoint === undefined) request.endpoint = argument;
+    else refuse(`unexpected argument ${argument}`);
+  }
+  if (request.endpoint === undefined) refuse("an endpoint is required");
+  return request;
+}
+
+async function answer(url, init) {
+  const response = await fetch(url, {
+    ...init,
+    headers: { accept: "application/vnd.github+json", ...(token === undefined ? {} : { authorization: `token ${token}` }), ...init.headers },
+  });
+  const text = await response.text();
+  let body;
+  try {
+    body = text === "" ? null : JSON.parse(text);
+  } catch {
+    body = text;
+  }
+  if (response.status >= 400) {
+    const message = body !== null && typeof body === "object" && typeof body.message === "string" ? body.message : text;
+    refuse(`${message} (HTTP ${response.status})`);
+  }
+  return { body, link: response.headers.get("link") };
+}
+
+function nextLink(link) {
+  if (link === null) return undefined;
+  for (const part of link.split(",")) {
+    const match = /<([^>]+)>\s*;\s*rel="next"/u.exec(part);
+    if (match !== null) return match[1];
+  }
+  return undefined;
+}
+
+function pageInfo(value) {
+  if (value === null || typeof value !== "object") return undefined;
+  if (typeof value.hasNextPage === "boolean" && "endCursor" in value) return value;
+  for (const child of Object.values(value)) {
+    const found = pageInfo(child);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function emit(expression, body) {
+  if (expression === undefined) {
+    process.stdout.write(`${JSON.stringify(body)}\n`);
+    return;
+  }
+  for (const value of evaluate(expression, body)) process.stdout.write(`${typeof value === "string" ? value : JSON.stringify(value)}\n`);
+}
+
+async function main() {
+  if (api === undefined) refuse("SLOP_TEST_GH_API names no GitHub fake");
+  const request = parse(process.argv.slice(2));
+  const base = api.replace(/\/+$/u, "");
+  if (request.endpoint === "graphql") {
+    const variables = {};
+    let query;
+    for (const [name, value] of request.fields) {
+      if (name === "query") query = value;
+      else variables[name] = value;
+    }
+    if (query === undefined) refuse("graphql needs a query field");
+    for (;;) {
+      const { body } = await answer(`${base}/graphql`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, variables }) });
+      if (body !== null && typeof body === "object" && Array.isArray(body.errors) && body.errors.length > 0) {
+        refuse(body.errors.map((error) => error.message).join("; "));
+      }
+      emit(request.jq, body);
+      const info = request.paginate ? pageInfo(body.data) : undefined;
+      if (info === undefined || !info.hasNextPage) return;
+      variables.endCursor = info.endCursor;
+    }
+  }
+  const method = request.method ?? (request.fields.length > 0 ? "POST" : "GET");
+  const target = new URL(`${base}/${request.endpoint.replace(/^\/+/u, "")}`);
+  const init = { method, headers: {} };
+  if (method === "GET") for (const [name, value] of request.fields) target.searchParams.append(name, String(value));
+  else if (request.fields.length > 0) {
+    init.headers = { "content-type": "application/json" };
+    init.body = JSON.stringify(Object.fromEntries(request.fields));
+  }
+  let url = target.href;
+  while (url !== undefined) {
+    const { body, link } = await answer(url, init);
+    emit(request.jq, body);
+    url = request.paginate ? nextLink(link) : undefined;
+  }
+}
+
+main().catch((error) => refuse(error instanceof Error ? error.message : String(error)));

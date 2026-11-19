@@ -4,7 +4,7 @@ import type { D1Database, ExecutionContext } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { DeploymentTier, type Tier } from "@repo/platform/config"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { D1, DatabaseFailure, type Statement, d1, sql } from "@repo/platform/d1"
 import { Caller, Unauthenticated } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
@@ -15,6 +15,9 @@ import { contributorAllocation, recipientAllocation } from "../src/client/contri
 import { DisclosuresRefused } from "../src/directTransfers/disclosures.vibe"
 import { disclosures } from "../src/programs/disclosures.vibe"
 import { publicRoutes } from "../src/public/routes.vibe"
+import { PoolListingLive } from "../src/public/listing.vibe"
+import { toAmount } from "../src/kernels/amounts.ts"
+import { PoolListing } from "@repo/ports/settlement"
 
 const now = Date.parse("2026-11-17T12:00:00.000Z")
 const vault = `0x${"a".repeat(40)}`
@@ -57,6 +60,12 @@ function snapshot(project: string, network: string, vaultAddress: string, asset:
     VALUES (${project}, ${network}, 'base', ${vaultAddress}, ${asset}, 6, '9000000', '2000000', '40000', '0', '0', '0', ${free}, '490000', '10000', NULL, NULL, '100', '2026-11-17T11:55:00.000Z', '2026-11-17T11:56:00.000Z')`
 }
 
+const pledgedVault = `0x${"d".repeat(40)}`
+
+function pledge(project: string, vaultAddress: string, period: string, amount: string, open: 0 | 1): Statement {
+  return sql`INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (${project}, 'base-mainnet', ${vaultAddress}, ${period}, ${amount}, ${open}, '100', '2026-11-17T11:56:00.000Z')`
+}
+
 function monthStart(project: string, network: string, vaultAddress: string, period: string, free: string): Statement {
   return sql`INSERT INTO vault_month_starts (project_id, network, vault, period, free_balance, total_gross_withdrawn, block_number, block_time, observed_at)
     VALUES (${project}, ${network}, ${vaultAddress}, ${period}, ${free}, '0', '1', ${`${period}-01T00:10:00.000Z`}, ${`${period}-01T00:11:00.000Z`})`
@@ -78,6 +87,14 @@ const seed = [
   monthStart("eliza", "base-mainnet", vault, "2026-10", "6000000"),
   monthStart("eliza", "base-mainnet", vault, "2026-11", "7000000"),
   monthStart("eliza", "base-mainnet", vault, "2026-09", "1000000"),
+  snapshot("pledged", "base-mainnet", pledgedVault, usdc, "4000000"),
+  sql`UPDATE vault_snapshots SET open_pledged_gross = '3000000' WHERE project_id = 'pledged'`,
+  pledge("pledged", pledgedVault, "2026-08", "5", 0),
+  pledge("pledged", pledgedVault, "2026-09", "1000000", 1),
+  pledge("pledged", pledgedVault, "2026-10", "2000000", 0),
+  pledge("pledged", pledgedVault, "2026-11", "2000000", 1),
+  pledge("pledged", pledgedVault, "2026-12", "0", 1),
+  pledge("eliza", vault, "2026-11", "5", 1),
   sql`INSERT INTO payment_chain_cursors (project_id, network, position, synced_at) VALUES ('eliza', 'base-mainnet', '12345', '2026-11-17T11:50:00.000Z')`,
 ]
 
@@ -164,11 +181,38 @@ const direct = { projectId: "eliza", contributionMonth: "2026-09", githubUserId:
 const elizaVault = { network: "base-mainnet", vault, freeBalance: "7000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [
   { period: "2026-10", freeBalance: "6000000", totalGrossWithdrawn: "0", blockTime: "2026-10-01T00:10:00.000Z" },
   { period: "2026-11", freeBalance: "7000000", totalGrossWithdrawn: "0", blockTime: "2026-11-01T00:10:00.000Z" },
-] }
-const demoVault = { network: "base-sepolia", vault: testVault, freeBalance: "5000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [] }
+], openPledgedGross: null, pledges: [] }
+const demoVault = { network: "base-sepolia", vault: testVault, freeBalance: "5000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [], openPledgedGross: null, pledges: [] }
+const pledgedFunding = { projectId: "pledged", vaults: [{ network: "base-mainnet", vault: pledgedVault, freeBalance: "4000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [], openPledgedGross: "3000000", pledges: [
+  { period: "2026-09", amount: "1000000", open: true },
+  { period: "2026-10", amount: "2000000", open: false },
+  { period: "2026-11", amount: "2000000", open: true },
+] }] }
+
+function manifestOf(id: string, cap: string, deployments: ReadonlyArray<{ readonly network: string; readonly vault: string }>) {
+  return { id, status: "active", reward: { kind: "monthly-pool", monthlyCapMinor: cap }, escrow: { chain: "base", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: deployments.map((deployment) => ({ ...deployment, asset: usdc })) } }
+}
+
+effect function amountOf(value: bigint) {
+  return try Effect.try(() => toAmount(value))
+}
+
+effect function factsOf(cap: bigint, fields: { readonly freeNow: bigint; readonly freeAtStart: bigint; readonly monthStartRead: boolean; readonly pledgeSupport: boolean; readonly pledged: bigint }) {
+  return {
+    read: "PoolCurrent", monthlyPool: true, period: 202611, amount: try amountOf(cap), priorAmount: try amountOf(0n), priorPending: false,
+    freeNow: try amountOf(fields.freeNow), monthStartRead: fields.monthStartRead, freeAtStart: try amountOf(fields.freeAtStart), withdrawnSince: false,
+    pledgeSupport: fields.pledgeSupport, pledged: try amountOf(fields.pledged),
+  }
+}
+
+const brokenD1 = Layer.succeed(D1, {
+  all: () => Effect.fail(new DatabaseFailure({ operation: "all", message: "D1 unavailable" })),
+  run: () => Effect.fail(new DatabaseFailure({ operation: "run", message: "D1 unavailable" })),
+  batch: () => Effect.fail(new DatabaseFailure({ operation: "batch", message: "D1 unavailable" })),
+})
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Public payment reads serve only stored records, never reach a chain during an RPC outage, and link a paid award to its month under either 2% rounding of the same gross (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', () => effect {
+  it.effect('Public payment reads serve only stored records, never reach a chain during an RPC outage, and link a paid award to its month under either 2% rounding of the same gross (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/monthPledges.md, "Pool funding serves a vault\'s open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open")', () => effect {
     const site = try Public
     const reads = {
       all: try site.read("production", "/api/v1/payments/vault-payments"),
@@ -229,7 +273,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       },
       unindexed: [503, "project_payments_not_indexed"],
       vault: [200, "public, max-age=60, s-maxage=60", (reads.vault.body as { snapshots: ReadonlyArray<{ freeBalance: string | null }>; staleAfterMs: number; servedAt: string })],
-      funding: ["public, max-age=60, s-maxage=60", { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }] }],
+      funding: ["public, max-age=60, s-maxage=60", { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }, pledgedFunding] }],
       signedOut: [401, "not_signed_in"],
       account: {
         payments: [["o1", "paid", "980000"], ["o3", "needs_wallet", "490000"], ["o4", "paid", "980000"]],
@@ -257,6 +301,31 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     ])
   })
 
+  it.effect('Discovery reads one pool fact per candidate from the cached vault rows, counting a pledged month in a pledging vault, a month-start funded pool and zero for a pool without rows, and a broken D1 fails instead of answering (spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging")', () => effect {
+    const site = try Public
+    const candidates = [
+      { projectId: "eliza", manifest: manifestOf("eliza", "7000000", [{ network: "base-mainnet", vault }]) },
+      { projectId: "nobody", manifest: manifestOf("nobody", "1000000", [{ network: "base-mainnet", vault: `0x${"e".repeat(40)}` }]) },
+      { projectId: "pledged", manifest: manifestOf("pledged", "2000000", [{ network: "base-mainnet", vault: pledgedVault }]) },
+      { projectId: "demo", manifest: manifestOf("demo", "5000000", [{ network: "base-sepolia", vault: testVault }]) },
+    ]
+    const tier = Layer.succeed(DeploymentTier, { tier: "production" })
+    const listed = (database: Layer.Layer<D1>) => effect {
+      provide settableClock(now).layer, Layer.provide(PoolListingLive, Layer.merge(database, tier)) {
+        return (try PoolListing).facts(candidates) catch (error) => error._tag
+      }
+    }
+    try same({ current: try listed(d1(site.reads)), broken: try listed(brokenD1) }, {
+      current: [
+        { projectId: "eliza", pool: try factsOf(7_000_000n, { freeNow: 7_000_000n, freeAtStart: 7_000_000n, monthStartRead: true, pledgeSupport: false, pledged: 0n }) },
+        { projectId: "nobody", pool: try factsOf(1_000_000n, { freeNow: 0n, freeAtStart: 0n, monthStartRead: false, pledgeSupport: false, pledged: 0n }) },
+        { projectId: "pledged", pool: try factsOf(2_000_000n, { freeNow: 0n, freeAtStart: 0n, monthStartRead: false, pledgeSupport: true, pledged: 2_000_000n }) },
+        { projectId: "demo", pool: try factsOf(5_000_000n, { freeNow: 0n, freeAtStart: 0n, monthStartRead: false, pledgeSupport: false, pledged: 0n }) },
+      ],
+      broken: "DatabaseFailure",
+    })
+  })
+
   it.effect('Testnet payments, totals and vaults appear only on the staging deployment (spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart")', () => effect {
     const site = try Public
     const paths = ["/api/v1/payments/vault-payments", "/api/v1/payments/actors/101/vault-payments", "/api/v1/pool-funding", "/api/v1/payments/projects/demo/vault"]
@@ -279,13 +348,13 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       production: [
         { payments: [paidO1], through: 3, next: null, total: 1 },
         { payments: [paidO1], through: 3, next: null, total: 1 },
-        { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }] },
+        { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }, pledgedFunding] },
         [],
       ],
       staging: [
         { payments: [paidO1, paidO4], through: 3, next: null, total: 2 },
         { payments: [paidO1, paidO4], through: 3, next: null, total: 2 },
-        { schema: "slop-pool-funding-v1", projects: [{ projectId: "demo", vaults: [demoVault] }, { projectId: "eliza", vaults: [elizaVault] }] },
+        { schema: "slop-pool-funding-v1", projects: [{ projectId: "demo", vaults: [demoVault] }, { projectId: "eliza", vaults: [elizaVault] }, pledgedFunding] },
         ["base-sepolia"],
       ],
       local: [{ payments: [paidO1], through: 3, next: null, total: 1 }, []],

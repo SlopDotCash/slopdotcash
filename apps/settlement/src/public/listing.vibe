@@ -1,0 +1,76 @@
+// spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"
+import { millisOf, nowSeconds } from "@repo/platform/clock"
+import { DeploymentTier } from "@repo/platform/config"
+import { D1, RowMismatch } from "@repo/platform/d1"
+import { type PoolCandidate, PoolListing, type ProjectPool } from "@repo/ports/settlement"
+import type { FundedVault, ProjectFunding } from "../client/public.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { parsePeriod } from "../kernels/calendar.ts"
+import { type FactsMonthStart, type FactsPledge, type FactsVault, networkPays, poolFacts } from "../kernels/poolFacts.ts"
+import { MonthlyManifest, monthlyCapOf } from "../monthly/store.vibe"
+import { fundedProjects } from "./funding.vibe"
+
+effect function units(text: string) {
+  const value = parseBaseUnits(text)
+  if (value === undefined) throw new RowMismatch({ text: "pool funding", issue: "not canonical base units" })
+  return value
+}
+
+effect function period(text: string) {
+  const value = parsePeriod(text)
+  if (value === undefined) throw new RowMismatch({ text: "pool funding", issue: "not a YYYY-MM period" })
+  return value
+}
+
+effect function factsVault(vault: FundedVault) {
+  const monthStarts: FactsMonthStart[] = []
+  for (const start of vault.monthStarts) monthStarts.push({ period: try period(start.period), freeBalance: try units(start.freeBalance), totalGrossWithdrawn: try units(start.totalGrossWithdrawn), blockTime: Math.floor(millisOf(start.blockTime) / 1000) })
+  const pledges: FactsPledge[] = []
+  for (const pledge of vault.pledges) pledges.push({ period: try period(pledge.period), amount: try units(pledge.amount), open: pledge.open })
+  return {
+    network: vault.network,
+    vault: vault.vault,
+    freeBalance: vault.freeBalance === null ? null : try units(vault.freeBalance),
+    totalGrossWithdrawn: try units(vault.totalGrossWithdrawn),
+    monthStarts,
+    openPledgedGross: vault.openPledgedGross === null ? null : try units(vault.openPledgedGross),
+    pledges,
+  } satisfies FactsVault
+}
+
+effect function projectPool(candidate: PoolCandidate, funded: ReadonlyMap<string, ReadonlyArray<FundedVault>>, now: number) {
+  const manifest = Schema.decodeUnknownEffect(MonthlyManifest)(candidate.manifest) catch effect () => {
+    throw new RowMismatch({ text: "registry manifest", issue: `${candidate.projectId} is not a project manifest` })
+  }
+  const vaults: FactsVault[] = []
+  for (const vault of funded.get(candidate.projectId) ?? []) vaults.push(try factsVault(vault))
+  const pool = try orDie(Effect.try(() => poolFacts({
+    pool: { monthlyPool: manifest.reward.kind === "monthly-pool", deployments: manifest.escrow?.deployments ?? [], capFor: (month) => monthlyCapOf(manifest, month) },
+    read: "PoolCurrent",
+    vaults,
+    pays: networkPays,
+    nowSeconds: now,
+  })))
+  return { projectId: candidate.projectId, pool } satisfies ProjectPool
+}
+
+export effect function poolListing(candidates: ReadonlyArray<PoolCandidate>) {
+  const now = try nowSeconds()
+  const projects: ReadonlyArray<ProjectFunding> = try fundedProjects(now)
+  const funded = new Map(projects.map((project) => [project.projectId, project.vaults] as const))
+  const pools: ProjectPool[] = []
+  for (const candidate of candidates) pools.push(try projectPool(candidate, funded, now))
+  return pools
+}
+
+export const PoolListingLive = Layer.effect(PoolListing, effect {
+  const db = try D1
+  const tier = try DeploymentTier
+  return {
+    facts: (candidates) => effect {
+      provide D1 = db, DeploymentTier = tier {
+        return try poolListing(candidates)
+      }
+    },
+  } satisfies PoolListing.Shape
+})

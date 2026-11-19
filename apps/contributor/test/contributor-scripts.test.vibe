@@ -1,0 +1,66 @@
+// spec/contributor/workflow.md, "Story: Ship useful work through the project's repository"
+import { it } from "@effect/vitest"
+import {
+  aFailedCommandRetainsItsOutputWhenCleanupFails,
+  aFailedStaleCleanupRollsBackOrNeedsManualRecovery,
+  aLaunchedChildStaysLeasedThroughBookkeepingFailureAndParentLoss,
+  aMissingGhClosesStartupAndRetainsTheSpawnError,
+  aReleasedHandleRefusesBeforeLaunching,
+  aStaleHelperCannotLaunchWhileASuccessorScans,
+  acquisitionPublishesByRenameAndKeepsTheFirstFailure,
+  anUnpublishedChildStaysProtectedAfterHelperDeath,
+  releaseUsesOnlyTheSavedTombstone,
+  theReportKeepsItsDiscoveryErrorWhenReleaseFails,
+} from "./support/scripts/lock.ts"
+import { posix } from "./support/scripts/fixture.ts"
+import {
+  anOpenPullRequestWithAClosingKeywordIsNotFreeWork,
+  discloseRefusesPlaceholderIdentityAndKeepsLegacyMarkers,
+  termsPreflightAcknowledgesTheServedTerms,
+  theLiveReportRunsThroughGhAndRetriesAChangedInventory,
+} from "./support/scripts/reports.ts"
+import { theOpenedCommandRecordsOneEventOnItsOwnRun } from "./support/scripts/opened.ts"
+
+const slow = { timeout: 120_000 }
+
+it.effect.skipIf(!posix)('A launched GitHub child keeps the discovery lock through a bookkeeping failure, parent loss and helper death (spec/contributor/discoveryLock.md, "Process deaths keep the lock until the command is provably gone"; spec/contributor/discoveryLock.md, "Manual recovery requires every affected process positively stopped")', () => effect {
+  try Effect.tryPromise(() => aLaunchedChildStaysLeasedThroughBookkeepingFailureAndParentLoss())
+  try Effect.tryPromise(() => anUnpublishedChildStaysProtectedAfterHelperDeath())
+}, slow)
+
+it.effect.skipIf(!posix)('Only the current owner\'s live handle starts a helper (spec/contributor/discoveryLock.md, "Only the current owner\'s live handle starts a helper, and startup checks the owner again"; spec/contributor/discoveryLock.md, "Acquisition scans for a clear lock under a guard that excludes startup")', () => effect {
+  try Effect.tryPromise(() => aStaleHelperCannotLaunchWhileASuccessorScans())
+  try Effect.try(() => aReleasedHandleRefusesBeforeLaunching())
+}, slow)
+
+it.effect.skipIf(!posix)('A failed GitHub command and a failed release keep the first failure and the command\'s output (spec/contributor/commandCompletion.md, "The helper retains a nonzero exit and its bounded diagnostic output"; spec/contributor/commandCompletion.md, "Outer release can fail after publication without erasing earlier evidence")', () => effect {
+  try Effect.try(() => aFailedCommandRetainsItsOutputWhenCleanupFails())
+  try Effect.try(() => theReportKeepsItsDiscoveryErrorWhenReleaseFails())
+  try Effect.try(() => aMissingGhClosesStartupAndRetainsTheSpawnError())
+}, slow)
+
+it.effect.skipIf(!posix)('A lock handle is returned only after a clean acquisition, and release retries touch only the saved tombstone (spec/contributor/lockPublication.md, "Acquisition prepares a candidate, quarantines a dead owner, and publishes by rename"; spec/contributor/lockPublication.md, "Release renames to a private tombstone and a retry uses only the saved path"; spec/contributor/discoveryLock.md, "A stale lock is renamed aside, and a failed cleanup rolls the new ownership back")', () => effect {
+  try Effect.try(() => acquisitionPublishesByRenameAndKeepsTheFirstFailure())
+  try Effect.try(() => aFailedStaleCleanupRollsBackOrNeedsManualRecovery())
+  try Effect.try(() => releaseUsesOnlyTheSavedTombstone())
+}, slow)
+
+it.effect('An open pull request that closes an issue by keyword makes that issue a blocker, not free work (spec/contributor/workflow.md, "Work selection records blockers, the project projection and live observation epochs")', () => effect {
+  try Effect.tryPromise(() => anOpenPullRequestWithAClosingKeywordIsNotFreeWork())
+}, slow)
+
+it.effect('The terms preflight acknowledges exactly the terms.json slop.cash serves and verifies each document by digest (spec/contributor/termsPreflight.md, "Each named document is digest-verified on an allowlisted host, and the cache never grants authority"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms")', () => effect {
+  try Effect.tryPromise(() => termsPreflightAcknowledgesTheServedTerms())
+}, slow)
+
+it.effect('Ordinary disclosure refuses placeholder identity and keeps the legacy marker readable (spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable")', () => effect {
+  try Effect.tryPromise(() => discloseRefusesPlaceholderIdentityAndKeepsLegacyMarkers())
+}, slow)
+
+it.effect.skipIf(!posix)('live-report --json reads GitHub through gh, reports the closing-keyword blocker and retries one complete snapshot after the inventory changes mid-read (spec/contributor/workflow.md, "Work selection records blockers, the project projection and live observation epochs"; spec/contributor/discoverySnapshot.md, "A changed inventory retries the whole snapshot once and a failed read never publishes")', () => effect {
+  try Effect.tryPromise(() => theLiveReportRunsThroughGhAndRetriesAChangedInventory())
+}, slow)
+
+it.effect('The opened command validates the pull request, exchanges a fresh assertion and records one pull_request_opened event on its own reused run (spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event"; spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply")', () => effect {
+  try Effect.tryPromise(() => theOpenedCommandRecordsOneEventOnItsOwnRun())
+}, slow)

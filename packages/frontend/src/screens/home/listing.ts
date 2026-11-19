@@ -1,6 +1,6 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
 import { toAmount } from "@repo/settlement/kernels/amounts";
-import { type HomeCard, homeBefore, homeGroup } from "../../../gen/frontend__poolListing.ts";
+import { type HomeCard, homeBefore, homeGroup, type ListingFacts, listedThisMonth as listedThisMonthOf } from "../../../gen/frontend__poolListing.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { projectImage } from "../../../gen/frontend__presentation.ts";
 import { type PoolFacts, poolDisplay } from "../../../gen/frontend__projections.ts";
@@ -115,6 +115,16 @@ export function cardNotes(project: ListedProject, merge: string | null): string[
 /** @throws {never} */
 export function openOffers(projects: ReadonlyArray<ListedProject>): ListedProject[] {
   return projects.filter((project) => project.status === "active" && project.securityBounty?.status === "open");
+}
+
+/** This month's listing facts of a project: whether it is active, whether its security program is open, and its pool. @throws {never} */
+export function listingOf(project: Pick<CardProject, "status" | "securityBounty"> & { readonly funding: PoolFacts }): ListingFacts {
+  return { active: project.status === "active", securityOpen: project.securityBounty?.status === "open", pool: project.funding };
+}
+
+/** Whether /sponsors and agent discovery list the project this month; every project while the funding read is not current. @throws {never} */
+export function listedThisMonth(project: ListedProject): boolean {
+  return listedThisMonthOf(listingOf(project));
 }
 
 /** Every open Featured or Community project whose card does not advertise a security bounty, in registry order. @throws {never} */

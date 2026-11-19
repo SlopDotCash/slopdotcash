@@ -1,5 +1,5 @@
 // spec/frontend/reportDetails.md, "Private report IDs scope both heading references"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"; spec/frontend/composition.md, "Each mounted report must belong to the authorized current account lifetime"
-import { Alert, Button, Disclosure, Field, Textarea } from "@repo/ui";
+import { Alert, Button, Disclosure, Field, Status, type StatusProps, Textarea } from "@repo/ui";
 import { RotateCcw } from "lucide-react";
 import { useState } from "react";
 import type { SubmissionView } from "@repo/security/client";
@@ -29,6 +29,8 @@ export type ReportDetailProps = {
   onReview: (decision: ReviewDecision, reason: string) => void;
 };
 
+const severityTones: Readonly<Record<string, StatusProps["presentation"]["tone"]>> = { critical: "Negative", high: "Negative", medium: "Caution", low: "Notice" };
+
 function draftOf(report: PrivateReport): ReportDraft {
   return { summary: report.summary, description: report.description, severity: report.severity ?? "", cvss: report.cvssVectorString ?? "", cwe: (report.cweIds ?? []).join(", ") };
 }
@@ -36,7 +38,7 @@ function draftOf(report: PrivateReport): ReportDraft {
 function Revise({ report, busy, onRevise }: { report: PrivateReport; busy: boolean; onRevise: (draft: ReportDraft) => void }) {
   const [draft, setDraft] = useState(() => draftOf(report));
   return (
-    <Disclosure summary="Add evidence or correct report">
+    <Disclosure summary="Edit report">
       <form
         className="flex flex-col gap-4 pt-2 text-foreground"
         onSubmit={(event) => {
@@ -44,10 +46,9 @@ function Revise({ report, busy, onRevise }: { report: PrivateReport; busy: boole
           onRevise(draft);
         }}
       >
-        <p>The new version is screened again. Your original receipt time and terms stay the same.</p>
         <ReportFields draft={draft} onChange={setDraft} disabled={busy} />
         <Button type="submit" className="self-start" loading={busy}>
-          {busy ? "Saving…" : "Save and screen again"}
+          {busy ? "Saving…" : "Save"}
         </Button>
       </form>
     </Disclosure>
@@ -63,15 +64,15 @@ function Review({ busy, onReview }: { busy: boolean; onReview: (decision: Review
   };
   return (
     <div className="flex flex-col gap-3">
-      <Field label="Review reason" hint="This routes the private report. It does not approve a bounty or payment.">
+      <Field label="Review reason">
         <Textarea required minLength={8} rows={3} value={reason} onChange={(event) => setReason(event.target.value)} />
       </Field>
       <div className="flex flex-wrap gap-2">
         <Button disabled={busy || short} onClick={() => decide("forward")}>
-          Approve for owner review
+          Forward to owner
         </Button>
         <Button variant="secondary" disabled={busy || short} onClick={() => decide("request-information")}>
-          Request more evidence
+          Request evidence
         </Button>
       </div>
     </div>
@@ -83,20 +84,22 @@ function Loaded({ submission, headings, detail, busy, onRetry, onRevise, onRevie
   return (
     <>
       {detail.refreshError ? (
-        <Alert
-          variant="destructive"
-          action={
-            <Button variant="link" onClick={onRetry}>
-              <RotateCcw aria-hidden className="size-4" /> Retry
-            </Button>
-          }
-        >
-          {detail.refreshError} Showing the last loaded report.
-        </Alert>
+        <p role="alert" className="flex items-center gap-2">
+          <Status title={detail.refreshError} presentation={{ tone: "Caution", icon: "Alert", label: "Stale" }} />
+          <span className="sr-only">{detail.refreshError}</span>
+          <Button variant="link" onClick={onRetry}>
+            <RotateCcw aria-hidden className="size-4" /> Retry
+          </Button>
+        </p>
       ) : null}
       <h4 id={headings.summary} className="font-semibold text-foreground">
         {detail.report.summary}
       </h4>
+      {detail.report.severity ? (
+        <p>
+          <Status title="Severity" presentation={{ tone: severityTones[detail.report.severity] ?? "Neutral", icon: "Dot", label: detail.report.severity }} />
+        </p>
+      ) : null}
       <pre
         role="region"
         aria-labelledby={`${headings.card} ${headings.summary}`}
@@ -105,7 +108,6 @@ function Loaded({ submission, headings, detail, busy, onRetry, onRevise, onRevie
       >
         {detail.report.description}
       </pre>
-      {detail.report.severity ? <p>Reported severity: {detail.report.severity}</p> : null}
       {intake?.canRevise ? <Revise key={intake.revision} report={detail.report} busy={busy} onRevise={onRevise} /> : null}
       {intake?.canReview ? <Review busy={busy} onReview={onReview} /> : null}
     </>
@@ -115,7 +117,7 @@ function Loaded({ submission, headings, detail, busy, onRetry, onRevise, onRevie
 /** The private report text, read only when its authorized reader opens it, with the revision and review it allows. */
 export function ReportDetail({ open, onOpenChange, detail, ...rest }: ReportDetailProps) {
   return (
-    <Disclosure summary="Read private report" open={open} onOpenChange={onOpenChange}>
+    <Disclosure summary="Report" open={open} onOpenChange={onOpenChange}>
       <div className="flex flex-col gap-3 pt-2">
         {detail.status === "loading" ? (
           <p role="status">Loading private report…</p>
@@ -130,7 +132,7 @@ export function ReportDetail({ open, onOpenChange, detail, ...rest }: ReportDeta
               </Button>
             }
           >
-            {detail.status === "error" ? detail.message : "Sign in again to read this report."}
+            {detail.status === "error" ? detail.message : "Sign in again"}
           </Alert>
         )}
       </div>

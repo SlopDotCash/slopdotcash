@@ -1,4 +1,7 @@
-// spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+// spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"
+import { periodContaining } from "@repo/settlement/kernels/calendar";
+import type { FundingVault } from "../../../kernels/poolFunding.ts";
+import type { FundingDeployment, FundingProject } from "./project.schema.ts";
 import type { ShownVaultSnapshot } from "../../../reads/payments.vibe";
 
 export const usdcSnapshot: ShownVaultSnapshot = {
@@ -29,3 +32,22 @@ export const staleSnapshot: ShownVaultSnapshot = { ...usdcSnapshot, stale: true,
 export const legacySnapshot: ShownVaultSnapshot = { ...usdcSnapshot, freeBalance: null, reservedPrincipal: null, reservedFees: null, reserved: null };
 
 export const walletHash = "0x9c1d4c0a4b0e3c7d2f1e6a5b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f70812";
+
+export const lockDeployment: FundingDeployment = { network: usdcSnapshot.network, vault: usdcSnapshot.vault, asset: usdcSnapshot.assetAddress, owner: "0x0000000000000000000000000000000000000a11" };
+
+export const lockProject: FundingProject = { id: "slop", slug: "slop", reward: { kind: "monthly-pool", monthlyCapMinor: "250000000" }, escrow: { chain: "base", deployments: [lockDeployment] } };
+
+const monthOf = (iso: string) => periodContaining(Date.parse(iso) / 1000);
+
+export const pledgedRow: FundingVault = {
+  network: lockDeployment.network,
+  vault: lockDeployment.vault,
+  freeBalance: 900_000_000n,
+  openPledgedGross: 500_000_000n,
+  pledges: [
+    { period: monthOf("2026-09-01T00:00:00Z"), amount: 250_000_000n, open: true },
+    { period: monthOf("2099-12-01T00:00:00Z"), amount: 250_000_000n, open: true },
+  ],
+};
+
+export const unpledgedRow: FundingVault = { ...pledgedRow, openPledgedGross: 0n, pledges: [] };

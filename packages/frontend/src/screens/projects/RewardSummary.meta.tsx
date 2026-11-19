@@ -1,6 +1,7 @@
 import { expect, screen } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
-import { bountyProject, funded, prizeProject, project, unread, withdrawn } from "./fixtures.ts";
+import { notListedText } from "../../../gen/frontend__poolListing.ts";
+import { bountyProject, funded, prizeProject, project, unfunded, unread, withdrawn } from "./fixtures.ts";
 import type { RewardSummaryProps } from "./RewardSummary.tsx";
 
 export const meta: ComponentMeta<RewardSummaryProps> = {
@@ -10,6 +11,7 @@ export const meta: ComponentMeta<RewardSummaryProps> = {
     Unread: { funding: unread },
     Bounty: { project: bountyProject },
     Prize: { project: prizeProject, funding: unread },
+    NotListed: { funding: unfunded },
   },
   play: {
     // spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"
@@ -22,7 +24,11 @@ export const meta: ComponentMeta<RewardSummaryProps> = {
     },
     // spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"
     Unread: async () => {
-      await expect([screen.getByText("Points only · no cash rewards").textContent, screen.queryByText(/\$500/u)]).toEqual(["Points only · no cash rewards", null]);
+      await expect([screen.getByText("Points only · no cash rewards").textContent, screen.queryByText(/\$500/u), screen.queryByText(notListedText)]).toEqual(["Points only · no cash rewards", null, null]);
+    },
+    // spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"
+    NotListed: async () => {
+      await expect([screen.getByText(notListedText).textContent, screen.getByText("Points only · no cash rewards").textContent]).toEqual([notListedText, "Points only · no cash rewards"]);
     },
   },
 };

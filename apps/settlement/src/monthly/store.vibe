@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"
 import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { D1, type D1Error, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
@@ -7,12 +7,14 @@ import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import type { Exclusion, Relationship } from "../../gen/settlement__payoutExclusions.ts"
 import type { Share } from "../../gen/settlement__allocation.ts"
 import type { Amount } from "../../gen/settlement__money.ts"
-import { type BanExclusion, type Change, type Cut, type CutNotice, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, NotAState, apply, canCloseProposalWindow, canObserveSettings, closeProposalWindow, observeSettings, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import { type BanExclusion, type Change, type Cut, type CutNotice, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, NotAState, apply, canCloseProposalWindow, canObservePledge, canObserveSettings, closeProposalWindow, observePledge, observeSettings, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
 import { MAX_BASE_UNITS, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, formatPeriod, parsePeriod, periodStartSeconds } from "../kernels/calendar.ts"
 import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
+import { pledgedIn } from "../../gen/settlement__monthPledges.effect.vibe"
 import { frozenTotal, obligationProgress, withinCap } from "../monthlyCommitment/execution.ts"
+import { PledgeRow, modelNetwork, storedPledgesOf } from "../vault/store.vibe"
 
 module limbs {
   import { toAmount } from "../kernels/amounts.ts"
@@ -121,10 +123,16 @@ export interface VaultReading {
   readonly observedAt: string
 }
 
+export interface PledgeHold {
+  readonly total: string | null
+  readonly open: string
+}
+
 export interface FundingFacts {
   readonly outstanding: number
   readonly reserved: number
   readonly vault?: VaultReading
+  readonly pledges?: PledgeHold
 }
 
 export interface Extra {
@@ -280,10 +288,11 @@ export interface MonthRows {
   readonly run: RunRow | undefined
   readonly obligations: ReadonlyArray<ObligationRow>
   readonly exclusions: ReadonlyArray<ExclusionRow>
+  readonly pledges: ReadonlyArray<PledgeRow>
 }
 
 export function unproposed(rows: MonthRows): MonthRows {
-  return { base: undefined, proposed: [], changes: [], cuts: [], settings: rows.settings, run: undefined, obligations: [], exclusions: [] }
+  return { base: undefined, proposed: [], changes: [], cuts: [], settings: rows.settings, run: undefined, obligations: [], exclusions: [], pledges: rows.pledges }
 }
 
 export interface Loaded {
@@ -307,6 +316,7 @@ export function monthReads(key: MonthKey): ReadonlyArray<Statement> {
     sql`SELECT trigger, actor_id, allocation_sequence, network, vault, frozen_at, obligations_created_at FROM monthly_payment_runs WHERE ${scope}`,
     sql`SELECT o.github_user_id, o.gross_base, o.fee_base, o.source_digest, p.github_user_id AS held_actor, p.gross_base AS held_gross, p.fee_base AS held_fee, p.state AS held_state FROM monthly_payment_obligations o LEFT JOIN payment_obligations p ON p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest WHERE o.project_id = ${key.projectId} AND o.period = ${formatPeriod(key.period)} ORDER BY o.rowid`,
     sql`SELECT x.github_user_id, (SELECT b.rowid FROM project_maintainer_bans b WHERE b.enforcement_id = x.enforcement_id AND b.github_id = x.github_user_id) AS ban FROM monthly_payment_exclusions x WHERE x.project_id = ${key.projectId} AND x.period = ${formatPeriod(key.period)} ORDER BY x.rowid`,
+    sql`SELECT network, vault, period, amount, open, block_number FROM vault_month_pledges WHERE ${scope} ORDER BY network, vault`,
   ]
 }
 
@@ -314,11 +324,11 @@ export function monthVersion(key: MonthKey): Statement {
   const scope = scopeOf(key)
   const project = key.projectId
   const period = formatPeriod(key.period)
-  return sql`SELECT json_array((SELECT count(*) FROM monthly_reward_bases WHERE ${scope}), (SELECT count(*) FROM monthly_reward_base_rows WHERE ${scope}), (SELECT count(*) FROM monthly_allocation_changes WHERE ${scope}), (SELECT count(*) FROM monthly_allocation_cut_reasons WHERE ${scope}), (SELECT count(*) FROM monthly_payment_settings WHERE project_id = ${project}), (SELECT count(*) || ':' || coalesce(max(obligations_created_at), '') FROM monthly_payment_runs WHERE ${scope}), (SELECT count(*) FROM monthly_payment_obligations WHERE ${scope}), (SELECT count(*) FROM monthly_payment_exclusions WHERE ${scope}), (SELECT coalesce(group_concat(p.source_digest || ':' || p.state || ':' || p.github_user_id || ':' || p.gross_base || ':' || p.fee_base, ','), '') FROM monthly_payment_obligations o JOIN payment_obligations p ON p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest WHERE o.project_id = ${project} AND o.period = ${period})) AS version`
+  return sql`SELECT json_array((SELECT count(*) FROM monthly_reward_bases WHERE ${scope}), (SELECT count(*) FROM monthly_reward_base_rows WHERE ${scope}), (SELECT count(*) FROM monthly_allocation_changes WHERE ${scope}), (SELECT count(*) FROM monthly_allocation_cut_reasons WHERE ${scope}), (SELECT count(*) FROM monthly_payment_settings WHERE project_id = ${project}), (SELECT count(*) || ':' || coalesce(max(obligations_created_at), '') FROM monthly_payment_runs WHERE ${scope}), (SELECT count(*) FROM monthly_payment_obligations WHERE ${scope}), (SELECT count(*) FROM monthly_payment_exclusions WHERE ${scope}), (SELECT coalesce(group_concat(p.source_digest || ':' || p.state || ':' || p.github_user_id || ':' || p.gross_base || ':' || p.fee_base, ','), '') FROM monthly_payment_obligations o JOIN payment_obligations p ON p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest WHERE o.project_id = ${project} AND o.period = ${period}), (SELECT coalesce(group_concat(network || ':' || vault || ':' || amount || ':' || open || ':' || block_number, ','), '') FROM vault_month_pledges WHERE ${scope})) AS version`
 }
 
 effect function rowsOf(found: ReadonlyArray<Rows>) {
-  const [bases, proposed, changes, cuts, settings, runs, obligations, exclusions] = found
+  const [bases, proposed, changes, cuts, settings, runs, obligations, exclusions, pledges] = found
   return {
     base: (try decoded(BaseRow, bases ?? [], "monthly base"))[0],
     proposed: try decoded(ProposedRow, proposed ?? [], "monthly base rows"),
@@ -328,6 +338,7 @@ effect function rowsOf(found: ReadonlyArray<Rows>) {
     run: (try decoded(RunRow, runs ?? [], "monthly run"))[0],
     obligations: try decoded(ObligationRow, obligations ?? [], "monthly obligations"),
     exclusions: try decoded(ExclusionRow, exclusions ?? [], "monthly exclusions"),
+    pledges: try decoded(PledgeRow, pledges ?? [], "month pledges"),
   } satisfies MonthRows
 }
 
@@ -357,12 +368,19 @@ function settled(month: Monthly, settings: ReadonlyArray<SettingRow>): Monthly {
   }, month)
 }
 
+effect function pledgeObserved(month: Monthly, rows: MonthRows, manifest: MonthlyManifest | undefined, served: ReadonlySet<string>) {
+  const deployment = manifest === undefined ? undefined : servedDeploymentOf(manifest, served)
+  if (deployment === undefined || !isNetworkKey(deployment.network)) return month
+  const pledged = pledgedIn(try storedPledgesOf(rows.pledges), modelNetwork(deployment.network), deployment.vault, month.period)
+  return pledged && canObservePledge(month, deployment.vault) ? observePledge(month, deployment.vault) : month
+}
+
 export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts, now: number) {
   const project = key.projectId
   const period = key.period
   const currentManifest = facts.current === undefined ? undefined : try manifestOf(project, facts.current.manifest)
   const currentRevision = facts.current === undefined || currentManifest === undefined ? noRevision : revisionOf(currentManifest, facts.current.number, period, facts.served)
-  const opened = { ...initial, project, period, phase: "Collecting" as MonthlyPhase, now, eligibility: facts.eligibility, currentRevision }
+  const opened = try pledgeObserved({ ...initial, project, period, phase: "Collecting" as MonthlyPhase, now, eligibility: facts.eligibility, currentRevision }, rows, currentManifest, facts.served)
   const found = rows.base
   if (found === undefined) return try decodeState(settled(opened, rows.settings))
   if (found.revision === null) throw new RowMismatch({ text: "monthly base", issue: "the proposal's project revision is not registered" })
@@ -608,11 +626,20 @@ effect function freezeWrites(key: MonthKey, loaded: Loaded, next: Monthly, actor
   return [sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) SELECT ${key.projectId}, ${formatPeriod(key.period)}, ${snapshot.trigger}, ${actor === undefined ? null : String(actor)}, ${next.sequence}, ${text}, ${digest}, ${deployment.network}, ${deployment.vault}, ${snapshot.totalGrossBase}, ${frozenAt}, NULL WHERE ${fence} AND ${actorClear(actor)} ON CONFLICT (project_id, period) DO NOTHING`]
 }
 
+function openPledgesHeld(projectId: string, network: string, vault: string): Statement {
+  return sql`(SELECT coalesce(group_concat(period || ':' || amount, ','), '') FROM (SELECT period, amount FROM vault_month_pledges WHERE project_id = ${projectId} AND network = ${network} AND vault = ${vault} AND open = 1 ORDER BY period))`
+}
+
+function pledgeGuard(key: MonthKey, run: RunRow, hold: PledgeHold | undefined) {
+  if (hold === undefined) return sql`1`
+  return sql`EXISTS (SELECT 1 FROM vault_snapshots WHERE project_id = ${key.projectId} AND network = ${run.network} AND vault = ${run.vault} AND open_pledged_gross IS ${hold.total}) AND ${openPledgesHeld(key.projectId, run.network, run.vault)} = ${hold.open}`
+}
+
 function fundingGuard(key: MonthKey, run: RunRow, next: Monthly, funding: FundingFacts) {
   const decisions = JSON.stringify([...next.obligations.map((entry) => ({ githubUserId: String(entry.actor), banned: 0 })), ...next.banned.map((entry) => ({ githubUserId: String(entry.actor), banned: 1 }))])
   const reading = funding.vault
   const vault = reading === undefined ? sql`1` : sql`EXISTS (SELECT 1 FROM vault_snapshots WHERE project_id = ${key.projectId} AND network = ${run.network} AND vault = ${run.vault} AND asset_address = ${reading.asset} AND free_balance = ${reading.free} AND observed_at = ${reading.observedAt})`
-  return sql`(SELECT count(*) FROM monthly_payment_obligations WHERE network = ${run.network} AND vault = ${run.vault}) = ${funding.outstanding} AND (SELECT count(*) FROM payment_obligations WHERE network = ${run.network} AND vault = ${run.vault}) = ${funding.reserved} AND ${vault} AND NOT EXISTS (SELECT 1 FROM json_each(${decisions}) d WHERE (${participationBanned(sql`json_extract(d.value, '$.githubUserId')`)}) <> json_extract(d.value, '$.banned'))`
+  return sql`(SELECT count(*) FROM monthly_payment_obligations WHERE network = ${run.network} AND vault = ${run.vault}) = ${funding.outstanding} AND (SELECT count(*) FROM payment_obligations WHERE network = ${run.network} AND vault = ${run.vault}) = ${funding.reserved} AND ${vault} AND ${pledgeGuard(key, run, funding.pledges)} AND NOT EXISTS (SELECT 1 FROM json_each(${decisions}) d WHERE (${participationBanned(sql`json_extract(d.value, '$.githubUserId')`)}) <> json_extract(d.value, '$.banned'))`
 }
 
 effect function fundingWrites(key: MonthKey, loaded: Loaded, next: Monthly, funding: FundingFacts | undefined) {

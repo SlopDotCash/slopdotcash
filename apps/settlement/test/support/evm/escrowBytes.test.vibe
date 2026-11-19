@@ -2,8 +2,8 @@ import { assert, layer } from "@effect/vitest"
 import { anvil } from "@repo/platform/testing/chains"
 import { type Address, encodeFunctionData } from "viem"
 import { type AwardState, type Bytes32, type EvmAddress, type Hex, awardCall, awardId, bindingCall, decodeAward, decodeBinding, decodeBytes32, decodeUint, escrowAbi, escrowGetter, evmAddress, factoryAbi } from "../../../src/chain/evm/abi.ts"
-import { commitAwardCalldata, payCalldata } from "../../../src/chain/evm/actions.ts"
-import { type DecodedLog, decodeEscrowLogs } from "../../../src/chain/evm/events.ts"
+import { CURRENT_PERIOD_CALL, OPEN_PLEDGED_GROSS_CALL, commitAwardCalldata, decodeCurrentPeriod, decodeMonthPledge, decodeOpenPledgedGross, expirePledgeCalldata, monthPledgeCall, payCalldata, pledgeMonthsCalldata } from "../../../src/chain/evm/actions.ts"
+import { type DecodedLog, EVM_PLEDGE_EVENT_TOPICS, decodeEscrowLogs } from "../../../src/chain/evm/events.ts"
 import { vaultKey } from "../../../src/chain/evm/factories.ts"
 import {
   type MonthlyEntry,
@@ -111,7 +111,68 @@ effect function reserved(vault: EvmAddress) {
   return decodeMonthlyReserve({ root: try read(vault, try Effect.try(() => monthlyRootCall(november))), reserve: try read(vault, try Effect.try(() => monthlyReserveCall(november))) })
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof RangeError ? error.message : "unexpected"
+}
+
 layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('The owner pledges three months of free funds in the escrow built from @repo/contracts, each month reads back open at its amount with the open total, the pledge events decode, and periods, counts and amounts the contract refuses never become calldata (spec/contracts/evmEscrow.md, "The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge"; spec/contracts/evmEscrow.md, "Anyone expires a pledge whose period\'s window closed without admission"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month\'s pledge and the vault\'s open total")', () => effect {
+    const { escrow } = try Stack
+    const { vault, from } = try opened(0x9101n)
+    try promise(() => escrow.fund(vault, 40_000_000n, escrow.roles.donor.address))
+    const current = decodeCurrentPeriod(try read(vault, CURRENT_PERIOD_CALL))
+    try sent(escrow.roles.owner.address, vault, Effect.try(() => pledgeMonthsCalldata(202612, 3, 10_000_000n)))
+    const months = [202611, 202612, 202701, 202702, 202703]
+    const pledges: Array<ReturnType<typeof decodeMonthPledge>> = []
+    for (const month of months) {
+      const answer = try read(vault, try Effect.try(() => monthPledgeCall(month)))
+      pledges.push(try Effect.try(() => decodeMonthPledge(month, answer)))
+    }
+    const open = decodeOpenPledgedGross(try read(vault, OPEN_PLEDGED_GROSS_CALL))
+    const logged = (try events(vault, from)).filter((event) => event.name === "MonthPledged" || event.name === "PledgeClosed")
+    const refusals: string[] = []
+    const builds = [
+      Effect.try({ try: () => pledgeMonthsCalldata(199912, 1, 1n), catch: messageOf }),
+      Effect.try({ try: () => pledgeMonthsCalldata(202613, 1, 1n), catch: messageOf }),
+      Effect.try({ try: () => pledgeMonthsCalldata(202612, 0, 1n), catch: messageOf }),
+      Effect.try({ try: () => pledgeMonthsCalldata(202612, 13, 1n), catch: messageOf }),
+      Effect.try({ try: () => pledgeMonthsCalldata(202612, 1, 0n), catch: messageOf }),
+      Effect.try({ try: () => pledgeMonthsCalldata(202612, 1, 1n << 128n), catch: messageOf }),
+      Effect.try({ try: () => expirePledgeCalldata(202600), catch: messageOf }),
+    ]
+    for (const build of builds) {
+      const answer = build catch (message) => message
+      refusals.push(answer)
+    }
+    try Effect.try(() => assert.deepStrictEqual({
+      current,
+      open,
+      pledges,
+      events: logged,
+      topics: Object.values(EVM_PLEDGE_EVENT_TOPICS).length,
+      refusals,
+      expiry: expirePledgeCalldata(202612) === encodeFunctionData({ abi: escrowAbi, functionName: "expirePledge", args: [202612] }),
+    }, {
+      current: 202612,
+      open: 30_000_000n,
+      pledges: [
+        { period: 202611, amount: 0n, open: false },
+        { period: 202612, amount: 10_000_000n, open: true },
+        { period: 202701, amount: 10_000_000n, open: true },
+        { period: 202702, amount: 10_000_000n, open: true },
+        { period: 202703, amount: 0n, open: false },
+      ],
+      events: [
+        { name: "MonthPledged", period: 202612, amount: 10_000_000n },
+        { name: "MonthPledged", period: 202701, amount: 10_000_000n },
+        { name: "MonthPledged", period: 202702, amount: 10_000_000n },
+      ],
+      topics: 2,
+      refusals: ["Invalid pledge period", "Invalid pledge period", "A pledge covers 1 to 12 periods", "A pledge covers 1 to 12 periods", "Amount must be 1 to uint128 max base units", "Amount must be 1 to uint128 max base units", "Invalid pledge period"],
+      expiry: true,
+    }))
+  })
+
   it.effect('The escrow built from @repo/contracts computes the same domain, award id, vault key, binding digest, V1 root and monthly digests as the codecs, and binds a wallet-signed destination sent as the authority\'s type-2 transaction (spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet\'s own signature"; spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once")', () => effect {
     const { escrow } = try Stack
     const { vault, domain, from } = try opened(1n)

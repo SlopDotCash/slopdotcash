@@ -100,9 +100,9 @@ export const textGroups: ReadonlyArray<readonly [string, ReadonlyArray<TextField
 ];
 
 export const responseFields: ReadonlyArray<readonly [keyof ResponseTargets, string, number]> = [
-  ["acknowledgeHours", "Acknowledge within (hours)", 336],
-  ["triageBusinessDays", "Triage within (business days)", 60],
-  ["updateIntervalDays", "Send an update every (days)", 60],
+  ["acknowledgeHours", "Acknowledge (hours)", 336],
+  ["triageBusinessDays", "Triage (business days)", 60],
+  ["updateIntervalDays", "Updates (days)", 60],
 ];
 
 const decodeManifest = Schema.decodeUnknownResult(ManifestFields);
@@ -275,26 +275,6 @@ export function assetAwardChanged(project: EditorProject, form: EditorForm): boo
   return form.assetChanged || published?.asset === undefined || published.grossMinor !== proposed.grossMinor;
 }
 
-export const responseGroup = "Response targets and contacts";
-
-/** The first text or response field the browser cannot check while its group is closed, with that group. @throws {never} */
-export function fieldProblem(form: EditorForm): { readonly group: string; readonly message: string } | undefined {
-  for (const [group, keys] of textGroups) {
-    for (const [key, label] of textFields.filter(([field]) => keys.includes(field))) {
-      const { required, minLength, maxLength } = textLimits(key);
-      const value = form.text[key].trim();
-      if (required && value === "") return { group, message: `Enter ${label.toLowerCase()}.` };
-      if (minLength !== undefined && value !== "" && value.length < minLength) return { group, message: `${label} needs at least ${minLength} characters.` };
-      if (form.text[key].length > maxLength) return { group, message: `${label} allows at most ${maxLength} characters.` };
-    }
-  }
-  for (const [key, label, max] of responseFields) {
-    const value = form.response[key];
-    if (!Number.isInteger(value) || value < 1 || value > max) return { group: responseGroup, message: `${label} must be a whole number from 1 to ${max}.` };
-  }
-  return undefined;
-}
-
 /** Why these terms cannot be reviewed yet, or undefined. @throws {never} */
 export function programProblem(project: EditorProject, form: EditorForm): string | undefined {
   const proposed = proposedAmount(project, form);
@@ -305,7 +285,7 @@ export function programProblem(project: EditorProject, form: EditorForm): string
   return assetAwardChanged(project, form) ? "A new or changed asset award cannot be published yet: the server cannot resolve the asset's precision from the typed amount. Keep the published award and asset to publish other changes." : undefined;
 }
 
-/** The project contacts named under the terms. @throws {never} */
-export function contacts(project: EditorProject, actor: { readonly githubLogin: string }): string {
-  return (project.existing?.terms.approvers.technical ?? [actor]).map((person) => `@${person.githubLogin}`).join(", ");
+/** The GitHub logins of the project contacts named under the terms. @throws {never} */
+export function contacts(project: EditorProject, actor: { readonly githubLogin: string }): ReadonlyArray<string> {
+  return (project.existing?.terms.approvers.technical ?? [actor]).map((person) => person.githubLogin);
 }

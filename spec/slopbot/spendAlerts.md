@@ -116,8 +116,8 @@ precedes the send, so an overlapping run cannot send it twice.
 
 ```quint
 pure def canClaimFailure(s: Spend, call: int, now: int): bool =
-  s.failures.some(n => n.call == call and not(n.claimed)) and settled(s, call, now)
-    and not(s.failures.some(n => n.call < call and not(n.claimed) and settled(s, n.call, now)))
+  s.failures.some(n => n.call == call and not(n.claimed)) and routeSettled(s, call, now)
+    and not(s.failures.some(n => n.call < call and not(n.claimed) and routeSettled(s, n.call, now)))
 pure def claimFailure(s: Spend, call: int, now: int): Spend =
   { ...s, failures: s.failures.listMap(n => if (n.call == call)
     { ...n, claimed: true, suppressed: suppressionOf(s, call, now) } else n) }
@@ -151,7 +151,7 @@ pure val settleSeconds = 120
 pure val repeatSeconds = 21600
 pure val maxSuppressionsPerRun = 200
 pure def costOf(s: Spend, call: int): CostRow = s.costs.select(c => c.id == call).nthOr(0, historicalRow)
-pure def settled(s: Spend, call: int, now: int): bool = costOf(s, call).at + settleSeconds <= now
+pure def routeSettled(s: Spend, call: int, now: int): bool = costOf(s, call).at + settleSeconds <= now
 pure def suppressionOf(s: Spend, call: int, now: int): Suppression =
   val c = costOf(s, call)
   if (c.failure != BudgetExhausted and s.costs.some(o => o.job == c.job and o.id > c.id and o.failure == NotFailed))

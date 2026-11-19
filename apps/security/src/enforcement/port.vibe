@@ -1,15 +1,21 @@
-// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/enforcement.md, "Retained evidence is checked when clearance relies on it"
+import { RegistryLive, RegistryManifestsLive } from "@repo/backend/ports"
 import { randomId } from "@repo/platform/crypto"
 import { D1, type NonEmpty, RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
 import { Roles } from "@repo/platform/roles"
 import type { Conflict } from "@repo/platform/stored"
 import { type Action, type Recorded, send } from "@repo/backend/projects/store"
-import type { ReadFailure } from "@repo/ports/backend"
+import { type ReadFailure, Registry, RegistryManifests } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { ContributorAudience } from "@repo/ports/points"
-import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRecord, EnforcementRows, PublicSecurity, type RestrictionFacts, type VettingState } from "@repo/ports/security"
-import type { ClearanceState, Enforcement as EnforcementState } from "../../gen/security__enforcement.ts"
-import { basis, basisLabel, clearanceState, latestOf, mayContribute } from "../../gen/security__enforcement.effect.vibe"
+import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRecord, EnforcementRows, type EvidenceObservation, PublicSecurity, type ReinstatementRead, type RestrictionFacts, type VettingState } from "@repo/ports/security"
+import type { ClearanceState, Enforcement as EnforcementState, PinRead } from "../../gen/security__enforcement.ts"
+import { basis, basisLabel, clearanceState, decidingAt, latestOf, mayContribute } from "../../gen/security__enforcement.effect.vibe"
+import { SkillTemplate } from "../admission/livePin.vibe"
+import { pinReads } from "../admission/pins.vibe"
+import { retainedAt } from "../admission/retention.vibe"
+import { projectAssessments } from "../admission/store.vibe"
 import { currentRestrictions, earliestRecorded, generation, journalColumns, journalFrom, keysOf, restrictionOf, scopeReads, scopeVersion } from "./rows.vibe"
 import { changeWrites, owners } from "./statements.vibe"
 import { EvidenceBucket } from "../evidence/objects.vibe"
@@ -52,8 +58,40 @@ effect function recordId() {
   return (try randomId()).replaceAll("-", "").toLowerCase()
 }
 
-export const EnforcementRowsLive = Layer.effect(EnforcementRows, effect {
-  const services = try Effect.context<D1 | Roles | Notices | ContributorAudience | Experimental.Crypto.Crypto>()
+effect function presentAt(row: number) {
+  return retainedAt(row) catch effect (error) => {
+    try Effect.logError("vetting evidence read failure", { assessment: row, failure: error._tag })
+    return false
+  }
+}
+
+effect function livePins(state: EnforcementState, projectId: string) {
+  const unavailable = state.repositories.map((repository): PinRead => ({ repository, assessment: 0, pin: "PinUnavailable" }))
+  const view = try (try Registry).project(projectId)
+  if (view === undefined) return unavailable
+  return pinReads(state, view, try projectAssessments(projectId)) catch effect (error) => {
+    if (error._tag === "PinUnavailable") return unavailable
+    throw error
+  }
+}
+
+effect function reinstatementRead(projectId: string) {
+  const { state } = try loadEnforcement(projectId)
+  const pins = try livePins(state, projectId)
+  const evidence: EvidenceObservation[] = []
+  for (const repository of state.repositories) {
+    const deciding = decidingAt(state, repository, pins)
+    if (deciding.state !== "AClean" && deciding.state !== "AMalicious") continue
+    evidence.push({ repository: String(repository), evidenceRead: { assessment: String(deciding.id), present: try presentAt(deciding.id) } })
+  }
+  return {
+    pins: pins.map((read) => ({ repository: String(read.repository), assessment: String(read.assessment), pin: read.pin })),
+    evidence,
+  } satisfies ReinstatementRead
+}
+
+export const EnforcementRowsLive = Layer.provide(Layer.effect(EnforcementRows, effect {
+  const services = try Effect.context<D1 | Roles | Notices | ContributorAudience | Registry | RegistryManifests | GitHub | SkillTemplate | EvidenceBucket | Experimental.Crypto.Crypto>()
   return {
     scope: (projectId) => succeed({ version: scopeVersion(projectId), reads: scopeReads(projectId) }),
     decode: (projectId, rows, registry) => Effect.provide(effect {
@@ -78,8 +116,9 @@ export const EnforcementRowsLive = Layer.effect(EnforcementRows, effect {
     recordedAt: (ids) => Effect.provide(effect {
       return isNonEmpty(ids) ? try earliestRecorded(ids) : undefined
     }, services),
+    reinstatement: (projectId) => Effect.provide(reinstatementRead(projectId), services),
   } satisfies EnforcementRows.Shape
-})
+}), Layer.merge(RegistryLive, RegistryManifestsLive))
 
 effect function accountRecord(record: AccountRecord) {
   const notices = try Notices

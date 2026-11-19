@@ -1,4 +1,4 @@
-// spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/composition.md, "Current and historical consent belong to the shared outbox"
+// spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/composition.md, "Current and historical consent belong to the shared outbox"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import type { Fetcher } from "@repo/platform/bindings"
 import { serviceClient } from "@repo/platform/binding"
 import { isoAt, isoNow } from "@repo/platform/clock"
@@ -97,8 +97,10 @@ effect function heldNotices(deployment: PaymentDeployment, obligationId: string,
   if (deployment.scope !== "Ordinary") return []
   const project = try (try Registry).project(deployment.projectId)
   const contributor = { eventKey: `payout-held:${obligationId}:${heldAt}`, recipientGithubId: githubUserId, kind: "PayoutHeld" as const, subject: deployment.projectId, actionPath: "/earnings", sourceAt: heldAt }
-  const steward = project === undefined || !/^[1-9][0-9]*$/u.test(project.stewardGithubId) ? [] : [{ eventKey: `payout-exception:${obligationId}:${heldAt}`, recipientGithubId: project.stewardGithubId, kind: "PayoutException" as const, subject: deployment.projectId, actionPath: `/projects/${deployment.projectId}`, sourceAt: heldAt }]
-  return try (try Notices).statements({ notices: [contributor, ...steward] })
+  const notices = try Notices
+  const recipient = project === undefined ? "" : try notices.payoutRecipient(project)
+  const audience = recipient === "" ? [] : [{ eventKey: `payout-exception:${obligationId}:${heldAt}`, recipientGithubId: recipient, kind: "PayoutException" as const, subject: deployment.projectId, actionPath: `/projects/${deployment.projectId}`, sourceAt: heldAt }]
+  return try notices.statements({ notices: [contributor, ...audience] })
 }
 
 effect function delivered(current: Settlement, update: DeliveryUpdate) {

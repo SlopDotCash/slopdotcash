@@ -98,7 +98,8 @@ budget-deferred triage once its calls' costs are recorded, escalates as
 unavailable. A worker that loses its calls' cost record before recording them
 releases its lease without escalating, and the call is retained as an unknown
 cost, so a later lease retries. A draft is immutable: a later lease that finds
-it escalates with it and never calls the model again.
+it escalates with it and never calls the model again, and a failure before
+that escalation escalates as unavailable.
 
 ```quint
 type Availability = Available | Unregistered | Restricted | NoInstallation
@@ -137,7 +138,7 @@ pure def draft(d: Dispute, by: int, token: int, uphold: bool, confidenceHundredt
   { ...d, callsInFlight: false, draft: if (uphold) A::DraftUphold else A::DraftDeny,
     draftConfidence: if (confidenceHundredths > cappedConfidence) cappedConfidence else confidenceHundredths }
 pure def canFailTriage(d: Dispute, by: int, token: int): bool =
-  by == slopbotWorker and holds(d, token) and d.draft == A::NoDraft
+  by == slopbotWorker and holds(d, token) and needsTriage(d)
 pure def failTriage(d: Dispute, by: int, token: int): Dispute = escalatedWith(TriageUnavailable, { ...d, callsInFlight: false })
 pure def canEscalateDrafted(d: Dispute, by: int, token: int): bool =
   by == slopbotWorker and holds(d, token) and d.draft != A::NoDraft and d.escalation == NotEscalated

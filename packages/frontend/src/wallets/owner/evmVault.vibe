@@ -1,4 +1,4 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"
 import { IMPLEMENTATION_SLOT, U256_MAX, addressWord, bytes32, decodeUint, escrowGetter, evmAddress } from "@repo/settlement/chain/evm/abi"
 import { vaultKey, vaultsCall } from "@repo/settlement/chain/evm/factories"
 import { sha256Hex } from "@repo/platform/crypto"
@@ -201,7 +201,7 @@ effect function walletBalance(connection: EvmConnection, vault: EvmVault, native
   return held
 }
 
-export effect function reviewTransfer(connection: EvmConnection, vault: EvmVault, operation: Operation, amount: string, evidence: Evidence) {
+export effect function reviewTransfer(connection: EvmConnection, vault: EvmVault, operation: Operation, amount: string, evidence: Evidence, extraCall: boolean = false) {
   try requireVaultWallet(connection, vault)
   const terms = termsOf(vault)
   if (evidence === "latest" && (operation !== "deposit" || terms.native || !same(connection.address, vault.owner))) throw refused(evmVaultMessages.waitRegistered)
@@ -224,8 +224,9 @@ export effect function reviewTransfer(connection: EvmConnection, vault: EvmVault
   }
   const fee = operation === "withdraw" ? ordinaryFeeBase(gross) : 0n
   const approvalNeeded = operation === "deposit" && !terms.native && allowance < gross
-  const capabilities: unknown = approvalNeeded ? evmRequest(connection, "wallet_getCapabilities", [connection.address, [hexQuantity(vault.chainId)]]) catch () => undefined : undefined
-  const batch = approvalNeeded && atomicSupported(capabilities, vault.chainId)
+  const batched = operation === "deposit" && (approvalNeeded || extraCall)
+  const capabilities: unknown = batched ? evmRequest(connection, "wallet_getCapabilities", [connection.address, [hexQuantity(vault.chainId)]]) catch () => undefined : undefined
+  const batch = batched && atomicSupported(capabilities, vault.chainId)
   return { operation, gross, fee, net: gross - fee, decimals: totals.decimals, freeBalance: free, approvalNeeded, resetAllowance: approvalNeeded && allowance > 0n, batch } satisfies TransferReview
 }
 
@@ -250,10 +251,10 @@ export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVaul
   return try sendTransaction(connection, vault.chainId, transaction, beforePrompt(callPlan(connection.address, vault.chainId, call)))
 }
 
-export effect function sendBatch<E, R>(connection: EvmConnection, vault: EvmVault, amount: string, evidence: Evidence, beforePrompt: (plan: EvmBatchPlan) => void!E!R) {
-  const review = try reviewTransfer(connection, vault, "deposit", amount, evidence)
+export effect function sendBatch<E, R>(connection: EvmConnection, vault: EvmVault, amount: string, evidence: Evidence, beforePrompt: (plan: EvmBatchPlan) => void!E!R, extraCalls: ReadonlyArray<Call> = []) {
+  const review = try reviewTransfer(connection, vault, "deposit", amount, evidence, extraCalls.length > 0)
   if (!review.batch) throw new VaultBatchUnavailable({ message: evmVaultMessages.batchUnavailable })
-  const calls = try Effect.try({ try: () => batchCalls(termsOf(vault), review.gross, review), catch: () => refused(decimalRefusal("OutOfRange", 0)) })
+  const calls = try Effect.try({ try: () => batchCalls(termsOf(vault), review.gross, review, extraCalls), catch: () => refused(decimalRefusal("OutOfRange", 0)) })
   const [first] = calls
   if (first !== undefined) try evmRequest(connection, "eth_estimateGas", [{ from: connection.address, ...first }])
   try requireVaultWallet(connection, vault)

@@ -1,7 +1,8 @@
 // spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { cloudflareAnswer, cloudflareToken, fieldOf, listOf, pinnedVersion, privateFile, sameVersion, setting, succeeded } from "./feeOperations.vibe"
+import { cloudflareAnswer, cloudflareToken, pinnedVersion, privateFile, sameVersion, setting, succeeded } from "./feeOperations.vibe"
+import { fieldOf, listOf, requireSolanaProbeCandidate } from "./feeTail.ts"
 import { solanaProbeModule, solanaProbeWorker } from "./probeWorker.ts"
 
 export type ProbeOperation = "candidate" | "subdomain-read" | "session-create" | "session-exchange" | "preview-upload" | "preview-invoke"
@@ -48,7 +49,11 @@ const invokeSeconds = 180
 const account = /^[a-f0-9]{32}$/u
 const subdomainName = /^[a-z0-9-]+$/u
 const providers = ["candidate", "recovery"] as const
-const methods = new Set<unknown>(["getGenesisHash", "getSlot", "getBlock", "getAccountInfo", "getFirstAvailableBlock"])
+const ProbeAnswer = Schema.Struct({ schemaVersion: Schema.Literal(1), rows: Schema.Tuple([Schema.Unknown, Schema.Unknown]) })
+
+const ProbeRowShape = Schema.Struct({ provider: Schema.Literals(providers), reads: Schema.Array(Schema.Unknown).check(Schema.isBetweenLength(4, 5)) })
+
+const ProbeReadShape = Schema.Struct({ method: Schema.Literals(["getGenesisHash", "getSlot", "getBlock", "getAccountInfo", "getFirstAvailableBlock"]) })
 const readCategories = new Set<unknown>(["invalid-json", "redirect", "rpc-refused", "TypeError", "SyntaxError", "AbortError", "TimeoutError", "request-error"])
 
 function failure(operation: ProbeOperation, httpStatus: number | null = null, cloudflareCode: number | null = null) {
@@ -69,15 +74,8 @@ export function safeProbeFailure(error: unknown) {
     : { operation: "unknown" as const, httpStatus: null, cloudflareCode: null }
 }
 
-export function requireSolanaProbeCandidate(value: string): string | undefined {
-  const url = URL.parse(value)
-  if (url === null || url.protocol !== "https:" || !url.hostname.endsWith(".helius-rpc.com") || url.username !== "" || url.password !== "" || url.hash !== "" || (url.port !== "" && url.port !== "443")) return undefined
-  return url.href
-}
-
 effect function safeRead(read: unknown) {
-  const method = fieldOf(read, "method")
-  if (!methods.has(method) || typeof method !== "string") throw invalid("Unexpected RPC probe method")
+  const { method } = Schema.decodeUnknownEffect(ProbeReadShape)(read) catch effect () => { throw invalid("Unexpected RPC probe method") }
   const category = fieldOf(read, "errorCategory")
   return {
     method,
@@ -89,15 +87,14 @@ effect function safeRead(read: unknown) {
 }
 
 export effect function safeSolanaProbeResult(value: unknown) {
-  const rows = fieldOf(value, "rows")
-  if (fieldOf(value, "schemaVersion") !== 1 || !Array.isArray(rows) || rows.length !== providers.length) throw invalid("Invalid RPC probe response")
+  const { rows } = Schema.decodeUnknownEffect(ProbeAnswer)(value) catch effect () => { throw invalid("Invalid RPC probe response") }
   const safe: ProbeRow[] = []
   for (const [index, provider] of providers.entries()) {
     const row: unknown = rows[index]
-    const reads = fieldOf(row, "reads")
-    if (fieldOf(row, "provider") !== provider || !Array.isArray(reads) || reads.length < 4 || reads.length > 5) throw invalid("Invalid RPC probe provider")
+    const shape = Schema.decodeUnknownEffect(ProbeRowShape)(row) catch effect () => { throw invalid("Invalid RPC probe provider") }
+    if (shape.provider !== provider) throw invalid("Invalid RPC probe provider")
     const checked: ProbeRead[] = []
-    for (const read of listOf(reads)) checked.push(try safeRead(read))
+    for (const read of shape.reads) checked.push(try safeRead(read))
     safe.push({
       provider,
       mainnet: fieldOf(row, "mainnet") === true,

@@ -674,7 +674,7 @@
           "spec": "spec/contributor/publication.md",
           "rules": [
             "Story: Publish the build's template index with exact provenance",
-            "Story: Publish the bootstrap skill and agent discovery files from one source"
+            "Story: Publish the three global skills and agent discovery files from one source"
           ]
         },
         {
@@ -1517,6 +1517,12 @@
           "rules": [
             "Story: Replace the Solana RPC pair of the exact active fee Worker"
           ]
+        },
+        {
+          "spec": "spec/fees/diagnostics.md",
+          "rules": [
+            "Story: Inspect the exact active fee Worker without changing anything"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -1767,6 +1773,12 @@
           "rules": [
             "Story: Prepare a group whose every claim is credited once"
           ]
+        },
+        {
+          "spec": "spec/points/referenceDiscussion.md",
+          "rules": [
+            "Story: Read a merged pull request's references from the census source"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -1850,6 +1862,18 @@
           "spec": "spec/settlement/octoberImport.md",
           "rules": [
             "Story: Write each reviewed October proposal once"
+          ]
+        },
+        {
+          "spec": "spec/points/referenceDiscussion.md",
+          "rules": [
+            "Story: Read a merged pull request's references from the census source"
+          ]
+        },
+        {
+          "spec": "spec/points/reviewedHistory.md",
+          "rules": [
+            "Story: Apply a reviewed historical packet only as the owner reviewed it"
           ]
         }
       ],
@@ -2016,7 +2040,7 @@
         {
           "spec": "spec/frontend/poolListing.md",
           "rules": [
-            "Story: Pick a project from one home grid",
+            "Story: Pick a project from the Featured and Community sections",
             "Story: List a monthly pool only in a month it is funded"
           ]
         },
@@ -2959,6 +2983,12 @@
           "spec": "spec/operations/stagingOrder.md",
           "rules": [
             "Story: Allow staging publication only from one complete, fresh history read"
+          ]
+        },
+        {
+          "spec": "spec/operations/robinhoodRpcRotation.md",
+          "rules": [
+            "Story: Rotate the fee converter's Robinhood RPC only to a qualified, independent endpoint from the pinned version"
           ]
         }
       ],

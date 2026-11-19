@@ -2,10 +2,11 @@
 import type { SetupStatus } from "@repo/backend/client";
 import { Alert, Button, NotFound, PageHeader, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
-import { Settings2 } from "lucide-react";
+import { Check, CloudCheck, CloudOff, Lock, Settings2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { PageProps } from "../../../app/pages.ts";
+import { type PageProps, signInPurposes } from "../../../app/pages.ts";
+import { Chip } from "../../admin/parts.tsx";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { SignInPanel } from "../../../app/SignInPanel.tsx";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
@@ -49,7 +50,6 @@ import {
 import { type Addition, UpdateForm } from "./UpdateForm.tsx";
 
 const page = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8";
-const signInPurpose = "Sign in with a maintainer account to change project settings.";
 const fieldIds: Readonly<Record<string, string>> = { monthlyAmount: "monthlyPool", tokenAddress: "rewardAssetAddress", tokenSymbol: "rewardAssetSymbol" };
 
 type Submission = { readonly status: "idle" | "publishing" } | { readonly status: "failed"; readonly message: string; readonly staleRevision: boolean } | { readonly status: "published"; readonly revision: number; readonly vaultSetup: boolean };
@@ -65,7 +65,7 @@ interface Published {
 function Frame({ children }: { children: ReactNode }) {
   return (
     <main className={page}>
-      <PageHeader title="Project settings" />
+      <PageHeader title="Settings" />
       {children}
     </main>
   );
@@ -192,7 +192,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
           {manifest.name}
         </a>
       </nav>
-      <PageHeader icon={<Settings2 aria-hidden />} title="Manage project" />
+      <PageHeader icon={<Settings2 aria-hidden />} title="Settings" actions={!review.monthly && !review.bountyOnly ? <Chip>External award</Chip> : undefined} />
       <ProjectNav runtime={runtime} project={{ id: base.projectId, slug: manifest.slug, bountyOnly: review.bountyOnly }} current="settings" />
       <SetupStatusPanel generation={published ? `revision-${published.revision}` : "initial"} runtime={runtime} projectId={base.projectId} actorId={actorId} initial={published?.setup} onSetup={setSetup} showProjectLink={false} />
       <UpdateForm
@@ -215,11 +215,11 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
       {review.stale ? (
         <Alert variant="destructive">
           <p>
-            This draft was saved against {edit.baseRevision === -1 ? "an unknown revision" : `revision ${edit.baseRevision}`}. The current revision is {managed.revision}. Review the changes below.
+            Draft is from {edit.baseRevision === -1 ? "an unknown rev" : `rev ${edit.baseRevision}`}; now rev {managed.revision}.
           </p>
           <div className="mt-3 flex flex-wrap gap-3">
             <Button variant="secondary" size="sm" onClick={() => store.update((latest) => ({ ...latest, baseRevision: managed.revision }))}>
-              Use this draft
+              Keep
             </Button>
             <Button
               variant="outline"
@@ -230,14 +230,14 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
                 setSubmission({ status: "idle" });
               }}
             >
-              Discard draft
+              Discard
             </Button>
           </div>
         </Alert>
       ) : null}
       {review.changed ? <ChangeReview changes={review.changes} rows={review.rows} addedRepositories={review.added.length} scanCleared={setup?.checks.scan.state === "cleared"} active={manifest.status === "active"} nextCycle={review.nextCycle} /> : null}
       {loadError ? <Alert variant="destructive">{loadError}</Alert> : null}
-      {attempted && (!valid || !review.changed) ? <Alert variant="destructive">{review.changed ? "Fix the marked fields." : "Change at least one field before you publish."}</Alert> : null}
+      {attempted && (!valid || !review.changed) ? <Alert variant="destructive">{review.changed ? "Fix the marked fields." : "Nothing changed."}</Alert> : null}
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-3">
           <Button loading={publishing} disabled={review.stale} onClick={() => void publish()}>
@@ -261,8 +261,10 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
             {submission.message}
           </Alert>
         ) : submission.status === "published" ? (
-          <p role="status" className="text-sm text-foreground">
-            Published revision {submission.revision}.{" "}
+          <p role="status" className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+            <Chip tone="Positive" icon={<Check aria-hidden />}>
+              Rev {submission.revision}
+            </Chip>
             {submission.vaultSetup ? (
               <a href="#project-vault" className="text-primary underline underline-offset-4">
                 Set up vault
@@ -271,7 +273,19 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
           </p>
         ) : null}
         <p role="status" className="text-sm text-muted-foreground">
-          {saveFailed ? "This browser cannot save the draft." : saving ? "Saving draft…" : "Draft saved on this device."}
+          {saveFailed ? (
+            <Chip tone="Negative" icon={<CloudOff aria-hidden />} title="This browser cannot save the draft.">
+              Draft not saved
+            </Chip>
+          ) : saving ? (
+            <span role="img" aria-label="Saving draft…" title="Saving draft…">
+              <StatusIcon icon="Spinner" />
+            </span>
+          ) : (
+            <span role="img" aria-label="Draft saved on this device" title="Draft saved on this device">
+              <CloudCheck aria-hidden className="size-4" />
+            </span>
+          )}
         </p>
       </div>
       <Vault runtime={runtime} manifest={current.manifest} />
@@ -280,14 +294,6 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
           Manage security bounty
         </a>
       </p>
-      {!review.monthly && !review.bountyOnly ? (
-        <section aria-labelledby="update-payouts" className="flex flex-col gap-2">
-          <h2 id="update-payouts" className="text-lg font-semibold text-foreground">
-            Payouts
-          </h2>
-          <p className="text-sm text-muted-foreground">External award. Slop publishes contribution shares only.</p>
-        </section>
-      ) : null}
     </main>
   );
 }
@@ -345,14 +351,16 @@ function MaintainerGate({ runtime, base, actorId, onReload, loadError }: Omit<Ed
           variant="destructive"
           action={
             <Button variant="outline" size="sm" onClick={retry}>
-              Retry access check
+              Retry
             </Button>
           }
         >
           {check.message}
         </Alert>
       ) : (
-        <p role="status">Project settings are available only to this project's maintainers.</p>
+        <p role="status" className="flex items-center gap-2">
+          <Lock aria-hidden className="size-4" /> Maintainers only
+        </p>
       )}
     </Frame>
   );
@@ -378,7 +386,7 @@ export function UpdatePage({ runtime, route }: PageProps) {
   if (shown.view.status !== "signedIn")
     return (
       <Frame>
-        <SignInPanel view={shown.view} href={loginHrefFor(shown, `/projects/${segment}/manage`)} purpose={signInPurpose} />
+        <SignInPanel view={shown.view} href={loginHrefFor(shown, `/projects/${segment}/manage`)} purpose={signInPurposes.ManageProject} />
       </Frame>
     );
   const base = loaded ?? (read?.status === "done" ? read.value : undefined);

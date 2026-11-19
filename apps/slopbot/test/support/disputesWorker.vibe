@@ -74,6 +74,8 @@ function registryOver(text: string) {
           return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
         },
         active: () => effect { return projects.map(viewOf) },
+        pausedProjects: () => effect { return [] },
+        appendVaultRegistration: () => Effect.die(new Error("the dispute journeys register no vault")),
         fence: () => effect { return sql`1` },
       }),
       Layer.succeed(Restrictions, {

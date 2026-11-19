@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+// spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"
 import type { D1Database, EmailMessage, SendEmail } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
@@ -9,11 +9,13 @@ import type { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@
 import type { ContributorAudience, DisputeAudience } from "@repo/ports/points"
 import type { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
 import type { SlopbotAudience } from "@repo/ports/slopbot"
+import { type IntakeVars, intakeToken } from "../intakeHealth/renewal.vibe"
+import { intakeRoutes } from "../intakeHealth/routes.vibe"
 import { type NotifyVars, notifySettings } from "../notify/config.vibe"
 import { notifyRoutes } from "../notify/routes.vibe"
 import { type OutgoingMail, drain, mailVia } from "../notify/send.vibe"
 
-export interface NotifyEnv extends NotifyVars, RoleVars {
+export interface NotifyEnv extends NotifyVars, RoleVars, IntakeVars {
   readonly SLOP_DB: D1Database
   readonly ADMIN_EMAIL: SendEmail
 }
@@ -27,7 +29,7 @@ const noSessions = Layer.succeed(Caller, {
 })
 
 function notifyBase(env: NotifyEnv, internet: Layer.Layer<HttpClient.HttpClient>, envelope: (mail: OutgoingMail) => EmailMessage) {
-  const platform = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, internet, noSessions, rolesFrom(env), mailVia(env.ADMIN_EMAIL, envelope))
+  const platform = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, internet, noSessions, rolesFrom(env), intakeToken(env), mailVia(env.ADMIN_EMAIL, envelope))
   return Layer.provideMerge(notifySettings(env), platform)
 }
 
@@ -42,7 +44,7 @@ export interface NotifyComposition<Env extends NotifyEnv> {
 export function notifyWorker<Env extends NotifyEnv>(composition: NotifyComposition<Env>) {
   return worker({
     services: (env: Env) => Layer.provideMerge(composition.ports(env), notifyBase(env, composition.internet, composition.envelope)),
-    routes: notifyRoutes,
+    routes: Layer.mergeAll(notifyRoutes, intakeRoutes),
     scheduled: () => drain(),
   })
 }

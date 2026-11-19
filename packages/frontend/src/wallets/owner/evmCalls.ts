@@ -1,6 +1,6 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"
 import type { VaultPurpose } from "@repo/settlement/chain/evm/abi";
-import { depositCalldata, withdrawCalldata } from "@repo/settlement/chain/evm/actions";
+import { depositCalldata, expirePledgeCalldata, pledgeMonthsCalldata, withdrawCalldata } from "@repo/settlement/chain/evm/actions";
 import { reviewedFactory } from "@repo/settlement/chain/evm/factories";
 import { isNetworkKey } from "@repo/settlement/kernels/networks";
 import { encodeFunctionData, hexToBytes, parseAbi } from "viem";
@@ -81,12 +81,23 @@ export interface BatchApproval {
 }
 
 /** @throws {RangeError} */
-export function batchCalls(terms: VaultCallTerms, gross: bigint, approval: BatchApproval): ReadonlyArray<Call> {
+export function batchCalls(terms: VaultCallTerms, gross: bigint, approval: BatchApproval, extraCalls: ReadonlyArray<Call> = []): ReadonlyArray<Call> {
   return [
     ...(approval.resetAllowance ? [approveCall(terms, 0n)] : []),
     ...(approval.approvalNeeded ? [approveCall(terms, gross)] : []),
     { to: terms.vault, data: depositCalldata(gross), value: "0x0" },
+    ...extraCalls,
   ];
+}
+
+/** @throws {RangeError} */
+export function pledgeCall(vault: string, fromPeriod: number, count: number, amountMinor: bigint): Call {
+  return { to: vault, data: pledgeMonthsCalldata(fromPeriod, count, amountMinor), value: "0x0" };
+}
+
+/** @throws {RangeError} */
+export function releaseCall(vault: string, period: number): Call {
+  return { to: vault, data: expirePledgeCalldata(period), value: "0x0" };
 }
 
 /** @throws {never} */

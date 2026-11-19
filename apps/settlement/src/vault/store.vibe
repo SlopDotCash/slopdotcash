@@ -1,6 +1,6 @@
-// spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"
+// spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"; spec/settlement/monthPledges.md, "Each month keeps the read of the newest block, and a read not taken changes nothing"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import { D1, type D1Error, RowMismatch, rows, sql } from "@repo/platform/d1"
+import { D1, type D1Error, RowMismatch, type Statement, rows, sql } from "@repo/platform/d1"
 import {
   type Balance,
   type Chain,
@@ -28,7 +28,7 @@ import {
   writable,
 } from "../../gen/settlement__vaultSnapshots.effect.vibe"
 import type { Amount } from "../../gen/settlement__money.ts"
-import { noStoredTotal } from "../../gen/settlement__monthPledges.effect.vibe"
+import { type StoredPledge, type StoredTotal, noStoredTotal } from "../../gen/settlement__monthPledges.effect.vibe"
 import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import type { ReviewedDeployment } from "./policy.vibe"
@@ -134,6 +134,16 @@ schema SnapshotRow {
   readonly block_number: string
   readonly block_time: string
   readonly observed_at: string
+  readonly open_pledged_gross: string | null
+}
+
+export schema PledgeRow {
+  readonly network: string
+  readonly vault: string
+  readonly period: string
+  readonly amount: string
+  readonly open: number
+  readonly block_number: string
 }
 
 schema MonthStartRow {
@@ -211,11 +221,51 @@ effect function monthStartOfRow(row: MonthStartRow) {
   } satisfies MonthStart
 }
 
+effect function periodOf(text: string, column: string) {
+  const match = PERIOD.exec(text)
+  if (match === null) throw new RowMismatch({ text: column, issue: "not a YYYY-MM period" })
+  return Number(match[1]) * 100 + Number(match[2])
+}
+
+effect function storedPledgeOf(row: PledgeRow) {
+  if (!isNetworkKey(row.network) || (row.open !== 0 && row.open !== 1)) throw new RowMismatch({ text: "vault_month_pledges", issue: "not a reviewed network and 0 or 1 open flag" })
+  return {
+    network: modelNetwork(row.network),
+    vault: row.vault,
+    period: try periodOf(row.period, "vault_month_pledges.period"),
+    amount: try amountOf(row.amount, "vault_month_pledges.amount"),
+    open: row.open === 1,
+    block: try amountOf(row.block_number, "vault_month_pledges.block_number"),
+  } satisfies StoredPledge
+}
+
+export effect function storedTotalOf(text: string | null) {
+  return (text === null ? noStoredTotal : { supported: true, amount: try amountOf(text, "vault_snapshots.open_pledged_gross") }) satisfies StoredTotal
+}
+
+export effect function storedPledgesOf(found: ReadonlyArray<PledgeRow>) {
+  const pledges: StoredPledge[] = []
+  for (const row of found) pledges.push(try storedPledgeOf(row))
+  return pledges
+}
+
+export effect function storedPledges(scope: SnapshotScope, network: NetworkKey, vault: string) {
+  return try storedPledgesOf(try rows(PledgeRow, sql`SELECT network, vault, period, amount, open, block_number FROM vault_month_pledges WHERE project_id = ${scope.projectId} AND network = ${network} AND vault = ${vault} ORDER BY period`))
+}
+
+effect function ordinaryPledges(scope: SnapshotScope, found: ReadonlyArray<SnapshotRow>, registration: Registration) {
+  const network = networkKeyOf(registration.identity.network)
+  if (!registered(registration) || network === undefined) return { pledges: [] as StoredPledge[], openPledged: noStoredTotal }
+  const row = found.find((candidate) => candidate.network === network && candidate.vault === registration.identity.vault)
+  return { pledges: try storedPledges(scope, network, registration.identity.vault), openPledged: try storedTotalOf(row?.open_pledged_gross ?? null) }
+}
+
 export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, requests: ReadonlyArray<RequestRow>) {
-  const found = try rows(SnapshotRow, sql`SELECT network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at FROM vault_snapshots WHERE project_id = ${scope.projectId}`)
+  const found = try rows(SnapshotRow, sql`SELECT network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at, open_pledged_gross FROM vault_snapshots WHERE project_id = ${scope.projectId}`)
   const starts = try rows(MonthStartRow, sql`SELECT network, vault, period, free_balance, total_gross_withdrawn, block_time FROM vault_month_starts WHERE project_id = ${scope.projectId} ORDER BY rowid`)
   const monthStarts: MonthStart[] = []
   for (const row of starts) monthStarts.push(try monthStartOfRow(row))
+  const { pledges, openPledged } = try ordinaryPledges(scope, found, registry.ordinary)
   return try decodeState({
     revision: registry.revision,
     history: registry.history,
@@ -223,8 +273,8 @@ export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, req
     privateBounty: { registration: registry.privateBounty, observation: try observed(found, "PrivateBounty", registry.privateBounty) },
     requests,
     monthStarts,
-    pledges: [],
-    openPledged: noStoredTotal,
+    pledges,
+    openPledged,
   })
 }
 
@@ -247,7 +297,7 @@ effect function upsert(scope: SnapshotScope, observation: Observation) {
   const network = try networkOf(observation.identity.network)
   const blockTime = try isoAt(observation.blockTime * 1000)
   const observedAt = try isoAt(observation.observedAt * 1000)
-  return try (try D1).run(sql`INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, total_service_fees, block_number, block_time, observed_at)
+  return sql`INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, total_service_fees, block_number, block_time, observed_at)
     VALUES (${scope.projectId}, ${network}, ${NETWORKS[network].chain}, ${observation.identity.vault}, ${observation.identity.asset}, ${observation.identity.decimals},
       ${amountText(counters.deposits)}, ${amountText(counters.payments)}, ${amountText(counters.payoutFees)}, ${amountText(counters.withdrawals)}, ${amountText(counters.withdrawalFees)},
       ${optionalText(balances.free)}, ${optionalText(balances.principal)}, ${optionalText(balances.feesReserved)}, ${optionalText(balances.feesAccrued)}, ${optionalText(balances.reserved)},
@@ -265,7 +315,39 @@ effect function upsert(scope: SnapshotScope, observation: Observation) {
       AND (length(excluded.total_paid) > length(vault_snapshots.total_paid) OR (length(excluded.total_paid) = length(vault_snapshots.total_paid) AND excluded.total_paid >= vault_snapshots.total_paid))
       AND (length(excluded.total_payout_fees) > length(vault_snapshots.total_payout_fees) OR (length(excluded.total_payout_fees) = length(vault_snapshots.total_payout_fees) AND excluded.total_payout_fees >= vault_snapshots.total_payout_fees))
       AND (length(excluded.total_gross_withdrawn) > length(vault_snapshots.total_gross_withdrawn) OR (length(excluded.total_gross_withdrawn) = length(vault_snapshots.total_gross_withdrawn) AND excluded.total_gross_withdrawn >= vault_snapshots.total_gross_withdrawn))
-      AND (length(excluded.total_withdrawal_fees) > length(vault_snapshots.total_withdrawal_fees) OR (length(excluded.total_withdrawal_fees) = length(vault_snapshots.total_withdrawal_fees) AND excluded.total_withdrawal_fees >= vault_snapshots.total_withdrawal_fees))`)
+      AND (length(excluded.total_withdrawal_fees) > length(vault_snapshots.total_withdrawal_fees) OR (length(excluded.total_withdrawal_fees) = length(vault_snapshots.total_withdrawal_fees) AND excluded.total_withdrawal_fees >= vault_snapshots.total_withdrawal_fees))`
+}
+
+function samePledgeRow(left: StoredPledge, right: StoredPledge): boolean {
+  return left.network === right.network && left.vault === right.vault && left.period === right.period && left.open === right.open
+    && amountText(left.amount) === amountText(right.amount) && amountText(left.block) === amountText(right.block)
+}
+
+effect function pledgeWrites(scope: SnapshotScope, before: Snapshots, accepted: Snapshots, request: RequestRow) {
+  if (request.purpose !== "Ordinary" || deployment(accepted, "Ordinary").observation.monthPledges.tag === "PledgesNotRead") return []
+  const observation = request.incoming
+  const network = try networkOf(observation.identity.network)
+  const block = amountText(observation.block)
+  const observedAt = try isoAt(observation.observedAt * 1000)
+  const stored = sql`SELECT 1 FROM vault_snapshots WHERE project_id = ${scope.projectId} AND network = ${network} AND vault = ${observation.identity.vault} AND block_number = ${block} AND observed_at = ${observedAt}`
+  const statements: Statement[] = [
+    sql`UPDATE vault_snapshots SET open_pledged_gross = ${accepted.openPledged.supported ? amountText(accepted.openPledged.amount) : null} WHERE project_id = ${scope.projectId} AND network = ${network} AND vault = ${observation.identity.vault} AND block_number = ${block} AND observed_at = ${observedAt}`,
+  ]
+  for (const pledge of accepted.pledges.filter((candidate) => !before.pledges.some((existing) => samePledgeRow(existing, candidate)))) {
+    const pledgeNetwork = try networkOf(pledge.network)
+    statements.push(sql`INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at)
+      SELECT ${scope.projectId}, ${pledgeNetwork}, ${pledge.vault}, ${periodText(pledge.period)}, ${amountText(pledge.amount)}, ${pledge.open ? 1 : 0}, ${amountText(pledge.block)}, ${observedAt}
+      WHERE EXISTS (${stored})
+      ON CONFLICT (project_id, network, vault, period) DO UPDATE SET amount = excluded.amount, open = excluded.open, block_number = excluded.block_number, observed_at = excluded.observed_at
+      WHERE CAST(excluded.block_number AS INTEGER) >= CAST(vault_month_pledges.block_number AS INTEGER)`)
+  }
+  return statements
+}
+
+effect function stored(scope: SnapshotScope, before: Snapshots, accepted: Snapshots, request: RequestRow) {
+  const statements = [try upsert(scope, request.incoming), ...(try pledgeWrites(scope, before, accepted, request))]
+  const outcomes = try (try D1).batch(statements)
+  return outcomes[0]?.changes ?? 0
 }
 
 effect function recordMonthStart(scope: SnapshotScope, start: MonthStart, observation: Observation) {
@@ -287,7 +369,7 @@ effect function written(scope: SnapshotScope, before: Snapshots, event: WriteEve
   const request = requestRow(before, event.requestId)
   const prior = deployment(before, request.purpose).observation
   if (event.reply === "WriteFailed" || !writable(request.incoming, prior)) return accepted
-  const changes = upsert(scope, request.incoming) catch () => -1
+  const changes = stored(scope, before, accepted, request) catch () => -1
   if (changes < 0) return try apply(before, { ...event, reply: "WriteFailed" })
   if (changes === 1) {
     const start = accepted.monthStarts.find((candidate) => !before.monthStarts.some((existing) => sameMonthStart(existing, candidate)))

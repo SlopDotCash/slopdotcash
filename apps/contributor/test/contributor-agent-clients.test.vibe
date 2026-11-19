@@ -1,0 +1,20 @@
+// spec/contributor/workflow.md, "Story: Ship useful work through the project's repository"
+import { afterEach, assert, it } from "@effect/vitest"
+import { AgentClientRecords } from "@repo/operations/evidence/records"
+import { headlessClients, runnable } from "./support/agentClients/clients.ts"
+import { keepRecords, observeClient, priorRecords } from "./support/agentClients/journey.ts"
+import { removeRoots } from "./support/installer/harness.ts"
+
+afterEach(() => removeRoots())
+
+for (const client of headlessClients) {
+  it.effect.skipIf(!runnable(client))(`Agent-client use in ${client.client}: install the project skill, authorize, start and disclose the exact client version, provider and model (spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"; spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable"; spec/contributor/installation.md, "Local authorization uses only the verified installed files")`, () => effect {
+    const observed = try Effect.try(() => observeClient(client))
+    const stored = try Effect.try(() => priorRecords(observed.recordedBy))
+    const prior = try Schema.decodeUnknownEffect(AgentClientRecords)(stored, { onExcessProperty: "error" })
+    const others = prior.records.filter((kept) => kept.workflow !== observed.record.workflow || kept.client !== observed.record.client)
+    const document = try Schema.decodeUnknownEffect(AgentClientRecords)({ schemaVersion: 1, recordedBy: observed.recordedBy, records: [...others, observed.record] }, { onExcessProperty: "error" })
+    try Effect.try(() => keepRecords(document))
+    assert.deepStrictEqual(observed.issues, [])
+  }, { timeout: 660_000 })
+}

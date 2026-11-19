@@ -1,14 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, layer } from "@effect/vitest"
-import { Response } from "miniflare"
+import { FormData, Request as ApiRequest, Response } from "miniflare"
+import { cloudflare, pinActive, pinnedWrangler } from "@repo/operations/rpc"
 import type { D1Database } from "@repo/platform/bindings"
 import { base64Decode } from "@repo/platform/chain/solana"
-import { webCrypto } from "@repo/platform/crypto"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
+import { gitBytes, systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import type { Handler } from "@repo/platform/testing"
 import { type Served, serve } from "@repo/platform/testing/chains"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type CloudflareApi, cloudflareApi } from "@repo/platform/testing/cloudflare"
 import { internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { type Event, type Quote, type SignedSend, maximumSafeValue } from "../gen/fees__conversion.ts"
@@ -19,7 +22,10 @@ import { expireUnlanded } from "../src/expiry/prove.vibe"
 import type { Instance } from "../src/journal/codec.vibe"
 import { journaledAttempts } from "../src/journal/queries.vibe"
 import { type Facts, journal, send } from "../src/journal/store.vibe"
-import { qualifySolanaRpcPair, recordFile, reviewedDigest, solanaPublicPair, witness } from "../src/programs/solanaRpcPair.vibe"
+import { publicPair as reviewedPair, qualifyPair, qualifySolanaRpcPair, recordFile, reviewedDigest, solanaPublicPair, validatePriorRotationProof, witness } from "../src/programs/solanaRpcPair.vibe"
+import { feeSourceParity } from "../src/programs/feeSourceParity.vibe"
+import { receiptFile, rotateSolanaRpc } from "../src/programs/solanaRpcRotation.vibe"
+import { ledger } from "../src/journal/codec.vibe"
 import { solanaGenesis } from "../src/runtime/pins.ts"
 import { jsonValue } from "../src/solana/bytes.ts"
 import { blockhashOf, parsedTransaction } from "../src/solana/wire.vibe"
@@ -268,6 +274,98 @@ effect function qualified(directory: string, pair: PublicPair) {
   return Effect.as(Effect.provideService(run, FetchHttpClient.Fetch, pair.fetch), "qualified") catch (error) => ("issue" in error ? error.issue : error._tag)
 }
 
+effect function priorOutcome(receipt: unknown, proof: Uint8Array, priorSource: string) {
+  const checked = Effect.as(validatePriorRotationProof(receipt, proof, reviewedPair, priorSource, ledger()), "accepted")
+  return Effect.provide(checked, webCrypto) catch (error) => error.issue
+}
+
+effect function rotationRefusal(values: Readonly<Record<string, string>>, root = ".") {
+  const run = Effect.as(rotateSolanaRpc([root]), "rotated")
+  return Effect.provide(run, Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown(values)), outbound, webCrypto, systemGit)) catch (error) => error.message
+}
+
+const rotationAccount = "0123456789abcdef0123456789abcdef"
+const reviewedDatabase = "5d1c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a"
+const strayDatabase = "6e2d5c4b-3a2f-4e1d-8c9b-0a1f2e3d4c5b"
+const heliusCandidate = "https://mainnet.helius-rpc.com/?api-key=journey"
+const feeWallet = `0x${"e".repeat(40)}`
+
+const reviewedRuntime = `${JSON.stringify({
+  name: "slop-fee-converter",
+  main: "../dist/feeConverter.js",
+  d1_databases: [{ binding: "FEE_DB", database_name: "slop-fees", database_id: reviewedDatabase }],
+  vars: {
+    SLOP_ENVIRONMENT: "production",
+    FEE_CONVERTER_MODE: "live",
+    BUYBACK_MODE: "live",
+    FEE_CONVERTER_NETWORKS: "solana",
+    FEE_WALLET_BASE: feeWallet,
+    FEE_WALLET_ETHEREUM: feeWallet,
+    FEE_WALLET_ROBINHOOD: feeWallet,
+    FEE_WALLET_SOLANA: "So11111111111111111111111111111111111111112",
+  },
+}, null, 2)}\n`
+
+effect function git(directory: string, args: ReadonlyArray<string>) {
+  const bytes = try Effect.provide(gitBytes({ args: ["-C", directory, "-c", "user.name=Slop fees", "-c", "user.email=fees@slop.invalid", "-c", "commit.gpgsign=false", ...args], limit: 1024 * 1024, seconds: 60 }, `git ${args[0]} failed`), systemGit)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+effect function committed(repository: string, files: Readonly<Record<string, string>>, message: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  for (const [name, text] of Object.entries(files)) {
+    try fs.makeDirectory(path.dirname(path.join(repository, name)), { recursive: true })
+    try fs.writeFileString(path.join(repository, name), text)
+  }
+  try git(repository, ["add", "-A"])
+  try git(repository, ["commit", "-q", "-m", message])
+  return try git(repository, ["rev-parse", "HEAD"])
+}
+
+effect function activeWorker(api: CloudflareApi, tag: string, database: string) {
+  const base = `https://cloudflare.test/client/v4/accounts/${rotationAccount}/workers/scripts/slop-fee-converter`
+  const authorized = { authorization: "Bearer journey" }
+  const message = `slop.cash release ${tag}`
+  const metadata = JSON.stringify({
+    annotations: { "workers/tag": tag, "workers/message": message },
+    bindings: [
+      { name: "FEE_DB", type: "d1", id: database },
+      { name: "FEE_WALLET_KEY_SOLANA", type: "secret_text", text: "never-export" },
+      { name: "RPC_URL_SOLANA", type: "secret_text", text: "https://retired-solana.test/v1" },
+      { name: "SOLANA_RECOVERY_RPC_URL", type: "secret_text", text: "https://retired-recovery.test/v1" },
+      { name: "FEE_CONVERTER_MODE", type: "plain_text", text: "live" },
+    ],
+  })
+  try promise(async () => {
+    const form = new FormData()
+    form.append("metadata", metadata)
+    return api.handler(new ApiRequest(`${base}/versions`, { method: "POST", headers: authorized, body: form }))
+  })
+  const pinned = api.state.versions["slop-fee-converter"]?.at(-1)?.id ?? ""
+  const deployment = JSON.stringify({ versions: [{ version_id: pinned, percentage: 100 }], annotations: { "workers/message": message } })
+  try promise(() => Promise.resolve(api.handler(new ApiRequest(`${base}/deployments`, { method: "POST", headers: { ...authorized, "content-type": "application/json" }, body: deployment }))))
+  return { pinned, mark: api.calls.length }
+}
+
+function writesSince(api: CloudflareApi, mark: number) {
+  return api.calls.slice(mark).filter((call) => call.method !== "GET" || call.path.includes("/d1/")).map((call) => `${call.method} ${call.path}`)
+}
+
+effect function parityOutcome(root: string, pinned: string, checkout: string) {
+  return Effect.provide(feeSourceParity(root, pinned, checkout), systemGit) catch (error) => error.message
+}
+
+effect function pinOutcome(values: Readonly<Record<string, string>>, root: string) {
+  const pinned = effect {
+    provide cloudflare({ root, wrangler: pinnedWrangler(root) }) {
+      const pin = try pinActive({ root, kind: "solana", sha: values.GITHUB_SHA ?? "", pinnedSource: values.SLOP_SOLANA_RPC_EXPECTED_SOURCE ?? "", expected: values.SLOP_SOLANA_RPC_EXPECTED_VERSION ?? "", runnerTemp: values.RUNNER_TEMP ?? "" })
+      return pin.database
+    }
+  }
+  return Effect.provide(pinned, Layer.merge(ConfigProvider.layer(ConfigProvider.fromUnknown(values)), outbound)) catch (error) => error.message
+}
+
 interface SavedCoverage {
   readonly operator: string
   readonly blocks: number
@@ -405,7 +503,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     })
   })
 
-  it.effect('Qualify the public Solana RPC pair from the retained synthetic witness, refusing any retained record its pages do not reconstruct (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it")', () => scoped(effect {
+  it.effect('Qualify the public Solana RPC pair from the retained synthetic witness, refusing any retained record its pages do not reconstruct, a pair of one operator, a prior witness that went past qualification or whose digest or history differs, a rotation without protected manual main and the private candidate, and a rotation whose fee source or fee database differs from the reviewed checkout, before any receipt or lease write (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/solanaRpcRotation.md, "A rotation starts only from protected manual main, the exact pinned active version and byte-identical fee source"; spec/fees/solanaRpcRotation.md, "A prior failed run\'s witness supplies history only, never authority")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-pair-" })
     const file = `${directory}/${recordFile}`
@@ -424,6 +522,62 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     const record = jsonValue(kept) as SavedRecord
     const digests = [...new Set(record.coverage.map((entry) => entry.digest))]
 
+    const sameOperator = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-pair-" })
+    const before = pair.requests.length
+    const twice = Effect.as(Effect.provide(qualifyPair(sameOperator, [Redacted.make(solanaPublicPair[1]), Redacted.make("https://public.rpc.solanavibestation.com/historical")]), FetchHttpClient.layer), "qualified") catch (error) => ("issue" in error ? error.issue : error._tag)
+    const proofBytes = new TextEncoder().encode(kept)
+    const priorSource = "a".repeat(40)
+    const stopped = { schemaVersion: 1, phase: "qualification", checkout: priorSource, deployedSource: "b".repeat(40), previousVersion: "11111111-2222-3333-4444-555555555555", sourceFiles: 1, proofSha256: try Effect.provide(sha256Hex(proofBytes), webCrypto) }
+    const prior = {
+      stopped: try priorOutcome(stopped, proofBytes, priorSource),
+      tookLease: try priorOutcome({ ...stopped, phase: "acquiring-lease", runId: "rpc-rotation-prior" }, proofBytes, priorSource),
+      uploaded: try priorOutcome({ ...stopped, candidateVersion: "66666666-7777-8888-9999-000000000000" }, proofBytes, priorSource),
+      otherSource: try priorOutcome(stopped, proofBytes, "c".repeat(40)),
+      digest: try priorOutcome({ ...stopped, proofSha256: "0".repeat(64) }, proofBytes, priorSource),
+    }
+    const runnerTemp = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-rotation-" })
+    const unprotected = try rotationRefusal({ RUNNER_TEMP: runnerTemp, SLOP_SOLANA_RPC_CANDIDATE: "https://mainnet.helius-rpc.com/?api-key=journey", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" })
+    const publicCandidate = try rotationRefusal({ RUNNER_TEMP: runnerTemp, SLOP_SOLANA_RPC_CANDIDATE: solanaPublicPair[0], GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main" })
+
+    const api = cloudflareApi({ accountId: rotationAccount })
+    const served: Served = try acquireRelease(promise(() => serve(api.handler)), (opened) => promise(() => opened.close()))
+    const checkout = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-checkout-" })
+    try git(checkout, ["init", "-q", "-b", "main"])
+    const reviewed = try committed(checkout, {
+      "package.json": "{}\n",
+      "apps/fees/package.json": `${JSON.stringify({ name: "@repo/fees", dependencies: {} })}\n`,
+      "apps/fees/src/runtime.vibe": "export const runtime = 1\n",
+      "apps/fees/wrangler/feeConverter.production.jsonc": reviewedRuntime,
+    }, "Reviewed fee runtime")
+    const changed = try committed(checkout, { "apps/fees/src/runtime.vibe": "export const runtime = 2\n" }, "Changed fee runtime")
+    const searchPath = try Config.withDefault(Config.String("PATH"), "")
+    const protectedRun = (sha: string, expected: string) => ({
+      RUNNER_TEMP: runnerTemp,
+      SLOP_SOLANA_RPC_CANDIDATE: heliusCandidate,
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REF: "refs/heads/main",
+      SLOP_FEE_CONVERTER_RELEASE: "enabled",
+      GITHUB_SHA: sha,
+      SLOP_SOLANA_RPC_EXPECTED_SOURCE: reviewed,
+      SLOP_SOLANA_RPC_EXPECTED_VERSION: expected,
+      CLOUDFLARE_ACCOUNT_ID: rotationAccount,
+      CLOUDFLARE_API_TOKEN: "journey-token",
+      CLOUDFLARE_API_BASE_URL: `${served.url}/client/v4`,
+      HOME: runnerTemp,
+      TMPDIR: runnerTemp,
+      PATH: searchPath,
+    })
+    const sourceWorker = try activeWorker(api, reviewed, reviewedDatabase)
+    const sourceMismatch = try rotationRefusal(protectedRun(changed, sourceWorker.pinned), checkout)
+    const sourceWrites = writesSince(api, sourceWorker.mark)
+    const reviewedPin = try pinOutcome(protectedRun(changed, sourceWorker.pinned), checkout)
+    const strayWorker = try activeWorker(api, reviewed, strayDatabase)
+    const wrongDatabase = try rotationRefusal(protectedRun(reviewed, strayWorker.pinned), checkout)
+    const databaseWrites = writesSince(api, strayWorker.mark)
+    const strayPin = try pinOutcome(protectedRun(reviewed, strayWorker.pinned), checkout)
+    const parity = { changed: try parityOutcome(checkout, reviewed, changed), reviewed: try parityOutcome(checkout, reviewed, reviewed) }
+    const receiptWritten = try fs.exists(`${runnerTemp}/${receiptFile}`)
+
     try same({
       first,
       again,
@@ -436,6 +590,10 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       pages: record.pages.map((page) => [page.operator, page.blocks.length]),
       proof: record.proof?.providers.map((provider) => provider.operator),
       refused,
+      twice: [twice, pair.requests.length - before],
+      prior,
+      rotation: [unprotected, publicCandidate, receiptWritten],
+      refusedBeforeLease: { sourceMismatch, sourceWrites, reviewedPin, wrongDatabase, databaseWrites, strayPin, parity },
     }, {
       first: "Solana witness differs from the reviewed chain",
       again: "Solana witness differs from the reviewed chain",
@@ -448,6 +606,24 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       pages: [32, 32, 32, 32, 32, 32, 19].flatMap((blocks) => [["solana-public", blocks], ["solana-vibe-station", blocks]]),
       proof: ["solana-public", "solana-vibe-station"],
       refused: tampers.map(() => "WitnessInconsistent"),
+      twice: ["Solana qualification requires two independent operators", 0],
+      prior: {
+        stopped: "Prior rotation history is incomplete",
+        tookLease: "Prior rotation was not stopped before activation",
+        uploaded: "Prior rotation was not stopped before activation",
+        otherSource: "Prior rotation was not stopped before activation",
+        digest: "Prior rotation proof digest differs from its receipt",
+      },
+      rotation: ["Solana fee RPC rotation refused; review the safe phase receipt", "Solana fee RPC rotation refused; review the safe phase receipt", false],
+      refusedBeforeLease: {
+        sourceMismatch: "Solana fee RPC rotation refused; review the safe phase receipt",
+        sourceWrites: [],
+        reviewedPin: reviewedDatabase,
+        wrongDatabase: "Solana fee RPC rotation refused; review the safe phase receipt",
+        databaseWrites: [],
+        strayPin: "Active fee database differs from the reviewed binding",
+        parity: { changed: "Deployed fee runtime differs from the reviewed checkout", reviewed: 4 },
+      },
     })
   }))
 })

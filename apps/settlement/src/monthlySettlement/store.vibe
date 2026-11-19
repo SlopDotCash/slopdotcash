@@ -1,15 +1,18 @@
-// spec/settlement/monthlySettlement.md, "The month and the vault start independently"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"; spec/settlement/monthlySettlement.md, "An obligation is reserved, paid or conflicted only as the vault's finalized award shows"; spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"
+// spec/settlement/monthlySettlement.md, "The month and the vault start independently"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"; spec/settlement/monthlySettlement.md, "An obligation is reserved, paid or conflicted only as the vault's finalized award shows"; spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
 import type { Award, Escrow, Network } from "../../gen/settlement__escrow.ts"
 import { initial as unopenedVault } from "../../gen/settlement__escrow.effect.vibe"
 import type { BanExclusion } from "../../gen/settlement__monthly.ts"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { otherOpenPledges } from "../../gen/settlement__monthPledges.effect.vibe"
 import { type Event, type MonthlySettlement, apply, decodeState, observation } from "../../gen/settlement__monthlySettlement.effect.vibe"
 import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { formatPeriod } from "../kernels/calendar.ts"
 import { type Chain, NETWORKS, SOLANA_NATIVE_ASSET, EVM_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
 import { chainAwards } from "../payments/chainAwards.vibe"
-import { type Extra, type FundingFacts, type Loaded, type MonthKey, ManifestInvalid, amountOf, manifestOf, readMonth, sendMonth, servedDeploymentOf } from "../monthly/store.vibe"
+import { type Extra, type FundingFacts, type Loaded, type MonthKey, type PledgeHold, ManifestInvalid, amountOf, manifestOf, readMonth, sendMonth, servedDeploymentOf } from "../monthly/store.vibe"
+import { PledgeRow, modelNetwork, storedPledgesOf, storedTotalOf } from "../vault/store.vibe"
 
 export interface VaultPlace {
   readonly network: string
@@ -28,12 +31,13 @@ export interface Settlement {
   readonly state: MonthlySettlement
   readonly earlierUnreserved: bigint
   readonly bans: ReadonlyArray<BanExclusion>
+  readonly otherOpenPledges: Amount
   readonly funding: FundingFacts
 }
 
 const networksOfChain: Readonly<Record<Chain, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "RobinhoodChain", solana: "Solana" }
 
-schema SnapshotRow { readonly asset_address: string; readonly asset_decimals: number; readonly free_balance: string | null; readonly block_time: string; readonly observed_at: string }
+schema SnapshotRow { readonly asset_address: string; readonly asset_decimals: number; readonly free_balance: string | null; readonly block_time: string; readonly observed_at: string; readonly open_pledged_gross: string | null }
 schema EarlierRow { readonly gross_base: string }
 schema CountRow { readonly outstanding: number; readonly reserved: number }
 schema BanRow { readonly github_id: string; readonly ban: number }
@@ -53,7 +57,7 @@ effect function placeOf(loaded: Loaded) {
 }
 
 effect function snapshotOf(key: MonthKey, place: VaultPlace) {
-  return try first(SnapshotRow, sql`SELECT asset_address, asset_decimals, free_balance, block_time, observed_at FROM vault_snapshots WHERE project_id = ${key.projectId} AND network = ${place.network} AND vault = ${place.vault}`)
+  return try first(SnapshotRow, sql`SELECT asset_address, asset_decimals, free_balance, block_time, observed_at, open_pledged_gross FROM vault_snapshots WHERE project_id = ${key.projectId} AND network = ${place.network} AND vault = ${place.vault}`)
 }
 
 effect function earlierOf(key: MonthKey, place: VaultPlace) {
@@ -65,6 +69,18 @@ effect function earlierOf(key: MonthKey, place: VaultPlace) {
     total += gross
   }
   return total
+}
+
+effect function heldBackOf(key: MonthKey, place: VaultPlace | undefined) {
+  const none = { amount: amountOf(0n), hold: undefined as PledgeHold | undefined }
+  if (place === undefined || !isNetworkKey(place.network)) return none
+  const snapshot = try snapshotOf(key, place)
+  if (snapshot === undefined) return none
+  const found = try rows(PledgeRow, sql`SELECT network, vault, period, amount, open, block_number FROM vault_month_pledges WHERE project_id = ${key.projectId} AND network = ${place.network} AND vault = ${place.vault} ORDER BY period`)
+  const total = try storedTotalOf(snapshot.open_pledged_gross)
+  const amount = otherOpenPledges(total, try storedPledgesOf(found), modelNetwork(place.network), place.vault, key.period)
+  const open = found.filter((row) => row.open === 1).map((row) => `${row.period}:${row.amount}`).join(",")
+  return { amount, hold: { total: snapshot.open_pledged_gross, open } satisfies PledgeHold }
 }
 
 effect function bansOf(month: Loaded) {
@@ -183,6 +199,7 @@ export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
   const vault = try vaultOf(key, loaded, place)
   const counts = place === undefined ? { outstanding: 0, reserved: 0 } : try countsOf(place)
   const state = try decodeState({ month: loaded.state, escrow: chain?.escrow ?? vault.escrow, headTime: chain?.headTime ?? vault.headTime })
+  const heldBack = try heldBackOf(key, place)
   return {
     key,
     loaded,
@@ -190,16 +207,21 @@ export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
     state,
     earlierUnreserved: place === undefined ? 0n : try earlierOf(key, place),
     bans: try bansOf(loaded),
-    funding: { outstanding: counts.outstanding, reserved: counts.reserved, vault: vault.reading },
+    otherOpenPledges: heldBack.amount,
+    funding: { outstanding: counts.outstanding, reserved: counts.reserved, vault: vault.reading, pledges: heldBack.hold },
   } satisfies Settlement
 }
 
 export type Decided = Extract<Event, { readonly type: "createObligations" | "noteUnderfunded" | "autoFreeze" | "finalize" | "adjust" }>
 
+export function monthObservation(settlement: Settlement, earlierUnreserved: Amount) {
+  return { ...observation(settlement.state, earlierUnreserved), otherOpenPledges: settlement.otherOpenPledges }
+}
+
 function monthEventOf(settlement: Settlement, event: Decided) {
   switch (event.type) {
-    case "createObligations": return { type: "createObligations" as const, observation: observation(settlement.state, event.earlierUnreserved), bans: event.bans }
-    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: observation(settlement.state, event.earlierUnreserved), bans: event.bans }
+    case "createObligations": return { type: "createObligations" as const, observation: monthObservation(settlement, event.earlierUnreserved), bans: event.bans }
+    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: monthObservation(settlement, event.earlierUnreserved), bans: event.bans }
     case "autoFreeze": return event
     case "finalize": return event
     case "adjust": return event

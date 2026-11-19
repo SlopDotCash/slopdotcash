@@ -1,0 +1,309 @@
+// spec/fees/solanaRpcRotation.md, "Story: Replace the Solana RPC pair of the exact active fee Worker"; spec/fees/solanaRpcRotation.md, "A rotation starts only from protected manual main, the exact pinned active version and byte-identical fee source"; spec/fees/solanaRpcRotation.md, "A prior failed run's witness supplies history only, never authority"; spec/fees/solanaRpcRotation.md, "The rotation takes the Solana lease only after qualifying the new pair, and stops at any boundary where the version, main or lease changed"; spec/fees/solanaRpcRotation.md, "A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated"; spec/fees/solanaRpcRotation.md, "An uncertain activation keeps its lease until it expires, and every other end releases only its own lease"; spec/fees/solanaRpcRotation.md, "Each phase is in the receipt before the next starts, and phases only move forward"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { isoNow } from "@repo/platform/clock"
+import { d1Http } from "@repo/platform/d1Http"
+import { type CommandFailure, type Pin, type WorkerVersion as Deployed, activateCandidate, cloudflare, confirmActivation, inspectVersion, pinActive, pinnedWrangler, requireLiveMain, requireRotationBase, requireSameWorker, uploadCandidate, workerState } from "@repo/operations/rpc"
+import type { Event as JournalEvent } from "../../gen/fees__conversion.effect.vibe"
+import { type BoundaryCheck, type Event, type Rotation, type RotationPhase, type RpcPair, type WorkerVersion, boundaryHolds, canReleaseLease, initial, machineOver, noPair, noVersion } from "../../gen/fees__solanaRpcRotation.effect.vibe"
+import { type Instance, type Names, ledger } from "../journal/codec.vibe"
+import { send as journalSend } from "../journal/store.vibe"
+import { rotationPrefix } from "../journal/writes.vibe"
+import { unpublished } from "../runtime/config.vibe"
+import { requireSolanaProbeCandidate } from "./feeTail.ts"
+import { feeSourceParity } from "./feeSourceParity.vibe"
+import { type SolanaPair, pairOperators, qualifyPair, recordFile, solanaPublicPair, validatePriorRotationProof } from "./solanaRpcPair.vibe"
+
+export error RotationStopped { step: string; phase: RotationPhase }
+export error RotationFailed { message: string }
+
+export interface Receipt {
+  readonly schemaVersion: 1
+  readonly checkout: string
+  readonly previousVersion: string
+  readonly deployedSource: string
+  readonly phase: string
+  readonly sourceFiles: number
+  readonly priorProofSha256?: string
+  readonly priorRun?: string
+  readonly priorSource?: string
+  readonly proofSha256?: string
+  readonly runId?: string
+  readonly candidateVersion?: string
+  readonly deploymentCommand?: CommandFailure
+  readonly verifiedAt?: string
+}
+
+export type ReceiptFields = Partial<Omit<Receipt, "schemaVersion" | "phase">>
+
+export interface RotationRun {
+  state(): Rotation!!
+  receipt(): Receipt!!
+  send(event: Event, fields?: ReceiptFields): Rotation!RotationStopped
+  note(fields: ReceiptFields): void!!
+}
+
+export const receiptFile = "fee-solana-rpc-rotation.json"
+export const proofFile = "solana-rpc-rotation-proof.json"
+export const rotationScope = "rotation:"
+
+const receiptPhases: Partial<Record<RotationPhase, string>> = { Qualifying: "qualification", AcquiringLease: "acquiring-lease", Leased: "leased", Uploaded: "uploaded", Deploying: "deploying", Verified: "verified" }
+const sourceSha = /^[a-f0-9]{40}$/u
+const versionId = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const accountId = /^[a-f0-9]{32}$/u
+const priorRunNumber = /^[1-9][0-9]*$/u
+const rotatedSecrets = ["RPC_URL_SOLANA", "SOLANA_RECOVERY_RPC_URL"]
+const pinnedBindings = ["FEE_DB", "FEE_WALLET_KEY_SOLANA", ...rotatedSecrets]
+const readbackAttempts = 10
+const refusedLine = "Solana fee RPC rotation refused; review the safe phase receipt"
+
+function failed(message: string) {
+  return new RotationFailed({ message })
+}
+
+effect function saved(fs: FileSystem.FileSystem, path: Path.Path, directory: string, file: string, receipt: Receipt) {
+  const output = path.join(directory, file)
+  const temporary = `${output}.tmp`
+  try scoped(effect {
+    const written = try fs.open(temporary, { flag: "w", mode: 0o600 })
+    try written.writeAll(new TextEncoder().encode(`${JSON.stringify(receipt, null, 2)}\n`))
+    try written.sync
+  })
+  try fs.rename(temporary, output)
+  try scoped(effect {
+    const folder = try fs.open(directory, { flag: "r" })
+    try folder.sync
+  })
+}
+
+export effect function startRun(directory: string, first: Receipt) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const held = try Ref.make(initial)
+  const receipt = try Ref.make(first)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  effect function keep(fields: ReceiptFields, phase?: string) {
+    const next = { ...(try Ref.get(receipt)), ...fields, ...phase === undefined ? {} : { phase } } satisfies Receipt
+    try Ref.set(receipt, next)
+    try orDie(saved(fs, path, directory, receiptFile, next))
+  }
+  effect function send(event: Event, fields: ReceiptFields = {}) {
+    const before = try machine.get()
+    const next = machine.send(event) catch effect (error) => {
+      throw new RotationStopped({ step: event.type, phase: error.state.phase })
+    }
+    const written = receiptPhases[next.phase]
+    if (next.phase !== before.phase && written !== undefined) try keep(fields, written)
+    return next
+  }
+  return { state: () => machine.get(), receipt: () => Ref.get(receipt), send, note: (fields: ReceiptFields) => keep(fields) } satisfies RotationRun
+}
+
+effect function holds<E, R>(check: void!E!R) {
+  return Effect.as(check, true) catch () => false
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable)
+  if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, stable(entry)]))
+  return value
+}
+
+function textOf(binding: Readonly<Record<string, unknown>> | undefined, key: string) {
+  const value = binding?.[key]
+  return typeof value === "string" ? value : ""
+}
+
+function modelVersion(names: Names, version: Deployed, pair: RpcPair): WorkerVersion {
+  const bindings = version.resources?.bindings ?? []
+  const named = (name: string) => bindings.find((binding) => binding.name === name)
+  const others = bindings.filter((binding) => !pinnedBindings.includes(textOf(binding, "name")))
+  const secret = (binding: Readonly<Record<string, unknown>>) => textOf(binding, "type").startsWith("secret_")
+  const database = named("FEE_DB")
+  return {
+    version: names.number("version", version.id),
+    number: version.number,
+    source: names.number("source", version.annotations?.["workers/tag"] ?? ""),
+    codeHash: names.number("hash", version.resources?.script?.etag ?? ""),
+    runtime: names.number("setting", `runtime:${JSON.stringify(stable(version.resources?.script_runtime ?? null))}`),
+    settings: names.number("setting", `settings:${JSON.stringify(stable(others.filter((binding) => !secret(binding))))}`),
+    otherBindings: names.number("setting", `bindings:${JSON.stringify(stable(others.filter(secret).map((binding) => [textOf(binding, "name"), textOf(binding, "type")])))}`),
+    database: names.number("setting", `database:${textOf(database, "type") === "d1" ? textOf(database, "database_id") || textOf(database, "id") : ""}`),
+    signer: textOf(named("FEE_WALLET_KEY_SOLANA"), "type") === "secret_text",
+    rpc: rotatedSecrets.every((name) => textOf(named(name), "type") === "secret_text") ? pair : noPair,
+  }
+}
+
+effect function text(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function rotationInputs() {
+  const candidateText = try Config.withDefault(Config.Redacted("SLOP_SOLANA_RPC_CANDIDATE"), Redacted.make(""))
+  const candidate = requireSolanaProbeCandidate(Redacted.value(candidateText))
+  if (candidate === undefined) throw failed("Expected the existing private Helius RPC candidate")
+  const sha = try text("GITHUB_SHA")
+  const expectedVersion = try text("SLOP_SOLANA_RPC_EXPECTED_VERSION")
+  const expectedSource = try text("SLOP_SOLANA_RPC_EXPECTED_SOURCE")
+  const token = try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make(""))
+  const account = try text("CLOUDFLARE_ACCOUNT_ID")
+  const manualMain = (try text("GITHUB_EVENT_NAME")) === "workflow_dispatch" && (try text("GITHUB_REF")) === "refs/heads/main"
+  const releaseEnabled = (try text("SLOP_FEE_CONVERTER_RELEASE")) === "enabled"
+  const pinned = sourceSha.test(sha) && sourceSha.test(expectedSource) && versionId.test(expectedVersion) && accountId.test(account) && Redacted.value(token) !== "" && (try text("NODE_TLS_REJECT_UNAUTHORIZED")) !== "0"
+  if (!manualMain || !releaseEnabled || !pinned) throw failed("Solana RPC rotation requires protected manual main and exact active pins")
+  const runnerTemp = try text("RUNNER_TEMP")
+  if (!runnerTemp.startsWith("/")) throw failed("Protected runner output unavailable")
+  const pair: SolanaPair = [Redacted.make(candidate), Redacted.make(solanaPublicPair[1])]
+  return { sha, expectedVersion, expectedSource, account, token, runnerTemp, pair, manualMain, releaseEnabled } satisfies Inputs
+}
+
+interface Inputs {
+  readonly sha: string
+  readonly expectedVersion: string
+  readonly expectedSource: string
+  readonly account: string
+  readonly token: Redacted.Redacted<string>
+  readonly runnerTemp: string
+  readonly pair: SolanaPair
+  readonly manualMain: boolean
+  readonly releaseEnabled: boolean
+}
+
+effect function priorWitness(run: RotationRun, inputs: Inputs, names: Names, directory: string) {
+  const priorDirectory = try text("SLOP_SOLANA_RPC_PRIOR_PROOF_DIRECTORY")
+  if (priorDirectory === "") return
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const priorReceipt = fs.readFileString(path.join(priorDirectory, receiptFile)) catch effect () => {
+    throw failed("Prior proof run unavailable")
+  }
+  const proofBytes = fs.readFile(path.join(priorDirectory, proofFile)) catch effect () => {
+    throw failed("Prior proof run unavailable")
+  }
+  const priorSource = try text("SLOP_SOLANA_RPC_PRIOR_SOURCE")
+  const priorRun = try text("SLOP_SOLANA_RPC_PRIOR_RUN")
+  if (!priorRunNumber.test(priorRun)) throw failed("Prior proof run unavailable")
+  const parsed = Effect.try(() => JSON.parse(priorReceipt) as unknown) catch effect () => {
+    throw failed("Prior rotation was not stopped before activation")
+  }
+  const witness = validatePriorRotationProof(parsed, proofBytes, inputs.pair, priorSource, names) catch effect (error) => {
+    throw failed("issue" in error ? error.issue : "Prior rotation was not stopped before activation")
+  }
+  try run.send({ type: "supplyPriorWitness", witness })
+  try fs.writeFile(path.join(directory, recordFile), proofBytes, { mode: 0o600, flag: "wx" })
+  try run.note({ priorProofSha256: try sha256Hex(proofBytes), priorRun, priorSource })
+}
+
+const failedCheck: BoundaryCheck = { passed: false, mainUnchanged: false, baseActive: false, leaseRenewed: false }
+const unreported: CommandFailure = { category: "command-failed", exitCode: null, providerCode: null }
+
+interface Lease {
+  readonly instance: Instance
+  readonly names: Names
+  readonly rotationId: number
+}
+
+effect function leaseStep(lease: Lease, event: JournalEvent) {
+  return Effect.as(journalSend(lease.instance, lease.names, event, "ReleaseWorkflow"), true) catch () => false
+}
+
+effect function boundary(inputs: Inputs, root: string, pin: Pin, latest: string, leaseRenewed: boolean) {
+  const mainUnchanged = try holds(requireLiveMain(root, inputs.sha))
+  const baseActive = try holds(effect { try requireRotationBase(try workerState(), inputs.expectedVersion, latest, pin.deploymentId) })
+  return { passed: true, mainUnchanged, baseActive, leaseRenewed } satisfies BoundaryCheck
+}
+
+effect function qualified(run: RotationRun, inputs: Inputs, root: string, pin: Pin, directory: string, runId: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const passed = try holds(qualifyPair(directory, inputs.pair))
+  const proof = path.join(directory, recordFile)
+  const retained = path.join(inputs.runnerTemp, proofFile)
+  if (try fs.exists(proof)) try fs.writeFile(retained, try fs.readFile(proof), { mode: 0o600 })
+  if (!passed) return try run.send({ type: "qualify", check: failedCheck })
+  try run.note({ proofSha256: try sha256Hex(try fs.readFile(retained)) })
+  return try run.send({ type: "qualify", check: try boundary(inputs, root, pin, inputs.expectedVersion, false) }, { runId })
+}
+
+effect function inspected(names: Names, candidate: string, pair: RpcPair) {
+  if (candidate === "") return { found: undefined, model: noVersion }
+  const found = inspectVersion(candidate) catch () => undefined
+  return { found, model: found === undefined ? { ...noVersion, version: names.number("version", candidate) } : modelVersion(names, found, pair) }
+}
+
+effect function leased(run: RotationRun, inputs: Inputs, root: string, pin: Pin, lease: Lease) {
+  const pair = (try run.state()).pair
+  const renew = () => leaseStep(lease, { type: "renewRotationLease", rotationId: lease.rotationId })
+  const beforeUpload = try boundary(inputs, root, pin, inputs.expectedVersion, try renew())
+  let candidate = ""
+  if (boundaryHolds(beforeUpload)) candidate = uploadCandidate(pin, { RPC_URL_SOLANA: inputs.pair[0], SOLANA_RECOVERY_RPC_URL: inputs.pair[1] }) catch () => ""
+  const uploaded = try inspected(lease.names, candidate, pair)
+  if ((try run.send({ type: "upload", uploaded: uploaded.model, check: beforeUpload }, { candidateVersion: candidate })).phase !== "Uploaded") return
+  const same = uploaded.found !== undefined && (try holds(requireSameWorker(pin.before, uploaded.found, inputs.sha, "solana")))
+  const beforeDeploy = { ...(try boundary(inputs, root, pin, candidate, try renew())), passed: same }
+  if ((try run.send({ type: "deploy", check: beforeDeploy })).phase !== "Deploying") return
+  const activation = activateCandidate(pin, candidate) catch () => ({ activation: "Unknown" as const, command: unreported })
+  if (activation.activation === "Unknown") try run.note({ deploymentCommand: activation.command })
+  const confirmation = try confirmActivation(pin, candidate, readbackAttempts)
+  const confirmed = confirmation.outcome === "Confirmed" && (try renew())
+  try run.send({ type: "confirmActivation", result: confirmed ? "Confirmed" : "Ambiguous" }, { verifiedAt: try isoNow() })
+}
+
+effect function stopHere(run: RotationRun) {
+  const phase = (try run.state()).phase
+  if (phase === "Leased") try run.send({ type: "upload", uploaded: noVersion, check: failedCheck })
+  if (phase === "Uploaded") try run.send({ type: "deploy", check: failedCheck })
+  if (phase === "Deploying") try run.send({ type: "confirmActivation", result: "Ambiguous" })
+}
+
+effect function rotation(root: string) {
+  const inputs = try rotationInputs()
+  const names = ledger()
+  provide cloudflare({ root, wrangler: pinnedWrangler(root) }) {
+    const pin = try pinActive({ root, kind: "solana", sha: inputs.sha, pinnedSource: inputs.expectedSource, expected: inputs.expectedVersion, runnerTemp: inputs.runnerTemp })
+    const sourceFiles = try feeSourceParity(root, inputs.expectedSource, inputs.sha)
+    const pair = pairOperators(inputs.pair)
+    const run = try startRun(inputs.runnerTemp, { schemaVersion: 1, checkout: inputs.sha, previousVersion: inputs.expectedVersion, deployedSource: inputs.expectedSource, phase: "qualification", sourceFiles })
+    try run.send({ type: "startRotation", request: {
+      manualMain: inputs.manualMain,
+      releaseEnabled: inputs.releaseEnabled,
+      checkout: names.number("source", inputs.sha),
+      pinnedVersion: names.number("version", inputs.expectedVersion),
+      pinnedSource: names.number("source", inputs.expectedSource),
+      active: modelVersion(names, pin.before, noPair),
+      onlyActiveAndLatest: true,
+      sourceParity: true,
+      reviewedDatabase: names.number("setting", `database:${pin.database}`),
+      pair,
+    } })
+    try scoped(effect {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectoryScoped({ directory: inputs.runnerTemp, prefix: "fee-solana-rotation-" })
+      try priorWitness(run, inputs, names, directory)
+      const rotationName = try randomId()
+      const instance: Instance = { network: "Solana", scope: rotationScope, epoch: 0, held: unpublished, tokens: [], receipts: [], vaults: [] }
+      const lease: Lease = { instance, names, rotationId: names.number("rotation", rotationName) }
+      if ((try qualified(run, inputs, root, pin, directory, `${rotationPrefix}${rotationScope}${rotationName}`)).phase !== "AcquiringLease") return
+      provide d1Http({ accountId: inputs.account, databaseId: pin.database, token: inputs.token }) {
+        const acquired = try leaseStep(lease, { type: "acquireRotationLease", rotationId: lease.rotationId })
+        if ((try run.send({ type: "leaseOutcome", acquired })).phase !== "Leased") return
+        leased(run, inputs, root, pin, lease) catch () => undefined
+        try stopHere(run)
+        if (canReleaseLease(try run.state())) {
+          try run.send({ type: "releaseLease" })
+          if (!(try leaseStep(lease, { type: "releaseRotationLease", rotationId: lease.rotationId }))) throw failed(refusedLine)
+        }
+      }
+    })
+    const end = try run.state()
+    if (end.phase !== "Verified") throw failed(refusedLine)
+    try Console.log(JSON.stringify(try run.receipt()))
+  }
+}
+
+export effect function rotateSolanaRpc(args: ReadonlyArray<string>) {
+  const [root = ".", ...rest] = args
+  if (rest.length > 0) throw failed("usage: rotate-solana-rpc [root]")
+  return rotation(root) catch effect () => {
+    throw failed(refusedLine)
+  }
+}

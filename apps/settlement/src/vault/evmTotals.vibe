@@ -1,7 +1,8 @@
-// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month's pledge and the vault's open total"
 import { type BlockRef, EvmRpc } from "@repo/platform/chain/evm"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeUint, escrowGetter, evmAddress, factoryGetter } from "../chain/evm/abi.ts"
+import { type ChainMonthPledge, OPEN_PLEDGED_GROSS_CALL, decodeMonthPledge, decodeOpenPledgedGross, monthPledgeCall } from "../chain/evm/actions.ts"
 import { vaultKey, vaultsCall } from "../chain/evm/factories.ts"
 import { DECIMALS_CALL, PENDING_MONTHLY_CALL, TOKEN_CALL, TOTALS_CALL, conservedTotals, needsPendingMonthly, readTotals, totalsRefusalMessage } from "../chain/evm/totals.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
@@ -25,6 +26,11 @@ export interface ChainTotals {
   readonly reservedFees: bigint | undefined
   readonly accruedFees: bigint | undefined
   readonly reserved: bigint | undefined
+}
+
+export interface ChainPledges {
+  readonly openPledgedGross: bigint
+  readonly pledges: ReadonlyArray<ChainMonthPledge>
 }
 
 const WORD = /^0x[0-9a-fA-F]{64}$/u
@@ -163,4 +169,30 @@ export effect function readEvmTotals(deployment: EvmDeployment) {
     accruedFees: counters.accruedFees,
     reserved: outcome.totals.reserved,
   } satisfies ChainTotals
+}
+
+effect function pledgeCall(period: number) {
+  return try Effect.try({ try: () => monthPledgeCall(period), catch: () => new DeploymentMismatch({ message: "Invalid pledge period" }) })
+}
+
+effect function monthPledge(vault: EvmAddress, period: number, block: bigint) {
+  const answer = try (try EvmRpc).call({ to: vault, data: try pledgeCall(period), block })
+  return try Effect.try({ try: () => decodeMonthPledge(period, answer), catch: () => new DeploymentMismatch({ message: "Malformed month pledge" }) })
+}
+
+export effect function readEvmMonthPledges(deployment: EvmDeployment, block: bigint, periods: ReadonlyArray<number>) {
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined) throw new DeploymentMismatch({ message: "Invalid vault" })
+  const rpc = try EvmRpc
+  if ((try rpc.code(vault, block)) === "0x") return undefined
+  const open = rpc.call({ to: vault, data: OPEN_PLEDGED_GROSS_CALL, block }) catch effect (error) => {
+    if (error._tag === "RpcRefused" && error.emptyRevert) return undefined
+    throw error
+  }
+  if (open === undefined) return undefined
+  const openPledgedGross = decodeOpenPledgedGross(open)
+  if (openPledgedGross === undefined) throw new DeploymentMismatch({ message: "Malformed month pledge" })
+  const pledges: ChainMonthPledge[] = []
+  for (const period of periods) pledges.push(try monthPledge(vault, period, block))
+  return { openPledgedGross, pledges } satisfies ChainPledges
 }

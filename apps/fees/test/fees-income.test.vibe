@@ -611,6 +611,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       JSON.stringify({ scriptName: feeWorker, outcome: "exception", exceptions: [{ message: `${leaked} rate limit 429` }], logs: [{ message: [JSON.stringify({ event: "fee_claim_error", network: "solana", error: `${leaked} invalid signer key`, raw: leaked }), JSON.stringify({ event: leaked, network: "solana" })] }] }),
       JSON.stringify({ scriptName: feeWorker, outcome: "ok", logs: [
         { level: "warn", message: ["[2026-11-17T00:00:00.000Z] WARN (#4):", "fee_buyback_error", { network: "Robinhood", leg: "buyback 0x1234567890123456789012345678901234567890", error: "RpcUnavailable", endpoint: "https://private.invalid/rpc?api-key=PRIVATE_RPC_KEY" }] },
+        { level: "warn", message: ["[2026-11-17T00:00:00.500Z] WARN (#4):", "fee_buyback_undecided", { network: "Base", error: "DlnUnavailable", txId: "0xPRIVATE_TX" }] },
         { level: "log", message: ["[2026-11-17T00:00:01.000Z] INFO (#4):", "fee_claim_skipped", { network: "Solana", vault: solanaVault, amount: "1", reason: "below the minimum" }] },
         { level: "warn", message: ["[2026-11-17T00:00:02.000Z] WARN (#4):", "fee_claim_error", { network: "Solana", error: "Solana getAccountInfo: IP blocked PRIVATE_RPC_KEY" }] },
       ] }),
@@ -622,6 +623,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       { outcome: "exception", exceptionCategories: ["rpc-rate-limit"], records: [{ event: "fee_claim_error", network: "solana", errorCategory: "signer-configuration" }] },
       { outcome: "ok", exceptionCategories: [], records: [
         { event: "fee_buyback_error", network: "robinhood", leg: "buyback", errorCategory: "rpc-unavailable" },
+        { event: "fee_buyback_undecided", network: "base", errorCategory: "bridge-verification" },
         { event: "fee_claim_skipped", network: "solana", vault: solanaVault, errorCategory: "below-minimum" },
         { event: "fee_claim_error", network: "solana", errorCategory: "rpc-blocked", rpcMethod: "getAccountInfo" },
       ] },

@@ -27,7 +27,7 @@ const environments: Readonly<Record<string, Environment>> = { production: "Produ
 
 schema WranglerFile { name: string; vars: Readonly<Record<string, string>> }
 
-const Envelope = Schema.Struct({ success: Schema.Boolean, result: Schema.optionalKey(Schema.Unknown) })
+export const Envelope = Schema.Struct({ success: Schema.Boolean, result: Schema.optionalKey(Schema.Unknown) })
 
 schema DeployedVersion { version_id: string; percentage: number }
 
@@ -128,20 +128,30 @@ function provider(names: ReadonlySet<string>, matched: boolean, name: keyof type
   return matched ? sourceDefaults[name] : "binding-absent-source-not-matched"
 }
 
-export effect function inspectFeeWorker(args: ReadonlyArray<string>) {
-  const [root = ".", named = "production", ...rest] = args
-  const environment = environments[named]
-  if (environment === undefined || rest.length > 0) throw failed(`usage: ${usage}`)
-  if ((try setting("GITHUB_REF")) !== "refs/heads/main") throw failed("Inspect only from main")
-  const accountId = (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? ""
-  const token = Option.getOrUndefined(try Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN")))
-  if (!account.test(accountId) || token === undefined || Redacted.value(token) === "") throw failed("Production credentials unavailable")
-  const checkedSource = (try setting("GITHUB_SHA")) ?? ""
-  if (!sourceSha.test(checkedSource)) throw failed("Invalid checked source")
-  const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
-  if (runnerTemp === "") throw failed("Runner temporary directory unavailable")
-  const reviewed = try wranglerFile(root, named)
-  const get = metadata(accountId, token, reviewed.name)
+export interface ActiveVersion {
+  readonly deploymentId: string
+  readonly versionId: string
+  readonly sourceCommit: string
+  readonly checkedSource: string
+  readonly sourceMatchesCheckout: boolean
+}
+
+export interface PinRequest {
+  readonly accountId: string
+  readonly token: Redacted.Redacted<string> | undefined
+  readonly worker: string
+  readonly checkedSource: string
+}
+
+effect function checkedToken(request: Omit<PinRequest, "worker">) {
+  const token = request.token
+  if (!account.test(request.accountId) || token === undefined || Redacted.value(token) === "") throw failed("Production credentials unavailable")
+  if (!sourceSha.test(request.checkedSource)) throw failed("Invalid checked source")
+  return token
+}
+
+effect function pinned(request: PinRequest, token: Redacted.Redacted<string>) {
+  const get = metadata(request.accountId, token, request.worker)
   const before = try active(try get("deployments"))
   const version = Schema.decodeUnknownEffect(Version)(try get(`versions/${before.versionId}`)) catch effect () => { throw failed("Version identity mismatch") }
   if (version.id !== before.versionId) throw failed("Version identity mismatch")
@@ -153,16 +163,40 @@ export effect function inspectFeeWorker(args: ReadonlyArray<string>) {
   if (after.id !== before.id || after.versionId !== before.versionId) throw failed("Deployment changed during inspection")
   const sourceCommit = version.annotations?.["workers/tag"] ?? ""
   if (!sourceSha.test(sourceCommit)) throw failed("Missing source commit tag")
+  const pin: ActiveVersion = { deploymentId: before.id, versionId: version.id, sourceCommit, checkedSource: request.checkedSource, sourceMatchesCheckout: sourceCommit === request.checkedSource }
+  return { pin, bindings }
+}
+
+export effect function activeVersion(request: PinRequest) {
+  return (try pinned(request, try checkedToken(request))).pin
+}
+
+export effect function inspectFeeWorker(args: ReadonlyArray<string>) {
+  const [root = ".", named = "production", ...rest] = args
+  const environment = environments[named]
+  if (environment === undefined || rest.length > 0) throw failed(`usage: ${usage}`)
+  if ((try setting("GITHUB_REF")) !== "refs/heads/main") throw failed("Inspect only from main")
+  const request = {
+    accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "",
+    token: Option.getOrUndefined(try Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN"))),
+    checkedSource: (try setting("GITHUB_SHA")) ?? "",
+  }
+  const token = try checkedToken(request)
+  const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
+  if (runnerTemp === "") throw failed("Runner temporary directory unavailable")
+  const reviewed = try wranglerFile(root, named)
+  const { pin, bindings } = try pinned({ ...request, worker: reviewed.name }, token)
+  const { sourceCommit, checkedSource } = pin
   const secretNames = bindings.filter((binding) => binding.type.startsWith("secret_")).map((binding) => binding.name).sort()
   const names = new Set(bindings.map((binding) => binding.name))
   const plaintext = new Map(bindings.filter((binding) => binding.type === "plain_text").map((binding) => [binding.name, binding.text] as const))
-  const matched = sourceCommit === checkedSource
+  const matched = pin.sourceMatchesCheckout
   const comparison = compareBindings(expectedBindings(reviewed.vars, environment, matched), bindings)
   const report = {
     schemaVersion: 1,
     worker: reviewed.name,
-    deploymentId: before.id,
-    versionId: version.id,
+    deploymentId: pin.deploymentId,
+    versionId: pin.versionId,
     sourceCommit,
     checkedSource,
     sourceMatchesCheckout: matched,

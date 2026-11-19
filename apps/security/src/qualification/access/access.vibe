@@ -1,0 +1,286 @@
+// spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { retentionBucket } from "@repo/platform/r2"
+import { evidencePolicy } from "../../client/evidence.vibe"
+import { partBytes } from "../../evidence/layout.ts"
+import { location } from "../../evidence/objects.vibe"
+import { type Ask, FixtureRefused, type Session, ask, endSessions, isoNow, now, promised, respond, session, signedAsk, status, verify } from "../flags/requests.vibe"
+import { type FixtureEnv, fixtureSite, publicReadToken } from "../flags/site.vibe"
+import { type SiteResponse, fixtureKeys, githubFixture } from "../flags/transport.ts"
+
+schema Granted { grant: string; expiresInSeconds: number }
+schema Closed { closedAt: string }
+schema StoredGrant { operator_github_id: string; reason: string; consumed_at: string | null }
+schema AuditRow { actor: string; action: string; reason: string }
+schema StateRow { state: string }
+schema ObjectRow { object_key: string; sha256: string; size_bytes: number; storage: string; storage_generation: string | null }
+
+const root = "/api/v1/operator/vetting-evidence"
+const runId = "run"
+const other = "900000099"
+const day = 86_400_000
+const encoder = new TextEncoder()
+const grantReason = "Inspect harmless hosted qualification bytes"
+
+interface Fixture {
+  readonly id: string
+  readonly sha: string
+  readonly data: Uint8Array
+  readonly path: string
+}
+
+export effect function qualifyAccess(env: FixtureEnv) {
+  const db = try D1
+  const objects = retentionBucket(env.EVIDENCE_SOURCE)
+  const owner = evidencePolicy.policyAuthorityGithubId
+  const reader = evidencePolicy.operatorGithubIds[1] ?? ""
+  const keys = try promised("Fixture keys were not generated", () => fixtureKeys())
+  const key = Redacted.make(keys.jwk)
+  const site = fixtureSite(env, { keys, github: githubFixture([], publicReadToken), templateSha256: try sha256Hex(env.QUALIFICATION_RUN), administrator: other })
+  const sessions = new Map<string, Session>()
+  for (const id of [owner, reader, other]) sessions.set(id, try session({ actorId: `qualification-${id}`, githubId: id, login: "synthetic-qualification" }))
+  const started = try now()
+  let stored = 0
+  let bytes = 0
+
+  function cookieOf(actor: string | null) {
+    return actor === null ? undefined : sessions.get(actor)?.cookie
+  }
+
+  effect function request(path: string, actor: string | null, options: Ask = {}) {
+    return try ask(site, path, { ...options, as: [cookieOf(actor), options.as].filter((part) => part !== undefined).join("; ") || undefined })
+  }
+
+  effect function signedOk(method: "POST" | "PUT", path: string, body: Uint8Array, contentType: string) {
+    const answer = try signedAsk(site, key, method, path, body, contentType)
+    try verify(answer.status >= 200 && answer.status < 300, "Fixture evidence was refused")
+  }
+
+  effect function fixture(id: string, data: Uint8Array, closedDays?: number, permanentAdmission = false) {
+    const sha = try sha256Hex(data)
+    const at = try isoNow()
+    try db.run(sql`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state)
+      VALUES(${id},'qualification-only',1,${"a".repeat(64)},${"b".repeat(64)},${"c".repeat(40)},${"d".repeat(64)},${owner},'synthetic-qualification',${at},'Harmless access qualification','pending')`)
+    const chunked = data.length > partBytes
+    const chunks: Array<{ readonly index: number; readonly sha256: string; readonly sizeBytes: number; readonly offset: number }> = []
+    if (chunked) for (let offset = 0; offset < data.length; offset += partBytes) {
+      const size = Math.min(partBytes, data.length - offset)
+      chunks.push({ index: chunks.length, sha256: try sha256Hex(data.subarray(offset, offset + size)), sizeBytes: size, offset })
+    }
+    const service = `/api/v1/vetting/evidence/${id}/${runId}`
+    const object = { sha256: sha, sizeBytes: data.length, kind: "trace", label: "Harmless qualification bytes", contentType: "application/octet-stream", ...(chunked ? { chunks: chunks.map(({ offset, ...chunk }) => chunk) } : {}) }
+    try signedOk("POST", service, encoder.encode(JSON.stringify({ traceSha256: sha, objects: [object] })), "application/json")
+    if (chunked) {
+      for (const chunk of chunks) try signedOk("PUT", `${service}/${sha}/chunks/${chunk.index}`, data.subarray(chunk.offset, chunk.offset + chunk.sizeBytes), "application/octet-stream")
+      try signedOk("POST", `${service}/${sha}/finalize`, encoder.encode("{}"), "application/json")
+    } else try signedOk("PUT", `${service}/${sha}`, data, "application/octet-stream")
+    stored += chunked ? chunks.length : 1
+    bytes += data.length
+    const finished = new Date(started - (closedDays ?? 0) * day).toISOString()
+    if (permanentAdmission) {
+      try db.run(sql`UPDATE vetting_assessments SET state='clean',result=${JSON.stringify({ schemaVersion: "slop-vetting-result-v2", disposition: "clean" })},completed_at=${finished} WHERE id=${id}`)
+    } else {
+      try db.run(sql`UPDATE vetting_assessments SET state='incomplete',completed_at=${at} WHERE id=${id}`)
+      if (closedDays !== undefined) try db.run(sql`INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(${id},${finished},${owner},'Synthetic aged case')`)
+    }
+    return { id, sha, data, path: `${root}/${id}/${runId}/${sha}` } satisfies Fixture
+  }
+
+  effect function grant(path: string, actor = owner) {
+    const answer = try request(`${path}/grant`, actor, { body: { reason: grantReason } })
+    try verify(answer.status === 201, "Read grant failed")
+    const body = Schema.decodeUnknownEffect(Granted)(answer.body) catch effect () => {
+      throw new FixtureRefused({ issue: "Read grant answer changed" })
+    }
+    try verify(body.expiresInSeconds === evidencePolicy.readGrantDurationSeconds, "Grant duration changed")
+    return body.grant
+  }
+
+
+  effect function objectOf(id: string) {
+    const row = try first(ObjectRow, sql`SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=${id}`)
+    if (row === undefined) throw new FixtureRefused({ issue: "Fixture object row is missing" })
+    return location(row)
+  }
+
+  effect function auditOf(id: string) {
+    return try rows(AuditRow, sql`SELECT actor,action,reason FROM vetting_evidence_audit WHERE assessment_id=${id}`)
+  }
+
+  effect function streamed(response: SiteResponse, limit?: number) {
+    const body = response.body
+    if (body === null) throw new FixtureRefused({ issue: "Download body missing" })
+    const reader = body.getReader()
+    const parts: Uint8Array[] = []
+    let size = 0
+    for (;;) {
+      const next = try promised("Download stream failed", () => reader.read())
+      if (next.done) break
+      try verify(next.value.length <= partBytes, "Download chunk exceeded bound")
+      parts.push(next.value)
+      size += next.value.length
+      if (limit !== undefined && parts.length >= limit) {
+        try promised("Download cancellation failed", () => reader.cancel())
+        break
+      }
+    }
+    try promised("The fixture background work failed", () => site.settle())
+    const assembled = new Uint8Array(size)
+    let offset = 0
+    for (const part of parts) {
+      assembled.set(part, offset)
+      offset += part.length
+    }
+    return assembled
+  }
+
+  const single = try fixture("vet_qualification_access", encoder.encode("Harmless hosted access fixture; no private report."))
+  const recent = try fixture("vet_qualification_recent", encoder.encode("Recent closed case retained."), 89)
+  const expired = try fixture("vet_qualification_expired", encoder.encode("Old closed case eligible for fixture deletion."), 91)
+  const permanent = try fixture("vet_qualification_permanent", encoder.encode("Permanent admission evidence after 91 days."), 91, true)
+  const large = try fixture("vet_qualification_large", new Uint8Array(partBytes + 17).fill(11))
+
+  try verify((try request(root, null)).status === 401, "Anonymous access accepted")
+  try verify((try request(root, other)).status === 403, "Administrator or moderator inherited evidence access")
+  try verify((try request(root, owner)).status === 200 && (try request(root, reader)).status === 200, "Designated readers refused")
+  try verify((try request(`${single.path}/grant`, owner, { body: { reason: "Cross-site refusal" }, headers: { origin: "https://other.invalid" } })).status === 403, "Cross-site grant accepted")
+  try verify((try request(`${single.path}/grant`, owner, { body: { reason: "Wrong media refusal" }, headers: { "content-type": "text/plain" } })).status === 403, "Wrong content type accepted")
+  try verify((try request(`${single.path}/grant`, owner, { body: { reason: "" } })).status === 400, "Empty reason accepted")
+
+  const one = try grant(single.path)
+  try verify((try status(site, `${single.path}/body`, { as: cookieOf(reader), headers: { "x-vetting-read-grant": one } })) === 403, "Cross-actor grant accepted")
+  try verify((try status(site, `${recent.path}/body`, { as: cookieOf(owner), headers: { "x-vetting-read-grant": one } })) === 403, "Cross-object grant accepted")
+  const readOnce = respond(site, `${single.path}/body`, { as: cookieOf(owner), headers: { "x-vetting-read-grant": one } })
+  const raced = try Effect.all([readOnce, readOnce], { concurrency: 2 })
+  try verify(raced.map((response) => response.status).toSorted().join() === "200,403", "Single-use grant race changed")
+  const accepted = raced.find((response) => response.status === 200)
+  const refused = raced.find((response) => response.status !== 200)
+  if (refused !== undefined) try promised("The refused read was not readable", () => refused.text())
+  if (accepted === undefined) throw new FixtureRefused({ issue: "Successful read missing" })
+  const readBytes = try streamed(accepted)
+  try verify((try sha256Hex(readBytes)) === single.sha, "Read bytes changed")
+  try verify(
+    accepted.headers.get("cache-control") === "private, no-store"
+      && accepted.headers.get("x-content-type-options") === "nosniff"
+      && (accepted.headers.get("content-disposition") ?? "").startsWith("attachment;")
+      && accepted.headers.get("content-security-policy") === "default-src 'none'; sandbox",
+    "Private read headers changed",
+  )
+  try verify((try status(site, `${single.path}/body`, { as: cookieOf(owner), headers: { "x-vetting-read-grant": one } })) === 403, "Grant replay accepted")
+  const storedGrant = try first(StoredGrant, sql`SELECT operator_github_id,reason,consumed_at FROM vetting_evidence_grants WHERE token_hash=${try sha256Hex(one)}`)
+  const readAudit = try auditOf(single.id)
+  try verify(
+    storedGrant?.operator_github_id === owner && storedGrant.consumed_at !== null && storedGrant.reason === grantReason
+      && readAudit.map((row) => row.action).toSorted().join() === "grant,read,read-attempt"
+      && readAudit.every((row) => row.actor === owner && row.reason === grantReason),
+    "Grant and read audit identity differs",
+  )
+
+  const expiredGrant = try grant(single.path)
+  try db.run(sql`UPDATE vetting_evidence_grants SET expires_at=${new Date(started - 1000).toISOString()} WHERE token_hash=${try sha256Hex(expiredGrant)}`)
+  try verify((try status(site, `${single.path}/body`, { as: cookieOf(owner), headers: { "x-vetting-read-grant": expiredGrant } })) === 403, "Expired grant accepted")
+
+  const readerSession = sessions.get(reader)
+  if (readerSession === undefined) throw new FixtureRefused({ issue: "Reader session is missing" })
+  try db.run(sql`UPDATE points_sessions SET expires_at=${new Date(started - 1000).toISOString()} WHERE token_hash=${readerSession.hash}`)
+  try verify((try request(root, reader)).status === 401, "Expired session accepted")
+  try db.run(sql`DELETE FROM points_sessions WHERE token_hash=${readerSession.hash}`)
+  try verify((try request(root, reader)).status === 401, "Revoked session accepted")
+  try db.run(sql`INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(${readerSession.hash},${readerSession.actorId},${try isoNow(3_600_000)})`)
+
+  const closePath = `${root}/${single.id}/close`
+  try verify((try request(closePath, reader, { body: { reason: "Reader cannot close a case" } })).status === 403, "Reader closed case")
+  try verify((try request(closePath, owner, { body: { reason: "Cross-site closure refused" }, headers: { origin: "https://other.invalid" } })).status === 403, "Cross-site closure accepted")
+  const closed = try request(closePath, owner, { body: { reason: "Close harmless qualification exception" } })
+  try verify(closed.status === 200, "Owner closure failed")
+  const replay = try request(closePath, owner, { body: { reason: "Repeat the same harmless closure" } })
+  const closure = Schema.decodeUnknownEffect(Schema.Tuple([Closed, Closed]))([closed.body, replay.body]) catch effect () => {
+    throw new FixtureRefused({ issue: "Closure answer changed" })
+  }
+  try verify(replay.status === 200 && closure[0].closedAt === closure[1].closedAt, "Closure replay moved retention deadline")
+  try verify((try first(StateRow, sql`SELECT state FROM vetting_assessments WHERE id=${single.id}`))?.state === "incomplete", "Closure changed assessment")
+  try verify((try request(`${expired.path}/grant`, owner, { body: { reason: "Expired case must refuse" } })).status === 410, "Expired case read accepted")
+  try grant(recent.path)
+  const permanentGrant = try grant(permanent.path)
+  const permanentRead = try request(`${permanent.path}/body`, owner, { headers: { "x-vetting-read-grant": permanentGrant } })
+  try verify(permanentRead.status === 200 && permanentRead.body === "Permanent admission evidence after 91 days.", "Admission evidence expired after closure")
+
+  effect function downloaded() {
+    const answer = try request(`${large.path}/download-grant`, owner, { body: { reason: "Read harmless chunked qualification" } })
+    try verify(answer.status === 201, "Download grant failed")
+    const value = answer.headers.get("set-cookie") ?? ""
+    try verify(
+      value.includes("Secure; HttpOnly; SameSite=Strict") && value.includes(`Max-Age=${evidencePolicy.readGrantDurationSeconds};`) && value.includes(`Path=${large.path}/download;`) && !value.includes("Domain="),
+      "Download cookie scope changed",
+    )
+    try verify(typeof answer.body === "object" && answer.body !== null && !Object.hasOwn(answer.body, "grant"), "Download grant returned token body")
+    return value.split(";")[0] ?? ""
+  }
+
+  effect function download(grantCookie: string, headers: Readonly<Record<string, string>> = {}, method: "GET" | "HEAD" = "GET") {
+    return try respond(site, `${large.path}/download`, { method, as: `${cookieOf(owner)}; ${grantCookie}`, headers: { "sec-fetch-site": "same-origin", ...headers } })
+  }
+
+  effect function downloadStatus(grantCookie: string, headers: Readonly<Record<string, string>> = {}, method: "GET" | "HEAD" = "GET") {
+    const response = try download(grantCookie, headers, method)
+    try promised("The download refusal was not readable", () => response.text())
+    return response.status
+  }
+
+  const cookie = try downloaded()
+  try verify((try downloadStatus(cookie, { "sec-fetch-site": "same-site" })) === 403, "Cross-site download accepted")
+  try verify((try downloadStatus(cookie, { range: "bytes=0-1" })) === 403, "Range download accepted")
+  try verify((try downloadStatus(`${cookie}; ${cookie}`)) === 403, "Duplicate download cookie accepted")
+  try verify((try downloadStatus(cookie, { origin: "https://flag-qualification.invalid", "content-type": "application/json" }, "HEAD")) === 405, "HEAD download accepted")
+  const body = try download(cookie)
+  try verify(body.status === 200 && body.headers.get("set-cookie") === null, "Download changed a possibly newer grant cookie")
+  const assembled = try streamed(body)
+  try verify(assembled.length === large.data.length && (try sha256Hex(assembled)) === large.sha, "Download bytes changed")
+  try verify((try downloadStatus(cookie)) === 403, "Download replay accepted")
+  try streamed(try download(try downloaded()), 1)
+  const audit = try auditOf(large.id)
+  try verify(
+    audit.filter((row) => row.action === "download-finished").length === 1
+      && audit.filter((row) => row.action === "download-cancelled").length === 1
+      && audit.every((row) => row.actor === owner && row.reason.length >= 8),
+    "Download audit differs",
+  )
+
+  const singleKey = try objectOf(single.id)
+  try objects.remove(singleKey)
+  try verify((try request(`${single.path}/grant`, owner, { body: { reason: "Missing source must refuse" } })).status === 404, "Missing object granted")
+  try objects.put(singleKey, new Uint8Array(single.data.length), { sha256: single.sha, contentType: "application/octet-stream" })
+  try verify((try request(`${single.path}/grant`, owner, { body: { reason: "Changed source must refuse" } })).status === 409, "Changed object granted")
+  try objects.remove(singleKey)
+  try objects.put(singleKey, single.data, { sha256: single.sha, contentType: "application/octet-stream" })
+  try endSessions([...sessions.values()])
+
+  return {
+    objects: stored,
+    bytes,
+    actualRoutes: true,
+    actualSessionLookup: true,
+    syntheticIdentities: true,
+    authorizedReaders: 2,
+    anonymousAndOtherRolesRefused: true,
+    sessionExpiryAndRevocationRefused: true,
+    originAndReasonEnforced: true,
+    grantSeconds: evidencePolicy.readGrantDurationSeconds,
+    actorObjectExpiryAndReplayEnforced: true,
+    grantAndReadAuditIdentityVerified: true,
+    concurrentReadStatuses: [200, 403],
+    exactSingleSha256: single.sha,
+    exactChunkedSha256: large.sha,
+    chunkedBytes: large.data.length,
+    nativeCookieScopeEnforced: true,
+    downloadFinishAndCancellationAudited: true,
+    ownerOnlyClosure: true,
+    closureReplayUnchanged: true,
+    assessmentUnchanged: true,
+    caseAccessExpiryEnforced: true,
+    missingAndCorruptBytesRefused: true,
+    liveOAuth: false,
+    operationalPolicyAttested: false,
+  }
+}

@@ -4,7 +4,7 @@ import { webCrypto } from "@repo/platform/crypto"
 import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import type { Event, Quote, SignedSend } from "../gen/fees__conversion.ts"
-import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
+import type { Network, Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import type { Instance } from "../src/journal/codec.vibe"
 import { journaledAttempts } from "../src/journal/queries.vibe"
 import { type Facts, journal, send } from "../src/journal/store.vibe"
@@ -27,6 +27,7 @@ interface World {
 }
 
 const liveBase = { source: 1, converterMode: "Live", buybackMode: "Off", networks: ["Base"], keys: ["Base"], nativeLimits: ["Base"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
+const liveSolana = { source: 1, converterMode: "Live", buybackMode: "Off", networks: ["Solana"], keys: ["Solana"], nativeLimits: ["Solana"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
 
 function quote(token: number): Quote {
   return { token, route: "Found", amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }
@@ -40,9 +41,9 @@ function services(world: World) {
   return Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer)
 }
 
-effect function opened(generation: number) {
+effect function opened(generation: number, network: Network = "Base") {
   const { db } = try Fixture
-  const instance = generationInstance(generation)
+  const instance = generationInstance(generation, network)
   return { instance, elapsed: 0, names: generationNames(generation), clock: settableClock(instance.epoch), db, signed: new Map<string, string>() } satisfies World
 }
 
@@ -65,15 +66,25 @@ effect function advance(world: World, elapsed: number) {
   world.clock.set(world.instance.epoch + world.elapsed)
 }
 
-effect function live(world: World) {
+effect function live(world: World, config: WorkerConfig = liveBase) {
   try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
-  try step(world, { type: "publishWorker", config: liveBase }, "ReleaseWorkflow")
+  try step(world, { type: "publishWorker", config }, "ReleaseWorkflow")
   try step(world, { type: "verifyReadiness" }, "Owner")
   try step(world, { type: "setReplacement", active: true }, "Owner")
   for (const token of [1, 2]) {
     try step(world, { type: "addToken", asset: "ProjectToken" })
     try step(world, { type: "receiveFee", transfer: { receipt: token, token, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true } })
   }
+}
+
+effect function refusal(world: World, event: Event) {
+  return Effect.as(step(world, event, "ReleaseWorkflow"), "accepted") catch (error) => error._tag === "JournalRefused" ? error.issue : error._tag
+}
+
+schema LockCheck { run_id: string; expires_at: string }
+
+effect function solanaLock(world: World) {
+  return (try Effect.provide(rows(LockCheck, sql`SELECT run_id, expires_at FROM fee_converter_locks WHERE network = 'solana'`), d1(world.db))).map((row) => [row.run_id, row.expires_at === "1970-01-01T00:00:00.000Z" ? "released" : "held"])
 }
 
 effect function direct(world: World, statement: Statement) {
@@ -178,6 +189,44 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       lease: [2, 3, "Recovery"],
       gas: [[0, "abandoned"]],
       intent: ["Quoted", 1],
+    })
+  })
+
+  it.effect('An operator Solana RPC rotation takes the shared lease only on a quiet Solana journal, shuts runs out while it holds, renews and releases only its own lease, and leaves an expired lease to the next run (spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
+    const rotating = try opened(3, "Solana")
+    try live(rotating, liveSolana)
+    const acquired = try refusal(rotating, { type: "acquireRotationLease", rotationId: 1 })
+    const runLocked = try tried(rotating, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+    const renewed = try refusal(rotating, { type: "renewRotationLease", rotationId: 1 })
+    const foreign = try refusal(rotating, { type: "releaseRotationLease", rotationId: 2 })
+    const base = try opened(6)
+    try live(base)
+    try step(base, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+    try step(base, { type: "evaluate", runId: 1, quote: quote(1) })
+    try step(base, { type: "reserveGas", runId: 1, nonce: 0, maximum: 90000 })
+    const besideBase = try refusal(rotating, { type: "renewRotationLease", rotationId: 1 })
+    const held = try solanaLock(rotating)
+    const released = try refusal(rotating, { type: "releaseRotationLease", rotationId: 1 })
+    const runAfter = try tried(rotating, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+    try step(rotating, { type: "releaseLease", runId: 1 })
+    const again = try refusal(rotating, { type: "acquireRotationLease", rotationId: 2 })
+
+    const later = try opened(4, "Solana")
+    try live(later, liveSolana)
+    const expiredTaken = try tried(later, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+    try step(later, { type: "evaluate", runId: 1, quote: quote(1) })
+    try step(later, { type: "reserveGas", runId: 1, nonce: 0, maximum: 5000000 })
+    const busy = try opened(5, "Solana")
+    const refusedBusy = try refusal(busy, { type: "acquireRotationLease", rotationId: 1 })
+    const afterBusy = try solanaLock(busy)
+    const loaded = (try Effect.provide(journal(busy.instance, busy.names), services(busy))).state
+
+    try same({
+      rotation: [acquired, runLocked, renewed, foreign, besideBase, held, released, runAfter, again],
+      later: [expiredTaken, refusedBusy, afterBusy.map(([run]) => String(run).startsWith("g4:")), loaded.rotation],
+    }, {
+      rotation: ["accepted", "Rejected", "accepted", "Rejected", "accepted", [["rpc-rotation-g3:g3-rotation-1", "held"]], "accepted", "accepted", "accepted"],
+      later: ["accepted", "Solana fee activity prevents RPC rotation", [true], { holder: 0, expiresAt: 0 }],
     })
   })
 })

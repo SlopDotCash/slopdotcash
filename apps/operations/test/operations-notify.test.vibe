@@ -207,12 +207,13 @@ effect function watched<A, E, R>(program: A!E!R) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Renew the observation only from a usable GitHub answer as the identity deployable\'s hourly job (spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours")', () => effect {
-    scripted(status(true))
-    const route = try requested("https://notify.internal/v1/intake/renew")
+  it.effect('Renew the observation only from a usable GitHub answer as the identity deployable\'s hourly job and through the notify route (spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours")', () => effect {
     const staging = try scheduled({ ...production, SLOP_ENVIRONMENT: "staging" })
     const elsewhere = try scheduled({ ...production, IDENTITY_PUBLIC_ORIGIN: "http://localhost:4466" })
     const offProductionReads = seen.length
+    const routeOutside = try requested("http://notify.internal/v1/intake/renew")
+    scripted(status(true))
+    const route = try requested("https://notify.internal/v1/intake/renew")
     const enabled = try renewed(status(true))
     const disabled = try renewed(status(false))
     const refusedToken = try renewed({ status: 401, body: JSON.stringify({ message: "Bad credentials" }) }, status(true))
@@ -228,8 +229,9 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try seed(0, "2100-01-01T00:00:00.000Z")
     const late = try renewed(status(true))
     const port = try intakePort()
-    try Effect.try(() => assert.deepStrictEqual({ route: route.status, staging, elsewhere, offProductionReads, enabled, disabled, refusedToken, rateLimited, malformed, unavailable, unreachable, unauthorized, badToken, badTokenReads, late, port }, {
-      route: 404,
+    try Effect.try(() => assert.deepStrictEqual({ routeOutside: routeOutside.status, route: { status: route.status, result: (route.body as { readonly result?: string } | null)?.result }, staging, elsewhere, offProductionReads, enabled, disabled, refusedToken, rateLimited, malformed, unavailable, unreachable, unauthorized, badToken, badTokenReads, late, port }, {
+      routeOutside: 404,
+      route: { status: 200, result: "Renewed" },
       staging: "renewed",
       elsewhere: "renewed",
       offProductionReads: 0,

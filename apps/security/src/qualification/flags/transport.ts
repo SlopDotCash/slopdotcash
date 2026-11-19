@@ -64,17 +64,36 @@ export function templateAssets(templateSha256: string): Fetcher {
   };
 }
 
-/** @throws {never} */
-export function inProcess<Env>(site: { fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> }, env: Env): Fetcher {
-  const context: ExecutionContext = { waitUntil: () => undefined };
-  return { fetch: (request) => site.fetch(request, env, context) };
+export type SiteResponse = Response;
+
+export interface Sent {
+  readonly method: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body?: string | Uint8Array;
 }
 
-/** @throws {Error} */
+export interface InProcessSite extends Fetcher {
+  send(url: string, sent: Sent): Promise<Response>;
+  settle(): Promise<void>;
+}
+
+/** @throws {never} */
+export function inProcess<Env>(site: { fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> }, env: Env): InProcessSite {
+  const pending: Promise<unknown>[] = [];
+  const context: ExecutionContext = { waitUntil: (promise) => { pending.push(promise); } };
+  const fetch = (request: Request): Promise<Response> => site.fetch(request, env, context);
+  const send = (url: string, sent: Sent): Promise<Response> => Promise.resolve().then(() => fetch(new Request(url, sent)));
+  const settle = async (): Promise<void> => {
+    while (pending.length > 0) await Promise.allSettled(pending.splice(0));
+  };
+  return { fetch, send, settle };
+}
+
+/** @throws {never} */
 export async function fixtureKeys(): Promise<FixtureKeys> {
-  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-  if (!("privateKey" in pair)) throw new Error("Ed25519 generated no key pair");
+  const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+  if (!("privateKey" in pair)) return Promise.reject(new TypeError("Ed25519 generated no key pair"));
   const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
-  const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   return { jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: jwk.d, x: jwk.x }), publicKey: btoa(String.fromCharCode(...raw)) };
 }

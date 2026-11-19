@@ -189,7 +189,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
               setSubmission({ status: "idle" });
             }}
           >
-            Add another project
+            Add another
           </Button>
         </div>
       </main>
@@ -287,7 +287,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
           ) : null}
           {step < lastStep ? (
             <Button onClick={() => goTo(step === 0 ? 1 : 2)}>
-              Next: {setupSteps[step === 0 ? 1 : 2]}
+              Next
               <ArrowRight aria-hidden className="size-4" />
             </Button>
           ) : null}

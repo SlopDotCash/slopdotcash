@@ -1,0 +1,58 @@
+{
+  "name": "eliza-computer",
+  "pages_build_output_dir": "../dist",
+  "compatibility_date": "2026-07-30",
+  "vars": {
+    "SLOP_ENVIRONMENT": "production",
+    "PUBLIC_SITE_URL": "https://slop.cash",
+    "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
+    "MONTHLY_PAYMENT_SCHEDULE": "{\"firstPeriod\":\"2026-11\",\"cutoffSecondsAfterPeriodEnd\":259200}",
+    "PAYMENT_NETWORKS": "[]",
+    "SLOP_PRIVATE_INTAKE_MODE": "on"
+  },
+  "d1_databases": [
+    {
+      "binding": "SLOP_DB",
+      "database_name": "slop-private",
+      "database_id": "1b453124-2709-45af-8389-151a8105c461",
+      "migrations_dir": "../../../migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "PRIVATE_TRACES", "bucket_name": "slop-private-traces" },
+    { "binding": "VETTING_EVIDENCE", "bucket_name": "slop-vetting-evidence" }
+  ],
+  "services": [
+    { "binding": "SLOPBOT", "service": "slop-slopbot" },
+    { "binding": "SLOPBOT_VALUE_IMPORT", "service": "slop-slopbot", "entrypoint": "HistoricalValuePublisher" },
+    { "binding": "SANDBOX", "service": "slop-vetting-sandbox" },
+    { "binding": "SLOP_IDENTITY", "service": "slop-identity" },
+    { "binding": "SLOP_NOTIFY", "service": "slop-notify" }
+  ],
+  "env": {
+    "preview": {
+      "d1_databases": [],
+      "r2_buckets": [],
+      "services": [],
+      "vars": { "PUBLIC_SITE_URL": "https://slop.cash" }
+    }
+  },
+  "expectedSecrets": [
+    "OPERATOR_GITHUB_IDS",
+    "TRACE_AUTH_SECRET"
+  ],
+  "optionalSecrets": [
+    "GITHUB_INTAKE_APP_CLIENT_ID",
+    "GITHUB_INTAKE_APP_CLIENT_SECRET",
+    "GITHUB_INTAKE_APP_ID",
+    "GITHUB_INTAKE_APP_PRIVATE_KEY",
+    "PAYMENT_RPC_URLS",
+    "REWARD_RPC_SOLANA",
+    "SLOP_GITHUB_READ_TOKEN",
+    "SLOP_INTAKE_GRANT_KEY",
+    "SURPLUS_API_KEY",
+    "X_CLIENT_ID",
+    "X_CLIENT_SECRET"
+  ]
+}

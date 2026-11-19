@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"
 import { createHash } from "node:crypto";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
@@ -63,7 +63,9 @@ const registry = Layer.succeed(Registry, {
   byRepository: () => Effect.succeed(undefined),
   byPath: () => Effect.succeed(undefined),
   active: () => Effect.succeed([]),
+  pausedProjects: () => Effect.succeed([]),
   fence: () => Effect.succeed(sql`1`),
+  appendVaultRegistration: () => Effect.die(new Error("The monthly driver registers no vaults")),
 });
 
 const runtimeOver = (db: Awaited<ReturnType<typeof database>>, clock: ReturnType<typeof settableClock>, facts: { eligibility: Eligibility; current: RevisionFact | undefined }) =>
@@ -164,7 +166,11 @@ const initialView = (w: World): Monthly => ({
   frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "",
 });
 
-const view = (state: Monthly): Monthly => ({ ...state, underfundedNotice: false, coordinatorRetries: 0 });
+const view = (state: Monthly): Monthly => ({ ...state, underfundedNotice: false, coordinatorRetries: 0, pledgedVault: state.pledgedVault === state.currentRevision.vault ? state.pledgedVault : "" });
+
+const storePledge = async (w: World, vault: string) => {
+  await w.db.prepare("INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, ?, ?, ?, '1000000', 1, '1', ?) ON CONFLICT (project_id, network, vault, period) DO UPDATE SET amount = excluded.amount, open = 1").bind(PROJECT, NETWORK, vault, formatPeriod(w.period as Period), new Date(w.clock.now()).toISOString()).run();
+};
 
 const observed = async (w: World): Promise<Monthly> => {
   if (w.period === undefined) return view(initialView(w));
@@ -202,6 +208,7 @@ const dispatch = async (event: Event): Promise<"accepted" | "refused"> => {
   }
   if (event.type === "observeSettings") await settingsTo(w, event.automatic, event.settingsSequence);
   if (event.type === "closeProposalWindow") w.closed = true;
+  if (event.type === "observePledge") await storePledge(w, event.pledgeVault);
   if (event.type === "recordReserved" || event.type === "recordConflict" || event.type === "recordPaid") await recordInLedger(w, event);
   return verdict;
 };

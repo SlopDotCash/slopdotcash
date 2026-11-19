@@ -1,0 +1,94 @@
+// spec/fees/solanaRpcRotation.md, "A rotation starts only from protected manual main, the exact pinned active version and byte-identical fee source"
+import { gitBytes } from "@repo/platform/git"
+
+export error ParityRefused { message: string }
+
+schema Manifest {
+  readonly name?: string
+  readonly dependencies?: Record<string, string>
+}
+
+const sourceSha = /^[a-f0-9]{40}$/u
+const canonicalRepository = "https://github.com/SlopDotCash/slopdotcash.git"
+const workspaceFolders = ["apps", "packages"]
+const workspaceExtras = ["vibestack/studio"]
+const feeInputs = ["apps/fees/src", "apps/fees/gen", "apps/fees/package.json", "apps/fees/vite.config.ts", "apps/fees/tsconfig.json", "apps/fees/wrangler/feeConverter.production.jsonc"]
+const rootInputs = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]
+const outputLimit = 4 * 1024 * 1024
+const gitSeconds = 30
+const differs = "Deployed fee runtime differs from the reviewed checkout"
+
+function refused(message: string) {
+  return new ParityRefused({ message })
+}
+
+effect function manifest(root: string, folder: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const text = fs.readFileString(files.join(root, folder, "package.json")) catch () => undefined
+  if (text === undefined) return undefined
+  const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return Schema.decodeUnknownEffect(Manifest)(parsed) catch () => undefined
+}
+
+effect function workspaceFoldersByName(root: string) {
+  const fs = try FileSystem.FileSystem
+  const folders: Array<string> = [...workspaceExtras]
+  for (const parent of workspaceFolders) {
+    const entries = fs.readDirectory(`${root}/${parent}`) catch () => []
+    for (const entry of [...entries].sort()) folders.push(`${parent}/${entry}`)
+  }
+  const named = new Map<string, { readonly folder: string; readonly dependencies: ReadonlyArray<string> }>()
+  for (const folder of folders) {
+    const found = try manifest(root, folder)
+    if (found?.name !== undefined) named.set(found.name, { folder, dependencies: Object.keys(found.dependencies ?? {}) })
+  }
+  return named
+}
+
+export effect function feeRuntimeInputs(root: string) {
+  const named = try workspaceFoldersByName(root)
+  const fees = named.get("@repo/fees")
+  if (fees === undefined) throw refused(differs)
+  const reached = new Set<string>()
+  const pending = [...fees.dependencies]
+  while (pending.length > 0) {
+    const name = pending.pop() ?? ""
+    const found = named.get(name)
+    if (found === undefined || reached.has(found.folder) || found.folder === fees.folder) continue
+    reached.add(found.folder)
+    pending.push(...found.dependencies)
+  }
+  const packages = [...reached].sort().flatMap((folder) => [`${folder}/src`, `${folder}/gen`, `${folder}/package.json`])
+  return [...feeInputs, ...packages, ...rootInputs]
+}
+
+effect function git(root: string, args: ReadonlyArray<string>) {
+  return new TextDecoder().decode(try gitBytes({ args: ["-C", root, ...args], limit: outputLimit, seconds: gitSeconds }, differs))
+}
+
+effect function pinnedCommit(root: string, pinned: string) {
+  const present = Effect.as(git(root, ["cat-file", "-e", `${pinned}^{commit}`]), true) catch () => false
+  if (present) return
+  try git(root, ["fetch", "--no-tags", "--depth=1", canonicalRepository, pinned])
+}
+
+export effect function feeSourceParity(root: string, pinnedSource: string, checkout: string) {
+  if (!sourceSha.test(pinnedSource) || !sourceSha.test(checkout)) throw refused("Invalid fee source pin")
+  const inputs = try feeRuntimeInputs(root)
+  const compared = effect {
+    try pinnedCommit(root, pinnedSource)
+    const changed = try git(root, ["diff", "--name-only", pinnedSource, checkout, "--", ...inputs])
+    const tracked = try git(root, ["ls-tree", "-r", "--name-only", checkout, "--", ...inputs])
+    return { changed: changed.trim(), files: tracked.split("\n").filter((line) => line !== "").length }
+  }
+  const { changed, files } = compared catch effect () => {
+    throw refused(differs)
+  }
+  if (changed !== "") throw refused(differs)
+  const dirty = git(root, ["status", "--porcelain", "--", ...inputs]) catch effect () => {
+    throw refused("Fee runtime checkout has local changes")
+  }
+  if (dirty.trim() !== "") throw refused("Fee runtime checkout has local changes")
+  return files
+}

@@ -1,24 +1,16 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
 import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
-import { cutoffAt, FIRST_PERIOD, type Period, periodContaining, periodStartSeconds, shiftPeriod } from "@repo/settlement/kernels/calendar";
-import { owedNow, type PoolDisplay, type PoolFacts, type PoolRead, poolDisplay } from "../../gen/frontend__projections.ts";
-import { type VaultLocks, withdrawalAllowed } from "../../gen/frontend__vaultLocks.ts";
+import { type Period, periodContaining } from "@repo/settlement/kernels/calendar";
+import { type FactsMonthStart, type FactsPledge, type FactsVault, poolFacts } from "@repo/settlement/kernels/poolFacts";
+import { lockedByPledges, owedNow, type PoolDisplay, type PoolFacts, type PoolRead, poolDisplay } from "../../gen/frontend__projections.ts";
+import type { VaultLocks } from "../../gen/frontend__vaultLocks.ts";
 import type { AssetKind } from "./assetText.ts";
 
-export interface FundingMonthStart {
-  readonly period: Period;
-  readonly freeBalance: bigint;
-  readonly totalGrossWithdrawn: bigint;
-  readonly blockTime: number;
-}
+export type FundingMonthStart = FactsMonthStart;
 
-export interface FundingVault {
-  readonly network: string;
-  readonly vault: string;
-  readonly freeBalance: bigint | null;
-  readonly totalGrossWithdrawn?: bigint;
-  readonly monthStarts?: ReadonlyArray<FundingMonthStart>;
-}
+export type FundingPledge = FactsPledge;
+
+export type FundingVault = FactsVault;
 
 export interface Deployment {
   readonly network: string;
@@ -49,14 +41,6 @@ export interface ZeroedPoolCap {
   readonly monthlyCapDisplay: "0 TOKEN" | "$0";
 }
 
-const firstReadWindowSeconds = 60 * 60;
-
-const canonicalVault = (vault: string) => (vault.startsWith("0x") ? vault.toLowerCase() : vault);
-
-const vaultKey = (network: string, vault: string) => `${network}\n${canonicalVault(vault)}`;
-
-const sum = (values: ReadonlyArray<bigint>) => values.reduce((total, value) => total + value, 0n);
-
 /** @throws {RangeError} */
 export function poolFunding({ pool, read, vaults, networkPays, nowMs }: {
   pool: FundedPool;
@@ -66,34 +50,13 @@ export function poolFunding({ pool, read, vaults, networkPays, nowMs }: {
   nowMs: number;
 }): PoolFunding {
   const nowSeconds = Math.floor(nowMs / 1000);
-  const period = periodContaining(nowSeconds);
-  const prior = shiftPeriod(period, -1);
-  const recorded = new Set(pool.deployments.filter((deployment) => networkPays(deployment.network)).map((deployment) => vaultKey(deployment.network, deployment.vault)));
-  const counted = vaults.filter((vault) => vault.freeBalance !== null && recorded.has(vaultKey(vault.network, vault.vault)));
-  const firstReads = counted.flatMap((vault) => {
-    const first = vault.monthStarts?.find((start) => start.period === period && start.blockTime - periodStartSeconds(period) < firstReadWindowSeconds);
-    return first === undefined ? [] : [{ first, withdrawnNow: vault.totalGrossWithdrawn }];
-  });
-  const facts: PoolFacts = {
-    read,
-    monthlyPool: pool.monthlyPool,
-    period,
-    amount: toAmount(pool.capFor(period)),
-    priorAmount: toAmount(prior >= FIRST_PERIOD ? pool.capFor(prior) : 0n),
-    priorPending: nowSeconds < cutoffAt(prior),
-    freeNow: toAmount(sum(counted.map((vault) => vault.freeBalance ?? 0n))),
-    monthStartRead: firstReads.length > 0,
-    freeAtStart: toAmount(sum(firstReads.map(({ first }) => first.freeBalance))),
-    withdrawnSince: firstReads.some(({ first, withdrawnNow }) => withdrawnNow !== undefined && withdrawnNow > first.totalGrossWithdrawn),
-    pledgeSupport: false,
-    pledged: toAmount(0n),
-  };
-  return { period, facts, display: poolDisplay(facts) };
+  const facts: PoolFacts = poolFacts({ pool, read, vaults, pays: networkPays, nowSeconds });
+  return { period: periodContaining(nowSeconds), facts, display: poolDisplay(facts) };
 }
 
 /** @throws {never} */
 export function promisedOwed(funding: PoolFunding): bigint | undefined {
-  return funding.display === "PoolFunded" ? fromAmount(owedNow(funding.facts)) : undefined;
+  return funding.display === "PoolFunded" && !lockedByPledges(funding.facts) ? fromAmount(owedNow(funding.facts)) : undefined;
 }
 
 /** @throws {never} */
@@ -104,7 +67,3 @@ export function zeroedPoolCap({ monthlyPool, monthlyCapMinor, hasCycleCaps, asse
 
 export const unreadLocks: VaultLocks = { cachedSupport: false, walletRead: false, freeKnown: false, free: toAmount(0n), locked: toAmount(0n) };
 
-/** @throws {RangeError} */
-export function withdrawalKeepsFunding({ funding, locks, gross }: { funding: PoolFunding; locks: VaultLocks; gross: bigint }): boolean {
-  return withdrawalAllowed(funding.facts, locks, toAmount(gross));
-}

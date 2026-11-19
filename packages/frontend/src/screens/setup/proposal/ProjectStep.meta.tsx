@@ -13,6 +13,7 @@ export const meta: ComponentMeta<ProjectStepProps> = {
     Bounty: { proposal: { ...filled, fundingMode: "bounty" } },
     LegalTerms: { proposal: { ...filled, copyrightModel: "sponsor-owned", inboundMode: "assignment" }, shown: (field) => (field === "legalHolder" ? "Enter 2 to 240 characters." : undefined) },
     RestoredRules: { extraRuleFields: ["contributionGuide", "securityContact"] },
+    Links: { proposal: { ...filled, website: "http://ntwrk.party", x: "@elizaOS" }, shown: (field) => (field === "website" ? "Use an https:// address." : undefined) },
   },
   play: {
     // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
@@ -22,6 +23,11 @@ export const meta: ComponentMeta<ProjectStepProps> = {
     // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
     Bounty: async () => {
       await expect(screen.queryByRole("checkbox")).toBeNull();
+    },
+    // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
+    Links: async () => {
+      await expect([(screen.getByLabelText("Website (optional)") as HTMLInputElement).value, (screen.getByLabelText("X account (optional)") as HTMLInputElement).value]).toEqual(["http://ntwrk.party", "@elizaOS"]);
+      await expect(screen.getByText("Use an https:// address.")).toBeTruthy();
     },
     // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
     BranchesLoading: async () => {

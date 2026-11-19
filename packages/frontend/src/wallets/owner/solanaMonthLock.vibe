@@ -1,0 +1,151 @@
+// spec/frontend/monthLock.md, "A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
+import { address, isBlockhash } from "@repo/platform/chain/solana"
+import { type MonthLockAction, paymentsSolanaMonthLock } from "@repo/settlement/client"
+import { expirePledgeInstruction, pledgeMonthInstructions } from "@repo/settlement/chain/solana/instructions"
+import type { Instruction } from "@repo/settlement/chain/solana/transactions"
+import { call } from "../../platform/api.vibe"
+import { WalletFailed } from "../core/discovery.vibe"
+import type { SolanaConnection } from "../core/solana.vibe"
+import { isChainMonth, siteMonth } from "./monthLockPeriods.ts"
+import type { LockCheck } from "./evmMonthLock.vibe"
+import { type ReviewedWire, solanaChainOf, wireMatches } from "./solanaPlans.ts"
+import { type SolanaVault, signAndVerify } from "./solanaVault.vibe"
+
+export type LockAction = "lock" | "release"
+
+export interface SolanaLockTransaction {
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+}
+
+export interface SolanaLockPlan {
+  readonly action: LockAction
+  readonly wallet: string
+  readonly periods: ReadonlyArray<number>
+  readonly requested: ReadonlyArray<number>
+  readonly amountMinor: bigint
+  readonly decimals: number | undefined
+  readonly transaction: SolanaLockTransaction | null
+  readonly wire: ReviewedWire | undefined
+}
+
+export error MonthLockRefused { message: string }
+
+export const solanaLockMessages = {
+  noSolana: "Choose a wallet with Solana transaction support.",
+  incomplete: "The Solana vault configuration is incomplete.",
+  invalidResponse: "The month lock service returned an invalid response.",
+  unprepared: "The month lock could not be prepared. Review again.",
+  invalidLock: "The month lock plan is invalid.",
+  invalidRelease: "The release plan is invalid.",
+  differs: "The prepared transaction differs from the reviewed month lock.",
+  nothingToSend: "Nothing to send.",
+  status: "The transaction status could not be verified.",
+} as const
+
+const limitBytes = 16_384
+const deadlineMs = 90_000
+const canonical = /^(0|[1-9][0-9]*)$/u
+const positive = /^[1-9][0-9]{0,19}$/u
+
+function refused(message: string) {
+  return new MonthLockRefused({ message })
+}
+
+function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function monthsOf(value: unknown): ReadonlyArray<number> | undefined {
+  return Array.isArray(value) && value.every((month) => typeof month === "number" && isChainMonth(month)) ? value as ReadonlyArray<number> : undefined
+}
+
+function transactionOf(value: unknown): SolanaLockTransaction | undefined {
+  const found = recordOf(value)
+  if (found === undefined) return undefined
+  const { blockhash, lastValidBlockHeight, transaction, networkFeeLamports } = found
+  return typeof blockhash === "string" && isBlockhash(blockhash) && typeof lastValidBlockHeight === "number" && Number.isSafeInteger(lastValidBlockHeight) && lastValidBlockHeight >= 0
+    && typeof transaction === "string" && typeof networkFeeLamports === "string" && canonical.test(networkFeeLamports)
+    ? { blockhash, lastValidBlockHeight, transaction, networkFeeLamports }
+    : undefined
+}
+
+function decimalsOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 36 ? value : undefined
+}
+
+function instructionsOf(vault: SolanaVault, wallet: string, action: LockAction, periods: ReadonlyArray<number>, amountMinor: bigint): ReadonlyArray<Instruction> | undefined {
+  const program = address(vault.terms.program)
+  const project = address(vault.terms.project)
+  const owner = address(wallet)
+  if (program === undefined || project === undefined || owner === undefined) return undefined
+  if (action === "lock") {
+    const built = pledgeMonthInstructions({ program, project, owner, periods, amount: amountMinor })
+    return built.kind === "built" ? built.value : undefined
+  }
+  const [period] = periods
+  const built = period === undefined ? undefined : expirePledgeInstruction({ program, project, period })
+  return built?.kind === "built" ? [built.value] : undefined
+}
+
+effect function asked(vault: SolanaVault, connection: SolanaConnection, body: Omit<MonthLockAction, "network" | "vault" | "wallet">) {
+  if (solanaChainOf(vault.network) === undefined) throw refused(solanaLockMessages.noSolana)
+  if (vault.terms.program === "" || vault.terms.project === "") throw refused(solanaLockMessages.incomplete)
+  const answer: unknown = call(paymentsSolanaMonthLock, { params: { id: vault.projectId }, body: { network: vault.network, vault: vault.vault, wallet: connection.address, ...body } }, { limitBytes, deadlineMs }) catch effect (failure) => {
+    throw refused(failure._tag === "Refused" && failure.status === 422 && failure.message !== "" ? failure.message : solanaLockMessages.unprepared)
+  }
+  const found = recordOf(answer)
+  if (found === undefined) throw refused(solanaLockMessages.invalidResponse)
+  return found
+}
+
+function checkedPlan(vault: SolanaVault, plan: SolanaLockPlan, invalid: string): SolanaLockPlan | string {
+  if (plan.transaction === null) return plan
+  const instructions = instructionsOf(vault, plan.wallet, plan.action, plan.periods, plan.amountMinor)
+  if (instructions === undefined) return invalid
+  const wire = wireMatches({ payer: plan.wallet, blockhash: plan.transaction.blockhash, transaction: plan.transaction.transaction }, instructions)
+  return wire === undefined ? solanaLockMessages.differs : { ...plan, wire }
+}
+
+export effect function reviewSolanaLock(vault: SolanaVault, connection: SolanaConnection, count: number, amount: string) {
+  const answer = try asked(vault, connection, { step: "review", action: "lock", count, amount })
+  const plan = recordOf(answer.plan)
+  const periods = monthsOf(plan?.periods)
+  const requested = monthsOf(plan?.requested)
+  const decimals = decimalsOf(plan?.decimals)
+  const transaction = plan?.transaction === null ? null : transactionOf(plan?.transaction)
+  if (plan === undefined || plan.wallet !== connection.address || typeof plan.amountMinor !== "string" || !positive.test(plan.amountMinor) || decimals === undefined
+    || periods === undefined || requested === undefined || requested.length !== count || !periods.every((period) => requested.includes(period))
+    || transaction === undefined || (transaction !== null && periods.length === 0)) throw refused(solanaLockMessages.invalidLock)
+  const checked = checkedPlan(vault, { action: "lock", wallet: connection.address, periods, requested, amountMinor: BigInt(plan.amountMinor), decimals, transaction, wire: undefined }, solanaLockMessages.invalidLock)
+  if (typeof checked === "string") throw refused(checked)
+  return checked
+}
+
+export effect function reviewSolanaRelease(vault: SolanaVault, connection: SolanaConnection, period: number) {
+  const answer = try asked(vault, connection, { step: "review", action: "release", period: siteMonth(period) })
+  const plan = recordOf(answer.plan)
+  const transaction = transactionOf(plan?.transaction)
+  if (plan === undefined || plan.wallet !== connection.address || plan.period !== period || typeof plan.amountMinor !== "string" || !canonical.test(plan.amountMinor) || transaction === undefined) throw refused(solanaLockMessages.invalidRelease)
+  const checked = checkedPlan(vault, { action: "release", wallet: connection.address, periods: [period], requested: [period], amountMinor: BigInt(plan.amountMinor), decimals: undefined, transaction, wire: undefined }, solanaLockMessages.invalidRelease)
+  if (typeof checked === "string") throw refused(checked)
+  return checked
+}
+
+export effect function sendSolanaLock<E>(vault: SolanaVault, connection: SolanaConnection, plan: SolanaLockPlan, beforePrompt: void!E) {
+  if (plan.wire === undefined || plan.wallet !== connection.address) throw refused(solanaLockMessages.nothingToSend)
+  return try signAndVerify(vault.network, connection, plan.wire, plan, (_plan) => beforePrompt)
+}
+
+export effect function checkSolanaLock(vault: SolanaVault, connection: SolanaConnection, plan: SolanaLockPlan, transactionId: string) {
+  if (plan.transaction === null) throw refused(solanaLockMessages.nothingToSend)
+  const answer = try asked(vault, connection, { step: "check", action: plan.action, periods: plan.periods, amountMinor: plan.amountMinor.toString(), blockhash: plan.transaction.blockhash, transactionId })
+  switch (answer.status) {
+    case "pending": return "ChainPending" satisfies LockCheck
+    case "failed": return "ChainFailed" satisfies LockCheck
+    case "finalized": return "ChainIncluded" satisfies LockCheck
+    default: throw new WalletFailed({ message: solanaLockMessages.status })
+  }
+}

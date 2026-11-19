@@ -1,7 +1,13 @@
 import { assert, layer } from "@effect/vitest"
-import { SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import { type Address, type Blockhash, SYSTEM_PROGRAM, SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import idlJson from "../../../../../packages/contracts/solana/idl/slop_escrow.json" with { type: "json" }
+import { PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE, MONTH_PLEDGE_SIZE, decodeMonthPledge, decodeProject } from "../../../src/chain/solana/accounts.ts"
+import { u32le, u64le, type U64 } from "../../../src/chain/solana/bytes.ts"
+import { PLEDGE_REFUSALS, expirePledgeInstruction, pledgeMonthInstructions } from "../../../src/chain/solana/instructions.ts"
+import { keyBytes, monthAddress, monthPledgeAddress } from "../../../src/chain/solana/pda.ts"
+import { compileLegacy } from "../../../src/chain/solana/transactions.ts"
 import { outbound } from "@repo/platform/http"
-import { type Deployment, type Scenario, escrowDeployment, expectedParity, nativeMonth, tokenProjects, transactionParity } from "./escrow.ts"
+import { type Deployment, type Scenario, escrowDeployment, expectedParity, nativeMonth, pledgeMonth, tokenProjects, transactionParity } from "./escrow.ts"
 
 service Escrow {
   readonly deployment: Deployment
@@ -26,6 +32,29 @@ effect function observed(scenario: Scenario) {
   }
 }
 
+interface IdlEntry {
+  readonly name: string
+  readonly discriminator: ReadonlyArray<number>
+  readonly accounts?: ReadonlyArray<{ readonly name: string; readonly writable?: boolean; readonly signer?: boolean }>
+}
+
+interface Idl {
+  readonly address: string
+  readonly instructions: ReadonlyArray<IdlEntry>
+  readonly accounts: ReadonlyArray<IdlEntry>
+}
+
+function entry(entries: ReadonlyArray<IdlEntry>, name: string): IdlEntry {
+  return entries.find((candidate) => candidate.name === name) ?? { name, discriminator: [] }
+}
+
+function bytesOf(size: number, discriminator: ReadonlyArray<number>, fields: ReadonlyArray<readonly [number, Uint8Array]>): Uint8Array {
+  const data = new Uint8Array(size)
+  data.set(discriminator, 0)
+  for (const [at, bytes] of fields) data.set(bytes, at)
+  return data
+}
+
 effect function journey(run: (deployment: Deployment) => Promise<Scenario>) {
   const { deployment } = try Escrow
   const scenario = try promise(() => run(deployment))
@@ -34,6 +63,57 @@ effect function journey(run: (deployment: Deployment) => Promise<Scenario>) {
 
 layer(Layer.mergeAll(Started, outbound), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
   it.effect('An attested month is admitted, its leaves commit or release, a co-signed wallet binding pays, the owner pledges the current month at its own pledge account, a 332- or 340-byte project reads the same, and every transaction finalizes as the exact codec bytes (spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project\'s network"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => journey(nativeMonth))
+
+  it.effect('Pledge and expiry instructions carry the program\'s discriminators and account order, one pledge account per project and month, twelve pledges fit one legacy transaction, a 340-byte project reports its open pledges, and a MonthPledge with a bad flag is refused (spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/contracts/solanaEscrow.md, "Anyone closes an open pledge once its period is committed or the period\'s window has closed"; spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges")', () => effect {
+    const program: Idl = idlJson
+    const id = program.address as Address
+    const project = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin" as Address
+    const owner = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS" as Address
+    const months = [202612, 202701, 202702, 202703, 202704, 202705, 202706, 202707, 202708, 202709, 202710, 202711]
+    const pledged = pledgeMonthInstructions({ program: id, project, owner, periods: months, amount: 5n })
+    const expired = expirePledgeInstruction({ program: id, project, period: 202612 })
+    const pledgeIdl = entry(program.instructions, "pledge_month")
+    const expireIdl = entry(program.instructions, "expire_pledge")
+    const refusal = (periods: ReadonlyArray<number>, amount: bigint) => {
+      const built = pledgeMonthInstructions({ program: id, project, owner, periods, amount })
+      return built.kind === "refused" && built.issue in PLEDGE_REFUSALS ? PLEDGE_REFUSALS[built.issue as keyof typeof PLEDGE_REFUSALS] : built.kind
+    }
+    const pledgeAccount = (flag: number) => decodeMonthPledge({ owner: id, lamports: 1n, executable: false, data: bytesOf(MONTH_PLEDGE_SIZE, entry(program.accounts, "MonthPledge").discriminator, [[8, keyBytes(project)], [40, u32le(202612)], [44, u64le(9n as U64)], [52, Uint8Array.of(flag, 254)]]) }, id)
+    const projectAccount = (size: number) => decodeProject({ owner: id, lamports: 1n, executable: false, data: bytesOf(size, entry(program.accounts, "Project").discriminator, size === PROJECT_SIZE ? [[332, u64le(77n as U64)]] : []) }, id)
+    const badFlag = pledgeAccount(2)
+    const pledgedOpen = (size: number) => {
+      const decoded = projectAccount(size)
+      return decoded.kind === "decoded" ? decoded.value.pledgedOpen : decoded.issue
+    }
+    try same({
+      pledges: pledged.kind === "built" ? pledged.value.map((instruction) => ({ head: [...instruction.data.slice(0, 8)], accounts: instruction.accounts.map((account) => [account.writable, account.signer]) })) : pledged.issue,
+      sameAsProgram: pledged.kind === "built" && pledged.value.every((instruction, index) => {
+        const reference = pledgeMonth(id, project, owner, months[index] as Parameters<typeof pledgeMonth>[3], 5n as U64)
+        return instruction.accounts.every((account, at) => account.key === reference.accounts[at]?.key) && instruction.data.every((byte, at) => byte === reference.data[at])
+      }),
+      pledgeAddresses: pledged.kind === "built" ? new Set(pledged.value.map((instruction) => instruction.accounts[2]?.key)).size : 0,
+      fits: pledged.kind === "built" ? compileLegacy({ payer: owner, blockhash: SYSTEM_PROGRAM as string as Blockhash, instructions: pledged.value }).kind : pledged.issue,
+      expiry: expired.kind === "built"
+        ? { head: [...expired.value.data.slice(0, 8)], data: [...expired.value.data.slice(8)], keys: expired.value.accounts.map((account) => [account.key, account.writable]) }
+        : expired.issue,
+      refusals: [refusal(months.slice(0, 1), 0n), refusal(months.slice(0, 1), 1n << 64n), refusal([], 1n), refusal([...months, 202712], 1n), refusal([199912], 1n), refusal([202612, 202612], 1n)],
+      pledgeFlags: [pledgeAccount(1).kind, badFlag.kind === "malformed" ? badFlag.issue : "decoded"],
+      pledgedOpen: [pledgedOpen(PROJECT_SIZE), pledgedOpen(PRE_PLEDGE_PROJECT_SIZE)],
+    }, {
+      pledges: months.map(() => ({ head: [...pledgeIdl.discriminator], accounts: (pledgeIdl.accounts ?? []).map((account) => [account.writable === true, account.signer === true]) })),
+      sameAsProgram: true,
+      pledgeAddresses: 12,
+      fits: "compiled",
+      expiry: {
+        head: [...expireIdl.discriminator],
+        data: [...u32le(202612)],
+        keys: [[project, true], [monthPledgeAddress(id, project, 202612 as Parameters<typeof monthAddress>[2]), true], [monthAddress(id, project, 202612 as Parameters<typeof monthAddress>[2]), false]],
+      },
+      refusals: ["A pledge must be positive", "Amount outside u64", "Pledge 1 to 12 periods", "Pledge 1 to 12 periods", "Period must be YYYYMM", "Each period may be pledged once per transaction"],
+      pledgeFlags: ["decoded", "invalidFlag"],
+      pledgedOpen: [77n, undefined],
+    })
+  })
 
   it.effect('A classic SPL award pays into the wallet\'s new token account, an admitted Token-2022 project takes deposits, and the refused Token-2022 mint starts no project (spec/contracts/solanaEscrow.md, "A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor\'s latest unvetoed binding"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order")', () => journey(tokenProjects))
 })

@@ -1,0 +1,348 @@
+// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { Socket } from "effect/socket"
+import { type HistoricalIntakeFailure, historicalIntakeErrorNames, projectHistoricalIntakeFailure } from "../import/diagnostics.vibe"
+
+export error IntakeReadFailed { stage: string; httpStatus: number | undefined; providerCode: number | undefined }
+export error IntakeInspectionRefused { message: string }
+export error IntakeInspectionIncomplete { message: string }
+
+export const intakeWorkers = ["slop-slopbot", "slop-vetting-sandbox"] as const
+export const intakePagesProject = "eliza-computer"
+export const intakeTailSeconds = 180
+export const intakeFile = "value-intake-diagnostic.json"
+
+type Target = (typeof intakeWorkers)[number] | "pages"
+
+const cloudflareApi = "https://api.cloudflare.com/client/v4"
+const responseLimit = 1024 * 1024
+const requestSeconds = 20
+const tailMessageLimit = 1024 * 1024
+const tailRecords = 200
+const listItems = 20
+const logItems = 50
+const logMessages = 10
+const structuredLimit = 8192
+const messageLimit = 4096
+const accountPattern = /^[a-f0-9]{32}$/u
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u
+const tailId = /^[a-zA-Z0-9-]{1,128}$/u
+const digest = /^[a-f0-9]{64}$/u
+
+const outcomes: ReadonlySet<unknown> = new Set(["ok", "exception", "canceled", "exceededCpu", "exceededMemory", "unknown"])
+const methods: ReadonlySet<unknown> = new Set(["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+const mergeStages: ReadonlySet<string> = new Set(["bundle-write", "input-write", "setup", "supervisor-exec", "supervisor-result", "output-read", "output-shape"])
+const exceptionNames: ReadonlySet<unknown> = new Set(historicalIntakeErrorNames)
+const safeCategories =
+  /^(?:unspecified|merge-(?:bundle-write|input-write|setup|supervisor-exec|supervisor-result|output-read|output-shape)|merge-supervisor-(?:exited|timeout|disk-limit|output-limit|not-executable)|publication-failed|session-failed|subrequest-limit|github-http-(?:401|403|404|429|500|502|503|504)|source-metadata-changed|rate-limit|authorization|resource-limit|timeout|source-or-assessment|rpc-connection|other)$/u
+
+type Fields = Readonly<Record<string, unknown>>
+
+export interface ExceptionFingerprint { readonly name: string; readonly messageSha256: string | null }
+
+export interface IntakeTailRecord {
+  outcome?: string
+  method?: string
+  httpStatus?: number
+  categories?: ReadonlyArray<string>
+  exceptionFingerprints?: ReadonlyArray<ExceptionFingerprint>
+  historicalIntakeFailures?: ReadonlyArray<HistoricalIntakeFailure>
+}
+
+export interface ReadFailure { readonly stage: string; readonly httpStatus?: number; readonly providerCode?: number }
+
+export function fieldsOf(value: unknown): Fields | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function listOf(value: unknown, limit: number): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value.slice(0, limit) : []
+}
+
+export function readFailed(stage: string, httpStatus?: number, providerCode?: number) {
+  return new IntakeReadFailed({ stage, httpStatus, providerCode })
+}
+
+export function failureOf(error: IntakeReadFailed): ReadFailure {
+  return {
+    stage: error.stage,
+    ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
+    ...(error.providerCode === undefined ? {} : { providerCode: error.providerCode }),
+  }
+}
+
+export function intakeError(input: unknown): string {
+  if (typeof input !== "string") return "unspecified"
+  const value = input.replace(/^Error: /u, "")
+  const stage = /^Merge reconstruction unavailable: ([a-z-]+)$/u.exec(value)?.[1]
+  if (stage !== undefined && mergeStages.has(stage)) return `merge-${stage}`
+  const supervisor = /^Merge reconstruction unavailable: supervisor-(exited|timeout|disk-limit|output-limit|not-executable)-(-?\d{1,3})$/u.exec(value)
+  if (supervisor !== null && Math.abs(Number(supervisor[2])) <= 255) return `merge-supervisor-${supervisor[1]}`
+  if (value === "historical value import failure") return "publication-failed"
+  if (value === "historical value import session failure") return "session-failed"
+  if (/too many subrequests|subrequest limit/iu.test(value)) return "subrequest-limit"
+  const githubStatus = /(?:GitHub|GET|POST)[^\n]*\b(401|403|404|429|500|502|503|504)\b/iu.exec(value)
+  if (githubStatus !== null) return `github-http-${githubStatus[1]}`
+  if (/source (?:identity|metadata) changed|recovery source metadata changed/iu.test(value)) return "source-metadata-changed"
+  if (/rate.?limit|\b429\b/iu.test(value)) return "rate-limit"
+  if (/\b(?:401|403)\b|unauthorized|forbidden/iu.test(value)) return "authorization"
+  if (/cpu|memory limit/iu.test(value)) return "resource-limit"
+  if (/timeout|timed out|abort/iu.test(value)) return "timeout"
+  if (/GitHub|source|metadata|assessment|predecessor/iu.test(value)) return "source-or-assessment"
+  if (/RPC|disconnected|connection/iu.test(value)) return "rpc-connection"
+  return "other"
+}
+
+effect function exceptionFingerprint(value: unknown) {
+  if (value === null || typeof value !== "object") return undefined
+  const row = value as Fields
+  const message = row.message
+  const hashable = typeof message === "string" && message.length <= messageLimit && new TextEncoder().encode(message).length <= messageLimit
+  return {
+    name: typeof row.name === "string" && exceptionNames.has(row.name) ? row.name : "OtherError",
+    messageSha256: hashable ? try sha256Hex(message) : null,
+  } satisfies ExceptionFingerprint
+}
+
+function isExceptionFingerprint(value: unknown): value is ExceptionFingerprint {
+  if (value === null || typeof value !== "object") return false
+  const row = value as Fields
+  return Object.keys(row).sort().join() === "messageSha256,name" && exceptionNames.has(row.name)
+    && (row.messageSha256 === null || (typeof row.messageSha256 === "string" && digest.test(row.messageSha256)))
+}
+
+effect function structuredMessage(message: unknown) {
+  if (typeof message !== "string" || message.length > structuredLimit) return message
+  const parsed = Effect.try(() => ({ value: JSON.parse(message) as unknown })) catch () => undefined
+  return parsed === undefined ? message : parsed.value
+}
+
+export effect function sanitizeIntakeTail(value: unknown) {
+  if (value === null || typeof value !== "object") return undefined
+  const fields = value as Fields
+  const row: IntakeTailRecord = {}
+  if (outcomes.has(fields.outcome)) row.outcome = fields.outcome as string
+  const event = fieldsOf(fields.event)
+  const method = fieldsOf(event?.request)?.method ?? fields.method
+  if (methods.has(method)) row.method = method as string
+  const status = fieldsOf(event?.response)?.status ?? fields.httpStatus
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) row.httpStatus = status
+  const labels: string[] = []
+  const intakeFailures: HistoricalIntakeFailure[] = []
+  for (const entry of listOf(fields.historicalIntakeFailures, listItems)) {
+    const failure = try projectHistoricalIntakeFailure(entry)
+    if (failure !== undefined) intakeFailures.push(failure)
+  }
+  const fingerprints: ExceptionFingerprint[] = listOf(fields.exceptionFingerprints, listItems).filter(isExceptionFingerprint).map((entry) => ({ name: entry.name, messageSha256: entry.messageSha256 }))
+  for (const category of listOf(fields.categories, listItems)) {
+    if (typeof category === "string" && safeCategories.test(category)) labels.push(category)
+  }
+  for (const entry of listOf(fields.exceptions, listItems)) {
+    labels.push(intakeError(fieldsOf(entry)?.message))
+    const fingerprint = try exceptionFingerprint(entry)
+    if (fingerprint !== undefined && fingerprints.length < listItems) fingerprints.push(fingerprint)
+  }
+  for (const entry of listOf(fields.logs, logItems)) {
+    for (const message of listOf(fieldsOf(entry)?.message, logMessages)) {
+      const failure = try projectHistoricalIntakeFailure(try structuredMessage(message))
+      if (failure !== undefined) {
+        if (intakeFailures.length < listItems) intakeFailures.push(failure)
+        continue
+      }
+      if (typeof message === "string") labels.push(intakeError(message))
+    }
+  }
+  if (labels.length > 0) row.categories = [...new Set(labels)]
+  if (fingerprints.length > 0) row.exceptionFingerprints = fingerprints
+  if (intakeFailures.length > 0) row.historicalIntakeFailures = intakeFailures
+  return Object.keys(row).length > 0 ? row : undefined
+}
+
+export effect function setting(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+export interface Authority { readonly accountId: string; readonly token: Redacted.Redacted<string> }
+
+export effect function cloudflareAuthority() {
+  const token = Option.getOrUndefined(try Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN"))) ?? Redacted.make("")
+  return { accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "", token } satisfies Authority
+}
+
+export function authorized(authority: Authority) {
+  return accountPattern.test(authority.accountId) && Redacted.value(authority.token).trim() !== ""
+}
+
+export effect function mainRunner() {
+  const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
+  return { main: (try setting("GITHUB_REF")) === "refs/heads/main" && runnerTemp !== "", runnerTemp }
+}
+
+type Method = "GET" | "POST" | "DELETE"
+
+function requestFor(method: Method, url: string) {
+  if (method === "POST") return HttpClientRequest.post(url)
+  if (method === "DELETE") return HttpClientRequest.delete(url)
+  return HttpClientRequest.get(url)
+}
+
+function providerCodeOf(body: Fields | undefined) {
+  const errors = body?.errors
+  const code = Array.isArray(errors) ? fieldsOf(errors[0])?.code : undefined
+  return typeof code === "number" && Number.isSafeInteger(code) && code >= 0 ? code : undefined
+}
+
+export function cloudflareAccount(authority: Authority) {
+  const base = `${cloudflareApi}/accounts/${authority.accountId}`
+  return (path: string, stage: string, method: Method = "GET", body?: unknown) => effect {
+    const headed = HttpClientRequest.setHeaders(requestFor(method, `${base}${path}`), { authorization: `Bearer ${Redacted.value(authority.token)}`, "content-type": "application/json" })
+    const request = body === undefined ? headed : HttpClientRequest.bodyJsonUnsafe(headed, body)
+    const answered = timeout(effect {
+      provide FetchHttpClient.RequestInit = { redirect: "error" } {
+        const response = try HttpClient.execute(request)
+        const bytes = boundedBytes(response, responseLimit, "Cloudflare API") catch () => undefined
+        return { status: response.status, bytes }
+      }
+    }, Duration.seconds(requestSeconds)) catch effect () => { throw readFailed(stage) }
+    const bytes = answered.bytes
+    if (bytes === undefined) throw readFailed(stage, answered.status)
+    const parsed = Effect.try(() => ({ value: JSON.parse(new TextDecoder().decode(bytes)) as unknown })) catch () => undefined
+    if (parsed === undefined) throw readFailed(stage, answered.status)
+    const envelope = fieldsOf(parsed.value)
+    if (answered.status < 200 || answered.status > 299 || envelope?.success !== true) throw readFailed(stage, answered.status, providerCodeOf(envelope))
+    return envelope.result
+  }
+}
+
+export type CloudflareAccount = ReturnType<typeof cloudflareAccount>
+
+export effect function attempted<A, R>(program: A!IntakeReadFailed!R) {
+  return Effect.map(program, (value) => ({ value, failure: undefined })) catch (failure) => ({ value: undefined, failure })
+}
+
+export function activeWorker(value: unknown) {
+  const deployments = fieldsOf(value)?.deployments
+  const current = Array.isArray(deployments) ? fieldsOf(deployments[0]) : undefined
+  const versions = current?.versions
+  const selected = Array.isArray(versions) && versions.length === 1 ? fieldsOf(versions[0]) : undefined
+  const deploymentId = current?.id
+  const versionId = selected?.version_id
+  if (typeof deploymentId !== "string" || !uuid.test(deploymentId) || selected?.percentage !== 100 || typeof versionId !== "string" || !uuid.test(versionId)) return undefined
+  return { deploymentId, versionId }
+}
+
+function activePages(value: unknown) {
+  const deployment = fieldsOf(fieldsOf(value)?.canonical_deployment)
+  const deploymentId = deployment?.id
+  if (typeof deploymentId !== "string" || !uuid.test(deploymentId) || deployment?.environment !== "production") return undefined
+  return { deploymentId }
+}
+
+function currentDeployment(target: Target, value: unknown) {
+  if (target === "pages") return fieldsOf(fieldsOf(value)?.canonical_deployment)?.id
+  const deployments = fieldsOf(value)?.deployments
+  return Array.isArray(deployments) ? fieldsOf(deployments[0])?.id : undefined
+}
+
+function tailTransport(url: unknown) {
+  const transport = typeof url === "string" ? URL.parse(url) : null
+  if (transport === null || transport.protocol !== "wss:" || !(transport.hostname.endsWith(".cloudflare.com") || transport.hostname.endsWith(".workers.dev")) || transport.username !== "" || transport.password !== "") return undefined
+  return transport.href
+}
+
+effect function tailFrame(frame: string | Uint8Array) {
+  const raw = typeof frame === "string" ? frame : new TextDecoder().decode(frame)
+  if (raw.length > tailMessageLimit) return undefined
+  const parsed = Effect.try(() => ({ value: JSON.parse(raw) as unknown })) catch () => undefined
+  return parsed === undefined ? undefined : try sanitizeIntakeTail(parsed.value)
+}
+
+export effect function readIntakeTail(url: string, seconds: number) {
+  const records: IntakeTailRecord[] = []
+  const listening = { opened: false }
+  const socket = try Socket.makeWebSocket(url, { protocols: "trace-v1", openTimeout: Duration.seconds(seconds) })
+  const observing = scoped(effect {
+    const reader = try socket.reader
+    listening.opened = true
+    const writer = try socket.writer
+    try writer.write(JSON.stringify({ debug: false }))
+    while (true) {
+      const frames = try reader.pull
+      for (const frame of frames) {
+        const record = try tailFrame(frame)
+        if (record !== undefined && records.length < tailRecords) records.push(record)
+      }
+    }
+  })
+  timeout(observing, Duration.seconds(seconds)) catch effect (error) => {
+    if (error._tag !== "TimeoutError" || !listening.opened) throw readFailed("tail-transport")
+  }
+  return records
+}
+
+interface TargetProgress {
+  stage: string
+  binding: { readonly deploymentId?: string; readonly versionId?: string }
+  observations: IntakeTailRecord[]
+}
+
+effect function observed(api: CloudflareAccount, target: Target, seconds: number, progress: TargetProgress) {
+  const path = target === "pages" ? `/pages/projects/${intakePagesProject}` : `/workers/scripts/${target}/deployments`
+  const binding = target === "pages" ? activePages(try api(path, "deployment-read")) : activeWorker(try api(path, "deployment-read"))
+  if (binding === undefined) throw readFailed("deployment-read")
+  progress.binding = binding
+  const tailPath = target === "pages" ? `/pages/projects/${intakePagesProject}/deployments/${binding.deploymentId}/tails` : `/workers/scripts/${target}/tails`
+  progress.stage = "tail-create"
+  const filters = "versionId" in binding ? { filters: [{ scriptVersion: binding.versionId }] } : {}
+  const tail = fieldsOf(try api(tailPath, "tail-create", "POST", filters))
+  const id = tail?.id
+  if (typeof id !== "string" || !tailId.test(id)) throw readFailed("tail-create")
+  progress.stage = "tail-transport"
+  const url = tailTransport(tail?.url)
+  const records = try exit(url === undefined ? Effect.fail(readFailed("tail-transport")) : readIntakeTail(url, seconds))
+  if (Exit.isSuccess(records)) progress.observations.push(...records.value)
+  try api(`${tailPath}/${id}`, "tail-delete", "DELETE")
+  if (Exit.isFailure(records)) return try Effect.failCause(records.cause)
+  progress.stage = "deployment-recheck"
+  if (currentDeployment(target, try api(path, "deployment-recheck")) !== binding.deploymentId) throw readFailed("deployment-recheck")
+}
+
+effect function inspectTarget(api: CloudflareAccount, target: Target, seconds: number) {
+  const progress: TargetProgress = { stage: "deployment-read", binding: {}, observations: [] }
+  const { failure } = try attempted(observed(api, target, seconds, progress))
+  return {
+    target,
+    ...progress.binding,
+    observations: progress.observations,
+    complete: failure === undefined,
+    ...(failure === undefined ? {} : { failure: failureOf(failure) }),
+  }
+}
+
+export effect function privateFile(directory: string, name: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.writeFileString(path.join(directory, name), text, { mode: 0o600 })
+}
+
+export effect function inspectValueIntake(seconds: number) {
+  const runner = try mainRunner()
+  if (!runner.main) throw new IntakeInspectionRefused({ message: "Main runner required" })
+  const authority = try cloudflareAuthority()
+  if (!authorized(authority)) throw new IntakeInspectionRefused({ message: "Diagnostic credentials unavailable" })
+  const api = cloudflareAccount(authority)
+  const checkedAt = try isoAt(try Clock.currentTimeMillis)
+  const targets = try Effect.forEach([...intakeWorkers, "pages" as const], (target) => inspectTarget(api, target, seconds), { concurrency: "unbounded" })
+  const result = { checkedAt, tailSeconds: seconds, rawLogsRetained: false, targets }
+  try privateFile(runner.runnerTemp, intakeFile, `${JSON.stringify(result, null, 2)}\n`)
+  try Console.log(JSON.stringify(result))
+  if (targets.some((target) => !target.complete)) throw new IntakeInspectionIncomplete({ message: "Intake diagnostic incomplete" })
+  return result
+}
+
+export effect function inspectValueIntakeCommand(args: ReadonlyArray<string>) {
+  if (args.length > 0) throw new IntakeInspectionRefused({ message: "usage: inspect-value-intake" })
+  try inspectValueIntake(intakeTailSeconds)
+}

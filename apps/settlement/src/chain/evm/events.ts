@@ -1,4 +1,4 @@
-// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once"; spec/settlement/escrow.md, "A proven leaf reclassifies pool gross into one award without debiting free funds"; spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet's own signature"
+// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once"; spec/settlement/escrow.md, "A proven leaf reclassifies pool gross into one award without debiting free funds"; spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet's own signature"; spec/contracts/evmEscrow.md, "The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge"; spec/contracts/evmEscrow.md, "Anyone expires a pledge whose period's window closed without admission"
 import { toEventSelector } from "viem";
 import { type Bytes32, type EvmAddress, type Hex, U8_MAX, U32_MAX, U64_MAX, U128_MAX, U256_MAX, bytes32, evmAddress, isZero, wordAddress, wordBool, wordBytes32, wordUint } from "./abi.ts";
 
@@ -32,6 +32,8 @@ export type EscrowEvent =
   | { readonly name: "MonthlyCommitted"; readonly period: number; readonly allocationRoot: Bytes32; readonly gross: bigint; readonly awards: bigint }
   | { readonly name: "MonthlyReserved"; readonly period: number; readonly allocationDigest: Bytes32; readonly allocationRoot: Bytes32; readonly wholeGross: bigint; readonly remainingGross: bigint; readonly count: number; readonly sourceSequence: bigint }
   | { readonly name: "MonthlyReserveReleased"; readonly period: number; readonly allocationDigest: Bytes32; readonly remainingGross: bigint; readonly releasedGross: bigint }
+  | { readonly name: "MonthPledged"; readonly period: number; readonly amount: bigint }
+  | { readonly name: "PledgeClosed"; readonly period: number; readonly amount: bigint; readonly reserved: boolean }
   | { readonly name: "Upgraded"; readonly implementation: EvmAddress }
   | { readonly name: "VaultCreated"; readonly projectId: Bytes32; readonly token: EvmAddress; readonly vault: EvmAddress; readonly owner: EvmAddress; readonly purpose: 0 | 1; readonly decimals: number }
   | { readonly name: "IdentityAuthorityRotationProposed"; readonly current: EvmAddress; readonly proposed: EvmAddress; readonly effectiveAt: bigint }
@@ -134,6 +136,8 @@ const layouts: ReadonlyArray<Layout> = [
     read: (t, d) => ({ name: "MonthlyReserveReleased", period: t.small(U32_MAX), allocationDigest: d.bytes32(), remainingGross: d.uint(U128_MAX), releasedGross: d.uint(U128_MAX) }),
     valid: (e) => e.name === "MonthlyReserveReleased" && positive(e.releasedGross) && e.releasedGross <= e.remainingGross,
   },
+  { signature: "MonthPledged(uint32,uint128)", indexed: 1, data: 1, read: (t, d) => ({ name: "MonthPledged", period: t.small(U32_MAX), amount: d.uint(U128_MAX) }), valid: (e) => e.name === "MonthPledged" && positive(e.amount) },
+  { signature: "PledgeClosed(uint32,uint128,bool)", indexed: 1, data: 2, read: (t, d) => ({ name: "PledgeClosed", period: t.small(U32_MAX), amount: d.uint(U128_MAX), reserved: d.bool() }), valid: always },
   { signature: "Upgraded(address)", indexed: 1, data: 0, read: (t) => ({ name: "Upgraded", implementation: t.address() }), valid: (e) => e.name === "Upgraded" && !isZero(e.implementation) },
   {
     signature: "VaultCreated(bytes32,address,address,address,uint8,uint8)", indexed: 3, data: 3,
@@ -158,6 +162,8 @@ const byTopic = new Map(layouts.map((layout) => [toEventSelector(layout.signatur
 const nameOf = (signature: string) => signature.slice(0, signature.indexOf("(")) as EventName;
 
 export const EVENT_TOPICS = Object.fromEntries(layouts.map((layout) => [nameOf(layout.signature), toEventSelector(layout.signature).toLowerCase() as Bytes32])) as Readonly<Record<EventName, Bytes32>>;
+
+export const EVM_PLEDGE_EVENT_TOPICS = { MonthPledged: EVENT_TOPICS.MonthPledged, PledgeClosed: EVENT_TOPICS.PledgeClosed } as const;
 
 const DATA = /^0x(?:[0-9a-fA-F]{64})*$/u;
 

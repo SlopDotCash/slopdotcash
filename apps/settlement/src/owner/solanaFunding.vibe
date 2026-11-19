@@ -7,10 +7,10 @@ import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
 import { normalizedNativeDelta } from "../kernels/budget.ts"
 import { ordinaryFeeBase } from "../kernels/fees.ts"
 import { ordinaryFeeEvidenceMatches } from "../../gen/settlement__money.effect.vibe"
-import type { PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import type { OwnerRequest, PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
 import { type FundingOperation, fundingInstructions } from "./ownerInstructions.ts"
 import { type VerifiedDeployment, finalizedFunds } from "./solanaDeployment.vibe"
-import { type WalletMessage, WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
+import { type WalletCheck, type WalletMessage, WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
 import { type Capture, type Outcome, outcomeOf, reviewed, submitted } from "./store.vibe"
 
 export interface FundingIntent {
@@ -36,7 +36,7 @@ export interface FundingPlan {
 
 const NATIVE_TOKEN_PROGRAM = "11111111111111111111111111111111"
 const PLEDGED_FUNDS = 6040
-const LOCKED_FUNDS = "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
+export const LOCKED_FUNDS = "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
 const CUSTOM_PROGRAM_ERROR = /^\{"InstructionError":\[(\d+),\{"Custom":(\d+)\}\]\}$/u
 
 function refused(message: string) {
@@ -188,6 +188,10 @@ export effect function checkFunding(verified: VerifiedDeployment, intent: Fundin
   const request = try reviewed(capture, planKind(intent.operation), facts, text)
   const checked = try checkWalletTransaction(intent.wallet, message, transactionId, intent.operation === "deposit")
   if (checked.status === "finalized") try verifiedMovements(verified, intent, checked.fetched, checked.accountKeys)
+  return try completedCheck(request, text, transactionId, checked)
+}
+
+export effect function completedCheck(request: OwnerRequest, text: string, transactionId: string, checked: WalletCheck) {
   const prefix = checked.status === "pending" ? "" : checked.prefix
   const result = {
     transaction: transactionId,

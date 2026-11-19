@@ -1,4 +1,4 @@
-// spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"
+// spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";

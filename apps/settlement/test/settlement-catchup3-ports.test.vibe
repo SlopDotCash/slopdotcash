@@ -1,0 +1,217 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { SYSTEM_PROGRAM, TOKEN_PROGRAM, SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import { DeploymentTier } from "@repo/platform/config"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
+import { DirectBounty, PublicVaultPaymentPage } from "@repo/ports/settlement"
+import { digestBytes, i64, i64le, readU64 } from "../src/chain/solana/bytes.ts"
+import { anchorData, meta } from "../src/chain/solana/instructions.ts"
+import { PURPOSE_BYTE, configAddress, keyBytes, programDataAddress, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
+import { DirectBountyLive } from "../src/direct/port.vibe"
+import { registryProjectDigest } from "../src/owner/ownerInstructions.ts"
+import { DeploymentUnverified, reviewedDeployment, verifiedDeployment } from "../src/owner/solanaDeployment.vibe"
+import { vaultPaymentPage } from "../src/public/records.vibe"
+import { SecurityProgramFundsLive } from "../src/securityScope/programFunds.vibe"
+import { type Deployment, escrowDeployment } from "./support/solana/escrow.ts"
+import { submit } from "./support/solana/program.ts"
+
+const now = Date.parse("2026-11-17T12:00:00.000Z")
+const at = "2026-11-17T11:56:00.000Z"
+const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+const evmVault = `0x${"a".repeat(40)}`
+const bountyVault = "Vau1t11111111111111111111111111111111111111"
+const bountyAsset = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+const directMint = "So1anaMint1111111111111111111111111111111111"
+
+function project(id: string): Statement {
+  return sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, '{}', ${"a".repeat(64)}, ${at}, ${at})`
+}
+
+function securityCase(id: string, projectId: string, terms: string): Statement {
+  return sql`INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at, root_cause_key)
+    VALUES (${id}, ${projectId}, 'owner/repo', '202', 'reporter', 'verified', ${at}, ${at}, '7', 1, ${terms}, 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 3, ${at}, ${at}, ${`root-${id}`})`
+}
+
+function reservation(caseId: string, projectId: string, gross: string): Statement {
+  return sql`INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) VALUES (${caseId}, ${projectId}, ${`root-${caseId}`}, 1, ${gross}, 'USDC', ${at})`
+}
+
+function bountySnapshot(projectId: string): Statement {
+  return sql`INSERT INTO security_vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at)
+    VALUES (${projectId}, 'solana-mainnet', 'solana', ${bountyVault}, ${bountyAsset}, 6, '5000000', '0', '0', '0', '0', '0', '5000000', '0', '0', '0', '0', '100', ${at}, ${at})`
+}
+
+function directPayment(caseId: string, chain: string, asset: string, fee: string, recipient: string, receipt: boolean): ReadonlyArray<Statement> {
+  const intent = JSON.stringify({ chain, asset: { address: asset }, feeBase: fee, transfers: [{ recipient: "researcher", amountBase: "3" }, { recipient, amountBase: fee }] })
+  return [
+    securityCase(caseId, "direct", "{}"),
+    sql`INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) VALUES (${caseId}, 'direct', ${`root-${caseId}`}, '{}', '4', ${at})`,
+    sql`INSERT INTO security_direct_payments (case_id, network, intent, prepared_at) VALUES (${caseId}, ${chain}, ${intent}, ${`2026-11-1${caseId.slice(-1)}T00:00:00.000Z`})`,
+    ...receipt ? [sql`INSERT INTO security_direct_payment_receipts (case_id, evidence, verified_at) VALUES (${caseId}, '{}', ${at})`] : [],
+  ]
+}
+
+const paidEvent = JSON.stringify({ kind: "paid", transactionId: "0xt1", eventIndex: 0, obligationId: "o1", projectId: "eliza", network: "base-mainnet", chain: "base", vault: evmVault, githubUserId: "101", sourceDigest: "1".repeat(64), grossMicro: "1000000", feeMicro: "20000", netMicro: "980000" })
+
+const seed = [
+  sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
+    VALUES ('o1', 'eliza', '101', 'base-mainnet', 'base', ${evmVault}, ${usdc}, 6, '1000000', '20000', ${"1".repeat(64)}, 'paid', '2026-11-01T00:00:00.000Z', '0xt1')`,
+  sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES ('base-mainnet', '0xt1', 0, 'block', 'paid', 'o1', ${paidEvent}, '2026-11-10T00:00:00.000Z')`,
+  sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
+    VALUES ('o3', 'eliza', '101', 'base-mainnet', 'base', ${evmVault}, ${usdc}, 6, '500000', '10000', ${"3".repeat(64)}, 'reserved', '2026-11-01T00:00:00.000Z', NULL)`,
+  project("funded"),
+  project("unreadable"),
+  project("direct"),
+  securityCase("case-funded", "funded", JSON.stringify({ currency: "USDC", decimals: 6, network: "solana" })),
+  securityCase("case-unreadable", "unreadable", "{}"),
+  reservation("case-funded", "funded", "2000000"),
+  reservation("case-unreadable", "unreadable", "1000000"),
+  bountySnapshot("funded"),
+  bountySnapshot("unreadable"),
+  ...directPayment("direct-1", "base", "0xABCDEF0000000000000000000000000000000001", "1", "0xFee0000000000000000000000000000000000001", true),
+  ...directPayment("direct-2", "base", "0xabcdef0000000000000000000000000000000001", "1", "0xfee0000000000000000000000000000000000001", false),
+  ...directPayment("direct-3", "solana", directMint, "2", "FeeWa11et111111111111111111111111111111111", true),
+]
+
+service Ledger {
+  readonly db: D1Database
+}
+
+const LedgerStarted = Layer.effect(Ledger, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { PORTS_DB: "ports" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PORTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  const db = try promise(() => database(mf, "PORTS_DB"))
+  provide d1(db) {
+    try (try D1).batch(seed)
+  }
+  return { db }
+})
+
+service Escrow {
+  readonly deployment: Deployment
+}
+
+const EscrowStarted = Layer.effect(Escrow, effect {
+  const deployment = try acquireRelease(promise(() => escrowDeployment()), (started) => promise(() => started.close()))
+  return { deployment }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const bountyTerms: ProgramTerms = { amount: { currency: "USDC", decimals: 6, network: "solana" }, deployments: [{ network: "solana-mainnet", vault: bountyVault, asset: bountyAsset }] }
+
+effect function portReads() {
+  provide Layer.mergeAll(DirectBountyLive, SecurityProgramFundsLive) {
+    const bounty = try DirectBounty
+    const program = try SecurityProgramFunds
+    return {
+      direct: {
+        base: try bounty.feeAwards({ network: "Base", asset: "0xabcdef0000000000000000000000000000000001" }),
+        solanaOtherCase: try bounty.feeAwards({ network: "Solana", asset: directMint.toLowerCase() }),
+        solana: try bounty.feeAwards({ network: "Solana", asset: directMint }),
+      },
+      funds: {
+        funded: (try program.read({ projectId: "funded", terms: bountyTerms })).funds,
+        unreadable: try program.read({ projectId: "unreadable", terms: bountyTerms }).pipe(Effect.flip, Effect.map((failure) => ({ tag: failure._tag, issue: "issue" in failure ? failure.issue : undefined }))),
+      },
+    }
+  }
+}
+
+layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Port providers answer in the ports\' plain shapes: finalized indexed vault payments, receipt-backed direct fee awards, and unreadable bounty reservations as a read failure (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot")', () => effect {
+    const { db } = try Ledger
+    provide Layer.mergeAll(d1(db), settableClock(now).layer, Layer.succeed(DeploymentTier, { tier: "production" })) {
+      const page = try vaultPaymentPage({ kind: "actor", githubUserId: "101" }, { after: 0, through: undefined })
+      const decoded = try Schema.decodeUnknownEffect(PublicVaultPaymentPage)(page)
+      const { direct, funds } = try portReads()
+      try same({ decoded, direct, funds }, {
+        decoded: {
+          payments: [{ id: "base-mainnet:0xt1:0", projectId: "eliza", network: "base-mainnet", chain: "base", contributionMonth: null, assetAddress: usdc, assetDecimals: 6, netBase: "980000", transactionId: "0xt1", indexedAt: "2026-11-10T00:00:00.000Z" }],
+          through: 1,
+          next: null,
+          total: 1,
+        },
+        direct: {
+          base: [{ caseId: "direct-1", network: "Base", asset: "0xABCDEF0000000000000000000000000000000001", feeBaseUnits: "1", feeRecipient: "0xFee0000000000000000000000000000000000001", feeTransferBaseUnits: "1", preparedAt: "2026-11-11T00:00:00.000Z", verifiedAt: at }],
+          solanaOtherCase: [],
+          solana: [{ caseId: "direct-3", network: "Solana", asset: directMint, feeBaseUnits: "2", feeRecipient: "FeeWa11et111111111111111111111111111111111", feeTransferBaseUnits: "2", preparedAt: "2026-11-13T00:00:00.000Z", verifiedAt: at }],
+        },
+        funds: {
+          funded: { currency: "USDC", decimals: 6, network: "solana", freeMinor: "5000000", snapshotAt: at, availableMinor: "3000000", assetAddress: bountyAsset, deploymentNetwork: "solana-mainnet" },
+          unreadable: { tag: "RowMismatch", issue: "Award reservation terms are malformed" },
+        },
+      })
+    }
+  })
+})
+
+layer(Layer.mergeAll(EscrowStarted, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('A reviewed Solana entry verifies at finality, and a program version deployed at or after the claim slot is refused (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee")', () => effect {
+    const { deployment } = try Escrow
+    const { chain } = deployment
+    provide solanaRpc({ urls: Redacted.make([chain.validator.url]), genesis: chain.validator.genesis }) {
+      const owner = chain.holder
+      const noDelay = i64(0n)
+      if (noDelay === undefined) return try die(new Error("zero is outside i64"))
+      const projectId = "slot-bound"
+      const digest = registryProjectDigest(projectId)
+      const projectPda = projectAddress(chain.program, owner.address, digest, "Ordinary")
+      const vault = vaultAddress(chain.program, projectPda)
+      const created = try promise(() => submit(chain, owner, [{
+        program: chain.program,
+        accounts: [meta(owner.address, true, true), meta(projectPda, true), meta(chain.mints.classic, false), meta(vault, true), meta(TOKEN_PROGRAM, false), meta(SYSTEM_PROGRAM, false), meta(configAddress(chain.program), false)],
+        data: anchorData("initialize", digestBytes(digest), digestBytes(deployment.network), keyBytes(deployment.identity.address), keyBytes(deployment.feeRecipient.address), i64le(noDelay), i64le(noDelay), Uint8Array.of(PURPOSE_BYTE.Ordinary)),
+      }]))
+      const programData = try (try SolanaRpc).account(programDataAddress(chain.program), "finalized")
+      if (programData === undefined) return try die(new Error("program data missing"))
+      const reviewed = try reviewedDeployment(projectId, "ordinary", "solana", {
+        network: "solana-devnet",
+        vault,
+        programId: chain.program,
+        upgradeAuthority: chain.upgradeAuthority.address,
+        projectPda,
+        networkDomain: deployment.network,
+        asset: chain.mints.classic,
+        owner: owner.address,
+        identityAuthority: deployment.identity.address,
+        feeRecipient: deployment.feeRecipient.address,
+        rotationAuthority: deployment.rotationAuthority.address,
+        deploymentTransaction: created,
+        sourceCommit: "0".repeat(40),
+        codeSha256: try sha256Hex(programData.data.slice(45)),
+        bindingDelaySeconds: "0",
+        rotationDelaySeconds: "0",
+        factory: null,
+        factoryCodeSha256: null,
+        registrar: null,
+      })
+      if (reviewed.family !== "solana") return try die(new Error("a Solana entry parsed as another family"))
+      const deployedAt = Number(readU64(programData.data, 4))
+      const outcome = (slot?: number) => verifiedDeployment(reviewed, slot).pipe(
+        Effect.map((verified) => verified.project),
+        Effect.catchTag("DeploymentUnverified", (refused: DeploymentUnverified) => Effect.succeed(refused.message)),
+      )
+      try same({
+        unbounded: try outcome(),
+        atDeploymentSlot: try outcome(deployedAt),
+        afterDeploymentSlot: try outcome(deployedAt + 1),
+        negativeSlot: try outcome(-1),
+      }, {
+        unbounded: projectPda,
+        atDeploymentSlot: "Program version was not effective before the receipt slot",
+        afterDeploymentSlot: projectPda,
+        negativeSlot: "Invalid receipt slot",
+      })
+    }
+  })
+})

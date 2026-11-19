@@ -1,4 +1,4 @@
-// spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"
+// spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "A bound review of a new item over the month's free-review cap is skipped before any call"; spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"
 import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
 import { first, rows, sql } from "@repo/platform/d1"
 import { type Denial } from "../../gen/slopbot__budgetBlocks.effect.vibe"
@@ -10,6 +10,7 @@ import type { ReviewJob } from "../jobs/job.vibe"
 import { type ClaimRequest, type ReviewClaim, assertCallClaim, claimReview, finishReview } from "../lease/store.vibe"
 import type { FinishDetail, Finished, ReviewRow } from "../lease/writes.vibe"
 import { recordCalls } from "../route/calls.vibe"
+import type { MonthAdmission } from "./cap.vibe"
 import { type CallRecord, type RouteControl, type RouteStatus, budgetExhausted, stepOf, triageRoute } from "../route/route.vibe"
 import { unregistered } from "../scope/facts.vibe"
 
@@ -155,8 +156,16 @@ export effect function recheckAttempt(attempt: Attempt, registry: RegistryObserv
 
 export effect function skipAttemptStep(attempt: Attempt) {
   const next = try attempt.review.send({ type: "skipMissingCredential" })
-  const status: RouteStatus = next.status === "InFlight" ? "InFlight" : "RetryableFailure"
+  const status: RouteStatus = next.status === "InFlight" || next.status === "BudgetBlocked" ? next.status : "RetryableFailure"
   return status
+}
+
+export effect function admitAttempt(attempt: Attempt, admission: MonthAdmission) {
+  return try attempt.review.send({ type: "admitMonthly", ...admission })
+}
+
+export effect function refuseAttempt(attempt: Attempt, admission: MonthAdmission) {
+  return try attempt.review.send({ type: "refuseMonthlyCap", ...admission })
 }
 
 type Rechecked = ReturnType<typeof recheckAttempt>

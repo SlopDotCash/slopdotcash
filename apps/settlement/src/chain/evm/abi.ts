@@ -1,4 +1,4 @@
-// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/contracts/evmEscrow.md, "The owner withdraws free funds to itself less the 2% fee"
+// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/contracts/evmEscrow.md, "The owner withdraws free funds to itself less the 2% fee"; spec/contracts/evmEscrow.md, "The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge"
 import { type Address, type Hex, encodeAbiParameters, encodeFunctionData, keccak256, parseAbi, toFunctionSelector } from "viem";
 import type { VaultPurpose } from "../../../gen/settlement__escrow.ts";
 
@@ -138,11 +138,28 @@ export const escrowAbi = parseAbi([
   "function pay(bytes32 id, uint64 expectedBindingVersion)",
   "function withdrawUnused(uint128 gross)",
   "function claimFees()",
+  "function pledgeMonths(uint32 fromPeriod, uint8 count, uint128 amount)",
+  "function expirePledge(uint32 period)",
+  "function currentPeriod() view returns (uint32)",
+  "function monthPledges(uint32 period) view returns (uint128 amount, bool open)",
+  "function openPledgedGross() view returns (uint128)",
   "error PledgedFunds()",
+  "error PledgeTooLow()",
+  "error InsufficientFreeBalance()",
+  "error InvalidInput()",
+  "error MonthlyAlreadyCommitted()",
+  "error WrongPurpose()",
+  "error PledgeNotLapsed()",
 ]);
 
 export const PLEDGED_FUNDS_ERROR = "PledgedFunds";
 export const PLEDGED_FUNDS_SELECTOR: Hex = toFunctionSelector(`${PLEDGED_FUNDS_ERROR}()`);
+
+export const PLEDGE_ERRORS = ["PledgeTooLow", "InsufficientFreeBalance", "InvalidInput", "MonthlyAlreadyCommitted", "WrongPurpose", "PledgeNotLapsed"] as const;
+
+export type PledgeError = (typeof PLEDGE_ERRORS)[number];
+
+export const PLEDGE_ERROR_SELECTORS = Object.fromEntries(PLEDGE_ERRORS.map((name) => [name, toFunctionSelector(`${name}()`)])) as Readonly<Record<PledgeError, Hex>>;
 
 export const factoryAbi = parseAbi([
   "function initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)",

@@ -1,11 +1,12 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
+import { toAmount } from "@repo/settlement/kernels/amounts";
 import { Arbitrary } from "effect";
 import { contract } from "vibestack/testing";
 import { type PoolFacts, poolDisplay } from "../../../gen/frontend__projections.ts";
 import { hasProjectCardBounty, type SecurityProgramStatus } from "../../kernels/rewardSummary.ts";
 import { vectors } from "../../kernels/vectors.ts";
-import { bounty, community, funded, mergeLine, pointsOnly, pool, prize, tokenPool, unread, withdrawn } from "./fixtures.ts";
-import { cardLine, cardNotes, homeProjectOrder, homeProjects, homeSections, type ListedProject } from "./listing.ts";
+import { bounty, community, funded, mergeLine, pledged, pointsOnly, pool, prize, tokenPool, unread, withdrawn } from "./fixtures.ts";
+import { cardLine, cardNotes, homeProjectOrder, homeProjects, homeSections, listedThisMonth, type ListedProject } from "./listing.ts";
 
 const separateBounty = (status: SecurityProgramStatus): ListedProject => ({
   ...community[0]!,
@@ -17,6 +18,7 @@ export const cardsHeadlineOnlyAnOpenOfferOrAFundedPool = vectors<ListedProject, 
   [{ ...pool, funding: withdrawn(5_000_000_000n) }, { amount: "Points only" }],
   [{ ...pool, funding: pointsOnly }, { amount: "Points only" }],
   [{ ...pool, funding: unread(5_000_000_000n) }, { amount: "Points only" }],
+  [{ ...pool, funding: pledged(5_000_000_000n) }, { amount: "$5,000/mo" }],
   [bounty, { amount: "$50k / Critical", state: "Funding verified" }],
   [prize, { amount: "$25k + points", state: "External prize" }],
   [community[0]!, { amount: "Points only" }],
@@ -103,3 +105,25 @@ export const homeSplitsTheOneOrderIntoFeaturedThenCommunitySections = vectors<Re
   [[community[0]!, community[1]!], [["community", ["community-1", "community-2"]]]],
   [[bounty, named(community[0]!, "retired", { listingTier: "retired" })], []],
 ], (projects) => homeSections(projects).map(({ tier, projects: entries }): [string, string[]] => [tier, ids(entries)]));
+
+const shortInNovember: PoolFacts = { ...funded(250_000_000n), period: 202611, freeNow: toAmount(249_999_999n) };
+
+export const onlyAFundedActiveMonthlyPoolIsListedThisMonth = vectors<ListedProject, boolean>([
+  [{ ...pool, funding: funded(250_000_000n) }, true],
+  [{ ...pool, funding: { ...funded(250_000_000n), period: 202611 } }, true],
+  [{ ...pool, funding: shortInNovember }, false],
+  [{ ...pool, funding: pointsOnly }, false],
+  [{ ...pool, funding: pledged(250_000_000n) }, true],
+  [{ ...pool, funding: { ...pledged(250_000_000n), pledged: toAmount(249_999_999n) } }, false],
+  [separateBounty("open"), true],
+  [{ ...separateBounty("draft"), funding: pointsOnly }, false],
+  [{ ...prize, funding: { ...pointsOnly, monthlyPool: false } }, true],
+  [{ ...pool, status: "paused", funding: pointsOnly }, true],
+  [{ ...pool, funding: unread(250_000_000n) }, true],
+  [{ ...pool, funding: { ...pointsOnly, read: "PoolLoading" } }, true],
+  [{ ...pool, funding: { ...pointsOnly, read: "PoolStale" } }, true],
+], listedThisMonth);
+
+export const homeKeepsAProjectThatTheFundingReadLeavesOut = vectors<ReadonlyArray<ListedProject>, string[]>([
+  [[{ ...pool, funding: pointsOnly }, { ...pool, id: "unread", slug: "unread", funding: unread(5_000_000_000n) }], ["slopdotcash", "unread"]],
+], (projects) => ids(homeProjects(projects)));

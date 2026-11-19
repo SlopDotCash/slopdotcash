@@ -1,0 +1,27 @@
+// spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"
+import { isoNow } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import { freeReviewsPerRepositoryPerMonth } from "../../gen/slopbot__reviewCap.effect.vibe"
+import type { ReviewTarget } from "../context/load.vibe"
+
+export type MonthItem = Pick<ReviewTarget, "repositoryId" | "itemKind" | "number">
+
+export interface MonthAdmission {
+  readonly alreadyAdmitted: boolean
+  readonly usedThisMonth: number
+}
+
+schema AdmissionRow { readonly admitted: number; readonly used: number }
+
+export effect function admitMonth(item: MonthItem) {
+  const startedAt = try isoNow()
+  const month = startedAt.slice(0, 7)
+  const { repositoryId, itemKind, number } = item
+  try (try D1).run(sql`INSERT OR IGNORE INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at)
+    SELECT ${repositoryId}, ${month}, ${itemKind}, ${number}, ${startedAt}
+    WHERE (SELECT COUNT(*) FROM slopbot_review_month_starts WHERE repository_id = ${repositoryId} AND month = ${month}) < ${freeReviewsPerRepositoryPerMonth}`)
+  const found = try first(AdmissionRow, sql`SELECT EXISTS (SELECT 1 FROM slopbot_review_month_starts WHERE repository_id = ${repositoryId} AND month = ${month} AND item_kind = ${itemKind} AND item_number = ${number}) AS admitted,
+    (SELECT COUNT(*) FROM slopbot_review_month_starts WHERE repository_id = ${repositoryId} AND month = ${month}) AS used`)
+  if (found === undefined) return try die(new Error("monthly admission read no row"))
+  return { alreadyAdmitted: found.admitted === 1, usedThisMonth: found.used } satisfies MonthAdmission
+}

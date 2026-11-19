@@ -8,13 +8,13 @@ export const aTokenIsAStandardAddressOtherThanTheNetworkCoins = vectors<RewardAs
   [
     [token("base", "0x00000000000000000000000000000000000000ab"), undefined],
     [token("base", " 0x00000000000000000000000000000000000000AB "), undefined],
-    [token("base", "0x1234"), { field: "tokenAddress", message: "Enter a 0x token contract address with 40 hexadecimal characters." }],
-    [token("base", "0x0000000000000000000000000000000000000000"), { field: "tokenAddress", message: "Enter a 0x token contract address with 40 hexadecimal characters." }],
+    [token("base", "0x1234"), { field: "tokenAddress", message: "Enter a 0x address with 40 hex characters." }],
+    [token("base", "0x0000000000000000000000000000000000000000"), { field: "tokenAddress", message: "Enter a 0x address with 40 hex characters." }],
     [token("robinhood", "0x5fc5360d0400a0fd4f2af552add042d716f1d168"), { field: "tokenAddress", message: "That address is the network stablecoin; choose USDG." }],
     [token("solana", "So11111111111111111111111111111111111111112"), undefined],
     [token("solana", "11111111111111111111111111111111"), { field: "tokenAddress", message: "Choose SOL as the native coin." }],
     [token("solana", "0x00000000000000000000000000000000000000ab"), { field: "tokenAddress", message: "Enter a base58 SPL mint address." }],
-    [token("ethereum", "0x00000000000000000000000000000000000000ab", "not a symbol"), { field: "tokenSymbol", message: "Enter a token symbol of 1 to 16 letters or digits." }],
+    [token("ethereum", "0x00000000000000000000000000000000000000ab", "not a symbol"), { field: "tokenSymbol", message: "Enter a symbol of 1-16 letters or digits." }],
   ],
   tokenProblem,
 );

@@ -1,8 +1,8 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
 import { toAmount } from "@repo/settlement/kernels/amounts"
 import type { PoolFacts } from "../../../gen/frontend__projections.ts"
 import { type VaultLocks, lockedFundsText } from "../../../gen/frontend__vaultLocks.ts"
-import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canSend, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, server, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
+import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canSend, canSetTabHidden, canSignIn, canSignOut, canWalletReply, flowOf, hiddenAskLimit, idleFlow, initial, machineOver, server, tab, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { SlotStorage } from "../core/slots.ts"
@@ -71,6 +71,7 @@ export interface OwnerVaultPage {
   confirmUnsent(target: Target): OwnerVault!VaultRefused
   enterCandidate(target: Target, candidate: string): OwnerVault!VaultRefused
   edit(editing: boolean): OwnerVault!!
+  tabHidden(hidden: boolean): OwnerVault!!
   ask<R>(target: Target, origin: Origin, check: (saved: Saved) => Answer!!R): OwnerVault!!R
   autoCheck<R>(target: Target, spacingMs: number, check: (saved: Saved) => Answer!!R): OwnerVault!!R
   clearUnreadable(target: Target): boolean!!
@@ -197,19 +198,22 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
       if (canEdit(state, editing, state.owner)) try sent({ type: "edit", editing }, state.owner)
       return try machine.get()
     },
+    tabHidden: effect (hidden: boolean) => {
+      const state = try machine.get()
+      if (canSetTabHidden(state, hidden, tab)) try sent({ type: "setTabHidden", hidden }, tab)
+      return try machine.get()
+    },
     ask: (target, origin, check) => answered(target, origin, check),
     autoCheck: effect (target: Target, spacingMs: number, check) => {
-      for (let attempt = 0; attempt < autoAskLimit; attempt++) {
+      while (true) {
         try Effect.sleep(spacingMs)
         const state = try machine.get()
-        if (!canAsk(state, target, "AutoCheck", timer)) {
-          if (flowOf(state, target).phase !== "Sent" || flowOf(state, target).stopped) return state
-          continue
-        }
+        const flow = flowOf(state, target)
+        if (flow.phase !== "Sent" || flow.stopped || (flow.autoAsks >= autoAskLimit && (target !== "Creation" || flow.hiddenAsks >= hiddenAskLimit))) return state
+        if (!canAsk(state, target, "AutoCheck", timer)) continue
         const after = try answered(target, "AutoCheck", check)
         if (flowOf(after, target).phase !== "Sent") return after
       }
-      return try machine.get()
     },
     clearUnreadable: effect (target: Target) => keeper.clearUnreadable(slotTarget(target)),
   } satisfies OwnerVaultPage

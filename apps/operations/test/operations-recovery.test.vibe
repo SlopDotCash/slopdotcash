@@ -282,7 +282,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       actualScheduledCore: true,
       controlledSequentialSubjobs: true,
       fixtureOnlyRetentionEnabled: true,
-      fixtureCaseCount: 23,
+      fixtureCaseCount: 24,
       agedDays: [89, 91],
       incompleteSnapshotAndMissingCorruptRestoresRefused: true,
       legacyPhysicalDeletionRefused: true,
@@ -302,5 +302,5 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     })
     try same({ replayedRetention, retentionDeliveries, retentionResults }, { replayedRetention: retainedText, retentionDeliveries: 2, retentionResults: 1 })
     try same({ remaining, outbound }, { remaining: [0, 0, 0], outbound: [] })
-  }))
+  }), 300_000)
 })

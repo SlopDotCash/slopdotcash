@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
 import { DataState, Disclosure, ExternalLink, PageHeader } from "@repo/ui";
 import { ArrowRight, HandCoins } from "lucide-react";
 import type { ReactNode } from "react";
@@ -6,7 +6,7 @@ import type { PageRuntime } from "../../app/runtime.vibe";
 import { useSession } from "../../app/useSession.ts";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { SOURCE_REPOSITORY } from "../../platform/site.ts";
-import { type ListedProject, reviewBudgetLabel, type Shown } from "../home/listing.ts";
+import { type ListedProject, listedThisMonth, reviewBudgetLabel, type Shown } from "../home/listing.ts";
 import type { MergeLine } from "../home/ProjectCards.tsx";
 import { FundingStatus } from "./FundingStatus.tsx";
 import { type NetworkPays, sponsorPoolLabel } from "./funding.ts";
@@ -76,7 +76,7 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
         </div>
         <DataState status={projects.status} onRetry={projects.onRetry}>
           <ul aria-label="Project funding pools" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {listed.map((project) => (
+            {listed.filter(listedThisMonth).map((project) => (
               <SponsorCard key={project.id} project={project} mergeLine={mergeLine} networkPays={networkPays} reviewBudgets={reviewBudgets} />
             ))}
           </ul>

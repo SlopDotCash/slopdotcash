@@ -68,12 +68,12 @@ const security = { ...notifyPostV1SecurityNotificationsDispatch, ...notifyPostV1
 const activity = { ...notifyPostV1ActivityNotificationsEligibility, ...notifyPostV1ActivityNotificationsDispatch, ...notifyPostV1ActivityNotificationsReconcile }
 const verification = notifyPostV1EmailVerification
 
-effect function internalRequest() {
+export effect function internalRequest() {
   const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
   return url.origin === notifyInternalOrigin && url.search === ""
 }
 
-function notFound() {
+export function notFound() {
   return json({ error: notifyPostV1SlopbotSpend.notFoundNoStore.error }, notifyPostV1SlopbotSpend.notFoundNoStore.status)
 }
 

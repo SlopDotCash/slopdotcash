@@ -1,12 +1,13 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/presentation.md, "Project tokens have one dollar prefix while native and approved stablecoin tickers have none"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/presentation.md, "Project tokens have one dollar prefix while native and approved stablecoin tickers have none"
 import { ExternalLink } from "@repo/ui";
 import { formatPeriod } from "@repo/settlement/kernels/calendar";
 import type { ReactNode } from "react";
+import { notListedText, showsNotListed } from "../../../gen/frontend__poolListing.ts";
 import type { PoolFunding } from "../../kernels/poolFunding.ts";
 import { projectRewardSummaries, type RewardSummary as Summary } from "../../kernels/rewardSummary.ts";
 import { bountyFundingLabel, compactPrizeLabel } from "../home/listing.ts";
 import type { ShownProject } from "./project.schema.ts";
-import { formatMonth, shownReward } from "./summary.ts";
+import { formatMonth, projectListing, shownReward } from "./summary.ts";
 
 export type RewardSummaryProps = {
   /** The project as the registry lists it. */
@@ -60,6 +61,7 @@ export function RewardSummary({ project, funding }: RewardSummaryProps) {
       {funding.display === "PoolWithdrawn" ? (
         <p className="font-medium text-warn">{`Funds were withdrawn from the vault during ${formatMonth(formatPeriod(funding.period))}; it no longer covers this month's amount.`}</p>
       ) : null}
+      {showsNotListed(projectListing({ project, funding })) ? <p className="text-lg font-medium text-foreground">{notListedText}</p> : null}
       {projectRewardSummaries(shown).map((summary) => (
         <p key={summary.kind} className="text-lg font-medium text-foreground">
           {lineOf(summary, shown)}

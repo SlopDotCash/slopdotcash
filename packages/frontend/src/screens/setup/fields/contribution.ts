@@ -13,11 +13,11 @@ export interface ContributionLabel {
 
 export const contributionLabels: Readonly<Record<ContributionField, ContributionLabel>> = {
   approvedScope: { label: "Approved scope", hint: "The accepted outcomes. Required." },
-  contributionGuide: { label: "Contribution guide", hint: "How to set up, branch and submit.", placeholder: "Setup, branch and submit steps. Empty uses CONTRIBUTING.md." },
-  supportedTasks: { label: "Supported tasks", hint: "The kinds of work the project wants.", placeholder: "For example: bug fixes, benchmark runs." },
-  requiredTests: { label: "Required tests", hint: "Commands or workflows that must pass.", placeholder: "Which commands or workflows must pass before a pull request?" },
-  reviewExpectations: { label: "Review expectations", hint: "Evidence a pull request must show for review.", placeholder: "What evidence must a pull request show for review?" },
+  contributionGuide: { label: "Contribution guide", hint: "How to set up, branch and submit.", placeholder: "Empty = CONTRIBUTING.md" },
+  supportedTasks: { label: "Supported tasks", hint: "The kinds of work the project wants." },
+  requiredTests: { label: "Required tests", hint: "Commands or workflows that must pass.", placeholder: "e.g. bun run verify" },
+  reviewExpectations: { label: "Review expectations", hint: "Evidence a pull request must show for review." },
   securityContact: { label: "Security contact", hint: "Where security reports go privately.", placeholder: "Email or Signal address" },
-  closurePolicy: { label: "Closure policy", hint: "When maintainers close or decline a pull request.", placeholder: "When do maintainers close or decline a pull request?" },
-  maintainerNotes: { label: "Maintainer notes", hint: "Anything else contributors should know.", placeholder: "Anything else contributors should know." },
+  closurePolicy: { label: "Closure policy", hint: "When maintainers close or decline a pull request." },
+  maintainerNotes: { label: "Maintainer notes", hint: "Anything else contributors should know." },
 };

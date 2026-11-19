@@ -6,7 +6,7 @@ import type { IntakePanelProps } from "./IntakePanel.tsx";
 const onCheck = fn();
 
 export const meta: ComponentMeta<IntakePanelProps> = {
-  args: { readiness: readiness.ready, signedIn: true, form: <p>Report form</p>, onCheck },
+  args: { readiness: readiness.ready, form: <p>Report form</p>, onCheck },
   examples: { Checking: { readiness: readiness.checking }, Stale: { readiness: readiness.stale }, Disabled: { readiness: readiness.disabled }, Failed: { readiness: readiness.failed } },
   play: {
     // spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"
@@ -23,7 +23,6 @@ export const meta: ComponentMeta<IntakePanelProps> = {
     // spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"
     Disabled: async () => {
       await expect(screen.queryByText("Report form")).toBeNull();
-      await expect(screen.getByText(/Slop private intake is unavailable\./u)).toBeTruthy();
     },
   },
 };

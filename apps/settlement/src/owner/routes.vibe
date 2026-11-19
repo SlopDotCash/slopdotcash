@@ -1,23 +1,26 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"
 import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain } from "@repo/platform/chain/rpc"
 import { type Address, type Blockhash, GenesisPinMissing, address, isBlockhash, solanaRpc } from "@repo/platform/chain/solana"
 import { Caller, Refused, handle, sameOriginWrite } from "@repo/platform/http"
 import type { Refusal } from "@repo/platform/route"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
-import { Rejected } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import { lockMonthCounts } from "../../gen/settlement__monthPledges.effect.vibe"
+import { Rejected, reviewAllowed } from "../../gen/settlement__ownerTransactions.effect.vibe"
 import type { ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
-import { type FundingAction, paymentsSolanaFunding } from "../client/owner.vibe"
-import { postPaymentsProjectsByIdSolanaFunding as parity } from "../client/refusals.vibe"
-import { MAX_BASE_UNITS, parseDecimalAmount } from "../kernels/amounts.ts"
+import { type FundingAction, type MonthLockAction, paymentsSolanaFunding, paymentsSolanaMonthLock } from "../client/owner.vibe"
+import { postPaymentsProjectsByIdSolanaFunding as parity, postPaymentsProjectsByIdSolanaMonthLock as lockParity } from "../client/refusals.vibe"
+import { MAX_BASE_UNITS, parseBaseUnits, parseDecimalAmount } from "../kernels/amounts.ts"
 import { type NetworkKey, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { registryDeployments } from "../vault/deployments.vibe"
+import { DeploymentMismatch } from "../vault/evmTotals.vibe"
 import type { SolanaDeployment } from "../vault/policy.vibe"
+import { type LockCheck, checkMonthLock, lockedFunds, reviewLock, reviewRelease } from "./monthLock.vibe"
 import { PaymentNetworks } from "./networks.vibe"
 import type { FundingOperation } from "./ownerInstructions.ts"
 import { DeploymentUnverified, verifiedDeployment } from "./solanaDeployment.vibe"
-import { type FundingIntent, checkFunding, grossOf, reviewFunding } from "./solanaFunding.vibe"
+import { type FundingIntent, LOCKED_FUNDS, checkFunding, grossOf, planKind, reviewFunding } from "./solanaFunding.vibe"
 import { WalletActionRefused } from "./solanaWallet.vibe"
-import type { Capture } from "./store.vibe"
+import { type Capture, draft } from "./store.vibe"
 
 function row(entry: { readonly status: number; readonly error: string; readonly message?: string }): Refusal {
   return { status: entry.status, code: entry.error, message: entry.message ?? "" }
@@ -31,6 +34,19 @@ const refusals = {
   unavailable: row(parity.paymentsUnavailable),
 } satisfies Readonly<Record<string, Refusal>>
 
+const lockRefusals = {
+  origin: row(lockParity.originForbiddenPrivateNoStore),
+  invalid: row(lockParity.invalidMonthLock),
+  invalidAmount: row(lockParity.invalidMonthLockAmount),
+  vaultNotFound: row(lockParity.fundingVaultNotFound),
+  unavailable: row(lockParity.paymentsUnavailable),
+} satisfies Readonly<Record<string, Refusal>>
+
+interface Located {
+  readonly vaultNotFound: Refusal
+  readonly unavailable: Refusal
+}
+
 const withdrawalAuthority = "Only the project steward with current repository authority can withdraw free funds from an unrestricted project."
 
 function refusedWith(refusal: Refusal) {
@@ -39,6 +55,10 @@ function refusedWith(refusal: Refusal) {
 
 function actionRejected(message: string) {
   return new Refused({ status: parity.fundingActionRejected.status, code: parity.fundingActionRejected.error, message })
+}
+
+function lockRejected(message: string) {
+  return new Refused({ status: lockParity.monthLockRejected.status, code: lockParity.monthLockRejected.error, message })
 }
 
 type Step =
@@ -61,16 +81,16 @@ effect function stepOf(body: FundingAction) {
   return { ...common, step: "check", gross, blockhash, transactionId } satisfies Step
 }
 
-effect function registered(projectId: string, network: NetworkKey, vault: string) {
+effect function registered(projectId: string, network: NetworkKey, vault: string, located: Located) {
   const networks = try PaymentNetworks
-  if (!networks.served.includes(network)) throw refusedWith(refusals.unavailable)
+  if (!networks.served.includes(network)) throw refusedWith(located.unavailable)
   const registry = registryDeployments([network], "ordinary") catch () => undefined
-  if (registry === undefined) throw refusedWith(refusals.unavailable)
+  if (registry === undefined) throw refusedWith(located.unavailable)
   const matches = registry.deployments.filter((deployment) => deployment.projectId === projectId && deployment.network === network && deployment.vault === vault)
   const [deployment] = matches
-  if (matches.length !== 1 || deployment === undefined || deployment.family !== "solana") throw refusedWith(refusals.vaultNotFound)
+  if (matches.length !== 1 || deployment === undefined || deployment.family !== "solana") throw refusedWith(located.vaultNotFound)
   const urls = try networks.urls(network)
-  if (urls === undefined) throw refusedWith(refusals.unavailable)
+  if (urls === undefined) throw refusedWith(located.unavailable)
   return { deployment: deployment satisfies SolanaDeployment, urls }
 }
 
@@ -80,14 +100,14 @@ effect function currentProject(projectId: string) {
   return project
 }
 
-effect function withdrawalFacts(project: ProjectView) {
+effect function withdrawalFacts(project: ProjectView, capture: Capture, deployment: SolanaDeployment, gross: bigint | undefined) {
   const actor = try (try Caller).current()
   const fresh = try currentProject(project.projectId)
   const repositoryId = fresh.repositories[0]?.id ?? ""
   const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId })
   const closure = (try Restrictions).project(fresh.projectId) catch () => undefined
   if (closure === undefined) throw refusedWith(refusals.unavailable)
-  return {
+  const facts = {
     steward: fresh.stewardGithubId === actor.githubId,
     repositoryAuthority: read.permission === "PermissionVerified" && read.installation === "Installed",
     revision: fresh.revision,
@@ -98,30 +118,36 @@ effect function withdrawalFacts(project: ProjectView) {
     monthLockPlanned: false,
     lockedFunds: false,
   } satisfies ReviewFacts
+  if (gross === undefined || !reviewAllowed(draft(capture), "WithdrawPlan", facts)) return facts
+  return { ...facts, lockedFunds: try lockedFunds(deployment, gross) } satisfies ReviewFacts
 }
 
 function depositFacts(capture: Capture): ReviewFacts {
   return { steward: false, repositoryAuthority: false, revision: capture.revision, restricted: false, networkServed: true, snapshotDigest: capture.snapshotDigest, obligationFunded: false, monthLockPlanned: false, lockedFunds: false }
 }
 
-effect function factsFor(operation: FundingOperation, project: ProjectView, capture: Capture) {
-  return operation === "deposit" ? depositFacts(capture) : try withdrawalFacts(project)
+effect function admitted(operation: FundingOperation, project: ProjectView, capture: Capture, deployment: SolanaDeployment, gross: bigint | undefined) {
+  const facts = operation === "deposit" ? depositFacts(capture) : try withdrawalFacts(project, capture, deployment, gross)
+  const request = draft(capture)
+  if (!reviewAllowed(request, planKind(operation), facts))
+    throw actionRejected(reviewAllowed(request, planKind(operation), { ...facts, lockedFunds: false }) ? LOCKED_FUNDS : withdrawalAuthority)
+  return facts
 }
 
 effect function fund(projectId: string, step: Step) {
-  const { deployment, urls } = try registered(projectId, step.network, step.vault)
+  const { deployment, urls } = try registered(projectId, step.network, step.vault, refusals)
   const project = try currentProject(projectId)
   const capture: Capture = { revision: project.revision, snapshotDigest: "" }
   provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
     const verified = try verifiedDeployment(deployment)
     if (step.step === "check") {
       const intent: FundingIntent = { operation: step.operation, wallet: step.wallet, gross: try grossOf(step.gross) }
-      return { status: try checkFunding(verified, intent, step.blockhash, step.transactionId, capture, try factsFor(step.operation, project, capture)) }
+      return { status: try checkFunding(verified, intent, step.blockhash, step.transactionId, capture, try admitted(step.operation, project, capture, deployment, undefined)) }
     }
     const parsed = parseDecimalAmount({ text: step.amount, decimals: verified.decimals, maximum: MAX_BASE_UNITS })
     if (parsed.kind === "Refused") throw refusedWith(refusals.invalidAmount)
     const intent: FundingIntent = { operation: step.operation, wallet: step.wallet, gross: try grossOf(parsed.amount.toString()) }
-    return { plan: try reviewFunding(verified, intent, capture, try factsFor(step.operation, project, capture)) }
+    return { plan: try reviewFunding(verified, intent, capture, try admitted(step.operation, project, capture, deployment, intent.gross)) }
   }
 }
 
@@ -132,6 +158,7 @@ effect function answer(projectId: string, body: FundingAction) {
     when WalletActionRefused: throw actionRejected(error.message);
     when Rejected: throw actionRejected(withdrawalAuthority);
     when DeploymentUnverified: throw refusedWith(refusals.unavailable);
+    when DeploymentMismatch: throw refusedWith(refusals.unavailable);
     when RpcUnavailable: throw refusedWith(refusals.unavailable);
     when RpcMalformed: throw refusedWith(refusals.unavailable);
     when RpcRefused: throw refusedWith(refusals.unavailable);
@@ -141,5 +168,87 @@ effect function answer(projectId: string, body: FundingAction) {
   }
 }
 
-export const ownerRoutes = handle(paymentsSolanaFunding, (input) => answer(input.params.id ?? "", input.body))
+type LockStep =
+  | { readonly kind: "lock"; readonly count: number; readonly amount: string }
+  | { readonly kind: "release"; readonly period: number }
+  | { readonly kind: "check"; readonly check: LockCheck; readonly blockhash: Blockhash; readonly transactionId: string }
+
+interface LockRequest {
+  readonly network: NetworkKey
+  readonly vault: string
+  readonly wallet: Address
+  readonly step: LockStep
+}
+
+const MONTH_TEXT = /^(\d{4})-(0[1-9]|1[0-2])$/u
+const AMOUNT_MINOR = /^[1-9][0-9]{0,19}$/u
+
+effect function lockStepOf(body: MonthLockAction) {
+  if (body.step === "review" && body.action === "lock") {
+    const { count, amount } = body
+    if (count === undefined || !lockMonthCounts.includes(count) || amount === undefined || amount.length > 80) throw refusedWith(lockRefusals.invalid)
+    return { kind: "lock", count, amount } satisfies LockStep
+  }
+  if (body.step === "review" && body.action === "release") {
+    const month = body.period === undefined ? null : MONTH_TEXT.exec(body.period)
+    if (month === null) throw refusedWith(lockRefusals.invalid)
+    return { kind: "release", period: Number(month[1]) * 100 + Number(month[2]) } satisfies LockStep
+  }
+  const { transactionId, blockhash, periods } = body
+  if (body.step !== "check" || (body.action !== "lock" && body.action !== "release") || transactionId === undefined || transactionId.length > 100 || blockhash === undefined || !isBlockhash(blockhash)
+    || periods === undefined || periods.length < 1 || periods.length > 12 || !periods.every((period) => Number.isSafeInteger(period) && period > 0))
+    throw refusedWith(lockRefusals.invalid)
+  const [first] = periods
+  if (body.action === "release") {
+    if (first === undefined || periods.length !== 1) throw refusedWith(lockRefusals.invalid)
+    return { kind: "check", check: { action: "release", period: first }, blockhash, transactionId } satisfies LockStep
+  }
+  const amount = body.amountMinor === undefined || !AMOUNT_MINOR.test(body.amountMinor) ? undefined : parseBaseUnits(body.amountMinor)
+  if (amount === undefined) throw refusedWith(lockRefusals.invalid)
+  return { kind: "check", check: { action: "lock", periods, amount }, blockhash, transactionId } satisfies LockStep
+}
+
+effect function lockRequestOf(body: MonthLockAction) {
+  const wallet = address(body.wallet)
+  if (wallet === undefined || (body.action !== "lock" && body.action !== "release")) throw refusedWith(lockRefusals.invalid)
+  const step = try lockStepOf(body)
+  if (!isNetworkKey(body.network) || NETWORKS[body.network].family !== "solana") throw refusedWith(lockRefusals.unavailable)
+  return { network: body.network, vault: body.vault, wallet, step } satisfies LockRequest
+}
+
+effect function lock(projectId: string, request: LockRequest) {
+  const { deployment, urls } = try registered(projectId, request.network, request.vault, lockRefusals)
+  const capture: Capture = { revision: deployment.revision, snapshotDigest: "" }
+  const { step, wallet } = request
+  provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
+    const verified = try verifiedDeployment(deployment)
+    if (step.kind === "check") return { status: try checkMonthLock({ verified, wallet, check: step.check, blockhash: step.blockhash, transactionId: step.transactionId, capture }) }
+    if (step.kind === "release") return { plan: try reviewRelease({ deployment, verified, wallet, capture, period: step.period }) }
+    const parsed = parseDecimalAmount({ text: step.amount, decimals: verified.decimals, maximum: MAX_BASE_UNITS })
+    if (parsed.kind === "Refused") throw refusedWith(lockRefusals.invalidAmount)
+    const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
+    return { plan: try reviewLock({ deployment, verified, wallet, capture, count: step.count, amount: parsed.amount, nowSeconds }) }
+  }
+}
+
+effect function answerLock(projectId: string, body: MonthLockAction) {
+  if (!(try sameOriginWrite())) throw refusedWith(lockRefusals.origin)
+  const request = try lockRequestOf(body)
+  return lock(projectId, request) catch effect (error) => match (error) {
+    when WalletActionRefused: throw lockRejected(error.message);
+    when DeploymentUnverified: throw refusedWith(lockRefusals.unavailable);
+    when DeploymentMismatch: throw refusedWith(lockRefusals.unavailable);
+    when RpcUnavailable: throw refusedWith(lockRefusals.unavailable);
+    when RpcMalformed: throw refusedWith(lockRefusals.unavailable);
+    when RpcRefused: throw refusedWith(lockRefusals.unavailable);
+    when WrongChain: throw refusedWith(lockRefusals.unavailable);
+    when GenesisPinMissing: throw refusedWith(lockRefusals.unavailable);
+    default: throw error;
+  }
+}
+
+export const ownerRoutes = Layer.mergeAll(
+  handle(paymentsSolanaFunding, (input) => answer(input.params.id ?? "", input.body)),
+  handle(paymentsSolanaMonthLock, (input) => answerLock(input.params.id ?? "", input.body)),
+)
 

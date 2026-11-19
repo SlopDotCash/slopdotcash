@@ -20,6 +20,7 @@ import {
   validRepositoryPath,
 } from "../../../flows/projects/proposal.ts";
 import { privateBountyCriteria, privateBountyTesting } from "../../../flows/security/program.vibe";
+import { type LinkInput, normalizeWebsiteInput, normalizeXInput } from "../../../kernels/projectLinks.ts";
 import { type SkillRuleField, skillRuleFields } from "../fields/contribution.ts";
 import { rewardNetwork, tokenProblem } from "../fields/rewardAsset.ts";
 
@@ -65,7 +66,7 @@ const spdx = /^[A-Za-z0-9-.+]{1,80}$/u;
 
 const projectFields: ReadonlyArray<ProposalField> = [
   "repository", "repositoryNumericId", "repositoryNodeId", "integrationBranch", "stewardLogin", "stewardActorId", "stewardNodeId",
-  "licenseSpdx", "licenseCommit", "licenseDigest", "name", "image", "headline", "goal", "criteria", "contributionGuide",
+  "licenseSpdx", "licenseCommit", "licenseDigest", "name", "image", "headline", "goal", "website", "x", "criteria", "contributionGuide",
   "supportedTasks", "requiredTests", "reviewExpectations", "securityContact", "closurePolicy", "maintainerNotes", "copyrightModel",
   "legalHolder", "inboundTermsUrl", "inboundCommit", "inboundDigest", "inboundVersion", "inboundAcceptance", "assignmentAssignee",
   "assignmentUrl", "assignmentDigest", "assignmentVersion", "assignmentSignedAt",
@@ -247,6 +248,10 @@ function lengthError(value: string, minimum: number, maximum: number): string | 
   return boundedText(value, minimum, maximum) ? undefined : `Enter ${minimum} to ${maximum} characters.`;
 }
 
+function linkError(input: LinkInput): string | undefined {
+  return input.ok ? undefined : input.error;
+}
+
 function rewardErrors(p: Proposal): FieldErrors {
   if (p.fundingMode !== "monthly" && p.fundingMode !== "bounty") return {};
   const errors: FieldErrors = {};
@@ -268,10 +273,10 @@ function legalErrors(p: Proposal): FieldErrors {
   if (p.copyrightModel === "sponsor-owned") {
     const holder = lengthError(p.legalHolder, 2, 240);
     if (holder) errors.legalHolder = holder;
-    if (p.stewardKind === "dao") errors.copyrightModel = "Sponsor-owned copyright is not available for a DAO steward. Choose another copyright model.";
+    if (p.stewardKind === "dao") errors.copyrightModel = "Not available for a DAO steward.";
   }
   if (p.inboundMode !== "unknown") {
-    if (!immutableProposalTermsUrl(p.inboundTermsUrl, p.repository, p.inboundCommit)) errors.inboundTermsUrl = "Use a github.com blob URL for this repository at the terms commit.";
+    if (!immutableProposalTermsUrl(p.inboundTermsUrl, p.repository, p.inboundCommit)) errors.inboundTermsUrl = "Use this repo's GitHub blob URL at that commit.";
     if (!gitSha.test(p.inboundCommit)) errors.inboundCommit = "Enter a 40-character commit SHA.";
     if (!fileDigest.test(p.inboundDigest)) errors.inboundDigest = "Enter a 64-character SHA-256.";
     const version = lengthError(p.inboundVersion, 1, 80);
@@ -305,6 +310,8 @@ export function proposalErrors(p: Proposal): FieldErrors {
     ["headline", lengthError(p.headline, 8, 120)],
     ["goal", lengthError(p.goal, 24, 600)],
     ["criteria", lengthError(p.criteria, 6, 2_000)],
+    ["website", linkError(normalizeWebsiteInput(p.website))],
+    ["x", linkError(normalizeXInput(p.x))],
     ...skillRuleFields.map((field) => [field, p[field].trim() === "" ? undefined : lengthError(p[field], 1, 2_000)] as const),
   ] as const;
   for (const [field, error] of lengths) if (error) errors[field] = error;

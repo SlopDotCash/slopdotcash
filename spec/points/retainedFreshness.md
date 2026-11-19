@@ -1,7 +1,7 @@
 # Retained production data freshness
 
-An explicit manual production release may retain its own published snapshot
-instead of collecting (`use_published_data`, [release run](../operations/release.md),
+An explicit manual production or staging release may retain its own
+published snapshot instead of collecting (`use_published_data`, [release run](../operations/release.md),
 "Normal releases need verified registry and GitHub collections for this
 environment"). Development at df21e37b7 also refuses a retained snapshot
 that is older than what production serves now, and lets such a run prepare
@@ -12,7 +12,9 @@ step of `.github/workflows/deploy.yml`, and the retained-data note of
 2754336e8). Generation times are the `generatedAt` of the retained bundle's
 leaderboard and profiles and of the ones `https://slop.cash` serves, each
 parsed by the shell as an exact canonical UTC time in milliseconds; `valid`
-is false for any time that is not one.
+is false for any time that is not one. At `67fd54fd4` the freshness check is
+a step of the production `deploy` job only: a retained staging release from
+`development` is not compared with what staging serves.
 
 ## Story: A retained release never moves production back to older data
 
@@ -35,7 +37,7 @@ pure def notOlder(kept: GenerationTime, served: GenerationTime): bool =
 pure def retainedCurrent(retained: SnapshotTimes, published: SnapshotTimes): bool =
   notOlder(retained.leaderboard, published.leaderboard) and notOlder(retained.profiles, published.profiles)
 pure def freshnessChecked(r: R::Release, mode: RR::RunMode): bool =
-  r.dataKind == R::RetainedSnapshot and r.phase != R::Superseded and mode == RR::NormalRun
+  r.environment == R::Production and r.dataKind == R::RetainedSnapshot and r.phase != R::Superseded and mode == RR::NormalRun
 pure def lawOlderRetainedRefused(retained: SnapshotTimes, published: SnapshotTimes): bool =
   (retained.leaderboard.millis < published.leaderboard.millis or retained.profiles.millis < published.profiles.millis)
     implies not(retainedCurrent(retained, published))

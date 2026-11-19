@@ -1,4 +1,4 @@
-// spec/contracts/solanaEscrow.md, "The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"
+// spec/contracts/solanaEscrow.md, "The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Account, type Address, type Decoded, type TokenAccount, SYSTEM_PROGRAM, addressOf, decodeTokenAccount } from "@repo/platform/chain/solana";
 import { type Digest, type I64, type U64, digestOf, readI64, readU32, readU64, sameBytes, utf8 } from "./bytes.ts";
@@ -124,6 +124,7 @@ export interface ProjectAccount {
   readonly monthlyEnabled: boolean;
   readonly accruedFees: U64;
   readonly monthlyOutstanding: U64;
+  readonly pledgedOpen: U64 | undefined;
 }
 
 function purposeAt(data: Uint8Array, at: number): Purpose {
@@ -162,6 +163,7 @@ export function decodeProject(account: Account | undefined, program: Address): D
       monthlyEnabled: flag(data, 315),
       accruedFees: readU64(data, 316),
       monthlyOutstanding: readU64(data, 324),
+      pledgedOpen: data.length === PROJECT_SIZE ? readU64(data, 332) : undefined,
     };
   });
 }
@@ -273,6 +275,22 @@ export function decodeMonthPledgePresence(account: Account | undefined, program:
     if (account === undefined) return false;
     anchored(account, program, MONTH_PLEDGE_SIZE, "MonthPledge");
     return true;
+  });
+}
+
+export interface MonthPledgeAccount {
+  readonly project: Address;
+  readonly period: number;
+  readonly amount: U64;
+  readonly open: boolean;
+  readonly bump: number;
+}
+
+/** @throws {never} */
+export function decodeMonthPledge(account: Account | undefined, program: Address): Decoded<MonthPledgeAccount, AccountIssue> {
+  return decodedBy(() => {
+    const data = anchored(account, program, MONTH_PLEDGE_SIZE, "MonthPledge");
+    return { project: key(data, 8), period: readU32(data, 40), amount: readU64(data, 44), open: flag(data, 52), bump: data[53] as number };
   });
 }
 

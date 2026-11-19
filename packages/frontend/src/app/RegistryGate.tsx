@@ -18,11 +18,11 @@ export type RegistryGateProps = {
 
 export function RegistryGate({ kind, freshness, frame, onRetry, children }: RegistryGateProps) {
   if (freshness === undefined) {
-    return frame(
-      <p className="flex items-center justify-center gap-2 py-12">
+    return (
+      <p role="status" aria-label="Loading" title="Loading" className="flex items-center justify-center gap-2 py-12">
         <Logo size="lg" label="" aria-hidden />
-        <Spinner label="Loading" />
-      </p>,
+        <Spinner aria-hidden />
+      </p>
     );
   }
   const policy = registryPolicy(pageOf(kind));

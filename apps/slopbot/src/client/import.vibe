@@ -26,7 +26,7 @@ export const ImportTerminalFrame = Schema.Union([
 
 export const ImportFrame = Schema.Union([ImportPendingFrame, ImportTerminalFrame])
 
-export const importLimitBytes = 25 * 1024 * 1024
+export const importLimitBytes = 33 * 1024 * 1024
 
 export const importMediaTypes = ["application/json", "multipart/form-data"] as const
 

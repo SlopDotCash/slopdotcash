@@ -10,7 +10,7 @@ const workflowInputs = /^(\.github\/workflows\/|\.github\/actions\/|package\.jso
 const affectedBy: Readonly<Record<keyof Affected, RegExp>> = {
   browserUI: /^(packages\/(frontend|ui|design-system)\/|apps\/app\/)/u,
   browserAPI: /^(apps\/(backend|operations|security|contributor|points|slopbot|settlement|fees)\/(src|wrangler)\/|migrations\/)/u,
-  rootSkill: /^skills\/slop\//u,
+  rootSkill: /^skills\/slop(?:-contributor|-maintainer)?\//u,
   sandbox: /^apps\/security\/src\/(sandbox|scanner|evidence)\//u,
   installer: /^(skills\/|apps\/contributor\/src\/(render|site|artifacts)\/|package\.json$|pnpm-lock\.yaml$)/u,
   solanaFixture: /^(packages\/contracts\/solana\/|apps\/(settlement|fees)\/src\/|migrations\/)/u,

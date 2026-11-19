@@ -1,5 +1,6 @@
 // spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"
-import { Alert, Button, Disclosure, Stepper } from "@repo/ui";
+import { Alert, Button, Status, Stepper } from "@repo/ui";
+import { Lock, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { type ReportDraft, reportBody } from "../../../flows/security/private.vibe";
 import type { ComposerPhase } from "./compose.vibe";
@@ -24,8 +25,6 @@ export type ReportComposerProps = {
   onSubmit: () => void;
 };
 
-const exampleStructure = "Affected component and revision:\n\nImpact:\n\nSafe reproduction steps:\n1.\n2.\n\nExpected and actual results:\n\nSupporting evidence:";
-
 const formClass = "flex flex-col gap-4";
 
 function focusOnMount(node: HTMLHeadingElement | null) {
@@ -49,8 +48,8 @@ function Reviewed({ draft, login, projectName, terms }: Pick<ReportComposerProps
   const body = reportBody(draft);
   return (
     <>
-      <h3 ref={focusOnMount} tabIndex={-1} className="text-lg font-semibold text-foreground">
-        Review your private report
+      <h3 ref={focusOnMount} tabIndex={-1} className="flex items-center gap-2 text-lg font-semibold text-foreground">
+        <Lock aria-hidden className="size-4" /> Review
       </h3>
       <p>
         To {projectName}, as @{login}.
@@ -59,13 +58,11 @@ function Reviewed({ draft, login, projectName, terms }: Pick<ReportComposerProps
       <h4 className="font-semibold text-foreground">{body.summary}</h4>
       <pre className="max-h-96 overflow-auto rounded-md border border-border bg-muted p-4 font-mono text-sm whitespace-pre-wrap">{body.description}</pre>
       <Classification draft={draft} />
-      <p>Slop stores this report privately and uses Surplus Intelligence to screen it. Only you and currently authorized reviewers can read it. GitHub delivery is optional and separate.</p>
-      <Disclosure summary="Privacy and review">
-        <p>
-          Screening is advice, not an award decision. Provider retention follows the account terms; zero retention is not promised. Do not include credentials. Your receipt records the terms in force when Slop accepts
-          the report.
-        </p>
-      </Disclosure>
+      <p className="flex flex-wrap gap-3">
+        <Status presentation={{ tone: "Neutral", icon: "Lock", label: "Private · screened by Surplus Intelligence" }} />
+        <Status presentation={{ tone: "Neutral", icon: "Eye", label: "Provider may retain data" }} />
+        <Status presentation={{ tone: "Caution", icon: "Alert", label: "No credentials" }} />
+      </p>
     </>
   );
 }
@@ -78,11 +75,10 @@ export function ReportComposer({ login, projectName, terms, draft, attempted, st
       <form className={formClass} onSubmit={submitted(onSubmit)}>
         <Alert variant="ok">
           <h3 className="font-semibold">Report received</h3>
-          <p>Slop saved your private report. Opening its receipt requires the same signed-in account.</p>
           {phase.message ? <p>{phase.message}</p> : null}
         </Alert>
         <Button type="submit" className="self-start" loading={busy}>
-          {busy ? "Checking receipt…" : "Check session and open receipt"}
+          {busy ? "Checking receipt…" : "Open receipt"}
         </Button>
       </form>
     );
@@ -90,12 +86,11 @@ export function ReportComposer({ login, projectName, terms, draft, attempted, st
     return (
       <form className={formClass} onSubmit={submitted(onSubmit)}>
         <Alert variant="warn">
-          <h3 className="font-semibold">Check your private session</h3>
+          <h3 className="font-semibold">Sign-in check needed</h3>
           {error ? <p>{error}</p> : null}
-          <p>No new report will be sent when you check your session.</p>
         </Alert>
         <Button type="submit" className="self-start" loading={busy}>
-          {busy ? "Checking session…" : "Check session to recover report"}
+          {busy ? "Checking session…" : "Recover report"}
         </Button>
       </form>
     );
@@ -119,36 +114,35 @@ export function ReportComposer({ login, projectName, terms, draft, attempted, st
           </p>
         </Alert>
       ) : null}
-      <Stepper aria-label="Report steps" steps={["Write report", "Review and submit"]} current={review ? 1 : 0} />
+      <Stepper aria-label="Report steps" steps={["Write", "Review"]} current={review ? 1 : 0} />
       {storageAvailable ? (
-        <p className="text-sm text-muted-foreground">
-          {attempted ? `This tab keeps the report for @${login}. Its receipt is not confirmed.` : `Draft kept in this tab for @${login}. It is not submitted yet.`}
+        <p>
+          {attempted ? (
+            <Status presentation={{ tone: "Caution", icon: "Clock", label: `Unconfirmed · @${login}` }} />
+          ) : (
+            <Status presentation={{ tone: "Neutral", icon: "Dot", label: `Draft · @${login}` }} />
+          )}
         </p>
       ) : (
-        <Alert variant="warn">This tab cannot save your draft. Keep this page open until you receive a receipt.</Alert>
+        <p role="alert" className="flex items-center gap-2 text-sm">
+          <TriangleAlert aria-hidden className="size-4 text-destructive" /> Draft not saved. Keep this tab open.
+        </p>
       )}
       {review ? (
         <Reviewed draft={draft} login={login} projectName={projectName} terms={terms} />
       ) : (
-        <>
-          <p>Explain the affected component or revision, what an attacker could do, and how to reproduce it safely.</p>
-          <ReportFields
-            draft={draft}
-            onChange={(next) => {
-              setInvalid(null);
-              onChange(next);
-            }}
-          />
-          <Disclosure summary="Example report structure">
-            <pre className="rounded-md border border-border bg-muted p-4 font-mono text-sm whitespace-pre-wrap">{exampleStructure}</pre>
-          </Disclosure>
-        </>
+        <ReportFields
+          draft={draft}
+          onChange={(next) => {
+            setInvalid(null);
+            onChange(next);
+          }}
+        />
       )}
       {error ? (
         <Alert variant="destructive">
           <strong>Report not confirmed</strong>
           <p>{error}</p>
-          {attempted ? <p>Your original report is kept. Retry it to reconcile the same submission.</p> : null}
         </Alert>
       ) : null}
       <div className="flex flex-wrap gap-2">

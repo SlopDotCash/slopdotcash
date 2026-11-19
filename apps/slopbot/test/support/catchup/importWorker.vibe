@@ -1,0 +1,85 @@
+// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"
+import type { ExecutionContext } from "@repo/platform/bindings"
+import { Caller, Unauthenticated } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { worker } from "@repo/platform/worker"
+import { type HistoricalValueBinding, historicalValueImport, importRoutes } from "../../../src/import/routes.vibe"
+
+export interface ImportEnv {
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly binding: HistoricalValueBinding | undefined
+}
+
+const cookieCaller = Layer.succeed(Caller, {
+  current: () => effect {
+    const request = try HttpServerRequest.HttpServerRequest
+    const githubId = request.cookies["__Host-slop_points"] ?? ""
+    if (!/^[1-9][0-9]{0,19}$/u.test(githubId)) throw new Unauthenticated()
+    return { githubId, login: `member-${githubId}`, actorId: `actor-${githubId}` }
+  },
+})
+
+const served = worker({
+  services: (env: ImportEnv) => Layer.mergeAll(rolesFrom(env), cookieCaller, historicalValueImport(env.binding)),
+  routes: importRoutes,
+})
+
+module host {
+  import type { HistoricalValueBinding } from "../../../src/import/routes.vibe"
+  export type Verdict = "publish" | "refuse" | "malformed"
+  export interface Gate {
+    readonly binding: HistoricalValueBinding
+    /** @throws {never} */
+    readonly decide: (verdict: Verdict) => void
+    /** @throws {never} */
+    readonly asked: () => number
+    /** @throws {never} */
+    readonly finished: () => number
+  }
+  export const importReceipt = { recordDigest: "f".repeat(64), sequence: 1 }
+  /** @throws {never} */
+  export function gateOf(): Gate {
+    let decide: (verdict: Verdict) => void = () => undefined
+    const verdict = new Promise<Verdict>((resolve) => { decide = resolve })
+    let asked = 0
+    let finished = 0
+    return {
+      binding: {
+        publishSubscription: async () => {
+          asked += 1
+          const decided = await verdict
+          if (decided === "refuse") throw new Error("Historical assessment was refused")
+          finished += 1
+          return decided === "malformed" ? { recordDigest: 7 } : importReceipt
+        },
+      },
+      decide: (next) => decide(next),
+      asked: () => asked,
+      finished: () => finished,
+    }
+  }
+}
+import { type Gate, type Verdict, gateOf, importReceipt } from host
+export { type Gate, type Verdict, gateOf, importReceipt }
+
+export interface Background {
+  readonly context: ExecutionContext
+  readonly settled: () => Promise<void>
+}
+
+export function background(): Background {
+  const pending: Promise<unknown>[] = []
+  return {
+    context: { waitUntil: (promise) => { pending.push(promise) } },
+    settled: () => Promise.all(pending).then(() => undefined),
+  }
+}
+
+export function importEnv(gate: Gate | undefined): ImportEnv {
+  return { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", binding: gate?.binding }
+}
+
+export function importServed(env: ImportEnv, request: globalThis.Request, context: ExecutionContext) {
+  return served.fetch(request, env, context)
+}

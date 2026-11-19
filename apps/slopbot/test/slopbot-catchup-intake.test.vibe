@@ -1,0 +1,296 @@
+// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/intakeHistory.md, "Story: Report a bounded, unsampled and stable projection of retained intake failures"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Handler, internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { Socket } from "effect/socket"
+import { inspectValueIntake } from "../src/programs/inspectValueIntake.vibe"
+import { inspectValueIntakeHistoryCommand, intakeHistoryQuery } from "../src/programs/inspectValueIntakeHistory.vibe"
+
+const accountId = "0123456789abcdef0123456789abcdef"
+const secret = "PRIVATE_TAIL_BODY"
+const pagesDeployment = "33333333-3333-4333-8333-333333333333"
+const deployments: Readonly<Record<string, string>> = {
+  "slop-slopbot": "11111111-1111-4111-8111-111111111111",
+  "slop-vetting-sandbox": "22222222-2222-4222-8222-222222222222",
+}
+const versions: Readonly<Record<string, string>> = {
+  "slop-slopbot": "44444444-4444-4444-8444-444444444444",
+  "slop-vetting-sandbox": "55555555-5555-4555-8555-555555555555",
+}
+const movedDeployment = "66666666-6666-4666-8666-666666666666"
+const failureLine = { event: "historical-intake-failure", stage: "bundle-metadata", sourceIndex: 0, sourceCount: 1, errorName: "TypeError", httpStatus: null, messageSha256: null }
+
+type SocketEnd = "open" | "never" | "error" | number
+
+interface World {
+  readonly movedAfter?: number
+  readonly refuseDeployments?: boolean
+  readonly tailUrl?: string
+  readonly tailDeleted?: boolean
+  readonly query?: unknown
+  readonly queryStatus?: number
+  readonly socket?: SocketEnd
+}
+
+interface Seen { readonly route: string; readonly body: string; readonly authorized: boolean }
+
+interface TailSeen { readonly url: string; readonly protocols: unknown; readonly sent: Array<string> }
+
+interface Traffic { readonly seen: Array<Seen>; readonly sockets: Array<TailSeen> }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function cloudflare(world: World, traffic: Traffic) {
+  const reads = new Map<string, number>()
+  const envelope = (result: unknown) => WebResponse.json({ success: true, errors: [], messages: [], result })
+  const refused = (status: number) => WebResponse.json({ success: false, errors: [{ code: 10000, message: secret }], messages: [], result: null }, { status })
+  const handler: Handler = async (request) => {
+    const url = new URL(request.url)
+    const route = `${request.method} ${url.pathname.replace(`/client/v4/accounts/${accountId}`, "")}`
+    traffic.seen.push({ route, body: await request.clone().text(), authorized: request.headers.get("authorization") === "Bearer private-token" })
+    const worker = /^GET \/workers\/scripts\/([a-z-]+)\/deployments$/u.exec(route)?.[1]
+    if (worker !== undefined) {
+      if (world.refuseDeployments === true) return refused(403)
+      const read = (reads.get(worker) ?? 0) + 1
+      reads.set(worker, read)
+      const id = world.movedAfter !== undefined && read > world.movedAfter ? movedDeployment : deployments[worker]
+      return envelope({ deployments: [{ id, versions: [{ version_id: versions[worker], percentage: 100 }], annotations: { secret } }] })
+    }
+    if (route === "GET /pages/projects/eliza-computer") return envelope({ name: secret, canonical_deployment: { id: pagesDeployment, environment: "production" } })
+    const tail = /^POST \/(?:workers\/scripts\/([a-z-]+)|pages\/projects\/eliza-computer\/deployments\/[a-f0-9-]+)\/tails$/u.exec(route)
+    if (tail !== null) {
+      const name = tail[1] ?? "pages"
+      return envelope({ id: `tail-${name}`, url: world.tailUrl ?? `wss://tail.cloudflare.com/${name}` })
+    }
+    if (route.startsWith("DELETE ")) return world.tailDeleted === false ? refused(200) : envelope(null)
+    if (route === "POST /workers/observability/telemetry/query") return world.queryStatus === undefined ? envelope(world.query) : refused(world.queryStatus)
+    return new WebResponse("unexpected", { status: 404 })
+  }
+  return asFetch(internet({ hosts: { "api.cloudflare.com": handler } }).handler)
+}
+
+function tailSockets(frames: ReadonlyArray<string>, ending: SocketEnd, seen: Array<TailSeen>) {
+  return (url: string, protocols?: unknown): Socket.WebSocketLike => {
+    const record: TailSeen = { url, protocols, sent: [] }
+    seen.push(record)
+    const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>()
+    const emit = (type: string, event: Socket.WebSocketEvent) => {
+      for (const listener of listeners.get(type) ?? []) listener(event)
+    }
+    return {
+      readyState: ending === "never" ? 0 : 1,
+      addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]) },
+      removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)) },
+      close: () => undefined,
+      send: (data) => {
+        record.sent.push(typeof data === "string" ? data : new TextDecoder().decode(data))
+        for (const frame of frames) emit("message", { type: "message", data: frame })
+        if (ending === "error") emit("error", { type: "error" })
+        if (typeof ending === "number") emit("close", { type: "close", code: ending })
+      },
+    }
+  }
+}
+
+function settings(temp: string, extra: Readonly<Record<string, string>>) {
+  return ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", RUNNER_TEMP: temp, CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "private-token", ...extra }))
+}
+
+effect function written(temp: string, name: string) {
+  const fs = try FileSystem.FileSystem
+  const file = `${temp}/${name}`
+  if (!(try fs.exists(file))) return { report: undefined, text: "", mode: 0 }
+  const text = try fs.readFileString(file)
+  const report: unknown = try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return { report, text, mode: (try fs.stat(file)).mode & 0o777 }
+}
+
+function outcomeOf(error: { readonly _tag: string }) {
+  return "message" in error && typeof error.message === "string" ? `${error._tag}: ${error.message}` : error._tag
+}
+
+const frames = [
+  JSON.stringify({
+    scriptName: secret,
+    outcome: "exception",
+    event: { request: { method: "POST", url: `https://slop.cash/${secret}`, headers: { authorization: secret } }, response: { status: 500 } },
+    exceptions: [{ name: "TypeError", message: "historical value import failure", stack: secret }],
+    logs: [{ message: [JSON.stringify(failureLine), secret, { body: secret }] }],
+  }),
+  `${secret} raw`,
+]
+
+effect function tailed(world: World, extra: Readonly<Record<string, string>> = {}) {
+  const fs = try FileSystem.FileSystem
+  const temp = try fs.makeTempDirectoryScoped({ prefix: "slopbot-intake-" })
+  const traffic: Traffic = { seen: [], sockets: [] }
+  const program = Effect.provide(inspectValueIntake(1), Layer.merge(FetchHttpClient.layer, settings(temp, extra)))
+  const provided = Effect.provideService(Effect.provideService(program, Socket.WebSocketConstructor, tailSockets(frames, world.socket ?? "open", traffic.sockets)), FetchHttpClient.Fetch, cloudflare(world, traffic))
+  const outcome = Effect.as(provided, "passed") catch (error) => outcomeOf(error)
+  return { outcome, ...(try written(temp, "value-intake-diagnostic.json")), routes: traffic.seen.map((seen) => seen.route).sort(), traffic }
+}
+
+effect function historied(world: World, from: string, to: string) {
+  const fs = try FileSystem.FileSystem
+  const temp = try fs.makeTempDirectoryScoped({ prefix: "slopbot-intake-history-" })
+  const traffic: Traffic = { seen: [], sockets: [] }
+  const program = Effect.provide(inspectValueIntakeHistoryCommand([]), Layer.merge(FetchHttpClient.layer, settings(temp, { SLOP_INTAKE_HISTORY_FROM: from, SLOP_INTAKE_HISTORY_TO: to })))
+  const outcome = Effect.as(Effect.provideService(program, FetchHttpClient.Fetch, cloudflare(world, traffic)), "passed") catch (error) => outcomeOf(error)
+  return { outcome, ...(try written(temp, "value-intake-history.json")), routes: traffic.seen.map((seen) => seen.route), traffic }
+}
+
+function withoutCheckedAt(report: unknown) {
+  if (report === null || typeof report !== "object") return report
+  const { checkedAt: _checkedAt, ...rest } = report as Readonly<Record<string, unknown>>
+  return rest
+}
+
+function leaks(text: string) {
+  return ["PRIVATE", "private-token", "slop.cash/"].some((needle) => text.includes(needle))
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('An operator reads bounded sanitized intake observations from both Workers and the Pages project, removes every tail it created, and reports each refused stage with integer codes only (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start")', () => effect {
+    const record = {
+      outcome: "exception",
+      method: "POST",
+      httpStatus: 500,
+      categories: ["publication-failed", "other"],
+      exceptionFingerprints: [{ name: "TypeError", messageSha256: try sha256Hex("historical value import failure") }],
+      historicalIntakeFailures: [failureLine],
+    }
+    const target = (name: string, observations: ReadonlyArray<unknown>, failure?: Readonly<Record<string, unknown>>) => ({
+      target: name,
+      ...(name === "pages" ? { deploymentId: pagesDeployment } : { deploymentId: deployments[name], versionId: versions[name] }),
+      observations,
+      complete: failure === undefined,
+      ...(failure === undefined ? {} : { failure }),
+    })
+    const report = (targets: ReadonlyArray<unknown>) => ({ tailSeconds: 1, rawLogsRetained: false, targets })
+    const allTargets = (observations: ReadonlyArray<unknown>, failure?: Readonly<Record<string, unknown>>) => ["slop-slopbot", "slop-vetting-sandbox", "pages"].map((name) => target(name, observations, failure))
+    const tailRoutes = [
+      "DELETE /pages/projects/eliza-computer/deployments/33333333-3333-4333-8333-333333333333/tails/tail-pages",
+      "DELETE /workers/scripts/slop-slopbot/tails/tail-slop-slopbot",
+      "DELETE /workers/scripts/slop-vetting-sandbox/tails/tail-slop-vetting-sandbox",
+      "POST /pages/projects/eliza-computer/deployments/33333333-3333-4333-8333-333333333333/tails",
+      "POST /workers/scripts/slop-slopbot/tails",
+      "POST /workers/scripts/slop-vetting-sandbox/tails",
+    ]
+    const metadataRoutes = ["GET /pages/projects/eliza-computer", "GET /workers/scripts/slop-slopbot/deployments", "GET /workers/scripts/slop-vetting-sandbox/deployments"]
+    const normal = try tailed({})
+    const unsafe = try tailed({ tailUrl: "wss://tail.example.com/collector" })
+    const closed = try tailed({ socket: 1000 })
+    const silent = try tailed({ socket: "never" })
+    const refused = try tailed({ refuseDeployments: true })
+    const moved = try tailed({ movedAfter: 1 })
+    const kept = try tailed({ tailDeleted: false })
+    const branch = try tailed({}, { GITHUB_REF: "refs/heads/feature" })
+    const forged = try tailed({}, { CLOUDFLARE_ACCOUNT_ID: "not-an-account" })
+    const workersOnly = (targets: ReadonlyArray<ReturnType<typeof target>>) => targets.map((entry) => entry.target === "pages" ? target("pages", [record]) : entry)
+    try same({
+      normal: [normal.outcome, withoutCheckedAt(normal.report), normal.mode, leaks(normal.text), normal.routes, normal.traffic.seen.every((seen) => seen.authorized)],
+      filters: normal.traffic.seen.filter((seen) => seen.route.startsWith("POST ")).map((seen) => seen.body).sort(),
+      sockets: normal.traffic.sockets.map((socket) => ({ ...socket })).sort((left, right) => left.url.localeCompare(right.url)),
+      unsafe: [unsafe.outcome, withoutCheckedAt(unsafe.report), unsafe.routes.filter((route) => route.includes("/tails")), unsafe.traffic.sockets.length],
+      closed: [closed.outcome, withoutCheckedAt(closed.report), closed.routes.filter((route) => route.includes("/tails"))],
+      silent: [silent.outcome, withoutCheckedAt(silent.report), silent.routes.filter((route) => route.startsWith("DELETE "))],
+      refused: [refused.outcome, withoutCheckedAt(refused.report), leaks(refused.text), refused.routes.filter((route) => route.includes("/tails"))],
+      moved: [moved.outcome, withoutCheckedAt(moved.report)],
+      kept: [kept.outcome, withoutCheckedAt(kept.report), leaks(kept.text)],
+      branch: [branch.outcome, branch.report, branch.routes],
+      forged: [forged.outcome, forged.report, forged.routes],
+    }, {
+      normal: ["passed", report(allTargets([record])), 0o600, false, [...metadataRoutes, ...metadataRoutes, ...tailRoutes].sort(), true],
+      filters: [
+        "{}",
+        JSON.stringify({ filters: [{ scriptVersion: versions["slop-slopbot"] }] }),
+        JSON.stringify({ filters: [{ scriptVersion: versions["slop-vetting-sandbox"] }] }),
+      ].sort(),
+      sockets: ["pages", "slop-slopbot", "slop-vetting-sandbox"].map((name) => ({ url: `wss://tail.cloudflare.com/${name}`, protocols: "trace-v1", sent: [JSON.stringify({ debug: false })] })),
+      unsafe: ["IntakeInspectionIncomplete: Intake diagnostic incomplete", report(allTargets([], { stage: "tail-transport" })), tailRoutes, 0],
+      closed: ["IntakeInspectionIncomplete: Intake diagnostic incomplete", report(allTargets([], { stage: "tail-transport" })), tailRoutes],
+      silent: ["IntakeInspectionIncomplete: Intake diagnostic incomplete", report(allTargets([], { stage: "tail-transport" })), tailRoutes.slice(0, 3)],
+      refused: [
+        "IntakeInspectionIncomplete: Intake diagnostic incomplete",
+        report([
+          { target: "slop-slopbot", observations: [], complete: false, failure: { stage: "deployment-read", httpStatus: 403, providerCode: 10000 } },
+          { target: "slop-vetting-sandbox", observations: [], complete: false, failure: { stage: "deployment-read", httpStatus: 403, providerCode: 10000 } },
+          target("pages", [record]),
+        ]),
+        false,
+        tailRoutes.filter((route) => route.includes("/pages/")),
+      ],
+      moved: ["IntakeInspectionIncomplete: Intake diagnostic incomplete", report(workersOnly(allTargets([record], { stage: "deployment-recheck" })))],
+      kept: ["IntakeInspectionIncomplete: Intake diagnostic incomplete", report(allTargets([record], { stage: "tail-delete", httpStatus: 200, providerCode: 10000 })), false],
+      branch: ["IntakeInspectionRefused: Main runner required", undefined, []],
+      forged: ["IntakeInspectionRefused: Diagnostic credentials unavailable", undefined, []],
+    })
+  })
+
+  it.effect('An operator projects retained intake failures for a short past window: an invalid window makes no call, a moved deployment, a sampled or malformed answer yields no rows, truncation and unprojectable rows fail the run, and at most three dry calls are made (spec/slopbot/intakeHistory.md, "An inspection is admitted only for a valid window, and makes at most three dry calls"; spec/slopbot/intakeHistory.md, "Only a bounded, unsampled answer over an unchanged deployment yields rows, and only a complete one passes")', () => effect {
+    const now = try Clock.currentTimeMillis
+    const from = new Date(now - 600_000).toISOString()
+    const to = new Date(now - 60_000).toISOString()
+    const timeframe = { from: now - 600_000, to: now - 60_000 }
+    const row = { timestamp: timeframe.from + 1000, source: failureLine, $metadata: { service: "slop-slopbot", message: secret }, $workers: { truncated: false } }
+    const answer = (events: ReadonlyArray<unknown>, count: number, run: Readonly<Record<string, unknown>> = {}) => ({ run: { status: "COMPLETED", dry: true, ...run }, events: { count, events } })
+    const observation = { timestamp: row.timestamp, failure: failureLine }
+    const base = {
+      worker: "slop-slopbot",
+      timeframe,
+      rawLogsRetained: false,
+      queryDry: true,
+      maximumEvents: 200,
+      attribution: "Bounded retained observations only; no private request/source identity, unsampled source coverage or absence of failures is established.",
+    }
+    const pinned = { deploymentId: deployments["slop-slopbot"], versionId: versions["slop-slopbot"] }
+    const refusedAt = (failure: Readonly<Record<string, unknown>>) => ({ ...base, complete: false, observations: [], failure })
+    const calls = ["GET /workers/scripts/slop-slopbot/deployments", "POST /workers/observability/telemetry/query", "GET /workers/scripts/slop-slopbot/deployments"]
+    const incomplete = "IntakeInspectionIncomplete: Intake history inspection incomplete"
+    const complete = try historied({ query: answer([row], 1) }, from, to)
+    const moved = try historied({ query: answer([row], 1), movedAfter: 1 }, from, to)
+    const sampled = try historied({ query: answer([row], 1, { statistics: { abr_level: 2 } }) }, from, to)
+    const resampled = try historied({ query: { ...answer([], 0), statistics: { abr_level: 4 } } }, from, to)
+    const unfinished = try historied({ query: answer([row], 1, { status: "RUNNING" }) }, from, to)
+    const oversized = try historied({ query: answer(Array.from({ length: 201 }, () => row), 201) }, from, to)
+    const failed = try historied({ queryStatus: 500 }, from, to)
+    const truncated = try historied({ query: answer([{ ...row, $workers: { truncated: true } }], 1) }, from, to)
+    const unprojectable = try historied({ query: answer([{ ...row, source: secret }], 1) }, from, to)
+    const paged = try historied({ query: answer([row], 2) }, from, to)
+    const tooLong = try historied({ query: answer([row], 1) }, new Date(now - 1_200_000).toISOString(), to)
+    const inexact = try historied({ query: answer([row], 1) }, from.replace("Z", "+00:00"), to)
+    const future = try historied({ query: answer([row], 1) }, from, new Date(now + 600_000).toISOString())
+    try same({
+      complete: [complete.outcome, withoutCheckedAt(complete.report), complete.mode, leaks(complete.text), complete.routes, complete.traffic.seen.every((seen) => seen.authorized)],
+      query: complete.traffic.seen[1]?.body,
+      moved: [moved.outcome, withoutCheckedAt(moved.report), moved.routes.length],
+      sampled: [sampled.outcome, withoutCheckedAt(sampled.report), sampled.routes],
+      resampled: [resampled.outcome, withoutCheckedAt(resampled.report)],
+      unfinished: [unfinished.outcome, withoutCheckedAt(unfinished.report)],
+      oversized: [oversized.outcome, withoutCheckedAt(oversized.report)],
+      failed: [failed.outcome, withoutCheckedAt(failed.report), leaks(failed.text)],
+      truncated: [truncated.outcome, withoutCheckedAt(truncated.report)],
+      unprojectable: [unprojectable.outcome, withoutCheckedAt(unprojectable.report), leaks(unprojectable.text)],
+      paged: [paged.outcome, withoutCheckedAt(paged.report), paged.routes.length],
+      refusedWindows: [tooLong, inexact, future].map((run) => [run.outcome, run.report, run.routes]),
+    }, {
+      complete: ["passed", { ...base, ...pinned, complete: true, matchedEvents: 1, returnedEvents: 1, rejectedEvents: 0, observations: [observation] }, 0o600, false, calls, true],
+      query: JSON.stringify(intakeHistoryQuery(timeframe)),
+      moved: [incomplete, refusedAt({ stage: "deployment-recheck" }), 3],
+      sampled: [incomplete, refusedAt({ stage: "history-sampling" }), calls.slice(0, 2)],
+      resampled: [incomplete, refusedAt({ stage: "history-sampling" })],
+      unfinished: [incomplete, refusedAt({ stage: "history-shape" })],
+      oversized: [incomplete, refusedAt({ stage: "history-shape" })],
+      failed: [incomplete, refusedAt({ stage: "history-query", httpStatus: 500, providerCode: 10000 }), false],
+      truncated: [incomplete, { ...base, ...pinned, complete: false, matchedEvents: 1, returnedEvents: 1, rejectedEvents: 1, observations: [] }],
+      unprojectable: [incomplete, { ...base, ...pinned, complete: false, matchedEvents: 1, returnedEvents: 1, rejectedEvents: 1, observations: [] }, false],
+      paged: [incomplete, { ...base, ...pinned, complete: false, matchedEvents: 2, returnedEvents: 1, rejectedEvents: 0, observations: [observation] }, 3],
+      refusedWindows: [0, 1, 2].map(() => ["IntakeInspectionRefused: Invalid intake history window", undefined, []]),
+    })
+  })
+})

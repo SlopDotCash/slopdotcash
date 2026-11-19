@@ -100,6 +100,15 @@ export const restoredDraftsKeepTheirLicenseTermsAndAssignment = vectors<unknown,
   return draft === null ? undefined : { licenseSpdx: draft.licenseSpdx, inboundMode: draft.inboundMode, inboundTermsUrl: draft.inboundTermsUrl, assignmentSignedAt: draft.assignmentSignedAt };
 });
 
+export const restoredDraftsReadMissingLinksAsEmpty = vectors<unknown, Partial<Record<string, string>> | undefined>([
+  [{ goal: "Ship a small engine." }, { website: "", x: "" }],
+  [{ website: "ntwrk.party", x: "@elizaOS" }, { website: "ntwrk.party", x: "@elizaOS" }],
+  [{ website: 7, x: null }, { website: "", x: "" }],
+], (stored) => {
+  const draft = proposalOf(stored);
+  return draft === null ? undefined : { website: draft.website, x: draft.x };
+});
+
 const rewardStart = "2026-11-17T08:00:00.000Z";
 const choice = (overrides: Partial<FundingChoice>): FundingChoice => ({ mode: "monthly", network: "base", assetKind: "stablecoin", tokenAddress: "", tokenSymbol: "", monthlyAmount: "1000", ...overrides });
 const pool = (chain: Chain, currency: string, monthlyCapMinor: string, monthlyCapDisplay: string, feeBasisPoints: number): MonthlyPoolReward => ({

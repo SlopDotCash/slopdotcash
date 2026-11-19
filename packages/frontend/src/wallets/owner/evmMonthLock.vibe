@@ -1,0 +1,201 @@
+// spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"
+import { CURRENT_PERIOD_CALL, OPEN_PLEDGED_GROSS_CALL, decodeCurrentPeriod, decodeMonthPledge, decodeOpenPledgedGross, monthPledgeCall } from "@repo/settlement/chain/evm/actions"
+import { parseDecimalAmount } from "@repo/settlement/kernels/amounts"
+import { lockPeriod, validLockCount } from "../../../gen/frontend__vaultLocks.ts"
+import { WalletChoice, WalletFailed, WalletUntrusted, conflictMessage } from "../core/discovery.vibe"
+import { type EvmConnection, sendTransaction } from "../core/evm.vibe"
+import { failureOf, providerRequest } from "../core/injected.ts"
+import { type Call, callPlan, pledgeCall, releaseCall } from "./evmCalls.ts"
+import { expectedOf } from "./evmEvidence.ts"
+import { type EvmVault, VaultActionRefused, batchProgress, readVault, readWalletTransaction, receiptState, requireVaultWallet, reviewTransfer, sendBatch } from "./evmVault.vibe"
+import { lockRefusal } from "./pledgeRefusals.ts"
+
+module texts {
+  import { type DecimalRefusal as Reason, decimalRefusalMessage } from "@repo/settlement/kernels/amounts"
+  /** @throws {never} */
+  export function decimalRefusal(reason: Reason, decimals: number): string { return decimalRefusalMessage[reason](decimals) }
+}
+import { decimalRefusal } from texts
+
+export interface MonthPledgeRead {
+  readonly period: number
+  readonly amount: bigint
+  readonly open: boolean
+}
+
+export interface PledgesRead {
+  readonly openPledgedGross: bigint
+  readonly pledges: ReadonlyArray<MonthPledgeRead>
+}
+
+export interface LockFacts {
+  readonly periods: ReadonlyArray<number>
+  readonly amountMinor: bigint
+  readonly decimals: number
+  readonly depositText: string
+  readonly depositGross: bigint
+  readonly batches: boolean
+  readonly existing: ReadonlyArray<MonthPledgeRead>
+}
+
+export type SentLock =
+  | { readonly kind: "transaction"; readonly hash: string; readonly from: string; readonly call: Call }
+  | { readonly kind: "batch"; readonly reference: string }
+
+export type LockCheck = "ChainPending" | "ChainFailed" | "ChainIncluded"
+
+export const evmLockMessages = {
+  chooseEvm: "Choose an EVM wallet.",
+  invalidRead: "The wallet returned an invalid vault read.",
+  invalidMonth: "The vault returned an invalid month.",
+  noSupport: "This vault cannot lock months yet.",
+  malformed: "Malformed month pledge",
+  failed: "The wallet request failed.",
+} as const
+
+error RawFailure { caught: unknown }
+
+const hexPattern = /^0x[0-9a-fA-F]+$/u
+
+function refused(message: string) {
+  return new VaultActionRefused({ message })
+}
+
+effect function provider(connection: EvmConnection) {
+  const choice = try WalletChoice
+  const held = try choice.held(connection.id)
+  if (held === undefined || (held.kind !== "announced" && held.kind !== "legacyEvm")) throw new WalletFailed({ message: evmLockMessages.chooseEvm })
+  if (!(try choice.trusted(connection.id))) throw new WalletUntrusted({ message: conflictMessage })
+  return held.provider
+}
+
+effect function raw(connection: EvmConnection, method: string, params: ReadonlyArray<unknown>) {
+  const source = try provider(connection)
+  return try tryPromise({ try: () => providerRequest(source, method, params), catch: (caught) => new RawFailure({ caught }) })
+}
+
+function emptyRevert(caught: unknown): boolean {
+  const record = typeof caught === "object" && caught !== null ? caught as { readonly data?: unknown; readonly error?: { readonly data?: unknown }; readonly message?: unknown } : {}
+  const nested = typeof record.error === "object" && record.error !== null ? record.error.data : undefined
+  if (record.data === "0x" || nested === "0x") return true
+  return record.data === undefined && nested === undefined && /^execution reverted\.?$/iu.test(String(record.message ?? "").trim())
+}
+
+function failed(caught: unknown) {
+  const message = failureOf(caught).message
+  return new WalletFailed({ message: message === "" ? evmLockMessages.failed : message })
+}
+
+effect function vaultCall(connection: EvmConnection, vault: EvmVault, data: string) {
+  const answer = raw(connection, "eth_call", [{ to: vault.vault, data }, "latest"]) catch effect (error) => {
+    if (error._tag === "RawFailure") throw failed(error.caught)
+    throw error
+  }
+  if (typeof answer !== "string" || !hexPattern.test(answer)) throw refused(evmLockMessages.invalidRead)
+  return answer
+}
+
+export effect function readPledges(connection: EvmConnection, vault: EvmVault, periods: ReadonlyArray<number>) {
+  const answer: unknown = raw(connection, "eth_call", [{ to: vault.vault, data: OPEN_PLEDGED_GROSS_CALL }, "latest"]) catch effect (error) => {
+    if (error._tag !== "RawFailure") throw error
+    if (emptyRevert(error.caught)) return undefined
+    throw failed(error.caught)
+  }
+  if (answer === undefined) return undefined
+  if (typeof answer !== "string" || !hexPattern.test(answer)) throw refused(evmLockMessages.invalidRead)
+  const openPledgedGross = decodeOpenPledgedGross(answer)
+  if (openPledgedGross === undefined) throw refused(evmLockMessages.invalidRead)
+  const pledges: MonthPledgeRead[] = []
+  for (const period of periods) {
+    const data = try vaultCall(connection, vault, monthPledgeCall(period))
+    pledges.push(try Effect.try({ try: () => decodeMonthPledge(period, data), catch: () => refused(evmLockMessages.malformed) }))
+  }
+  return { openPledgedGross, pledges } satisfies PledgesRead
+}
+
+export effect function readVaultMonth(connection: EvmConnection, vault: EvmVault) {
+  const period = decodeCurrentPeriod(try vaultCall(connection, vault, CURRENT_PERIOD_CALL))
+  if (period === undefined) throw refused(evmLockMessages.invalidMonth)
+  return period
+}
+
+export effect function lockedTotal(connection: EvmConnection, vault: EvmVault) {
+  return (try readPledges(connection, vault, []))?.openPledgedGross
+}
+
+export effect function lockFacts(connection: EvmConnection, vault: EvmVault, count: number, amount: string, deposit: string) {
+  try requireVaultWallet(connection, vault)
+  const depositText = deposit.trim()
+  const depositReview = depositText === "" ? undefined : try reviewTransfer(connection, vault, "deposit", depositText, "finalized", true)
+  const decimals = depositReview?.decimals ?? (try readVault(connection, vault, "finalized")).decimals
+  const parsed = parseDecimalAmount({ text: amount, decimals })
+  if (parsed.kind === "Refused") throw refused(decimalRefusal(parsed.reason, decimals))
+  const current = try readVaultMonth(connection, vault)
+  const periods = validLockCount(count) ? Array.from({ length: count }, (_, index) => lockPeriod(current, index)) : []
+  const read = try readPledges(connection, vault, periods)
+  if (read === undefined) throw refused(evmLockMessages.noSupport)
+  return {
+    periods,
+    amountMinor: parsed.amount,
+    decimals,
+    depositText,
+    depositGross: depositReview?.gross ?? 0n,
+    batches: depositReview?.batch ?? true,
+    existing: read.pledges,
+  } satisfies LockFacts
+}
+
+effect function estimated(connection: EvmConnection, transaction: { readonly from: string } & Call) {
+  raw(connection, "eth_estimateGas", [transaction]) catch effect (error) => {
+    if (error._tag !== "RawFailure") throw error
+    const text = lockRefusal(error.caught)
+    if (text !== undefined) throw refused(text)
+    throw failed(error.caught)
+  }
+}
+
+effect function sendCall<E>(connection: EvmConnection, vault: EvmVault, call: Call, beforePrompt: void!E) {
+  const transaction = { from: connection.address, ...call }
+  try estimated(connection, transaction)
+  try requireVaultWallet(connection, vault)
+  const hash = try sendTransaction(connection, vault.chainId, transaction, beforePrompt)
+  return { kind: "transaction", hash, from: connection.address, call } satisfies SentLock
+}
+
+effect function callOf(build: () => Call) {
+  return try Effect.try({ try: build, catch: (caught) => refused(caught instanceof Error ? caught.message : evmLockMessages.invalidRead) })
+}
+
+export effect function sendLock<E>(connection: EvmConnection, vault: EvmVault, facts: LockFacts, beforePrompt: void!E) {
+  const first = facts.periods[0]
+  if (first === undefined) throw refused(evmLockMessages.invalidMonth)
+  const call = try callOf(() => pledgeCall(vault.vault, first, facts.periods.length, facts.amountMinor))
+  if (facts.depositText === "") return try sendCall(connection, vault, call, beforePrompt)
+  const reference: string = sendBatch(connection, vault, facts.depositText, "finalized", (_plan) => beforePrompt, [call]) catch effect (error) => {
+    const text = lockRefusal(error)
+    if (text !== undefined) throw refused(text)
+    throw error
+  }
+  return { kind: "batch", reference } satisfies SentLock
+}
+
+export effect function sendRelease<E>(connection: EvmConnection, vault: EvmVault, period: number, beforePrompt: void!E) {
+  try requireVaultWallet(connection, vault)
+  const call = try callOf(() => releaseCall(vault.vault, period))
+  return try sendCall(connection, vault, call, beforePrompt)
+}
+
+export effect function checkSentLock(connection: EvmConnection, vault: EvmVault, sent: SentLock) {
+  if (sent.kind === "transaction") {
+    const read = try readWalletTransaction(connection, vault, sent.hash, expectedOf(callPlan(sent.from, vault.chainId, sent.call)), false)
+    if (read.status === "pending") return "ChainPending" satisfies LockCheck
+    if (read.status === "failed" || read.receipt?.status === "0x0") return "ChainFailed" satisfies LockCheck
+    return "ChainIncluded" satisfies LockCheck
+  }
+  const report = try batchProgress(connection, vault, sent.reference)
+  if (report.kind === "notSent") return "ChainFailed" satisfies LockCheck
+  if (report.kind !== "landed" || report.hash === undefined) return "ChainPending" satisfies LockCheck
+  const state = try receiptState(connection, vault, report.hash, undefined)
+  if (state === undefined || !state.canonical) return "ChainPending" satisfies LockCheck
+  return (state.success ? "ChainIncluded" : "ChainFailed") satisfies LockCheck
+}

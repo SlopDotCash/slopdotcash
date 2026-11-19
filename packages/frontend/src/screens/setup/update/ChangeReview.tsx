@@ -1,7 +1,9 @@
 // spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
 import type { RevisionChanges } from "@repo/backend/owner/classify";
 import { CompareChange } from "@repo/ui";
-import type { ChangeRow } from "./revision.ts";
+import { Calendar, Check, Minus, ShieldAlert } from "lucide-react";
+import { Chip } from "../../admin/parts.tsx";
+import { type ChangeEffect, type ChangeField, type ChangeRow, changeEffect } from "./revision.ts";
 
 export type ChangeReviewProps = {
   changes: RevisionChanges;
@@ -15,21 +17,62 @@ export type ChangeReviewProps = {
   nextCycle: string;
 };
 
-/** What publishing does, by kind of change, and each value now beside the value proposed. */
+function EffectChip({ effect, active, nextCycle }: { effect: ChangeEffect; active: boolean; nextCycle: string }) {
+  if (effect === "live") return <Chip tone="Positive">Live now</Chip>;
+  if (effect === "rescan")
+    return (
+      <Chip tone="Caution" icon={<ShieldAlert aria-hidden />}>
+        {active ? "Rescan · pauses" : "Rescan"}
+      </Chip>
+    );
+  return <Chip icon={<Calendar aria-hidden />}>From {nextCycle}</Chip>;
+}
+
+function ChangeValue({ field, value }: { field: ChangeField; value: string }) {
+  if (field === "slopbot") {
+    const on = value === "Allowed";
+    return (
+      <Chip tone={on ? "Positive" : "Neutral"} icon={on ? <Check aria-hidden /> : <Minus aria-hidden />}>
+        {on ? "On" : "Off"}
+      </Chip>
+    );
+  }
+  if (field === "image") return value ? <img src={value} alt="Custom avatar" width={32} height={32} /> : "GitHub avatar";
+  return value;
+}
+
+/** What publishing does: each value now beside the value proposed with its effect, and the effects of changes that have no row of their own. */
 export function ChangeReview({ changes, rows, addedRepositories, scanCleared, active, nextCycle }: ChangeReviewProps) {
   const executableCleared = scanCleared && addedRepositories === 0;
   const executable = changes.executable.length > 0;
+  const rowEffects = new Set(rows.map((row) => changeEffect(row.field, executableCleared)));
+  const unlisted = ([changes.presentation.length > 0 || (executableCleared && executable) ? "live" : null, !executableCleared && executable ? "rescan" : null, changes.financial.length > 0 ? "next-month" : null] as const).filter((effect): effect is ChangeEffect => effect !== null && !rowEffects.has(effect));
   return (
     <section aria-labelledby="update-changes" className="flex flex-col gap-4">
       <h2 id="update-changes" className="text-lg font-semibold text-foreground">
         Changes
       </h2>
-      <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-foreground">
-        {changes.presentation.length > 0 || (executableCleared && executable) ? <li>Presentation and cleared contribution changes publish now.</li> : null}
-        {!executableCleared && executable ? <li>Contribution changes need a new security scan. {active ? "The project pauses and goes live again when the scan passes." : "The project goes live when the scan passes."}</li> : null}
-        {changes.financial.length > 0 ? <li>Financial changes apply from {nextCycle} (UTC). Funded awards keep their terms.</li> : null}
-      </ul>
-      {rows.length > 0 ? <CompareChange changes={rows.map((row) => ({ label: row.label, current: row.current, proposed: row.proposed }))} /> : null}
+      {unlisted.length > 0 ? (
+        <p className="flex flex-wrap gap-2">
+          {unlisted.map((effect) => (
+            <EffectChip key={effect} effect={effect} active={active} nextCycle={nextCycle} />
+          ))}
+        </p>
+      ) : null}
+      {rows.length > 0 ? (
+        <CompareChange
+          changes={rows.map((row) => ({
+            label: row.label,
+            current: <ChangeValue field={row.field} value={row.current} />,
+            proposed: (
+              <span className="inline-flex flex-wrap items-center gap-2">
+                <ChangeValue field={row.field} value={row.proposed} />
+                <EffectChip effect={changeEffect(row.field, executableCleared)} active={active} nextCycle={nextCycle} />
+              </span>
+            ),
+          }))}
+        />
+      ) : null}
     </section>
   );
 }

@@ -1,0 +1,111 @@
+// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/frontend/presentation.md, "A blocked or failed beacon cannot block the page or its actions"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"
+import type { Fetcher } from "@repo/platform/bindings"
+import { boundedBytes } from "@repo/platform/browser"
+import { type Tier, tierOf } from "@repo/platform/config"
+import { document, documentHeaders } from "./html.ts"
+import { type BeaconEvidence, type SiteEnvironment, analyticsMayLoad } from "@repo/frontend/presentation"
+
+module subtle {
+  import { Effect } from "effect"
+  import type { Fetcher } from "@repo/platform/bindings"
+  /** @throws {never} */
+  export function fetcherOf<E>(serve: (request: globalThis.Request) => Effect.Effect<globalThis.Response, E>): Fetcher {
+    return { fetch: (request) => Effect.runPromise(serve(request)) }
+  }
+}
+import { fetcherOf } from subtle
+
+type Replacement = readonly [source: string, replacement: string, expected: number]
+
+export error ShellChanged { source: string; expected: number; found: number }
+
+const cashDomain = "slop.cash"
+const techDomain = "slop.tech"
+const transformedLimit = 1024 * 1024
+const beaconTag = `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"230b277fc6fe4a279c8b06cf7e569719","spa":true,"send":{"to":"/cdn-cgi/rum"}}'></script>`
+const beaconEvidence: BeaconEvidence = { cloudflareWebAnalytics: true, sameOrigin: true, cookies: false, localStorage: false, queryStrings: false, pathAndReferringSiteOnly: true }
+const environments: { readonly [T in Tier]: SiteEnvironment } = { production: "Production", staging: "Staging", local: "Local" }
+
+const techShell: ReadonlyArray<Replacement> = [
+  ['href="https://slop.cash/"', `href="https://${techDomain}/"`, 1],
+  ['content="slop.cash"', `content="${techDomain}"`, 1],
+  ['content="https://slop.cash/"', `content="https://${techDomain}/"`, 1],
+  ['content="https://slop.cash/og-slop-cash.png"', 'content="https://slop.tech/og-slop-tech.png"', 2],
+]
+
+const sponsorHeadline = "Fund a project. Pay for accepted work."
+
+const sponsorHead: ReadonlyArray<Replacement> = [
+  ["<title>Slop: ship and maintain open source</title>", "<title>Fund a project · Slop</title>", 1],
+  ['content="Slop: ship and maintain open source"', `content="${sponsorHeadline}"`, 2],
+  ['content="MAKE MONEY SHIPPING OPEN SOURCE."', `content="${sponsorHeadline}"`, 2],
+  ['content="Contribute to open source or maintain your project with your coding agent."', `content="Fund a monthly pool for an open-source project. It pays contributors for the work the project's maintainers accept."`, 3],
+  ['href="https://slop.cash/"', 'href="https://slop.cash/sponsors"', 1],
+  ['content="https://slop.cash/"', 'content="https://slop.cash/sponsors"', 1],
+  ['content="https://slop.cash/og-slop-cash.png"', 'content="https://slop.cash/og-slop-cash-sponsors.png"', 2],
+]
+
+const beaconBody: ReadonlyArray<Replacement> = [["</body>", `${beaconTag}</body>`, 1]]
+
+function occurrences(contents: string, source: string) {
+  return contents.split(source).length - 1
+}
+
+function hostOf(hostname: string) {
+  return hostname.toLowerCase().replace(/\.$/u, "")
+}
+
+function domainOf(host: string) {
+  return host === techDomain || host === `www.${techDomain}` ? techDomain : cashDomain
+}
+
+function sponsorPage(pathname: string) {
+  return pathname === "/sponsors" || pathname === "/sponsors/"
+}
+
+effect function replacedExactly(contents: string, replacements: ReadonlyArray<Replacement>) {
+  let html = contents
+  for (const [source, replacement, expected] of replacements) {
+    const found = occurrences(html, source)
+    if (found !== expected) throw new ShellChanged({ source, expected, found })
+    html = html.replaceAll(source, replacement)
+  }
+  return html
+}
+
+function withSponsorHead(contents: string) {
+  if (sponsorHead.some(([source, , expected]) => occurrences(contents, source) !== expected)) return contents
+  return sponsorHead.reduce((html, [source, replacement]) => html.replaceAll(source, replacement), contents)
+}
+
+effect function withBeacon(contents: string) {
+  if (contents.includes("static.cloudflareinsights.com")) return contents
+  return try replacedExactly(contents, beaconBody)
+}
+
+effect function htmlOf(request: globalThis.Request, response: globalThis.Response) {
+  const bytes = try boundedBytes(HttpClientResponse.fromWeb(HttpClientRequest.get(request.url), response), transformedLimit, "HTML response")
+  return new TextDecoder().decode(bytes)
+}
+
+effect function served(assets: Fetcher, environment: string | undefined, request: globalThis.Request) {
+  const response = try orDie(tryPromise(() => assets.fetch(request)))
+  if (request.method !== "GET") return response
+  if (response.status < 200 || response.status >= 300 || !(response.headers.get("content-type") ?? "").includes("text/html")) return response
+  const { hostname, pathname } = new URL(request.url)
+  const host = hostOf(hostname)
+  const cash = domainOf(host) === cashDomain
+  const sponsor = cash && sponsorPage(pathname)
+  const headers = documentHeaders(response, !cash)
+  if (analyticsMayLoad(environments[try tierOf(environment)], host, beaconEvidence)) {
+    const html = try htmlOf(request, response)
+    return document(response, headers, try withBeacon(sponsor ? withSponsorHead(html) : html))
+  }
+  if (sponsor) return document(response, headers, withSponsorHead(try htmlOf(request, response)))
+  if (cash) return document(response, headers)
+  return document(response, headers, try replacedExactly(try htmlOf(request, response), techShell))
+}
+
+export function documents(assets: Fetcher, environment: string | undefined) {
+  return fetcherOf((request) => served(assets, environment, request))
+}

@@ -1,5 +1,5 @@
 // spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
-import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import type { D1Database } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
@@ -22,7 +22,7 @@ import { VettingBansLive } from "../../enforcement/vettingBans.vibe"
 import { evidenceBucket } from "../../evidence/objects.vibe"
 import { evidenceRoutes } from "../../evidence/routes.vibe"
 import { AuditLive } from "../../privacy/port.vibe"
-import { type FixtureKeys, type GitHubFixture, inProcess, templateAssets } from "./transport.ts"
+import { type FixtureKeys, type GitHubFixture, type InProcessSite, inProcess, templateAssets } from "./transport.ts"
 
 export const fixtureOrigin = "https://flag-qualification.invalid"
 export const publicReadToken = "qualification-public-read-token"
@@ -75,6 +75,6 @@ const site = worker({
   routes: Layer.mergeAll(enforcementRoutes, admissionRecordRoutes, evidenceRoutes),
 })
 
-export function fixtureSite(fixture: FixtureEnv, facts: SiteFacts): Fetcher {
+export function fixtureSite(fixture: FixtureEnv, facts: SiteFacts): InProcessSite {
   return inProcess(site, { fixture, facts })
 }

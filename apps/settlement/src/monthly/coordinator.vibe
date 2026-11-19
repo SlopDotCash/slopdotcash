@@ -1,19 +1,19 @@
-// spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"
+// spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import { rows, sql } from "@repo/platform/d1"
 import { Conflict } from "@repo/platform/stored"
 import { Registry } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
-import { type Monthly, Rejected as MonthRejected, canAutoFreeze, cutoff, financialTermsSame, firstAutomaticPeriod } from "../../gen/settlement__monthly.effect.vibe"
-import { Rejected, canCreateObligations, canNoteUnderfunded } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { type Monthly, Rejected as MonthRejected, canAutoFreeze, canCreateObligations, canNoteUnderfunded, cutNoticeElapsed, cutoff, financialTermsSame, firstAutomaticPeriod, pledgeKeepsMonth } from "../../gen/settlement__monthly.effect.vibe"
+import { Rejected } from "../../gen/settlement__monthlySettlement.effect.vibe"
 import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
-import { type Settlement, loadSettlement, settle } from "../monthlySettlement/store.vibe"
-import { type MonthKey, FundingStale, ProjectChanged, amountOf } from "./store.vibe"
+import { type Settlement, loadSettlement, monthObservation, settle } from "../monthlySettlement/store.vibe"
+import { type MonthKey, FundingStale, ProjectChanged, amountOf, sendMonth } from "./store.vibe"
 
 const coordinator = "coordinator"
 
 export type Funding = "Created" | "AlreadyCreated" | "Underfunded" | "StaleFunding" | "NotFrozen"
 
-type Freezing = "Frozen" | "BeforeCutoff" | "BeforeFirstPeriod" | "AutomaticOff" | "ProjectRestricted" | "VaultNotServed" | "FinancialPolicyChanged" | "ProjectChanged" | "AlreadyFrozen"
+type Freezing = "Frozen" | "BeforeCutoff" | "BeforeFirstPeriod" | "AutomaticOff" | "ProjectRestricted" | "VaultNotServed" | "CutNoticePending" | "FinancialPolicyChanged" | "ProjectChanged" | "AlreadyFrozen"
 
 export interface Waiting {
   readonly key: string
@@ -35,10 +35,11 @@ export effect function underfundedNotice(settlement: Settlement) {
   if (run === undefined || project === undefined) return []
   const period = formatPeriod(settlement.key.period)
   const projectId = settlement.key.projectId
-  return try (try Notices).statements({
+  const notices = try Notices
+  return try notices.statements({
     notices: [{
       eventKey: `monthly-underfunded:${projectId}:${period}`,
-      recipientGithubId: project.stewardGithubId,
+      recipientGithubId: try notices.payoutRecipient(project),
       kind: "PayoutException",
       subject: projectId,
       detail: `The ${period} monthly awards wait for funds. No award is created until the vault covers the whole month.`,
@@ -56,7 +57,8 @@ export effect function fundMonth(key: MonthKey) {
   if (state.month.phase !== "Frozen") return "NotFrozen" satisfies Funding
   const earlierUnreserved = amountOf(settlement.earlierUnreserved)
   const bans = [...settlement.bans]
-  if (canCreateObligations(state, earlierUnreserved, bans)) {
+  const observation = monthObservation(settlement, earlierUnreserved)
+  if (canCreateObligations(state.month, observation, bans)) {
     const outcome = settle(settlement, { type: "createObligations", earlierUnreserved, bans }, coordinator) catch effect (error) => match (error) {
       when FundingStale: "StaleFunding" satisfies Funding;
       when Conflict: "StaleFunding" satisfies Funding;
@@ -66,11 +68,10 @@ export effect function fundMonth(key: MonthKey) {
     }
     return typeof outcome === "string" ? outcome : "Created" satisfies Funding
   }
-  if (!canNoteUnderfunded(state, earlierUnreserved, bans)) return "StaleFunding" satisfies Funding
+  if (!canNoteUnderfunded(state.month, observation, bans)) return "StaleFunding" satisfies Funding
   const notices = try underfundedNotice(settlement)
-  settle(settlement, { type: "noteUnderfunded", earlierUnreserved, bans }, coordinator, { alongside: notices }) catch effect (error) => match (error) {
+  sendMonth(key, { type: "noteUnderfunded", observation, bans }, { alongside: notices }) catch effect (error) => match (error) {
     when Conflict: undefined;
-    when Rejected: undefined;
     when MonthRejected: undefined;
     default: throw error;
   }
@@ -81,9 +82,11 @@ function waitingReason(month: Monthly): Freezing {
   if (month.phase !== "Proposed") return "AlreadyFrozen"
   if (month.period < firstAutomaticPeriod) return "BeforeFirstPeriod"
   if (month.now < cutoff(month)) return "BeforeCutoff"
-  if (!month.automatic) return "AutomaticOff"
-  if (month.eligibility.paused || month.eligibility.restricted) return "ProjectRestricted"
+  const pledged = pledgeKeepsMonth(month)
+  if (!pledged && !month.automatic) return "AutomaticOff"
+  if (!pledged && (month.eligibility.paused || month.eligibility.restricted)) return "ProjectRestricted"
   if (!month.eligibility.networkServed) return "VaultNotServed"
+  if (pledged && !cutNoticeElapsed(month)) return "CutNoticePending"
   if (!financialTermsSame(month.revision, month.currentRevision)) return "FinancialPolicyChanged"
   return "ProjectChanged"
 }
@@ -107,6 +110,7 @@ const kebab: Readonly<Record<Exclude<Freezing, "Frozen" | "BeforeCutoff" | "Alre
   AutomaticOff: "automatic-off",
   ProjectRestricted: "project-restricted",
   VaultNotServed: "vault-not-served",
+  CutNoticePending: "cut-notice-pending",
   FinancialPolicyChanged: "financial-policy-changed",
   ProjectChanged: "project-changed",
 }

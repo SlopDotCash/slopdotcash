@@ -1,6 +1,7 @@
-// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
+import { isoNow } from "@repo/platform/clock";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
 import { settableClock } from "@repo/platform/testing/clock";
@@ -11,7 +12,8 @@ import type { CallRecord as ModelCall, Event, Review } from "../../gen/slopbot__
 import type { Route } from "../../gen/slopbot__routing.ts";
 import type { ReviewJob } from "../../src/jobs/job.vibe";
 import type { ReviewRow } from "../../src/lease/writes.vibe";
-import { type Attempt, type ReviewView, bindAttempt, blockAttempt, completeAttempt, finishAttempt, keepCalls, openAttempt, recheckAttempt, recordAttemptCall, reviewView, skipAttemptStep, startCalls } from "../../src/review/store.vibe";
+import { admitMonth } from "../../src/review/cap.vibe";
+import { type Attempt, type ReviewView, admitAttempt, bindAttempt, blockAttempt, completeAttempt, finishAttempt, keepCalls, openAttempt, recheckAttempt, recordAttemptCall, refuseAttempt, reviewView, skipAttemptStep, startCalls } from "../../src/review/store.vibe";
 import { type CallRecord, budgetExhausted, stepOf, triageRoute } from "../../src/route/route.vibe";
 import { settled } from "../support/settled.ts";
 
@@ -60,6 +62,18 @@ function denialOf(call: ModelCall, resetAt: number): Denial {
   const at = resetAt > 0 ? clockAt(resetAt) : 0;
   if (call.provider === "OrbioSonnet") return { source: "OrbioFailure", resetAt: at, orbioServed: false };
   return { source: call.outcome === "CallBudgetDenied" ? "SurplusSpendingDenial" : "SurplusOtherFailure", resetAt: at, orbioServed: false };
+}
+
+async function admission(alreadyAdmitted: boolean, usedThisMonth: number) {
+  const now = await runtime.runPromise(isoNow());
+  const month = now.slice(0, 7);
+  const others = alreadyAdmitted ? Math.max(usedThisMonth - 1, 0) : usedThisMonth;
+  await db.batch([
+    db.prepare("DELETE FROM slopbot_review_month_starts WHERE repository_id = ?").bind(repositoryId()),
+    db.prepare("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) SELECT ?, ?, 'pull_request', 100000 + i, ? FROM n WHERE ? > 0").bind(others, repositoryId(), month, now, others),
+    db.prepare("INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) SELECT ?, ?, 'issue', 1, ? WHERE ?").bind(repositoryId(), month, now, alreadyAdmitted ? 1 : 0),
+  ]);
+  return runtime.runPromise(admitMonth({ repositoryId: repositoryId(), itemKind: "issue", number: 1 }));
 }
 
 async function opened(route: Route) {
@@ -119,8 +133,11 @@ async function dispatch(event: Event) {
     case "finish":
       return settled(completeAttempt(held, {}, event.unreviewed), runtime);
     case "admitMonthly":
-    case "refuseMonthlyCap":
-      return "refused" as const;
+      return settled(admitAttempt(held, await admission(event.alreadyAdmitted, event.usedThisMonth)), runtime);
+    case "refuseMonthlyCap": {
+      const refused = refuseAttempt(held, await admission(event.alreadyAdmitted, event.usedThisMonth));
+      return settled(refused.pipe(Effect.flatMap(() => finishAttempt(held, "skipped", { skipReason: "monthly-review-cap" }))), runtime);
+    }
   }
 }
 

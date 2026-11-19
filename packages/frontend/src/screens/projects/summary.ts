@@ -1,12 +1,14 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
 import type { WorkItem, WorkQueue } from "@repo/points/client";
 import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
+import type { ListingFacts } from "../../../gen/frontend__poolListing.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
 import { bootstrapPrompt, siteOrigin } from "../home/agentLinks.ts";
+import { listingOf } from "../home/listing.ts";
 import { poolReadOf, rowsValid, totalOf } from "./history.ts";
 import type { ShownProject } from "./project.schema.ts";
 
@@ -64,6 +66,11 @@ export function projectFunding({ project, read, networkPays, nowMs }: { project:
     networkPays,
     nowMs,
   });
+}
+
+/** The project page's listing facts for this month's pool funding. @throws {never} */
+export function projectListing({ project, funding }: { project: ShownProject; funding: PoolFunding }): ListingFacts {
+  return listingOf({ status: project.status, securityBounty: project.securityBounty, funding: funding.facts });
 }
 
 /** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */

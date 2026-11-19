@@ -15,6 +15,7 @@ import { anvil } from "@repo/platform/testing/chains"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { worker } from "@repo/platform/worker"
 import { Authority, type Permission, type ProjectView, Registry, type RegistryManifest, RegistryManifests, Restrictions } from "@repo/ports/backend"
+import { lockPeriods } from "../gen/settlement__monthPledges.effect.vibe"
 import type { ReviewFacts } from "../gen/settlement__ownerTransactions.effect.vibe"
 import { type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
@@ -25,6 +26,7 @@ import { anchorData, meta } from "../src/chain/solana/instructions.ts"
 import { PURPOSE_BYTE, configAddress, keyBytes, programDataAddress, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
 import { type Instruction, compileLegacy, unsignedTransaction, withSignature } from "../src/chain/solana/transactions.ts"
 import type { NetworkKey } from "../src/kernels/networks.ts"
+import { checkMonthLock, lockedFunds, reviewLock, reviewRelease } from "../src/owner/monthLock.vibe"
 import { paymentNetworks } from "../src/owner/networks.vibe"
 import { type FundingOperation, fundingInstructions, registryProjectDigest } from "../src/owner/ownerInstructions.ts"
 import { ownerRoutes } from "../src/owner/routes.vibe"
@@ -105,7 +107,7 @@ effect function opened(projectId: string) {
     rotationAuthority: deployment.rotationAuthority.address,
     rotationDelaySeconds: "0",
   }
-  return { verified: try verifiedDeployment(record), owner }
+  return { verified: try verifiedDeployment(record), owner, record }
 }
 
 effect function signed(wallet: Keypair, wire: Uint8Array) {
@@ -150,10 +152,10 @@ effect function onChain<A, E, R>(run: A!E!R) {
 }
 
 const mismatch = "WalletActionRefused: This transaction does not match the pending wallet action. Check its signature in your wallet."
-const lockedFunds = "WalletActionRefused: These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
+const lockedFundsRefusal = "WalletActionRefused: These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
 
 layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, and a withdrawal of a pledged month\'s funds is refused before the wallet step (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, a withdrawal of a pledged month\'s funds is refused before the wallet step, and the owner locks three months once, never lower, and cannot release an unpledged month (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
     const { verified, owner } = try opened("owner-funding-journey")
     const deposit = intentOf("deposit", owner, try amount(1_000_000n))
     const depositPlan = try reviewFunding(verified, deposit, capture, depositFacts)
@@ -174,6 +176,22 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     try promise(() => pledgeCurrentMonth(deployment, owner, verified.project, pledged))
     const lockedReview = try refusalOf(reviewFunding(verified, intentOf("withdraw", owner, try amount(300_000n)), capture, ownerFacts))
     const unlockedPlan = try reviewFunding(verified, intentOf("withdraw", owner, try amount(200_000n)), capture, ownerFacts)
+    const locking = try opened("owner-month-lock")
+    const lockDeposit = intentOf("deposit", locking.owner, try amount(1_000_000n))
+    const lockDepositPlan = try reviewFunding(locking.verified, lockDeposit, capture, depositFacts)
+    const lockDeposited = try checkFunding(locking.verified, lockDeposit, lockDepositPlan.blockhash, try sentPlan(locking.owner, lockDepositPlan.transaction), capture, depositFacts)
+    const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
+    const months = lockPeriods(nowSeconds, 12)
+    const planned = { deployment: locking.record, verified: locking.verified, wallet: locking.owner.address, capture }
+    const lockPlan = try reviewLock({ ...planned, count: 3, amount: 200_000n, nowSeconds })
+    if (lockPlan.transaction === null) return try die(new Error("the first lock planned no transaction"))
+    const lockSent = try sentPlan(locking.owner, lockPlan.transaction.transaction)
+    const lockChecked = try checkMonthLock({ verified: locking.verified, wallet: locking.owner.address, check: { action: "lock", periods: lockPlan.periods, amount: 200_000n }, blockhash: lockPlan.transaction.blockhash as Blockhash, transactionId: lockSent, capture })
+    const relock = try reviewLock({ ...planned, count: 3, amount: 200_000n, nowSeconds })
+    const lowered = try refusalOf(reviewLock({ ...planned, count: 1, amount: 100_000n, nowSeconds }))
+    const unpledged = try refusalOf(reviewRelease({ ...planned, period: months[5] ?? 0 }))
+    const takesLocked = try lockedFunds(locking.record, 500_000n)
+    const aboveLocked = try lockedFunds(locking.record, 400_000n)
     try same({
       deposit: { gross: depositPlan.gross, fee: depositPlan.fee, net: depositPlan.net, freeBefore: depositPlan.freeBalance, tokenProgram: depositPlan.tokenProgram, decimals: depositPlan.decimals },
       checks: [deposited, recheck, withdrawn],
@@ -181,13 +199,31 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
       refused: { stranger: strangerReview, restricted: restrictedReview, tooMuch, strangerCheck },
       free: funds.free,
       locked: { review: lockedReview, unlocked: { gross: unlockedPlan.gross, freeBefore: unlockedPlan.freeBalance } },
+      monthLock: {
+        deposited: lockDeposited,
+        plan: { periods: lockPlan.periods, requested: lockPlan.requested, amountMinor: lockPlan.amountMinor, decimals: lockPlan.decimals, current: lockPlan.current },
+        checked: lockChecked,
+        relock: { periods: relock.periods, transaction: relock.transaction },
+        lowered,
+        unpledged,
+        withdrawals: [takesLocked, aboveLocked],
+      },
     }, {
       deposit: { gross: "1000000", fee: "0", net: "1000000", freeBefore: "0", tokenProgram: TOKEN_PROGRAM, decimals: 6 },
       checks: ["finalized", "finalized", "finalized"],
       withdrawal: { gross: "500000", fee: "10000", net: "490000", freeBefore: "1000000" },
       refused: { stranger: "Rejected", restricted: "Rejected", tooMuch: "WalletActionRefused: The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.", strangerCheck: "Rejected" },
       free: 500_000n,
-      locked: { review: lockedFunds, unlocked: { gross: "200000", freeBefore: "500000" } },
+      locked: { review: lockedFundsRefusal, unlocked: { gross: "200000", freeBefore: "500000" } },
+      monthLock: {
+        deposited: "finalized",
+        plan: { periods: months.slice(0, 3), requested: months.slice(0, 3), amountMinor: "200000", decimals: 6, current: months.slice(0, 3).map((period) => ({ period, amountMinor: "0", open: false })) },
+        checked: "finalized",
+        relock: { periods: [], transaction: null },
+        lowered: `WalletActionRefused: A locked month can only be raised: ${months[0]}.`,
+        unpledged: "WalletActionRefused: This month has no open pledge.",
+        withdrawals: [true, false],
+      },
     })
   }))
 
@@ -230,7 +266,9 @@ function ports(views: ReadonlyArray<ProjectView>) {
       byRepository: () => effect { return undefined },
       byPath: () => effect { return undefined },
       active: () => effect { return views },
+      pausedProjects: () => effect { return views.filter((view) => view.rowStatus === "Paused") },
       fence: () => effect { return sql`1` },
+      appendVaultRegistration: () => Effect.die(new Error("The owner journeys register no vaults")),
     }),
     Layer.succeed(Authority, {
       repository: (read) => effect {
@@ -263,30 +301,59 @@ const fundingSite = worker({
   routes: ownerRoutes,
 })
 
-effect function funding(body: unknown, origin?: string) {
+effect function posted(route: "solana-funding" | "solana-month-lock", body: unknown, origin?: string) {
   const headers: Record<string, string> = origin === undefined ? { "content-type": "application/json" } : { "content-type": "application/json", origin }
-  const request = try orDie(Effect.try(() => new WebRequest("https://slop.test/api/v1/payments/projects/route-project/solana-funding", { method: "POST", headers, body: JSON.stringify(body) })))
+  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects/route-project/${route}`, { method: "POST", headers, body: JSON.stringify(body) })))
   const response = try promise(() => fundingSite.fetch(request as unknown as globalThis.Request, {}, context))
   const text = try promise(() => response.text())
   return { status: response.status, body: try orDie(Effect.try(() => JSON.parse(text) as unknown)) }
 }
 
 layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
-  it.effect('The funding route refuses a cross-origin write, an unknown step, an unserved network and an unregistered vault before any chain read (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan")', () => effect {
+  it.effect('The funding and month-lock routes refuse a cross-origin write, a malformed action, an unserved network and an unregistered vault before any chain read (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount")', () => effect {
+    const site = "https://slop.test"
     const action = { step: "review", operation: "deposit", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, amount: "1" }
     const answers = [
-      try funding(action),
-      try funding({ ...action, step: "sign" }, "https://slop.test"),
-      try funding({ ...action, network: "base-mainnet" }, "https://slop.test"),
-      try funding({ ...action, network: "solana-testnet" }, "https://slop.test"),
-      try funding(action, "https://slop.test"),
+      try posted("solana-funding", action),
+      try posted("solana-funding", { ...action, step: "sign" }, site),
+      try posted("solana-funding", { ...action, network: "base-mainnet" }, site),
+      try posted("solana-funding", { ...action, network: "solana-testnet" }, site),
+      try posted("solana-funding", action, site),
     ]
-    try same({ answers, routeOutbound }, {
+    const lock = { step: "review", action: "lock", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, count: 3, amount: "1" }
+    const check = { step: "check", action: "lock", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, blockhash: SYSTEM_PROGRAM, transactionId: "1", periods: [202611], amountMinor: "1" }
+    const release = { step: "review", action: "release", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, period: "2026-11" }
+    const lockAnswers = [
+      try posted("solana-month-lock", lock),
+      try posted("solana-month-lock", { ...lock, count: 2 }, site),
+      try posted("solana-month-lock", { ...lock, amount: "1".repeat(81) }, site),
+      try posted("solana-month-lock", { ...release, period: "2026-13" }, site),
+      try posted("solana-month-lock", { ...check, periods: Array.from({ length: 13 }, () => 202611) }, site),
+      try posted("solana-month-lock", { ...check, action: "release", periods: [202611, 202612] }, site),
+      try posted("solana-month-lock", { ...check, amountMinor: "0" }, site),
+      try posted("solana-month-lock", { ...lock, network: "base-mainnet" }, site),
+      try posted("solana-month-lock", release, site),
+      try posted("solana-month-lock", check, site),
+    ]
+    const invalidLock = { status: 400, body: { error: "invalid_month_lock", message: "" } }
+    try same({ answers, lockAnswers, routeOutbound }, {
       answers: [
         { status: 403, body: { error: "origin_forbidden", message: "" } },
         { status: 400, body: { error: "invalid_funding_action", message: "" } },
         { status: 503, body: { error: "payments_unavailable", message: "" } },
         { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
+      ],
+      lockAnswers: [
+        { status: 403, body: { error: "origin_forbidden", message: "" } },
+        invalidLock,
+        invalidLock,
+        invalidLock,
+        invalidLock,
+        invalidLock,
+        invalidLock,
+        { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
         { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
       ],
       routeOutbound: [],

@@ -1,0 +1,154 @@
+// spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { type Address, type Blockhash, base64Encode } from "@repo/platform/chain/solana"
+import { type PledgeRead, acceptedRead, canPlanRelease, lockPeriods, lockPlanPeriods, lockPlanned, lockRefusal, withdrawTakesPledgedFunds } from "../../gen/settlement__monthPledges.effect.vibe"
+import type { PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import { type Built, type InstructionIssue, type PledgeIssue, PLEDGE_REFUSALS, expirePledgeInstruction, pledgeMonthInstructions } from "../chain/solana/instructions.ts"
+import type { Instruction } from "../chain/solana/transactions.ts"
+import type { ChainPledges } from "../vault/evmTotals.vibe"
+import type { SolanaDeployment } from "../vault/policy.vibe"
+import { readSolanaMonthPledges, readSolanaTotals } from "../vault/solanaTotals.vibe"
+import { amountOfBigint } from "../vault/store.vibe"
+import { DeploymentUnverified, type VerifiedDeployment } from "./solanaDeployment.vibe"
+import { completedCheck } from "./solanaFunding.vibe"
+import { type PreparedWalletTransaction, WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
+import { type Capture, reviewed } from "./store.vibe"
+
+export interface LockTransaction {
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+}
+
+export interface LockedMonth {
+  readonly period: number
+  readonly amountMinor: string
+  readonly open: boolean
+}
+
+export interface LockPlan {
+  readonly wallet: string
+  readonly periods: ReadonlyArray<number>
+  readonly requested: ReadonlyArray<number>
+  readonly amountMinor: string
+  readonly decimals: number
+  readonly current: ReadonlyArray<LockedMonth>
+  readonly transaction: LockTransaction | null
+}
+
+export interface ReleasePlan {
+  readonly wallet: string
+  readonly period: number
+  readonly periods: ReadonlyArray<number>
+  readonly amountMinor: string
+  readonly transaction: LockTransaction
+}
+
+export type LockCheck =
+  | { readonly action: "lock"; readonly periods: ReadonlyArray<number>; readonly amount: bigint }
+  | { readonly action: "release"; readonly period: number }
+
+interface Planned {
+  readonly deployment: SolanaDeployment
+  readonly verified: VerifiedDeployment
+  readonly wallet: Address
+  readonly capture: Capture
+}
+
+function refused(message: string) {
+  return new WalletActionRefused({ message })
+}
+
+function isPledgeIssue(issue: InstructionIssue): issue is PledgeIssue {
+  return Object.hasOwn(PLEDGE_REFUSALS, issue)
+}
+
+effect function built<A>(outcome: Built<A>) {
+  if (outcome.kind === "refused") throw refused(isPledgeIssue(outcome.issue) ? PLEDGE_REFUSALS[outcome.issue] : "Invalid pledge")
+  return outcome.value
+}
+
+effect function pledgeInstructions(verified: VerifiedDeployment, wallet: Address, periods: ReadonlyArray<number>, amount: bigint) {
+  return try built(pledgeMonthInstructions({ program: verified.program, project: verified.project, owner: wallet, periods, amount }))
+}
+
+effect function releaseInstruction(verified: VerifiedDeployment, period: number) {
+  return try built(expirePledgeInstruction({ program: verified.program, project: verified.project, period }))
+}
+
+function pledgeRead(chain: ChainPledges | undefined): PledgeRead {
+  if (chain === undefined) return { tag: "NoPledgeSupport" }
+  return acceptedRead({
+    tag: "PledgesRead",
+    openPledged: amountOfBigint(chain.openPledgedGross),
+    pledges: chain.pledges.map((pledge) => ({ period: pledge.period, amount: amountOfBigint(pledge.amount), open: pledge.open })),
+  })
+}
+
+function lockFacts(capture: Capture, monthLockPlanned: boolean): ReviewFacts {
+  return { steward: false, repositoryAuthority: false, revision: capture.revision, restricted: false, networkServed: true, snapshotDigest: capture.snapshotDigest, obligationFunded: false, monthLockPlanned, lockedFunds: false }
+}
+
+function transactionOf(prepared: PreparedWalletTransaction): LockTransaction {
+  return { blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, transaction: prepared.transaction, networkFeeLamports: prepared.networkFeeLamports }
+}
+
+effect function plannedTransaction(planned: Planned, kind: PlanKind, monthLockPlanned: boolean, instructions: ReadonlyArray<Instruction>) {
+  const prepared = try prepareWalletTransaction(planned.wallet, instructions)
+  const message = try walletMessage(planned.wallet, prepared.blockhash, instructions)
+  try reviewed(planned.capture, kind, lockFacts(planned.capture, monthLockPlanned), base64Encode(message.bytes))
+  return transactionOf(prepared)
+}
+
+export effect function reviewLock(planned: Planned & { readonly count: number; readonly amount: bigint; readonly nowSeconds: number }) {
+  const { deployment, verified, wallet, count, amount } = planned
+  const requested = lockPeriods(planned.nowSeconds, count)
+  try pledgeInstructions(verified, wallet, requested, amount)
+  const ordinary = deployment.scope === "ordinary"
+  const chain = ordinary ? try readSolanaMonthPledges(deployment, requested) : undefined
+  const read: PledgeRead = ordinary ? pledgeRead(chain) : { tag: "PledgesNotRead" }
+  const limbs = amountOfBigint(amount)
+  const refusal = lockRefusal(ordinary, read, limbs)
+  if (refusal === "NotOrdinaryVault") throw refused("Only an ordinary project vault takes month pledges.")
+  if (refusal === "NotMigrated") throw refused("This vault must be migrated before it can lock months.")
+  if (refusal === "PledgesUnavailable" || chain === undefined) throw new DeploymentUnverified({ message: "Invalid month pledges" })
+  if (refusal === "LockOnlyRaises")
+    throw refused(`A locked month can only be raised: ${chain.pledges.filter((pledge) => pledge.open && pledge.amount > amount).map((pledge) => pledge.period).join(", ")}.`)
+  const periods = lockPlanPeriods(read, limbs)
+  const transaction = periods.length === 0 ? null : try plannedTransaction(planned, "LockMonthsPlan", lockPlanned(count, limbs, ordinary, read), try pledgeInstructions(verified, wallet, periods, amount))
+  return {
+    wallet,
+    periods,
+    requested,
+    amountMinor: amount.toString(),
+    decimals: verified.decimals,
+    current: chain.pledges.map((pledge) => ({ period: pledge.period, amountMinor: pledge.amount.toString(), open: pledge.open })),
+    transaction,
+  } satisfies LockPlan
+}
+
+export effect function reviewRelease(planned: Planned & { readonly period: number }) {
+  const { deployment, verified, wallet, period } = planned
+  const instruction = try releaseInstruction(verified, period)
+  const chain = try readSolanaMonthPledges(deployment, [period])
+  const [pledge] = chain?.pledges ?? []
+  if (pledge === undefined || !canPlanRelease(pledgeRead(chain), period)) throw refused("This month has no open pledge.")
+  const transaction = try plannedTransaction(planned, "ReleaseLapsedPledgePlan", true, [instruction])
+  return { wallet, period, periods: [period], amountMinor: pledge.amount.toString(), transaction } satisfies ReleasePlan
+}
+
+export effect function checkMonthLock(input: { readonly verified: VerifiedDeployment; readonly wallet: Address; readonly check: LockCheck; readonly blockhash: Blockhash; readonly transactionId: string; readonly capture: Capture }) {
+  const { verified, wallet, check, capture } = input
+  const instructions = check.action === "lock" ? try pledgeInstructions(verified, wallet, check.periods, check.amount) : [try releaseInstruction(verified, check.period)]
+  const message = try walletMessage(wallet, input.blockhash, instructions)
+  const text = base64Encode(message.bytes)
+  const request = try reviewed(capture, check.action === "lock" ? "LockMonthsPlan" : "ReleaseLapsedPledgePlan", lockFacts(capture, true), text)
+  return try completedCheck(request, text, input.transactionId, try checkWalletTransaction(wallet, message, input.transactionId, false))
+}
+
+export effect function lockedFunds(deployment: SolanaDeployment, gross: bigint) {
+  const chain = try readSolanaMonthPledges(deployment, [])
+  const pledged = chain !== undefined && chain.openPledgedGross > 0n
+  const free = pledged ? (try readSolanaTotals(deployment)).free : 0n
+  return withdrawTakesPledgedFunds(amountOfBigint(free), pledged, amountOfBigint(gross), pledgeRead(chain))
+}

@@ -1,0 +1,107 @@
+// spec/slopbot/repositoryScope.md, "Story: A repository answers only to its permanent identity"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Statement, sql } from "@repo/platform/d1"
+import { type World, fileOf, installationId, mergedAt, patchOf, pulls, repositoryId } from "../inferenceWorker.vibe"
+import { rewriteNext } from "../proofsWorker.vibe"
+import { answerNext } from "../workUnitsWorker.vibe"
+
+export const formerPath = "ada/alpha"
+export const currentPath = "ada/alpha-next"
+
+export effect function renamed(world: World) {
+  try orDie(Effect.try(() => world.github.world.renameRepo(formerPath, currentPath)))
+}
+
+export effect function registeredUnderFormerPath() {
+  const manifest = JSON.stringify({
+    id: "alpha",
+    name: "Alpha",
+    status: "active",
+    listingTier: "community",
+    steward: { github: { actorId: "101", nodeId: "U_ada", login: "ada" } },
+    authority: { repositoryId: String(repositoryId), repositoryNodeId: "R_alpha01" },
+    terms: { repositoryLicense: { state: "unknown", spdx: null, url: null, commitSha: null, fileSha256: null } },
+    repositories: [{ id: formerPath, githubUrl: `https://github.com/${currentPath}` }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "points" },
+    funding: {},
+  })
+  const digest = try sha256Hex(manifest)
+  const at = "2026-11-01T00:00:00.000Z"
+  const statements: ReadonlyArray<Statement> = [
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('alpha', 'active', 1, ${manifest}, ${digest}, ${at}, ${at})`,
+    sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${formerPath}, 'alpha')`,
+    sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${currentPath}, 'alpha')`,
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('alpha', 1, ${manifest}, ${digest}, 'Created', ${at})`,
+    sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES ('alpha', 1, 'Created')`,
+  ]
+  return statements
+}
+
+export function requestedAtCurrentPath(deliveryId: string, number: number, receivedAt: string): ReadonlyArray<Statement> {
+  const [owner = "", repo = ""] = currentPath.split("/")
+  return [
+    sql`INSERT INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${deliveryId}, 'pull_request', ${receivedAt})`,
+    sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
+      VALUES (${deliveryId}, ${installationId}, ${repositoryId}, ${owner}, ${repo}, ${number}, ${receivedAt})`,
+  ]
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+function withBlobUrls(body: Fields) {
+  const files = body["files"]
+  if (!Array.isArray(files)) return body
+  const listed: ReadonlyArray<Fields> = files
+  return { ...body, files: listed.map((file) => ({ ...file, blob_url: `https://github.com/${currentPath}/blob/${String(body["sha"])}/${String(file["filename"])}` })) }
+}
+
+function scriptedPage(number: number) {
+  return (body: Fields) => {
+    const files = body["files"]
+    if (!Array.isArray(files)) return body
+    const listed: ReadonlyArray<Fields> = files
+    return withBlobUrls({ ...body, files: listed.map((file) => file["filename"] === fileOf(number) ? { ...file, patch: patchOf(number) } : file) })
+  }
+}
+
+export function commitPagePath(sha: string) {
+  return `/repos/${currentPath}/commits/${sha}?per_page=100&page=1`
+}
+
+export effect function servedWithBlobUrls(world: World, sha: string) {
+  try rewriteNext(world.github, `GET ${commitPagePath(sha)}`, withBlobUrls)
+}
+
+function census(world: World) {
+  return () => ({
+    data: {
+      search: {
+        issueCount: pulls.length,
+        nodes: pulls.map((number) => ({
+          id: world.pullIds.get(number) ?? "",
+          number,
+          url: `https://github.com/${currentPath}/pull/${number}`,
+          mergedAt: mergedAt(number),
+          baseRefOid: world.base,
+          headRefOid: world.heads.get(number) ?? "",
+          repository: { id: "R_alpha01", databaseId: repositoryId, nameWithOwner: currentPath, isPrivate: false },
+          mergeCommit: { oid: world.merges.get(number) ?? "" },
+          commits: { totalCount: 1, nodes: [{ commit: { oid: world.heads.get(number) ?? "" } }], pageInfo: { hasNextPage: false, endCursor: null } },
+        })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+      rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-11-30T01:00:00Z" },
+    },
+  })
+}
+
+export effect function scriptedAtCurrentPath(world: World, number: number, rounds = 4) {
+  const pull: unknown = try orDie(Effect.try(() => world.github.represent.pull(currentPath, number)))
+  for (let round = 0; round < rounds; round++) {
+    for (const sha of [world.heads.get(number) ?? "", world.merges.get(number) ?? ""]) {
+      try rewriteNext(world.github, `GET ${commitPagePath(sha)}`, scriptedPage(number))
+      try answerNext(world.github, `/commits/${sha}/pulls`, [pull])
+    }
+    try rewriteNext(world.github, "POST /graphql", census(world))
+  }
+}

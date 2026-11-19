@@ -1,4 +1,4 @@
-// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
 import { ExternalLink, PageHeader } from "@repo/ui";
 import { Ban, BookOpen, CalendarCheck, CircleSlash, GitPullRequest, HandCoins, ListChecks, type LucideIcon, Search, ShieldCheck, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
@@ -226,6 +226,11 @@ export function HowItWorksPage() {
           </Answer>
           <Answer question="What does projected mean? Is the pool funded?">
             <p>A live estimate at the project&apos;s cap. It is not a balance or a guarantee: a cap is a target, and only funds in the vault can be allocated. Funds added after a month freezes count toward later months.</p>
+          </Answer>
+          <Answer question="Can the owner take this month's pool back?">
+            <p>
+              When an owner locks a month in the project vault, that month&apos;s pool is locked in the vault until it is paid out: the vault contract refuses to withdraw it, and it can be paid even if the owner turns automatic payment off. The owner can still lower an individual contributor&apos;s amount before the cutoff, with a public reason. A locked month that is never reserved for payout can be released back to the owner&apos;s free funds from the 4th of the second month after it, by a transaction anyone can send; the project&apos;s manage page offers it. Without a lock, Slop&apos;s pages refuse that withdrawal but the contract does not. Slop&apos;s upgrade key can still change the vault contract.
+            </p>
           </Answer>
           <Answer question="Is there a referral program?">
             <p>

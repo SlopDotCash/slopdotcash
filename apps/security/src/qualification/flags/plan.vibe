@@ -14,7 +14,7 @@ export const protectedWorkflow = "SlopDotCash/slopdotcash/.github/workflows/vett
 export const databaseBinding = "EVIDENCE_DATABASE"
 export const bucketBinding = "EVIDENCE_SOURCE"
 export const queueBinding = "EVIDENCE_BACKUP_QUEUE"
-export const flagActions = ["flags", "access", "empty"] as const
+export const flagActions = ["flags", "empty"] as const
 
 export type FlagAction = (typeof flagActions)[number]
 

@@ -1,12 +1,15 @@
-// spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+// spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"
 import { nowSeconds } from "@repo/platform/clock"
 import { RowMismatch, rows, sql } from "@repo/platform/d1"
 import { Refused } from "@repo/platform/http"
 import type { AssetTotals, ProjectTotals } from "../client/vault.vibe"
-import type { FundedVault, MonthStart, PoolFunding } from "../client/public.vibe"
+import type { FundedVault, MonthStart, PoolFunding, ProjectFunding } from "../client/public.vibe"
 import { getPaymentsProjectsByIdTotals } from "../client/refusals.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { formatPeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
+import { isNetworkKey } from "../kernels/networks.ts"
+import { servedVaultPledges } from "../vault/pledges.vibe"
+import { type PledgeRow, modelNetwork, storedPledgesOf, storedTotalOf } from "../vault/store.vibe"
 import { includeTestnets, testnetFilter } from "./records.vibe"
 
 schema SnapshotRow {
@@ -17,6 +20,17 @@ schema SnapshotRow {
   readonly total_gross_withdrawn: string
   readonly block_time: string
   readonly observed_at: string
+  readonly open_pledged_gross: string | null
+}
+
+schema ProjectPledgeRow {
+  readonly project_id: string
+  readonly network: string
+  readonly vault: string
+  readonly period: string
+  readonly amount: string
+  readonly open: number
+  readonly block_number: string
 }
 
 schema StartRow {
@@ -44,8 +58,7 @@ schema CursorRow {
   readonly synced_at: string
 }
 
-effect function periodsNow() {
-  const now = try nowSeconds()
+effect function periodsNow(now: number) {
   const current = try orDie(Effect.try(() => periodContaining(now)))
   const previous = try orDie(Effect.try(() => shiftPeriod(current, -1)))
   return [formatPeriod(previous), formatPeriod(current)] as const
@@ -55,10 +68,15 @@ function vaultKey(row: { readonly project_id: string; readonly network: string; 
   return `${row.project_id}\n${row.network}\n${row.vault}`
 }
 
-export effect function poolFunding() {
+effect function servedOf(row: SnapshotRow, found: ReadonlyArray<PledgeRow>, now: number) {
+  if (row.open_pledged_gross === null || !isNetworkKey(row.network)) return []
+  return servedVaultPledges(try storedTotalOf(row.open_pledged_gross), try storedPledgesOf(found), modelNetwork(row.network), row.vault, now)
+}
+
+export effect function fundedProjects(now: number) {
   const shown = try includeTestnets()
-  const [previous, current] = try periodsNow()
-  const snapshots = try rows(SnapshotRow, sql`SELECT project_id, network, vault, free_balance, total_gross_withdrawn, block_time, observed_at FROM vault_snapshots WHERE 1 = 1${testnetFilter(sql`network`, shown)} ORDER BY project_id, network, vault`)
+  const [previous, current] = try periodsNow(now)
+  const snapshots = try rows(SnapshotRow, sql`SELECT project_id, network, vault, free_balance, total_gross_withdrawn, block_time, observed_at, open_pledged_gross FROM vault_snapshots WHERE 1 = 1${testnetFilter(sql`network`, shown)} ORDER BY project_id, network, vault`)
   const starts = try rows(StartRow, sql`SELECT project_id, network, vault, period, free_balance, total_gross_withdrawn, block_time FROM vault_month_starts WHERE period IN (${previous}, ${current}) ORDER BY period`)
   const startsOf = new Map<string, MonthStart[]>()
   for (const row of starts) {
@@ -66,6 +84,9 @@ export effect function poolFunding() {
     list.push({ period: row.period, freeBalance: row.free_balance, totalGrossWithdrawn: row.total_gross_withdrawn, blockTime: row.block_time })
     startsOf.set(vaultKey(row), list)
   }
+  const pledgeRows = try rows(ProjectPledgeRow, sql`SELECT project_id, network, vault, period, amount, open, block_number FROM vault_month_pledges WHERE (period >= ${previous} OR open = 1) AND amount <> '0' ORDER BY period`)
+  const pledgesOf = new Map<string, ProjectPledgeRow[]>()
+  for (const row of pledgeRows) pledgesOf.set(vaultKey(row), [...(pledgesOf.get(vaultKey(row)) ?? []), row])
   const projects = new Map<string, FundedVault[]>()
   for (const row of snapshots) {
     const list = projects.get(row.project_id) ?? []
@@ -77,10 +98,16 @@ export effect function poolFunding() {
       blockTime: row.block_time,
       observedAt: row.observed_at,
       monthStarts: startsOf.get(vaultKey(row)) ?? [],
+      openPledgedGross: row.open_pledged_gross,
+      pledges: try servedOf(row, pledgesOf.get(vaultKey(row)) ?? [], now),
     })
     projects.set(row.project_id, list)
   }
-  return { schema: "slop-pool-funding-v1", projects: [...projects].map(([projectId, vaults]) => ({ projectId, vaults })) } satisfies PoolFunding
+  return [...projects].map(([projectId, vaults]) => ({ projectId, vaults }) satisfies ProjectFunding)
+}
+
+export effect function poolFunding() {
+  return { schema: "slop-pool-funding-v1", projects: try fundedProjects(try nowSeconds()) } satisfies PoolFunding
 }
 
 interface AssetSums {

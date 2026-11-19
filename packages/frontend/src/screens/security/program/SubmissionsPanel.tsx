@@ -1,5 +1,5 @@
 // spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"
-import { Alert, Button } from "@repo/ui";
+import { Alert, Button, Spinner, Status } from "@repo/ui";
 import { RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import type { SubmissionView } from "@repo/security/client";
@@ -28,8 +28,8 @@ export type SubmissionsPanelProps = {
 
 function Refresh({ label, onRefresh }: { label: string; onRefresh: () => void }) {
   return (
-    <Button variant="link" onClick={onRefresh}>
-      <RotateCcw aria-hidden className="size-4" /> {label}
+    <Button variant="link" aria-label={label} title={label} onClick={onRefresh}>
+      <RotateCcw aria-hidden className="size-4" />
     </Button>
   );
 }
@@ -38,10 +38,17 @@ const everyReport = () => true;
 
 /** `#security-submissions`: the reporter's private reports, the linked one first, then those that need them. */
 export function SubmissionsPanel({ list, cases, focusId, grantError, shows = everyReport, onRefresh, entry }: SubmissionsPanelProps) {
-  if (list.status === "loading") return <p role="status">Loading private reports…</p>;
+  if (list.status === "loading") return <Spinner label="Loading private reports…" />;
   if (list.status === "failed")
     return (
-      <Alert variant="destructive" action={<Refresh label="Retry" onRefresh={onRefresh} />}>
+      <Alert
+        variant="destructive"
+        action={
+          <Button variant="link" onClick={onRefresh}>
+            <RotateCcw aria-hidden className="size-4" /> Retry
+          </Button>
+        }
+      >
         {list.message}
       </Alert>
     );
@@ -49,7 +56,7 @@ export function SubmissionsPanel({ list, cases, focusId, grantError, shows = eve
   const ordered = orderedSubmissions(list.submissions, focusId, caseOf, shows);
   const quiet = grantError === null && !list.authorityUnavailable && list.refreshError === null;
   if (quiet && shownSubmissions(list.submissions, focusId).length === 0)
-    return cases.length === 0 ? <p className="text-muted-foreground">You have no private reports yet.</p> : null;
+    return cases.length === 0 ? <p className="text-muted-foreground">No reports</p> : null;
   return (
     <section id="security-submissions" aria-labelledby="security-submissions-heading" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -59,13 +66,19 @@ export function SubmissionsPanel({ list, cases, focusId, grantError, shows = eve
         <Refresh label="Refresh reports" onRefresh={onRefresh} />
       </div>
       {list.authorityUnavailable ? (
-        <Alert variant="warn" announcement="Polite" action={<Refresh label="Retry access check" onRefresh={onRefresh} />}>
-          Some maintainer access could not be checked. Your own reports are shown.
-        </Alert>
+        <p role="status" className="flex items-center gap-2">
+          <Status title="Some maintainer access could not be checked" presentation={{ tone: "Caution", icon: "Alert", label: "Partial list" }} />
+          <Refresh label="Retry access check" onRefresh={onRefresh} />
+        </p>
       ) : null}
-      {list.refreshError === null ? null : <Alert variant="destructive">Report status could not refresh. The previous status is shown. {list.refreshError}</Alert>}
+      {list.refreshError === null ? null : (
+        <p role="alert" className="flex items-center gap-2">
+          <Status title={list.refreshError} presentation={{ tone: "Caution", icon: "Alert", label: "Stale" }} />
+          <span className="sr-only">{list.refreshError}</span>
+          <Refresh label="Retry" onRefresh={onRefresh} />
+        </p>
+      )}
       {grantError === null ? null : <Alert variant="destructive">{grantErrors[grantError] ?? grantErrors.grant_exchange_failed}</Alert>}
-      <p className="text-sm text-muted-foreground">Screening assists review; owners decide awards. GitHub delivery is optional.</p>
       {ordered.map((submission) => (
         <div key={submission.id}>{entry(submission, caseOf(submission), submission.id === focusId)}</div>
       ))}

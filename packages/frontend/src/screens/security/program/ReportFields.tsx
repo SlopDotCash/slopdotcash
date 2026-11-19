@@ -17,7 +17,6 @@ const severities: ReadonlyArray<readonly [string, string]> = [
   ["low", "Low"],
 ];
 
-/** The report's summary and description, then its optional severity, CVSS vector and CWE IDs. */
 export function ReportFields({ draft, onChange, disabled = false }: ReportFieldsProps) {
   const [classified, setClassified] = useState(draft.severity !== "" || draft.cvss !== "" || draft.cwe !== "");
   const set = (key: keyof ReportDraft) => (value: string) => onChange({ ...draft, [key]: value });
@@ -26,12 +25,12 @@ export function ReportFields({ draft, onChange, disabled = false }: ReportFields
       <Field label="Summary">
         <Input autoComplete="off" disabled={disabled} maxLength={1024} minLength={8} required value={draft.summary} onChange={(event) => set("summary")(event.target.value)} />
       </Field>
-      <Field label="Description" hint="Include the affected revision, impact and safe reproduction steps. Do not include credentials or cause a real loss of funds.">
-        <Textarea disabled={disabled} maxLength={65000} minLength={20} required rows={10} value={draft.description} onChange={(event) => set("description")(event.target.value)} />
+      <Field label="Description">
+        <Textarea disabled={disabled} maxLength={65000} minLength={20} placeholder="Revision, impact, repro steps" required rows={10} value={draft.description} onChange={(event) => set("description")(event.target.value)} />
       </Field>
-      <Disclosure summary="Additional classification (optional)" open={classified} onOpenChange={setClassified}>
+      <Disclosure summary="Classification" open={classified} onOpenChange={setClassified}>
         <div className="flex flex-col gap-4 pt-2">
-          <Field label="Severity (optional)">
+          <Field label="Severity">
             <Select disabled={disabled || draft.cvss.trim() !== ""} value={draft.severity} onChange={(event) => set("severity")(event.target.value)}>
               {severities.map(([value, label]) => (
                 <option key={value} value={value}>
@@ -40,10 +39,10 @@ export function ReportFields({ draft, onChange, disabled = false }: ReportFields
               ))}
             </Select>
           </Field>
-          <Field label="CVSS vector (optional, instead of severity)">
+          <Field label="CVSS vector">
             <Input autoComplete="off" disabled={disabled} placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" spellCheck={false} value={draft.cvss} onChange={(event) => set("cvss")(event.target.value)} />
           </Field>
-          <Field label="CWE IDs (optional)">
+          <Field label="CWE IDs">
             <Input autoComplete="off" disabled={disabled} placeholder="CWE-284" spellCheck={false} value={draft.cwe} onChange={(event) => set("cwe")(event.target.value)} />
           </Field>
         </div>

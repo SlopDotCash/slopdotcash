@@ -1,4 +1,5 @@
-// spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"; spec/settlement/vault.md, "Only the fixed refund destination receives free funds"
+// spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"; spec/settlement/vault.md, "Only the fixed refund destination receives free funds"; spec/frontend/monthLock.md, "Story: Lock months from the owner's wallet"
+import { type Period, formatPeriod } from "@repo/settlement/kernels/calendar";
 import { Result, Schema } from "effect";
 
 export const FundingDeployment = Schema.Struct({
@@ -17,6 +18,7 @@ export const FundingReward = Schema.Struct({
   chain: Schema.optional(Schema.String),
   monthlyCapMinor: Schema.optional(Schema.String),
   monthlyCapDisplay: Schema.optional(Schema.String),
+  cycleCaps: Schema.optional(Schema.Array(Schema.Struct({ cycleId: Schema.String, monthlyCapMinor: Schema.String }))),
   asset: Schema.optional(Schema.NullOr(FundingAsset)),
 });
 
@@ -42,4 +44,13 @@ export function fundingProjectOf(record: unknown): FundingProject | undefined {
 /** @throws {never} */
 export function deploymentsOf(project: FundingProject): ReadonlyArray<FundingDeployment> {
   return project.escrow?.deployments ?? [];
+}
+
+const minorPattern = /^(0|[1-9][0-9]*)$/u;
+
+/** The reward cap of a UTC month in base units: its cycle's cap where one is set, else the monthly cap. @throws {never} */
+export function monthlyCapAt(project: FundingProject, period: Period): bigint {
+  const month = formatPeriod(period);
+  const text = project.reward.cycleCaps?.find((cap) => cap.cycleId === month)?.monthlyCapMinor ?? project.reward.monthlyCapMinor ?? "0";
+  return minorPattern.test(text) ? BigInt(text) : 0n;
 }

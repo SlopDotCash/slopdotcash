@@ -1,8 +1,9 @@
-// spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division"
+// spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"
 import { address } from "@repo/platform/chain/solana"
 import { sha256Hex } from "@repo/platform/crypto"
 import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
-import type { FundedMonth, Leaf } from "../../gen/settlement__monthlyCommitment.ts"
+import type { FundedMonth, Leaf, SigningFacts } from "../../gen/settlement__monthlyCommitment.ts"
+import { pledgeConsents, pledgedIn } from "../../gen/settlement__monthPledges.effect.vibe"
 import { bytes32, evmAddress } from "../chain/evm/abi.ts"
 import { type MonthlyEntry, allocationRoot, monthlyDigest } from "../chain/evm/monthlyRoot.ts"
 import { type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../chain/solana/allocationRoot.ts"
@@ -13,6 +14,7 @@ import { type Period, automaticCutoffAt, parsePeriod, shiftPeriod } from "../ker
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { type Loaded, type MonthKey, type MonthlyManifest, ManifestInvalid, amountOf, awardSource, executionSnapshot, exclusionsOf, feePolicyOf, loadMonth, manifestOf } from "../monthly/store.vibe"
 import { type ChainAward, chainAwards, holdsAward } from "../payments/chainAwards.vibe"
+import { modelNetwork, storedPledges } from "../vault/store.vibe"
 
 export interface AttestationRequest {
   readonly projectId: string
@@ -159,19 +161,47 @@ effect function snapshotOf(text: string) {
   }
 }
 
-export effect function preparePlan(request: AttestationRequest, options: PlanOptions) {
+export type Consent = Omit<SigningFacts, "height" | "snapshotDigest">
+
+export interface ConsentRead {
+  readonly loaded: Loaded
+  readonly consent: Consent
+}
+
+export effect function monthPledged(projectId: string, network: string, vault: string, period: Period) {
+  if (!isNetworkKey(network)) return false
+  return pledgedIn(try storedPledges({ projectId }, network, vault), modelNetwork(network), vault, period)
+}
+
+export effect function consentOf(request: AttestationRequest, period: Period, served: ReadonlySet<string>) {
+  const loaded: Loaded = try loadMonth({ projectId: request.projectId, period } satisfies MonthKey)
+  const current = loaded.facts.current
+  const deployment = current === undefined ? undefined : (try manifestOf(request.projectId, current.manifest)).escrow?.deployments.find((entry) => entry.network === request.network)
+  const eligibility = loaded.facts.eligibility
+  const consent: Consent = {
+    projectActive: current !== undefined && eligibility.active,
+    restricted: eligibility.restricted,
+    vaultServed: deployment !== undefined && served.has(request.network),
+    automaticOn: loaded.state.automatic,
+    pledged: deployment !== undefined && (try monthPledged(request.projectId, deployment.network, deployment.vault, period)),
+    retired: eligibility.retired,
+  }
+  return { loaded, consent } satisfies ConsentRead
+}
+
+export effect function preparePlan(request: AttestationRequest, options: PlanOptions, read?: ConsentRead) {
   const period = parsePeriod(request.period)
   if (period === undefined) throw refuse("monthly_window_closed", "This month is outside its commitment window.")
   const window = try windowOf(period)
   if (options.now < window.opensAt || options.now >= window.closesAt) throw refuse("monthly_window_closed", "This month is outside its commitment window.")
-  const key: MonthKey = { projectId: request.projectId, period }
-  const loaded: Loaded = try loadMonth(key)
+  const { loaded, consent } = read ?? try consentOf(request, period, options.served)
   const current = loaded.facts.current
-  if (!loaded.facts.eligibility.active || loaded.facts.eligibility.restricted || current === undefined) throw refuse("project_restricted", "The project cannot create new commitments.")
+  const waived = pledgeConsents(consent.pledged, consent.retired)
+  if (current === undefined || (!waived && (!consent.projectActive || consent.restricted))) throw refuse("project_restricted", "The project cannot create new commitments.")
   const manifest = try manifestOf(request.projectId, current.manifest)
   const deployment = manifest.escrow?.deployments.find((entry) => entry.network === request.network)
-  if (deployment === undefined || !options.served.has(request.network)) throw refuse("vault_not_served", "The project's vault is not served by this attester.")
-  if (!loaded.state.automatic) throw refuse("automatic_off", "The owner disabled automatic monthly commitments.")
+  if (deployment === undefined || !consent.vaultServed) throw refuse("vault_not_served", "The project's vault is not served by this attester.")
+  if (!waived && !consent.automaticOn) throw refuse("automatic_off", "The owner disabled automatic monthly commitments.")
   const run = try first(RunSnapshotRow, sql`SELECT snapshot, snapshot_sha256, network, vault, frozen_at, obligations_created_at FROM monthly_payment_runs WHERE project_id = ${request.projectId} AND period = ${request.period}`)
   const base = loaded.rows.base
   if (run === undefined || base === undefined || !/^[a-f0-9]{64}$/u.test(request.snapshotSha256) || run.snapshot_sha256 !== request.snapshotSha256 || (try sha256Hex(run.snapshot)) !== request.snapshotSha256) throw refuse("snapshot_changed", "The requested frozen allocation is unavailable.")

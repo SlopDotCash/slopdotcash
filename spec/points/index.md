@@ -12,6 +12,7 @@ trace evidence remain separate and never change a payment share.
 - [Reward weights](./rewardWeights.md)
 - [Accepted work units](./workUnits.md)
 - [Accepted-commit authorship](./authorship.md)
+- [Retained-copy reference discussion](./referenceDiscussion.md)
 - [Implementation allocation](./allocation.md)
 - [Review credit](./reviews.md)
 - [Aggregate monthly penalties](./penalties.md)

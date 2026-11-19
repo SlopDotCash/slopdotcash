@@ -41,25 +41,30 @@ type Outcome<T> =
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "closed"; readonly message: string }
 
-function outcomeOf<A, T>(result: Private<A>, decode: (value: A) => T | undefined): Outcome<T> {
+function problemOf<A>(result: Private<A>): string | undefined {
   switch (result.kind) {
-    case "done": {
-      const value = decode(result.value)
-      return value === undefined ? { kind: "failed", message: caseMessages.invalid } : { kind: "value", value }
-    }
     case "failed": {
       const failure = result.failure
-      if (failure._tag === "Refused" && failure.status === 401) return { kind: "problem", message: caseMessages.signedOut }
-      if (failure._tag === "Refused" && [403, 404, 410].includes(failure.status)) return { kind: "problem", message: caseMessages.revoked }
-      return { kind: "failed", message: result.message }
+      if (failure._tag === "Refused" && failure.status === 401) return caseMessages.signedOut
+      if (failure._tag === "Refused" && [403, 404, 410].includes(failure.status)) return caseMessages.revoked
+      return undefined
     }
-    case "unverified":
-      return { kind: "problem", message: caseMessages.unverified }
-    case "accountChanged":
-      return { kind: "problem", message: result.message }
+    case "unverified": return caseMessages.unverified
+    case "accountChanged": return result.message
+    case "done":
     case "closed":
-      return { kind: "closed", message: result.message }
+      return undefined
   }
+}
+
+function outcomeOf<A, T>(result: Private<A>, decode: (value: A) => T | undefined): Outcome<T> {
+  if (result.kind === "done") {
+    const value = decode(result.value)
+    return value === undefined ? { kind: "failed", message: caseMessages.invalid } : { kind: "value", value }
+  }
+  const problem = problemOf(result)
+  if (problem !== undefined) return { kind: "problem", message: problem }
+  return result.kind === "closed" ? { kind: "closed", message: result.message } : { kind: "failed", message: result.message }
 }
 
 function settled<T>(prior: Loaded<T>, outcome: Outcome<T>): Loaded<T> | undefined {
@@ -78,6 +83,7 @@ export service CaseDesk {
   openCase(owner: string, caseId: string | null): void!!
   reloadCase(owner: string): void!!
   replaceCase(owner: string, record: SecurityCase): void!!
+  revoke(owner: string, message: string): void!!
 }
 
 export const caseDesk = Layer.effect(CaseDesk, effect {
@@ -153,6 +159,16 @@ export const caseDesk = Layer.effect(CaseDesk, effect {
     try SubscriptionRef.set(detail, { owner, caseId: record.id, loaded: { status: "ready", value: record, refreshError: null } })
   }
 
+  effect function revoke(owner: string, message: string) {
+    listRound += 1
+    detailRound += 1
+    if (listOwner === owner) try SubscriptionRef.set(list, { status: "problem", message })
+    const shown = try SubscriptionRef.get(detail)
+    if (shown.owner !== owner) return
+    try release()
+    try SubscriptionRef.set(detail, { owner, caseId: shown.caseId, loaded: { status: "problem", message } })
+  }
+
   return {
     lists: SubscriptionRef.changes(list),
     details: SubscriptionRef.changes(detail),
@@ -160,6 +176,7 @@ export const caseDesk = Layer.effect(CaseDesk, effect {
     openCase: (owner: string, caseId: string | null) => Effect.provideContext(openCase(owner, caseId), context),
     reloadCase: (owner: string) => Effect.provideContext(reloadCase(owner), context),
     replaceCase: (owner: string, record: SecurityCase) => Effect.provideContext(replaceCase(owner, record), context),
+    revoke: (owner: string, message: string) => Effect.provideContext(revoke(owner, message), context),
   }
 })
 
@@ -209,7 +226,11 @@ export effect function caseChanged(owner: string, record: SecurityCase | null) {
 export effect function actOnCase(owner: string, record: SecurityCase, action: string, fields: Readonly<Record<string, unknown>>, key: string | null) {
   const used = key ?? (try requestKey())
   const result = try actOnSecurityCase(owner, { caseId: record.id, action, expectedRevision: record.revision, idempotencyKey: used, fields })
-  if (result.kind !== "done") return { kind: "refused", key: used, message: result.message } satisfies Acted
+  if (result.kind !== "done") {
+    const problem = problemOf(result)
+    if (problem !== undefined) try (try CaseDesk).revoke(owner, problem)
+    return { kind: "refused", key: used, message: problem ?? result.message } satisfies Acted
+  }
   return { kind: "saved", key: used, record: caseOf(result.value.case) ?? null } satisfies Acted
 }
 

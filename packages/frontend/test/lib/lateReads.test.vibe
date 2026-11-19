@@ -8,12 +8,15 @@ import { rolesFrom } from "@repo/platform/roles"
 import { settableClock } from "@repo/platform/testing/clock"
 import { pages } from "@repo/platform/worker"
 import { type RevisionBody, pointRevisionId } from "@repo/points/client"
+import { toAmount } from "@repo/settlement/kernels/amounts"
+import { parsePeriod } from "@repo/settlement/kernels/calendar"
 import { settlement } from "@repo/settlement/live"
 import { decideDispute, listDisputes, openDispute, readDispute } from "../../src/flows/account/disputes.vibe"
 import { Deployment } from "../../src/platform/config.vibe"
 import { deploymentOrigins } from "@repo/platform/config"
 import { LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
 import { type ProfileActorSource, recentPoints, resolveProfileActor } from "../../src/projections/profile.ts"
+import { poolFunding } from "../../src/kernels/poolFunding.ts"
 import { loadPoolFunding } from "../../src/reads/funding.vibe"
 import { loadDirectTransfers, loadVaultPayments } from "../../src/reads/payments.vibe"
 import { loadProfiles, lookUpMember } from "../../src/reads/points.vibe"
@@ -118,6 +121,7 @@ import { type World, site, startWorld } from world
 const now = Date.parse("2026-11-17T12:00:00.000Z")
 const seededAt = "2026-11-01T00:00:00.000Z"
 const vault = `0x${"a".repeat(40)}`
+const pledgeVault = `0x${"b".repeat(40)}`
 const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 const recordedAt = "2026-11-10T14:00:00.000Z"
 const recipientNode = "MDQ6VXNlcjQy"
@@ -190,7 +194,15 @@ const funding: ReadonlyArray<Statement> = [
     VALUES ('alpha', 'base-mainnet', 'base', ${vault}, ${usdc}, 6, '9000000', '2000000', '40000', '0', '0', '0', '7000000', '490000', '10000', NULL, NULL, '100', '2026-11-17T11:55:00.000Z', '2026-11-17T11:56:00.000Z')`,
   sql`INSERT INTO vault_month_starts (project_id, network, vault, period, free_balance, total_gross_withdrawn, block_number, block_time, observed_at)
     VALUES ('alpha', 'base-mainnet', ${vault}, '2026-11', '7000000', '0', '1', '2026-11-01T00:10:00.000Z', '2026-11-01T00:11:00.000Z')`,
+  sql`INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at, open_pledged_gross)
+    VALUES ('beta', 'base-mainnet', 'base', ${pledgeVault}, ${usdc}, 6, '10000000', '0', '0', '0', '0', '0', '0', '0', '0', NULL, NULL, '100', '2026-11-17T11:55:00.000Z', '2026-11-17T11:56:00.000Z', '10000000')`,
+  sql`INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at)
+    VALUES ('beta', 'base-mainnet', ${pledgeVault}, '2026-11', '5000000', 1, '100', '2026-11-17T11:56:00.000Z'), ('beta', 'base-mainnet', ${pledgeVault}, '2026-12', '5000000', 1, '100', '2026-11-17T11:56:00.000Z')`,
 ]
+
+function pledgedPool(capMinor: bigint) {
+  return { monthlyPool: true, deployments: [{ network: "base-mainnet", vault: pledgeVault }], capFor: () => capMinor }
+}
 
 const published = JSON.stringify({ schemaVersion: "1", syncedAt: "2026-11-16T09:30:00.000Z", projects: [manifestOf("alpha", "featured")] })
 
@@ -248,7 +260,7 @@ effect function seeded<A, E, R>(world: World, program: A!E!R) {
 }
 
 layer(Layer.mergeAll(PublicSite, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect(`A visitor reads the registry live and then from the last published copy, the whole paged direct-transfer history or the legacy unpaged list, vault payments and pool funding (spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails"; spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/paymentHistory.md, "Pages advance a strictly increasing cursor against the first page's boundary and total"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only")`, () => effect {
+  it.effect(`A visitor reads the registry live and then from the last published copy, the whole paged direct-transfer history or the legacy unpaged list, vault payments and pool funding (spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails"; spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/paymentHistory.md, "Pages advance a strictly increasing cursor against the first page's boundary and total"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open")`, () => effect {
     const { world } = try Browser
     try seeded(world, effect {
       try (try D1).batch([...project("alpha", "featured"), ...project("gamma", "retired"), ...funding])
@@ -274,6 +286,10 @@ layer(Layer.mergeAll(PublicSite, webCrypto), { excludeTestServices: true, timeou
       const vaultRows = try loadVaultPayments({ kind: "project", projectId: "alpha" })
       const pool = try loadPoolFunding()
       const alpha = pool.get("alpha")?.[0]
+      const beta = pool.get("beta") ?? []
+      const pledgeFunded = try Effect.try(() => poolFunding({ pool: pledgedPool(5_000_000n), read: "PoolCurrent", vaults: beta, networkPays: () => true, nowMs: now }))
+      const pledgeShort = try Effect.try(() => poolFunding({ pool: pledgedPool(6_000_000n), read: "PoolCurrent", vaults: beta, networkPays: () => true, nowMs: now }))
+      const noFreeFunds = try Effect.try(() => toAmount(0n))
 
       try same({
         registry: [live.freshness, live.projects.some((entry) => entry.id === "alpha"), stale.freshness, stale.projects.map((entry) => entry.id), failed.freshness, failed.projects.length, failed.error],
@@ -282,7 +298,8 @@ layer(Layer.mergeAll(PublicSite, webCrypto), { excludeTestServices: true, timeou
         pagedReads,
         legacy: [legacy.length, legacyReads],
         vaultRows: vaultRows.length,
-        pool: [alpha?.network, alpha?.freeBalance, alpha?.monthStarts?.map((start) => [start.freeBalance, start.totalGrossWithdrawn])],
+        pool: [alpha?.network, alpha?.freeBalance, alpha?.monthStarts?.map((start) => [start.freeBalance, start.totalGrossWithdrawn]), alpha?.openPledgedGross, alpha?.pledges],
+        pledges: [beta.map((entry) => [entry.vault, entry.freeBalance, entry.openPledgedGross, entry.pledges]), pledgeFunded.display, pledgeFunded.facts.freeNow, pledgeShort.display],
       }, {
         registry: [{ tag: "RegistryCurrent" }, true, { tag: "RegistryStale", syncedAt: "2026-11-16T09:30:00.000Z" }, ["alpha"], { tag: "RegistryFailed" }, 0, "Project data could not load."],
         registryReads: ["GET /api/v1/projects", "GET /api/v1/projects", "GET /data/project-registry.json", "GET /api/v1/projects", "GET /data/project-registry.json"],
@@ -290,7 +307,13 @@ layer(Layer.mergeAll(PublicSite, webCrypto), { excludeTestServices: true, timeou
         pagedReads: ["GET /api/v1/payments/projects/alpha/direct-transfers paged", "GET /api/v1/payments/projects/alpha/direct-transfers?after=100&through=101 paged"],
         legacy: [101, ["GET /api/v1/payments/projects/alpha/direct-transfers"]],
         vaultRows: 0,
-        pool: ["base-mainnet", 7_000_000n, [[7_000_000n, 0n]]],
+        pool: ["base-mainnet", 7_000_000n, [[7_000_000n, 0n]], null, []],
+        pledges: [
+          [[pledgeVault, 0n, 10_000_000n, [{ period: parsePeriod("2026-11"), amount: 5_000_000n, open: true }, { period: parsePeriod("2026-12"), amount: 5_000_000n, open: true }]]],
+          "PoolFunded",
+          noFreeFunds,
+          "PointsOnly",
+        ],
       })
     }
   })

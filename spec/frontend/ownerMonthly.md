@@ -35,7 +35,7 @@ import walletAttempt as WA from "./walletAttempt"
 import monthly as MO from "../settlement/monthly"
 type MonthView = { sequence: int, automatic: bool, cutoffAt: int, latestCutAt: int, frozen: bool }
 type SaveResult = SaveAccepted | SaveConflict | WindowClosed | SaveFailed
-type Notice = Quiet | AllocationSaved | CutSaved | Conflict | Closed | Failed | Finalized | StorageBlocked | Occupied
+type Notice = Quiet | AllocationSaved | CutSaved | Conflict | Closed | Failed | Finalized | StorageBlocked | Occupied | NoticeWindow
 type Target = Commitment | Setting | Release
 type Phase = Idle | Reviewed | Awaiting | Sent | Unclear | Done | Reverted
 type ChainResult = StillPending | FinalMatch | FinalFailure | Mismatch
@@ -44,7 +44,7 @@ type Funds = FundsHidden | FundsLoading | FundsError | FundsReady
 type OwnerMonthly = { owner: int, manages: bool, lifetime: int, now: int, month: MonthView, loaded: bool,
   draftOpen: bool, draftCut: bool, reasonLength: int, saving: int, expected: int, savingCut: bool, finalizing: bool,
   requests: int, notice: Notice, commitment: Flow, setting: Flow, release: Flow, releaseApproved: bool,
-  funds: Funds, fundsRequest: int, used: List[str] }
+  funds: Funds, fundsRequest: int, used: List[str], settingRequest: int }
 pure val server = 0
 pure val adapter = -1
 pure val clock = -2
@@ -53,7 +53,7 @@ pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awai
 pure val initial: OwnerMonthly = { owner: 0, manages: false, lifetime: 0, now: 1, month: noMonth, loaded: false,
   draftOpen: false, draftCut: false, reasonLength: 0, saving: 0, expected: 0, savingCut: false, finalizing: false,
   requests: 0, notice: Quiet, commitment: idleFlow, setting: idleFlow, release: idleFlow, releaseApproved: false,
-  funds: FundsHidden, fundsRequest: 0, used: List() }
+  funds: FundsHidden, fundsRequest: 0, used: List(), settingRequest: 0 }
 pure def editorOpen(v: OwnerMonthly): bool = v.loaded and v.manages and not(v.month.frozen)
   and not(v.month.automatic and v.now >= v.month.cutoffAt)
 pure def cutsOpen(v: OwnerMonthly): bool = editorOpen(v) and not(v.month.automatic and v.now >= v.month.cutoffAt - MO::cutNoticeSeconds)
@@ -117,6 +117,36 @@ pure def canFinalizeReply(v: OwnerMonthly, lifetime: int, accepted: bool, by: in
 pure def finalizeReply(v: OwnerMonthly, lifetime: int, accepted: bool, by: int): OwnerMonthly =
   if (accepted) { ...v, finalizing: false, draftOpen: false, month: { ...v.month, frozen: true }, notice: Finalized }
   else { ...v, finalizing: false, notice: Failed }
+```
+
+### Turning automatic finalization on is refused while a late cut's notice runs
+
+A manager toggles the project's automatic finalization ("Monthly
+finalization setting", `PUT /monthly-settings` with the opposite of the
+shown value, development `src/OwnerAwards.tsx` `toggleAutomatic` at
+`67fd54fd4`); an accepted reply shows the stored value. The server refuses
+turning it on with 409 `cut_notice_window` while a cut of an unfrozen month
+has a 24-hour notice that ends after that month's cutoff and has not yet
+ended ([monthly settings](../settlement/monthlySettings.md)); the page then
+shows the server's message, which names the time the notice ends, and the
+shown value stays.
+
+```quint
+type SettingResult = SettingAccepted | SettingNoticeWindow | SettingFailed
+pure def canToggleFinalization(v: OwnerMonthly, by: int): bool = by == v.owner and v.loaded and v.manages
+  and v.settingRequest == 0 and v.requests < 9007199254740991
+pure def toggleFinalization(v: OwnerMonthly, by: int): OwnerMonthly =
+  { ...v, requests: v.requests + 1, settingRequest: v.requests + 1, notice: Quiet }
+pure def canToggleFinalizationReply(v: OwnerMonthly, lifetime: int, request: int, answer: SettingResult, by: int): bool =
+  by == server and lifetime == v.lifetime and request > 0 and request == v.settingRequest
+    and (answer == SettingNoticeWindow implies not(v.month.automatic))
+pure def toggleFinalizationReply(v: OwnerMonthly, lifetime: int, request: int, answer: SettingResult, by: int): OwnerMonthly =
+  if (answer == SettingAccepted) { ...v, settingRequest: 0, month: { ...v.month, automatic: not(v.month.automatic) } }
+  else { ...v, settingRequest: 0, notice: if (answer == SettingNoticeWindow) NoticeWindow else Failed }
+pure def stepNoticeWindowKeepsSetting(before: OwnerMonthly, after: OwnerMonthly): bool =
+  (after.notice == NoticeWindow and before.notice != NoticeWindow) implies
+    (not(before.month.automatic) and not(after.month.automatic))
+pure def sometimesFinalizationRefusedInNotice(v: OwnerMonthly): bool = v.notice == NoticeWindow and not(v.month.automatic)
 ```
 
 ## Story: Sign the owner's monthly transactions from a saved attempt

@@ -1,8 +1,8 @@
-// spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/monthlyCommitment.md, "A finalized admitted root that matches a signed attempt admits the month"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+// spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/monthlyCommitment.md, "A finalized admitted root that matches a signed attempt admits the month"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/monthPledges.md, "Publication, a newer attempt and on-chain admission need a pledge in the run's own vault or the automatic default on"
 import { secp256k1 } from "@noble/curves/secp256k1.js"
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
 import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
-import { first, rows, sql } from "@repo/platform/d1"
+import { first, sql } from "@repo/platform/d1"
 import { type ChainView, type Commitment, type Event, type SigningFacts, apply, canAdmit, canAdmitLegacy, canCloseWindow, canComplete, canInvestigate, canObserve, canObserveFacts, canRefuseSigning, canSignEvm, signingRefusal, stale, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
 import { type AwardState, type Bytes32, U128_MAX, U256_MAX, awardCall, awardId, bytes32, decodeAddress, decodeAward, decodeBool, decodeBytes32, decodeUint, escrowGetter, isZero } from "../chain/evm/abi.ts"
 import { MONTHLY_RESERVE_VERSION, MONTHLY_RESERVE_VERSION_CALL, type MonthlyEntry, type MonthlyReservation, SOURCE_SEQUENCE_CALL, decodeMonthlyReserve, monthlyReservation, monthlyReserveCall, monthlyReserveDigest, monthlyRootCall } from "../chain/evm/monthlyRoot.ts"
@@ -10,8 +10,8 @@ import { parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, parsePeriod } from "../kernels/calendar.ts"
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { type Entries, ordinaryScope, within } from "../journal/journal.vibe"
-import { type AttestationPlan, type AttestationRequest, type PlanOptions, type Planned, PlanRefused, preparePlan } from "../monthlyCommitment/plan.vibe"
-import { type EvmReservation, type JournalContext, type JournalKey, type JournalRun, type SignedPlan, loadJournal, runJournal } from "../monthlyCommitment/store.vibe"
+import { type AttestationPlan, type AttestationRequest, type PlanOptions, type Planned, PlanRefused, consentOf, preparePlan } from "../monthlyCommitment/plan.vibe"
+import { type EvmReservation, type JournalContext, type JournalKey, type JournalRun, type SignedPlan, loadJournal, monthConsent, runJournal } from "../monthlyCommitment/store.vibe"
 import { amountOf } from "../monthly/store.vibe"
 import { AttesterConfig, type Deployment, DeploymentRefused, SignerUnavailable, onChain, reviewedDeployment } from "./evm.vibe"
 import { DeploymentMismatch, verifyEvmDeployment } from "../vault/evmTotals.vibe"
@@ -121,9 +121,11 @@ export const refusedFacts: Readonly<Record<string, (facts: SigningFacts) => Sign
 }
 
 export effect function signingFacts(request: AttestationRequest, options: PlanOptions, height: number) {
-  const facts = plannedFacts(height, request.snapshotSha256)
+  const period = parsePeriod(request.period)
+  const read = period === undefined ? undefined : try consentOf(request, period, options.served)
+  const facts = { ...plannedFacts(height, request.snapshotSha256), ...read?.consent }
   const refusal = effect {
-    try preparePlan(request, options)
+    try preparePlan(request, options, read)
     return undefined
   } catch effect (error) => match (error) {
     when PlanRefused: error;
@@ -153,7 +155,7 @@ export effect function decide(state: Commitment, view: ChainView, facts: Signing
   if (canComplete(current)) current = try stepped(current, events, { type: "complete" }, by)
   if (canCloseWindow(current)) current = try stepped(current, events, { type: "closeWindow" }, by)
   if (current.phase !== "Authorized" || current.view.admittedRoot !== "") return { state: current, events, sign: false } satisfies Decided
-  if (canObserveFacts(current, facts)) current = try stepped(current, events, { type: "observeFacts", facts }, by)
+  if (canObserveFacts(current, facts, by)) current = try stepped(current, events, { type: "observeFacts", facts }, by)
   if (signingRefusal(current) !== "NoRefusal") {
     if (canRefuseSigning(current)) current = try stepped(current, events, { type: "refuseSigning" }, by)
     return { state: current, events, sign: false } satisfies Decided
@@ -371,7 +373,6 @@ schema Candidate {
 }
 
 schema CandidateList { readonly items: string }
-schema AutomaticRow { readonly automatic: number }
 
 const CandidateItems = Schema.Array(Candidate)
 
@@ -379,11 +380,6 @@ effect function candidates() {
   const found = try first(CandidateList, sql`SELECT json_group_array(json_object('projectId', r.project_id, 'period', r.period, 'network', r.network, 'snapshotSha256', r.snapshot_sha256)) AS items FROM monthly_payment_runs r LEFT JOIN monthly_payment_authorizations a ON a.project_id = r.project_id AND a.period = r.period AND a.network = r.network WHERE r.obligations_created_at IS NOT NULL AND EXISTS (SELECT 1 FROM monthly_payment_obligations o WHERE o.project_id = r.project_id AND o.period = r.period) AND (a.authorization IS NULL OR json_extract(a.authorization, '$.plan.family') = 'evm')`)
   const parsed = try Effect.try({ try: () => JSON.parse(found?.items ?? "[]") as unknown, catch: () => refusedMonth("Monthly candidates are malformed") })
   return Schema.decodeUnknownEffect(CandidateItems)(parsed) catch effect () => { throw refusedMonth("Monthly candidates are malformed") }
-}
-
-effect function automaticPayment(projectId: string) {
-  const [latest] = try rows(AutomaticRow, sql`SELECT automatic FROM monthly_payment_settings WHERE project_id = ${projectId} ORDER BY sequence DESC LIMIT 1`)
-  return latest === undefined || latest.automatic === 1
 }
 
 export type MonthAttester<E extends { readonly _tag: string }, R> = (request: AttestationRequest, now: number) => MonthAttestation!E!R
@@ -416,7 +412,7 @@ export effect function publishMonthlyAuthorizations<EE extends { readonly _tag: 
   for (const request of try candidates()) {
     const label = `${request.projectId}/${request.period}/${request.network}`
     const period = parsePeriod(request.period)
-    if (!networks.has(request.network) || !isNetworkKey(request.network) || period === undefined || !inWindow(period, now) || !(try automaticPayment(request.projectId))) continue
+    if (!networks.has(request.network) || !isNetworkKey(request.network) || period === undefined || !inWindow(period, now) || !(try monthConsent(request))) continue
     const attest = NETWORKS[request.network].family === "solana" ? attesters.SolanaV3 : attesters.EvmV2
     const outcome = effect {
       const attested = try attest(request, now)

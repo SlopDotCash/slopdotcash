@@ -1,12 +1,14 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"
 import { millisOf } from "@repo/platform/clock"
 import { U128_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
 import { staleAfterMs } from "@repo/settlement/client"
+import { toAmount } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
 import type { PoolFacts } from "../../../../gen/frontend__projections.ts"
 import { type Answer, Machine as VaultMachine } from "../../../../gen/frontend__ownerVault.effect.vibe"
 import { type Batch, Machine as BatchMachine } from "../../../../gen/frontend__batchedDeposit.effect.vibe"
 import { zero } from "../../../../gen/settlement__money.ts"
+import { type VaultLocks, pageGuardApplies } from "../../../../gen/frontend__vaultLocks.ts"
 import { type ChainResult, Machine as MonthlyMachine } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
 import { Machine as ReadMachine } from "../../../../gen/frontend__requests.effect.vibe"
 import { networkLabel } from "../../../kernels/assetText.ts"
@@ -24,6 +26,7 @@ import { batchFlow } from "../../../wallets/owner/batchedDeposit.vibe"
 import { baseUnits } from "../../../wallets/owner/commitmentCalls.ts"
 import { type MonthlySetting, type ProjectReward, type SettingReview, checkEvmSetting, evmVaultOf, familyOf, reviewEvmSetting, sendEvmSetting } from "../../../wallets/owner/commitments.vibe"
 import { batchCalls, batchPlan } from "../../../wallets/owner/evmCalls.ts"
+import { lockedTotal } from "../../../wallets/owner/evmMonthLock.vibe"
 import { type EvmVault, type TransferCheck, type TransferReview, checkTransfer, plannedTransfer, reviewTransfer, sendTransfer } from "../../../wallets/owner/evmVault.vibe"
 import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts"
 import { ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
@@ -31,6 +34,7 @@ import type { EvmBatchPlan, OwnerPlan } from "../../../wallets/owner/ownerPlans.
 import { type OwnerVaultPage, type Saved, ownerVaultPage } from "../../../wallets/owner/ownerVault.vibe"
 import { receivedNotice } from "../../../wallets/owner/receivedNotice.ts"
 import { type ReviewedFunding, type SolanaVault, checkFunding, reviewFunding, sendFunding } from "../../../wallets/owner/solanaVault.vibe"
+import { lockServices } from "./monthLock.vibe"
 import { pageHidden } from "./pageVisibility.ts"
 import type { FundingDeployment, FundingProject } from "./project.schema.ts"
 import { type SavedTransfer, type VaultKeys, evmTerms, sameBatch, savedSetting, solanaTerms, storedPlan, transferCandidates, vaultKeys } from "./savedPlans.ts"
@@ -128,7 +132,7 @@ function machinesOf() {
 }
 
 export function vaultServices(project: FundingProject, deployment: FundingDeployment, period: string) {
-  return Layer.provideMerge(machinesOf(), Layer.provideMerge(deskOf(project, deployment, period), shared))
+  return Layer.provideMerge(Layer.merge(machinesOf(), lockServices(project, deployment)), Layer.provideMerge(deskOf(project, deployment, period), shared))
 }
 
 export type VaultServices = Layer.Success<ReturnType<typeof vaultServices>>
@@ -214,6 +218,10 @@ function plannedFrom(plan: OwnerPlan | undefined): string | undefined {
   return plan?.kind === "evmDeposit" ? plan.call.from : undefined
 }
 
+export effect function tabHidden(hidden: boolean) {
+  return try (try VaultDesk).page.tabHidden(hidden)
+}
+
 export effect function followVault(account: number) {
   return try (try VaultDesk).page.follow(account)
 }
@@ -236,19 +244,36 @@ export effect function connectWallet(id: number, forTransfer: boolean) {
   return connection
 }
 
-export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number) {
-  const { evm, solana, page, batch, monthlyPool, unreadPool } = try VaultDesk
-  if (operation === "withdraw" && monthlyPool && pool === undefined) throw stopped(fundingMessages.promiseUnread)
+effect function amountOf(value: bigint) {
+  return try orDie(Effect.try(() => toAmount(value)))
+}
+
+effect function walletLocks(connection: EvmConnection, evm: EvmVault, cachedSupport: boolean, free: bigint) {
+  const locked: bigint | undefined = lockedTotal(connection, evm) catch () => undefined
+  return { cachedSupport, walletRead: locked !== undefined, freeKnown: true, free: try amountOf(free), locked: try amountOf(locked ?? 0n) } satisfies VaultLocks
+}
+
+effect function guarded(operation: "deposit" | "withdraw", pool: PoolFacts | undefined, locks: VaultLocks) {
+  const { monthlyPool, unreadPool } = try VaultDesk
+  if (operation === "withdraw" && monthlyPool && pool === undefined && pageGuardApplies(unreadPool, locks)) throw stopped(fundingMessages.promiseUnread)
+}
+
+export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number, pledgeSupport: boolean) {
+  const { evm, solana, page, batch, unreadPool } = try VaultDesk
   const facts = pool ?? unreadPool
+  const cached: VaultLocks = { ...unreadLocks, cachedSupport: pledgeSupport }
   if (connection.family === "solana") {
     if (solana === undefined) throw stopped(fundingMessages.unsupported)
+    try guarded(operation, pool, cached)
     const funding = try reviewFunding(solana, connection.solana, operation, amount)
-    try page.review("Transfer", operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts, unreadLocks)
+    try page.review("Transfer", operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts, cached)
     return { kind: "solana", funding } satisfies ActionReview
   }
   if (evm === undefined) throw stopped(fundingMessages.unsupported)
   const review = try reviewTransfer(connection.evm, evm, operation, amount, "finalized")
-  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, facts, unreadLocks)
+  const locks = operation === "withdraw" ? try walletLocks(connection.evm, evm, pledgeSupport, review.freeBalance) : cached
+  try guarded(operation, pool, locks)
+  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, facts, locks)
   let offered = false
   if (review.batch) offered = (try batch.review(account, review)).phase === "Offered"
   return { kind: "evm", review, batch: offered } satisfies ActionReview

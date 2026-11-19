@@ -98,7 +98,7 @@ export schema ProgramStatus = "draft" | "pending-approval" | "open" | "paused" |
 
 export interface ProgramChange {
   readonly projectId: string
-  readonly actorGithubId: string
+  readonly actor: { readonly githubId: string; readonly login: string }
   readonly administrator: boolean
   readonly canManageContacts: boolean
   readonly creating: boolean

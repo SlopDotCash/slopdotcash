@@ -30,7 +30,7 @@ export const meta: ComponentMeta<ReportDetailProps> = {
       await expect(screen.getByRole("region").getAttribute("aria-labelledby")).toBe(`${headings.card} ${headings.summary}`);
       onReview.mockClear();
       await userEvent.type(screen.getByRole("textbox", { name: /Review reason/u }), "Reproduced on a fork.");
-      await userEvent.click(screen.getByRole("button", { name: "Approve for owner review" }));
+      await userEvent.click(screen.getByRole("button", { name: "Forward to owner" }));
       await expect(onReview).toHaveBeenCalledWith("forward", "Reproduced on a fork.");
     },
     // spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"

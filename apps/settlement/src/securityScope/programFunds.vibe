@@ -1,6 +1,7 @@
 // spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
-import { millisOf } from "@repo/platform/clock"
-import { type Statement, first, rows, sql } from "@repo/platform/d1"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { D1, RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import { type AwardAssetTerms, type ProgramDeployment, type ProgramFundsRead, type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
 import { NETWORKS, defaultAsset, isNetworkKey } from "../kernels/networks.ts"
 
 module limbs {
@@ -12,47 +13,6 @@ module limbs {
 import { baseUnits } from limbs
 
 export const snapshotMaxAgeMillis = 30 * 60_000
-
-export interface ProgramAsset {
-  readonly network: string
-  readonly symbol: string
-  readonly decimals: number
-  readonly address: string
-}
-
-export interface AwardAssetTerms {
-  readonly currency: string
-  readonly decimals: number
-  readonly network: string | null
-  readonly asset?: ProgramAsset
-}
-
-export interface ProgramDeployment {
-  readonly network: string
-  readonly vault: string
-  readonly asset: string
-}
-
-export interface ProgramTerms {
-  readonly amount: AwardAssetTerms
-  readonly deployments: ReadonlyArray<ProgramDeployment>
-}
-
-export interface ProgramFunds {
-  readonly currency: string
-  readonly decimals: number
-  readonly network: string | null
-  readonly freeMinor: string
-  readonly snapshotAt: string
-  readonly availableMinor: string
-  readonly assetAddress: string
-  readonly deploymentNetwork: string
-}
-
-export interface FundsRead {
-  readonly funds: ProgramFunds | undefined
-  readonly guards: ReadonlyArray<Statement>
-}
 
 export function sameAssetAddress(network: string, left: string, right: string) {
   return isNetworkKey(network) && NETWORKS[network].family === "solana" ? left === right : left.toLowerCase() === right.toLowerCase()
@@ -125,7 +85,7 @@ export effect function readSecurityProgramFunds(projectId: string, program: Prog
       || !(nowMillis - millisOf(snapshot.observed_at) <= snapshotMaxAgeMillis)) continue
     if (best === undefined || free > best.free) best = { deployment, snapshot, free }
   }
-  if (best === undefined) return { funds: undefined, guards: [] } satisfies FundsRead
+  if (best === undefined) return { funds: undefined, guards: [] } satisfies ProgramFundsRead
   const { deployment, snapshot, free } = best
   const count = try first(CountRow, sql`SELECT count(*) AS n FROM security_award_reservations WHERE project_id = ${projectId}`)
   if (count === undefined) throw new ReservationsUnreadable({ reason: "Award reservation snapshot unavailable" })
@@ -154,5 +114,18 @@ export effect function readSecurityProgramFunds(projectId: string, program: Prog
       deploymentNetwork: deployment.network,
     },
     guards,
-  } satisfies FundsRead
+  } satisfies ProgramFundsRead
 }
+
+export const SecurityProgramFundsLive = Layer.effect(SecurityProgramFunds, effect {
+  const services = try Effect.context<D1>()
+  return {
+    read: ({ projectId, terms }) => effect {
+      const nowMillis = millisOf(try isoNow())
+      return Effect.provide(readSecurityProgramFunds(projectId, terms, nowMillis), services) catch effect (error) => match (error) {
+        when ReservationsUnreadable: throw new RowMismatch({ text: "security_award_reservations", issue: error.reason });
+        default: throw error;
+      }
+    },
+  } satisfies SecurityProgramFunds.Shape
+})

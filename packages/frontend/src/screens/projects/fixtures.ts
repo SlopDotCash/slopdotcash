@@ -1,11 +1,11 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
 import type { WorkItem } from "@repo/points/client";
 import type { CycleIndexEntry, DirectTransfer, PublicVaultPayment } from "@repo/settlement/client";
 import { periodContaining } from "@repo/settlement/kernels/calendar";
 import type { PoolFunding } from "../../kernels/poolFunding.ts";
 import type { Shown } from "../home/listing.ts";
 import type { ShownProject } from "./project.schema.ts";
-import { projectFunding } from "./summary.ts";
+import { projectFunding, projectListing } from "./summary.ts";
 
 export const origin = "https://slop.cash";
 
@@ -86,6 +86,17 @@ export const withdrawn: PoolFunding = projectFunding({
   networkPays: payingEverywhere,
   nowMs: Date.parse("2026-12-10T12:00:00.000Z"),
 });
+
+export const unfunded: PoolFunding = projectFunding({
+  project,
+  read: { status: "Current", vaults: [{ ...vault, freeBalance: 100_000_000n, totalGrossWithdrawn: 0n, monthStarts: [] }] },
+  networkPays: payingEverywhere,
+  nowMs: Date.parse("2026-11-17T12:00:00.000Z"),
+});
+
+export const listing = projectListing({ project, funding: funded });
+
+export const unlisted = projectListing({ project, funding: unfunded });
 
 export const unread: PoolFunding = projectFunding({ project, read: { status: "Loading", vaults: undefined }, networkPays: payingEverywhere, nowMs: Date.parse("2026-11-17T12:00:00.000Z") });
 

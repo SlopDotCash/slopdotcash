@@ -5,6 +5,76 @@ import { systemGit } from "@repo/platform/git"
 import { QualificationRefused, sandboxPlan, sandboxQualification } from "../src/qualification/sandbox.vibe"
 import { ScreeningQualificationFailed, screeningPlan, securityScreening } from "../src/qualification/screening.vibe"
 import { VettingControlsRefused, flagsPlan, flagsRun, vettingControls } from "../src/qualification/vettingControls.vibe"
+import { flagsQualification } from "../src/qualification/flags/hosted.vibe"
+import { ControlPlane, ControlRefused, type Method } from "@repo/operations/controlPlane"
+import { Cloudflare } from "@repo/operations/wrangler"
+
+interface Boundary {
+  readonly calls: string[]
+  readonly tools: string[]
+  readonly control: ControlPlane.Shape
+  readonly cloudflare: Cloudflare.Shape
+}
+
+function cloudflareBoundary(failing?: string): Boundary {
+  const calls: string[] = []
+  const tools: string[] = []
+  const present = new Map<string, unknown>()
+  let created = 0
+  const listing = /^(d1\/database|queues)\?name=/u
+  const control: ControlPlane.Shape = {
+    accountId: "a".repeat(32),
+    call: (step: string, method: Method, path: string, body?: unknown) => effect {
+      calls.push(`${method} ${path}`)
+      const named = (body ?? {}) as { readonly name?: string; readonly queue_name?: string }
+      if (failing !== undefined && named.queue_name === failing) throw new ControlRefused({ step, status: 500, codes: [10000] })
+      if (method === "GET" && listing.test(path)) return []
+      if (method === "DELETE") {
+        present.delete(path)
+        return {}
+      }
+      if (method === "GET") return present.get(path)
+      created += 1
+      if (path === "d1/database") {
+        const uuid = `00000000-0000-0000-0000-${String(created).padStart(12, "0")}`
+        const database = { uuid, name: named.name }
+        present.set(`d1/database/${uuid}`, database)
+        return database
+      }
+      if (path === "r2/buckets") {
+        const bucket = { name: named.name, creation_date: "2026-11-18T00:00:00.000Z" }
+        present.set(`r2/buckets/${named.name}`, bucket)
+        return bucket
+      }
+      const queue = { queue_id: created.toString(16).padStart(32, "0"), queue_name: named.queue_name, consumers: [] }
+      present.set(`queues/${queue.queue_id}`, queue)
+      return queue
+    },
+    find: (_step: string, path: string) => effect {
+      calls.push(`find ${path}`)
+      return present.get(path)
+    },
+  }
+  const tool = (name: string) => (step: string) => effect {
+    tools.push(`${name} ${step}`)
+    return ""
+  }
+  const cloudflare: Cloudflare.Shape = {
+    accountId: "a".repeat(32),
+    wrangler: tool("wrangler"),
+    docker: tool("docker"),
+    node: tool("node"),
+    read: tool("read"),
+    write: tool("write"),
+  }
+  return { calls, tools, control, cloudflare }
+}
+
+effect function qualified(boundary: Boundary, run: string) {
+  provide ControlPlane = boundary.control, Cloudflare = boundary.cloudflare {
+    return try flagsQualification({ run, source: "f".repeat(40), root: "/var/empty/slop-flag-qualification", workspace: "/var/empty/slop-flag-qualification" })
+  }
+}
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
@@ -63,5 +133,52 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto, FetchHttpClient.l
         },
       )
     }
+  })
+
+  it.effect('Hosted flag qualification provisions exactly named disposable resources in order and, after a failure, deletes exactly what it created and reports an uncertain creation without touching it (spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it")', () => effect {
+    const run = "slop-vet-flags-12-1"
+    const unbuilt = cloudflareBoundary()
+    const failedBuild = try qualified(unbuilt, run)
+    const uncertain = cloudflareBoundary(`${run}-failed`)
+    const failedQueue = try qualified(uncertain, run)
+    const database = "00000000-0000-0000-0000-000000000001"
+    const work = (3).toString(16).padStart(32, "0")
+    const failed = (4).toString(16).padStart(32, "0")
+    const provisioned = [
+      `find workers/scripts/${run}/settings`,
+      `GET d1/database?name=${run}-source`,
+      "POST d1/database",
+      `find r2/buckets/${run}-source`,
+      "POST r2/buckets",
+      `GET queues?name=${run}-work`,
+      "POST queues",
+      `GET queues?name=${run}-failed`,
+      "POST queues",
+    ]
+    const removed = (path: string) => [`GET ${path}`, `DELETE ${path}`, `find ${path}`]
+    try same(
+      {
+        unbuilt: { calls: unbuilt.calls, tools: unbuilt.tools, failure: failedBuild.failure, cleanup: failedBuild.cleanup, success: failedBuild.success, hosted: failedBuild.hosted, productionTouched: failedBuild.productionTouched },
+        uncertain: { calls: uncertain.calls, tools: uncertain.tools, failure: failedQueue.failure, cleanup: failedQueue.cleanup, success: failedQueue.success },
+      },
+      {
+        unbuilt: {
+          calls: [...provisioned, ...removed(`queues/${failed}`), ...removed(`queues/${work}`), ...removed(`d1/database/${database}`), ...removed(`r2/buckets/${run}-source`)],
+          tools: [],
+          failure: { stage: "prepare-resources", kind: "FlagsRefused", reason: "The flag qualification Worker is not built (apps/security/dist/vettingFlags.js)", status: null, cloudflareCodes: [] },
+          cleanup: { complete: true, failedOperations: 0, unresolvedCreations: [] },
+          success: false,
+          hosted: true,
+          productionTouched: false,
+        },
+        uncertain: {
+          calls: [...provisioned, ...removed(`queues/${work}`), ...removed(`d1/database/${database}`), ...removed(`r2/buckets/${run}-source`)],
+          tools: [],
+          failure: { stage: "prepare-resources", kind: "ControlRefused", reason: "create queue", status: 500, cloudflareCodes: [10000] },
+          cleanup: { complete: false, failedOperations: 0, unresolvedCreations: [`${run}-failed`] },
+          success: false,
+        },
+      },
+    )
   })
 })

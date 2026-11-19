@@ -1,4 +1,4 @@
-// spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"
+// spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
 import { RowMismatch, decoded } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
@@ -6,7 +6,7 @@ import { type HoldingKind, type Attempt, type Coverage, type ExpiryProof, type E
 import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import type { Held } from "../runtime/config.vibe"
 import { signedFees } from "./signedSend.ts"
-import { type Evaluation, type NetworkName, type StateName, releasedAt } from "./writes.vibe"
+import { type Evaluation, type NetworkName, type StateName, releasedAt, rotationPrefix } from "./writes.vibe"
 
 module verified {
   import { nativeUnits as unitsOf, nativeWei as weiAt, overran as above, sumOf as summed } from "./amounts.ts"
@@ -21,7 +21,7 @@ module verified {
 }
 import { nativeUnits, nativeWei, overran, sumOf } from verified
 
-export type NameKind = "wallet" | "token" | "tx" | "run" | "vault" | "deployment" | "receipt" | "operator" | "hash"
+export type NameKind = "wallet" | "token" | "tx" | "run" | "vault" | "deployment" | "receipt" | "operator" | "hash" | "rotation" | "version" | "source" | "setting"
 
 export interface Names {
   number(kind: NameKind, text: string): number
@@ -316,7 +316,9 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const proofRows = try decoded(ProofRow, proven ?? [], "Solana expiry proofs")
   const clock = (try Clock.currentTimeMillis) - epoch
   const ms = (iso: string) => millisOf(iso) - epoch
-  const leased = lock !== undefined && lock.run_id.startsWith(scope) ? lock : undefined
+  const rotationScope = `${rotationPrefix}${scope}`
+  const rotating = lock !== undefined && lock.run_id.startsWith(rotationScope) ? lock : undefined
+  const leased = lock !== undefined && !lock.run_id.startsWith(rotationPrefix) && lock.run_id.startsWith(scope) ? lock : undefined
 
   const reserved = new Set(gasRows.flatMap((row) => row.tx_id === null ? [] : [row.tx_id]))
   const live = rows.filter((row) => row.mode === "live")
@@ -510,7 +512,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     overrun,
     scans,
     proofs,
-    rotation: { holder: 0, expiresAt: 0 },
+    rotation: rotating === undefined || rotating.expires_at === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: names.number("rotation", rotating.run_id.slice(rotationScope.length)), expiresAt: ms(rotating.expires_at) },
   } satisfies Fee)
   return { state, sends, gas, tokens, runs, scans: latestScans, foreign, pending } satisfies Journal
 }

@@ -4,5 +4,5 @@ import type { ProjectImageFieldProps } from "./ProjectImageField.tsx";
 
 export const meta: ComponentMeta<ProjectImageFieldProps> = {
   args: { value: "", onChange: fn(), ownerLogin: "octo-org" },
-  examples: { NoOwner: { ownerLogin: "" }, Compact: { compact: true } },
+  examples: { NoOwner: { ownerLogin: "" } },
 };

@@ -1,0 +1,58 @@
+{
+  "name": "slop-staging",
+  "pages_build_output_dir": "../dist",
+  "compatibility_date": "2026-07-30",
+  "vars": {
+    "SLOP_ENVIRONMENT": "staging",
+    "PUBLIC_SITE_URL": "https://staging.slop.cash",
+    "PAYMENTS_ALLOWED_ORIGIN": "https://staging.slop.cash",
+    "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
+    "MONTHLY_PAYMENT_SCHEDULE": "{\"firstPeriod\":\"2026-11\",\"cutoffSecondsAfterPeriodEnd\":259200}",
+    "PAYMENT_NETWORKS": "[\"base-sepolia\",\"ethereum-sepolia\",\"robinhood-testnet\",\"solana-devnet\"]",
+    "SLOP_PRIVATE_INTAKE_MODE": "on"
+  },
+  "d1_databases": [
+    {
+      "binding": "SLOP_DB",
+      "database_name": "slop-staging",
+      "database_id": "6fcddcc1-f3d7-4175-bdde-09afddd53a8a",
+      "migrations_dir": "../../../migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "PRIVATE_TRACES", "bucket_name": "slop-staging-traces" },
+    { "binding": "VETTING_EVIDENCE", "bucket_name": "slop-staging-vetting-evidence" }
+  ],
+  "services": [
+    { "binding": "SLOPBOT", "service": "slop-repository-access-staging" },
+    { "binding": "SLOPBOT_VALUE_IMPORT", "service": "slop-repository-access-staging", "entrypoint": "HistoricalValuePublisher" },
+    { "binding": "SANDBOX", "service": "slop-vetting-sandbox-staging" },
+    { "binding": "SLOP_IDENTITY", "service": "slop-identity-staging" }
+  ],
+  "env": {
+    "preview": {
+      "d1_databases": [],
+      "r2_buckets": [],
+      "services": [],
+      "vars": { "PUBLIC_SITE_URL": "https://staging.slop.cash", "SLOP_ENVIRONMENT": "staging" }
+    }
+  },
+  "expectedSecrets": [
+    "OPERATOR_GITHUB_IDS",
+    "TRACE_AUTH_SECRET"
+  ],
+  "optionalSecrets": [
+    "GITHUB_INTAKE_APP_CLIENT_ID",
+    "GITHUB_INTAKE_APP_CLIENT_SECRET",
+    "GITHUB_INTAKE_APP_ID",
+    "GITHUB_INTAKE_APP_PRIVATE_KEY",
+    "PAYMENT_RPC_URLS",
+    "REWARD_RPC_SOLANA",
+    "SLOP_GITHUB_READ_TOKEN",
+    "SLOP_INTAKE_GRANT_KEY",
+    "SURPLUS_API_KEY",
+    "X_CLIENT_ID",
+    "X_CLIENT_SECRET"
+  ]
+}

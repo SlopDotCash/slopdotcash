@@ -139,6 +139,8 @@ effect function fundedMonth(db: D1Database, vault: EvmAddress, asset: string, ma
       ...recipients.map((recipient, index) => sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (${projectId}, ${period}, ${recipient.githubUserId}, ${recipient.login}, ${recipient.gross.toString()}, ${sources[index] ?? ""})`),
       sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES (${projectId}, ${period}, 'automatic', NULL, 0, ${snapshot}, ${try sha256Hex(snapshot)}, ${network}, ${vault}, ${total}, ${frozenAt}, '2026-12-04T00:05:00.000Z')`,
       ...recipients.map((recipient, index) => sql`INSERT INTO monthly_payment_obligations (project_id, period, github_user_id, github_login, gross_base, fee_base, source_digest, network, vault, created_at) VALUES (${projectId}, ${period}, ${recipient.githubUserId}, ${recipient.login}, ${recipient.gross.toString()}, ${ordinaryFeeBase(recipient.gross).toString()}, ${sources[index] ?? ""}, ${network}, ${vault}, '2026-12-04T00:05:00.000Z')`),
+      sql`INSERT INTO monthly_payment_settings (project_id, sequence, automatic, actor_id, created_at) VALUES (${projectId}, 1, 0, '4242', '2026-11-20T00:00:00.000Z')`,
+      sql`INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (${projectId}, ${network}, ${vault}, ${period}, '5000000', 1, '1', '2026-12-03T00:00:00.000Z')`,
     ])
   }
   return sources
@@ -171,13 +173,18 @@ effect function configured(stack: "test" | "production", pins: string) {
   return try attesterConfig({ SIGNER_STACK: stack, PAYMENT_RPC_URLS: urls, SIGNER_PRIVATE_KEY: key, TEST_SIGNER_PRIVATE_KEY: key }, pins)
 }
 
-effect function attesterLayer(stack: "test" | "production", now: number) {
+interface Standing {
+  readonly restricted?: boolean
+  readonly retired?: boolean
+}
+
+effect function attesterLayer(stack: "test" | "production", now: number, standing: Standing = {}) {
   const { db, journalPath, manifest, manifestSha256, pins } = try Bench
   const clock = settableClock(now * 1000)
   const facts = Layer.succeed(MonthlyFacts, {
     of: () => effect {
       return {
-        eligibility: { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false, retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true },
+        eligibility: { revision: 1, active: true, verifiedPool: true, paused: false, restricted: standing.restricted ?? false, retired: standing.retired ?? false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true },
         current: { number: 1, manifest, manifestSha256 },
         served: new Set([network]),
       }
@@ -188,8 +195,8 @@ effect function attesterLayer(stack: "test" | "production", now: number) {
     Layer.succeed(AttesterConfig, try configured(stack, pins)), Layer.succeed(SolanaAttesterConfig, solana))
 }
 
-effect function published(stack: "test" | "production", now: number) {
-  provide try attesterLayer(stack, now) {
+effect function published(stack: "test" | "production", now: number, standing: Standing = {}) {
+  provide try attesterLayer(stack, now, standing) {
     try createJournal()
     return try publishMonthlyAuthorizations(new Set([network]), now, { EvmV2: attestEvmMonth, SolanaV3: attestSolanaMonth })
   }
@@ -305,7 +312,7 @@ effect function reserved(project: string, salt: bigint, overstated: bigint) {
 }
 
 function viewOf(project: string): ProjectView {
-  return { projectId: project, revision: 1, manifestSha256: releaseManifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${project}`, integrationBranch: "main", aliases: [] }], closureConsent: false }
+  return { projectId: project, revision: 1, manifestSha256: releaseManifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${project}`, integrationBranch: "main", aliases: [] }], closureConsent: false }
 }
 
 effect function releaseLayer(cases: ReadonlyArray<Reserved>) {
@@ -317,7 +324,9 @@ effect function releaseLayer(cases: ReadonlyArray<Reserved>) {
       byRepository: () => effect { return undefined },
       byPath: () => effect { return undefined },
       active: () => effect { return cases.map((reserve) => viewOf(reserve.projectId)) },
+      pausedProjects: () => effect { return [] },
       fence: () => effect { return sql`1` },
+      appendVaultRegistration: () => Effect.die(new Error("The release journey registers no vaults")),
     }),
     Layer.succeed(Authority, {
       repository: (read) => effect { return { ...read, permission: read.actorGithubId === steward ? "PermissionVerified" : "PermissionDenied", installation: "Installed" } },
@@ -341,7 +350,7 @@ effect function review(reserve: Reserved) {
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('The attester signs a month once, replays the same signature, appends a V2 attempt after a source change and stops at admission (spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "A finalized admitted root that matches a signed attempt admits the month"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester")', () => effect {
+  it.effect('The attester signs a month once, replays the same signature, appends a V2 attempt after a source change and stops at admission (spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "A finalized admitted root that matches a signed attempt admits the month"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/monthPledges.md, "Publication, a newer attempt and on-chain admission need a pledge in the run\'s own vault or the automatic default on"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project")', () => effect {
     const { escrow, vault, sources } = try Bench
     const now = opensAt + 3600
     const refusedStack = try published("test", now)
@@ -356,8 +365,9 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
     const award = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id: awardId(escrow.chainId, vault, handSource), actor: 101n, gross: 3_000_000n, sourceDigest: handSource }))
     try promise(() => escrow.send(escrow.roles.owner.address, vault, award))
     try finalize(escrow)
-    const reattested = try published("production", now + 120)
+    const reattested = try published("production", now + 120, { restricted: true })
     const appended = try attempts()
+    const retired = try published("production", now + 150, { restricted: true, retired: true })
     const latest = appended[1]
     const reservation = latest === undefined ? undefined : reservationOf(latest)
     if (latest === undefined || reservation === undefined) return try die(new Error("no second attempt was published"))
@@ -378,6 +388,7 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       replaySignature: afterReplay[0]?.signatureHex === signedOnce[0]?.signatureHex,
       journalled: journalledSignature === signedOnce[0]?.signatureHex,
       reattested: reattested.published,
+      retired: [retired.published, retired.refused],
       appended: appended.map((attempt) => [attempt.plan.evmReservation.count, attempt.plan.evmReservation.remainingGross]),
       firstKept: appended[0]?.signatureHex === signedOnce[0]?.signatureHex,
       admitted: [admitted.published, admitted.failures],
@@ -391,6 +402,7 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       replaySignature: true,
       journalled: true,
       reattested: [`${projectId}/${period}/${network}`],
+      retired: [[], [`${projectId}/${period}/${network} refused: project_restricted`]],
       appended: [[2, "5000000"], [1, "2000000"]],
       firstKept: true,
       admitted: [[], []],

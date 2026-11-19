@@ -118,3 +118,26 @@ export const anInvalidEarlierStepIsWhereTheFormStays = vectors<readonly [Proposa
     return [settled.step, settled.attempted[0]] as const;
   },
 );
+
+export const newProjectLinksAddOnlyAValidWebsiteAndXAccount = vectors<Proposal, unknown>(
+  [
+    [filled, { repository: "https://github.com/octo-org/engine", issues: "https://github.com/octo-org/engine/issues" }],
+    [
+      { ...filled, website: "ntwrk.party", x: "@elizaOS" },
+      { repository: "https://github.com/octo-org/engine", issues: "https://github.com/octo-org/engine/issues", website: "https://ntwrk.party", x: "https://x.com/elizaOS" },
+    ],
+    [{ ...filled, website: "http://ntwrk.party", x: "@not a handle" }, { repository: "https://github.com/octo-org/engine", issues: "https://github.com/octo-org/engine/issues" }],
+  ],
+  (proposal) => draftManifest({ proposal, actor: undefined, valid: true, now }).manifest.links,
+);
+
+export const theProjectStepRefusesAnInvalidWebsiteOrXAccount = vectors<Proposal, readonly [string | undefined, string | undefined]>(
+  [
+    [{ ...filled, website: "ntwrk.party", x: "@elizaOS" }, [undefined, undefined]],
+    [{ ...filled, website: "http://ntwrk.party", x: "@not a handle" }, ["Use an https:// address.", "Enter an X handle such as @slopcash, or its x.com link."]],
+  ],
+  (proposal) => {
+    const errors = proposalErrors(proposal);
+    return [errors.website, errors.x] as const;
+  },
+);

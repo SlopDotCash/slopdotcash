@@ -15,6 +15,6 @@ export type PageProps = {
 export type RegisteredPage = ComponentType<PageProps>;
 
 export const signInPurposes: Partial<Record<PageKind, string>> = {
-  ManageProject: "Sign in with a maintainer account to change project settings.",
+  ManageProject: "Maintainers only",
   SecurityCases: "Sign in to see your security cases.",
 };

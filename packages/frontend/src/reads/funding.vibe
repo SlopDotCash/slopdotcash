@@ -1,11 +1,11 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
 import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { type FundedVault, type MonthStart, poolFunding } from "@repo/settlement/client"
+import { type FundedVault, type MonthPledge, type MonthStart, poolFunding } from "@repo/settlement/client"
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
 import { whoBuildsFiguresShown } from "../../gen/frontend__views.effect.vibe"
-import type { FundingMonthStart, FundingVault } from "../kernels/poolFunding.ts"
+import type { FundingMonthStart, FundingPledge, FundingVault } from "../kernels/poolFunding.ts"
 import { call } from "../platform/api.vibe"
 import { fetchBounded } from "../platform/bounded.vibe"
 import { type MergeActivityRow, type WhoBuildsSnapshot, whoBuildsSnapshotOf, whoBuildsText } from "../projections/statistics.ts"
@@ -58,14 +58,30 @@ function monthStartOf(start: MonthStart): FundingMonthStart | undefined {
   return { period, freeBalance, totalGrossWithdrawn, blockTime }
 }
 
+function pledgeOf(pledge: MonthPledge): FundingPledge | undefined {
+  const period = parsePeriod(pledge.period)
+  const amount = units(pledge.amount)
+  return period === undefined || amount === undefined ? undefined : { period, amount, open: pledge.open }
+}
+
+function pledgesOf(openPledgedGross: bigint | null, pledges: ReadonlyArray<MonthPledge>): ReadonlyArray<FundingPledge> | undefined {
+  if (openPledgedGross === null && pledges.length > 0) return undefined
+  const parsed = pledges.map(pledgeOf)
+  const valid = parsed.filter((pledge): pledge is FundingPledge => pledge !== undefined)
+  if (valid.length !== parsed.length || new Set(valid.map((pledge) => pledge.period)).size !== valid.length) return undefined
+  return valid
+}
+
 function vaultOf(vault: FundedVault): FundingVault | undefined {
   const freeBalance = vault.freeBalance === null ? null : units(vault.freeBalance)
   const totalGrossWithdrawn = units(vault.totalGrossWithdrawn)
+  const openPledgedGross = vault.openPledgedGross === null ? null : units(vault.openPledgedGross)
   const monthStarts = vault.monthStarts.map(monthStartOf)
-  if (freeBalance === undefined || totalGrossWithdrawn === undefined || seconds(vault.blockTime) === undefined || seconds(vault.observedAt) === undefined) return undefined
+  if (freeBalance === undefined || totalGrossWithdrawn === undefined || openPledgedGross === undefined || seconds(vault.blockTime) === undefined || seconds(vault.observedAt) === undefined) return undefined
   const valid = monthStarts.filter((start): start is FundingMonthStart => start !== undefined)
-  if (valid.length !== monthStarts.length) return undefined
-  return { network: vault.network, vault: vault.vault, freeBalance, totalGrossWithdrawn, monthStarts: valid }
+  const pledges = pledgesOf(openPledgedGross, vault.pledges)
+  if (valid.length !== monthStarts.length || pledges === undefined) return undefined
+  return { network: vault.network, vault: vault.vault, freeBalance, totalGrossWithdrawn, monthStarts: valid, openPledgedGross, pledges }
 }
 
 export effect function loadPoolFunding() {

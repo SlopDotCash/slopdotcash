@@ -30,6 +30,8 @@ export const emptyProposal = Object.freeze({
   headline: "",
   image: "",
   goal: "",
+  website: "",
+  x: "",
   criteria: "",
   contributionGuide: "",
   supportedTasks: "",

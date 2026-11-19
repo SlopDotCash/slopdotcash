@@ -1,0 +1,213 @@
+// spec/slopbot/intakeHistory.md, "Story: Report a bounded, unsampled and stable projection of retained intake failures"; spec/slopbot/intakeHistory.md, "An inspection is admitted only for a valid window, and makes at most three dry calls"; spec/slopbot/intakeHistory.md, "Only a bounded, unsampled answer over an unchanged deployment yields rows, and only a complete one passes"
+import { isoAt } from "@repo/platform/clock"
+import { type Event, type IntakeHistory, Machine, initial, machineOver, maximumEvents } from "../../gen/slopbot__intakeHistory.effect.vibe"
+import { type HistoricalIntakeFailure, projectHistoricalIntakeFailure } from "../import/diagnostics.vibe"
+import {
+  type Authority,
+  type CloudflareAccount,
+  IntakeInspectionIncomplete,
+  IntakeInspectionRefused,
+  type IntakeReadFailed,
+  attempted,
+  activeWorker,
+  authorized,
+  cloudflareAccount,
+  cloudflareAuthority,
+  failureOf,
+  fieldsOf,
+  mainRunner,
+  privateFile,
+  readFailed,
+  setting,
+} from "./inspectValueIntake.vibe"
+
+export const historyWorker = "slop-slopbot"
+export const historyQueryId = "slop-fixed-intake-failures-v1"
+export const historyFile = "value-intake-history.json"
+
+const exactTime = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/u
+const structuredLimit = 8192
+const attribution = "Bounded retained observations only; no private request/source identity, unsampled source coverage or absence of failures is established."
+
+export interface Timeframe { readonly from: number; readonly to: number }
+
+export interface IntakeObservation { readonly timestamp: number; readonly failure: HistoricalIntakeFailure }
+
+export interface HistoryRun { readonly machine: Machine.Shape }
+
+export effect function openHistoryRun(start: IntakeHistory = initial) {
+  const held = try Ref.make<IntakeHistory>(start)
+  return { machine: try machineOver(() => Ref.get(held), (next) => Ref.set(held, next)) } satisfies HistoryRun
+}
+
+export effect function historyState(run: HistoryRun) {
+  return try run.machine.get()
+}
+
+export effect function sendHistory(run: HistoryRun, event: Event) {
+  return try run.machine.send(event)
+}
+
+export effect function receiveHistory(run: HistoryRun, input: unknown) {
+  return try run.machine.receive(input)
+}
+
+export function exactMillis(value: string) {
+  if (!exactTime.test(value)) return undefined
+  const millis = Date.parse(value)
+  if (!Number.isFinite(millis)) return undefined
+  return new Date(millis).toISOString() === (value.includes(".") ? value : value.replace(/Z$/u, ".000Z")) ? millis : undefined
+}
+
+export function intakeHistoryQuery(timeframe: Timeframe) {
+  return {
+    queryId: historyQueryId,
+    timeframe,
+    dry: true,
+    view: "events",
+    limit: maximumEvents,
+    parameters: {
+      datasets: ["cloudflare-workers"],
+      filterCombination: "and",
+      filters: [{ key: "$metadata.service", operation: "eq", type: "string", value: historyWorker }],
+      needle: { value: "historical-intake-failure", isRegex: false, matchCase: true },
+    },
+  }
+}
+
+effect function decodedCandidate(candidate: unknown) {
+  if (typeof candidate !== "string") return { value: candidate }
+  if (candidate.length > structuredLimit) return undefined
+  return Effect.try(() => ({ value: JSON.parse(candidate) as unknown })) catch () => undefined
+}
+
+export effect function storedIntakeFailure(value: unknown, timeframe: Timeframe) {
+  const row = fieldsOf(value)
+  const metadata = fieldsOf(row?.$metadata)
+  const workers = fieldsOf(row?.$workers)
+  if (row !== undefined && Object.hasOwn(row, "$workers") && (workers === undefined || (Object.hasOwn(workers, "truncated") && workers.truncated !== false))) return undefined
+  const timestamp = row?.timestamp
+  if (row === undefined || metadata?.service !== historyWorker || typeof timestamp !== "number" || !Number.isSafeInteger(timestamp) || timestamp < timeframe.from || timestamp > timeframe.to) return undefined
+  const unique = new Map<string, HistoricalIntakeFailure>()
+  for (const candidate of [row.source, fieldsOf(row.source)?.message, metadata.message]) {
+    const decoded = try decodedCandidate(candidate)
+    if (decoded === undefined) continue
+    const safe = try projectHistoricalIntakeFailure(decoded.value)
+    if (safe !== undefined) unique.set(JSON.stringify(safe), safe)
+  }
+  const [failure] = unique.values()
+  return unique.size === 1 && failure !== undefined ? { timestamp, failure } satisfies IntakeObservation : undefined
+}
+
+function unsampled(value: unknown) {
+  if (value === undefined) return true
+  const statistics = fieldsOf(value)
+  return statistics !== undefined && (statistics.abr_level === undefined || statistics.abr_level === 1)
+}
+
+interface QueryAnswer {
+  readonly ok: boolean
+  readonly rows: ReadonlyArray<unknown>
+  readonly matched: number
+  readonly sampled: boolean
+}
+
+function answerOf(value: unknown): QueryAnswer {
+  const result = fieldsOf(value)
+  const run = fieldsOf(result?.run)
+  const events = fieldsOf(result?.events)
+  const rows = events?.events
+  const count = events?.count
+  const ok = run?.status === "COMPLETED" && run.dry === true && Array.isArray(rows) && typeof count === "number" && Number.isSafeInteger(count)
+  return {
+    ok,
+    rows: ok && Array.isArray(rows) ? rows : [],
+    matched: ok && typeof count === "number" ? count : 0,
+    sampled: !unsampled(run?.statistics) || !unsampled(result?.statistics),
+  }
+}
+
+effect function deployment(api: CloudflareAccount, stage: string) {
+  const active = activeWorker(try api(`/workers/scripts/${historyWorker}/deployments`, stage))
+  if (active === undefined) throw readFailed(stage)
+  return active
+}
+
+effect function admitted(run: HistoryRun, from: string, to: string, authority: Authority) {
+  const runner = try mainRunner()
+  const now = try Clock.currentTimeMillis
+  const start = exactMillis(from)
+  const end = exactMillis(to)
+  const state = try sendHistory(run, { type: "admit", window: { start: start ?? 0, end: end ?? 0, now, exact: start !== undefined && end !== undefined, mainRunner: runner.main, authority: authorized(authority) } })
+  if (state.phase !== "HistoryRefused") return { runnerTemp: runner.runnerTemp, now, timeframe: { from: start ?? 0, to: end ?? 0 } }
+  if (!runner.main) throw new IntakeInspectionRefused({ message: "Main runner required" })
+  if (!authorized(authority)) throw new IntakeInspectionRefused({ message: "Intake history authority unavailable" })
+  throw new IntakeInspectionRefused({ message: "Invalid intake history window" })
+}
+
+interface Inspected {
+  readonly state: IntakeHistory
+  readonly before?: { readonly deploymentId: string; readonly versionId: string }
+  readonly answer?: QueryAnswer
+  readonly observations: ReadonlyArray<IntakeObservation>
+  readonly failure?: IntakeReadFailed
+}
+
+function inspection(fields: Inspected): Inspected {
+  return fields
+}
+
+effect function failedAt(run: HistoryRun, event: Event, failure: IntakeReadFailed) {
+  return inspection({ state: try sendHistory(run, event), observations: [], failure })
+}
+
+effect function inspected(run: HistoryRun, api: CloudflareAccount, timeframe: Timeframe) {
+  const read = try attempted(deployment(api, "deployment-read"))
+  if (read.failure !== undefined) return try failedAt(run, { type: "readMetadata", ok: false }, read.failure)
+  const before = read.value
+  try sendHistory(run, { type: "readMetadata", ok: true })
+  const answered = try attempted(api("/workers/observability/telemetry/query", "history-query", "POST", intakeHistoryQuery(timeframe)))
+  if (answered.failure !== undefined) return try failedAt(run, { type: "query", ok: false, rows: 0, matched: 0, sampled: false }, answered.failure)
+  const answer = answerOf(answered.value)
+  const queried = try sendHistory(run, { type: "query", ok: answer.ok, rows: answer.rows.length, matched: answer.matched, sampled: answer.sampled })
+  if (queried.phase === "HistoryRefused") return inspection({ state: queried, observations: [], failure: readFailed(queried.shape ? "history-sampling" : "history-shape") })
+  const observations: IntakeObservation[] = []
+  for (const row of answer.rows) {
+    const observation = try storedIntakeFailure(row, timeframe)
+    if (observation !== undefined) observations.push(observation)
+  }
+  const after = try attempted(deployment(api, "deployment-recheck"))
+  const stable = after.failure === undefined && after.value.deploymentId === before.deploymentId && after.value.versionId === before.versionId
+  const state = try sendHistory(run, { type: "recheck", stable, projected: observations.length })
+  if (!stable) return inspection({ state, observations: [], failure: after.failure ?? readFailed("deployment-recheck") })
+  return inspection({ state, before, answer, observations: observations.slice(0, state.outputRows) })
+}
+
+export effect function inspectValueIntakeHistory(from: string, to: string) {
+  const run = try openHistoryRun()
+  const authority = try cloudflareAuthority()
+  const { runnerTemp, now, timeframe } = try admitted(run, from, to, authority)
+  const base = { checkedAt: try isoAt(now), worker: historyWorker, timeframe, rawLogsRetained: false, queryDry: true, maximumEvents, attribution }
+  const outcome = try inspected(run, cloudflareAccount(authority), timeframe)
+  const complete = outcome.state.phase === "HistoryComplete"
+  const result = outcome.failure !== undefined || outcome.before === undefined || outcome.answer === undefined
+    ? { ...base, complete: false, observations: [], failure: failureOf(outcome.failure ?? readFailed("history-read")) }
+    : {
+      ...base,
+      ...outcome.before,
+      complete,
+      matchedEvents: outcome.answer.matched,
+      returnedEvents: outcome.answer.rows.length,
+      rejectedEvents: outcome.answer.rows.length - outcome.observations.length,
+      observations: outcome.observations,
+    }
+  try privateFile(runnerTemp, historyFile, `${JSON.stringify(result, null, 2)}\n`)
+  try Console.log(JSON.stringify(result))
+  if (!complete) throw new IntakeInspectionIncomplete({ message: "Intake history inspection incomplete" })
+  return result
+}
+
+export effect function inspectValueIntakeHistoryCommand(args: ReadonlyArray<string>) {
+  if (args.length > 0) throw new IntakeInspectionRefused({ message: "usage: inspect-value-intake-history" })
+  try inspectValueIntakeHistory((try setting("SLOP_INTAKE_HISTORY_FROM")) ?? "", (try setting("SLOP_INTAKE_HISTORY_TO")) ?? "")
+}

@@ -1,0 +1,62 @@
+// spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"
+import type { QueueMessage } from "@repo/platform/bindings"
+import { D1, first, sql } from "@repo/platform/d1"
+import { retentionBucket } from "@repo/platform/r2"
+import { flagActions, isFlagsRun } from "./plan.vibe"
+import { FixtureRefused } from "./requests.vibe"
+import { twoFlagPause } from "./scenario.vibe"
+import type { FixtureEnv } from "./site.vibe"
+
+export service FlagsFixture { readonly env: FixtureEnv }
+
+schema Command { qualification: string; action: "flags" | "empty"; delivery: string }
+schema PhaseRow { phase: string }
+
+const deliveryPattern = new RegExp(`^(${flagActions.join("|")})-[1-9][0-9]{0,3}$`, "u")
+
+effect function phaseRecorded(name: string) {
+  return (try first(PhaseRow, sql`SELECT phase FROM qualification_results WHERE phase=${name}`)) !== undefined
+}
+
+effect function record(name: string, result: unknown) {
+  return try (try D1).run(sql`INSERT OR IGNORE INTO qualification_results VALUES(${name}, ${JSON.stringify(result)})`)
+}
+
+effect function once<A, E, R>(phase: string, run: A!E!R) {
+  if (try phaseRecorded(phase)) return
+  if ((try record(`started-${phase}`, {})) !== 1) throw new FixtureRefused({ issue: "Partial fixture run must not repeat" })
+  try record(phase, try run)
+}
+
+effect function emptied(env: FixtureEnv) {
+  const objects = retentionBucket(env.EVIDENCE_SOURCE)
+  for (;;) {
+    const page = try objects.list("", undefined, 100)
+    if (page.objects.length === 0) break
+    for (const object of page.objects) {
+      if (!object.key.startsWith("vetting/")) throw new FixtureRefused({ issue: "Foreign fixture object" })
+      try objects.remove(object.key)
+    }
+  }
+  try record("empty", { empty: true })
+}
+
+effect function performed(action: Command["action"], env: FixtureEnv) {
+  if (action === "flags") return try once("flags", twoFlagPause(env))
+  try emptied(env)
+}
+
+export effect function flagsMessage(message: QueueMessage) {
+  const { env } = try FlagsFixture
+  const command = Schema.decodeUnknownEffect(Command)(message.body) catch effect () => {
+    throw new FixtureRefused({ issue: "Invalid fixture command" })
+  }
+  if (!isFlagsRun(env.QUALIFICATION_RUN) || command.qualification !== env.QUALIFICATION_RUN || !deliveryPattern.test(command.delivery) || !command.delivery.startsWith(`${command.action}-`)) {
+    throw new FixtureRefused({ issue: "Invalid fixture command" })
+  }
+  const completed = performed(command.action, env) catch effect (error) => {
+    try record(`failed-${command.action}`, { failed: true, category: error._tag === "FixtureRefused" ? error.issue : error._tag })
+    return false
+  }
+  if (completed !== false) try (try D1).run(sql`INSERT OR IGNORE INTO qualification_deliveries VALUES(${`command:${command.delivery}`}, ${command.action})`)
+}

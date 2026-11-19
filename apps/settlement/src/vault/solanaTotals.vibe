@@ -1,9 +1,11 @@
-// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month's pledge and the vault's open total"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"
 import { SYSTEM_PROGRAM, SolanaRpc, address, publicKey } from "@repo/platform/chain/solana"
-import { decodeProject, decodeVault } from "../chain/solana/accounts.ts"
-import { vaultAddress } from "../chain/solana/pda.ts"
+import type { ChainMonthPledge } from "../chain/evm/actions.ts"
+import { decodeMonthPledge, decodeProject, decodeVault } from "../chain/solana/accounts.ts"
+import { monthPledgeAddress, vaultAddress } from "../chain/solana/pda.ts"
+import { isPeriod } from "../kernels/calendar.ts"
 import { readMint, readRefusalMessage, readTokenAccount } from "../kernels/token2022.ts"
-import { type ChainTotals, DeploymentMismatch } from "./evmTotals.vibe"
+import { type ChainPledges, type ChainTotals, DeploymentMismatch } from "./evmTotals.vibe"
 import type { SolanaDeployment } from "./policy.vibe"
 
 const NATIVE_DECIMALS = 9
@@ -73,4 +75,32 @@ export effect function readSolanaTotals(deployment: SolanaDeployment) {
     accruedFees,
     reserved,
   } satisfies ChainTotals
+}
+
+export effect function readSolanaMonthPledges(deployment: SolanaDeployment, periods: ReadonlyArray<number>) {
+  const program = address(deployment.programId)
+  const project = address(deployment.projectPda)
+  if (program === undefined || project === undefined) return try refuse("Solana project deployment missing")
+  const months = periods.filter(isPeriod)
+  if (months.length !== periods.length) return try refuse("Period must be YYYYMM")
+  const read = try (try SolanaRpc).accounts([project, ...months.map((period) => monthPledgeAddress(program, project, period))], "finalized")
+  if (read.value.length !== months.length + 1) return try refuse("Invalid RPC account list")
+  if (read.value[0] === undefined) return try refuse("Project account missing")
+  const decoded = decodeProject(read.value[0], program)
+  if (decoded.kind === "malformed") return try refuse("Malformed escrow project")
+  const openPledgedGross = decoded.value.pledgedOpen
+  if (openPledgedGross === undefined) return undefined
+  const pledges: ChainMonthPledge[] = []
+  for (const [index, period] of months.entries()) {
+    const account = read.value[index + 1]
+    if (account === undefined) {
+      pledges.push({ period, amount: 0n, open: false })
+      continue
+    }
+    const pledge = decodeMonthPledge(account, program)
+    if (pledge.kind === "malformed") return try refuse(pledge.issue === "invalidFlag" ? "Month pledge identity mismatch" : "Malformed month pledge")
+    if (pledge.value.project !== project || pledge.value.period !== period) return try refuse("Month pledge identity mismatch")
+    pledges.push({ period, amount: pledge.value.amount, open: pledge.value.open })
+  }
+  return { openPledgedGross, pledges } satisfies ChainPledges
 }

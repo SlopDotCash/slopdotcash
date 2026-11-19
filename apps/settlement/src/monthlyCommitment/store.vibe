@@ -1,9 +1,10 @@
-// spec/settlement/monthlyCommitment.md, "A journal begins with no authorization"; spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"
+// spec/settlement/monthlyCommitment.md, "A journal begins with no authorization"; spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/monthPledges.md, "Publication, a newer attempt and on-chain admission need a pledge in the run's own vault or the automatic default on"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { recoverDigest } from "@repo/platform/chain/evm"
 import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { type Attempt, type ChainFamily, type Commitment, type Event, type FundedMonth, type LegacyAuthorization, NotAState, apply, authorize, canAuthorize, decodeState, initial, noLegacy, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
+import { runConsent } from "../../gen/settlement__monthPledges.effect.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, formatPeriod } from "../kernels/calendar.ts"
 import { amountOf } from "../monthly/store.vibe"
@@ -193,16 +194,37 @@ export effect function authorizationText(signed: SignedPlan, first: string | und
   return JSON.stringify({ plan: signed.plan, signatureHex: signed.signatureHex, legacyAuthorization: { plan: legacy.plan, signatureHex: legacy.signatureHex } } satisfies MonthlyAuthorization)
 }
 
+export interface MonthRun {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+}
+
+function runVaultPledged(run: MonthRun): Statement {
+  return sql`EXISTS (SELECT 1 FROM monthly_payment_runs pr JOIN vault_month_pledges pp ON pp.project_id = pr.project_id AND pp.network = pr.network AND pp.vault = pr.vault AND pp.period = pr.period WHERE pr.project_id = ${run.projectId} AND pr.period = ${run.period} AND pr.network = ${run.network} AND pp.amount <> '0')`
+}
+
+function automaticOn(projectId: string): Statement {
+  return sql`coalesce((SELECT automatic FROM monthly_payment_settings WHERE project_id = ${projectId} ORDER BY sequence DESC LIMIT 1), 1) = 1`
+}
+
+schema ConsentRow { readonly pledged: number; readonly automatic: number }
+
+export effect function monthConsent(run: MonthRun) {
+  const row = try first(ConsentRow, sql`SELECT ${runVaultPledged(run)} AS pledged, ${automaticOn(run.projectId)} AS automatic`)
+  return runConsent(row?.pledged === 1, row?.automatic === 1)
+}
+
 effect function signedWrites(key: JournalKey, journal: Journal, signed: SignedPlan, now: number) {
   const period = formatPeriod(key.period)
   const published = try isoAt(now * 1000)
   const text = try authorizationText(signed, journal.rows.first?.authorization)
-  const automatic = sql`coalesce((SELECT automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1), 1) = 1`
-  const first = sql`INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) SELECT project_id, period, network, snapshot_sha256, ${text}, ${published} FROM monthly_payment_runs WHERE project_id = ${key.projectId} AND period = ${period} AND network = ${key.network} AND snapshot_sha256 = ${signed.plan.request.snapshotSha256} AND obligations_created_at IS NOT NULL AND ${automatic} ON CONFLICT DO NOTHING`
+  const consent = sql`(${runVaultPledged({ projectId: key.projectId, period, network: key.network })} OR ${automaticOn(key.projectId)})`
+  const first = sql`INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) SELECT project_id, period, network, snapshot_sha256, ${text}, ${published} FROM monthly_payment_runs WHERE project_id = ${key.projectId} AND period = ${period} AND network = ${key.network} AND snapshot_sha256 = ${signed.plan.request.snapshotSha256} AND obligations_created_at IS NOT NULL AND ${consent} ON CONFLICT DO NOTHING`
   const reservation = signed.plan.evmReservation
   if (reservation === undefined) return [first]
   const sequence = reservation.sourceSequence
-  return [first, sql`INSERT INTO monthly_payment_authorization_attempts (project_id, period, network, source_sequence, authorization, published_at) SELECT project_id, period, network, ${sequence}, ${text}, ${published} FROM monthly_payment_authorizations a WHERE project_id = ${key.projectId} AND period = ${period} AND network = ${key.network} AND snapshot_sha256 = ${signed.plan.request.snapshotSha256} AND ${automatic} AND NOT EXISTS (SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id = a.project_id AND n.period = a.period AND n.network = a.network AND (length(n.source_sequence) > length(${sequence}) OR (length(n.source_sequence) = length(${sequence}) AND n.source_sequence > ${sequence}))) ON CONFLICT DO NOTHING`]
+  return [first, sql`INSERT INTO monthly_payment_authorization_attempts (project_id, period, network, source_sequence, authorization, published_at) SELECT project_id, period, network, ${sequence}, ${text}, ${published} FROM monthly_payment_authorizations a WHERE project_id = ${key.projectId} AND period = ${period} AND network = ${key.network} AND snapshot_sha256 = ${signed.plan.request.snapshotSha256} AND ${consent} AND NOT EXISTS (SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id = a.project_id AND n.period = a.period AND n.network = a.network AND (length(n.source_sequence) > length(${sequence}) OR (length(n.source_sequence) = length(${sequence}) AND n.source_sequence > ${sequence}))) ON CONFLICT DO NOTHING`]
 }
 
 effect function completionWrites(key: JournalKey, now: number) {
@@ -226,7 +248,6 @@ function validated(key: JournalKey, context: JournalContext, signed: SignedPlan)
 }
 
 schema CurrentRow { readonly authorization: string }
-schema AutomaticRow { readonly automatic: number }
 
 export interface JournalRun {
   readonly events: ReadonlyArray<Event>
@@ -238,9 +259,8 @@ effect function published(key: JournalKey, text: string) {
   const scope = scopeOf(key)
   const current = try first(CurrentRow, sql`SELECT authorization FROM monthly_payment_current_authorizations WHERE ${scope}`)
   if (current?.authorization === text) return
-  const setting = try first(AutomaticRow, sql`SELECT automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1`)
   const failure = { projectId: key.projectId, period: formatPeriod(key.period), network: key.network }
-  if (setting !== undefined && setting.automatic !== 1) throw new PublicationSkipped(failure)
+  if (!(try monthConsent(failure))) throw new PublicationSkipped(failure)
   throw new PublicationConflict(failure)
 }
 

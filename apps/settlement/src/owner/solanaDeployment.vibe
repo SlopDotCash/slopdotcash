@@ -2,11 +2,12 @@
 import { sha256Hex } from "@repo/platform/crypto"
 import { type Account, type Address, SYSTEM_PROGRAM, SolanaRpc, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, address, addressOf } from "@repo/platform/chain/solana"
 import { decodeConfig, decodeProject, decodeVault } from "../chain/solana/accounts.ts"
-import { digest, readU32 } from "../chain/solana/bytes.ts"
+import { digest, readU32, readU64 } from "../chain/solana/bytes.ts"
 import { type Purpose, UPGRADEABLE_LOADER, configAddress, keyBytes, projectAddress, vaultAddress } from "../chain/solana/pda.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { readMint } from "../kernels/token2022.ts"
-import type { SolanaDeployment } from "../vault/policy.vibe"
+import { type Chain, PAYOUT_FEE_BASIS_POINTS, SECURITY_FEE_BASIS_POINTS, WITHDRAWAL_FEE_BASIS_POINTS } from "../kernels/networks.ts"
+import { PolicyInvalid, type PolicyScope, type SolanaDeployment, reviewedPolicy } from "../vault/policy.vibe"
 import { type FundingAsset, registryProjectDigest } from "./ownerInstructions.ts"
 
 export error DeploymentUnverified { message: string }
@@ -42,7 +43,7 @@ effect function finalizedAccount(at: Address) {
   return try (try SolanaRpc).account(at, "finalized")
 }
 
-effect function programCode(deployment: SolanaDeployment, program: Address) {
+effect function programCode(deployment: SolanaDeployment, program: Address, executedAtSlot: number | undefined) {
   const account = try finalizedAccount(program)
   if (account === undefined || !account.executable) throw unverified("Program is not executable")
   if (account.owner !== UPGRADEABLE_LOADER) {
@@ -59,6 +60,7 @@ effect function programCode(deployment: SolanaDeployment, program: Address) {
   if (content.length <= 45 || readU32(content, 0) !== 3 || flag > 1) throw unverified("Invalid ProgramData metadata")
   const authority = flag === 1 ? addressOf(content.slice(13, 45)) ?? null : null
   if (authority !== deployment.upgradeAuthority) throw unverified("Upgrade authority mismatch")
+  if (executedAtSlot !== undefined && Number(readU64(content, 4)) >= executedAtSlot) throw unverified("Program version was not effective before the receipt slot")
   return content.slice(45)
 }
 
@@ -73,9 +75,24 @@ effect function assetOf(mintText: string) {
   return { asset: { kind: "Token", mint, tokenProgram } as FundingAsset, decimals: read.decimals }
 }
 
-export effect function verifiedDeployment(deployment: SolanaDeployment) {
+export effect function reviewedDeployment(projectId: string, scope: PolicyScope, chain: Chain, entry: unknown) {
+  const [deployment] = try reviewedPolicy(projectId, {
+    schemaVersion: "1",
+    effectiveCycle: "2026-01",
+    chain,
+    feeBasisPoints: scope === "security-bounty" ? SECURITY_FEE_BASIS_POINTS : PAYOUT_FEE_BASIS_POINTS,
+    withdrawalFeeBasisPoints: WITHDRAWAL_FEE_BASIS_POINTS,
+    feeMode: "deduct-from-gross",
+    deployments: [entry],
+  }, scope)
+  if (deployment === undefined) throw new PolicyInvalid({ message: "Invalid escrow policy fields" })
+  return deployment
+}
+
+export effect function verifiedDeployment(deployment: SolanaDeployment, executedAtSlot?: number) {
+  if (executedAtSlot !== undefined && (!Number.isSafeInteger(executedAtSlot) || executedAtSlot < 0)) throw unverified("Invalid receipt slot")
   const program = try key(deployment.programId, "program")
-  const code = try programCode(deployment, program)
+  const code = try programCode(deployment, program, executedAtSlot)
   if ((try sha256Hex(code)) !== deployment.codeSha256) throw unverified("Deployed program bytes differ from reviewed digest")
   const config = decodeConfig(try finalizedAccount(configAddress(program)), program)
   if (config.kind !== "decoded") throw unverified("Escrow Config missing")

@@ -387,10 +387,6 @@ export effect function flagsQualification(input: FlagsRun & { readonly root: str
     report.results.flags = flags.first
     report.results.replayedFlags = flags.again
     report.results.acknowledgedFlagCommands = 2
-    const access = try replayed("access")
-    report.results.access = access.first
-    report.results.replayedAccess = access.again
-    report.results.acknowledgedAccessCommands = 2
     success = true
   }
 

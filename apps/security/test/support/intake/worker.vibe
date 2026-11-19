@@ -82,7 +82,7 @@ function ports(env: Env) {
       active: () => succeed([...projects.values()]),
       pausedProjects: () => succeed([...projects.values()].filter((project) => project.rowStatus === "Paused")),
       fence: () => succeed(sql`1`),
-      appendVaultRegistration: () => fail(new VaultRegistrationRefused({ code: "vault_setup_unavailable" })),
+      appendVaultRegistration: () => fail(new VaultRegistrationRefused({ code: "github_unavailable" })),
     } satisfies Registry.Shape),
     Layer.succeed(Authority, {
       repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),

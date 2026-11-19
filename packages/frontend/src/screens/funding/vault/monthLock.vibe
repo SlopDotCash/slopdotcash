@@ -1,0 +1,269 @@
+// spec/frontend/monthLock.md, "Story: Lock months from the owner's wallet"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"
+import { toAmount } from "@repo/settlement/kernels/amounts"
+import { type LockReply, type LockResult, Machine, type MonthLock, adapter, canCheck, canConnect, canLapse, canReadVault, canRequestLock, canRequestRelease, canReview, canWalletAnswer, checkIntervalMs, checkLimit, machine, reader, timer } from "../../../../gen/frontend__monthLock.effect.vibe"
+import { lockedLine } from "../../../../gen/frontend__vaultLocks.ts"
+import type { ChainPledge } from "../../../../gen/settlement__monthPledges.ts"
+import { positiveAmount } from "../../../../gen/settlement__money.ts"
+import type { FundingVault } from "../../../kernels/poolFunding.ts"
+import type { EvmConnection } from "../../../wallets/core/evm.vibe"
+import type { SolanaConnection } from "../../../wallets/core/solana.vibe"
+import { evmVaultOf } from "../../../wallets/owner/commitments.vibe"
+import { type LockFacts, type MonthPledgeRead, type SentLock, checkSentLock, lockFacts, sendLock, sendRelease } from "../../../wallets/owner/evmMonthLock.vibe"
+import type { EvmVault } from "../../../wallets/owner/evmVault.vibe"
+import { type SolanaLockPlan, checkSolanaLock, reviewSolanaLock, reviewSolanaRelease, sendSolanaLock } from "../../../wallets/owner/solanaMonthLock.vibe"
+import type { SolanaVault } from "../../../wallets/owner/solanaVault.vibe"
+import type { FundingDeployment, FundingProject } from "./project.schema.ts"
+import { solanaTerms } from "./savedPlans.ts"
+
+export type LockConnection =
+  | { readonly family: "evm"; readonly address: string; readonly evm: EvmConnection }
+  | { readonly family: "solana"; readonly address: string; readonly solana: SolanaConnection }
+
+export interface LockReview {
+  readonly periods: ReadonlyArray<number>
+  readonly amountMinor: bigint
+  readonly decimals: number | undefined
+  readonly depositGross: bigint
+  readonly existing: ReadonlyArray<MonthPledgeRead>
+  readonly alreadyLocked: boolean
+}
+
+type Reviewed =
+  | { readonly kind: "evm"; readonly facts: LockFacts }
+  | { readonly kind: "solana"; readonly plan: SolanaLockPlan }
+
+type Sent =
+  | { readonly kind: "evm"; readonly sent: SentLock }
+  | { readonly kind: "solana"; readonly plan: SolanaLockPlan; readonly signature: string }
+
+interface Memory {
+  readonly wallets: ReadonlyArray<string>
+  readonly reviewed: Reviewed | undefined
+  readonly sent: Sent | undefined
+}
+
+export error LockStopped { message: string }
+
+export const lockMessages = {
+  connectOwner: "Connect the vault owner's wallet first.",
+  connect: "Connect a wallet first.",
+  reviewAgain: "Review the lock again.",
+  unsupported: "This vault's network is not available for wallet actions here.",
+  incomplete: "The Solana vault configuration is incomplete.",
+} as const
+
+const ownerSender = 1
+
+export service LockDesk {
+  readonly owner: string
+  readonly evm: EvmVault | undefined
+  readonly solana: SolanaVault | undefined
+  readonly memory: Ref.Ref<Memory>
+}
+
+function stopped(message: string) {
+  return new LockStopped({ message })
+}
+
+function same(owner: string, wallet: string, evm: boolean): boolean {
+  return evm ? owner.toLowerCase() === wallet.toLowerCase() : owner === wallet
+}
+
+effect function amountOf(value: bigint) {
+  return try orDie(Effect.try(() => toAmount(value)))
+}
+
+effect function chainPledge(read: MonthPledgeRead) {
+  return { period: read.period, amount: try amountOf(read.amount), open: read.open } satisfies ChainPledge
+}
+
+export interface LockTerms {
+  readonly owner: string
+  readonly evm: EvmVault | undefined
+  readonly solana: SolanaVault | undefined
+}
+
+export function lockDesk(terms: LockTerms) {
+  const desk = Layer.effect(LockDesk, effect {
+    return { ...terms, memory: try Ref.make<Memory>({ wallets: [], reviewed: undefined, sent: undefined }) }
+  })
+  return Layer.merge(desk, machine())
+}
+
+export function lockServices(project: FundingProject, deployment: FundingDeployment) {
+  const terms = solanaTerms(deployment)
+  const solana: SolanaVault | undefined = terms === undefined ? undefined : { projectId: project.id, network: deployment.network, vault: deployment.vault, terms }
+  return lockDesk({ owner: deployment.owner, evm: evmVaultOf(deployment), solana })
+}
+
+export effect function lockMachine() {
+  return try Machine
+}
+
+effect function senderOf(address: string) {
+  const { owner, evm, memory } = try LockDesk
+  if (same(owner, address, evm !== undefined)) return ownerSender
+  const known = (try Ref.get(memory)).wallets
+  const found = known.findIndex((wallet) => same(wallet, address, evm !== undefined))
+  if (found >= 0) return ownerSender + 1 + found
+  try Ref.update(memory, (kept) => ({ ...kept, wallets: [...kept.wallets, address] }))
+  return ownerSender + 1 + known.length
+}
+
+effect function sent(event: Parameters<Machine.Shape["send"]>[0], by: number) {
+  const lock = try Machine
+  try orDie(lock.send(event, by))
+}
+
+export effect function readCard(row: FundingVault | undefined, free: bigint | null | undefined, nowSeconds: number) {
+  const lock = try Machine
+  const supported = row?.openPledgedGross !== undefined && row.openPledgedGross !== null
+  if (supported && (free === undefined || free === null)) return try lock.get()
+  const freeAmount = try amountOf(supported ? free ?? 0n : 0n)
+  const locked = try amountOf(supported ? row?.openPledgedGross ?? 0n : 0n)
+  if (canReadVault(try lock.get(), supported, ownerSender, freeAmount, locked, reader)) try sent({ type: "readVault", supported, owner: ownerSender, free: freeAmount, locked }, reader)
+  for (const pledge of row?.pledges ?? []) {
+    const month = try chainPledge(pledge)
+    if (lockedLine(month, nowSeconds) !== "ReleasableMonth") continue
+    if (canLapse(try lock.get(), month.amount, reader)) try sent({ type: "lapse", monthAmount: month.amount }, reader)
+  }
+  return try lock.get()
+}
+
+export effect function connectCard(connection: LockConnection) {
+  const lock = try Machine
+  const id = try senderOf(connection.address)
+  if (canConnect(try lock.get(), id, id)) try sent({ type: "connect", wallet: id }, id)
+  return try lock.get()
+}
+
+effect function reviewedOf(connection: LockConnection, count: number, amount: string, deposit: string) {
+  const { evm, solana } = try LockDesk
+  if (connection.family === "evm") {
+    if (evm === undefined) throw stopped(lockMessages.unsupported)
+    const facts = try lockFacts(connection.evm, evm, count, amount, deposit)
+    return { kind: "evm", facts } satisfies Reviewed
+  }
+  if (solana === undefined) throw stopped(lockMessages.incomplete)
+  return { kind: "solana", plan: try reviewSolanaLock(solana, connection.solana, count, amount) } satisfies Reviewed
+}
+
+function shownOf(reviewed: Reviewed): LockReview {
+  if (reviewed.kind === "evm") {
+    const { facts } = reviewed
+    return { periods: facts.periods, amountMinor: facts.amountMinor, decimals: facts.decimals, depositGross: facts.depositGross, existing: facts.existing, alreadyLocked: false }
+  }
+  const { plan } = reviewed
+  const existing = plan.requested.map((period) => (plan.periods.includes(period) ? { period, amount: 0n, open: false } : { period, amount: plan.amountMinor, open: true }))
+  return { periods: plan.requested, amountMinor: plan.amountMinor, decimals: plan.decimals, depositGross: 0n, existing, alreadyLocked: plan.transaction === null }
+}
+
+export effect function reviewCard(connection: LockConnection, count: number, amount: string, deposit: string, monthlyMinor: bigint) {
+  const lock = try Machine
+  const { memory } = try LockDesk
+  const id = try senderOf(connection.address)
+  if ((try lock.get()).wallet !== id) throw stopped(lockMessages.connectOwner)
+  const reviewed = try reviewedOf(connection, count, amount, deposit)
+  const shown = shownOf(reviewed)
+  const existing: ChainPledge[] = []
+  for (const read of shown.existing) existing.push(try chainPledge(read))
+  const event = { type: "review", count, amount: try amountOf(shown.amountMinor), monthly: try amountOf(monthlyMinor), existing, deposit: try amountOf(shown.depositGross), batches: reviewed.kind === "solana" || reviewed.facts.batches } as const
+  if (!canReview(try lock.get(), event.count, event.amount, event.monthly, event.existing, event.deposit, event.batches, id)) throw stopped(lockMessages.reviewAgain)
+  try sent(event, id)
+  const state = try lock.get()
+  try Ref.update(memory, (kept) => ({ ...kept, reviewed: state.phase === "LockReviewed" ? reviewed : undefined }))
+  return shown
+}
+
+effect function answered(reply: LockReply) {
+  const lock = try Machine
+  if (canWalletAnswer(try lock.get(), reply, adapter)) try sent({ type: "walletAnswer", reply }, adapter)
+}
+
+effect function prompted<A, E extends { readonly _tag: string }>(work: A!E) {
+  const lock = try Machine
+  const result: A | undefined = work catch effect (error) => {
+    if ((try lock.get()).phase !== "LockAwaiting") throw error
+    try answered(error._tag === "WalletDeclined" ? "LockDeclined" : "LockUnclear")
+    return undefined
+  }
+  if (result !== undefined) try answered("LockSigned")
+  return result
+}
+
+export effect function sendCard(connection: LockConnection) {
+  const lock = try Machine
+  const { evm, solana, memory } = try LockDesk
+  const id = try senderOf(connection.address)
+  const reviewed = (try Ref.get(memory)).reviewed
+  if (reviewed === undefined) throw stopped(lockMessages.reviewAgain)
+  const before = effect {
+    if (!canRequestLock(try lock.get(), id)) throw stopped(lockMessages.reviewAgain)
+    try sent({ type: "requestLock" }, id)
+  }
+  let next: Sent | undefined
+  if (reviewed.kind === "evm") {
+    if (evm === undefined || connection.family !== "evm") throw stopped(lockMessages.unsupported)
+    const done = try prompted(sendLock(connection.evm, evm, reviewed.facts, before))
+    next = done === undefined ? undefined : { kind: "evm", sent: done }
+  } else {
+    if (solana === undefined || connection.family !== "solana") throw stopped(lockMessages.unsupported)
+    const signature = try prompted(sendSolanaLock(solana, connection.solana, reviewed.plan, before))
+    next = signature === undefined ? undefined : { kind: "solana", plan: reviewed.plan, signature }
+  }
+  try Ref.update(memory, (kept) => ({ ...kept, reviewed: next === undefined ? kept.reviewed : undefined, sent: next ?? kept.sent }))
+  return try lock.get()
+}
+
+export effect function releaseCard(connection: LockConnection, period: number, monthMinor: bigint) {
+  const lock = try Machine
+  const { evm, solana, memory } = try LockDesk
+  const id = try senderOf(connection.address)
+  const monthAmount = try amountOf(monthMinor)
+  if ((try lock.get()).wallet !== id) throw stopped(lockMessages.connect)
+  const before = effect {
+    if (!canRequestRelease(try lock.get(), monthAmount, id)) throw stopped(lockMessages.reviewAgain)
+    try sent({ type: "requestRelease", monthAmount }, id)
+  }
+  let next: Sent | undefined
+  if (connection.family === "evm") {
+    if (evm === undefined) throw stopped(lockMessages.unsupported)
+    const done = try prompted(sendRelease(connection.evm, evm, period, before))
+    next = done === undefined ? undefined : { kind: "evm", sent: done }
+  } else {
+    if (solana === undefined) throw stopped(lockMessages.incomplete)
+    const plan = try reviewSolanaRelease(solana, connection.solana, period)
+    const signature = try prompted(sendSolanaLock(solana, connection.solana, plan, before))
+    next = signature === undefined ? undefined : { kind: "solana", plan, signature }
+  }
+  if (next !== undefined) try Ref.update(memory, (kept) => ({ ...kept, sent: next }))
+  return try lock.get()
+}
+
+effect function checked(connection: LockConnection, sent: Sent) {
+  const { evm, solana } = try LockDesk
+  if (sent.kind === "evm" && evm !== undefined && connection.family === "evm") return try checkSentLock(connection.evm, evm, sent.sent)
+  if (sent.kind === "solana" && solana !== undefined && connection.family === "solana") return try checkSolanaLock(solana, connection.solana, sent.plan, sent.signature)
+  return "ChainUnreadable" satisfies LockResult
+}
+
+export effect function watchCard(connection: LockConnection, onIncluded: void!!) {
+  const lock = try Machine
+  const { memory } = try LockDesk
+  for (let attempt = 0; attempt < checkLimit; attempt++) {
+    try Effect.sleep(checkIntervalMs)
+    const sentLock = (try Ref.get(memory)).sent
+    if ((try lock.get()).phase !== "LockChecking" || sentLock === undefined) return
+    const result: LockResult = checked(connection, sentLock) catch () => "ChainUnreadable" satisfies LockResult
+    if (canCheck(try lock.get(), result, timer)) try sent({ type: "check", result }, timer)
+    const phase = (try lock.get()).phase
+    if (phase === "LockChecking") continue
+    try Ref.update(memory, (kept) => ({ ...kept, sent: undefined }))
+    if (phase === "LockIncluded") try onIncluded
+    return
+  }
+}
+
+export function sendsDeposit(state: MonthLock): boolean {
+  return state.kind === "LockingMonths" && positiveAmount(state.deposit)
+}

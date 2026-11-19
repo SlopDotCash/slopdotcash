@@ -1,8 +1,9 @@
 // spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { isFullAwardSplit } from "@repo/security/client";
-import { Alert, Button, Disclosure, Field, Input, Select, Textarea } from "@repo/ui";
+import { Alert, Button, Field, Input, Select, Status, type StatusProps, Textarea, cn, focusRing } from "@repo/ui";
+import { ChevronDown } from "lucide-react";
 import { Result, Schema } from "effect";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { RewardAssetFields } from "../../setup/fields/RewardAssetFields.tsx";
 import { SecurityOffer } from "../program/SecurityOffer.tsx";
 import { ProgramTerms } from "../program/terms.schema.ts";
@@ -16,12 +17,10 @@ import {
   boundVault,
   contacts,
   editorSplit,
-  fieldProblem,
   initialForm,
   programProblem,
   proposedProgram,
   responseFields,
-  responseGroup,
   textFields,
   textGroups,
   textLimits,
@@ -46,12 +45,30 @@ const statusLabels: ReadonlyArray<readonly [EditorForm["status"], string]> = [
   ["closed", "Closed"],
 ];
 
-type Opened = { open: boolean; onOpenChange: (open: boolean) => void };
+const reviewTones: Readonly<Record<EditorForm["status"], StatusProps["presentation"]>> = {
+  draft: { tone: "Caution", icon: "Dot", label: "draft" },
+  "pending-approval": { tone: "Caution", icon: "Clock", label: "pending-approval" },
+  paused: { tone: "Caution", icon: "Pause", label: "paused" },
+  open: { tone: "Positive", icon: "Check", label: "open" },
+  closed: { tone: "Neutral", icon: "Ban", label: "closed" },
+};
 
-function TextGroup({ title, keys, form, busy, set, opened }: { title: string; keys: ReadonlyArray<TextField>; form: EditorForm; busy: boolean; set: (key: TextField, value: string) => void; opened: Opened }) {
+function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Disclosure summary={title} {...opened}>
-      <fieldset disabled={busy} className="flex flex-col gap-4 pt-2">
+    <details className="group flex flex-col gap-2">
+      <summary className={cn(focusRing, "inline-flex cursor-pointer list-none items-center gap-1 self-start rounded-sm font-medium text-foreground hover:text-primary [&::-webkit-details-marker]:hidden")}>
+        <ChevronDown aria-hidden className="size-4 -rotate-90 group-open:rotate-0 motion-safe:transition-transform motion-safe:duration-fast" />
+        {title}
+      </summary>
+      <div className="mt-2 flex flex-col gap-4">{children}</div>
+    </details>
+  );
+}
+
+function TextGroup({ title, keys, form, busy, set }: { title: string; keys: ReadonlyArray<TextField>; form: EditorForm; busy: boolean; set: (key: TextField, value: string) => void }) {
+  return (
+    <Group title={title}>
+      <fieldset disabled={busy} className="flex flex-col gap-4">
         <legend className="sr-only">{title}</legend>
         {textFields
           .filter(([key]) => keys.includes(key))
@@ -64,7 +81,7 @@ function TextGroup({ title, keys, form, busy, set, opened }: { title: string; ke
             );
           })}
       </fieldset>
-    </Disclosure>
+    </Group>
   );
 }
 
@@ -72,8 +89,12 @@ function Review({ project, form, actor }: Pick<ProgramEditorProps, "project" | "
   const proposed = decodeTerms({ ...proposedProgram(project, form, actor), status: "open" });
   return (
     <section aria-label="Review bounty terms" className="flex flex-col gap-3">
-      <h3 className="font-semibold text-foreground">Review before publishing</h3>
-      <p>Proposed status: {form.status}. Changes apply to future reports only.</p>
+      <h3 className="flex items-center gap-2 font-semibold text-foreground">
+        Review <Status presentation={reviewTones[form.status]} />
+      </h3>
+      <p>
+        <Status presentation={{ tone: "Neutral", icon: "Clock", label: "Future reports only" }} />
+      </p>
       {Result.isSuccess(proposed) ? <SecurityOffer terms={proposed.success} amountPreview={amountPreview(project, form)} /> : null}
       <dl className="flex flex-col gap-2 text-sm">
         <div>
@@ -93,17 +114,20 @@ function Review({ project, form, actor }: Pick<ProgramEditorProps, "project" | "
   );
 }
 
+function openGroups(event: FormEvent) {
+  let group = (event.target as HTMLElement).closest("details");
+  while (group !== null) {
+    group.open = true;
+    group = group.parentElement?.closest("details") ?? null;
+  }
+}
+
 /** The owner's public bounty terms: edited, reviewed, then published as a new revision against the current one. */
 export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps) {
   const [form, setForm] = useState<EditorForm>(() => initialForm(project));
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
-  const opened = (group: string): Opened => ({
-    open: open.has(group),
-    onOpenChange: (next) => setOpen((current) => new Set(next ? [...current, group] : [...current].filter((entry) => entry !== group))),
-  });
   const existing = project.existing?.terms;
   const fullAward = isFullAwardSplit(editorSplit(project));
   const later = afterApproval(project);
@@ -112,11 +136,6 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
-    const field = fieldProblem(form);
-    if (field !== undefined) {
-      opened(field.group).onOpenChange(true);
-      return setError(field.message);
-    }
     const problem = programProblem(project, form);
     if (problem !== undefined) return setError(problem);
     setError(null);
@@ -135,9 +154,7 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
       <h2 id="owner-security-title" className="text-xl font-semibold text-foreground">
         Security bounty
       </h2>
-      <p className="text-muted-foreground">
-        {fullAward ? "You decide each award. The researcher receives the whole award and Slop takes no share." : "You decide each award: 75% to the researcher, 25% to Slop."} Changes apply to future reports only.
-      </p>
+      <p className="text-muted-foreground">{fullAward ? "100% to researcher" : "75% researcher · 25% Slop"}</p>
       {existing ? (
         <p>
           <a href={`/projects/${project.slug}/security`} className="text-primary underline underline-offset-4 hover:decoration-2">
@@ -149,7 +166,7 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
           </a>
         </p>
       ) : null}
-      <form className="flex flex-col gap-4" onSubmit={submit}>
+      <form className="flex flex-col gap-4" onInvalidCapture={openGroups} onSubmit={submit}>
         <div hidden={reviewing} className="flex flex-col gap-4">
           <fieldset disabled={busy} className="flex flex-col gap-4">
             <legend className="text-sm font-medium text-foreground">Offer</legend>
@@ -162,7 +179,13 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
                 ))}
               </Select>
             </Field>
-            <Field label={`Published gross award (${amountCurrency(project, form)})`}>
+            <Field
+              label={
+                <>
+                  Award ({amountCurrency(project, form)}) <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Discretionary" }} />
+                </>
+              }
+            >
               <Input inputMode="decimal" required value={form.amount} onChange={(event) => update({ amount: event.target.value })} />
             </Field>
             {preview ? (
@@ -181,7 +204,6 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
                 </div>
               </dl>
             ) : null}
-            <p>A discretionary award, not a promised payment.</p>
             {existing?.amount.currency === "USD" && !existing.amount.asset ? (
               <p>USD</p>
             ) : (
@@ -194,18 +216,18 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
                 onChange={(field, value) => setForm((current) => ({ ...current, assetChanged: true, asset: { ...current.asset, [field]: value } }))}
               />
             )}
-            <Field label="Planned awards" hint={later ? "Leave blank to review each first qualifying finding separately." : undefined}>
-              <Input type="number" min="1" max="1000" required={!later} value={form.awards} onChange={(event) => update({ awards: event.target.value })} />
+            <Field label="Planned awards" hint={later ? "Blank = each finding reviewed separately" : undefined}>
+              <Input type="number" min="1" max="1000" required={!later} placeholder={later ? "No limit" : undefined} value={form.awards} onChange={(event) => update({ awards: event.target.value })} />
             </Field>
             <Field label={`Source commit (${existing?.scope.sourceRevisions[0]?.repository ?? project.repository})`}>
               <Input required minLength={40} maxLength={40} pattern="[0-9a-f]{40}" value={form.commit} onChange={(event) => update({ commit: event.target.value })} />
             </Field>
           </fieldset>
           {textGroups.map(([title, keys]) => (
-            <TextGroup key={title} title={title} keys={keys} form={form} busy={busy} opened={opened(title)} set={(key, value) => setForm((current) => ({ ...current, text: { ...current.text, [key]: value } }))} />
+            <TextGroup key={title} title={title} keys={keys} form={form} busy={busy} set={(key, value) => setForm((current) => ({ ...current, text: { ...current.text, [key]: value } }))} />
           ))}
-          <Disclosure summary={responseGroup} {...opened(responseGroup)}>
-            <fieldset disabled={busy} className="flex flex-col gap-4 pt-2">
+          <Group title="Response targets">
+            <fieldset disabled={busy} className="flex flex-col gap-4">
               <legend className="sr-only">Response targets</legend>
               {responseFields.map(([key, label, max]) => (
                 <Field key={key} label={label}>
@@ -219,9 +241,14 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
                   />
                 </Field>
               ))}
-              <p>Project contacts: {contacts(project, actor)}.</p>
             </fieldset>
-          </Disclosure>
+            <p className="flex flex-wrap items-center gap-2">
+              Contacts:{" "}
+              {contacts(project, actor).map((login) => (
+                <Status key={login} presentation={{ tone: "Neutral", icon: "Dot", label: `@${login}` }} />
+              ))}
+            </p>
+          </Group>
         </div>
         {reviewing ? (
           <>

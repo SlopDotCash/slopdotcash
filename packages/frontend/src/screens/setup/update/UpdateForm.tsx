@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"
 import { Button, Disclosure } from "@repo/ui";
 import { X } from "lucide-react";
 import { formatDate } from "../../projects/summary.ts";
@@ -8,6 +8,7 @@ import { TextField } from "../fields/ProjectFields.tsx";
 import { ClosureConsent } from "../proposal/ClosureConsent.tsx";
 import { type FundingField, FundingFields } from "../proposal/FundingFields.tsx";
 import type { ManagedManifest, PendingRepository } from "./manifest.schema.ts";
+import { ReadyLabelFields } from "./ReadyLabelFields.tsx";
 import type { FormGroup, UpdateField, UpdateReview } from "./revision.ts";
 
 export type Addition = { readonly state: "idle" | "loading" } | { readonly state: "error"; readonly message: string };
@@ -30,7 +31,7 @@ export type UpdateFormProps = {
 
 const fundingFields = { mode: "fundingMode", network: "network", assetKind: "assetKind", tokenAddress: "tokenAddress", tokenSymbol: "tokenSymbol", monthlyAmount: "monthlyAmount" } as const satisfies Record<FundingField, UpdateField>;
 
-/** The owner's edit of the current revision: listing, contribution rules, added repositories and monthly rewards. */
+/** The owner's edit of the current revision: listing and its links, contribution rules with the ready label, added repositories and monthly rewards. */
 export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, onPending, repository, addition, onRepository, onAdd, publishing }: UpdateFormProps) {
   const { value, added, choice } = review;
   const group = (name: FormGroup, summary: string) => ({ summary, open: open.has(name), onOpenChange: (next: boolean) => onOpen(name, next) });
@@ -41,17 +42,28 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
           <ProjectImageField value={value.image} onChange={(image) => onChange("image", image)} />
           <TextField label="Short description" name="headline" value={value.headline} error={shown("headline")} onChange={(entry) => onChange("headline", entry)} />
           <TextField label="Goal" name="goal" multiline value={value.goal} error={shown("goal")} onChange={(entry) => onChange("goal", entry)} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <TextField label="Website (optional)" name="website" placeholder="https://example.com" value={value.website} error={shown("website")} onChange={(entry) => onChange("website", entry)} />
+            <TextField label="X account (optional)" name="x" placeholder="@handle" value={value.x} error={shown("x")} onChange={(entry) => onChange("x", entry)} />
+          </div>
         </div>
       </Disclosure>
-      <Disclosure {...group("rules", "Contribution rules")}>
+      <ClosureConsent value={value.automaticClosure} onChange={(entry) => onChange("automaticClosure", entry)} />
+      <Disclosure summary="Contribution rules" open={open.has("rules") || open.has("moreRules")} onOpenChange={(next) => {
+          onOpen("rules", next);
+          if (!next) onOpen("moreRules", false);
+        }}
+      >
         <div className="flex flex-col gap-4 pt-2 text-foreground">
-          <TextField label="Acceptance criteria" name="criteria" multiline placeholder="What accepted GitHub outcomes qualify?" value={value.criteria} error={shown("criteria")} onChange={(entry) => onChange("criteria", entry)} />
-          <ClosureConsent value={value.automaticClosure} onChange={(entry) => onChange("automaticClosure", entry)} />
-          <h3 className="text-sm font-semibold">Contributor instructions</h3>
-          <p className="text-sm text-muted-foreground">These cannot override Slop's safety rules.</p>
-          {skillRuleFields.map((field) => (
-            <TextField key={field} label={contributionLabels[field].label} name={field} multiline placeholder={contributionLabels[field].placeholder} value={value[field]} error={shown(field)} onChange={(entry) => onChange(field, entry)} />
-          ))}
+          <TextField label="Acceptance criteria" name="criteria" multiline value={value.criteria} error={shown("criteria")} onChange={(entry) => onChange("criteria", entry)} />
+          <ReadyLabelFields value={value} shown={shown} onChange={onChange} />
+          <Disclosure {...group("moreRules", "More rules")}>
+            <div className="flex flex-col gap-4 pt-2">
+              {skillRuleFields.map((field) => (
+                <TextField key={field} label={contributionLabels[field].label} name={field} multiline placeholder={contributionLabels[field].placeholder} value={value[field]} error={shown(field)} onChange={(entry) => onChange(field, entry)} />
+              ))}
+            </div>
+          </Disclosure>
         </div>
       </Disclosure>
       <Disclosure {...group("repositories", "Repositories")}>
@@ -101,12 +113,9 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
         </Disclosure>
       ) : null}
       {review.offerVault ? (
-        <div className="flex flex-col items-start gap-2">
-          <p className="text-sm text-muted-foreground">Keeps this amount and asset. Publish this change to begin vault setup.</p>
-          <Button variant="secondary" onClick={() => onChange("fundingMode", "monthly")}>
-            Enable vault setup
-          </Button>
-        </div>
+        <Button variant="secondary" className="self-start" onClick={() => onChange("fundingMode", "monthly")}>
+          Set up vault
+        </Button>
       ) : null}
     </form>
   );

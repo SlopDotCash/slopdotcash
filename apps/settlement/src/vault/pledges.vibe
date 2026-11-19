@@ -1,0 +1,55 @@
+// spec/settlement/monthPledges.md, "A refresh reads the previous UTC month, the next eleven after the current one, and every month still stored open"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month's pledge and the vault's open total"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"
+import { evmRpc } from "@repo/platform/chain/evm"
+import { solanaRpc } from "@repo/platform/chain/solana"
+import { type PledgeRead, type StoredPledge, type StoredTotal, acceptedRead, pledgeReadWindow, servedPledges, storedOpenPeriods } from "../../gen/settlement__monthPledges.effect.vibe"
+import { formatPeriod, isPeriod } from "../kernels/calendar.ts"
+import type { RegisteredDeployment } from "./deployments.vibe"
+import { type ChainPledges, type ChainTotals, readEvmMonthPledges } from "./evmTotals.vibe"
+import { readSolanaMonthPledges } from "./solanaTotals.vibe"
+import { amountOfBigint, amountText, identityOf } from "./store.vibe"
+
+export interface PledgeOutcome {
+  readonly read: PledgeRead
+  readonly failure: string | undefined
+}
+
+export interface ServedPledge {
+  readonly period: string
+  readonly amount: string
+  readonly open: boolean
+}
+
+export const notRead: PledgeOutcome = { read: { tag: "PledgesNotRead" }, failure: undefined }
+
+export function pledgeReadPeriods(blockTime: number, stored: ReadonlyArray<StoredPledge>, network: string, vault: string): ReadonlyArray<number> {
+  return [...new Set([...pledgeReadWindow(blockTime), ...storedOpenPeriods([...stored], network, vault)])].sort((left, right) => left - right)
+}
+
+function reasonOf(error: { readonly _tag: string; readonly message?: unknown }): string {
+  return error._tag === "DeploymentMismatch" && typeof error.message === "string" ? error.message : error._tag
+}
+
+function outcomeOf(read: ChainPledges | undefined): PledgeOutcome {
+  if (read === undefined) return { read: { tag: "NoPledgeSupport" }, failure: undefined }
+  const accepted = acceptedRead({
+    tag: "PledgesRead",
+    openPledged: amountOfBigint(read.openPledgedGross),
+    pledges: read.pledges.map((pledge) => ({ period: pledge.period, amount: amountOfBigint(pledge.amount), open: pledge.open })),
+  })
+  return { read: accepted, failure: accepted.tag === "PledgesNotRead" ? "Invalid month pledges" : undefined }
+}
+
+export effect function readPledges(deployment: RegisteredDeployment, totals: ChainTotals, stored: ReadonlyArray<StoredPledge>, urls: Redacted.Redacted<ReadonlyArray<string>>, pin: string) {
+  const identity = identityOf(deployment, totals.decimals)
+  const periods = pledgeReadPeriods(totals.blockTime, stored, identity.network, identity.vault)
+  const read = deployment.family === "evm"
+    ? Effect.provide(readEvmMonthPledges(deployment, totals.block, periods), evmRpc({ urls, chainId: deployment.chainId })) catch (error) => reasonOf(error)
+    : Effect.provide(readSolanaMonthPledges(deployment, periods), solanaRpc({ urls, genesis: pin })) catch (error) => reasonOf(error)
+  return (typeof read === "string" ? { read: { tag: "PledgesNotRead" }, failure: read } : outcomeOf(read)) satisfies PledgeOutcome
+}
+
+export function servedVaultPledges(total: StoredTotal, stored: ReadonlyArray<StoredPledge>, network: string, vault: string, now: number): ReadonlyArray<ServedPledge> {
+  return servedPledges(total, [...stored], network, vault, now)
+    .sort((left, right) => left.period - right.period)
+    .flatMap((row) => isPeriod(row.period) ? [{ period: formatPeriod(row.period), amount: amountText(row.amount), open: row.open }] : [])
+}

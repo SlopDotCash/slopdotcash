@@ -30,8 +30,10 @@ interface Answer {
 
 const context: ExecutionContext = { waitUntil: () => undefined }
 const served = new Set(["base-sepolia"])
-const vaultDigits: Readonly<Record<string, string>> = { alpha: "1", bravo: "2", charlie: "3", delta: "4", echo: "7", foxtrot: "8", golf: "5" }
-const userStewarded = new Set(["golf"])
+const vaultDigits: Readonly<Record<string, string>> = { alpha: "1", bravo: "2", charlie: "3", delta: "4", echo: "7", foxtrot: "8", golf: "5", hotel: "a", india: "b", juliet: "c", november: "d", oscar: "e", papa: "f", quebec: "6" }
+const userStewarded = new Set(["golf", "quebec"])
+const listers: ReadonlyMap<string, string> = new Map([["oscar", "88"], ["quebec", "88"]])
+const restricted = new Set<string>()
 const asset = `0x${"6".repeat(40)}`
 const steward = "77"
 const maintainer = "55"
@@ -86,11 +88,24 @@ effect function proposed(env: Env, projectId: string) {
   try seed(env, "INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
   try seed(env, "INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (?, '2026-11', ?, ?, ?, '1000000000', 3, '2026-12-01T00:11:00.000Z')", projectId, manifest, manifestSha256, "a".repeat(64))
   for (const [actor, gross] of shares) try seed(env, "INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (?, '2026-11', ?, ?, ?, ?)", projectId, actor, `user${actor}`, gross, try origin(projectId, actor))
-  views.set(projectId, { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${projectId}`, integrationBranch: "main", aliases: [] }], closureConsent: false })
+  views.set(projectId, { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: userStewarded.has(projectId) ? "UserSteward" : "OrganizationSteward", listing: listers.has(projectId) ? { fromApplication: true, applicantGithubId: listers.get(projectId) } : { fromApplication: false }, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${projectId}`, integrationBranch: "main", aliases: [] }], closureConsent: false })
 }
 
-effect function snapshot(env: Env, projectId: string, free: string | null, observedAt: string) {
-  try seed(env, "INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, block_number, block_time, observed_at) VALUES (?, 'base-sepolia', 'base', ?, ?, 6, ?, '0', '0', '0', '0', '0', ?, '1', ?, ?) ON CONFLICT (project_id, network, vault) DO UPDATE SET free_balance = excluded.free_balance, total_deposited = excluded.total_deposited, observed_at = excluded.observed_at", projectId, vaultOf(projectId), asset, free ?? "0", free, observedAt, observedAt)
+effect function snapshot(env: Env, projectId: string, free: string | null, observedAt: string, openPledged: string | null = null) {
+  try seed(env, "INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, block_number, block_time, observed_at, open_pledged_gross) VALUES (?, 'base-sepolia', 'base', ?, ?, 6, ?, '0', '0', '0', '0', '0', ?, '1', ?, ?, ?) ON CONFLICT (project_id, network, vault) DO UPDATE SET free_balance = excluded.free_balance, total_deposited = excluded.total_deposited, observed_at = excluded.observed_at, open_pledged_gross = excluded.open_pledged_gross", projectId, vaultOf(projectId), asset, free ?? "0", free, observedAt, observedAt, openPledged)
+}
+
+effect function pledge(env: Env, projectId: string, period: string, amount: string, vault: string = vaultOf(projectId)) {
+  try seed(env, "INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, 'base-sepolia', ?, ?, ?, 1, '1', '2026-12-02T12:00:00.000Z')", projectId, vault, period, amount)
+}
+
+effect function automaticOff(env: Env, projectId: string) {
+  try seed(env, "INSERT INTO monthly_payment_settings (project_id, sequence, automatic, actor_id, created_at) VALUES (?, 1, 0, ?, '2026-12-02T12:00:00.000Z')", projectId, steward)
+}
+
+function amend(projectId: string, change: Partial<ProjectView>) {
+  const view = views.get(projectId)
+  if (view !== undefined) views.set(projectId, { ...view, ...change })
 }
 
 effect function banAccount(env: Env, projectId: string, githubId: string) {
@@ -116,11 +131,13 @@ const ports = Layer.mergeAll(
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [...views.values()] },
+    pausedProjects: () => effect { return [...views.values()].filter((view) => view.rowStatus === "Paused") },
     fence: () => effect { return sql`1` },
+    appendVaultRegistration: () => Effect.die(new Error("The monthly owner journeys register no vaults")),
   }),
   Layer.succeed(Restrictions, {
     account: (githubId) => effect { return { banned: banned.has(githubId) } },
-    project: () => effect { return { restricted: false } },
+    project: (projectId) => effect { return { restricted: restricted.has(projectId) } },
     fence: (account) => effect { return banned.has(account.githubId) ? sql`SELECT json('account banned') AS unbanned` : sql`SELECT 1 AS unbanned` },
     unbanned: (githubId) => effect { return banned.has(githubId) ? sql`0` : sql`1` },
   }),
@@ -135,6 +152,10 @@ const ports = Layer.mergeAll(
       return batch.notices.map((notice) => sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at) SELECT ${notice.eventKey}, ${notice.recipientGithubId}, 'payout_exception', ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${notice.sourceAt} WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
     },
     fanout: () => effect { return [] },
+    payoutRecipient: (project) => effect {
+      const lister = project.listing.fromApplication ? project.listing.applicantGithubId : project.listing.firstActorGithubId
+      return project.stewardAccount === "OrganizationSteward" && lister !== undefined ? lister : project.stewardGithubId
+    },
   }),
   Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
   Layer.succeed(PaymentNetworks, { served: [], urls: () => effect { return undefined } }),
@@ -245,7 +266,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     try same({ owner: owner.status, runs, single: frozen !== (field(owner.body, "run", "trigger") === "owner") }, { owner: 200, runs: 1, single: true })
   })
 
-  it.effect('An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month")', () => effect {
+  it.effect('An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month"; spec/settlement/monthPledges.md, "Another month\'s open pledge is held back from this month\'s funding"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     try proposed(env, "charlie")
@@ -265,6 +286,30 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     const waitingOf = (report: typeof first) => report.waiting.filter((entry) => entry.key === "charlie/2026-11").map((entry) => entry.reason)
     try same({ finalized: finalized.status, unknownFree: waitingOf(unknownFree), noticesAfterUnknownFree, first: waitingOf(first), second: waitingOf(second), stale: waitingOf(stale), funded: funded.created.includes("charlie/2026-11"), notices, obligations }, {
       finalized: 200, unknownFree: ["underfunded"], noticesAfterUnknownFree: 1, first: ["underfunded"], second: ["underfunded"], stale: ["stale-funding"], funded: true, notices: 1, obligations: 3,
+    })
+    for (const projectId of ["oscar", "papa", "quebec"]) {
+      try proposed(env, projectId)
+      try ask(env, `/${projectId}/monthly/2026-11/finalize`, { as: steward, json: { expectedSequence: 0 } })
+    }
+    try snapshot(env, "oscar", "1000000000", "2026-12-02T11:55:00.000Z", "300000000")
+    try pledge(env, "oscar", "2026-12", "300000000")
+    try snapshot(env, "papa", "1000000000", "2026-12-02T11:55:00.000Z", "1000000000")
+    try pledge(env, "papa", "2026-11", "1000000000")
+    try snapshot(env, "quebec", "500000000", "2026-12-02T11:55:00.000Z")
+    const pledged = try coordinate(env)
+    const audience = "SELECT count(*) AS n FROM notifications WHERE event_key = ? AND recipient_github_id = ?"
+    const oscarLister = try count(env, audience, "monthly-underfunded:oscar:2026-11", "88")
+    const oscarSteward = try count(env, audience, "monthly-underfunded:oscar:2026-11", steward)
+    const quebecSteward = try count(env, audience, "monthly-underfunded:quebec:2026-11", steward)
+    const quebecLister = try count(env, audience, "monthly-underfunded:quebec:2026-11", "88")
+    try same({
+      waiting: pledged.waiting.filter((entry) => ["oscar/2026-11", "papa/2026-11", "quebec/2026-11"].includes(entry.key)),
+      created: pledged.created.filter((key) => ["oscar/2026-11", "papa/2026-11", "quebec/2026-11"].includes(key)),
+      oscarLister, oscarSteward, quebecSteward, quebecLister,
+    }, {
+      waiting: [{ key: "oscar/2026-11", reason: "underfunded" }, { key: "quebec/2026-11", reason: "underfunded" }],
+      created: ["papa/2026-11"],
+      oscarLister: 1, oscarSteward: 0, quebecSteward: 1, quebecLister: 0,
     })
   })
 
@@ -287,18 +332,40 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('An owner who turned the automatic default off is never frozen at the cutoff (spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence")', () => effect {
+  it.effect('An owner who turned the automatic default off is never frozen at the cutoff, unless the month is pledged in the vault that pays it (spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project")', () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     try proposed(env, "echo")
     const off = try ask(env, "/echo/monthly-settings", { as: steward, json: { automatic: false } })
     const writer = try ask(env, "/echo/monthly-settings", { as: maintainer, json: { automatic: true } })
+    const months = ["hotel", "india", "juliet", "kilo", "lima", "mike", "november"]
+    for (const projectId of months) try proposed(env, projectId)
+    for (const projectId of ["hotel", "kilo", "lima", "mike", "november"]) try automaticOff(env, projectId)
+    for (const projectId of ["hotel", "india", "juliet", "mike", "november"]) try pledge(env, projectId, "2026-11", "1000000")
+    try pledge(env, "kilo", "2026-11", "1000000", `0x${"0".repeat(40)}`)
+    try pledge(env, "lima", "2026-12", "1000000")
+    amend("india", { rowStatus: "Paused" })
+    restricted.add("juliet")
+    amend("mike", { listingTier: "Retired" })
+    clock.set(Date.parse("2026-12-03T22:00:00.000Z"))
+    const lateCut = try ask(env, "/november/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 0, reason: "Half of the reviewed work was reverted upstream." } })
     clock.set(Date.parse("2026-12-04T00:05:00.000Z"))
     const report = try coordinate(env)
     const runs = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'echo'")
+    const reasonOf = (projectId: string) => report.frozen.includes(`${projectId}/2026-11`) ? "frozen" : report.waiting.find((entry) => entry.key === `${projectId}/2026-11`)?.reason
+    const atCutoff = Object.fromEntries(months.map((projectId) => [projectId, reasonOf(projectId)]))
+    clock.set(Date.parse("2026-12-04T22:00:00.000Z"))
+    const afterNotice = try coordinate(env)
+    const triggers = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id IN ('hotel', 'india', 'juliet', 'november') AND trigger = 'automatic' AND actor_id IS NULL")
     try same({
       off: [off.status, off.body], writer: errorOf(writer),
       waiting: report.waiting.filter((entry) => entry.key === "echo/2026-11").map((entry) => entry.reason), runs,
-    }, { off: [200, { automatic: false }], writer: [403, "owner_required"], waiting: ["automatic-off"], runs: 0 })
+      lateCut: lateCut.status, atCutoff, novemberAfterNotice: afterNotice.frozen.includes("november/2026-11"), triggers,
+    }, {
+      off: [200, { automatic: false }], writer: [403, "owner_required"], waiting: ["automatic-off"], runs: 0,
+      lateCut: 200,
+      atCutoff: { hotel: "frozen", india: "frozen", juliet: "frozen", kilo: "automatic-off", lima: "automatic-off", mike: "automatic-off", november: "cut-notice-pending" },
+      novemberAfterNotice: true, triggers: 4,
+    })
   })
 })

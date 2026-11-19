@@ -1,0 +1,364 @@
+// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/repositoryScope.md, "Story: A repository answers only to its permanent identity"
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { type ModelCall, ProviderFailure } from "@repo/platform/providers"
+import { rolesFrom } from "@repo/platform/roles"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import type { ProviderCall } from "@repo/platform/testing/providers"
+import { type HistoricalIntakeProgress, IntakeProgress } from "../src/import/diagnostics.vibe"
+import { publicationCommitPages } from "../src/import/commitPages.vibe"
+import { HistoricalPublication, PublicationFailed, importSettings, publishSubscription, publisherMethods } from "../src/import/publisher.vibe"
+import { QualificationFailed, qualificationTransport, qualifyValueModels, qualifyValueModelsCommand } from "../src/programs/qualify.vibe"
+import { consumePendingValueRequests } from "../src/value/inference/consumer.vibe"
+import { type Verdict, background, gateOf, importEnv, importReceipt, importServed } from "./support/catchup/importWorker.vibe"
+import { importRequest as requestFor } from "./support/catchup/requests.ts"
+import { commitPagePath, currentPath, registeredUnderFormerPath, renamed, requestedAtCurrentPath, scriptedAtCurrentPath, servedWithBlobUrls } from "./support/catchup/renamed.vibe"
+import { type World, installed, producerRevision, qualificationProviders, seeded, services, unresolvedVerdict } from "./support/inferenceWorker.vibe"
+
+service Journey {
+  readonly world: World
+  readonly db: D1Database
+}
+
+const administrator = { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" }
+
+const unpublished = Layer.succeed(HistoricalPublication, { publish: () => Effect.fail(new PublicationFailed()) })
+
+const Started = Layer.unwrap(effect {
+  const world = try seeded()
+  try renamed(world)
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: "slopbot-catchup-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  provide d1(db), webCrypto {
+    try (try D1).batch([...try registeredUnderFormerPath(), installed()])
+  }
+  const intake = Layer.mergeAll(importSettings({ SLOPBOT_PRODUCER_REVISION: producerRevision }), rolesFrom(administrator), unpublished)
+  return Layer.mergeAll(Layer.provideMerge(Layer.merge(services(world, db), intake), webCrypto), Layer.succeed(Journey, { world, db }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const site = "https://slop.test"
+const importUrl = `${site}/api/v1/slopbot/value-import`
+const streamed = "application/x-ndjson"
+const pendingFrame = "{\"status\":\"pending\"}\n"
+
+const envelope = (repository: string) => ({
+  installationId: 501,
+  mode: "single",
+  result: {
+    provenance: { channel: "chatgpt-subscription", provider: "openai", model: "subagent", client: "chatgpt", exactVariant: null, identityEvidence: "self-reported", apiReceipt: null },
+    assessedAt: "2026-10-20T00:00:00.000Z",
+    sourceDigest: "d".repeat(64),
+    rubricVersion: "slop-value-rubric:v1",
+  },
+  revisionReason: null,
+  sources: [{ repository, pullRequestNumber: 1, contextPaths: [] }],
+  supersedes: null,
+})
+
+function importRequest(cookie: string | undefined, body: string) {
+  return requestFor(importUrl, `application/json, ${streamed}`, cookie, body)
+}
+
+const decoder = new TextDecoder()
+
+effect function firstChunk(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  const chunk = try promise(() => reader.read())
+  return chunk.done ? "" : decoder.decode(chunk.value)
+}
+
+effect function rest(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  let text = ""
+  while (true) {
+    const chunk = try promise(() => reader.read())
+    if (chunk.done) return text
+    text += decoder.decode(chunk.value)
+  }
+}
+
+effect function opened(cookie: string, body: string) {
+  const gate = gateOf()
+  const running = background()
+  const response = try promise(() => importServed(importEnv(gate), importRequest(cookie, body), running.context))
+  const stream = response.body
+  if (stream === null) return try die(new Error("the import stream has no body"))
+  const reader = stream.getReader()
+  const first = try firstChunk(reader)
+  return { gate, running, response, reader, first, finishedBeforeVerdict: gate.finished() }
+}
+
+effect function decided(cookie: string, body: string, verdict: Verdict) {
+  const started = try opened(cookie, body)
+  try sync(() => started.gate.decide(verdict))
+  const frames = try rest(started.reader)
+  return { ...started, frames }
+}
+
+function streamHeaders(response: globalThis.Response) {
+  return [response.status, response.headers.get("content-type"), response.headers.get("cache-control"), response.headers.get("x-content-type-options")]
+}
+
+effect function logged<A, E, R>(program: A!E!R) {
+  const lines: string[] = []
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const first = Array.isArray(message) ? message[0] : message
+    if (typeof first === "string") lines.push(first)
+  })], { mergeWithExisting: true })
+  const outcome = try exit(Effect.provide(program, capture))
+  return { outcome, lines }
+}
+
+const sonnet = (call: ProviderCall) => call.route === "surplus-anthropic" && call.model === "claude-sonnet-5.5"
+const orbio = (call: ProviderCall) => call.route === "orbio" && call.model === "anthropic/claude-sonnet-5.5"
+const marked = (call: ProviderCall) => call.messages.some((message) => message.content.includes("catch-up qualification"))
+
+function qualificationCall(route: ModelCall["route"], model: string): ModelCall {
+  return { route, model, system: "Answer in JSON.", messages: [{ role: "user", content: "{\"item\":{\"contentOmittedFromModel\":true},\"case\":\"catch-up qualification\"}" }], maxTokens: 64 }
+}
+
+effect function transportAfter(world: World, calls: ReadonlyArray<ModelCall>) {
+  provide qualificationProviders(world, { ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" }) {
+    const transport = try qualificationTransport("value")
+    const outcomes: string[] = []
+    for (const call of calls) {
+      const outcome = transport.complete(call) catch effect (failure) => match (failure) {
+        when ProviderFailure: failure.reason;
+        default: throw failure;
+      }
+      outcomes.push(typeof outcome === "string" ? outcome : "served")
+    }
+    const meter = try transport.meter()
+    return { outcomes, mayCall: try transport.mayCall(), requests: meter.requests, violated: meter.violated }
+  }
+}
+
+const unviewed = {
+  status: "unresolved",
+  tier: null,
+  rationale: "The capture was not viewed.",
+  dimensions: Object.fromEntries(["alignment", "impact", "complexity", "verification", "maintenance", "overlap"].map((dimension) => [dimension, "Unviewed media prevents assessment."])),
+  limitations: ["The media was not viewed."],
+  evidenceUrls: [],
+  relatedPullRequests: [],
+  reviews: [],
+}
+
+const media = (call: ProviderCall) => call.messages.some((message) => message.content.includes("capture.webm"))
+
+effect function deniedThenOrbio(world: World) {
+  const resetsAt = "2099-01-01T00:00:00.000Z"
+  try Effect.try(() => {
+    world.providers.reply((call) => media(call) && sonnet(call), { failure: "spendDenied", resetsAt })
+    world.providers.reply((call) => media(call) && orbio(call), { text: JSON.stringify(unviewed) }, { costMicro: 900 })
+    world.providers.reply((call) => media(call) && sonnet(call), { failure: "spendDenied", resetsAt })
+    world.providers.reply((call) => media(call) && orbio(call), { text: JSON.stringify({ units: [{ claimIds: ["claim-capture"], assessment: unviewed }] }) }, { costMicro: 900 })
+  })
+  const start = world.providers.calls.length
+  provide qualificationProviders(world, { ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" }) {
+    const summaries = try qualifyValueModels(false)
+    return {
+      summaries: summaries.map((summary) => [summary.path, summary.provider, summary.requestedModel, summary.requests, summary.outcome]),
+      asked: world.providers.calls.slice(start).filter(media).map((call) => [call.route, call.model]),
+    }
+  }
+}
+
+effect function refusedRun(world: World, variables: Readonly<Record<string, string>>) {
+  const configured = ConfigProvider.layer(ConfigProvider.fromEnvRecord(variables))
+  const refused = Effect.provide(qualifyValueModelsCommand([]), Layer.mergeAll(configured, outboundVia({ fetch: (request) => world.github.fetch(request) }), webCrypto)) catch effect (error) => match (error) {
+    when QualificationFailed: error.message;
+    default: throw error;
+  }
+  return typeof refused === "string" ? refused : "ran"
+}
+
+layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('An administrator streams a historical import through the publisher binding: pending frames until the one terminal frame, refusals stay JSON, a malformed receipt ends in 409, and a cancelled reader leaves publication running (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start")', () => effect {
+    const body = JSON.stringify(envelope(currentPath))
+    const refusals: unknown[] = []
+    for (const [cookie, sent, configured] of [[undefined, body, true], ["8", body, true], ["7", "{", true], ["7", body, false]] as const) {
+      const gate = gateOf()
+      const response = try promise(() => importServed(importEnv(configured ? gate : undefined), importRequest(cookie, sent), background().context))
+      const text = try promise(() => response.text())
+      refusals.push([response.status, (response.headers.get("content-type") ?? "").includes(streamed), text, gate.asked()])
+    }
+    const published = try decided("7", body, "publish")
+    const large = try decided("7", JSON.stringify({ ...envelope(currentPath), padding: "x".repeat(26 * 1024 * 1024) }), "publish")
+    const refused = try decided("7", body, "refuse")
+    const malformed = try decided("7", body, "malformed")
+    const cancelled = try opened("7", body)
+    try promise(() => cancelled.reader.cancel())
+    try sync(() => cancelled.gate.decide("publish"))
+    try promise(() => cancelled.running.settled())
+    const receiptFrame = `${JSON.stringify({ status: 200, body: importReceipt })}\n`
+    const refusalFrame = `${JSON.stringify({ status: 409, body: { error: "assessment_not_published" } })}\n`
+    const streamedHeaders = [200, streamed, "private, no-store, no-transform", "nosniff"]
+    try same({
+      refusals,
+      published: [streamHeaders(published.response), published.first, published.finishedBeforeVerdict, published.frames, published.gate.finished()],
+      large: [large.response.status, large.first, large.frames, large.gate.asked()],
+      refused: [streamHeaders(refused.response), refused.first, refused.frames, refused.gate.finished()],
+      malformed: [streamHeaders(malformed.response), malformed.first, malformed.frames, malformed.gate.finished()],
+      cancelled: [cancelled.first, cancelled.gate.asked(), cancelled.gate.finished()],
+    }, {
+      refusals: [
+        [401, false, "{\"error\":\"unauthorized\"}", 0],
+        [403, false, "{\"error\":\"forbidden\"}", 0],
+        [400, false, "{\"error\":\"invalid_request\"}", 0],
+        [503, false, "{\"error\":\"intake_unavailable\"}", 0],
+      ],
+      published: [streamedHeaders, pendingFrame, 0, receiptFrame, 1],
+      large: [200, pendingFrame, receiptFrame, 1],
+      refused: [streamedHeaders, pendingFrame, refusalFrame, 0],
+      malformed: [streamedHeaders, pendingFrame, refusalFrame, 1],
+      cancelled: [pendingFrame, 1, 1],
+    })
+  })
+
+  it.effect('A failed import records its stages in order, collecting every source\'s repository, registry and installation facts before admission, logs one seven-field line and returns the original refusal unchanged (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start")', () => effect {
+    const input = envelope("ada/missing")
+    const stages: HistoricalIntakeProgress[] = []
+    const observer: IntakeProgress.Shape = { observe: (progress) => sync(() => { stages.push(progress) }) }
+    const observed = (submitted: unknown) => effect {
+      provide IntakeProgress = observer {
+        return try publishSubscription("7", submitted, undefined)
+      }
+    }
+    const direct = try exit(observed(input))
+    const single = stages.splice(0).map((progress) => [progress.stage, progress.sourceIndex, progress.sourceCount])
+    const twoSources = {
+      ...envelope(currentPath),
+      mode: "work-unit",
+      supersedes: [],
+      legacyPredecessors: [],
+      sources: [{ repository: currentPath, pullRequestNumber: 1, contextPaths: [] }, { repository: "ada/missing", pullRequestNumber: 1, contextPaths: [] }],
+    }
+    const joint = try exit(observed(twoSources))
+    const jointStages = stages.map((progress) => [progress.stage, progress.sourceIndex, progress.sourceCount])
+    const diagnosed = try logged(publisherMethods.publishSubscription("7", input))
+    const failure = Exit.isFailure(diagnosed.outcome) ? Cause.squash(diagnosed.outcome.cause) : undefined
+    const tag = failure !== null && typeof failure === "object" && "_tag" in failure ? failure._tag : undefined
+    const message = failure !== null && typeof failure === "object" && "message" in failure && typeof failure.message === "string" ? failure.message : undefined
+    const intake = try Effect.try(() => diagnosed.lines.filter((line) => line.includes("historical-intake-failure")).map((line) => JSON.parse(line) as unknown))
+    try same({
+      direct: Exit.isFailure(direct),
+      stages: single,
+      joint: Exit.isFailure(joint),
+      jointStages,
+      tag,
+      intake,
+    }, {
+      direct: true,
+      stages: [["envelope", null, null], ["installation", null, 1], ["github-client", null, 1], ["source-repository", 0, 1]],
+      joint: true,
+      jointStages: [["envelope", null, null], ["installation", null, 2], ["github-client", null, 2], ["source-repository", 0, 2], ["source-registry", 0, 2], ["source-installation", 0, 2], ["source-repository", 1, 2]],
+      tag: "NotFound",
+      intake: [{
+        event: "historical-intake-failure",
+        stage: "source-repository",
+        sourceIndex: 0,
+        sourceCount: 1,
+        errorName: "GitHubError",
+        httpStatus: 404,
+        messageSha256: message === undefined ? null : try sha256Hex(message),
+      }],
+    })
+  })
+
+  it.effect('One publication reads each verified commit page once, and a client that has not verified the repository reads GitHub again (spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge")', () => effect {
+    const { world } = try Journey
+    const head = world.heads.get(1) ?? ""
+    const page = commitPagePath(head)
+    const fetched = () => world.github.requests.filter((request) => request.url.endsWith(page)).length
+    const before = fetched()
+    try servedWithBlobUrls(world, head)
+    const pages = publicationCommitPages()
+    const scoped = (try GitHubApp).asInstallation("501")
+    const counts = effect {
+      provide scoped {
+        const verifying = try pages.wrap
+        try verifying.json(`/repos/${currentPath}`, Schema.Unknown)
+        try verifying.json(page, Schema.Unknown)
+        try verifying.json(page, Schema.Unknown)
+        const afterVerified = fetched() - before
+        const unverified = try pages.wrap
+        try unverified.json(page, Schema.Unknown)
+        const afterUnverified = fetched() - before
+        try unverified.json(`/repos/${currentPath}`, Schema.Unknown)
+        try unverified.json(page, Schema.Unknown)
+        return [afterVerified, afterUnverified, fetched() - before]
+      }
+    }
+    try same(try counts, [1, 2, 2])
+  })
+
+  it.effect('A renamed repository registered under its former path publishes at its current path once (spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence")', () => effect {
+    const { world } = try Journey
+    try (try D1).batch(requestedAtCurrentPath("catchup-renamed-1", 1, "2026-11-10T00:00:00.000Z"))
+    try Effect.try(() => world.providers.reply((call) => sonnet(call) && call.messages.some((message) => message.content.includes("Fix 1")), { text: unresolvedVerdict(1), model: "claude-sonnet-5.5" }, { input: 120, output: 80, costMicro: 1500 }))
+    try scriptedAtCurrentPath(world, 1)
+    const outcome = try consumePendingValueRequests()
+    const rows = try (try D1).all(sql`SELECT json_extract(record_json, '$.repositoryDatabaseId') AS repositoryId, json_extract(record_json, '$.pullRequestNumber') AS pull FROM slopbot_value_journal`)
+    try same({ outcome, rows }, { outcome: ["Published"], rows: [{ repositoryId: 7001, pull: 1 }] })
+  })
+
+  it.effect('The qualification transport allows one fallback after an exact Orbio quota refusal, stops on any other unreceipted error, an Orbio quota type with another code included, charges the refusal its bound, and a real run needs both keys; each value path asks Surplus Sonnet first and, after a spending denial, finishes through Orbio in two requests (spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")', () => effect {
+    const { world } = try Journey
+    const quota = { raw: { status: 402, body: { error: { type: "insufficient_quota", code: "insufficient_quota" } } } } as const
+    try Effect.try(() => {
+      world.providers.reply((call) => orbio(call) && marked(call), quota)
+      world.providers.reply((call) => sonnet(call) && marked(call), { text: "{}", model: "claude-sonnet-5.5" }, { costMicro: 0 })
+    })
+    const fallback = try transportAfter(world, [qualificationCall("orbio", "anthropic/claude-sonnet-5.5"), qualificationCall("surplus-anthropic", "claude-sonnet-5.5")])
+    try Effect.try(() => world.providers.reply((call) => orbio(call) && marked(call), { raw: { status: 503, body: { error: { type: "insufficient_quota" } } } }))
+    const unavailable = try transportAfter(world, [qualificationCall("orbio", "anthropic/claude-sonnet-5.5")])
+    try Effect.try(() => world.providers.reply((call) => orbio(call) && marked(call), { raw: { status: 402, body: { error: { type: "authentication_error" } } } }))
+    const unauthenticated = try transportAfter(world, [qualificationCall("orbio", "anthropic/claude-sonnet-5.5")])
+    try Effect.try(() => world.providers.reply((call) => orbio(call) && marked(call), { raw: { status: 402, body: { error: { type: "insufficient_quota", code: "other" } } } }))
+    const otherCode = try transportAfter(world, [qualificationCall("orbio", "anthropic/claude-sonnet-5.5")])
+    try Effect.try(() => {
+      world.providers.reply((call) => orbio(call) && marked(call), quota)
+      world.providers.reply((call) => sonnet(call) && marked(call), { text: "{}", model: "claude-sonnet-5.5" }, { costMicro: 1_000_000 })
+    })
+    const expensive = try transportAfter(world, [qualificationCall("orbio", "anthropic/claude-sonnet-5.5"), qualificationCall("surplus-anthropic", "claude-sonnet-5.5")])
+    const release = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "push" }
+    const refusal = "Slopbot model qualification requires the protected main release and both provider keys."
+    try same({
+      fallback: [fallback.outcomes.length, fallback.mayCall, fallback.requests, fallback.violated],
+      unavailable: [unavailable.mayCall, unavailable.requests, unavailable.violated],
+      unauthenticated: [unauthenticated.mayCall, unauthenticated.requests, unauthenticated.violated],
+      otherCode: [otherCode.mayCall, otherCode.requests],
+      expensive: [expensive.mayCall, expensive.requests, expensive.violated],
+      orbioOnly: try refusedRun(world, { ...release, ORBIO_API_KEY: "orbio-test-credential" }),
+      surplusOnly: try refusedRun(world, { ...release, SURPLUS_API_KEY: "surplus-test-credential" }),
+      branch: try refusedRun(world, { ...release, GITHUB_REF: "refs/heads/feature", ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" }),
+      routed: try deniedThenOrbio(world),
+    }, {
+      fallback: [2, false, 2, false],
+      unavailable: [false, 1, false],
+      unauthenticated: [false, 1, false],
+      otherCode: [false, 1],
+      expensive: [false, 2, true],
+      orbioOnly: refusal,
+      surplusOnly: refusal,
+      branch: refusal,
+      routed: {
+        summaries: ["single", "joint"].map((path) => [path, "orbio", "anthropic/claude-sonnet-5.5", 2, "unviewed media unresolved"]),
+        asked: [0, 1].flatMap(() => [["surplus-anthropic", "claude-sonnet-5.5"], ["orbio", "anthropic/claude-sonnet-5.5"]]),
+      },
+    })
+  })
+})

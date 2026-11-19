@@ -11,7 +11,8 @@ import { FormData, Request as ApiRequest, Response } from "miniflare"
 import { InspectRefused, InspectUsage, inspect } from "../src/programs/inspect.vibe"
 import { AgentClientsRefused, agentClientGate, requiredClients } from "../src/release/evidence/agentClients.vibe"
 import { EvidenceRefused, type Verification, sealEvidence, validateEvidence } from "../src/release/evidence/bundle.vibe"
-import { captureEvidence, committedBuild, servedArtifacts } from "../src/release/evidence/capture.vibe"
+import { captureEvidence, committedBuild, remoteArtifactPaths, servedArtifacts } from "../src/release/evidence/capture.vibe"
+import { evidence } from "../src/release/evidence/command.vibe"
 import { type PinRequest, activateCandidate, confirmActivation, pinActive, pinnedWrangler, rotateRobinhoodRpc, uploadCandidate } from "../src/release/rpc/command.vibe"
 import { type ContractProbe, RotationRefused } from "../src/release/rpc/qualify.vibe"
 import { cloudflare } from "../src/release/wrangler/cloudflare.vibe"
@@ -322,13 +323,21 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const retyped = new Map(hosted)
     retyped.set("SKILL.md", { bytes: skill, type: "application/octet-stream" })
     const wrongType = try settled(routed(servedArtifacts("https://slop.cash", local, `${sourceSha}-3`), asFetch(siteHost(retyped))))
+    const rolePaths = ["contribute/SKILL.md", "maintain/SKILL.md", ".well-known/agent-skills/slop-contributor/SKILL.md", ".well-known/agent-skills/slop-maintainer/SKILL.md"]
+    const roleLocal = rolePaths.map((path) => ({ path, bytes: encoder.encode(`# ${path}\n`) }))
+    const roleHosted = new Map<string, { readonly bytes: Uint8Array; readonly type: string }>(roleLocal.map((artifact) => [artifact.path, { bytes: artifact.bytes, type: "text/markdown; charset=utf-8" }]))
+    const roleSkills = (try routed(servedArtifacts("https://slop.cash", roleLocal, `${sourceSha}-roles`), asFetch(siteHost(roleHosted)))).map((entry) => entry.path)
+    const roleSkillsCaptured = rolePaths.every((path) => remoteArtifactPaths.includes(path))
+    const changedMaintainer = new Map(roleHosted)
+    changedMaintainer.set("maintain/SKILL.md", { bytes: encoder.encode("# maintain/SKILL.MD\n"), type: "text/markdown" })
+    const maintainerChanged = try settled(routed(servedArtifacts("https://slop.cash", roleLocal, `${sourceSha}-maintainer`), asFetch(siteHost(changedMaintainer))))
     const staleBuild = try settled(committedBuild(encoder.encode(buildManifest(otherSha)), sourceSha))
     const currentBuild = try committedBuild(encoder.encode(buildManifest(sourceSha)), sourceSha)
 
     try Effect.try(() => assert.deepStrictEqual({
       sealed, valid, otherSource, mixed, staged, partial, resealed, afterReseal, tamperedLog, extraKey, extraFile, inside,
       honest: honest.map((entry) => ({ path: entry.path, status: entry.status, bytes: entry.bytes, contentType: entry.contentType })),
-      tamperedSite, wrongType, staleBuild, currentBuild: currentBuild.revision,
+      tamperedSite, wrongType, roleSkills, roleSkillsCaptured, maintainerChanged, staleBuild, currentBuild: currentBuild.revision,
     }, {
       sealed: "ok",
       valid: "ok",
@@ -348,12 +357,15 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       ],
       tamperedSite: "https://slop.cash SKILL.md does not match the verified artifact",
       wrongType: "https://slop.cash SKILL.md returned application/octet-stream; expected text/markdown",
+      roleSkills: ["contribute/SKILL.md", "maintain/SKILL.md", ".well-known/agent-skills/slop-contributor/SKILL.md", ".well-known/agent-skills/slop-maintainer/SKILL.md"],
+      roleSkillsCaptured: true,
+      maintainerChanged: "https://slop.cash maintain/SKILL.md does not match the verified artifact",
       staleBuild: `the skill manifest revision ${otherSha} does not match the tested revision ${sourceSha}`,
       currentBuild: sourceSha,
     }))
   }))
 
-  it.effect('Refuse release when an affected workflow lacks a recorded agent-client result (spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full")', () => scoped(effect {
+  it.effect('Release without agent-client records, which stay pull-request evidence (spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-agent-clients-" })
@@ -390,10 +402,12 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     try fs.remove(records)
     served.revision = head
     const nothingChanged = try gate(unrelated)
-    served.revision = undefined
-    const unverifiedRelease = try gate(unrelated)
+    const log = new TextEncoder().encode(`[Slop] published and verified ${unrelated}\n`)
+    const out = files.join(directory, "evidence", "production")
+    try sealEvidence(out, verification(unrelated, { bytes: log.length, sha256: try sha256Hex(log) }), log)
+    const releasedWithoutRecords = try settled(configured(evidence(["validate", out]), { GITHUB_SHA: unrelated }))
 
-    try Effect.try(() => assert.deepStrictEqual({ complete, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, unverifiedRelease }, {
+    try Effect.try(() => assert.deepStrictEqual({ complete, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, releasedWithoutRecords }, {
       complete: "ok",
       missingClient: `release refused: the affected agent-client workflows lack passing records for ${head}: contributor-skill has no recorded result for muse`,
       missingModel: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
@@ -402,7 +416,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       failed: `release refused: the affected agent-client workflows lack passing records for ${head}: hermes-agent 1.4.2 (anthropic / claude-opus-4-5) failed slop-skill: the client could not install the skill; hermes-agent 1.4.2 (anthropic / claude-opus-4-5) failed contributor-skill: the client could not install the skill`,
       staleSource: "release refused",
       nothingChanged: "ok",
-      unverifiedRelease: "the agent-client records must be a non-empty regular file within 1 MiB",
+      releasedWithoutRecords: "ok",
     }))
   }))
 

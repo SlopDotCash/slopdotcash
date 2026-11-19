@@ -1,7 +1,7 @@
 // spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"
 import { type ModelCall, type ModelReply, Provider as Gateways, type ProviderFailure, type Usage, providers } from "@repo/platform/providers"
 import { type Denial, blocksRoute } from "../../gen/slopbot__budgetBlocks.effect.vibe"
-import { type CallOutcome, type Provider, type ReviewStatus, expectedModel, initial, nextProvider } from "../../gen/slopbot__review.effect.vibe"
+import { type CallOutcome, type Provider, type ReviewStatus, expectedModel, initial, nextProvider, routeEnd } from "../../gen/slopbot__review.effect.vibe"
 
 export type Gateway = "orbio" | "surplus"
 
@@ -62,8 +62,8 @@ export type RouteStatus = Extract<ReviewStatus, "InFlight" | "Answered" | "Budge
 
 export interface RouteControl<E, R> {
   readonly recheck: () => RouteStatus!E!R
-  readonly skip: () => RouteStatus!E!R
-  readonly record: (call: CallRecord, provider: Provider, denial: Denial) => RouteStatus!E!R
+  readonly skip: (provider: Provider, remembered: Denial | undefined) => RouteStatus!E!R
+  readonly record: (call: CallRecord, provider: Provider, denial: Denial, remembered: Denial | undefined) => RouteStatus!E!R
 }
 
 export interface ProviderKeys {
@@ -78,6 +78,24 @@ function chainFrom(first: Provider) {
 }
 
 export const triageRoute: ReadonlyArray<Provider> = chainFrom(initial.provider)
+
+function endOf(first: Provider) {
+  let provider = first
+  while (nextProvider(provider) !== provider) provider = nextProvider(provider)
+  return provider
+}
+
+const backstop = endOf(initial.provider)
+
+function following(route: ReadonlyArray<Provider>, provider: Provider, outcome: CallOutcome | "skipped") {
+  if (provider === backstop) return undefined
+  const next = outcome === "CallFailed" ? nextProvider(provider) : backstop
+  return route.includes(next) ? next : undefined
+}
+
+function ended(remembered: Denial | undefined): RouteStatus {
+  return routeEnd(remembered?.resetAt ?? 0) === "BudgetBlocked" ? "BudgetBlocked" : "RetryableFailure"
+}
 
 export function stepOf(provider: Provider): Step {
   const gateway: Gateway = provider === "OrbioSonnet" ? "orbio" : "surplus"
@@ -177,12 +195,8 @@ export function freeRoute<E, R>(mayCall: () => boolean!E!R): RouteControl<E, R> 
       const status: RouteStatus = allowed ? "InFlight" : "RetryableFailure"
       return status
     },
-    skip: () => Effect.succeed<RouteStatus>("InFlight"),
-    record: (call, _provider, denial) => effect {
-      const now = try Clock.currentTimeMillis
-      const status: RouteStatus = call.outcome === "ok" ? "Answered" : blocksRoute(denial) && denial.resetAt > now ? "BudgetBlocked" : "InFlight"
-      return status
-    },
+    skip: (provider, remembered) => Effect.succeed(provider === backstop ? ended(remembered) : "InFlight"),
+    record: (call, provider, _denial, remembered) => Effect.succeed(call.outcome === "ok" ? "Answered" : provider === backstop ? ended(remembered) : "InFlight"),
   }
 }
 
@@ -190,26 +204,33 @@ export effect function runStructuredRoute<T, E, R>(route: ReadonlyArray<Provider
   const gateways = try Gateways
   const schemaText = try orDie(Effect.try(() => JSON.stringify(output.schema)))
   const calls: CallRecord[] = []
-  for (const [index, provider] of route.entries()) {
+  let remembered: Denial | undefined = undefined
+  let next: Provider | undefined = route[0]
+  while (next !== undefined) {
+    const provider: Provider = next
     const step = stepOf(provider)
+    if (!gateways.configured.has(wireOf(step.gateway))) {
+      const skipped = control.skip(provider, remembered) catch (failure) => ({ failure })
+      if (typeof skipped !== "string") return { kind: "recheckFailed", failure: skipped.failure, calls } satisfies RouteOutcome<T, E>
+      if (skipped === "BudgetBlocked" && remembered !== undefined) return { kind: "budgetBlocked", denial: remembered, calls } satisfies RouteOutcome<T, E>
+      if (skipped !== "InFlight") return { kind: "exhausted", calls } satisfies RouteOutcome<T, E>
+      next = following(route, provider, "skipped")
+      continue
+    }
     const rechecked = control.recheck() catch (failure) => ({ failure })
     if (typeof rechecked !== "string") return { kind: "recheckFailed", failure: rechecked.failure, calls } satisfies RouteOutcome<T, E>
     if (rechecked !== "InFlight") return { kind: "registryChanged", calls } satisfies RouteOutcome<T, E>
-    if (!gateways.configured.has(wireOf(step.gateway))) {
-      const skipped = control.skip() catch (failure) => ({ failure })
-      if (typeof skipped !== "string") return { kind: "recheckFailed", failure: skipped.failure, calls } satisfies RouteOutcome<T, E>
-      if (skipped !== "InFlight") return { kind: "exhausted", calls } satisfies RouteOutcome<T, E>
-      continue
-    }
-    const base: CallRecord = { routeStep: index + 1, gateway: step.gateway, requestedModel: step.model, servedModel: null, priceKey: step.priceKey, outcome: "failed", failure: null, usage: noUsage, providerCostMicroUsd: null, providerRequestId: null }
+    const base: CallRecord = { routeStep: triageRoute.indexOf(provider) + 1, gateway: step.gateway, requestedModel: step.model, servedModel: null, priceKey: step.priceKey, outcome: "failed", failure: null, usage: noUsage, providerCostMicroUsd: null, providerRequestId: null }
     const answer = Effect.map(gateways.complete(modelCall(step, prompt, effort, output.schema, schemaText)), (reply) => ({ reply })) catch (failure) => ({ failure })
     const settled = "failure" in answer ? { call: failedCall(base, step, answer.failure), denial: denialOf(step, answer.failure), verdict: undefined } : try answered(base, step, answer.reply, output)
     calls.push(settled.call)
-    const status = control.record(settled.call, provider, settled.denial) catch (failure) => ({ failure })
+    if (blocksRoute(settled.denial)) remembered = settled.denial
+    const status = control.record(settled.call, provider, settled.denial, remembered) catch (failure) => ({ failure })
     if (typeof status !== "string") return { kind: "recheckFailed", failure: status.failure, calls } satisfies RouteOutcome<T, E>
     if (status === "Answered" && settled.verdict !== undefined) return { kind: "answered", verdict: settled.verdict, calls, servedBy: settled.call } satisfies RouteOutcome<T, E>
-    if (status === "BudgetBlocked") return { kind: "budgetBlocked", denial: settled.denial, calls } satisfies RouteOutcome<T, E>
+    if (status === "BudgetBlocked" && remembered !== undefined) return { kind: "budgetBlocked", denial: remembered, calls } satisfies RouteOutcome<T, E>
     if (status !== "InFlight") return { kind: "exhausted", calls } satisfies RouteOutcome<T, E>
+    next = following(route, provider, outcomeOf(settled.call))
   }
   return { kind: "exhausted", calls } satisfies RouteOutcome<T, E>
 }

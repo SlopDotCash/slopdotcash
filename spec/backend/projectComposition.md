@@ -282,7 +282,11 @@ while the restriction holds, so the restriction's retired revision is never
 taken for a removal. Reinstatement restores a paused Community listing only
 for a project the restriction retired; a project the owner removed before
 the restriction stays removed. Every moderator decision carries the
-revision and sequence its preview confirmed.
+revision and sequence its preview confirmed. An account appeal, an account
+denial and an account reinstatement are journaled on the project's
+enforcement record, in the same write as the decision of
+[account bans across participation](./accessComposition.md); they change
+no registry revision.
 
 ```quint
 pure def canFlag(c: Registry, by: int, receipt: int, standing: E::FlagStanding): bool =
@@ -340,6 +344,15 @@ pure def observeIdentity(c: Registry, by: int, repository: int, identity: int): 
   { ...c, security: E::observeIdentity(c.security, by, repository, identity) }
 pure def canRecognizeFrozen(c: Registry, by: int, row: E::FrozenRow): bool = E::canRecognizeFrozen(c.security, by, row)
 pure def recognizeFrozen(c: Registry, by: int, row: E::FrozenRow): Registry = { ...c, security: E::recognizeFrozen(c.security, by, row) }
+pure def canJournalAccountAppeal(c: Registry, by: int): bool = E::canJournalAccountAppeal(c.security, by)
+pure def journalAccountAppeal(c: Registry, by: int): Registry = { ...c, security: E::journalAccountAppeal(c.security, by) }
+pure def canJournalAccountDenial(c: Registry, by: int, fence: E::Fence): bool = E::canJournalAccountDenial(c.security, by, fence)
+pure def journalAccountDenial(c: Registry, by: int, fence: E::Fence): Registry =
+  { ...c, security: E::journalAccountDenial(c.security, by, fence) }
+pure def canJournalAccountReinstatement(c: Registry, by: int, fence: E::Fence, accounts: List[int]): bool =
+  E::canJournalAccountReinstatement(c.security, by, fence, accounts)
+pure def journalAccountReinstatement(c: Registry, by: int, fence: E::Fence, accounts: List[int]): Registry =
+  { ...c, security: E::journalAccountReinstatement(c.security, by, fence, accounts) }
 pure def alwaysRestrictionRetiresRegistry(c: Registry): bool =
   (c.security.restriction != E::Clear and c.security.restriction != E::FlagQuarantine and not(c.security.revisionPending))
     implies c.project.tier == P::Retired and c.project.status == P::Paused

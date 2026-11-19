@@ -2,6 +2,7 @@
 import { templatePaths } from "@repo/contributor/render/fields";
 import { type Proposal, rewardFields } from "../../../flows/projects/proposal.ts";
 import { type BountyActor, type BountyTerms, privateBountyTerms } from "../../../flows/security/program.vibe";
+import { type LinkInput, normalizeWebsiteInput, normalizeXInput, withOwnerLinks } from "../../../kernels/projectLinks.ts";
 import { skillRuleFields } from "../fields/contribution.ts";
 import { chainOf, fundingOf, slugOf } from "./form.ts";
 
@@ -15,6 +16,10 @@ const unset = "Describe the project in one sentence.";
 
 function signedAt(value: string): string {
   return value === "" || Number.isNaN(Date.parse(value)) ? "" : new Date(value).toISOString();
+}
+
+function validLink(input: LinkInput): string | null {
+  return input.ok ? input.value : null;
 }
 
 function repositoryLicense(p: Proposal, repository: string) {
@@ -115,7 +120,7 @@ export function draftManifest({ proposal: p, actor, valid, now }: { proposal: Pr
       addresses: [],
     },
     modelPolicy: { mode: "open-declared", disclosureRequired: true },
-    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+    links: withOwnerLinks({ repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` }, validLink(normalizeWebsiteInput(p.website)), validLink(normalizeXInput(p.x))),
   };
   return { manifest, slug, bounty };
 }

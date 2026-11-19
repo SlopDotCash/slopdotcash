@@ -1,4 +1,5 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"
+import { poolDisplay } from "../../../gen/frontend__projections.ts";
 import { formatRewardCapDisplay } from "../../kernels/assetText.ts";
 import type { ListedProject } from "../home/listing.ts";
 
@@ -20,6 +21,6 @@ export function vaultStateLabel(project: ListedProject, networkPays: NetworkPays
 export function sponsorPoolLabel(project: ListedProject): string {
   const { reward } = project;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity?.name) return `external prize share · ${reward.externalOpportunity.name}`;
-  if (project.pool !== "PoolFunded" || reward.monthlyCapMinor === 0n) return "points only";
+  if (poolDisplay(project.funding) !== "PoolFunded" || reward.monthlyCapMinor === 0n) return "points only";
   return `${formatRewardCapDisplay(reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
 }

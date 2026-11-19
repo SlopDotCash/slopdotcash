@@ -32,6 +32,7 @@ stay open to a banned account.
 ```quint
 import access as AC from "./access"
 import enforcement as E from "../security/enforcement"
+import participation as PT from "../points/participation"
 type Gate = ProjectWrite | NamedSteward | TraceRun | TraceProgress | BountyReservation | IntakeSubmission | FlagFiling
 type Kept = FlagRead | FlagWithdrawal | IntakeReconciliation
 type Write = { gate: Gate, actor: int, at: int }

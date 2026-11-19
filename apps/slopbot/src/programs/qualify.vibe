@@ -1,14 +1,20 @@
 // spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/review.md, "Every call is free, attributed and accounted"
+import { millisOf, nowSeconds } from "@repo/platform/clock"
+import { d1 } from "@repo/platform/d1"
 import { type ModelCall, type ModelReply, Provider, ProviderFailure, providers } from "@repo/platform/providers"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
 import { buildPrompt } from "../review/prompt.vibe"
 import { verdictOutput } from "../review/verdict.vibe"
 import { priceUsage } from "../route/calls.vibe"
 import { type Output, type Prompt, type RouteControl, freeRoute, runStructuredRoute, stepOf, triageRoute } from "../route/route.vibe"
 import type { Evidence } from "../value/evidence/types.vibe"
 import { type ValueAssessment, type ValueCall, jointValueCall, singleValueCall } from "../value/inference/assessment.vibe"
-import { valueRoute } from "../value/inference/run.vibe"
+import { type InferenceChecks, runValueInference, valueRoute } from "../value/inference/run.vibe"
+import { InferenceConfig, valueApiStartAt } from "../value/inference/settings.vibe"
+import { sourceDigestOf } from "../value/workUnits/prepare.vibe"
 import type { WorkUnitEvidence } from "../value/workUnits/types.vibe"
-import type { Provider as Step } from "../../gen/slopbot__valueInference.effect.vibe"
+import type { Authority, Source, Provider as Step } from "../../gen/slopbot__valueInference.effect.vibe"
 
 export error QualificationFailed { message: string }
 
@@ -105,6 +111,8 @@ export const qualificationGroup: WorkUnitEvidence = {
 interface QualificationPath<T> {
   readonly path: "single" | "joint"
   readonly call: ValueCall<T>
+  readonly sourceDigest: string
+  readonly group: ReadonlyArray<Source>
   readonly assessments: (verdict: T) => ReadonlyArray<ValueAssessment>
 }
 
@@ -190,10 +198,10 @@ export effect function qualificationTransport(purpose: QualificationPurpose) {
   } satisfies QualificationTransport
 }
 
-effect function meteredRoute<T, E, R>(transport: QualificationTransport, purpose: QualificationPurpose, prompt: Prompt, output: Output<T>, control: RouteControl<E, R>) {
+effect function meteredRoute<T, E, R>(transport: QualificationTransport, prompt: Prompt, output: Output<T>, control: RouteControl<E, R>) {
   const inner = try Provider
   provide Provider = { configured: inner.configured, complete: transport.complete } {
-    return try runStructuredRoute(routeFor(purpose), prompt, purpose === "value" ? "high" : "medium", output, control)
+    return try runStructuredRoute(triageRoute, prompt, "medium", output, control)
   }
 }
 
@@ -201,18 +209,47 @@ function calling(transport: QualificationTransport, dryRun: boolean) {
   return () => dryRun ? Effect.succeed(false) : transport.mayCall()
 }
 
+const qualificationAuthority: Authority = { revision: 1, generation: 1, manifest: "qualification", installation: 1, active: true }
+
+const qualificationChecks: InferenceChecks<never, never> = {
+  authority: () => Effect.succeed(qualificationAuthority),
+  remote: (key, group) => Effect.succeed({ observedSource: key, members: [...group] }),
+  leased: () => Effect.succeed(true),
+}
+
+const qualificationLedger = { settings: { monthly: qualificationBudgetMicroUsd, maximum: qualificationBudgetMicroUsd, start: millisOf(valueApiStartAt) }, producerRevision: undefined }
+
+const unconfigured: ReadonlySet<ModelCall["route"]> = new Set()
+
+effect function pathLedger(path: QualificationPath<unknown>["path"]) {
+  const started = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: `qualification-${path}` } })), (worker) => promise(() => worker.dispose()))
+  const applied = try tryPromise({ try: () => migrate(started, "SLOPBOT_DB", migrationsDir), catch: () => new QualificationFailed({ message: failure }) })
+  if (applied.some((file) => file.error !== undefined)) throw new QualificationFailed({ message: failure })
+  return try tryPromise({ try: () => database(started, "SLOPBOT_DB"), catch: () => new QualificationFailed({ message: failure }) })
+}
+
+effect function inferredOnLedger<T>(path: QualificationPath<T>, transport: QualificationTransport, dryRun: boolean) {
+  const inner = try Provider
+  const db = try pathLedger(path.path)
+  const deadline = (try nowSeconds()) + 900
+  const metered = { configured: dryRun ? unconfigured : inner.configured, complete: transport.complete }
+  provide d1(db), InferenceConfig = qualificationLedger, Provider = metered {
+    return try runValueInference(path.call.prompt, { ...path.call.output, sourceDigest: path.sourceDigest }, { installationId: qualificationAuthority.installation, group: path.group, deadline }, qualificationChecks)
+  }
+}
+
 effect function qualifyPath<T>(path: QualificationPath<T>, dryRun: boolean) {
   const { item } = path.call.prompt
   if (item.includes("contentBase64") || !item.includes("\"contentOmittedFromModel\":true")) throw new QualificationFailed({ message: failure })
   const transport = try qualificationTransport("value")
-  const routed = try meteredRoute(transport, "value", path.call.prompt, path.call.output, freeRoute(calling(transport, dryRun)))
+  const inferred = try Effect.scoped(inferredOnLedger(path, transport, dryRun))
   const spent = try transport.meter()
   if (dryRun) {
-    if (routed.calls.length > 0) throw new QualificationFailed({ message: failure })
+    if (spent.requests > 0 || inferred.kind === "answered") throw new QualificationFailed({ message: failure })
     return { path: path.path, provider: null, requestedModel: null, servedModel: null, requestId: null, requests: 0, outcome: "dry-run; no provider calls" } satisfies QualificationSummary
   }
-  if (routed.kind !== "answered" || spent.violated || spent.uncertain || routed.calls.length !== spent.requests || !unresolvedMedia(path.assessments(routed.verdict))) throw new QualificationFailed({ message: failure })
-  const served = routed.servedBy
+  if (inferred.kind !== "answered" || spent.violated || spent.uncertain || inferred.calls.length !== spent.requests || !unresolvedMedia(path.assessments(inferred.verdict))) throw new QualificationFailed({ message: failure })
+  const served = inferred.servedBy
   return { path: path.path, provider: served.gateway, requestedModel: served.requestedModel, servedModel: served.servedModel, requestId: served.providerRequestId, requests: spent.requests, outcome: "unviewed media unresolved" } satisfies QualificationSummary
 }
 
@@ -232,7 +269,7 @@ const markerLimitation = /\b(?:loader|loading|marker|path|existence|presence)\b|
 export effect function qualifyGeneralReview(dryRun: boolean) {
   const prompt = buildPrompt({ policy: [{ path: "CONTRIBUTING.md", text: reviewPolicy, truncated: false }], quality: [], itemText: reviewItem, related: undefined, limitations: [] }, "pull_request")
   const transport = try qualificationTransport("general-review")
-  const routed = try meteredRoute(transport, "general-review", prompt, verdictOutput, freeRoute(calling(transport, dryRun)))
+  const routed = try meteredRoute(transport, prompt, verdictOutput, freeRoute(calling(transport, dryRun)))
   const spent = try transport.meter()
   if (dryRun) {
     if (routed.calls.length > 0) throw new QualificationFailed({ message: failure })
@@ -249,10 +286,13 @@ export effect function qualifyValueModels(dryRun: boolean) {
   const gateways = try Provider
   if (!dryRun && (!gateways.configured.has("orbio") || !gateways.configured.has("surplus-anthropic"))) throw new QualificationFailed({ message: refusal })
   const [source] = qualificationGroup.sources
-  if (source === undefined) throw new QualificationFailed({ message: failure })
+  const [jointDigest] = qualificationGroup.sourceDigests
+  if (source === undefined || jointDigest === undefined) throw new QualificationFailed({ message: failure })
+  const member = (digest: string): Source => ({ repository: qualificationEvidence.repositoryDatabaseId, pull: qualificationEvidence.pull.number, digest })
+  const singleDigest = try sourceDigestOf(qualificationEvidence, source.policy)
   return [
-    try qualifyPath({ path: "single", call: try singleValueCall(qualificationEvidence, source.policy), assessments: (verdict) => [verdict] }, dryRun),
-    try qualifyPath({ path: "joint", call: try jointValueCall(qualificationGroup), assessments: (verdict) => verdict.units.map((unit) => unit.assessment) }, dryRun),
+    try qualifyPath({ path: "single", call: try singleValueCall(qualificationEvidence, source.policy), sourceDigest: singleDigest, group: [member(singleDigest)], assessments: (verdict) => [verdict] }, dryRun),
+    try qualifyPath({ path: "joint", call: try jointValueCall(qualificationGroup), sourceDigest: qualificationGroup.sourceDigest, group: [member(jointDigest.digest)], assessments: (verdict) => verdict.units.map((unit) => unit.assessment) }, dryRun),
   ]
 }
 

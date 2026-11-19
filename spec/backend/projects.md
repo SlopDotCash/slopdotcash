@@ -386,10 +386,10 @@ listed. An append never removes, reorders or renames a listed repository. The
 original repository's eligibility and the economic terms do not change.
 
 ```quint
-pure def appendable(p: Project, by: int, repository: NewRepository): bool =
-  authorized(by, repository.facts.repository, repository.appended) and
-  repository.facts.repository > 0 and not(p.repositories.includes(repository.facts.repository)) and
-  repository.facts.public and not(repository.facts.archived) and not(repository.facts.fork) and repository.facts.branch > 0
+pure def appendable(p: Project, by: int, newRepository: NewRepository): bool =
+  authorized(by, newRepository.facts.repository, newRepository.appended) and
+  newRepository.facts.repository > 0 and not(p.repositories.includes(newRepository.facts.repository)) and
+  newRepository.facts.public and not(newRepository.facts.archived) and not(newRepository.facts.fork) and newRepository.facts.branch > 0
 pure val facts2: RepositoryFacts = { ...facts1, repository: 2 }
 pure def lawAppendedRepositoryPausesAndStartsNextMonth(p: Project, by: int, change: OwnerChange, newRepository: NewRepository): bool =
   (canPublishOwnerRevision(p, by, change) and change.appends.includes(newRepository)) implies
@@ -607,15 +607,14 @@ pure def place(p: Project, by: int, tier: Tier): Project = revised(Placement, by
 pure val exception1: Exception = { expectedRevision: 2, reason: 1, status: Paused, tier: Community, steward: 1,
   participation: OpenParticipation, fieldsComplete: true, network: 1, asset: 1, financial: false, executable: false,
   otherFields: false, funded: false, vaults: noVaults, reward: noPromise, clearance: ClearanceRetained, license: license1 }
-pure val exceptionSamples = Set(exception1, { ...exception1, tier: Retired }, { ...exception1, steward: 4 },
+pure val exceptionValues = tuples(Set(1, 2, 3), Set(exception1, { ...exception1, tier: Retired }, { ...exception1, steward: 4 },
   { ...exception1, participation: Archived }, { ...exception1, participation: PermissionRequired },
   { ...exception1, status: Active }, { ...exception1, status: Active, executable: true, clearance: ClearanceMissing },
   { ...exception1, financial: true, funded: true, vaults: { ordinary: true, bounty: false } },
   { ...exception1, financial: true, network: 2 }, { ...exception1, otherFields: true },
   { ...exception1, status: Active, participation: Archived }, { ...exception1, license: noLicense },
-  { ...exception1, status: Active, license: noLicense }, { ...exception1, license: { ...noLicense, url: 1 } })
-pure val exceptionValues = exceptionSamples.union(exceptionSamples.map(x => { ...x, expectedRevision: 1 }))
-  .union(exceptionSamples.map(x => { ...x, expectedRevision: 3 })).union(Set({ ...exception1, steward: 4, reason: 0 }))
+  { ...exception1, status: Active, license: noLicense }, { ...exception1, license: { ...noLicense, url: 1 } }))
+  .map(x => { ...x._2, expectedRevision: x._1 }).union(Set({ ...exception1, steward: 4, reason: 0 }))
 pure def alwaysRestrictedParticipationPaused(p: Project): bool = p.participation != OpenParticipation implies p.status == Paused
 pure def alwaysRetirementConsistent(p: Project): bool =
   (p.retirement != NotRetired iff p.tier == Retired) and (p.retirement != NotRetired implies p.status == Paused)

@@ -1,4 +1,4 @@
-// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
 import { type NonEmpty, type Statement, chunked, list, sql } from "@repo/platform/d1"
 
 export type NetworkName = "base" | "ethereum" | "robinhood" | "solana"
@@ -33,6 +33,22 @@ export function renewLease(network: NetworkName, runId: string, expiresAt: strin
 
 export function releaseLease(network: NetworkName, runId: string, now: string): Statement {
   return sql`UPDATE fee_converter_locks SET expires_at = ${releasedAt} WHERE network = ${network} AND run_id = ${runId} AND expires_at >= ${now}`
+}
+
+export const rotationPrefix = "rpc-rotation-"
+
+const quietSolana = sql`(SELECT COUNT(*) FROM fee_conversions WHERE network = 'solana' AND mode = 'live' AND (state IN ('quoted', 'submitted', 'unknown') OR (approval_tx_id IS NOT NULL AND raw_tx IS NULL AND tx_id IS NULL) OR (kind = 'bridge' AND state = 'finalized' AND NOT EXISTS (SELECT 1 FROM fee_bridge_outcomes o WHERE o.bridge_id = fee_conversions.id)))) = 0 AND (SELECT COUNT(*) FROM fee_native_gas WHERE network = 'solana' AND (state = 'reserved' OR (state = 'signed' AND actual_wei IS NULL))) = 0`
+
+export function acquireRotationLease(runId: string, expiresAt: string, now: string): Statement {
+  return sql`INSERT INTO fee_converter_locks (network, run_id, expires_at) SELECT 'solana', ${runId}, ${expiresAt} WHERE ${quietSolana} ON CONFLICT(network) DO UPDATE SET run_id = excluded.run_id, expires_at = excluded.expires_at WHERE fee_converter_locks.expires_at < ${now}`
+}
+
+export function renewRotationLease(runId: string, expiresAt: string, now: string): Statement {
+  return sql`UPDATE fee_converter_locks SET expires_at = ${expiresAt} WHERE network = 'solana' AND run_id = ${runId} AND expires_at >= ${now} AND ${quietSolana}`
+}
+
+export function releaseRotationLease(runId: string): Statement {
+  return sql`UPDATE fee_converter_locks SET expires_at = ${releasedAt} WHERE network = 'solana' AND run_id = ${runId}`
 }
 
 export function abandonReserved(network: NetworkName, scope: string): Statement {

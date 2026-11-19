@@ -24,9 +24,9 @@ export const meta: ComponentMeta<ReportComposerProps> = {
   },
   examples: {
     Review: { phase: { kind: "compose", review: true } },
-    Uncertain: { phase: { kind: "compose", review: true }, attempted: true, error: "The report could not be confirmed. Retry the same report." },
+    Uncertain: { phase: { kind: "compose", review: true }, attempted: true, error: "No receipt returned. Retry." },
     NoStorage: { storageAvailable: false },
-    NeedsSession: { phase: { kind: "needsSession" }, error: "Your private session could not be verified. Retry before viewing reports." },
+    NeedsSession: { phase: { kind: "needsSession" }, error: "Session check failed. Report kept." },
     Received: { phase: { kind: "received", message: null } },
   },
   play: {

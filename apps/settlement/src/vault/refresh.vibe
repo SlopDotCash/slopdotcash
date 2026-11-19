@@ -1,13 +1,15 @@
-// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"
 import { evmRpc } from "@repo/platform/chain/evm"
 import { SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
 import { nowSeconds } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
+import type { PledgeRead } from "../../gen/settlement__monthPledges.effect.vibe"
 import { type Balance, type Identity, type Observation, type Purpose, type RequestResult, type Snapshots, requestRow } from "../../gen/settlement__vaultSnapshots.effect.vibe"
 import { verifiedDeployment } from "../owner/solanaDeployment.vibe"
 import type { RegisteredDeployment } from "./deployments.vibe"
 import { type ChainTotals, readEvmTotals } from "./evmTotals.vibe"
 import type { PolicyScope } from "./policy.vibe"
+import { notRead, readPledges } from "./pledges.vibe"
 import { PaymentRpc } from "./rpc.vibe"
 import { readSolanaTotals } from "./solanaTotals.vibe"
 import { type VaultSession, amountOfBigint, identityOf, openSession, registrationOf, registryOf } from "./store.vibe"
@@ -21,6 +23,7 @@ export interface Refreshed {
   readonly result: RequestResult
   readonly http: number
   readonly reason: string | undefined
+  readonly pledgeFailure: string | undefined
 }
 
 export error RefreshFailed { failures: ReadonlyArray<string> }
@@ -43,7 +46,7 @@ function balance(value: bigint | undefined): Balance {
   return value === undefined ? { present: false, amount: [0] } : { present: true, amount: amountOfBigint(value) }
 }
 
-export function observationOf(totals: ChainTotals, identity: Identity, purpose: Purpose, observedAt: number): Observation {
+export function observationOf(totals: ChainTotals, identity: Identity, purpose: Purpose, observedAt: number, monthPledges: PledgeRead): Observation {
   return {
     exists: true,
     identity: { ...identity, readVault: totals.readVault, asset: totals.asset, decimals: totals.decimals },
@@ -66,7 +69,7 @@ export function observationOf(totals: ChainTotals, identity: Identity, purpose: 
       reserved: balance(totals.reserved),
     },
     legacyServiceFees: [0],
-    monthPledges: { tag: "PledgesNotRead" },
+    monthPledges,
   }
 }
 
@@ -94,9 +97,9 @@ function done(state: Snapshots): boolean {
   return requestRow(state, REQUEST).phase === "RequestDone"
 }
 
-effect function finished(session: VaultSession, deployment: RegisteredDeployment, reason: string | undefined) {
+effect function finished(session: VaultSession, deployment: RegisteredDeployment, reason: string | undefined, pledgeFailure?: string) {
   const row = requestRow(try session.current(), REQUEST)
-  return { projectId: deployment.projectId, network: deployment.network, vault: deployment.vault, result: row.result, http: row.http, reason } satisfies Refreshed
+  return { projectId: deployment.projectId, network: deployment.network, vault: deployment.vault, result: row.result, http: row.http, reason, pledgeFailure } satisfies Refreshed
 }
 
 effect function priorDecimals(deployment: RegisteredDeployment) {
@@ -130,11 +133,12 @@ export effect function refreshDeployment(deployment: RegisteredDeployment, sourc
     try session.send({ type: "observationFails", requestId: REQUEST })
     return try finished(session, deployment, read.reason)
   }
-  const observation = observationOf(read.totals, identityOf(deployment, decimals), purpose, try nowSeconds())
-  if (done(try session.send({ type: "readTotals", requestId: REQUEST, observation, finalized: true }))) return try finished(session, deployment, "Vault totals differ from the reviewed deployment")
-  if (done(try session.send({ type: "readPrior", requestId: REQUEST }))) return try finished(session, deployment, undefined)
+  const pledges = urls === undefined || purpose !== "Ordinary" ? notRead : try readPledges(deployment, read.totals, (try session.current()).pledges, urls, pin)
+  const observation = observationOf(read.totals, identityOf(deployment, decimals), purpose, try nowSeconds(), pledges.read)
+  if (done(try session.send({ type: "readTotals", requestId: REQUEST, observation, finalized: true }))) return try finished(session, deployment, "Vault totals differ from the reviewed deployment", pledges.failure)
+  if (done(try session.send({ type: "readPrior", requestId: REQUEST }))) return try finished(session, deployment, undefined, pledges.failure)
   try session.send({ type: "write", requestId: REQUEST, reply: "WriteAcknowledged" })
-  return try finished(session, deployment, undefined)
+  return try finished(session, deployment, undefined, pledges.failure)
 }
 
 function succeeded(refreshed: Refreshed): boolean {
@@ -142,14 +146,16 @@ function succeeded(refreshed: Refreshed): boolean {
 }
 
 export effect function refreshVaultSnapshots(deployments: ReadonlyArray<RegisteredDeployment>) {
-  const outcomes: Array<{ readonly index: number; readonly failure: string | undefined }> = []
+  const outcomes: Array<{ readonly index: number; readonly failures: ReadonlyArray<string> }> = []
   for concurrent(4) (const [index, deployment] of deployments.entries()) {
     const refreshed = refreshDeployment(deployment) catch (error) => error._tag
+    const label = `${deployment.projectId} ${deployment.network}`
     const failure = typeof refreshed === "string"
-      ? `${deployment.projectId} ${deployment.network}: ${refreshed}`
-      : succeeded(refreshed) ? undefined : `${deployment.projectId} ${deployment.network}: ${refreshed.reason ?? refreshed.result}`
-    outcomes.push({ index, failure })
+      ? `${label}: ${refreshed}`
+      : succeeded(refreshed) ? undefined : `${label}: ${refreshed.reason ?? refreshed.result}`
+    const pledgeFailure = typeof refreshed === "string" || refreshed.pledgeFailure === undefined ? undefined : `${label}: ${refreshed.pledgeFailure}`
+    outcomes.push({ index, failures: [failure, pledgeFailure].filter((text) => text !== undefined) })
   }
-  const failures = outcomes.sort((left, right) => left.index - right.index).flatMap((outcome) => outcome.failure === undefined ? [] : [outcome.failure])
+  const failures = outcomes.sort((left, right) => left.index - right.index).flatMap((outcome) => outcome.failures)
   if (failures.length > 0) throw new RefreshFailed({ failures })
 }

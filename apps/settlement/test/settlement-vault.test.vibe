@@ -13,10 +13,11 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { EffectiveWallet, type RegistryManifest, RegistryManifests, Wallets } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { Response } from "miniflare"
-import type { Address } from "viem"
-import { requestRow } from "../gen/settlement__vaultSnapshots.effect.vibe"
+import { type Address, toFunctionSelector } from "viem"
+import type { PledgeRead } from "../gen/settlement__monthPledges.effect.vibe"
+import { type Purpose, requestRow } from "../gen/settlement__vaultSnapshots.effect.vibe"
 import { type EvmAddress, IMPLEMENTATION_SLOT, awardId, evmAddress } from "../src/chain/evm/abi.ts"
-import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
+import { commitAwardCalldata, pledgeMonthsCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { decodeProject } from "../src/chain/solana/accounts.ts"
 import { vaultAddress } from "../src/chain/solana/pda.ts"
@@ -57,6 +58,7 @@ const SOURCE_COMMIT = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
 const SOLANA_PROGRAM = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 const SOLANA_PROJECT = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
 const LOCAL_SOLANA = "solana-devnet"
+const MONTH_PLEDGE_SELECTOR = toFunctionSelector("monthPledges(uint32)").slice(2)
 const chains = { Base: "base", Ethereum: "ethereum", Robinhood: "robinhood", Solana: "solana" } as const
 
 function textBytes(hex: string): Uint8Array {
@@ -95,6 +97,7 @@ function ports(manifests: ReadonlyArray<RegistryManifest>) {
     Layer.succeed(Notices, {
       statements: () => effect { return [] },
       fanout: () => effect { return [] },
+      payoutRecipient: (project) => effect { return project.stewardGithubId },
     }),
   )
 }
@@ -217,11 +220,13 @@ effect function obligationsOf(project: string) {
   return (try rows("SELECT id, state FROM payment_obligations WHERE project_id = ? ORDER BY id", project)).map((row) => [row.id, row.state])
 }
 
-effect function offered(deployment: Extract<RegisteredDeployment, { family: "evm" }>, totals: ChainTotals, observedAt: number) {
+const notRead: PledgeRead = { tag: "PledgesNotRead" }
+
+effect function offered(deployment: Extract<RegisteredDeployment, { family: "evm" }>, totals: ChainTotals, observedAt: number, monthPledges: PledgeRead = notRead, purpose: Purpose = "Ordinary") {
   const registration = registrationOf(deployment, totals.decimals)
-  const session = try openSession({ projectId: deployment.projectId }, registryOf({ revision: deployment.revision, ordinary: registration }))
-  try session.send({ type: "beginRead", requestId: 1, purpose: "Ordinary" })
-  const read = requestRow(try session.send({ type: "readTotals", requestId: 1, observation: observationOf(totals, identityOf(deployment, totals.decimals), "Ordinary", observedAt), finalized: true }), 1)
+  const session = try openSession({ projectId: deployment.projectId }, registryOf(purpose === "Ordinary" ? { revision: deployment.revision, ordinary: registration } : { revision: deployment.revision, privateBounty: registration }))
+  try session.send({ type: "beginRead", requestId: 1, purpose })
+  const read = requestRow(try session.send({ type: "readTotals", requestId: 1, observation: observationOf(totals, identityOf(deployment, totals.decimals), purpose, observedAt, monthPledges), finalized: true }), 1)
   const prior = read.phase === "RequestDone" ? read : requestRow(try session.send({ type: "readPrior", requestId: 1 }), 1)
   const done = prior.phase === "RequestDone" ? prior : requestRow(try session.send({ type: "write", requestId: 1, reply: "WriteAcknowledged" }), 1)
   return [done.result, done.http]
@@ -257,7 +262,7 @@ function release(overrides: Partial<ReleaseEnvironment>): ReleaseEnvironment {
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('A reviewed deployment loads from the registry while an invalid manifest, a shared vault or an unserved network fails, and each finalized write keeps its asset, counters and first read of the month (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', () => effect {
+  it.effect('A reviewed deployment loads from the registry while an invalid manifest, a shared vault or an unserved network fails, and each finalized write keeps its asset, counters and first read of the month (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"; spec/settlement/monthPledges.md, "Each month keeps the read of the newest block, and a read not taken changes nothing"; spec/settlement/monthPledges.md, "A refresh reads the previous UTC month, the next eleven after the current one, and every month still stored open"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month\'s pledge and the vault\'s open total")', () => effect {
     const world = try World
     provide world.clock.layer, try evmShell(world.escrow.chain.url) {
       const project = "vault-journey-store"
@@ -300,6 +305,84 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         withoutFree: ["ObservationStored", 200],
         latest: [{ block_number: String(totals.block + 2n), free_balance: null }],
         starts: [{ vault, period: "2026-12", free_balance: "40000000", total_gross_withdrawn: "0" }],
+      })
+      const pledging = "vault-journey-pledges"
+      const pledgeVault = try opened(pledging, 0x7010n)
+      const pledged = (try ours(pledging)).deployment
+      const owner = world.escrow.roles.owner.address as Address
+      try rows("INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, 'base-mainnet', ?, '2026-09', '5', 1, '1', '2026-09-30T00:00:00.000Z')", pledging, pledgeVault)
+      const pledgeData = try Effect.try(() => pledgeMonthsCalldata(202612, 3, 10_000_000n))
+      try promise(() => world.escrow.send(owner, pledgeVault, pledgeData))
+      world.escrow.chain.setFinalized(try promise(() => world.escrow.head()))
+      world.clock.advance(60_000)
+      try refreshVaultSnapshots([pledged])
+      const firstBlock = String(try promise(() => world.escrow.head()))
+      const pledgeRows = effect { return try rows("SELECT period, amount, open, block_number FROM vault_month_pledges WHERE project_id = ? AND (amount <> '0' OR period = '2026-09') ORDER BY period", pledging) }
+      const pledgeTotal = effect { return try rows("SELECT total_deposited, open_pledged_gross FROM vault_snapshots WHERE project_id = ?", pledging) }
+      const pledgeStored = { rows: try pledgeRows, months: (try rows("SELECT count(*) AS months FROM vault_month_pledges WHERE project_id = ?", pledging))[0], total: try pledgeTotal }
+      const asked: string[] = []
+      const outage = try world.serve(async (request) => {
+        const body = await request.clone().text()
+        asked.push(body)
+        if (body.includes(MONTH_PLEDGE_SELECTOR)) return new Response("unavailable", { status: 503 })
+        return forward(world.escrow.chain.url)(request)
+      })
+      try promise(() => world.escrow.fund(pledgeVault, 1_000_000n, world.escrow.roles.donor.address))
+      world.escrow.chain.setFinalized(try promise(() => world.escrow.head()))
+      world.clock.advance(60_000)
+      const failedRead = effect {
+        provide try evmShell(outage) {
+          return refreshVaultSnapshots([pledged]) catch (error) => error._tag === "RefreshFailed" ? error.failures : [error._tag]
+        }
+      }
+      const failure = { failures: try failedRead, rows: try pledgeRows, total: try pledgeTotal, askedPledges: asked.some((body) => body.includes(MONTH_PLEDGE_SELECTOR)) }
+      const pledgeTotals = try chainTotals(pledged, world.escrow.chain.url)
+      const later = try nowSeconds()
+      const read = (pledges: ReadonlyArray<{ readonly period: number; readonly amount: number; readonly open: boolean }>, openPledged: number): PledgeRead => ({ tag: "PledgesRead", openPledged: [openPledged], pledges: pledges.map((pledge) => ({ ...pledge, amount: [pledge.amount] })) })
+      const older = { result: try offered(pledged, { ...pledgeTotals, block: pledgeTotals.block - 1n }, later, read([{ period: 202612, amount: 1, open: true }], 1)), rows: try pledgeRows }
+      const closed = { result: try offered(pledged, { ...pledgeTotals, block: pledgeTotals.block + 1n }, later, read([{ period: 202612, amount: 7, open: false }], 0)), rows: try pledgeRows, total: try pledgeTotal }
+      const unsupported = { result: try offered(pledged, { ...pledgeTotals, block: pledgeTotals.block + 2n }, later, { tag: "NoPledgeSupport" }), rows: try pledgeRows, total: try pledgeTotal }
+      const bounty = "vault-journey-bounty"
+      try opened(bounty, 0x7011n)
+      const bountyDeployment = (try ours(bounty)).deployment
+      const bountyTotals = try chainTotals(bountyDeployment, world.escrow.chain.url)
+      const bountyWrite = try offered(bountyDeployment, bountyTotals, later, read([{ period: 202612, amount: 9, open: true }], 9), "PrivateBounty")
+      try same({
+        stored: pledgeStored,
+        failure,
+        older,
+        closed,
+        unsupported,
+        bounty: { result: bountyWrite, rows: try rows("SELECT period FROM vault_month_pledges WHERE project_id = ?", bounty), total: try rows("SELECT open_pledged_gross FROM vault_snapshots WHERE project_id = ?", bounty) },
+      }, {
+        stored: {
+          rows: [
+            { period: "2026-09", amount: "0", open: 0, block_number: firstBlock },
+            { period: "2026-12", amount: "10000000", open: 1, block_number: firstBlock },
+            { period: "2027-01", amount: "10000000", open: 1, block_number: firstBlock },
+            { period: "2027-02", amount: "10000000", open: 1, block_number: firstBlock },
+          ],
+          months: { months: 14 },
+          total: [{ total_deposited: "40000000", open_pledged_gross: "30000000" }],
+        },
+        failure: {
+          failures: [`${pledging} base-mainnet: RpcUnavailable`],
+          rows: pledgeStored.rows,
+          total: [{ total_deposited: "41000000", open_pledged_gross: "30000000" }],
+          askedPledges: true,
+        },
+        older: { result: ["ObservationOlder", 200], rows: pledgeStored.rows },
+        closed: {
+          result: ["ObservationStored", 200],
+          rows: [pledgeStored.rows[0], { period: "2026-12", amount: "7", open: 0, block_number: String(pledgeTotals.block + 1n) }, pledgeStored.rows[2], pledgeStored.rows[3]],
+          total: [{ total_deposited: "41000000", open_pledged_gross: "0" }],
+        },
+        unsupported: {
+          result: ["ObservationStored", 200],
+          rows: [pledgeStored.rows[0], { period: "2026-12", amount: "7", open: 0, block_number: String(pledgeTotals.block + 1n) }, pledgeStored.rows[2], pledgeStored.rows[3]],
+          total: [{ total_deposited: "41000000", open_pledged_gross: null }],
+        },
+        bounty: { result: ["ObservationStored", 200], rows: [], total: [{ open_pledged_gross: null }] },
       })
     }
   })
@@ -491,7 +574,7 @@ effect function signatureOf(scenario: Scenario, label: string) {
 }
 
 layer(ClusterStarted, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('Classic SPL, admitted Token-2022 and native SOL vaults store their finalized totals (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership")', () => effect {
+  it.effect('Classic SPL, admitted Token-2022 and native SOL vaults store their finalized totals (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month\'s pledge and the vault\'s open total")', () => effect {
     const { tokens, native, escrow } = try Cluster
     provide try clusterShell() {
       const deployments = [
@@ -501,12 +584,20 @@ layer(ClusterStarted, { excludeTestServices: true, timeout: "900 seconds" })((it
       ]
       try refreshVaultSnapshots(deployments)
       try same(
-        try rows("SELECT project_id, asset_address, free_balance FROM vault_snapshots WHERE network = ? ORDER BY project_id", LOCAL_SOLANA),
-        [
-          { project_id: "solana-classic", asset_address: escrow.chain.mints.classic, free_balance: "9000000" },
-          { project_id: "solana-native", asset_address: SYSTEM_PROGRAM, free_balance: "6500000000" },
-          { project_id: "solana-token-2022", asset_address: escrow.chain.mints.token2022, free_balance: "5000000" },
-        ],
+        {
+          snapshots: try rows("SELECT project_id, asset_address, free_balance, open_pledged_gross FROM vault_snapshots WHERE network = ? ORDER BY project_id", LOCAL_SOLANA),
+          pledges: try rows("SELECT project_id, amount, open FROM vault_month_pledges WHERE network = ? AND amount <> '0' ORDER BY project_id", LOCAL_SOLANA),
+          months: try rows("SELECT project_id, count(*) AS months FROM vault_month_pledges WHERE network = ? GROUP BY project_id ORDER BY project_id", LOCAL_SOLANA),
+        },
+        {
+          snapshots: [
+            { project_id: "solana-classic", asset_address: escrow.chain.mints.classic, free_balance: "9000000", open_pledged_gross: "0" },
+            { project_id: "solana-native", asset_address: SYSTEM_PROGRAM, free_balance: "6500000000", open_pledged_gross: "1000000000" },
+            { project_id: "solana-token-2022", asset_address: escrow.chain.mints.token2022, free_balance: "5000000", open_pledged_gross: "0" },
+          ],
+          pledges: [{ project_id: "solana-native", amount: "1000000000", open: 1 }],
+          months: [{ project_id: "solana-classic", months: 13 }, { project_id: "solana-native", months: 13 }, { project_id: "solana-token-2022", months: 13 }],
+        },
       )
     }
   })

@@ -13,7 +13,7 @@ export const meta: ComponentMeta<FundingFieldsProps> = {
     PointsOnly: { choice: { ...choice, mode: "none" } },
     Compact: { compact: true, onBounty },
     PrivateBounty: { compact: true, onBounty, bounty: true },
-    Token: { choice: { ...choice, assetKind: "token" }, error: (field) => (field === "tokenAddress" ? "Enter a 0x token contract address with 40 hexadecimal characters." : undefined) },
+    Token: { choice: { ...choice, assetKind: "token" }, error: (field) => (field === "tokenAddress" ? "Enter a 0x address with 40 hex characters." : undefined) },
     VaultNetwork: { networkFixed: true },
   },
   play: {

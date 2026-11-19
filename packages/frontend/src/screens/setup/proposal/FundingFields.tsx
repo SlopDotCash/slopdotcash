@@ -1,5 +1,6 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
-import { PAYOUT_FEE_BASIS_POINTS, WITHDRAWAL_FEE_BASIS_POINTS } from "@repo/settlement/kernels/networks";
+import { PAYOUT_FEE_BASIS_POINTS } from "@repo/settlement/kernels/networks";
+import { Status } from "@repo/ui";
 import { ListChecks, type LucideIcon, Shield, Wallet } from "lucide-react";
 import type { FundingChoice } from "../../../flows/projects/proposal.ts";
 import { ChoiceField, TextField } from "../fields/ProjectFields.tsx";
@@ -22,8 +23,6 @@ export type FundingFieldsProps = {
   networkError?: string;
 };
 
-const percent = (basisPoints: number) => `${basisPoints / 100}%`;
-
 /** The one optional reward choice: points only, a monthly amount in one asset on one network, or a private bounty. */
 export function FundingFields({ choice, onChange, error, networkFixed, compact = false, bounty = false, onBounty, networkError }: FundingFieldsProps) {
   const symbol = rewardSymbol(choice);
@@ -42,31 +41,25 @@ export function FundingFields({ choice, onChange, error, networkFixed, compact =
   return (
     <div className="flex flex-col gap-6">
       <ChoiceField
-        label={compact ? "Reward type" : "Monthly funding (optional)"}
+        label={compact ? "Reward type" : "Type"}
         name="fundingMode"
         value={mode}
         options={modes}
         onChange={(value) => (value === "bounty" ? onBounty?.() : onChange("mode", value))}
       />
-      {mode === "none" ? (
-        compact ? null : <p className="text-sm text-muted-foreground">Add funding later.</p>
-      ) : (
+      {mode === "none" ? null : (
         <>
           <RewardAssetFields choice={choice} onChange={onChange} error={error} networkFixed={networkFixed} networkError={networkError} compact={compact} />
           <TextField
-            label={bounty ? `Award per accepted finding (${symbol})` : `Monthly amount (${symbol})`}
+            label={bounty ? `Award (${symbol})` : `Amount / month (${symbol})`}
             name="monthlyPool"
             inputMode="decimal"
             value={choice.monthlyAmount}
             error={error("monthlyAmount")}
-            hint={compact ? undefined : "A pledge until deposited in the vault. Changes apply from the next UTC month."}
+            hint={compact ? undefined : <Status presentation={{ tone: "Caution", icon: "Wallet", label: "Pledge until deposited" }} />}
             onChange={(value) => onChange("monthlyAmount", value)}
           />
-          {compact ? null : (
-            <p className="text-sm text-muted-foreground">
-              Payout fee: {percent(PAYOUT_FEE_BASIS_POINTS)}. Unused-fund withdrawal fee: {percent(WITHDRAWAL_FEE_BASIS_POINTS)}.
-            </p>
-          )}
+          {compact ? null : <p className="text-sm text-muted-foreground">{PAYOUT_FEE_BASIS_POINTS / 100}% fee</p>}
         </>
       )}
     </div>

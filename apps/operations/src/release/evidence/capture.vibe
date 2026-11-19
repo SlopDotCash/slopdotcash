@@ -35,14 +35,27 @@ export const productionOrigin = "https://slop.cash"
 export const remoteArtifactPaths: ReadonlyArray<string> = [
   "index.html",
   "SKILL.md",
+  "contribute/SKILL.md",
+  "maintain/SKILL.md",
   ".well-known/agent-skills/index.json",
   ".well-known/agent-skills/slop/SKILL.md",
+  ".well-known/agent-skills/slop-contributor/SKILL.md",
+  ".well-known/agent-skills/slop-maintainer/SKILL.md",
   "llms.txt",
   "skill-manifest.json",
   "data/leaderboard.json",
 ]
 
-const skillPaths: ReadonlySet<string> = new Set(["SKILL.md", ".well-known/agent-skills/index.json", ".well-known/agent-skills/slop/SKILL.md", "skill-manifest.json"])
+const skillPaths: ReadonlySet<string> = new Set([
+  "SKILL.md",
+  "contribute/SKILL.md",
+  "maintain/SKILL.md",
+  ".well-known/agent-skills/index.json",
+  ".well-known/agent-skills/slop/SKILL.md",
+  ".well-known/agent-skills/slop-contributor/SKILL.md",
+  ".well-known/agent-skills/slop-maintainer/SKILL.md",
+  "skill-manifest.json",
+])
 
 const requiredSecurityHeaders: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
   ["content-security-policy", ["default-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "upgrade-insecure-requests"]],
