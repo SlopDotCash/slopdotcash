@@ -203,7 +203,13 @@ export function githubIngestionReadTransport(
         /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u.exec(
           url.pathname,
         )?.[1] ?? "";
-      const pullFiles = /^\/pulls\/[1-9]\d*\/files$/u.test(repositoryPath);
+      // GitHub answers a transient HTTP 500 on these per-item list pages; the
+      // same page retried a second later normally succeeds (19 Nov: one 500 on
+      // a pull request's reviews ended a five-hour collection).
+      const pullFiles =
+        /^\/(?:pulls\/[1-9]\d*\/(?:files|reviews|comments|commits)|issues\/[1-9]\d*\/(?:comments|events|timeline))$/u.test(
+          repositoryPath,
+        );
       const commitFilePage =
         /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
         /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
