@@ -109,10 +109,10 @@ module vetting_scan_clearance_rule {
   run missingCoverageNeverResolvesTest = init
     .then(reviewPrimary(true, false, 0, 3, 2))
     .expect(s.primaryCoverage == 3)
+  // A scanner gap alone does not call the specialist; it blocks clearance.
   run scannerGapBlocksTest = init.then(inspect(true, false, false, false))
     .then(reviewPrimary(true, false, 0, 0, -1))
-    .then(reviewSpecialist(true, false, 0, 0, -1))
-    .then(publish).expect(s.result == "incomplete")
+    .then(publish).expect(s.result == "incomplete" and s.specialist == 0)
   run maliceBlocksTest = init
     .then(reviewPrimary(true, false, 2, 0, -1))
     .then(reviewSpecialist(true, true, 2, 0, -1))
