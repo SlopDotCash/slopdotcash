@@ -20,7 +20,14 @@ import {
   resolverKey,
   type SubmissionFeeEnv,
 } from "./config";
-import { type FeeChain, message, type NetworkResult, runNetwork } from "./core";
+import {
+  type FeeChain,
+  failureReason,
+  labelled,
+  message,
+  type NetworkResult,
+  runNetwork,
+} from "./core";
 import { type RateResult, runRate } from "./rate";
 import { D1FeeStore, type SubmissionFeeD1Database } from "./store";
 
@@ -51,7 +58,10 @@ export type DepositRun =
       mode: "dry_run" | "live";
       /** Networks with no deployed contract: nothing was read there. */
       unset: string[];
-      networks: (NetworkResult | { network: string; error: string })[];
+      networks: (
+        | NetworkResult
+        | { network: string; error: string; reason?: string }
+      )[];
     };
 
 const print = (event: Record<string, unknown>) =>
@@ -74,7 +84,7 @@ export async function runDeposits(
   const log = overrides.log ?? print;
   for (const network of config.unset)
     log({ event: "submission_fee_contract_unset", network });
-  const store = new D1FeeStore(env.SUBMISSION_FEE_DB);
+  const store = labelled(new D1FeeStore(env.SUBMISSION_FEE_DB), "store");
   // Slopbot's table (migration 0141) names the pull requests a fee was asked
   // for. Without it no deposit can be matched, so nothing is read.
   if (!(await store.hasItems())) {
@@ -85,7 +95,10 @@ export async function runDeposits(
   const secret = config.mode === "live" ? resolverKey(env) : undefined;
   if (config.mode === "live" && config.networks.length > 0 && !secret)
     throw new TypeError("live mode needs SUBMISSION_FEE_RESOLVER_KEY");
-  const networks: (NetworkResult | { network: string; error: string })[] = [];
+  const networks: (
+    | NetworkResult
+    | { network: string; error: string; reason: string }
+  )[] = [];
   for (const network of config.networks) {
     try {
       networks.push(
@@ -94,13 +107,16 @@ export async function runDeposits(
           network,
           terms: config.terms,
           store,
-          chain: overrides.chain
-            ? overrides.chain(network, secret)
-            : createEvmFeeChain({
-                network,
-                privateKey: secret,
-                fetch: overrides.fetch,
-              }),
+          chain: labelled(
+            overrides.chain
+              ? overrides.chain(network, secret)
+              : createEvmFeeChain({
+                  network,
+                  privateKey: secret,
+                  fetch: overrides.fetch,
+                }),
+            "chain",
+          ),
           now,
           randomId: () => crypto.randomUUID(),
           log,
@@ -109,7 +125,13 @@ export async function runDeposits(
     } catch (error) {
       // One network's failure never stops the other; the next run retries.
       overrides.onError?.(error);
-      networks.push({ network: network.network, error: message(error) });
+      // The reason names the step and the error classes only; see
+      // `failureReason`.
+      networks.push({
+        network: network.network,
+        error: message(error),
+        reason: failureReason(error),
+      });
     }
   }
   return { status: "ran", mode: config.mode, unset: config.unset, networks };
