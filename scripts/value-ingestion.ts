@@ -48,6 +48,17 @@ import {
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
+import {
+  AttributionRecorder,
+  canonicalJson,
+  revalidateAttributionEntries,
+} from "./attribution-memo";
+import type {
+  AttributionMemoEntry,
+  AttributionMemoFence,
+  AttributionMemoResult,
+  CollectionMemoSession,
+} from "./collection-memo";
 import type { ValueReferenceDiscussionSource } from "./historical-discussion-evidence";
 import {
   RetainedAttributionIncompleteError,
@@ -451,13 +462,22 @@ export interface ValueInputProgress {
   total: number;
 }
 
+/** Reuse of commit attributions from the previous trusted collection. */
+export interface AttributionMemoContext {
+  session: CollectionMemoSession;
+  /** Seeds the audit sample, so one cutoff always audits the same sources. */
+  cutoffAt: string;
+}
+
+type ValueGithub = Pick<GitHubClient, "get" | "graphql" | "fileText"> & {
+  readReferenceDiscussion?: (
+    source: ValueReferenceDiscussionSource,
+    pull: Pull,
+  ) => Promise<CompleteValueReferenceDiscussion | null>;
+};
+
 export async function loadValueInputs(
-  github: Pick<GitHubClient, "get" | "graphql" | "fileText"> & {
-    readReferenceDiscussion?: (
-      source: ValueReferenceDiscussionSource,
-      pull: Pull,
-    ) => Promise<CompleteValueReferenceDiscussion | null>;
-  },
+  liveGithub: ValueGithub,
   outcomes: readonly AttributionOutcome[],
   transport: Fetch = fetch,
   unavailableJointSources?: (
@@ -465,7 +485,61 @@ export async function loadValueInputs(
   ) => Promise<readonly string[]>,
   attributionOutcomes: readonly AttributionOutcome[] = outcomes,
   onProgress: (progress: ValueInputProgress) => void = () => {},
+  memo?: AttributionMemoContext,
 ) {
+  // While an attribution is computed live, every read passes through its
+  // recorder so the next collection can tell whether the answer still holds.
+  let recorder: AttributionRecorder | null = null;
+  const github: ValueGithub = {
+    get: async <T>(path: string) => {
+      const current = recorder;
+      try {
+        const value = await liveGithub.get<T>(path);
+        current?.observeGet(path, value);
+        return value;
+      } catch (error) {
+        current?.observeError();
+        throw error;
+      }
+    },
+    graphql: async <T>(query: string, variables: Record<string, unknown>) => {
+      const current = recorder;
+      try {
+        const value = await liveGithub.graphql<T>(query, variables);
+        current?.observeGraphql(query, variables, value);
+        return value;
+      } catch (error) {
+        current?.observeError();
+        throw error;
+      }
+    },
+    fileText: async (...args: Parameters<GitHubClient["fileText"]>) => {
+      const current = recorder;
+      current?.observeFile(args[0], args[1], args[3]);
+      try {
+        return await liveGithub.fileText(...args);
+      } catch (error) {
+        current?.observeError();
+        throw error;
+      }
+    },
+    readReferenceDiscussion: liveGithub.readReferenceDiscussion
+      ? async (source, pull) => {
+          const current = recorder;
+          try {
+            const discussion = await liveGithub.readReferenceDiscussion?.(
+              source,
+              pull,
+            );
+            if (discussion) current?.observeIncoming(discussion.timeline);
+            return discussion ?? null;
+          } catch (error) {
+            current?.observeError();
+            throw error;
+          }
+        }
+      : undefined,
+  };
   const heldWorkUnits: HeldWorkUnit[] = [];
   const valueDecisions = new Map<
     string,
@@ -588,6 +662,7 @@ export async function loadValueInputs(
     };
     const cached = sourceCache.get(id);
     if (cached) {
+      recorder?.observePull(cached.evidence.pull);
       if (
         cached.evidence.repository.toLowerCase() !==
           repository.id.toLowerCase() ||
@@ -655,7 +730,7 @@ export async function loadValueInputs(
     const missing = [...actorIds].filter((id) => !valueActors.has(id));
     for (let offset = 0; offset < missing.length; offset += 100) {
       const ids = missing.slice(offset, offset + 100);
-      const result = await github.graphql<{
+      const result = await liveGithub.graphql<{
         nodes: ({
           __typename: string;
           id: string;
@@ -686,17 +761,31 @@ export async function loadValueInputs(
     }
   }
 
-  async function resolveRetainedAuthors(
-    outcome: (typeof outcomes)[number],
-    repositoryId: string,
-  ) {
-    const mergedAt = outcome.mergedAt;
-    if (!mergedAt) return;
-    // Every branch credits primary authors. Read retained-copy evidence only
-    // for known ordinary unlinked commits first accepted by this PR; a later
-    // promotion cannot trigger another attribution pass for imported work.
+  type RetainedAuthor = {
+    actor: GitHubActor;
+    originalPullRequestId: string;
+    originalPullRequestUrl: string;
+    originalCommitSha: string;
+  };
+  type AttributionAnswer =
+    | { kind: "none" }
+    | { kind: "hold"; limitations: readonly string[] }
+    | {
+        kind: "authors";
+        authors: Map<string, RetainedAuthor>;
+        bindings: Extract<
+          AttributionMemoResult,
+          { kind: "authors" }
+        >["authors"];
+      };
+
+  // Every branch credits primary authors. Read retained-copy evidence only
+  // for known ordinary unlinked commits first accepted by this PR; a later
+  // promotion cannot trigger another attribution pass for imported work.
+  function eligibleCommitShasFor(outcome: (typeof outcomes)[number]) {
+    if (!outcome.mergedAt) return new Set<string>();
     const creditRepositoryId = repositoryIdFromUrl(outcome.url).toLowerCase();
-    const eligibleCommitShas = new Set(
+    return new Set(
       (outcome.commits ?? [])
         .filter(
           (commit) =>
@@ -708,7 +797,15 @@ export async function loadValueInputs(
         )
         .map((commit) => commit.oid),
     );
-    if (eligibleCommitShas.size === 0) return;
+  }
+
+  async function resolveRetainedAuthors(
+    outcome: (typeof outcomes)[number],
+    repositoryId: string,
+    eligibleCommitShas: ReadonlySet<string>,
+  ): Promise<AttributionAnswer> {
+    const mergedAt = outcome.mergedAt;
+    if (!mergedAt || eligibleCommitShas.size === 0) return { kind: "none" };
     const { identity } = await repositoryIdentity(repositoryId);
     const assertAttributionSource = (pull: Pull) => {
       if (
@@ -747,10 +844,8 @@ export async function loadValueInputs(
         : undefined,
     );
     assertAttributionSource(discovery.pull);
-    if (discovery.limitations.length) {
-      implementationAttributionHolds.set(outcome.id, discovery.limitations);
-      return;
-    }
+    if (discovery.limitations.length)
+      return { kind: "hold", limitations: discovery.limitations };
     const originalCandidates = new Map<string, boolean>();
     async function isOriginal(reference: RelatedPullRequest) {
       if (
@@ -779,7 +874,7 @@ export async function loadValueInputs(
       if (await isOriginal(reference)) hasOriginal = true;
     // Most unlinked commits have no replaced submission. Do not collect every
     // historical commit patch merely to discover that no claim can be made.
-    if (!hasOriginal) return;
+    if (!hasOriginal) return { kind: "none" };
     const accepted = await source(repositoryId, outcome.number, outcome.id);
     const sources = [accepted];
     for (const reference of accepted.evidence.relatedPullRequests) {
@@ -797,14 +892,13 @@ export async function loadValueInputs(
     }
     // Without an original-source candidate, unlinked work keeps the ordinary
     // source-creator fallback. Its provisional minimum needs no value review.
-    if (sources.length === 1) return;
+    if (sources.length === 1) return { kind: "none" };
     let bindings: Awaited<ReturnType<typeof retainedCommitCreditSources>>;
     try {
       bindings = await retainedCommitCreditSources(accepted, sources);
     } catch (error) {
       if (!(error instanceof RetainedAttributionIncompleteError)) throw error;
-      implementationAttributionHolds.set(outcome.id, error.limitations);
-      return;
+      return { kind: "hold", limitations: error.limitations };
     }
     const eligibleBindings = [...bindings].filter(([sha]) =>
       eligibleCommitShas.has(sha),
@@ -812,15 +906,11 @@ export async function loadValueInputs(
     await hydrateActors(
       new Set(eligibleBindings.map(([, entry]) => entry.actorNodeId)),
     );
-    const authors = new Map<
-      string,
-      {
-        actor: GitHubActor;
-        originalPullRequestId: string;
-        originalPullRequestUrl: string;
-        originalCommitSha: string;
-      }
-    >();
+    const authors = new Map<string, RetainedAuthor>();
+    const memoBindings: Extract<
+      AttributionMemoResult,
+      { kind: "authors" }
+    >["authors"] = [];
     for (const [sha, binding] of eligibleBindings) {
       const actor = valueActors.get(binding.actorNodeId);
       if (!actor || !isCreditEligibleCommitAuthor(actor))
@@ -831,8 +921,104 @@ export async function loadValueInputs(
         originalPullRequestUrl: binding.originalPullRequestUrl,
         originalCommitSha: binding.originalCommitSha,
       });
+      memoBindings.push([
+        sha,
+        binding.actorNodeId,
+        binding.originalPullRequestId,
+        binding.originalPullRequestUrl,
+        binding.originalCommitSha,
+      ]);
     }
-    if (authors.size) retainedCommitAuthors.set(outcome.id, authors);
+    return authors.size
+      ? { kind: "authors", authors, bindings: memoBindings }
+      : { kind: "none" };
+  }
+
+  function memoResult(answer: AttributionAnswer): AttributionMemoResult | null {
+    if (answer.kind === "hold") return null;
+    return answer.kind === "none"
+      ? { kind: "none" }
+      : { kind: "authors", authors: answer.bindings };
+  }
+
+  /** The live computation, recorded for the next collection. */
+  async function liveAttribution(
+    outcome: (typeof outcomes)[number],
+    repositoryId: string,
+    eligibleCommitShas: ReadonlySet<string>,
+  ): Promise<AttributionAnswer> {
+    if (eligibleCommitShas.size === 0 || !outcome.mergedAt)
+      return { kind: "none" };
+    const registered = findRegisteredRepositoryById(repositoryId);
+    const active = new AttributionRecorder(
+      registered
+        ? [
+            repositoryId,
+            registered.id,
+            `${registered.owner}/${registered.name}`,
+            ...registered.aliases,
+          ]
+        : [repositoryId],
+    );
+    recorder = active;
+    let answer: AttributionAnswer;
+    try {
+      answer = await resolveRetainedAuthors(
+        outcome,
+        repositoryId,
+        eligibleCommitShas,
+      );
+    } finally {
+      recorder = null;
+    }
+    if (memo && outcome.headRefOid) {
+      const { identity } = await repositoryIdentity(repositoryId);
+      const entry = active.entry(
+        outcome.id,
+        attributionFence(outcome, identity.node_id, eligibleCommitShas),
+        memoResult(answer),
+      );
+      if (entry) memo.session.next.set(outcome.id, entry);
+    }
+    return answer;
+  }
+
+  function attributionFence(
+    outcome: (typeof outcomes)[number],
+    repositoryNodeId: string,
+    eligibleCommitShas: ReadonlySet<string>,
+  ): AttributionMemoFence {
+    return {
+      number: outcome.number,
+      url: outcome.url,
+      headRefOid: outcome.headRefOid as string,
+      mergedAt: new Date(outcome.mergedAt as string).toISOString(),
+      updatedAt: new Date(outcome.updatedAt).toISOString(),
+      repositoryNodeId,
+      eligibleCommitShas: [...eligibleCommitShas].sort(),
+    };
+  }
+
+  /** A reused answer: actors are re-read live, exactly as the live path does. */
+  async function reusedAttribution(
+    entry: AttributionMemoEntry,
+  ): Promise<AttributionAnswer | null> {
+    if (entry.result.kind === "none") return { kind: "none" };
+    await hydrateActors(
+      new Set(entry.result.authors.map((author) => author[1])),
+    );
+    const authors = new Map<string, RetainedAuthor>();
+    for (const [sha, actorNodeId, id, url, original] of entry.result.authors) {
+      const actor = valueActors.get(actorNodeId);
+      if (!actor || !isCreditEligibleCommitAuthor(actor)) return null;
+      authors.set(sha, {
+        actor,
+        originalPullRequestId: id,
+        originalPullRequestUrl: url,
+        originalCommitSha: original,
+      });
+    }
+    return { kind: "authors", authors, bindings: entry.result.authors };
   }
 
   // Attribution applies to the complete merge census, including historical
@@ -842,11 +1028,88 @@ export async function loadValueInputs(
     completed: 0,
     total: attributionOutcomes.length,
   });
-  for (const [index, outcome] of attributionOutcomes.entries()) {
+  const repositoryOf = (outcome: (typeof outcomes)[number]) => {
     const [owner, repo] = new URL(outcome.url).pathname
       .split("/")
       .filter(Boolean);
-    await resolveRetainedAuthors(outcome, `${owner}/${repo}`);
+    return `${owner}/${repo}`;
+  };
+  const eligible = new Map(
+    attributionOutcomes.map((outcome) => [
+      outcome.id,
+      eligibleCommitShasFor(outcome),
+    ]),
+  );
+  // Incremental collection: an earlier answer is reused only when the live
+  // census and every recorded input still match. Everything else is live.
+  const reusable = new Map<string, AttributionMemoEntry>();
+  if (memo?.session.prior.size) {
+    const candidates: AttributionMemoEntry[] = [];
+    for (const outcome of attributionOutcomes) {
+      const entry = memo.session.prior.get(outcome.id);
+      const shas = eligible.get(outcome.id) ?? new Set<string>();
+      if (!entry || shas.size === 0 || !outcome.mergedAt || !outcome.headRefOid)
+        continue;
+      const repositoryId = repositoryOf(outcome);
+      const { identity } = await repositoryIdentity(repositoryId);
+      if (
+        canonicalJson(entry.fence) ===
+        canonicalJson(attributionFence(outcome, identity.node_id, shas))
+      )
+        candidates.push(entry);
+      else memo.session.stats.fenceMisses += 1;
+    }
+    const valid = await revalidateAttributionEntries(
+      liveGithub.graphql.bind(liveGithub) as Parameters<
+        typeof revalidateAttributionEntries
+      >[0],
+      candidates,
+    );
+    for (const entry of candidates) {
+      if (valid.has(entry.outcomeId)) reusable.set(entry.outcomeId, entry);
+      else memo.session.stats.fenceMisses += 1;
+    }
+  }
+  // Audit sample: recompute some reusable answers live first. One difference
+  // discards every reuse in this run.
+  const answers = new Map<string, AttributionAnswer>();
+  if (memo)
+    for (const outcome of attributionOutcomes) {
+      const entry = reusable.get(outcome.id);
+      if (!entry || !memo.session.audits(outcome.id, memo.cutoffAt)) continue;
+      const answer = await liveAttribution(
+        outcome,
+        repositoryOf(outcome),
+        eligible.get(outcome.id) as Set<string>,
+      );
+      answers.set(outcome.id, answer);
+      memo.session.stats.audited += 1;
+      if (canonicalJson(memoResult(answer)) !== canonicalJson(entry.result)) {
+        memo.session.stats.auditMismatches += 1;
+        reusable.clear();
+      }
+    }
+  for (const [index, outcome] of attributionOutcomes.entries()) {
+    const repositoryId = repositoryOf(outcome);
+    const shas = eligible.get(outcome.id) ?? new Set<string>();
+    let answer = answers.get(outcome.id);
+    const entry = reusable.get(outcome.id);
+    if (!answer && entry) {
+      const reused = await reusedAttribution(entry);
+      if (reused && memo) {
+        answer = reused;
+        memo.session.next.set(outcome.id, entry);
+        memo.session.stats.reused += 1;
+      }
+    }
+    if (!answer) {
+      answer = await liveAttribution(outcome, repositoryId, shas);
+      if (memo && shas.size) memo.session.stats.live += 1;
+    }
+    if (answer.kind === "hold")
+      implementationAttributionHolds.set(outcome.id, answer.limitations);
+    else if (answer.kind === "authors")
+      retainedCommitAuthors.set(outcome.id, answer.authors);
     onProgress({
       phase: "commit-attributions",
       completed: index + 1,
