@@ -23,7 +23,8 @@
 // The first ask is two writes (GitHub, then D1) under a lease, so a job can
 // die between them; `holder` is a job that holds the lease. The Worker may
 // withdraw a payment whose deposit a chain reorganisation removed, while no
-// outcome is set; the next check then asks again.
+// outcome is set; the next check then asks again. Taking an unpaid ask back
+// removes its row, so a deposit sent afterwards pays for nothing.
 module bot_submission_fee {
   pure val REFUND_AFTER = 2
   pure val KEPT_AFTER = 2
@@ -58,7 +59,7 @@ module bot_submission_fee {
   // An ask that can be taken back: finished, or left by a job that died.
   val askStands = s.gate == "asked" or (s.gate == "asking" and not(s.holder))
   def released(state) = state.with("gate", "released").with("label", "none")
-    .with("comments", 1)
+    .with("comments", 1).with("row", false)
 
   // --- The owner, the operator, the contributor and maintainers.
   action setMode(wanted: str): bool = all { wanted != s.mode,
@@ -189,6 +190,10 @@ module bot_submission_fee {
     not(s.everLive) implies all { s.label == "none", s.comments == 0,
       s.gate == "none" or s.gate == "recorded", s.outcome == "none" },
     s.gate == "recorded" implies s.row,
+    // While the switch stays live, an ask taken back leaves no row for the
+    // Worker to mark paid.
+    (s.mode == "live" and not(s.leftLive) and s.gate == "released")
+      implies not(s.row),
     // While the switch stays live, an asked pull request that was never paid
     // has no review of its head and no ready label.
     (s.mode == "live" and not(s.leftLive) and unpaidAsk and not(s.everPaid))
@@ -251,11 +256,13 @@ module bot_submission_fee {
   run settingTurnedOffReleasesTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(ownerTurnsOff).then(feeCheck).then(review(true))
-    .expect(s.gate == "released" and s.label == "none" and s.reviewed)
+    .expect(s.gate == "released" and s.label == "none" and s.reviewed
+      and not(s.row))
   run authorGainingAccessReleasesTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(authorGainsAccess).then(review(true))
-    .expect(s.gate == "released" and s.label == "none" and not(s.reviewed))
+    .expect(s.gate == "released" and s.label == "none" and not(s.reviewed)
+      and not(s.row))
   run crashDoesNotDuplicateTheCommentTest = init.then(ownerTurnsOn)
     .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
     .then(holderDies).then(review(true)).then(askPosts).then(askRecords)
