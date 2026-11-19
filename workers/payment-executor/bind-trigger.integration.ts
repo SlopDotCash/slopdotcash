@@ -64,6 +64,10 @@ const attesterKey =
 const attester = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 const owner = "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc";
 const payer = "0x90f79bf6eb2c4f870365e785982e1f101e93b906";
+// Anvil account 3: the payer that becomes the new identity authority after
+// the rotation, so the updated reviewed pin names it.
+const payerKey =
+  "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
 const fee = "0x0000000000000000000000000000000000000fee";
 const projectKey = `0x${"1".padStart(64, "0")}`;
 const source = `0x${"2".padStart(64, "0")}`;
@@ -686,8 +690,13 @@ try {
 
   // Replay the Quint authority handoff through the real signing core and
   // Anvil contract. The old signature is delayed across registrar rotation:
-  // it cannot be rebroadcast by the service, but its eventual reverted
-  // receipt must retire the held journal without changing the binding.
+  // it cannot be rebroadcast by the service, and the first scheduled run
+  // after the rotation retires the held journal locally because no receipt
+  // exists and the old bytes can never land as a valid binding. Delivering
+  // the old bytes outside the service afterwards still reverts on-chain
+  // without changing the binding. The Quint rotation-retirement trace
+  // (rotatedBindingRetiresWithoutReceiptTest) models this path: its states
+  // 6 and 7 are the local retirement and the reverted outside delivery.
   const traceDirectory = mkdtempSync(join(tmpdir(), "slop-rotation-trace-"));
   const rotationSnapshot = await rpc("evm_snapshot", []);
   const beforeRotationJournal = journalDb
@@ -702,7 +711,7 @@ try {
         `${root}formal/models/payments/authority_rotation.qnt`,
         "--backend=typescript",
         "--seed=1",
-        "--match=^delayedOldAuthorityRevertsAndReconcilesTest$",
+        "--match=^rotatedBindingRetiresWithoutReceiptTest$",
         `--out-itf=${join(traceDirectory, "trace-{test}-{seq}.json")}`,
       ],
       { stdio: "pipe" },
@@ -712,7 +721,7 @@ try {
       readFileSync(
         join(
           traceDirectory,
-          "trace-delayedOldAuthorityRevertsAndReconcilesTest-0.json",
+          "trace-rotatedBindingRetiresWithoutReceiptTest-0.json",
         ),
         "utf8",
       ),
@@ -758,6 +767,26 @@ try {
       JOURNAL: journal,
       SIGNER: privateKeyToAccount(attesterKey),
     };
+    // The operator's normal next step after the rotation is to update the
+    // reviewed pin and the signer to the new authority. The first scheduled
+    // run after that update must still retire the entry: reconcileBindingWinner
+    // used to throw "Stored binding identity differs" on the updated pin
+    // before it read any receipt, so the retirement code was never reached.
+    assert.equal(
+      privateKeyToAccount(payerKey).address.toLowerCase(),
+      payer,
+      "rotated pin signer must be the new authority",
+    );
+    const rotatedPinEnvironment = {
+      ...rotationEnvironment,
+      PAYMENT_DEPLOYMENTS: JSON.stringify(
+        JSON.parse(env.PAYMENT_DEPLOYMENTS).map((pin: object) => ({
+          ...pin,
+          identityAuthority: payer,
+        })),
+      ),
+      SIGNER: privateKeyToAccount(payerKey),
+    };
     await checkRotationState(2); // wallet consent exists, no signature yet.
     dropBroadcast = true;
     await assert.rejects(
@@ -777,19 +806,44 @@ try {
     await mine(64);
     await checkRotationState(5);
     const sendsBeforeRotationRetry = bindingBroadcasts;
-    const heldReport = await runStoredBindings(rotationEnvironment, []);
-    assert.equal(heldReport.failed, 1);
+    // The broadcast was lost before the rotation, so no receipt exists and
+    // the old bytes can never land as a valid binding: the first scheduled
+    // run retires the journal entry locally instead of failing on it forever.
+    // It runs with the updated pin and signer, as the operator would have
+    // them after the rotation.
+    const heldReport = await runStoredBindings(rotatedPinEnvironment, []);
+    assert.equal(heldReport.failed, 0);
     assert.equal(bindingBroadcasts, sendsBeforeRotationRetry);
-    await checkRotationState(5);
+    assert.equal((await pendingStoredBindings(journal)).length, 0);
+    assert.equal(await journal.get(oldAttempt.key), null);
+    assert.ok(
+      await journal.get(
+        `${oldAttempt.key}:rotated:${oldAttempt.transactionId}`,
+      ),
+    );
+    await checkRotationState(6); // retired locally, no receipt, binding unchanged.
     dropBroadcast = false;
-    // Deliver the original outside the service to model an in-flight request.
+    const [, versionBefore] = words(
+      await read(vault, "bindings(uint64)", ["123"]),
+    );
+    // Deliver the original outside the service to model an in-flight request:
+    // the old bytes still revert on-chain and must not change the binding,
+    // even though the journal entry is already retired.
     await rpc("eth_sendRawTransaction", [oldAttempt.rawTransaction]);
     await mine(1);
     const revertedReceipt = (await rpc("eth_getTransactionReceipt", [
       oldAttempt.transactionId,
     ])) as { status: string };
     assert.equal(revertedReceipt.status, "0x0");
-    await checkRotationState(6);
+    const [, versionAfter] = words(
+      await read(vault, "bindings(uint64)", ["123"]),
+    );
+    assert.equal(versionAfter.toString(), versionBefore.toString());
+    assert.equal(
+      `0x${(await read(factory, "identityAuthority()")).slice(-40)}`,
+      payer,
+    );
+    await checkRotationState(7); // outside delivery reverted, binding unchanged.
     await mine(64);
     const reconciled = await runStoredBindings(rotationEnvironment, []);
     assert.equal(reconciled.failed, 0);
@@ -797,10 +851,9 @@ try {
     assert.equal(await journal.get(oldAttempt.key), null);
     assert.ok(
       await journal.get(
-        `${oldAttempt.key}:reverted:${oldAttempt.transactionId}`,
+        `${oldAttempt.key}:rotated:${oldAttempt.transactionId}`,
       ),
     );
-    await checkRotationState(9);
   } finally {
     dropBroadcast = false;
     await rpc("evm_revert", [rotationSnapshot]);
@@ -1321,7 +1374,7 @@ try {
     404,
   );
   console.log(
-    `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; expired and superseded consent stayed held at the existing cancellation fee cap; the delayed original receipt reconciled without another broadcast`,
+    `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; expired and superseded consent stayed held at the existing cancellation fee cap; the lost binding retired locally after rotation without another broadcast`,
   );
 } finally {
   anvil.kill();
