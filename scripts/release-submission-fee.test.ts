@@ -2,7 +2,10 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "../src/lib/submission-fee.mjs";
-import { assertSubmissionFeeRelease } from "./release-submission-fee";
+import {
+  assertSubmissionFeeRelease,
+  endpointSecrets,
+} from "./release-submission-fee";
 
 type Config = Parameters<typeof assertSubmissionFeeRelease>[0];
 const checkedIn = () =>
@@ -128,4 +131,40 @@ test("another database, a route, a missing schedule, a key in the file or a bad 
   refused((config) => {
     config.vars.SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI = "1";
   }, "daily native limit");
+});
+
+test("keyed endpoints come from the release map by network, and a bad map is refused without echoing it", () => {
+  expect(endpointSecrets(undefined)).toEqual({});
+  expect(endpointSecrets("  ")).toEqual({});
+  expect(
+    endpointSecrets(
+      JSON.stringify({
+        "base-mainnet": "https://base.example/v2/key-a",
+        "robinhood-mainnet": "https://rc.example/v2/key-b",
+        "solana-mainnet": "https://sol.example/key-c",
+      }),
+    ),
+  ).toEqual({
+    RPC_URL_SUBMISSION_FEE_BASE: "https://base.example/v2/key-a",
+    RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://rc.example/v2/key-b",
+  });
+  // A network the map does not name keeps the public default.
+  expect(
+    endpointSecrets(JSON.stringify({ "base-mainnet": "https://b.example/k" })),
+  ).toEqual({ RPC_URL_SUBMISSION_FEE_BASE: "https://b.example/k" });
+  for (const bad of [
+    "https://b.example/secret-key",
+    JSON.stringify(["https://b.example/secret-key"]),
+    JSON.stringify({ "base-mainnet": "http://b.example/secret-key" }),
+    JSON.stringify({ "robinhood-mainnet": 7 }),
+  ]) {
+    let thrown = "";
+    try {
+      endpointSecrets(bad);
+    } catch (error) {
+      thrown = String(error);
+    }
+    expect(thrown).toContain("PAYMENT_RPC_URLS");
+    expect(thrown).not.toContain("secret-key");
+  }
 });
