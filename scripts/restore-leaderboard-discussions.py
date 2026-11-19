@@ -16,9 +16,9 @@ from pathlib import Path
 
 # Match the cache envelope in github-discussion-cache.ts. This also limits the
 # archive before any file is extracted.
-MAX_CACHE_FILES = 24_000
-MAX_CACHE_BYTES = 256 * 1024 * 1024
-MAX_ENTRY_BYTES = 2 * 1024 * 1024 + 2048
+MAX_CACHE_FILES = 100_000
+MAX_CACHE_BYTES = 1024 * 1024 * 1024
+MAX_ENTRY_BYTES = 8 * 1024 * 1024 + 2048
 MAX_ARCHIVE_BYTES = MAX_CACHE_BYTES + MAX_CACHE_FILES * 512
 MAX_AGE = timedelta(hours=48)
 
