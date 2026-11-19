@@ -11,10 +11,16 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-export const MAX_DISCUSSION_CACHE_ENTRIES = 24_000;
-export const MAX_DISCUSSION_CACHE_BYTES = 256 * 1024 * 1024;
+export const MAX_DISCUSSION_CACHE_ENTRIES = 100_000;
+export const MAX_DISCUSSION_CACHE_BYTES = 1024 * 1024 * 1024;
 export const MAX_DISCUSSION_CACHE_AGE_MS = 48 * 60 * 60 * 1_000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+// Commit-addressed reads never change, so a resumed collection can revalidate
+// them with a conditional request (a 304 costs no GitHub quota) instead of
+// downloading every large commit page again. Discussions keep a reserve so
+// these pages can never crowd them out of the checkpoint.
+export const MAX_IMMUTABLE_BODY_BYTES = 8 * 1024 * 1024;
+const DISCUSSION_RESERVE_BYTES = 256 * 1024 * 1024;
 const MAX_METADATA_BYTES = 2_048;
 const ENTRY_NAME = /^[a-f0-9]{64}\.bin$/u;
 const canonicalRepo = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u;
@@ -98,6 +104,45 @@ function matchesDiscussion(
   );
 }
 
+/** A read whose bytes are fixed by the commit object ids in its URL. */
+function immutableValidator(
+  path: string,
+  search: string,
+): ((value: unknown) => boolean) | null {
+  const page = /^\?per_page=100&page=[1-9]\d{0,5}$/u;
+  const commit = /^commits\/([a-f0-9]{40})$/u.exec(path);
+  if (commit)
+    return page.test(search)
+      ? (value) => {
+          const data = object(value);
+          return (
+            data?.sha === commit[1] &&
+            Array.isArray(data.files) &&
+            data.files.length <= 100
+          );
+        }
+      : null;
+  const compare = /^compare\/([a-f0-9]{40})\.\.\.([a-f0-9]{40})$/u.exec(path);
+  if (compare)
+    return search === "" || page.test(search)
+      ? (value) => {
+          const data = object(value);
+          return (
+            object(data?.base_commit)?.sha === compare[1] &&
+            typeof data?.status === "string" &&
+            Array.isArray(data.commits)
+          );
+        }
+      : null;
+  const object_ = /^git\/(commits|trees|blobs)\/([a-f0-9]{40})$/u.exec(path);
+  if (object_)
+    return search === "" ||
+      (object_[1] === "trees" && search === "?recursive=1")
+      ? (value) => object(value)?.sha === object_[2]
+      : null;
+  return null;
+}
+
 export function githubDiscussionCache(
   options: DiscussionCacheOptions,
   now: () => number,
@@ -134,74 +179,23 @@ export function githubDiscussionCache(
         throw new Error("GitHub discussion cache exceeds its retention bounds");
     }
   }
-  return (url: URL, headers: Headers, redirect: RequestRedirect) => {
-    const match =
-      /^\/repos\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(pulls|issues)\/([1-9]\d*)(?:\/(comments|reviews))?$/u.exec(
-        url.pathname,
-      );
-    if (
-      !match ||
-      url.origin !== "https://api.github.com" ||
-      url.username ||
-      url.password ||
-      url.hash ||
-      redirect !== "manual"
-    )
-      return null;
-    const [, rawRepo, section, rawNumber, collection] = match;
-    const repository = rawRepo.toLowerCase();
-    const nodeId = repositories.get(repository);
-    const number = Number(rawNumber);
-    if (
-      !nodeId ||
-      !Number.isSafeInteger(number) ||
-      (section === "issues" && collection !== "comments") ||
-      (collection
-        ? !/^\?per_page=100&page=[1-9]\d{0,5}$/u.test(url.search)
-        : url.search !== "") ||
-      headers.get("accept") !== accept ||
-      headers.get("x-github-api-version") !== apiVersion ||
-      headers.get("user-agent") !== "slopbot" ||
-      !/^Bearer \S+$/u.test(headers.get("authorization") ?? "") ||
-      [...headers.keys()].some(
-        (name) =>
-          ![
-            "accept",
-            "authorization",
-            "user-agent",
-            "x-github-api-version",
-          ].includes(name),
-      )
-    )
-      return null;
-    const fragment =
-      collection === "reviews"
-        ? "pullrequestreview-"
-        : collection === "comments"
-          ? section === "issues"
-            ? "issuecomment-"
-            : "discussion_r"
-          : undefined;
-    const pullUrl = `https://github.com/${repository}/pull/${number}`;
-    if (fragment !== undefined && !publicPulls.has(pullUrl)) return null;
-    // Match the current observation. A failed or inaccessible PR response
-    // must not leave an earlier success fencing later discussion reads.
-    if (fragment === undefined) publicPulls.delete(pullUrl);
+  function entry(
+    nodeId: string,
+    url: URL,
+    maxBody: number,
+    valid: (value: unknown) => boolean,
+    admitted: () => boolean,
+    observe: () => void,
+    immutable: boolean,
+  ) {
     const name = `${hash(JSON.stringify(["1", nodeId, url.href, accept, apiVersion]))}.bin`;
     const path = join(options.directory, name);
     const validBody = (bytes: Uint8Array) => {
-      if (bytes.length === 0 || bytes.length > MAX_BODY_BYTES) return false;
+      if (bytes.length === 0 || bytes.length > maxBody) return false;
       const value: unknown = JSON.parse(
         new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       );
-      return matchesDiscussion(
-        value,
-        number,
-        pullUrl,
-        repository,
-        nodeId,
-        fragment,
-      );
+      return valid(value);
     };
     return {
       async read(): Promise<CachedDiscussion | null> {
@@ -215,10 +209,7 @@ export function githubDiscussionCache(
           );
           try {
             const stat = await handle.stat();
-            if (
-              !stat.isFile() ||
-              stat.size > MAX_BODY_BYTES + MAX_METADATA_BYTES
-            )
+            if (!stat.isFile() || stat.size > maxBody + MAX_METADATA_BYTES)
               return null;
             const raw = await handle.readFile();
             const line = raw.indexOf(10);
@@ -250,24 +241,22 @@ export function githubDiscussionCache(
         }
       },
       async save(etag: string, bytes: Uint8Array): Promise<void> {
-        if (fragment !== undefined && !publicPulls.has(pullUrl)) return;
+        if (!admitted()) return;
         try {
           if (!validBody(bytes)) return;
         } catch {
           return;
         }
-        if (
-          fragment === undefined &&
-          publicPulls.size < MAX_DISCUSSION_CACHE_ENTRIES
-        )
-          publicPulls.add(pullUrl);
+        observe();
         if (!etagPattern.test(etag)) return;
         const metadata = `${JSON.stringify({ version: 1, key: name, etag, observedAt: now(), digest: hash(bytes) })}\n`;
         const size = Buffer.byteLength(metadata) + bytes.length;
         const previous = sizes.get(name) ?? 0;
         if (
           (!previous && sizes.size >= MAX_DISCUSSION_CACHE_ENTRIES) ||
-          totalBytes + size - previous > MAX_DISCUSSION_CACHE_BYTES ||
+          totalBytes + size - previous >
+            MAX_DISCUSSION_CACHE_BYTES -
+              (immutable ? DISCUSSION_RESERVE_BYTES : 0) ||
           writing.has(name)
         )
           return;
@@ -296,5 +285,101 @@ export function githubDiscussionCache(
         }
       },
     };
+  }
+  const headersMatch = (headers: Headers) =>
+    headers.get("accept") === accept &&
+    headers.get("x-github-api-version") === apiVersion &&
+    headers.get("user-agent") === "slopbot" &&
+    /^Bearer \S+$/u.test(headers.get("authorization") ?? "") &&
+    [...headers.keys()].every((name) =>
+      [
+        "accept",
+        "authorization",
+        "user-agent",
+        "x-github-api-version",
+      ].includes(name),
+    );
+  return (url: URL, headers: Headers, redirect: RequestRedirect) => {
+    const immutable =
+      /^\/repos\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(.+)$/u.exec(url.pathname);
+    const validator = immutable && immutableValidator(immutable[2], url.search);
+    if (
+      immutable &&
+      validator &&
+      url.origin === "https://api.github.com" &&
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      redirect === "manual" &&
+      headersMatch(headers)
+    ) {
+      const nodeId = repositories.get(immutable[1].toLowerCase());
+      if (!nodeId) return null;
+      return entry(
+        nodeId,
+        url,
+        MAX_IMMUTABLE_BODY_BYTES,
+        (value) => validator(value),
+        () => true,
+        () => undefined,
+        true,
+      );
+    }
+    const match =
+      /^\/repos\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(pulls|issues)\/([1-9]\d*)(?:\/(comments|reviews))?$/u.exec(
+        url.pathname,
+      );
+    if (
+      !match ||
+      url.origin !== "https://api.github.com" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      redirect !== "manual"
+    )
+      return null;
+    const [, rawRepo, section, rawNumber, collection] = match;
+    const repository = rawRepo.toLowerCase();
+    const nodeId = repositories.get(repository);
+    const number = Number(rawNumber);
+    if (
+      !nodeId ||
+      !Number.isSafeInteger(number) ||
+      (section === "issues" && collection !== "comments") ||
+      (collection
+        ? !/^\?per_page=100&page=[1-9]\d{0,5}$/u.test(url.search)
+        : url.search !== "") ||
+      !headersMatch(headers)
+    )
+      return null;
+    const fragment =
+      collection === "reviews"
+        ? "pullrequestreview-"
+        : collection === "comments"
+          ? section === "issues"
+            ? "issuecomment-"
+            : "discussion_r"
+          : undefined;
+    const pullUrl = `https://github.com/${repository}/pull/${number}`;
+    if (fragment !== undefined && !publicPulls.has(pullUrl)) return null;
+    // Match the current observation. A failed or inaccessible PR response
+    // must not leave an earlier success fencing later discussion reads.
+    if (fragment === undefined) publicPulls.delete(pullUrl);
+    return entry(
+      nodeId,
+      url,
+      MAX_BODY_BYTES,
+      (value) =>
+        matchesDiscussion(value, number, pullUrl, repository, nodeId, fragment),
+      () => fragment === undefined || publicPulls.has(pullUrl),
+      () => {
+        if (
+          fragment === undefined &&
+          publicPulls.size < MAX_DISCUSSION_CACHE_ENTRIES
+        )
+          publicPulls.add(pullUrl);
+      },
+      false,
+    );
   };
 }
