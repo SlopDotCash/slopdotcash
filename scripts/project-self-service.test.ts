@@ -201,6 +201,35 @@ test("a new project cannot reuse a listed project id or repository", async () =>
   ]);
 });
 
+test("creating an already listed repository again points the owner to its manage page", async () => {
+  const { persistence, create } = registry();
+  expect((await create("open-registry", "example/open-registry")).status).toBe(
+    201,
+  );
+  const again = await create("open-registry", "example/open-registry");
+  expect(again.status).toBe(409);
+  expect(again.body.error).toBe("registry_conflict");
+  expect(String(again.body.message)).toContain(
+    "example/open-registry is already listed on Slop as open-registry",
+  );
+  expect(String(again.body.message)).toContain(
+    "/projects/open-registry/manage",
+  );
+  const renamed = await create("open-registry-two", "example/open-registry");
+  expect(renamed.status).toBe(409);
+  expect(String(renamed.body.message)).toContain(
+    "/projects/open-registry/manage",
+  );
+  const taken = await create("open-registry", "other/their-repo", OTHER);
+  expect(taken.status).toBe(409);
+  expect(String(taken.body.message)).toContain(
+    "The project id open-registry is already used",
+  );
+  expect((await persistence.listProjects()).map((p) => p.id)).toEqual([
+    "open-registry",
+  ]);
+});
+
 test("an admin revision still replaces the listed project with that id", async () => {
   const { persistence, call, create } = registry();
   await create("open-registry", "example/open-registry");

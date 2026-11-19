@@ -264,10 +264,17 @@ with a repository-level synthesis (`workers/vetting/ACQUISITION.md`,
 run size limit: objects are stored once by SHA-256 in private R2 in 8 MiB
 parts and referenced by every run that declares them
 (`backend/vetting/EVIDENCE.md`). Never reintroduce an entry, file, total or
-evidence size refusal, and never record a partly reviewed repository as passed. Record the
-existing-project exemption explicitly, never as a passed scan; its project-ID
-scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
-reinstatement requirements still apply.
+evidence size refusal, and never record a partly reviewed repository as passed.
+Operator decision, 19 November 2026: clearance follows the scanner's own
+evidence. Info, low and medium model findings and reviewer coverage reasons the
+scanner verifies as outside the acquired revision are advisory; unreviewed
+supplied content, a missing or unexplained coverage area, a high or critical
+finding, suspected malice and scanner gaps still block. Slop's queued template
+is checked deterministically and not sent to the models; well-formed images are
+listed by digest (PRD section 8). Record the existing-project exemption
+explicitly, never as a passed scan; its project-ID scope is unchanged. Flags,
+pauses, confirmed-malicious bans and fresh-scan reinstatement requirements
+still apply.
 
 Owner decision, 27 October 2026: the registered Umia Protocol fork may receive
 an explicit, audited normal-admission exemption through the administrator
@@ -699,7 +706,11 @@ the complete browser lanes, and every other check still runs. A push release
 cannot skip them. A release that skipped either set is not evidence that
 the skipped checks passed.
 To publish new data without a commit, run the release workflow by hand
-(`workflow_dispatch`) with the `use_published_data` option off. Every production release requires current main equivalence. Every
+(`workflow_dispatch`) with the `use_published_data` option off. The
+`daily-collection.yml` workflow does this every day at 07:17 UTC unless a
+collection is already running, publishes a superseded collection through a
+`data_from_run` release, and resumes a failed collection once (operator
+decision, 19 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
