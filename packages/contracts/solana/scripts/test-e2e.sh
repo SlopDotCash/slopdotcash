@@ -5,11 +5,22 @@ mkdir -p .local
 if [[ ! -f .local/payer.json ]]; then
   solana-keygen new --no-bip39-passphrase --silent --outfile .local/payer.json >/dev/null
 fi
-npm ci --ignore-scripts --legacy-peer-deps
 rpc_port=${SLOP_TEST_RPC_PORT:-18899}
 faucet_port=$((rpc_port + 41))
 dynamic_ports="$((rpc_port + 2))-$((rpc_port + 31))"
 export ANCHOR_PROVIDER_URL="http://127.0.0.1:$rpc_port"
+# Any TCP listener on the RPC port means another process owns it, even one that never replies.
+rpc_port_taken() {
+  node -e 'const s = require("net").connect(+process.argv[1], "127.0.0.1"); s.on("connect", () => process.exit(0)); s.on("error", () => process.exit(1)); setTimeout(() => process.exit(1), 2000)' "$rpc_port"
+}
+refuse_occupied_port() {
+  if rpc_port_taken; then
+    printf '%s\n' "Refusing to start: $ANCHOR_PROVIDER_URL already has a listener. Stop that process or set SLOP_TEST_RPC_PORT." >&2
+    return 1
+  fi
+}
+refuse_occupied_port
+npm ci --ignore-scripts --legacy-peer-deps
 export ANCHOR_WALLET="$PWD/.local/payer.json"
 validator_pid=""
 validator_receipt=""
@@ -55,6 +66,7 @@ trap 'exit 129' HUP
 # The program loads as upgradeable with the local payer as upgrade authority, so
 # ProgramData exists and the payer can sign initialize_config, as on mainnet with the owner-controlled upgrade authority retained.
 start_validator() {
+  refuse_occupied_port
   local program_arguments
   program_arguments=$(node integration/program-genesis.mjs)
   read -ra program_accounts <<<"$program_arguments"
@@ -92,6 +104,16 @@ start_validator() {
     cat .local/validator.log >&2
     return 1
   fi
+  if [[ "$validator" == native ]]; then
+    local expected actual
+    expected=$(solana-keygen pubkey "$PWD/.local/ledger/validator-keypair.json")
+    actual=$(node -e 'fetch(process.argv[1], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getIdentity" }), signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((b) => process.stdout.write(b.result?.identity ?? ""), () => process.exit(1))' "$ANCHOR_PROVIDER_URL" || true)
+    if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+      printf '%s\n' "The validator at $ANCHOR_PROVIDER_URL is not the one this run started." >&2
+      cat .local/validator.log >&2
+      return 1
+    fi
+  fi
   node scripts/airdrop-local.mjs
 }
 # CI qualifies the exact retained production artifact. Local runs without one
@@ -116,9 +138,10 @@ stop_validator
 skip_suite() {
   printf 'SKIP integration/%s: needs %s, not on this branch\n' "$1" "$2"
 }
+printf '%s\n' 'SKIP reason shared by every suite below: they load adapter.ts, and it and the client files that import it carry payment and fee policy from src/lib/payments and backend/payments (acceptsPayoutFee, ordinaryFee, PayoutPolicy, PaymentChainAdapter). That is business logic.'
 skip_suite escrow.e2e.mjs 'adapter.ts, monthly-reserve.ts and workers/payment-executor (monthly-release.ts, solana-monthly.ts)'
 skip_suite executor.e2e.mjs 'adapter.ts, workers/payment-executor, workers/payments and backend/payments'
-skip_suite keeper.e2e.mjs 'adapter.ts, scripts/payment-keeper, functions/api, src/lib payments and workers/payment-executor'
+skip_suite keeper.e2e.mjs 'adapter.ts, transactions.ts, scripts/payment-keeper (budget.ts, keeper.ts, store.ts), functions/api/v1/[[path]].ts, src/lib (escrow-policy.mjs, payments/monthly-allocation.ts, project-schema.mjs), tests/project-application-manifest.ts, tests/sqlite-d1.ts and workers/payment-executor/solana-monthly.ts'
 skip_suite native.e2e.mjs 'adapter.ts, funding.ts, owner-creation.ts and workers/payment-executor/solana.ts'
 skip_suite owner-instructions.e2e.mjs 'funding.ts, owner-creation.ts and owner-instructions.ts'
 skip_suite owner-plan.e2e.mjs 'commitment.ts, funding.ts and backend/payments/handler.ts'

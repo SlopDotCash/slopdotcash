@@ -441,8 +441,9 @@ platform tools v1.52 (see [the package README](../README.md) for the
 as upgrade authority, and runs `integration/production-delay.e2e.mjs` against a
 fresh validator. It proves that only the upgrade authority creates the Config,
 through the unsigned `scripts/config-plan.mjs` transaction, exactly once, and
-that `initialize` rejects 3,599 seconds and accepts 3,600 seconds. It uses
-local test funds only.
+that `initialize` accepts zero award and rotation delays and rejects a
+negative award or rotation delay, an award delay above 30 days and a rotation
+delay above 90 days. It uses local test funds only.
 
 The validator is `solana-test-validator` 2.1.21 when that exact version is on
 `PATH`; otherwise it is the pinned Agave 2.1.21 container of
@@ -458,7 +459,16 @@ services (`workers/payment-executor`, `workers/payments`, `backend/payments`,
 `scripts/payment-keeper`). Those are not on this branch, so `test-e2e.sh` prints
 `SKIP` with what each suite needs instead of running it: `escrow`, `executor`,
 `keeper`, `native`, `owner-instructions`, `owner-plan`, `pledge` and
-`token-2022`. They return with that business logic.
+`token-2022`. Every suite loads `adapter.ts`, and it and the client files that
+import it carry payment and fee policy: `adapter.ts` imports `acceptsPayoutFee`
+from `src/lib/payments/contracts.ts` and the `PaymentChainAdapter` type from
+`backend/payments/ledger.ts`, `funding.ts` and `commitment.ts` also import
+`ordinaryFee`, and `owner-instructions.ts` imports `PayoutPolicy`. The suites return
+with that business logic.
+
+`test-e2e.sh` refuses to start when anything listens on the RPC port, and in native
+mode checks that the validator's `getIdentity` is the key in
+`.local/ledger/validator-keypair.json` before any test runs.
 
 If a test stage fails, `.local/failure-evidence/` retains bounded status and
 receipt metadata, without keys, transaction bytes, account data or raw logs.
