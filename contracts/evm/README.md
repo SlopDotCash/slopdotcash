@@ -643,3 +643,80 @@ address, block and code hash for the independent root watcher, with the accrual
 job in `dry_run` and posting not activated. The AI-assisted internal review is
 [`docs/security/referral-distributor-ai-review-2026-10-25.md`](../../docs/security/referral-distributor-ai-review-2026-10-25.md);
 it is not an audit.
+
+## Submission deposits
+
+`src/SubmissionDeposits.sol` is a separate, non-upgradeable contract that holds
+refundable submission deposits, built for the platform submission fee (operator
+decision, 18 November 2026). **It is not deployed on any chain, and no Slop
+service reads or calls it.** The PRD does not yet describe a platform fee: PRD
+section 4 still covers only fees a repository runs itself. The product rule, the
+Worker that settles deposits, the Slopbot gate and the service key they need are
+separate changes. It is separate from the escrow: it has no factory, no proxy, no
+project id and no vault role, and the escrow never calls it.
+
+- Anyone calls `deposit(item, token, amount, keptTo)`. `item` names what the
+  deposit is for; for a pull request it is
+  `keccak256(abi.encodePacked("slop-fee-v1", uint64(githubRepositoryId), uint64(pullRequestNumber)))`.
+  The contract pulls exactly `amount`, and records the payer, the token, the
+  amount and `keptTo`. None of those can change afterwards. Ids count up from 1.
+  The contract keeps no list of accepted tokens, amounts or kept addresses; that
+  check is off chain, and a deposit that fails it is refunded or reclaimed.
+- The resolver calls `resolve(id, refund)` once per open deposit: `true` sends
+  the amount back to the payer, `false` sends it to that deposit's `keptTo`.
+  `resolveMany(ids, refunds)` does the same for a list, all or nothing. A payout
+  that fails reverts with `PayoutFailed(id)`, which names the deposit.
+- If a deposit is still open `reclaimDelay` after it was made (30 days in the
+  deployment scripts, fixed for the life of a deployment), its payer calls
+  `reclaim(id)` and takes it back. A resolver that stops working strands nobody.
+- The owner calls `setResolver`, `pauseDeposits` and the two-step
+  `transferOwnership` / `acceptOwnership`. Pausing refuses new deposits only; it
+  never blocks `resolve`, `resolveMany` or `reclaim`. The resolver is never the
+  owner or the pending owner. No owner action moves, redirects or resolves a
+  deposit.
+
+What a stolen resolver key can do: settle any open deposit either way. It can
+refund deposits that should have been kept, and it can send deposits that should
+have been refunded to their `keptTo`, which for a burn address cannot be
+recovered. What it cannot do: send a deposit anywhere other than its payer or its
+`keptTo`, take anything for itself, change a record, touch a deposit that is
+already settled or reclaimed, or stay in place once the owner replaces it. What a
+stolen owner key can do: name a resolver it controls, which then has exactly the
+resolver's two outcomes, and pause new deposits. The most either key can affect
+is the deposits open at that moment (`openTotal(token)`).
+
+Other limits: transfers must be exact in both directions, so fee-on-transfer and
+rebasing tokens are refused. A token that freezes the payer blocks that payer's
+refund and reclaim (the deposit can still be kept), and a paused token blocks
+every movement of that token until it is unpaused. Tokens sent to the contract
+without `deposit` belong to no deposit and cannot be moved by anyone. Every entry
+point that moves tokens holds a reentrancy lock.
+
+`test/SubmissionDeposits.t.sol` covers every recorded field and event, the
+refusals of `deposit`, short and excess delivery in both directions, tokens that
+return nothing or false, both outcomes and their destinations, single settlement, the roles,
+`resolveMany`, reclaim timing, pausing, stray tokens, reentry through a hostile
+token in each entry point, and a fuzz over three deposits.
+`test/SubmissionDepositsInvariant.t.sol` runs random payer, resolver, owner and
+passer-by sequences over two tokens and checks after every call that the balance
+held equals the open deposits, that every token outside the contract is with a
+payer or a kept address in the amount the outcomes imply, and that no forbidden
+call succeeded. These suites are regression evidence, not a security review.
+
+`script/DeploySubmissionDepositsRobinhood.s.sol` (chain id 4663) and
+`script/DeploySubmissionDepositsBase.s.sol` (chain id 8453) share
+`script/DeploySubmissionDeposits.sol`: each refuses any other chain, takes only
+`SUBMISSION_DEPOSITS_OWNER` and `SUBMISSION_DEPOSITS_RESOLVER` from the
+environment, fixes the 30-day reclaim delay, and reads the deployed values back
+before it reports. They move no tokens; `test/SubmissionDepositsDeploy.t.sol`
+covers their refusals. Neither has been run against a real chain. The steps for
+the owner are in
+[`docs/submission-deposits-deploy-runbook.md`](../../docs/submission-deposits-deploy-runbook.md).
+On 18 November 2026 both scripts and the full deposit, refund, kept, batch and
+reclaim sequence were rehearsed on local forks of Base (USDC) and Robinhood
+Chain (USDG and SLOP). Built with the settings in `foundry.toml` and a 30-day
+delay, the runtime code hash is
+`0xe4c13bf58d547617ad10f4ee7bf4a43fb47ab68a4f6e841f5c22acd3874c55ef` on either
+chain. The AI-assisted review note is
+[`docs/submission-deposits-ai-review-2026-11-18.md`](../../docs/submission-deposits-ai-review-2026-11-18.md);
+it is not an audit.
