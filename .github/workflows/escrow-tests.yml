@@ -189,6 +189,8 @@ jobs:
         if: github.event_name != 'pull_request'
       - run: bun run test:referral-accrual:anvil
         if: github.event_name != 'pull_request'
+      - run: bun run test:submission-fee:anvil
+        if: github.event_name != 'pull_request'
       - name: Exercise fee conversion and claim recovery on an isolated local chain
         env:
           SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role

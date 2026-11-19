@@ -286,7 +286,8 @@ export function submissionFeeTokenKind(network, token, terms = {}) {
  * token is the network's stablecoin or SLOP; `keptTo` is the fee wallet for a
  * stablecoin and the burn address for SLOP; and the amount is at least the
  * amount due at the deposit's block time. Everything else is refused with a
- * reason and is refunded, never kept.
+ * reason and never kept: a refused deposit of an accepted token is refunded,
+ * and one of any other token is left for its payer to reclaim.
  */
 export function submissionDepositCounts(
   network,
@@ -335,14 +336,19 @@ export function submissionDepositCounts(
  * What the resolver may send for one deposit: "refund", "keep" or null.
  *
  * Nothing is sent before the deposit is finalized and judged, or once it has
- * left the open states. A deposit that does not count is refunded. A deposit
- * that counts is refunded when its pull request's row says `refund_due`, and
- * kept only when that row says `kept_due` and names this very deposit as the
- * one that paid. No other input can produce "keep".
+ * left the open states. A deposit of a token outside the table is never
+ * resolved at all: the resolver makes no call into a token nobody reviewed,
+ * and its payer reclaims it from the contract after 30 days. A deposit of an
+ * accepted token that does not count is refunded. A deposit that counts is
+ * refunded when its pull request's row says `refund_due`, and kept only when
+ * that row says `kept_due` and names this very deposit as the one that paid.
+ * No other input can produce "keep".
  */
-export function submissionResolveAction(network, deposit, item) {
+export function submissionResolveAction(network, deposit, item, terms = {}) {
   if (!deposit.finalizedAt) return null;
   if (!["open", "refund_due", "kept_due"].includes(deposit.state)) return null;
+  if (submissionFeeTokenKind(network, deposit.token, terms) === null)
+    return null;
   if (deposit.accepted === 0 || deposit.accepted === false) return "refund";
   if (deposit.accepted !== 1 && deposit.accepted !== true) return null;
   if (

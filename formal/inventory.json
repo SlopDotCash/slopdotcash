@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "fe400c0e3ee39afb35fd77d5e25a0ab57ddcad7d4e0b8eaa739597b352673198",
+      "sha256": "021aaf202a429455427626e7cd18197b20b7b994125ef36359ca0b7997eabdf1",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -26,19 +26,19 @@
       "candidateLines": [
         40, 50, 164, 294, 360, 361, 422, 475, 532, 612, 617, 732, 738, 806, 809,
         835, 836, 857, 869, 901, 939, 1169, 1197, 1289, 1302, 1393, 1501, 1503,
-        1504, 1708, 1791, 1944, 1946, 1976, 2085, 2107, 2178, 2189, 2214, 2285,
-        2298, 2311, 2320, 2321, 2322, 2339
+        1504, 1708, 1791, 1944, 1946, 1976, 2091, 2113, 2184, 2195, 2220, 2291,
+        2304, 2317, 2326, 2327, 2328, 2345
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "8ae78cd9ba2d0d23a3622be50738b9ae4dda00211b68977deb3370e643fef5cf",
+      "sha256": "d4511b0022fc3d756adcdc7556b02531faa1c2830914957d9718c03525635a6d",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [194],
+      "candidateLines": [196],
       "review": "mapped-abstraction"
     },
     {
@@ -1286,6 +1286,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/submission-fee/handler.ts",
+      "sha256": "a0f15e0cfb72b377320860871d9289b3a6f19ad83d4fba7520784b7fbc520760",
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_rate.qnt"
+      ],
+      "candidateLines": [59, 60, 145],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/trace/auth.ts",
       "sha256": "72fc7a32af9df1ab599675b24ee7a68af7806a666b8d5362e1077d6e71370a23",
       "models": [
@@ -1714,6 +1724,27 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "contracts/evm/script/DeploySubmissionDeposits.sol",
+      "sha256": "9a2eb45c7c24d606ec2a8dbb8d8922b97caf03f92067786159e27ce3f7655521",
+      "models": ["formal/models/contracts/submission_deposits_deployment.qnt"],
+      "candidateLines": [45, 47],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/evm/script/DeploySubmissionDepositsBase.s.sol",
+      "sha256": "86724ccbe3dc0d9d41121787bece7cc11a070e5fd782eb631bccd88729b21114",
+      "models": ["formal/models/contracts/submission_deposits_deployment.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/evm/script/DeploySubmissionDepositsRobinhood.s.sol",
+      "sha256": "45d09c025bba3c391e4f64327de871ce59c7feb70d06290a9c3c4de8bc45156c",
+      "models": ["formal/models/contracts/submission_deposits_deployment.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "contracts/evm/script/DeployUpgradeImplementations.s.sol",
       "sha256": "d5259a20380b50621693c6cd205ed2bc245fc2c5d4209ceb27e69245d27624f5",
       "models": ["formal/models/contracts/evm_proxy_lifecycle.qnt"],
@@ -1744,6 +1775,15 @@
         "formal/models/referrals/referral_root_history.qnt"
       ],
       "candidateLines": [155, 267, 280],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/evm/src/SubmissionDeposits.sol",
+      "sha256": "7f8c69347c1292a8127aa591678386e2e22ad58fec31966076d74c01bf202c3e",
+      "models": ["formal/models/contracts/submission_deposits.qnt"],
+      "candidateLines": [
+        18, 22, 37, 113, 121, 154, 164, 168, 199, 221, 232, 235, 236
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -2221,7 +2261,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "10ac1c43564ab9bbf507279dd3b98df865efc9eafdec173e1725bba28f1f9f82",
+      "sha256": "8e3e1b1cffceb0706d48efc0cf6a83f1029d4e19c26d35a79467b3d4c28c50e3",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_request_composition.qnt",
@@ -2231,7 +2271,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [550, 551, 587, 600],
+      "candidateLines": [553, 554, 590, 603],
       "review": "mapped-abstraction"
     },
     {
@@ -3617,6 +3657,26 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0139_submission_fee_deposits.sql",
+      "sha256": "7371e185d7e0a7e556fa9168e2a27f2b945547e42f1536bd7c8a364f0ccb5c43",
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "candidateLines": [
+        9, 11, 12, 30, 38, 45, 59, 66, 68, 69, 72, 74, 78, 79, 87, 88, 89, 90,
+        114
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0140_submission_fee_rates.sql",
+      "sha256": "512d25335f9e297a928fb43667334fd5f8870398bf9e1c427888214675ccc230",
+      "models": ["formal/models/fees/submission_fee_rate.qnt"],
+      "candidateLines": [14, 16, 30, 32],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "migrations/0141_submission_fee_items.sql",
       "sha256": "7e813a368a55731043b786fc922df4b63f1fcbed708e56d934df037ea8eda498",
       "models": ["formal/models/slopbot/bot_submission_fee.qnt"],
@@ -3632,9 +3692,9 @@
     },
     {
       "path": "package.json",
-      "sha256": "cf9927f26d487b688d157a03c6d8278c55d21d98e44e1d37c7dbfbb898ad1ac7",
+      "sha256": "033c09e7f55ed27789e3ea4b64c6268f2b26766a27b81acd62ede78d193fbe12",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [78, 82, 84, 85],
+      "candidateLines": [80, 84, 86, 87],
       "review": "mapped-abstraction"
     },
     {
@@ -4893,6 +4953,13 @@
         290, 291, 292, 293, 376, 379, 382, 409, 410, 412, 432, 496, 516, 517,
         519, 522, 554, 555, 556, 561, 622, 673
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/release-submission-fee.ts",
+      "sha256": "e489e8076bc009b6035d0e24f23e6166549dcb4badbeaaeeb863e12065dfb8e5",
+      "models": ["formal/models/fees/submission_fee_send.qnt"],
+      "candidateLines": [158, 160, 167],
       "review": "mapped-abstraction"
     },
     {
@@ -7449,12 +7516,14 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "e514fa88d029ce804069456e7513dde88253cc20720d056cd1b1ac2d59512d18",
+      "sha256": "ab5ad3ba0d0e49de7d52685e52c157d7fe201c1f16d96e11238f86f223519919",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [56, 78, 337, 345],
+      "candidateLines": [56, 78, 338, 349],
       "review": "mapped-abstraction"
     },
     {
@@ -7856,15 +7925,17 @@
     },
     {
       "path": "workers/fee-converter/buyback-store.ts",
-      "sha256": "9039fa775c3d1e0fa9b9c23c993292fba0a9fa2eeb3c44b2a04c462f56d5dc5f",
+      "sha256": "dcb6dd3c4623116386d79d35d220777bc7d78e4022c3a91896b5529976d0cf5f",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
-        "formal/models/fees/fee_value_caps.qnt"
+        "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/submission_fee_deposit.qnt"
       ],
       "candidateLines": [
-        37, 51, 78, 110, 139, 144, 151, 155, 160, 171, 172, 178, 210
+        37, 52, 79, 103, 104, 123, 150, 179, 184, 191, 195, 200, 211, 212, 218,
+        250
       ],
       "review": "mapped-abstraction"
     },
@@ -9705,6 +9776,82 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Literal deployment bindings, five-minute cron, queue limits and closure-off default; no own runtime transition. Review/queue/admission behavior is in bot_moderation, bot_webhook_delivery, bot_value_request; deploying these settings remains an operational gate."
+    },
+    {
+      "path": "workers/submission-fee/chain.ts",
+      "sha256": "bdbdad6818adfe979048aef888cbbf302e0b6ed924b5205f144282426d837931",
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "candidateLines": [
+        49, 102, 108, 174, 179, 273, 278, 323, 346, 352, 407, 417, 421, 427,
+        429, 431, 437, 440, 442, 448
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/submission-fee/config.ts",
+      "sha256": "5c18cff7cdc8917b1c05cccdf79c7e770f13fc71a1d9d7e87d6a314ab2fe76ad",
+      "models": ["formal/models/fees/submission_fee_send.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/submission-fee/core.ts",
+      "sha256": "27106dd12c7cfffa139c2e4e7ebd9cb6a44a9526f68b2e8a509ae33637540ab6",
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "candidateLines": [
+        5, 30, 92, 109, 128, 144, 165, 166, 172, 178, 203, 215, 226, 250, 257,
+        294, 338, 383, 384, 392, 393, 400, 403, 420, 448, 465, 468, 498, 558,
+        572, 578, 579, 606, 633, 636, 637, 639, 641, 643, 651, 652, 658, 667,
+        673, 726, 727, 743, 804, 816, 851, 877, 895, 907
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/submission-fee/index.ts",
+      "sha256": "b2917898d127135b1bcc4b8a3c2dbc2893dee7aa2238140a14ddba81711b0b30",
+      "models": [
+        "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "candidateLines": [47, 48, 50, 71, 73, 82, 115, 174],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/submission-fee/rate.ts",
+      "sha256": "f3e520d8b453f3da2e2b1f49343be35737948c2bb705b46a95ae82980bc928f1",
+      "models": ["formal/models/fees/submission_fee_rate.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/submission-fee/store.ts",
+      "sha256": "ff1e7040ffbd402cc255148eb583c35d57e98e396e0f8be38c4d78884b4c86b6",
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_send.qnt"
+      ],
+      "candidateLines": [
+        39, 59, 87, 116, 150, 167, 169, 171, 186, 276, 278, 281, 290, 295, 306,
+        315, 321, 322, 345, 352, 400, 427, 452, 453, 484, 487, 519, 531, 535,
+        537, 539, 546, 595, 602, 604, 612, 619, 623, 648, 657, 658, 662, 696,
+        729
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/submission-fee/wrangler.toml",
+      "sha256": "801d2c73dcb18eff2b037363aa6c235399afd5eb04903faee80a694828645300",
+      "models": ["formal/models/fees/submission_fee_send.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "workers/verified-budget.ts",
@@ -12708,6 +12855,61 @@
       ]
     },
     {
+      "path": "formal/models/contracts/submission_deposits.qnt",
+      "sha256": "45aec22f4d761ec6a66ee8fb30b47c4f7837d6919e508f0c63d55178e4763a15",
+      "sources": ["contracts/evm/src/SubmissionDeposits.sol"],
+      "scenarios": [
+        "cancelledOwnershipCannotBeAcceptedTest",
+        "earlyReclaimRefusedTest",
+        "failedRefundCanStillBeKeptTest",
+        "failedTransferLeavesTheDepositOpenTest",
+        "keptGoesToTheKeptAddressTest",
+        "missingKeptAddressRefusedTest",
+        "newResolverStillHasOnlyTheTwoOutcomesTest",
+        "onlyTheResolverSettlesTest",
+        "ownerCannotBecomeResolverTest",
+        "ownerCannotReclaimTest",
+        "pauseNeverBlocksReclaimTest",
+        "pauseNeverBlocksSettlementTest",
+        "pausedDepositRefusedTest",
+        "payerCannotSettleTest",
+        "pendingOwnerCannotBecomeResolverTest",
+        "reclaimAfterDelayTest",
+        "reclaimedCannotBeSettledTest",
+        "reentrantDepositRefusedTest",
+        "reentrantReclaimRefusedTest",
+        "reentrantSettleRefusedTest",
+        "refundGoesToThePayerTest",
+        "replacedResolverLosesPowerTest",
+        "resolverCannotBeNamedOwnerTest",
+        "resolvesOnceTest",
+        "secondDepositHasItsOwnClockTest",
+        "settledCannotBeReclaimedTest",
+        "shortDeliveryRefusedTest",
+        "twoDepositsSettleIndependentlyTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/submission_deposits_deployment.qnt",
+      "sha256": "b95994506e14f0d61ddfb3d025a0063bf125e84c03248a9ca1296307ba1e0299",
+      "sources": [
+        "contracts/evm/script/DeploySubmissionDeposits.sol",
+        "contracts/evm/script/DeploySubmissionDepositsBase.s.sol",
+        "contracts/evm/script/DeploySubmissionDepositsRobinhood.s.sol"
+      ],
+      "scenarios": [
+        "baseScriptRefusesRobinhoodTest",
+        "deployedEmptyAndInactiveOnBaseTest",
+        "deployedEmptyAndInactiveOnRobinhoodTest",
+        "mismatchedDeploymentRefusedTest",
+        "missingOrSharedRolesRefusedTest",
+        "otherChainRefusedTest",
+        "robinhoodScriptRefusesBaseTest",
+        "secondDeploymentRefusedTest",
+        "unreadDeploymentNotReportedTest"
+      ]
+    },
+    {
       "path": "formal/models/contracts/test_contract_deployment.qnt",
       "sha256": "4df5f35f169a86ef600b03f1973b2a41c113c17368c72e33782926c019ca0832",
       "sources": [
@@ -13458,6 +13660,103 @@
         "nativeOverDebitTest",
         "unresolvedLookupTest",
         "wrongDestinationTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/submission_fee_deposit.qnt",
+      "sha256": "34439242440a19a80355c15dd2c32ca40a139f592230ba5263791d8040791be9",
+      "sources": [
+        "backend/submission-fee/handler.ts",
+        "migrations/0139_submission_fee_deposits.sql",
+        "src/lib/submission-fee.mjs",
+        "workers/fee-converter/buyback-store.ts",
+        "workers/submission-fee/chain.ts",
+        "workers/submission-fee/core.ts",
+        "workers/submission-fee/store.ts"
+      ],
+      "scenarios": [
+        "closeKeepsAndCountsAsIncomeTest",
+        "lateRequestStillCountsTest",
+        "mergeRefundTest",
+        "paidBeforeFinalThenRefundedOnMergeTest",
+        "reclaimIsARefundTest",
+        "reclaimRecordedTest",
+        "reorgUnpaysTest",
+        "secondDepositRefundedTest",
+        "secondDepositRefusedTest",
+        "shortDepositRefundedNeverKeptTest",
+        "undecidedSendsNothingTest",
+        "unknownItemRefundedAfterWaitTest",
+        "unknownItemWaitsTest",
+        "unknownTokenIsNeverResolvedTest",
+        "unknownTokenNotResolvedTest",
+        "unknownTokenReclaimedByPayerTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/submission_fee_rate.qnt",
+      "sha256": "cbef58174cc46fe1ed48ff9b6bddf5ca04682cfe48769503f319d60d1e05e011",
+      "sources": [
+        "backend/submission-fee/handler.ts",
+        "migrations/0140_submission_fee_rates.sql",
+        "src/lib/submission-fee.mjs",
+        "workers/submission-fee/chain.ts",
+        "workers/submission-fee/index.ts",
+        "workers/submission-fee/rate.ts",
+        "workers/submission-fee/store.ts"
+      ],
+      "scenarios": [
+        "driftResetsEarlyTest",
+        "firstRateFromNextHourTest",
+        "firstRateNeedsAFullDayTest",
+        "insideBandNoEarlyResetTest",
+        "offReadsNothingTest",
+        "oneReadingAnHourTest",
+        "unreadablePoolKeepsLastRateTest",
+        "weeklyNeedsAgeAndReadingsTest",
+        "weeklyNotBeforeSixHoursTest",
+        "weeklyResetAtSixHoursTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/submission_fee_send.qnt",
+      "sha256": "3425fbbd07dc91a3e199e1cd9e19b06289d0ed395bf193524c6e8ed364b2d1e4",
+      "sources": [
+        "migrations/0139_submission_fee_deposits.sql",
+        "scripts/release-submission-fee.ts",
+        "workers/submission-fee/chain.ts",
+        "workers/submission-fee/config.ts",
+        "workers/submission-fee/core.ts",
+        "workers/submission-fee/index.ts",
+        "workers/submission-fee/store.ts",
+        "workers/submission-fee/wrangler.toml"
+      ],
+      "scenarios": [
+        "diedAfterRecordingResendsSameBytesTest",
+        "diedBeforeRecordingSendsNothingTest",
+        "dryRunNeverParksTest",
+        "dryRunNeverPreparesTest",
+        "dryRunRecordsOnceAndNeverSignsTest",
+        "failedSendIsSentForAgainTest",
+        "gasBudgetSignsNothingTest",
+        "liveRefusedWithoutKeyTest",
+        "missingItemsTableIsInertTest",
+        "offIsInertTest",
+        "oneInFlightTest",
+        "parkedOnceNotAgainTest",
+        "parkedReleasedAfterUnblockTest",
+        "parkedReturnsWhenPayableTest",
+        "resendKeepsOneSignatureTest",
+        "resolvedOnChainIsNotSentAgainTest",
+        "secondBatchWaitsForFirstTest",
+        "sentThenSettledTest",
+        "stuckAfterSigningFailsOnChainTest",
+        "stuckAfterSigningIsParkedNextRunTest",
+        "stuckDepositBlocksUntilParkedTest",
+        "stuckDepositParkedAndRestSentTest",
+        "systemicRevertParksNothingTest",
+        "systemicRevertSignsNothingTest",
+        "unsetContractIsInertTest"
       ]
     },
     {

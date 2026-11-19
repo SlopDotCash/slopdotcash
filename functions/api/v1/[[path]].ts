@@ -66,6 +66,7 @@ import { deterministicAnalyzer } from "../../../backend/security/report-analysis
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
+import { handleSubmissionFeeApi } from "../../../backend/submission-fee/handler";
 import {
   CloudflareTracePersistence,
   privateIntakeStatus,
@@ -495,6 +496,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (referralsResponse !== null) return referralsResponse;
   const mergeActivity = await handleMergeActivityApi(request, { db });
   if (mergeActivity !== null) return mergeActivity;
+  const submissionFee = await handleSubmissionFeeApi(request, { db, now });
+  if (submissionFee !== null) return submissionFee;
   const poolFunding = await handlePoolFundingApi(request, { db, tier });
   if (poolFunding !== null) return poolFunding;
   // Null without the exact operator token: the request then falls through
