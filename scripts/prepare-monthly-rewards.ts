@@ -17,6 +17,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { maintainerShareBasisPoints } from "../src/lib/maintainer-share.mjs";
+import type { ASI_NOVEMBER_CLOSEOUT } from "../src/lib/payments/asi-november-closeout";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
 import {
   type MonthlyBase,
@@ -62,6 +63,7 @@ export interface MonthlyMaintainerShare {
 
 export type MonthlyBaseWithShare = MonthlyBase & {
   maintainerShare?: MonthlyMaintainerShare;
+  earlyCloseAt?: typeof ASI_NOVEMBER_CLOSEOUT.cutoff;
 };
 
 export interface MonthlyBasesResult {
@@ -274,19 +276,24 @@ export function monthlyBasesSql(
 ): string {
   const statements: string[] = [];
   for (const base of result.bases) {
+    const key = `project_id=${quote(base.projectId)} AND period=${quote(base.period)}`;
+    const header = `${key} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)} AND cap_base=${quote(base.capBase)}`;
+    const closeAt = base.earlyCloseAt ? quote(base.earlyCloseAt) : null;
+    const closeoutColumn = closeAt === null ? "" : ",early_close_at";
+    const closeoutValue = closeAt === null ? "" : `,${closeAt}`;
+    const closeoutBinding =
+      closeAt === null ? "" : ` AND early_close_at=${closeAt}`;
+    const stored = `EXISTS(SELECT 1 FROM monthly_reward_bases WHERE ${header}${closeoutBinding})`;
+    const columns = [
+      base.projectId,
+      base.period,
+      base.manifest,
+      base.manifestSha256,
+      base.sourceSnapshotSha256,
+      base.capBase,
+    ].map(quote);
     statements.push(
-      `INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(${[
-        base.projectId,
-        base.period,
-        base.manifest,
-        base.manifestSha256,
-        base.sourceSnapshotSha256,
-        base.capBase,
-      ]
-        .map(quote)
-        .join(
-          ",",
-        )},${base.rows.length},${quote(createdAt)}) ON CONFLICT(project_id,period) DO NOTHING;`,
+      `INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at${closeoutColumn}) VALUES(${columns.join(",")},${base.rows.length},${quote(createdAt)}${closeoutValue}) ON CONFLICT(project_id,period) DO NOTHING;`,
     );
     for (const row of base.rows)
       statements.push(
@@ -301,13 +308,10 @@ export function monthlyBasesSql(
           .map(quote)
           .join(
             ",",
-          )} WHERE EXISTS(SELECT 1 FROM monthly_reward_bases WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)}) ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
+          )} WHERE ${stored} ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
       );
-    // The maintainer share is stored only beside the exact proposal it was
-    // computed for, and like the proposal it is written once.
     const share = base.maintainerShare;
     if (share) {
-      const stored = `EXISTS(SELECT 1 FROM monthly_reward_bases WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)})`;
       statements.push(
         `INSERT INTO monthly_maintainer_shares(project_id,period,basis_points,pool_base,decisions,decisions_sha256,created_at) SELECT ${[base.projectId, base.period].map(quote).join(",")},${share.basisPoints},${[share.poolBase, share.decisions, share.decisionsSha256, createdAt].map(quote).join(",")} WHERE ${stored} ON CONFLICT(project_id,period) DO NOTHING;`,
       );

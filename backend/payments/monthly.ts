@@ -21,6 +21,7 @@ import {
   type EscrowDeployment,
   maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
+import { ASI_NOVEMBER_CLOSEOUT } from "../../src/lib/payments/asi-november-closeout";
 import {
   type MonthlyAwardState,
   type PaymentAsset,
@@ -177,6 +178,7 @@ interface StoredBase {
   manifestSha256: string;
   sourceSnapshotSha256: string;
   capBase: string;
+  earlyCloseAt: string | null;
   rows: MonthlyBaseRow[];
 }
 
@@ -207,6 +209,16 @@ async function loadBase(
       "proposal_incomplete",
       "This month's proposed allocation is incomplete.",
     );
+  const closeout = ASI_NOVEMBER_CLOSEOUT;
+  const early =
+    projectId === closeout.projectId && period === closeout.period
+      ? await db
+          .prepare(
+            "SELECT early_close_at FROM monthly_reward_bases WHERE project_id=? AND period=?",
+          )
+          .bind(projectId, period)
+          .first<{ early_close_at: string | null }>()
+      : null;
   return {
     projectId,
     period,
@@ -214,6 +226,7 @@ async function loadBase(
     manifestSha256: base.manifest_sha256,
     sourceSnapshotSha256: base.source_snapshot_sha256,
     capBase: base.cap_base,
+    earlyCloseAt: early?.early_close_at ?? null,
     rows,
   };
 }
@@ -461,14 +474,28 @@ async function freezeMonthlyPeriod(
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   const { project, deployment } = input;
   const period = assertPeriod(input.period);
-  if (input.now.getTime() < periodEnd(period).getTime())
+  const monthOpen = input.now < periodEnd(period);
+  const earlyCloseout = ASI_NOVEMBER_CLOSEOUT;
+  const earlyBase =
+    monthOpen &&
+    input.trigger === "owner" &&
+    project.id === earlyCloseout.projectId &&
+    period === earlyCloseout.period &&
+    input.now.getTime() >= Date.parse(earlyCloseout.cutoff)
+      ? await loadBase(db, project.id, period)
+      : null;
+  if (
+    monthOpen &&
+    (earlyBase?.earlyCloseAt !== earlyCloseout.cutoff ||
+      earlyBase.capBase !== earlyCloseout.grossBase)
+  )
     throw new MonthlyPaymentError(
       409,
       "month_open",
       "This month has not closed.",
     );
   if (await loadRun(db, project.id, period)) return "already-frozen";
-  const base = await loadBase(db, project.id, period);
+  const base = earlyBase ?? (await loadBase(db, project.id, period));
   if (!base)
     throw new MonthlyPaymentError(
       404,
@@ -948,6 +975,7 @@ export interface MonthlyOwnerView {
   asset: (PaymentAsset & { symbol: string | null }) | null;
   proposal: {
     capBase: string;
+    earlyCloseAt?: string;
     allocationSequence: number;
     allocations: MonthlyAllocation[];
     /** The newest cut below a proposed amount; finalize waits 24 hours after it. */
@@ -1096,6 +1124,7 @@ export function monthlyOwnerService(deps: {
       );
       proposal = {
         capBase: base.capBase,
+        ...(base.earlyCloseAt ? { earlyCloseAt: base.earlyCloseAt } : {}),
         allocationSequence: sequence,
         allocations: currentAllocations(base.rows, changes),
         latestCutAt: await latestCutAt(deps.db, project.id, period),
@@ -1247,6 +1276,12 @@ export function monthlyOwnerService(deps: {
           404,
           "proposal_unavailable",
           "No allocation has been proposed for this month.",
+        );
+      if (base.earlyCloseAt)
+        throw new MonthlyPaymentError(
+          409,
+          "closeout_allocations_fixed",
+          "This month uses the exact reviewed closeout allocations.",
         );
       const { changes, sequence } = await loadChanges(
         deps.db,
