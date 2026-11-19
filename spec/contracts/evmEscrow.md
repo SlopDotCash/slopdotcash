@@ -522,7 +522,9 @@ pure def stepMonthsRetained(before: Escrow, after: Escrow): bool = before.vault.
 
 `ProjectEscrow` keeps no period on an award, and `commitMonthlyLeaf` emits
 only `AwardCommitted`, so `origins` is a model-only log: each committed leaf
-appends its period and leaf, and nothing else changes it. Every logged leaf
+appends its period and leaf, and nothing else changes it. The conformance
+driver drops it from the observed vault and never compares it, since the
+chain cannot report it. Every logged leaf
 is proved by its period's stored root, count and total, and its source has
 the award of that leaf's actor and gross, logged once. A period's committed
 gross is the sum of the gross of its logged leaves, so it equals the gross
@@ -554,8 +556,9 @@ award. The allocation builder can sign a root at the current source
 sequence that still lists a source the owner committed by hand, since
 `reserveMonthly` checks the sequence, not the leaves. `commitMonthlyLeaf`
 refuses a stranded leaf because the award ID exists, and once any leaf of
-the period has committed, `releaseMonthlyReserve` refuses the period, so a
-stranded leaf's gross stays in the pending reserve for good.
+the period has committed, `releaseMonthlyReserve` refuses the period (its
+remainder is below its total), so a stranded leaf's gross stays in the
+pending reserve for good.
 
 ```quint
 pure def evmStrandedLeaf(e: Escrow, period: int, leaf: L::Leaf): bool =
@@ -566,8 +569,7 @@ pure def lawStrandedLeafNeverCommits(e: Escrow, period: int, leaf: L::Leaf): boo
   evmStrandedLeaf(e, period, leaf) implies not(canCommitMonthlyLeaf(e, period, leaf))
 pure def lawTouchedMonthNeverReleases(e: Escrow, period: int, expectedRemaining: int, releasedGross: int,
   signer: str, by: str): bool =
-  val m = monthFor(e.vault.months, period)
-  (m.committedGross > 0 and m.released >= 0 and m.committedGross + m.released + m.remaining == m.total)
+  (alwaysMonthsWellFormed(e) and monthFor(e.vault.months, period).committedGross > 0)
     implies not(canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by))
 pure def sometimesEvmStrandedLeaf(e: Escrow): bool =
   e.vault.months.some(m => m.leaves.some(l => evmStrandedLeaf(e, m.period, l)))
