@@ -143,12 +143,11 @@ type Observation = NoCallNeeded | NotStored | SameDigest({ earlier: int }) | Cal
 pure def withoutCalls(r: Routine): bool = C::routineClockPending(r.privateCase) or r.onGithub
 pure def accepts(r: Routine, found: Observation): bool =
   val context = T::receiptExclusions(r.privateCase.terms)
-  if (withoutCalls(r)) found == NoCallNeeded
-  else match found {
-    | NoCallNeeded => failuresNow(r) >= maxUnavailableAttempts
-    | NotStored => true
-    | SameDigest(x) => earlierCases.contains(x.earlier)
-    | Calls(x) => failuresNow(r) < maxUnavailableAttempts and validReading(context, x.first) and validReading(context, x.second)
+  match found {
+    | NoCallNeeded => withoutCalls(r) or failuresNow(r) >= maxUnavailableAttempts
+    | NotStored => not(withoutCalls(r))
+    | SameDigest(x) => not(withoutCalls(r)) and earlierCases.contains(x.earlier)
+    | Calls(x) => not(withoutCalls(r)) and failuresNow(r) < maxUnavailableAttempts and validReading(context, x.first) and validReading(context, x.second)
   }
 pure def verdict(r: Routine, found: Observation): Decision =
   if (r.onGithub) held(GithubAdvisory, ByHold, 0)
@@ -239,13 +238,13 @@ pure def saveVersion(r: Routine, by: int, digest: str): Routine =
     privateCase: C::reviseReport(r.privateCase, by, r.screening.version + 1), savedAt: r.nowMs }
 pure def canClaimScreening(r: Routine): bool = S::canClaim(r.screening, r.screening.revision, r.nowMs, true)
 pure def claimScreening(r: Routine): Routine = { ...r, screening: S::claim(r.screening, r.screening.revision, r.nowMs, true) }
-pure def screeningInput(r: Routine, screened: S::Observation): S::Input = { exactVersionLoaded: true,
-  duplicateEvidence: screened == S::DuplicateEvidence, route: S::Surplus, exclusions: T::receiptExclusions(r.privateCase.terms) }
+pure def screeningInput(r: Routine, duplicate: bool): S::Input = { exactVersionLoaded: true,
+  duplicateEvidence: duplicate, route: S::Surplus, exclusions: T::receiptExclusions(r.privateCase.terms) }
 pure def screeningClaim(r: Routine): S::Claim = { revision: r.screening.revision, version: r.screening.version, digest: r.screening.digest }
-pure def canFinishScreening(r: Routine, screened: S::Observation): bool =
-  S::canFinish(r.screening, screeningClaim(r), screeningInput(r, screened), screened)
-pure def finishScreening(r: Routine, screened: S::Observation): Routine =
-  { ...r, screening: S::finish(r.screening, screeningClaim(r), screeningInput(r, screened), screened) }
+pure def canFinishScreening(r: Routine, screened: S::Observation, duplicate: bool): bool =
+  S::canFinish(r.screening, screeningClaim(r), screeningInput(r, duplicate), screened)
+pure def finishScreening(r: Routine, screened: S::Observation, duplicate: bool): Routine =
+  { ...r, screening: S::finish(r.screening, screeningClaim(r), screeningInput(r, duplicate), screened) }
 pure def canReachGithub(r: Routine): bool = not(r.onGithub)
 pure def reachGithub(r: Routine): Routine = { ...r, onGithub: true }
 pure def alwaysVersionsAligned(r: Routine): bool = r.privateCase.reportVersion == r.screening.version
