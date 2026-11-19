@@ -21414,7 +21414,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_scan_clearance_rule.qnt",
-      "sha256": "d8a2f955805894d1438e71a746486011c5d4bcbc77061f2b4dec6411428cc93f",
+      "sha256": "a5d4ff9248f93002a3211ddc2e24cc3a9560f606cef0aa7caa59d2de21535fdc",
       "sources": [
         "backend/vetting/scan-result.ts",
         "scripts/qualify-vetting-review.ts",
