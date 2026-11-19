@@ -13,22 +13,30 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/daily-collection.yml",
+      "sha256": "aba6f909a80280844881291fc37ac9a783e9bc2e52f040cc118a09710327f22b",
+      "models": ["formal/models/release/daily_collection.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "8e3685ac843872fb666937d1a5059c5397544b3396c667eed08d51473f3cfb36",
+      "sha256": "f02aa1d9320ed3375e1667a6b4ad8e19f56349667dc03da374900a25079d8e5a",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt",
+        "formal/models/release/daily_collection.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 54, 215, 352, 445, 446, 535, 588, 645, 725, 730, 845, 851, 919, 922,
-        948, 949, 970, 982, 1014, 1052, 1282, 1310, 1402, 1415, 1506, 1614,
-        1616, 1617, 1821, 1904, 2057, 2059, 2089, 2204, 2226, 2297, 2308, 2333,
-        2404, 2417, 2430, 2439, 2440, 2441, 2458
+        44, 54, 215, 355, 448, 449, 538, 591, 648, 728, 733, 848, 854, 922, 925,
+        951, 952, 973, 985, 1017, 1055, 1285, 1313, 1405, 1418, 1509, 1617,
+        1619, 1620, 1824, 1907, 2060, 2062, 2092, 2207, 2229, 2300, 2311, 2336,
+        2407, 2420, 2433, 2442, 2443, 2444, 2461
       ],
       "review": "mapped-abstraction"
     },
@@ -3944,6 +3952,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/daily-collection.ts",
+      "sha256": "522e0702b36f19b5112b1804b5c4013308203626be4ebc5034da5513d0cabcd4",
+      "models": ["formal/models/release/daily_collection.qnt"],
+      "candidateLines": [
+        40, 46, 52, 117, 163, 164, 165, 172, 178, 205, 208, 213, 279, 447, 477
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/dev-backend-notify.ts",
       "sha256": "21a102b61f63ad7101d24899d0b94c7b7cdd569c18b044a36c0e4e8568a16534",
       "models": ["formal/models/tooling/development_stack.qnt"],
@@ -6062,7 +6079,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "fb72941347020674e084071ef32e12fe5aaf5dcf8c43a55953d4fe3cb5d3c26a",
+      "sha256": "a9f3ce131a20855d60b329f8a3b05d4d81d0a154e173251cf60bfd1aa1609734",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
@@ -6083,18 +6100,18 @@
       "candidateLines": [
         23, 169, 494, 497, 498, 499, 500, 501, 502, 503, 505, 508, 512, 517,
         533, 544, 552, 553, 570, 586, 590, 608, 616, 624, 631, 634, 654, 669,
-        670, 1083, 1094, 1095, 1105, 1116, 1119, 1124, 1127, 1136, 1139, 1140,
-        1142, 1143, 1148, 1176, 1180, 1183, 1193, 1194, 1253, 1255, 1259, 1264,
-        1273, 1283, 1288, 1345, 1358, 1366, 1369, 1376, 1451, 1476, 1484, 1485,
-        1487, 1492, 1496, 1505, 1520, 1527, 1631, 1632, 1633, 1635, 1641, 1651,
-        1658, 1674, 1687, 1719, 1729, 1736, 1741, 1744, 1755, 1777, 1778, 1780,
-        1781, 1877, 1880, 1907, 2342, 2344, 2432, 2472, 2521, 2524, 2530, 2531,
-        2533, 2543, 2545, 2549, 2560, 2574, 2586, 2603, 2613, 2617, 2618, 2621,
-        2624, 2625, 2626, 2627, 2628, 2629, 2630, 2631, 2632, 2633, 2636, 2637,
-        2638, 2639, 2641, 2647, 2732, 2742, 2756, 2787, 2798, 3187, 3211, 3216,
-        3245, 3270, 3277, 3290, 3311, 3315, 3329, 3337, 3347, 3360, 3365, 3370,
-        3371, 3374, 3401, 3448, 3449, 3453, 3458, 3595, 3627, 3635, 3636, 3644,
-        3646, 3731, 3739, 3740, 3777, 3782, 3788, 3794, 3808, 3821, 3822, 3837
+        670, 1081, 1092, 1093, 1103, 1114, 1117, 1122, 1125, 1134, 1137, 1138,
+        1140, 1141, 1146, 1174, 1178, 1181, 1191, 1192, 1251, 1253, 1257, 1262,
+        1271, 1281, 1286, 1343, 1356, 1364, 1367, 1374, 1449, 1474, 1482, 1483,
+        1485, 1490, 1494, 1503, 1518, 1525, 1629, 1630, 1631, 1633, 1639, 1649,
+        1656, 1672, 1685, 1717, 1727, 1734, 1739, 1742, 1753, 1775, 1776, 1778,
+        1779, 1875, 1878, 1905, 2340, 2342, 2430, 2470, 2519, 2522, 2528, 2529,
+        2531, 2541, 2543, 2547, 2558, 2572, 2584, 2601, 2611, 2615, 2616, 2619,
+        2622, 2623, 2624, 2625, 2626, 2627, 2628, 2629, 2630, 2631, 2634, 2635,
+        2636, 2637, 2639, 2645, 2730, 2740, 2754, 2785, 2796, 3185, 3209, 3214,
+        3243, 3268, 3275, 3288, 3309, 3313, 3327, 3335, 3345, 3358, 3363, 3368,
+        3369, 3372, 3399, 3446, 3447, 3451, 3456, 3593, 3625, 3633, 3634, 3642,
+        3644, 3729, 3737, 3738, 3775, 3780, 3786, 3792, 3806, 3819, 3820, 3835
       ],
       "review": "mapped-abstraction"
     },
@@ -7545,14 +7562,14 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "ab5ad3ba0d0e49de7d52685e52c157d7fe201c1f16d96e11238f86f223519919",
+      "sha256": "234812b30928cc3736209e090c3a4368095b8f7a53c427152765194afb5e145e",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [56, 78, 338, 349],
+      "candidateLines": [67, 89, 349, 360],
       "review": "mapped-abstraction"
     },
     {
@@ -15607,6 +15624,25 @@
         "modelSourceSelectsAffectedModelsTest",
         "pushCannotSkipTest",
         "releaseCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/daily_collection.qnt",
+      "sha256": "5f91b952854fb62b5b8af6f655bbaeaec5f224ce5cc07f98e402575115f13dcd",
+      "sources": [
+        ".github/workflows/daily-collection.yml",
+        ".github/workflows/deploy.yml",
+        "scripts/daily-collection.ts"
+      ],
+      "scenarios": [
+        "failedCollectionResumesOnceTest",
+        "newDayStartsNewResumeChainTest",
+        "noCheckpointNoResumeTest",
+        "olderDataNeverReplacesNewerTest",
+        "resumeWaitsForRunningCollectionTest",
+        "supersededCollectionPublishesTest",
+        "supersededPublishRetriesThenStopsTest",
+        "tickSkipsWhileCollectingTest"
       ]
     },
     {

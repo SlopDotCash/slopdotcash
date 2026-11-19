@@ -11,8 +11,11 @@ The Worker reads the contract, records each deposit, judges whether it pays
 for its pull request, marks that pull request paid, and sends what Slopbot's
 row says is due. It decides nothing about merges or closes.
 
-**It ships `off`.** The contracts are not deployed, so their addresses in
-`src/lib/submission-fee.mjs` are `null` and no network is served.
+**It ships `off`.** The contracts were deployed on 19 November 2026 and their
+addresses and start blocks are in `src/lib/submission-fee.mjs`
+(`contracts/DEPLOY-MAINNET.md`). Their resolver is still the unusable address
+`0x000000000000000000000000000000000000dEaD`, and while the mode is `off` no
+network is read.
 
 ## What runs
 
@@ -204,12 +207,11 @@ with its resolve transaction, whose `kept_to` is that fee wallet and whose
 token is the asset asked about. Kept SLOP goes to the burn address and is not
 income. Refunds and reclaims are not income.
 
-## Going live (not done; each step is the operator's)
+## Going live (steps 1 and 2 done 19 November 2026; each step is the operator's)
 
-1. Deploy `SubmissionDeposits` on Base and Robinhood Chain
-   (`contracts/evm/README.md`), with a new resolver address that is not the
-   owner.
-2. Put both addresses and their deployment blocks in
+1. Done. `SubmissionDeposits` is deployed on Base and Robinhood Chain
+   (`contracts/DEPLOY-MAINNET.md`), with the unusable address as resolver.
+2. Done. Both addresses and their deployment blocks are in
    `SUBMISSION_FEE_CONTRACTS` and `SUBMISSION_FEE_START_BLOCKS`
    (`src/lib/submission-fee.mjs`).
 3. Install the resolver key as the Worker secret
