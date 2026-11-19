@@ -104,7 +104,7 @@ effect function nativeBalance(account: EvmAddress) {
   const { escrow } = try Stack
   const answer = try promise(() => escrow.chain.rpc("eth_getBalance", [account, "latest"]))
   if (typeof answer !== "string") return try die(new Error("eth_getBalance answered no quantity"))
-  return BigInt(answer)
+  return try Effect.try(() => BigInt(answer))
 }
 
 effect function totals(vault: EvmAddress) {
@@ -362,23 +362,27 @@ layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
     const vault = try promise(() => escrow.createVault({ owner, projectId: word(5n), asset: ether, purpose: "OrdinaryPurpose", monthlyCap: 10n ** 17n, monthlyEnabled: true }))
     const from = (try promise(() => escrow.head())) + 1n
     const feesBefore = try nativeBalance(FEE_RECIPIENT)
-    try promise(() => escrow.send(donor, vault, depositCalldata(10n ** 18n), 10n ** 18n))
+    const deposit = try Effect.try(() => depositCalldata(10n ** 18n))
+    try promise(() => escrow.send(donor, vault, deposit, 10n ** 18n))
     try sent(escrow.roles.owner.address, vault, Effect.try(() => withdrawCalldata(10n ** 17n + 1n)))
     const withdrawn = try totals(vault)
     try sent(donor, vault, Effect.sync(() => claimFeesCalldata()))
     const claimed = try totals(vault)
     const fee = 2n * 10n ** 15n + 1n
+    const fees = (try nativeBalance(FEE_RECIPIENT)) - feesBefore
+    const logged = try events(vault, from)
+    const depositor = try address(donor)
     try Effect.try(() => assert.deepStrictEqual({
       withdrawn: withdrawn.kind === "Totals" ? { native: withdrawn.totals.native, decimals: withdrawn.totals.decimals, free: withdrawn.totals.counters.free, accrued: withdrawn.totals.counters.accruedFees, balance: withdrawn.totals.counters.balance } : withdrawn,
       claimed: claimed.kind === "Totals" ? { accrued: claimed.totals.counters.accruedFees, withdrawalFees: claimed.totals.counters.withdrawalFees, balance: claimed.totals.counters.balance } : claimed,
-      fees: (try nativeBalance(FEE_RECIPIENT)) - feesBefore,
-      events: try events(vault, from),
+      fees,
+      events: logged,
     }, {
       withdrawn: { native: true, decimals: 18, free: 9n * 10n ** 17n - 1n, accrued: fee, balance: 9n * 10n ** 17n - 1n + fee },
       claimed: { accrued: 0n, withdrawalFees: fee, balance: 9n * 10n ** 17n - 1n },
       fees: fee,
       events: [
-        { name: "Deposited", depositor: try address(donor), amount: 10n ** 18n },
+        { name: "Deposited", depositor, amount: 10n ** 18n },
         { name: "UnusedWithdrawn", destination: owner, gross: 10n ** 17n + 1n, net: 10n ** 17n + 1n - fee, fee },
         { name: "FeesClaimed", recipient: FEE_RECIPIENT, amount: fee },
       ],
