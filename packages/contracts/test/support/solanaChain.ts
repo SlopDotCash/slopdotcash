@@ -16,23 +16,24 @@ import { sbfBuild } from "@repo/platform/testing/chains";
 import {
   type Address,
   type Blockhash,
+  type Message,
   ASSOCIATED_TOKEN_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
+  base58Decode,
   base58Encode,
   base64Decode,
   base64Encode,
+  encodeMessage,
   encodeTransaction,
+  findPda,
 } from "@repo/platform/chain/solanaWire";
-import { type I64, type U64, concat, i64le as encodeI64, readI64, readU32, readU64, u32le, u64le as encodeU64, utf8 } from "../../../../apps/settlement/src/chain/solana/bytes.ts";
-import { UPGRADEABLE_LOADER, configAddress, keyBytes, programDataAddress } from "../../../../apps/settlement/src/chain/solana/pda.ts";
-import { type AccountMeta, type Instruction, compileLegacy, requiredSigners } from "../../../../apps/settlement/src/chain/solana/transactions.ts";
 
-export { ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, concat, keyBytes, readI64, readU32, readU64, u32le, utf8, type Address, type Instruction };
+export { ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, type Address };
 
 export const SOLANA_VERSION = "2.1.21";
-export const LOADER = UPGRADEABLE_LOADER;
+export const LOADER = "BPFLoaderUpgradeab1e11111111111111111111111" as Address;
 export const ED25519_PROGRAM = "Ed25519SigVerify111111111111111111111111111" as Address;
 export const INSTRUCTIONS_SYSVAR = "Sysvar1nstructions1111111111111111111111111" as Address;
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111" as Address;
@@ -55,14 +56,25 @@ const solanaRoot = fileURLToPath(new URL("../../solana/", import.meta.url));
 const scratch = join(solanaRoot, ".local");
 export const PROGRAM = (JSON.parse(await readFile(join(solanaRoot, "idl", "slop_escrow.json"), "utf8")) as { readonly address: Address }).address;
 
+export const utf8 = (text: string) => new TextEncoder().encode(text);
 export const sha256 = (...parts: ReadonlyArray<Uint8Array>): Uint8Array => {
   const hash = createHash("sha256");
   for (const part of parts) hash.update(part);
   return new Uint8Array(hash.digest());
 };
+export const keyBytes = (address: Address): Uint8Array => {
+  const bytes = base58Decode(address);
+  if (bytes?.length !== 32) throw new Error(`${address} is not a public key`);
+  return bytes;
+};
 export const addressOf = (bytes: Uint8Array): Address => base58Encode(bytes) as Address;
-export const PROGRAM_DATA = programDataAddress(PROGRAM);
-export const CONFIG = configAddress(PROGRAM);
+export function pda(seeds: ReadonlyArray<Uint8Array>, program: Address = PROGRAM): Address {
+  const found = findPda(seeds, program);
+  if (found === undefined) throw new Error("no program address for these seeds");
+  return found.address;
+}
+export const PROGRAM_DATA = pda([keyBytes(PROGRAM)], LOADER);
+export const CONFIG = pda([utf8("config")]);
 
 export const rentFor = (length: number): bigint => (BigInt(length) + 128n) * 6960n;
 
@@ -85,7 +97,17 @@ export function keypair(label: string): Keypair {
 
 export const signed = (key: Keypair, message: Uint8Array): Uint8Array => new Uint8Array(sign(null, message, key.secret));
 
-export const meta = (key: Address, writable: boolean, signer = false): AccountMeta => ({ key, writable, signer });
+export interface Meta {
+  readonly key: Address;
+  readonly signer: boolean;
+  readonly writable: boolean;
+}
+export const meta = (key: Address, writable: boolean, signer = false): Meta => ({ key, writable, signer });
+export interface Instruction {
+  readonly program: Address;
+  readonly accounts: ReadonlyArray<Meta>;
+  readonly data: Uint8Array;
+}
 
 export interface GenesisAccount {
   readonly address: Address;
@@ -95,9 +117,34 @@ export interface GenesisAccount {
   readonly executable: boolean;
 }
 
+export const u32le = (value: number) => {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, true);
+  return bytes;
+};
 export const u16le = (value: number) => Uint8Array.of(value & 0xff, value >> 8);
-export const u64le = (value: bigint) => encodeU64(value as U64);
-export const i64le = (value: bigint) => encodeI64(value as I64);
+export const u64le = (value: bigint) => {
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setBigUint64(0, value, true);
+  return bytes;
+};
+export const i64le = (value: bigint) => {
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setBigInt64(0, value, true);
+  return bytes;
+};
+export const concat = (...parts: ReadonlyArray<Uint8Array>): Uint8Array => {
+  const joined = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    joined.set(part, at);
+    at += part.length;
+  }
+  return joined;
+};
+export const readU64 = (data: Uint8Array, at: number) => new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(at, true);
+export const readI64 = (data: Uint8Array, at: number) => new DataView(data.buffer, data.byteOffset, data.byteLength).getBigInt64(at, true);
+export const readU32 = (data: Uint8Array, at: number) => new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(at, true);
 export const keyAt = (data: Uint8Array, at: number) => addressOf(data.slice(at, at + 32));
 
 const exec = promisify(execFile);
@@ -355,6 +402,39 @@ export async function launch(): Promise<Chain> {
     return reply.value.blockhash;
   };
 
+  const compile = (payer: Address, instructions: ReadonlyArray<Instruction>, recent: Blockhash): Message => {
+    const seen = new Map<Address, { signer: boolean; writable: boolean }>([[payer, { signer: true, writable: true }]]);
+    const mark = (key: Address, signer: boolean, writable: boolean) => {
+      const was = seen.get(key);
+      seen.set(key, { signer: (was?.signer ?? false) || signer, writable: (was?.writable ?? false) || writable });
+    };
+    for (const instruction of instructions) {
+      for (const account of instruction.accounts) mark(account.key, account.signer, account.writable);
+      mark(instruction.program, false, false);
+    }
+    const others = [...seen].filter(([key]) => key !== payer);
+    const pick = (signer: boolean, writable: boolean) => others.filter(([, role]) => role.signer === signer && role.writable === writable).map(([key]) => key);
+    const keysInOrder = [payer, ...pick(true, true), ...pick(true, false), ...pick(false, true), ...pick(false, false)];
+    const index = new Map(keysInOrder.map((key, at) => [key, at]));
+    const role = (key: Address) => seen.get(key) as { signer: boolean; writable: boolean };
+    const signers = keysInOrder.filter((key) => role(key).signer);
+    return {
+      version: "legacy",
+      header: {
+        requiredSignatures: signers.length,
+        readonlySigned: signers.filter((key) => !role(key).writable).length,
+        readonlyUnsigned: keysInOrder.filter((key) => !role(key).signer && !role(key).writable).length,
+      },
+      accountKeys: keysInOrder,
+      recentBlockhash: recent,
+      instructions: instructions.map((instruction) => ({
+        programIndex: index.get(instruction.program) as number,
+        accounts: instruction.accounts.map((account) => index.get(account.key) as number),
+        data: instruction.data,
+      })),
+    };
+  };
+
   const confirmed = async (signature: string): Promise<boolean | undefined> => {
     for (let attempt = 0; attempt < 600; attempt++) {
       const reply = (await rpc("getSignatureStatuses", [[signature], { searchTransactionHistory: true }])) as { value: ({ err: unknown; confirmationStatus: string } | null)[] };
@@ -370,15 +450,18 @@ export async function launch(): Promise<Chain> {
     // A distinct compute limit makes each transaction unique, so a repeated event is never "already processed".
     const unique: Instruction = { program: COMPUTE_BUDGET, accounts: [], data: concat(Uint8Array.of(2), u32le(1_400_000 - (nonce++ % 200_000))) };
     for (let attempt = 0; attempt < 5; attempt++) {
-      const compiled = compileLegacy({ payer: keys.deployer.address, blockhash: await blockhash(), instructions: [unique, ...instructions] });
-      if (compiled.kind === "refused") throw new Unrepresentable(`the transaction cannot be compiled: ${compiled.issue}`);
-      const signatures = requiredSigners(compiled.message).map((key) => {
+      const message = compile(keys.deployer.address, [unique, ...instructions], await blockhash());
+      const bytes = encodeMessage(message);
+      if (bytes === undefined) throw new Unrepresentable("the transaction cannot be encoded");
+      const required = message.accountKeys.slice(0, message.header.requiredSignatures);
+      const signatures = required.map((key) => {
         const signer = byAddress.get(key);
         if (signer === undefined) throw new Unrepresentable(`no key signs for ${key}`);
-        return signed(signer, compiled.bytes);
+        return signed(signer, bytes);
       });
-      const wire = encodeTransaction({ signatures, message: compiled.message });
-      if (wire === undefined) throw new Error("a compiled transaction did not encode");
+      const wire = encodeTransaction({ signatures, message });
+      if (wire === undefined) throw new Unrepresentable("the transaction cannot be encoded");
+      if (wire.length > 1232) throw new Unrepresentable(`a transaction of ${wire.length} bytes is too large`);
       try {
         await rpc("sendTransaction", [base64Encode(wire), { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 10 }]);
       } catch (error) {

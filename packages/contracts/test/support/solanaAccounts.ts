@@ -4,10 +4,6 @@
 import type { AccountFacts, MintFacts } from "../../gen/contracts__solanaEscrow.ts";
 import type { Purpose } from "../../gen/contracts__ledger.ts";
 import { findPda } from "@repo/platform/chain/solanaWire";
-import { type AllocationNode, encodeProof, leafNode, sumNode } from "../../../../apps/settlement/src/chain/solana/allocationRoot.ts";
-import { type Digest, type U64, digestBytes, digestOf } from "../../../../apps/settlement/src/chain/solana/bytes.ts";
-import * as escrowAddresses from "../../../../apps/settlement/src/chain/solana/pda.ts";
-import type { Period } from "../../../../apps/settlement/src/kernels/calendar.ts";
 import {
   type Address,
   type GenesisAccount,
@@ -27,6 +23,7 @@ import {
   keyBytes,
   keypair,
   meta,
+  pda,
   rentFor,
   sha256,
   u16le,
@@ -80,21 +77,17 @@ export function wordNumber(bytes: Uint8Array): number | undefined {
 
 export const purposeByte: Readonly<Record<Purpose, number>> = { Ordinary: 0, Bounty: 1 };
 
-const name = (text: string) => digestOf(word(text)) as Digest;
-const digestWord = (source: number) => digestOf(numberWord(source)) as Digest;
-const period32 = (period: number) => Number(uint(period, 32)) as Period;
-
-export const projectAddress = (owner: Address, project: string, purpose: Purpose) => escrowAddresses.projectAddress(PROGRAM, owner, name(project), purpose);
-export const vaultAddress = (project: Address) => escrowAddresses.vaultAddress(PROGRAM, project);
-export const awardId = (project: Address, source: number) => digestBytes(escrowAddresses.awardId(project, digestWord(source)));
-export const awardAddress = (project: Address, source: number) => escrowAddresses.awardAddress(PROGRAM, project, escrowAddresses.awardId(project, digestWord(source)));
-export const originAddress = (project: Address, source: number) => escrowAddresses.originAddress(PROGRAM, project, digestWord(source));
-export const monthlySourceAddress = (project: Address, source: number) => escrowAddresses.monthlySourceAddress(PROGRAM, project, digestWord(source));
-export const monthAddress = (project: Address, period: number) => escrowAddresses.monthAddress(PROGRAM, project, period32(period));
-export const pledgeAddress = (project: Address, period: number) => escrowAddresses.monthPledgeAddress(PROGRAM, project, period32(period));
-export const settledAddress = (month: Address, source: number) => escrowAddresses.settledAddress(PROGRAM, month, digestWord(source));
-export const bindingAddress = (project: Address, actor: number) => escrowAddresses.bindingAddress(PROGRAM, project, uint(actor, 64) as U64);
-export const vetoAddress = (project: Address, actor: number, version: number) => escrowAddresses.vetoAddress(PROGRAM, project, uint(actor, 64) as U64, uint(version, 64) as U64);
+export const projectAddress = (owner: Address, project: string, purpose: Purpose) => pda([utf8("project"), keyBytes(owner), word(project), Uint8Array.of(purposeByte[purpose])]);
+export const vaultAddress = (project: Address) => pda([utf8("vault"), keyBytes(project)]);
+export const awardId = (project: Address, source: number) => sha256(utf8("slop-escrow-award"), keyBytes(project), numberWord(source));
+export const awardAddress = (project: Address, source: number) => pda([utf8("award"), keyBytes(project), awardId(project, source)]);
+export const originAddress = (project: Address, source: number) => pda([utf8("origin"), keyBytes(project), numberWord(source)]);
+export const monthlySourceAddress = (project: Address, source: number) => pda([utf8("monthly-source"), keyBytes(project), numberWord(source)]);
+export const monthAddress = (project: Address, period: number) => pda([utf8("month"), keyBytes(project), u32le(Number(uint(period, 32)))]);
+export const pledgeAddress = (project: Address, period: number) => pda([utf8("pledge"), keyBytes(project), u32le(Number(uint(period, 32)))]);
+export const settledAddress = (month: Address, source: number) => pda([utf8("settled"), keyBytes(month), numberWord(source)]);
+export const bindingAddress = (project: Address, actor: number) => pda([utf8("wallet"), keyBytes(project), u64le(uint(actor, 64))]);
+export const vetoAddress = (project: Address, actor: number, version: number) => pda([utf8("veto"), keyBytes(project), u64le(uint(actor, 64)), u64le(uint(version, 64))]);
 
 export const instructionData = (name: string, ...args: ReadonlyArray<Uint8Array>) => concat(sha256(utf8(`global:${name}`)).slice(0, 8), ...args);
 export const accountDiscriminator = (name: string) => sha256(utf8(`account:${name}`)).slice(0, 8);
@@ -120,14 +113,28 @@ export interface Leaf {
   readonly gross: number;
   readonly source: number;
 }
-const node = (leaf: Leaf): AllocationNode => leafNode({ actor: uint(leaf.actor, 64) as U64, gross: uint(leaf.gross, 64) as U64, source: digestWord(leaf.source) });
+interface Node {
+  readonly hash: Uint8Array;
+  readonly total: bigint;
+}
+
+// The leaf and node hashes of apps/settlement/src/chain/solana/allocationRoot.ts, which this package cannot import.
+const node = (leaf: Leaf): Node => {
+  const gross = uint(leaf.gross, 64);
+  return { hash: sha256(Uint8Array.of(0), u64le(uint(leaf.actor, 64)), u64le(gross), numberWord(leaf.source)), total: gross };
+};
+const sumNode = (left: Node, right: Node): Node | undefined => {
+  const total = left.total + right.total;
+  if (total >= 1n << 64n) return undefined;
+  return { hash: sha256(Uint8Array.of(1), left.hash, u64le(left.total), right.hash, u64le(right.total)), total };
+};
 
 /** The Merkle-sum tree the program proves leaves against. */
-export function allocationTree(leaves: ReadonlyArray<Leaf>): { readonly root: Uint8Array; readonly proof: (index: number) => ReadonlyArray<AllocationNode> } | undefined {
+export function allocationTree(leaves: ReadonlyArray<Leaf>): { readonly root: Uint8Array; readonly proof: (index: number) => ReadonlyArray<Node> } | undefined {
   if (leaves.length === 0) return undefined;
-  const levels: AllocationNode[][] = [leaves.map(node)];
+  const levels: Node[][] = [leaves.map(node)];
   for (let level = levels[0]; level.length > 1; level = levels[levels.length - 1]) {
-    const next: AllocationNode[] = [];
+    const next: Node[] = [];
     for (let at = 0; at < level.length; at += 2) {
       const right = level[at + 1];
       const joined = right === undefined ? level[at] : sumNode(level[at], right);
@@ -138,9 +145,9 @@ export function allocationTree(leaves: ReadonlyArray<Leaf>): { readonly root: Ui
   }
   const top = (levels[levels.length - 1])[0];
   return {
-    root: digestBytes(top.hash),
+    root: top.hash,
     proof: (index) => {
-      const siblings: AllocationNode[] = [];
+      const siblings: Node[] = [];
       let at = index;
       for (const level of levels.slice(0, -1)) {
         const sibling = level[at % 2 === 1 ? at - 1 : at + 1];
@@ -152,7 +159,7 @@ export function allocationTree(leaves: ReadonlyArray<Leaf>): { readonly root: Ui
   };
 }
 
-export { encodeProof };
+export const encodeProof = (proof: ReadonlyArray<Node>) => concat(u32le(proof.length), ...proof.map((step) => concat(step.hash, u64le(step.total))));
 
 export const transferChecked = (program: Address, source: Address, mint: Address, destination: Address, owner: Address, amount: bigint): Instruction => ({
   program,
