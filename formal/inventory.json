@@ -6,6 +6,13 @@
   "exclusions": "Dependencies, generated build outputs, test/fixture trees, declarations and integration test entry points are not production state machines. Generated registry source remains inventoried through its generator.",
   "sources": [
     {
+      "path": ".github/workflows/asi-november-closeout.yml",
+      "sha256": "c90c3fa1546671f3d7aefb71b8eb279b9f9e1452653b2369a999f59080fc3e00",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/cancel-closed-pr-runs.yml",
       "sha256": "687b67ce2a3967dc79662c13340cc2380169a3f62619c9ec3a29398656e563ba",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -500,8 +507,9 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "e2c22f60a2bc033cac96fb884e7c424649921ed6fe40886d9e292a76baa726a3",
+      "sha256": "c02b0788a863e2e187bd50f273c3724fda060abc207c0e608a315c2f0f0a2a48",
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt",
@@ -511,10 +519,10 @@
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        90, 132, 136, 139, 140, 153, 331, 421, 532, 582, 584, 598, 608, 618,
-        624, 642, 761, 765, 788, 793, 816, 880, 907, 916, 936, 1016, 1135, 1190,
-        1238, 1333, 1335, 1366, 1368, 1371, 1490, 1512, 1521, 1534, 1540, 1584,
-        1610, 1616, 1620, 1675, 1692
+        91, 133, 137, 140, 141, 154, 344, 434, 559, 609, 611, 625, 635, 645,
+        651, 669, 788, 792, 815, 820, 843, 907, 934, 943, 963, 1044, 1164, 1219,
+        1267, 1368, 1370, 1401, 1403, 1406, 1525, 1547, 1556, 1569, 1575, 1619,
+        1645, 1651, 1655, 1710, 1727
       ],
       "review": "mapped-abstraction"
     },
@@ -3752,6 +3760,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0143_asi_november_closeout.sql",
+      "sha256": "d6b0b0cf7efeed3e18678b3dea02fa46647d3b0bb7a917e064f4ae3aa32e4955",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [7, 8],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -4409,6 +4424,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/guarded-monthly-import.ts",
+      "sha256": "8ee097d5e8d19b8217a31d71a4bf733e7343c3c23fbddcb1810a17071553c8fb",
+      "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
+        "formal/models/rewards/october_proposal_import.qnt"
+      ],
+      "candidateLines": [15, 83],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/historical-discussion-evidence.ts",
       "sha256": "775b0fecfa0ec23199522eca53b257000ff59e67653037706e598ad72e84c4be",
       "models": [
@@ -4663,6 +4688,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/prepare-asi-november-closeout.ts",
+      "sha256": "a98b9c083ee51bb48b3ecf351e2bbff8a1452ee5123432929a6a4ae26ec0b74e",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [1, 189, 190, 191, 272],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/prepare-contribution-quality.ts",
       "sha256": "1fac9f8a79a52301170231ac78286615a08b1f5ef792da6e65419d7198e2d5fc",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
@@ -4707,22 +4739,23 @@
     },
     {
       "path": "scripts/prepare-monthly-rewards.ts",
-      "sha256": "26feaebef23a39e59a654d35b32b337597a9487290967b7f0860e9de805f9700",
+      "sha256": "4230b54713f1ec06ad15e892d06aa6d98e4e727fa7d808ba6e359c27a3da15d9",
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [
-        15, 109, 110, 111, 205, 216, 278, 293, 312, 316, 360, 365
+        15, 111, 112, 113, 207, 218, 296, 300, 316, 320, 364, 369
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/prepare-october-rewards.ts",
-      "sha256": "eef124152bccdef5314ca94768e1723da54d21db7d7c25693e7cf4bd4bb31d63",
+      "sha256": "fbde324c62721dfc8c02852346384236f35fe9608c9a1515b777c23492648452",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
-      "candidateLines": [2, 15, 41, 139],
+      "candidateLines": [2, 58],
       "review": "mapped-abstraction"
     },
     {
@@ -5158,6 +5191,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/run-asi-november-closeout.ts",
+      "sha256": "3de3486a16f62feeae7ee43ef77311292a818c177112b2d70d89232f0ee8a1a8",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [2, 160, 185, 242],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/run-e2e-phase.mjs",
       "sha256": "08d0368c0b925438b62d8dc80b4bd4d6c2b65c038c22929d377e1e8d845dcab1",
       "models": [
@@ -5200,7 +5240,7 @@
     },
     {
       "path": "scripts/run-october-rewards.ts",
-      "sha256": "725b83035217988ec4efcd23c3fe43e65fbc6af20c25ecfde12ad2cf10f47e86",
+      "sha256": "719f77a54a953f17da413f28892b0c771c846076407c7f86d861c492e4795c56",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
       "candidateLines": [3, 171, 324, 328, 341, 549, 553, 557],
       "review": "mapped-abstraction"
@@ -5865,8 +5905,9 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "f61037a1d194bf57e934076e8c035cc77b171addc0a6d19c328ae298f903969b",
+      "sha256": "5a64d4d6f46802b7e18235b51e87979be6135b5341bf07e5e3ddb71873095860",
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_owner_awards.qnt",
@@ -5875,9 +5916,9 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        14, 17, 97, 108, 136, 138, 141, 148, 149, 157, 158, 169, 175, 176, 177,
-        178, 179, 182, 183, 233, 291, 293, 301, 319, 320, 421, 446, 506, 529,
-        655, 669, 832, 845, 867, 898, 899, 903, 908, 910, 913, 920, 938
+        14, 17, 98, 109, 145, 147, 150, 157, 158, 166, 167, 178, 184, 185, 186,
+        187, 188, 191, 192, 242, 300, 302, 310, 328, 329, 430, 455, 515, 538,
+        664, 678, 854, 867, 889, 920, 921, 925, 930, 932, 935, 942, 960
       ],
       "review": "mapped-abstraction"
     },
@@ -6284,9 +6325,9 @@
     },
     {
       "path": "src/ReportProofFields.tsx",
-      "sha256": "3f3362588a5526e0c73a7486bcdcf00211798439c4080cace3a3f9e741ee4fb1",
+      "sha256": "c83eaef4185934ca4e77280cbafdb6fd31c282c3f72324ccb55263696253cb23",
       "models": ["formal/models/ui/ui_private_intake.qnt"],
-      "candidateLines": [2, 86, 133, 215],
+      "candidateLines": [2, 87, 134, 216],
       "review": "mapped-abstraction"
     },
     {
@@ -7046,6 +7087,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/payments/asi-november-closeout.ts",
+      "sha256": "e9db0593a7976a456a81e8cf11e702e50e8ad0ad941d747335ca7388b3197974",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/payments/contracts.ts",
       "sha256": "c481ede9ddb5d23039ebfe5463beed0849891d6613bf6ad12b360f54cb5b1f2a",
       "models": [
@@ -7058,9 +7106,12 @@
     },
     {
       "path": "src/lib/payments/escrow-cycle.ts",
-      "sha256": "5082130ebf84163377b21fd048be8c3d549d05db4a257f8190d3e0997c1ba289",
-      "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [245],
+      "sha256": "ff8f0b31f31f53e737176b8019ca98daf13855feb72bb0716b98caf4691e4884",
+      "models": [
+        "formal/models/points/source_import.qnt",
+        "formal/models/rewards/asi_november_closeout.qnt"
+      ],
+      "candidateLines": [95, 289],
       "review": "mapped-abstraction"
     },
     {
@@ -16249,6 +16300,23 @@
       "scenarios": ["capPreservedTest", "pledgeZeroTest"]
     },
     {
+      "path": "formal/models/rewards/asi_november_closeout.qnt",
+      "sha256": "c7cf6c6ed57786fb04563a1f68b807bfa667e108723aae080a9932c4e69b6cba",
+      "sources": [
+        ".github/workflows/asi-november-closeout.yml",
+        "backend/payments/monthly.ts",
+        "migrations/0143_asi_november_closeout.sql",
+        "scripts/guarded-monthly-import.ts",
+        "scripts/prepare-asi-november-closeout.ts",
+        "scripts/prepare-monthly-rewards.ts",
+        "scripts/run-asi-november-closeout.ts",
+        "src/OwnerAwards.tsx",
+        "src/lib/payments/asi-november-closeout.ts",
+        "src/lib/payments/escrow-cycle.ts"
+      ],
+      "scenarios": ["ordinaryCalendarTest", "ownerEarlyCloseTest"]
+    },
+    {
       "path": "formal/models/rewards/bucket_aggregation.qnt",
       "sha256": "50e8434eec65b78c45c14c248a06d1141afa3045102ca73bef98974fe62da54e",
       "sources": [
@@ -16606,10 +16674,11 @@
     },
     {
       "path": "formal/models/rewards/october_proposal_import.qnt",
-      "sha256": "f07b27c6de7419500f1783ff946ab6a9504ba4311886fa028edb3f1082d57dc1",
+      "sha256": "9b62bf077bea3a0349b64cd0beff532c8ca2d5d47fa657e9f72e45d44b5d81f6",
       "sources": [
         ".github/workflows/october-rewards.yml",
         "migrations/0081_monthly_asset_amount_range.sql",
+        "scripts/guarded-monthly-import.ts",
         "scripts/october-reward-review.ts",
         "scripts/points-protection-sql.ts",
         "scripts/prepare-monthly-rewards.ts",
