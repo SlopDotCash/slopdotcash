@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "fe8b7164e7125852f4e4786c41e38f18ccacdfc57cb3e95e5e302cb06764faf5",
+      "sha256": "f3ed4aac4000552c112ecee6d58bf1b83069f7b0b279fd53146164c4ab34670b",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 54, 250, 383, 449, 475, 476, 550, 603, 660, 740, 745, 860, 866, 934,
-        937, 963, 964, 985, 997, 1029, 1067, 1297, 1325, 1417, 1430, 1521, 1629,
-        1631, 1632, 1836, 1919, 2072, 2074, 2104, 2219, 2241, 2312, 2323, 2348,
-        2419, 2432, 2445, 2454, 2455, 2456, 2473
+        44, 54, 250, 383, 493, 521, 522, 596, 649, 706, 786, 791, 906, 912, 980,
+        983, 1009, 1010, 1031, 1043, 1075, 1113, 1343, 1371, 1463, 1476, 1567,
+        1675, 1677, 1678, 1882, 1965, 2118, 2120, 2150, 2265, 2287, 2358, 2369,
+        2394, 2465, 2478, 2491, 2500, 2501, 2502, 2519
       ],
       "review": "mapped-abstraction"
     },
@@ -3970,6 +3970,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/compare-local-git-objects.ts",
+      "sha256": "1de2368681980ac528408faa4d7aff9686443fadc6034b04bc091649b79943b1",
+      "models": ["formal/models/points/local_git_objects.qnt"],
+      "candidateLines": [39, 67],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/complete-quality-discussions.ts",
       "sha256": "05528c9b91640ad57505d34095b09ef7d31222e4613c7e825669f9b6acd4047c",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
@@ -4303,7 +4310,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "774e40419301f29108edbc8a1225e173df0a651e8802d307db43a68d920e5196",
+      "sha256": "5776e21712f0d7c84ddcedf7bb7cf9d5805cb1f6a20730946db6c975ec586760",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
@@ -4316,15 +4323,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        42, 197, 208, 217, 297, 309, 311, 314, 531, 619, 640, 676, 707, 772,
-        804, 895, 928, 937, 949, 985, 1082, 1278, 1513, 1575, 1583, 1641, 1694,
-        1697, 1890, 1899, 1904, 1911, 1994, 1995, 2161, 2162, 2245, 2278, 2306,
-        2308, 2312, 2322, 2324, 2336, 2346, 2356, 2381, 2384, 2385, 2388, 2390,
-        2415, 2467, 2678, 2681, 2973, 3093, 3214, 3227, 3238, 3239, 3426, 3427,
-        3618, 3634, 3646, 3653, 3679, 3689, 3693, 3697, 3701, 3756, 3775, 3802,
-        3819, 3853, 3854, 3856, 3872, 3889, 3890, 3891, 3900, 3905, 4085, 4443,
-        4465, 4474, 4524, 4559, 4565, 4572, 4641, 4732, 4890, 5149, 5159, 5161,
-        5174, 5205, 5207, 5208, 5212, 5216, 5272, 5326, 5377, 5380, 5466, 5515
+        42, 201, 212, 221, 301, 313, 315, 318, 537, 625, 646, 682, 713, 778,
+        810, 901, 934, 943, 955, 991, 1088, 1284, 1519, 1581, 1589, 1647, 1700,
+        1703, 1896, 1905, 1910, 1917, 2000, 2001, 2167, 2168, 2251, 2284, 2312,
+        2314, 2318, 2328, 2330, 2342, 2352, 2362, 2387, 2390, 2391, 2394, 2396,
+        2421, 2473, 2684, 2687, 2979, 3099, 3220, 3233, 3244, 3245, 3432, 3433,
+        3624, 3640, 3652, 3659, 3685, 3695, 3699, 3703, 3707, 3762, 3781, 3808,
+        3825, 3859, 3860, 3862, 3878, 3895, 3896, 3897, 3906, 3911, 4091, 4449,
+        4471, 4480, 4530, 4565, 4571, 4578, 4647, 4738, 4896, 5156, 5166, 5168,
+        5181, 5212, 5214, 5215, 5219, 5223, 5279, 5333, 5384, 5387, 5481, 5541
       ],
       "review": "mapped-abstraction"
     },
@@ -4375,11 +4382,14 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "b91daaf594f47e231bf8343def3c8cfb07c02fe5d41fbe78da03a5377e193960",
-      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "sha256": "5beb29c61ad6d1d985aaec01ebe6af5dfc9fe6466ef5f04e1b1343e83c596096",
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/points/local_git_objects.qnt"
+      ],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 228, 230, 265, 287, 297, 302, 306, 310,
-        311, 312, 316, 319, 320, 330, 339, 361, 371, 380, 388
+        36, 54, 87, 108, 110, 128, 168, 231, 233, 250, 282, 304, 314, 319, 323,
+        327, 328, 329, 333, 336, 337, 347, 356, 378, 388, 397, 405
       ],
       "review": "mapped-abstraction"
     },
@@ -4501,6 +4511,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static excluded-directory names shared by proof snapshot and inventory scanners; no updates or cross-call state transition."
+    },
+    {
+      "path": "scripts/local-git-objects.ts",
+      "sha256": "59d485c9e8a0bba7f10f1e3e1d6b8bd4a2db4203d1f28f7dc28c9657603e4c17",
+      "models": ["formal/models/points/local_git_objects.qnt"],
+      "candidateLines": [46, 77, 90, 100, 106, 113, 121],
+      "review": "mapped-abstraction"
     },
     {
       "path": "scripts/local-solana-validator.mjs",
@@ -15443,6 +15460,22 @@
         "newestFiveMaterialTestsTest",
         "reviewCapTest",
         "uncappedPositiveMergesTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/local_git_objects.qnt",
+      "sha256": "999d69be877c7c0f9e7c03d47c14f2414cc60adcd744f9edbcefcae7dbbf8106",
+      "sources": [
+        "scripts/compare-local-git-objects.ts",
+        "scripts/github-ingestion-read.ts",
+        "scripts/local-git-objects.ts"
+      ],
+      "scenarios": [
+        "crashDeclinesWaitingTest",
+        "deadProcessCannotAnswerTest",
+        "exactServedLocallyTest",
+        "restartAfterCrashTest",
+        "uncertainGoesToGitHubTest"
       ]
     },
     {

@@ -86,6 +86,10 @@ import {
   valueScoringPolicy,
 } from "../src/lib/scoring-policy";
 import {
+  type LocalGitObjects,
+  localGitObjectsFromDirectory,
+} from "./local-git-objects";
+import {
   isTransientArtifactFailure,
   planReferencedArtifacts,
   verifyReferencedArtifacts,
@@ -523,6 +527,8 @@ export interface GenerateOptions {
   deploymentTier?: DeploymentTier;
   /** Trusted production collection can retain public GitHub discussion reads. */
   discussionCheckpoint?: { directory: string; deadlineMs: number };
+  /** Local bare clones that answer exact Git tree and commit reads. */
+  localGitObjects?: LocalGitObjects;
   /**
    * Incremental collection (PRD section 9): immutable commit statistics and
    * fenced commit attributions from the previous trusted collection.
@@ -5092,6 +5098,7 @@ export async function generateLeaderboardFromGitHub(
         })),
       },
       quotaDeadlineMs: discussionCheckpoint?.deadlineMs,
+      localGitObjects: options.localGitObjects,
     },
   );
   const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
@@ -5387,6 +5394,13 @@ function progressLine(progress: GenerationProgress): string {
   return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
+/** Off unless the workflow made local bare clones (operator decision,
+ * 20 November 2026). Any read they cannot answer exactly goes to GitHub. */
+function localGitObjectsFromEnv() {
+  const directory = process.env.SLOP_LOCAL_GIT_DIR;
+  return directory ? localGitObjectsFromDirectory(directory) : undefined;
+}
+
 function discussionCheckpointFromEnv() {
   const directory = process.env.SLOP_DISCUSSION_CHECKPOINT;
   const deadline = process.env.SLOP_DISCUSSION_DEADLINE_MS;
@@ -5461,6 +5475,7 @@ if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const collectionMemo = await collectionMemoFromEnv();
   const acceptedReviewHistory = loadAcceptedReviewHistory();
+  const localGitObjects = localGitObjectsFromEnv();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   let latestProgress: GenerationProgress | null = null;
   const heartbeat = setInterval(() => {
@@ -5475,6 +5490,7 @@ if (import.meta.main) {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
     discussionCheckpoint: discussionCheckpointFromEnv(),
+    localGitObjects,
     collectionMemo: collectionMemo?.session,
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
@@ -5492,7 +5508,10 @@ if (import.meta.main) {
       }
     },
   })
-    .finally(() => clearInterval(heartbeat))
+    .finally(() => {
+      clearInterval(heartbeat);
+      localGitObjects?.close();
+    })
     .catch((error: unknown) => {
       // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
       if (!(error instanceof ValueFeedUnavailableError)) throw error;
@@ -5501,6 +5520,13 @@ if (import.meta.main) {
       );
       process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
     });
+  if (localGitObjects) {
+    localGitObjects.close();
+    const { served, declined } = localGitObjects.stats;
+    process.stderr.write(
+      `[slop.cash] local git objects: ${served} served from local clones, ${declined} read from GitHub instead\n`,
+    );
+  }
   if (collectionMemo) {
     const { session, output } = collectionMemo;
     const lines = session.commitLines;
