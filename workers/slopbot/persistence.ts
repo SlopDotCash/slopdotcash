@@ -93,6 +93,8 @@ type InstallationUpdate =
         account: { id: number; login: string; type: string };
       };
       sourceUpdatedAt: number;
+      /** The snapshot says `suspended_at` is null. An omitted field is not this. */
+      active: boolean;
     }
   | {
       kind: "state";
@@ -117,6 +119,7 @@ export async function completeInstallationDelivery(
           `INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at)
            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id) DO UPDATE SET
              removed_at = NULL,
+             suspended_at = CASE WHEN ? = 1 THEN NULL ELSE slopbot_installations.suspended_at END,
              account_login = excluded.account_login,
              source_updated_at = excluded.source_updated_at
            WHERE slopbot_installations.source_updated_at IS NULL
@@ -129,6 +132,7 @@ export async function completeInstallationDelivery(
           update.installation.account.type,
           now(),
           update.sourceUpdatedAt,
+          update.active ? 1 : 0,
         ),
     );
   } else if (update?.kind === "state") {

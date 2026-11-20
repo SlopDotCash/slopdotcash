@@ -183,27 +183,41 @@ function harness(seedBeforeDeliveryMigration?: (sqlite: Database) => void) {
     SLOPBOT_APP_USER_ID: "999999",
   };
   const deliver = async (
-    action: "created" | "suspend" | "unsuspend" | "deleted",
+    action:
+      | "created"
+      | "new_permissions_accepted"
+      | "suspend"
+      | "unsuspend"
+      | "deleted",
     deliveryId: string,
     updatedAt: string | number,
     login = "acme",
+    suspendedAt?: string | null | "omit",
   ) => {
+    const installation: Record<string, unknown> = {
+      id: INSTALLATION_ID,
+      app_id: 1,
+      app_slug: "slopbot",
+      target_id: 777,
+      target_type: "Organization",
+      repository_selection: "all",
+      permissions: { issues: "write", pull_requests: "write" },
+      events: ["issues", "pull_request"],
+      created_at: "2026-10-14T10:00:00Z",
+      updated_at: updatedAt,
+      account: { id: 777, login, type: "Organization" },
+    };
+    if (suspendedAt !== "omit") {
+      installation.suspended_at =
+        suspendedAt !== undefined
+          ? suspendedAt
+          : action === "suspend"
+            ? updatedAt
+            : null;
+    }
     const body = JSON.stringify({
       action,
-      installation: {
-        id: INSTALLATION_ID,
-        app_id: 1,
-        app_slug: "slopbot",
-        target_id: 777,
-        target_type: "Organization",
-        repository_selection: "all",
-        permissions: { issues: "write", pull_requests: "write" },
-        events: ["issues", "pull_request"],
-        created_at: "2026-10-14T10:00:00Z",
-        updated_at: updatedAt,
-        suspended_at: action === "suspend" ? updatedAt : null,
-        account: { id: 777, login, type: "Organization" },
-      },
+      installation,
       sender: { id: 555, login: "owner", type: "User" },
     });
     return worker.fetch(
@@ -347,6 +361,74 @@ describe("installation webhook delivery", () => {
     expect(context.db.suspendedAt()).toEqual({
       suspended_at: expect.any(String),
     });
+  });
+
+  test("a newer permissions acceptance that shows an active installation clears the suspension", async () => {
+    const { db, deliver } = harness();
+    await deliver("created", "created-active-snapshot", "2026-10-14T10:00:00Z");
+    await deliver("suspend", "suspend-active-snapshot", "2026-10-14T10:01:00Z");
+    expect(db.suspendedAt()?.suspended_at).not.toBeNull();
+
+    await deliver(
+      "new_permissions_accepted",
+      "permissions-active-snapshot",
+      "2026-10-14T10:03:00Z",
+      "acme",
+      null,
+    );
+    expect(db.suspendedAt()?.suspended_at).toBeNull();
+
+    // GitHub already unsuspended the app before the permissions acceptance.
+    // That older delivery must not put the suspension back.
+    await deliver(
+      "unsuspend",
+      "unsuspend-before-permissions",
+      "2026-10-14T10:02:00Z",
+    );
+    expect(db.suspendedAt()?.suspended_at).toBeNull();
+  });
+
+  test("a permissions acceptance that still shows a suspension keeps it", async () => {
+    const { db, deliver } = harness();
+    await deliver("suspend", "suspend-still", "2026-10-14T10:01:00Z");
+    await deliver(
+      "new_permissions_accepted",
+      "permissions-still-suspended",
+      "2026-10-14T10:02:00Z",
+      "acme",
+      "2026-10-14T10:01:00Z",
+    );
+    expect(db.suspendedAt()?.suspended_at).not.toBeNull();
+  });
+
+  test("a permissions acceptance with no suspension field keeps the recorded suspension", async () => {
+    const { db, deliver } = harness();
+    await deliver("suspend", "suspend-omitted", "2026-10-14T10:01:00Z");
+    await deliver(
+      "new_permissions_accepted",
+      "permissions-omitted-suspension",
+      "2026-10-14T10:02:00Z",
+      "acme",
+      "omit",
+    );
+    expect(db.suspendedAt()?.suspended_at).not.toBeNull();
+  });
+
+  test("an older active snapshot does not clear a newer suspension", async () => {
+    const { db, deliver } = harness();
+    await deliver(
+      "suspend",
+      "suspend-newer-than-snapshot",
+      "2026-10-14T10:02:00Z",
+    );
+    await deliver(
+      "new_permissions_accepted",
+      "permissions-older-than-suspend",
+      "2026-10-14T10:01:00Z",
+      "acme",
+      null,
+    );
+    expect(db.suspendedAt()?.suspended_at).not.toBeNull();
   });
 });
 

@@ -102,6 +102,8 @@ type Payload = {
     id: number;
     account?: { id: number; login: string; type: string };
     updated_at?: string | number;
+    /** Null means GitHub reports the installation is not suspended. */
+    suspended_at?: string | null;
   };
   repository?: {
     id: number;
@@ -258,7 +260,14 @@ async function handleInstallation(
     deliveryId,
     payload.action === "created" ||
       payload.action === "new_permissions_accepted"
-      ? { kind: "upsert", installation: identity, sourceUpdatedAt }
+      ? {
+          kind: "upsert",
+          installation: identity,
+          sourceUpdatedAt,
+          // Only an explicit null is an active snapshot. A missing field must
+          // not clear a suspension that this delivery does not report.
+          active: installation.suspended_at === null,
+        }
       : state
         ? { kind: "state", installation: identity, state, sourceUpdatedAt }
         : null,

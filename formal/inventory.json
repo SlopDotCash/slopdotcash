@@ -9131,7 +9131,7 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "2ec2e1be65a8b1e6aedc38680368c9b2d8dc783e1685741de0de8ab5b8e1f7b9",
+      "sha256": "5ec221c9a1e01e60f3d4f5ecf28f13ce8b07e029caa85d6602332a3feb8ae357",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_ready_label.qnt",
@@ -9139,9 +9139,9 @@
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 255, 262, 263, 286, 292, 318, 347, 358, 397, 406, 418, 427, 432, 439,
-        449, 451, 461, 464, 467, 471, 558, 573, 582, 586, 613, 622, 705, 711,
-        721
+        3, 257, 271, 272, 295, 301, 327, 356, 367, 406, 415, 427, 436, 441, 448,
+        458, 460, 470, 473, 476, 480, 567, 582, 591, 595, 622, 631, 714, 720,
+        730
       ],
       "review": "mapped-abstraction"
     },
@@ -9184,7 +9184,7 @@
     },
     {
       "path": "workers/slopbot/persistence.ts",
-      "sha256": "622e1f77c7ee30073750522535585f7dfb569d1874294e735a1e8fe6c0d66c3b",
+      "sha256": "f489f215657bdd376702de632723dabec04cfb0b860769b52c5ecbfc87579f92",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -9197,11 +9197,11 @@
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        31, 48, 59, 72, 98, 103, 110, 113, 117, 118, 126, 127, 128, 129, 131,
-        134, 135, 136, 138, 140, 146, 149, 159, 160, 161, 162, 164, 165, 166,
-        173, 177, 186, 211, 213, 235, 256, 265, 277, 294, 295, 297, 308, 314,
-        319, 322, 324, 335, 336, 339, 344, 347, 348, 371, 374, 375, 377, 396,
-        402, 405, 436, 469, 501, 530, 531
+        31, 48, 59, 72, 100, 105, 112, 115, 119, 120, 129, 130, 131, 132, 134,
+        135, 138, 139, 140, 142, 144, 150, 153, 163, 164, 165, 166, 168, 169,
+        170, 177, 181, 190, 215, 217, 239, 260, 269, 281, 298, 299, 301, 312,
+        318, 323, 326, 328, 339, 340, 343, 348, 351, 352, 375, 378, 379, 381,
+        400, 406, 409, 440, 473, 505, 534, 535
       ],
       "review": "mapped-abstraction"
     },
@@ -16806,7 +16806,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_installation_lifecycle.qnt",
-      "sha256": "9031b6313da8d3f9b512162165939d6f8cd566ece0b7e47aa40aed416e395e62",
+      "sha256": "f738e94c5224aee0722cc91dec90011ae4383c72cb4c4c71ff024820fa0145f8",
       "sources": [
         "migrations/0013_slopbot.sql",
         "migrations/0018_slopbot_delivery_processing.sql",
@@ -16815,6 +16815,8 @@
         "workers/slopbot/persistence.ts"
       ],
       "scenarios": [
+        "activeSnapshotClearsSuspensionTest",
+        "oldActiveSnapshotKeepsSuspensionTest",
         "oldEventCannotReviveTest",
         "permissionsUpsertPreservesSuspensionTest",
         "tieRemovalWinsTest"
