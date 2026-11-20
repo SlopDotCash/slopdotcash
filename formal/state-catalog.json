@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "fc52b5022dfb49f2170eca04de59ee809caf02b6ac4740336fc1d7dfc7658790",
+  "inventorySha256": "c04c31afc26651df39e0265487370eed5d2589d157ec98a1b2fe2cf27cf2ada9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -50,11 +50,12 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1016,
+      "line": 1044,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt",
@@ -68,11 +69,12 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1628,
+      "line": 1663,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt",
@@ -2265,6 +2267,26 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/collection-memo.ts",
+      "line": 50,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["CLOSED", "MERGED", "OPEN"],
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "lexicallyUnmentionedValues": ["CLOSED", "MERGED", "OPEN"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/collection-memo.ts",
+      "line": 455,
+      "name": "CollectionMode",
+      "kind": "string-union",
+      "values": ["full", "incremental"],
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/escrow-acceptance/shared.ts",
       "line": 199,
       "name": "status",
@@ -2363,7 +2385,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 242,
+      "line": 253,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2383,7 +2405,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 484,
+      "line": 495,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2419,7 +2441,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3830,
+      "line": 3876,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2439,7 +2461,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4434,
+      "line": 4480,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2487,6 +2509,16 @@
         "version-read",
         "version-source"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/local-git-objects.ts",
+      "line": 50,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["--batch", "--batch-check"],
+      "models": ["formal/models/points/local_git_objects.qnt"],
+      "lexicallyUnmentionedValues": ["--batch", "--batch-check"],
       "review": "candidate-only"
     },
     {
@@ -2593,6 +2625,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/run-asi-november-closeout.ts",
+      "line": 36,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["preflight", "readback"],
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "lexicallyUnmentionedValues": ["preflight", "readback"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/run-october-rewards.ts",
       "line": 42,
       "name": "ValidationStage",
@@ -2669,7 +2711,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 440,
+      "line": 525,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2692,7 +2734,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 449,
+      "line": 534,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
