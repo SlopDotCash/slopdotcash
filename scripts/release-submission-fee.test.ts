@@ -1,8 +1,11 @@
 // The release check of the submission-fee Worker, on the checked-in file.
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "../src/lib/submission-fee.mjs";
-import { assertSubmissionFeeRelease } from "./release-submission-fee";
+import {
+  assertSubmissionFeeRelease,
+  endpointSecrets,
+} from "./release-submission-fee";
 
 type Config = Parameters<typeof assertSubmissionFeeRelease>[0];
 const checkedIn = () =>
@@ -27,10 +30,13 @@ const never = () => {
   throw new Error("the secret inventory must not be read");
 };
 
-test("the checked-in Worker ships off, on the private production database, and reads no secret names", () => {
+test("the checked-in Worker is record-only, on the private production database, and reads no secret names", () => {
   expect(assertSubmissionFeeRelease(checkedIn(), production, never)).toBe(
-    "off",
+    "dry_run",
   );
+  const off = checkedIn();
+  off.vars.SUBMISSION_FEE_MODE = "off";
+  expect(assertSubmissionFeeRelease(off, production, never)).toBe("off");
 });
 
 test("dry_run needs no key and no deployed contract", () => {
@@ -96,6 +102,21 @@ test("the settings page says the fee is switched on only while Slopbot asks for 
   );
 });
 
+test("no release workflow or package script builds the site with the pay page's test seam", () => {
+  // `VITE_SLOP_FEE_FIXTURE` lets a browser test supply the pay page's address
+  // tables and switch. Only the browser-test fixture build may set it.
+  const named = (path: string) =>
+    readFileSync(path, "utf8").includes("VITE_SLOP_FEE_FIXTURE");
+  for (const workflow of readdirSync(".github/workflows"))
+    expect([workflow, named(`.github/workflows/${workflow}`)]).toEqual([
+      workflow,
+      false,
+    ]);
+  for (const path of ["package.json", "vite.config.ts", "wrangler.toml"])
+    expect([path, named(path)]).toEqual([path, false]);
+  expect(named("scripts/prepare-e2e-fixture.mjs")).toBe(true);
+});
+
 test("another database, a route, a missing schedule, a key in the file or a bad value is refused", () => {
   const refused = (change: (config: Config) => void, message: string) => {
     const config = checkedIn();
@@ -128,4 +149,40 @@ test("another database, a route, a missing schedule, a key in the file or a bad 
   refused((config) => {
     config.vars.SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI = "1";
   }, "daily native limit");
+});
+
+test("keyed endpoints come from the release map by network, and a bad map is refused without echoing it", () => {
+  expect(endpointSecrets(undefined)).toEqual({});
+  expect(endpointSecrets("  ")).toEqual({});
+  expect(
+    endpointSecrets(
+      JSON.stringify({
+        "base-mainnet": "https://base.example/v2/key-a",
+        "robinhood-mainnet": "https://rc.example/v2/key-b",
+        "solana-mainnet": "https://sol.example/key-c",
+      }),
+    ),
+  ).toEqual({
+    RPC_URL_SUBMISSION_FEE_BASE: "https://base.example/v2/key-a",
+    RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://rc.example/v2/key-b",
+  });
+  // A network the map does not name keeps the public default.
+  expect(
+    endpointSecrets(JSON.stringify({ "base-mainnet": "https://b.example/k" })),
+  ).toEqual({ RPC_URL_SUBMISSION_FEE_BASE: "https://b.example/k" });
+  for (const bad of [
+    "https://b.example/secret-key",
+    JSON.stringify(["https://b.example/secret-key"]),
+    JSON.stringify({ "base-mainnet": "http://b.example/secret-key" }),
+    JSON.stringify({ "robinhood-mainnet": 7 }),
+  ]) {
+    let thrown = "";
+    try {
+      endpointSecrets(bad);
+    } catch (error) {
+      thrown = String(error);
+    }
+    expect(thrown).toContain("PAYMENT_RPC_URLS");
+    expect(thrown).not.toContain("secret-key");
+  }
 });

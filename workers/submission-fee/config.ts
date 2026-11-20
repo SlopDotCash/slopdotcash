@@ -68,8 +68,12 @@ export interface SubmissionFeeConfig {
   price: PriceSource;
 }
 
+// mainnet.base.org refuses eth_getLogs ("request limit reached", read from two
+// networks on 19 November 2026), so the default Base endpoint is one that
+// answers the 2,000-block page. A keyed endpoint in the optional secret
+// RPC_URL_SUBMISSION_FEE_BASE replaces it.
 const DEFAULT_RPC: Readonly<Record<string, string>> = Object.freeze({
-  "base-mainnet": "https://mainnet.base.org",
+  "base-mainnet": "https://base-rpc.publicnode.com",
   "robinhood-mainnet": "https://rpc.mainnet.chain.robinhood.com",
 });
 const RPC_VAR: Readonly<Record<string, keyof SubmissionFeeEnv>> = Object.freeze(

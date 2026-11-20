@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "75f17045f7a26e7e470c18ecd1eeea6f94fedb2a4b7fdaf26b096780145d34cd",
+  "inventorySha256": "efae21865acdeac37d9a13b45955ee00f54258320412e604c90cb38f78f10580",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2754,7 +2754,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 496,
+      "line": 506,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2782,7 +2782,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1233,
+      "line": 1243,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -3487,8 +3487,30 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/evm-fee-deposit.ts",
+      "line": 322,
+      "name": "FeeDepositStatus",
+      "kind": "string-union",
+      "values": [
+        "approval-confirmed",
+        "failed",
+        "finalized",
+        "not-sent",
+        "pending",
+        "received"
+      ],
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "lexicallyUnmentionedValues": [
+        "approval-confirmed",
+        "finalized",
+        "not-sent",
+        "pending"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 388,
+      "line": 390,
       "name": "status",
       "kind": "string-union",
       "values": [
@@ -3978,6 +4000,21 @@
       "values": ["approved", "proposed"],
       "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/submission-fee-page.ts",
+      "line": 51,
+      "name": "FeeOutcome",
+      "kind": "string-union",
+      "values": ["kept", "kept_due", "refund_due", "refunded"],
+      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "lexicallyUnmentionedValues": [
+        "kept",
+        "kept_due",
+        "refund_due",
+        "refunded"
+      ],
       "review": "candidate-only"
     },
     {
@@ -4949,7 +4986,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 338,
+      "line": 413,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
@@ -4962,7 +4999,7 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 51,
+      "line": 58,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
