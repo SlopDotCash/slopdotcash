@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "5b4506c6f53be617fb249a1c43824a4c92f045c2fcd09b920e57181ddb6dcdd7",
+      "sha256": "39bfa1c36878fc3d2d05e037a7108395af20ba353a4daf8a95f4af3d7a3c5583",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 62, 258, 393, 459, 486, 487, 561, 614, 671, 751, 756, 871, 877, 945,
-        948, 974, 975, 996, 1008, 1040, 1078, 1308, 1336, 1428, 1441, 1532,
-        1640, 1642, 1643, 1847, 1930, 2083, 2085, 2115, 2230, 2252, 2323, 2334,
-        2359, 2430, 2443, 2456, 2465, 2466, 2467, 2484
+        44, 62, 258, 393, 503, 532, 533, 607, 660, 717, 797, 802, 917, 923, 991,
+        994, 1020, 1021, 1042, 1054, 1086, 1124, 1354, 1382, 1474, 1487, 1578,
+        1686, 1688, 1689, 1893, 1976, 2129, 2131, 2161, 2276, 2298, 2369, 2380,
+        2405, 2476, 2489, 2502, 2511, 2512, 2513, 2530
       ],
       "review": "mapped-abstraction"
     },
@@ -3970,6 +3970,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/compare-local-git-objects.ts",
+      "sha256": "1de2368681980ac528408faa4d7aff9686443fadc6034b04bc091649b79943b1",
+      "models": ["formal/models/points/local_git_objects.qnt"],
+      "candidateLines": [39, 67],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/complete-quality-discussions.ts",
       "sha256": "05528c9b91640ad57505d34095b09ef7d31222e4613c7e825669f9b6acd4047c",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
@@ -4303,7 +4310,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "774e40419301f29108edbc8a1225e173df0a651e8802d307db43a68d920e5196",
+      "sha256": "5776e21712f0d7c84ddcedf7bb7cf9d5805cb1f6a20730946db6c975ec586760",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
@@ -4316,15 +4323,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        42, 197, 208, 217, 297, 309, 311, 314, 531, 619, 640, 676, 707, 772,
-        804, 895, 928, 937, 949, 985, 1082, 1278, 1513, 1575, 1583, 1641, 1694,
-        1697, 1890, 1899, 1904, 1911, 1994, 1995, 2161, 2162, 2245, 2278, 2306,
-        2308, 2312, 2322, 2324, 2336, 2346, 2356, 2381, 2384, 2385, 2388, 2390,
-        2415, 2467, 2678, 2681, 2973, 3093, 3214, 3227, 3238, 3239, 3426, 3427,
-        3618, 3634, 3646, 3653, 3679, 3689, 3693, 3697, 3701, 3756, 3775, 3802,
-        3819, 3853, 3854, 3856, 3872, 3889, 3890, 3891, 3900, 3905, 4085, 4443,
-        4465, 4474, 4524, 4559, 4565, 4572, 4641, 4732, 4890, 5149, 5159, 5161,
-        5174, 5205, 5207, 5208, 5212, 5216, 5272, 5326, 5377, 5380, 5466, 5515
+        42, 201, 212, 221, 301, 313, 315, 318, 537, 625, 646, 682, 713, 778,
+        810, 901, 934, 943, 955, 991, 1088, 1284, 1519, 1581, 1589, 1647, 1700,
+        1703, 1896, 1905, 1910, 1917, 2000, 2001, 2167, 2168, 2251, 2284, 2312,
+        2314, 2318, 2328, 2330, 2342, 2352, 2362, 2387, 2390, 2391, 2394, 2396,
+        2421, 2473, 2684, 2687, 2979, 3099, 3220, 3233, 3244, 3245, 3432, 3433,
+        3624, 3640, 3652, 3659, 3685, 3695, 3699, 3703, 3707, 3762, 3781, 3808,
+        3825, 3859, 3860, 3862, 3878, 3895, 3896, 3897, 3906, 3911, 4091, 4449,
+        4471, 4480, 4530, 4565, 4571, 4578, 4647, 4738, 4896, 5156, 5166, 5168,
+        5181, 5212, 5214, 5215, 5219, 5223, 5279, 5333, 5384, 5387, 5481, 5541
       ],
       "review": "mapped-abstraction"
     },
@@ -4375,11 +4382,14 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "b91daaf594f47e231bf8343def3c8cfb07c02fe5d41fbe78da03a5377e193960",
-      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "sha256": "5beb29c61ad6d1d985aaec01ebe6af5dfc9fe6466ef5f04e1b1343e83c596096",
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/points/local_git_objects.qnt"
+      ],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 228, 230, 265, 287, 297, 302, 306, 310,
-        311, 312, 316, 319, 320, 330, 339, 361, 371, 380, 388
+        36, 54, 87, 108, 110, 128, 168, 231, 233, 250, 282, 304, 314, 319, 323,
+        327, 328, 329, 333, 336, 337, 347, 356, 378, 388, 397, 405
       ],
       "review": "mapped-abstraction"
     },
@@ -4501,6 +4511,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static excluded-directory names shared by proof snapshot and inventory scanners; no updates or cross-call state transition."
+    },
+    {
+      "path": "scripts/local-git-objects.ts",
+      "sha256": "59d485c9e8a0bba7f10f1e3e1d6b8bd4a2db4203d1f28f7dc28c9657603e4c17",
+      "models": ["formal/models/points/local_git_objects.qnt"],
+      "candidateLines": [46, 77, 90, 100, 106, 113, 121],
+      "review": "mapped-abstraction"
     },
     {
       "path": "scripts/local-solana-validator.mjs",
@@ -10418,7 +10435,7 @@
     },
     {
       "path": "wrangler.toml",
-      "sha256": "c8ee4d32dc0de5636b7e1caa9ea078926d7811224255b7f48051b5798475dc0e",
+      "sha256": "c0c3af6eaebe6ab6db89076cde6686cb34e4f6e63c15f9b3d719f503ef18991e",
       "models": ["formal/models/api/api_points_session_lifetime.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -15464,6 +15481,22 @@
         "newestFiveMaterialTestsTest",
         "reviewCapTest",
         "uncappedPositiveMergesTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/local_git_objects.qnt",
+      "sha256": "999d69be877c7c0f9e7c03d47c14f2414cc60adcd744f9edbcefcae7dbbf8106",
+      "sources": [
+        "scripts/compare-local-git-objects.ts",
+        "scripts/github-ingestion-read.ts",
+        "scripts/local-git-objects.ts"
+      ],
+      "scenarios": [
+        "crashDeclinesWaitingTest",
+        "deadProcessCannotAnswerTest",
+        "exactServedLocallyTest",
+        "restartAfterCrashTest",
+        "uncertainGoesToGitHubTest"
       ]
     },
     {

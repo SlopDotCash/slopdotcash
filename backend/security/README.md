@@ -307,7 +307,7 @@ severity, then proof present, then age.
 
 `SECURITY_ROUTINE_DECISIONS` in the Pages environment is `off`, `dry_run`
 or `live`; any other value is off. `wrangler.toml` sets production
-(`dry_run`) and `wrangler.staging.toml` sets staging (`off`); the release
+(`live` since 20 November 2026) and `wrangler.staging.toml` sets staging (`off`); the release
 publishes that file with the Pages project, so a change takes effect with
 the next release. `dry_run` runs every rule, model calls included, and
 writes only `security_routine_decisions` rows with `applied = 0`: no case

@@ -454,8 +454,8 @@ that returns the report to the program owner. It acknowledges everything else
 and ranks it for the owner. It never closes on a plausible loss of funds, an
 unavailable or disagreeing reading, an open appeal or correction, or a report
 on GitHub. `SECURITY_ROUTINE_DECISIONS` is `off`, `dry_run` or `live`, set in
-`wrangler.toml` (production, `dry_run`) and `wrangler.staging.toml` (`off`);
-`dry_run` records decisions only, and `live` needs its own reviewed change.
+`wrangler.toml` (production, `live` since 20 November 2026) and
+`wrangler.staging.toml` (`off`); `dry_run` records decisions only.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report

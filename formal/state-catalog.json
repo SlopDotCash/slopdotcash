@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6f2df175ee9812aaee3da1749d9c6e802a33748a8d73b3090d7fd57ca5ae29a1",
+  "inventorySha256": "6a0b351b9680542228c042e3f45d1634e9f4158b00dbdac172b4078ceb2d1377",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2383,7 +2383,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 249,
+      "line": 253,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2403,7 +2403,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 491,
+      "line": 495,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2439,7 +2439,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3870,
+      "line": 3876,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2459,7 +2459,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4474,
+      "line": 4480,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2507,6 +2507,16 @@
         "version-read",
         "version-source"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/local-git-objects.ts",
+      "line": 50,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["--batch", "--batch-check"],
+      "models": ["formal/models/points/local_git_objects.qnt"],
+      "lexicallyUnmentionedValues": ["--batch", "--batch-check"],
       "review": "candidate-only"
     },
     {
