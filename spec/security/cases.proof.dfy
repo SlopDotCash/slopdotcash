@@ -40,7 +40,7 @@ lemma RevokedTriagers(c: PrivateCase, by_: int, checkedEpoch: int, actor: int)
 {
 }
 
-// A new snapshot leaves every receipt, appeal and triage field as it was.
+// A new snapshot leaves every receipt, appeal and triage field as it was; an unreceived case has no triager to revoke.
 lemma observeAuthority_ensures(c: PrivateCase, snapshot: Authority)
   ensures (inv(c) ==> canObserveAuthority(c, snapshot) ==> alwaysUnpaidHasNoAward(observeAuthority(c, snapshot)))
   ensures (inv(c) ==> canObserveAuthority(c, snapshot) ==> alwaysVerifiedReceiptValid(observeAuthority(c, snapshot)))
@@ -75,6 +75,7 @@ lemma observeAuthority_ensures(c: PrivateCase, snapshot: Authority)
 {
   if inv(c) && canObserveAuthority(c, snapshot) {
     var after := observeAuthority(c, snapshot);
+    assert !c.submission.Verified? ==> |c.triagers| == 0;
     assert after.submission == c.submission && after.receipt == c.receipt && after.appeal == c.appeal;
     assert after.commitment == c.commitment && after.payment == c.payment && after.related == c.related;
     assert after.relatedReview == c.relatedReview && after.triage == c.triage && after.routine == c.routine;

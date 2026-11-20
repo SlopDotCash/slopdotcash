@@ -120,7 +120,8 @@ pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Ver
   and (c.submission != Verified implies c.award == NotApplicable)
 pure def alwaysUnreceivedBlank(c: PrivateCase): bool = c.revision >= 0 and (c.submission != Verified implies
   c.receipt == Received and c.appeal == NoAppeal and c.commitment == NoCommitment and c.payment == PaymentNotApplicable
-  and c.related == NotAssessed and c.relatedReview == ReviewNotApplicable and c.triage.state == NoTriage)
+  and c.related == NotAssessed and c.relatedReview == ReviewNotApplicable and c.triage.state == NoTriage
+  and c.triagers.length() == 0)
   and (c.submission == NotReceived implies c.revision == 0)
 pure def stepReceiptFrozen(before: PrivateCase, after: PrivateCase): bool = after.reporter == before.reporter and
   (before.submission == Verified implies after.submission == Verified and after.terms == before.terms and after.source == before.source)
