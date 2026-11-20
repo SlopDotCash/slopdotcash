@@ -486,3 +486,81 @@ test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a
     );
   }
 });
+
+test("jobFor keeps the first operative /slopbot command and skips closed fences", () => {
+  const basePayload = {
+    action: "created",
+    installation: { id: 1 },
+    sender: { id: 42, type: "User" },
+    repository: {
+      id: 100,
+      name: "repo",
+      private: false,
+      owner: { login: "owner" },
+    },
+    issue: { number: 1, node_id: "PR_1", pull_request: {} },
+  };
+  const commandJob = (body: string) =>
+    jobFor(
+      "issue_comment",
+      "del-operative-command",
+      { ...basePayload, comment: { id: 21, body } },
+      "99",
+    );
+  const subjectOf = (job: ReturnType<typeof commandJob>) =>
+    job !== null && "subject" in job ? job.subject : undefined;
+
+  // A finding appeal that later names the other command is not a value dispute.
+  const appealThenDispute = commandJob(
+    "/slopbot appeal the closure\n\n/slopbot dispute the score",
+  );
+  assert.equal(appealThenDispute?.kind, "appeal");
+  assert.equal(subjectOf(appealThenDispute), undefined);
+
+  // A decision is not replaced by a later quotation of the original command.
+  const denyThenAppeal = commandJob(
+    "/slopbot deny value-appeal:fixture\r\n\r\nQuoted command:\r\n/slopbot appeal",
+  );
+  assert.equal(denyThenAppeal?.kind, "appeal_command");
+  if (denyThenAppeal?.kind === "appeal_command") {
+    assert.equal(denyThenAppeal.command, "deny");
+    assert.equal(denyThenAppeal.appealKey, "value-appeal:fixture");
+  }
+
+  // A closed sample, including a three-space or tilde fence, is not a command.
+  const fencedDispute = commandJob(
+    "```\n/slopbot dispute\n```\n/slopbot appeal the cited rule does not apply",
+  );
+  assert.equal(fencedDispute?.kind, "appeal");
+  assert.equal(subjectOf(fencedDispute), undefined);
+  const indentedFence = commandJob(
+    "   ```\n/slopbot dispute\n   ```\n/slopbot appeal the close",
+  );
+  assert.equal(indentedFence?.kind, "appeal");
+  assert.equal(subjectOf(indentedFence), undefined);
+  assert.equal(commandJob("~~~\n/slopbot appeal\n~~~\n"), null);
+  assert.equal(
+    commandJob(
+      "```\n/slopbot reject value-appeal:bad/key\n```\n/slopbot appeal the close",
+    )?.kind,
+    "appeal",
+  );
+
+  // A malformed first key does not fall through to a later appeal line.
+  assert.equal(
+    commandJob(
+      "/slopbot reject value-appeal:bad/key\n/slopbot appeal the close",
+    ),
+    null,
+  );
+
+  // An unclosed fence does not hide a command, and a quote or inline sample
+  // still does not count.
+  assert.equal(
+    commandJob("```\n/slopbot appeal the tests were included")?.kind,
+    "appeal",
+  );
+  assert.equal(commandJob("> /slopbot appeal"), null);
+  assert.equal(commandJob("`/slopbot appeal`"), null);
+  assert.equal(commandJob("    /slopbot appeal the close")?.kind, "appeal");
+});

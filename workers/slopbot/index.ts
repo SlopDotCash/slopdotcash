@@ -4,7 +4,8 @@
 import { readLimitedBody } from "../../backend/trace/validation";
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
-import { APPEAL_COMMANDS, type Job } from "./contracts";
+import { slopbotCommentCommand } from "./comment-command";
+import type { Job } from "./contracts";
 import { dispatchFailureAlert } from "./failure-alerts";
 import { verifyWebhookSignature } from "./github";
 import { dispatchMaintainerHolds } from "./maintainer-holds";
@@ -170,34 +171,20 @@ export function jobFor(
       };
     if (action !== "created") return null;
     const text = (payload.comment?.body ?? "").trim();
-    if (/(?:^|\r?\n)\s*\/slopbot\s+dispute(?::|\s|$)/u.test(text))
+    // The first command outside a closed fence is the one the author issued.
+    // A later appeal or dispute line, or a fenced sample, must not replace it.
+    const command = slopbotCommentCommand(text);
+    if (command?.name === "dispute" || command?.name === "appeal")
       return {
         kind: "appeal",
-        subject: "value",
+        ...(command.name === "dispute" ? { subject: "value" as const } : {}),
         ...(payload.comment?.id ? { appealCommentId: payload.comment.id } : {}),
         ...base,
         ...item,
         senderId: sender.id,
       };
-    if (/(?:^|\r?\n)\s*\/slopbot\s+appeal(?::|\s|$)/u.test(text))
-      return {
-        kind: "appeal",
-        ...base,
-        ...item,
-        senderId: sender.id,
-        ...(payload.comment?.id ? { appealCommentId: payload.comment.id } : {}),
-      };
-    const commandMatch = new RegExp(
-      `(?:^|\\r?\\n)\\s*/slopbot\\s+(${APPEAL_COMMANDS.join("|")})(?=\\s|$)`,
-      "u",
-    ).exec(text);
-    const command = APPEAL_COMMANDS.find((name) => name === commandMatch?.[1]);
-    if (command === undefined || commandMatch === null) return null;
-    const target =
-      text
-        .slice(commandMatch.index + commandMatch[0].length)
-        .trim()
-        .split(/\s+/u)[0] ?? "";
+    if (command === null) return null;
+    const target = text.slice(command.end).trim().split(/\s+/u)[0] ?? "";
     if (
       /^(?:appeal|value-appeal):/u.test(target) &&
       !/^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(target)
@@ -210,7 +197,7 @@ export function jobFor(
       : undefined;
     return {
       kind: "appeal_command",
-      command,
+      command: command.name,
       ...(appealKey ? { appealKey } : {}),
       ...base,
       ...item,

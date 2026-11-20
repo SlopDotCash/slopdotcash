@@ -37,6 +37,7 @@ import {
   isActiveMember,
   isMember,
 } from "./closure-eligibility";
+import { appealCommandStatement } from "./comment-command";
 import {
   AUTHOR_DAILY_CAP,
   CATEGORIES,
@@ -2937,27 +2938,18 @@ async function appealStatement(
     }>(
       `/repos/${job.owner}/${job.repo}/issues/comments/${job.appealCommentId}`,
     );
+    const statement = appealCommandStatement(comment?.body ?? "");
     if (
       !comment ||
       comment.user?.id !== appellantId ||
       comment.issue_url !==
         `https://api.github.com/repos/${job.owner}/${job.repo}/issues/${job.number}` ||
-      !/(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\s|$)/u.test(
-        comment.body ?? "",
-      )
+      statement === null
     )
       throw new Error(
         "The original dispute comment is unavailable or changed source",
       );
-    return (
-      (comment.body ?? "")
-        .replace(
-          /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\b)\s*/u,
-          "\n",
-        )
-        .trim()
-        .slice(0, 4000) || "(no reason given)"
-    );
+    return statement;
   }
   let statement = "(no appeal text; the author reopened the item)";
   for (let page = 1; page <= 10; page++) {
@@ -2969,19 +2961,9 @@ async function appealStatement(
     if (!Array.isArray(comments))
       throw new Error("the appeal comments are unreadable");
     for (const comment of comments) {
-      const body = comment.body ?? "";
-      if (
-        comment.user?.id === appellantId &&
-        /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\s|$)/u.test(body)
-      )
-        statement =
-          body
-            .replace(
-              /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\b)\s*/u,
-              "\n",
-            )
-            .trim()
-            .slice(0, 4000) || "(no reason given)";
+      const statementText = appealCommandStatement(comment.body ?? "");
+      if (comment.user?.id === appellantId && statementText !== null)
+        statement = statementText;
     }
     if (comments.length < 100) break;
   }

@@ -111,6 +111,7 @@
   "workers/notify/wrangler.toml": "Literal service-only email binding, fixed sender and empty default schedule; destination secrets are not checked in. api_mail_delivery and bot_notice_delivery cover send/claim states; explicit pilot release creates its own schedule outside this file.",
   "workers/payments/deployment-types.ts": "Type declarations of payment deployment records and per-step views; no runtime code or state transition.",
   "workers/referral-accrual/merkle.ts": "Pure deterministic Merkle leaf/tree/proof calculation over supplied amounts and addresses; no external state or root posting. This classification does not claim cryptographic correctness or replace the distributor state machine.",
+  "workers/slopbot/comment-command.ts": "Pure recognition of the first operative /slopbot command in one comment. Closed fenced samples are not commands. It performs no I/O and records no appeal, decision or penalty; jobFor and appeal triage own those transitions.",
   "workers/slopbot/entrypoint.ts": "Only re-exports the default worker and named RPC entrypoint classes. Request, scheduled and queue transitions are in index.ts; private import and readiness transitions are in the exported implementations.",
   "workers/slopbot/value-evidence-types.ts": "Type declarations of value evidence and its proof records; no runtime code or state transition.",
   "workers/slopbot/value-work-unit-types.ts": "Type declarations of joint value work-unit records; no runtime code or state transition.",

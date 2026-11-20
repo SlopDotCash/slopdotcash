@@ -9025,6 +9025,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/comment-command.ts",
+      "sha256": "b9569f5b2598348104d971fbe99a719d34a3bde2c5179b16d279d969cb606592",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure recognition of the first operative /slopbot command in one comment. Closed fenced samples are not commands. It performs no I/O and records no appeal, decision or penalty; jobFor and appeal triage own those transitions."
+    },
+    {
       "path": "workers/slopbot/contracts.ts",
       "sha256": "a2321d1f660bedc8a9e329e433279ddfaf924bb48c4d79091862bc2aacc0a85c",
       "models": [
@@ -9079,7 +9087,7 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "2ec2e1be65a8b1e6aedc38680368c9b2d8dc783e1685741de0de8ab5b8e1f7b9",
+      "sha256": "bb65b8f45d52c73646af87ef59d9e4165b8a3a75318abd569a7103994c492a48",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_ready_label.qnt",
@@ -9087,9 +9095,9 @@
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 255, 262, 263, 286, 292, 318, 347, 358, 397, 406, 418, 427, 432, 439,
-        449, 451, 461, 464, 467, 471, 558, 573, 582, 586, 613, 622, 705, 711,
-        721
+        3, 242, 249, 250, 273, 279, 305, 334, 345, 384, 393, 405, 414, 419, 426,
+        436, 438, 448, 451, 454, 458, 545, 560, 569, 573, 600, 609, 692, 698,
+        708
       ],
       "review": "mapped-abstraction"
     },
@@ -9248,7 +9256,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "d7fc2f837eec76e5fe3b5842913712f6c211e321f54c163d8bf92e31b5e1c2be",
+      "sha256": "cf0a0f05e4ef1b999ebf1f6c93c7dd1b7e5d60a7dc268e14050f324afa37cc52",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9263,13 +9271,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 167, 282, 297, 306, 316, 319, 511, 665, 812, 841, 851, 986, 991, 996,
-        998, 1001, 1003, 1004, 1015, 1018, 1020, 1077, 1078, 1080, 1081, 1097,
-        1103, 1154, 1176, 1177, 1185, 1190, 1291, 1293, 1313, 1332, 1415, 1420,
-        1573, 1688, 1695, 1696, 1731, 1748, 1751, 1752, 1914, 1919, 1981, 1994,
-        1999, 2006, 2007, 2011, 2012, 2020, 2036, 2093, 2240, 2300, 2306, 2317,
-        2343, 2373, 2398, 2406, 2429, 2434, 2510, 2511, 2561, 2596, 2647, 2792,
-        3049, 3124, 3290, 3301, 3309, 3407, 3408, 3448, 3498, 3512, 3528
+        3, 168, 283, 298, 307, 317, 320, 512, 666, 813, 842, 852, 987, 992, 997,
+        999, 1002, 1004, 1005, 1016, 1019, 1021, 1078, 1079, 1081, 1082, 1098,
+        1104, 1155, 1177, 1178, 1186, 1191, 1292, 1294, 1314, 1333, 1416, 1421,
+        1574, 1689, 1696, 1697, 1732, 1749, 1752, 1753, 1915, 1920, 1982, 1995,
+        2000, 2007, 2008, 2012, 2013, 2021, 2037, 2094, 2241, 2301, 2307, 2318,
+        2344, 2374, 2399, 2407, 2430, 2435, 2511, 2512, 2562, 2597, 2648, 2793,
+        3031, 3106, 3272, 3283, 3291, 3389, 3390, 3430, 3480, 3494, 3510
       ],
       "review": "mapped-abstraction"
     },
