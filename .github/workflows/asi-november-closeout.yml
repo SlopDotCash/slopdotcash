@@ -25,6 +25,17 @@ on:
         type: string
       preview_sha256:
         type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      SLOPBOT_APP_ID:
+        required: true
+      SLOPBOT_APP_PRIVATE_KEY:
+        required: true
+      ASI_CLOSEOUT_REVIEWED_PACKET:
+        required: false
 permissions:
   contents: read
 jobs:
