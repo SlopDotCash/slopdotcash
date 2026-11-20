@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "89a700d0b03453122de8d393873faca4de7ea8fbf3b2e71bd007f1e50cca61eb",
+      "sha256": "fe8b7164e7125852f4e4786c41e38f18ccacdfc57cb3e95e5e302cb06764faf5",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -41,7 +41,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "d4511b0022fc3d756adcdc7556b02531faa1c2830914957d9718c03525635a6d",
+      "sha256": "d6a25cc013474f0c4cd274d305056f751c86d001191390f37f3d00890859ba55",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
