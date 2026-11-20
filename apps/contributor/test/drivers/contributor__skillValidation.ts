@@ -52,8 +52,9 @@ function sent(run: Run, key: string, event: Event) {
   switch (event.type) {
     case "probeRuntime": {
       const tried = event.matches ? pinnedUv : absent;
-      return probeRuntime(run.state, tried, root).pipe(Effect.tap((next) => {
+      return probeRuntime(run.state, tried, root).pipe(Effect.map((next) => {
         if (next.runtime && !run.state.runtime) run.chosen = tried;
+        return next;
       }));
     }
     case "inspect":
