@@ -88,9 +88,19 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
       - name: Load the exact trusted main attempt's checkpoint
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
           RESUME_RUN: ${{ inputs.discussion_resume_run }}
         run: python3 scripts/restore-leaderboard-discussions.py
       - name: Pass verified checkpoint to preparation
@@ -128,9 +138,19 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
       - name: Load the exact trusted main attempt's collected data
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
           DATA_RUN: ${{ inputs.data_from_run }}
         run: python3 scripts/restore-collected-data.py
       - name: Pass verified data to preparation
