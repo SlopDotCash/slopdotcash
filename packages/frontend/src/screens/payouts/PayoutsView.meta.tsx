@@ -12,7 +12,7 @@ export const meta: ComponentMeta<PayoutsViewProps> = {
     SignedOut: { signedOut: true, account: undefined },
   },
   play: {
-    // spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+    // spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
     Default: async () => {
       await expect(screen.getAllByText("Paid").length).toBe(1);
       await expect(["Submitted", "Queued", "Held", "Needs wallet", "Underfunded", "Unavailable", "Received"].map((word) => screen.getAllByText(word).length > 0)).toEqual([true, true, true, true, true, true, true]);

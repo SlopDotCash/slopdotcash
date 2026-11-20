@@ -1,12 +1,12 @@
-// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
 import { decodeBytes32, escrowAbi } from "@repo/settlement/chain/evm/abi";
 import { commitAwardCalldata } from "@repo/settlement/chain/evm/actions";
 import type { MonthlyAsset, MonthlyAwardState } from "@repo/settlement/client";
 import { decimalRefusalMessage, formatBaseUnits, parseDecimalAmount } from "@repo/settlement/kernels/amounts";
 import { FIRST_PERIOD, formatPeriod, parsePeriod, periodContaining, shiftPeriod } from "@repo/settlement/kernels/calendar";
-import { type StatusProps, awardPresentation as decisionPresentation, paymentPresentation } from "@repo/ui";
+import type { StatusProps } from "@repo/ui";
 import { decodeFunctionData } from "viem";
-import { type AwardDisplay, type AwardFacts, paymentDisplay } from "../../../../gen/frontend__projections.ts";
+import { type AwardDisplay, type AwardFacts, awardPresentation as decisionPresentation, paymentDisplay, paymentPresentation } from "../../../../gen/frontend__projections.ts";
 import { assetSymbol, knownAssetSymbol } from "../../../kernels/assetText.ts";
 import { storageKeys } from "../../../platform/storage.vibe";
 import type { SlotStorage } from "../../../wallets/core/slots.ts";

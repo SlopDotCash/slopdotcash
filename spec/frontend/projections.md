@@ -160,6 +160,45 @@ pure val factsValues = Set(
 )
 ```
 
+### Payment states keep award, funding and settlement apart
+
+Only finalized exact settlement is shown as paid. Held, submitted and
+scheduled payments keep their obligation and say so. Each state is a
+[status presentation](../ui/status.md): a tone, an icon and a word.
+PRD section 6 names these states; development shows them through
+`PAYMENT_STATUS` and `AWARD_STATUS` in `src/PayoutRows.tsx` (commit 7acb6d13c).
+
+```quint
+import designSystem as D from "../designSystem"
+import status as U from "../ui/status"
+pure def paymentPresentation(settlement: PaymentDisplay): U::Presentation =
+  if (settlement == PaymentUnavailable) U::shown(D::Neutral, U::Slash, "Unavailable")
+  else if (settlement == PaymentUnderfunded) U::shown(D::Caution, U::Wallet, "Underfunded")
+  else if (settlement == AwaitingWallet) U::shown(D::Notice, U::Wallet, "Needs wallet")
+  else if (settlement == ReadyToPay) U::shown(D::Neutral, U::Clock, "Queued")
+  else if (settlement == ScheduledPayment) U::shown(D::Notice, U::Clock, "Scheduled")
+  else if (settlement == HeldPayment) U::shown(D::Caution, U::Pause, "Held")
+  else if (settlement == SubmittedPayment) U::shown(D::Notice, U::Send, "Submitted")
+  else U::shown(D::Positive, U::Check, "Paid")
+pure def awardPresentation(decision: AwardDecision): U::Presentation =
+  if (decision == Projected) U::shown(D::Neutral, U::Dot, "Projected")
+  else if (decision == UnderReview) U::shown(D::Notice, U::Eye, "Under review")
+  else if (decision == ApprovedAward) U::shown(D::Positive, U::Check, "Approved")
+  else U::shown(D::Neutral, U::Ban, "Excluded")
+pure def fundingPresentation(funding: FundingObservation): U::Presentation =
+  if (funding == FundingUnavailable) U::shown(D::Neutral, U::Slash, "Unavailable")
+  else if (funding == Underfunded) U::shown(D::Caution, U::Wallet, "Underfunded")
+  else U::shown(D::Positive, U::Check, "Funded")
+pure def lawOnlyPaidLooksSettled(settlement: PaymentDisplay): bool =
+  paymentPresentation(settlement).tone == D::Positive iff settlement == PaidPayment
+pure def lawPaymentStatesAreDistinguishable(a: PaymentDisplay, b: PaymentDisplay): bool =
+  a != b implies U::distinguishable(paymentPresentation(a), paymentPresentation(b))
+pure def lawAwardStatesAreDistinguishable(a: AwardDecision, b: AwardDecision): bool =
+  a != b implies U::distinguishable(awardPresentation(a), awardPresentation(b))
+pure def lawFundingStatesAreDistinguishable(a: FundingObservation, b: FundingObservation): bool =
+  a != b implies U::distinguishable(fundingPresentation(a), fundingPresentation(b))
+```
+
 ## Story: Read Points standings with equal ranks for equal totals
 
 ### Monthly and lifetime standings sum the same accepted-work history
