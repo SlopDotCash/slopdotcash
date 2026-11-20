@@ -496,6 +496,17 @@ Use the owner-controlled operator process described above. The application
 services do not receive the payer or upgrade key. The plan builders in
 `contracts/solana/scripts/` read chain state and produce unsigned transactions.
 
+Since 20 November 2026 the same Cargo workspace also holds
+`slop-submission-deposits`, a separate program that is not deployed and has its
+own runbook (`docs/submission-deposits-solana-deploy-runbook.md`). This section
+concerns `slop-escrow` only. `anchor build --verifiable` without a program name
+builds every program of the workspace; the reviewed file is still
+`target/verifiable/slop_escrow.so`. The step 2 command has not been rerun since
+the second program was added; the `solana-verifiable` job, which names
+`programs/slop-escrow/Cargo.toml`, is unchanged for the escrow, and a local build
+of the escrow gives the same bytes with and without the second program
+(SHA-256 compared on 20 November 2026).
+
 Placeholders:
 
 - `$PROGRAM` = `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ`

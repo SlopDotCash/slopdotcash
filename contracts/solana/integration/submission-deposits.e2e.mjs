@@ -10,8 +10,8 @@ import {
   createMint,
   freezeAccount,
   setAuthority,
-  thawAccount,
   TOKEN_2022_PROGRAM_ID,
+  thawAccount,
   transfer,
 } from "@solana/spl-token";
 import {
@@ -24,8 +24,8 @@ import {
   acceptOwnership,
   addresses,
   ata,
-  balance,
   BN,
+  balance,
   chainTime,
   context,
   deposit,
@@ -45,12 +45,11 @@ import {
   readDeposit,
   readLedger,
   reclaim,
-  reclaimCall,
   refuses,
   resolve,
   resolveCall,
-  setResolver,
   SHORT_DELAY,
+  setResolver,
   snapshot,
   TOKEN_PROGRAM_ID,
   tokens,
@@ -124,7 +123,10 @@ test("only the upgrade authority initializes, once, with distinct roles and a bo
     initialize({ ...good, owner: stranger.publicKey }),
     /already in use/,
   );
-  assert.equal((await readConfig()).owner.toBase58(), owner.publicKey.toBase58());
+  assert.equal(
+    (await readConfig()).owner.toBase58(),
+    owner.publicKey.toBase58(),
+  );
 });
 
 test("the program offers exactly its nine instructions and no way to move tokens otherwise", () => {
@@ -299,12 +301,15 @@ test("a deposit refuses a wrong source, mint, vault or id, and a balance that is
   // A mint whose vault nobody opened.
   const unopened = await newMint(6);
   await tokens(unopened, alice.publicKey, FEE);
-  await refuses(
-    deposit({ ...good, mint: unopened }),
-    /AccountNotInitialized/,
-  );
+  await refuses(deposit({ ...good, mint: unopened }), /AccountNotInitialized/);
   // A frozen source cannot pay.
-  await freezeAccount(connection, payer, ata(alice.publicKey, mint), mint, payer);
+  await freezeAccount(
+    connection,
+    payer,
+    ata(alice.publicKey, mint),
+    mint,
+    payer,
+  );
   await refuses(deposit(good), /frozen|custom program error: 0x11\b/i);
   await thawAccount(connection, payer, ata(alice.publicKey, mint), mint, payer);
   // The payer must sign: the cluster rejects a deposit for alice that only a stranger signed.
@@ -314,7 +319,10 @@ test("a deposit refuses a wrong source, mint, vault or id, and a balance that is
   unsigned.partialSign(stranger);
   await refuses(
     connection.sendRawTransaction(
-      unsigned.serialize({ requireAllSignatures: false, verifySignatures: false }),
+      unsigned.serialize({
+        requireAllSignatures: false,
+        verifySignatures: false,
+      }),
     ),
     /signature verification fail/i,
   );
@@ -340,9 +348,15 @@ test("ids count up without a gap, an item may be paid more than once, and a race
     (await depositCall({ ...good, from: bob, id })).rpc(),
   ]);
   leftOpen.push(3n, id);
-  assert.equal(results.filter((entry) => entry.status === "fulfilled").length, 1);
+  assert.equal(
+    results.filter((entry) => entry.status === "fulfilled").length,
+    1,
+  );
   assert.equal((await readConfig()).depositCount.toString(), id.toString());
-  assert.equal((await readLedger(mint)).openTotal.toString(), (4n * FEE).toString());
+  assert.equal(
+    (await readLedger(mint)).openTotal.toString(),
+    (4n * FEE).toString(),
+  );
   assert.equal(await balance(addresses.vault(mint)), 4n * FEE);
 });
 
@@ -350,7 +364,10 @@ test("only the resolver resolves", async () => {
   const before = await snapshot(mint);
   for (const signer of [stranger, owner, alice])
     for (const refund of [true, false])
-      await refuses(resolve({ resolver: signer, id: 1n, refund }), /NotResolver/);
+      await refuses(
+        resolve({ resolver: signer, id: 1n, refund }),
+        /NotResolver/,
+      );
   assert.equal(await snapshot(mint), before);
   assert.ok(await readDeposit(1n));
 });
@@ -362,7 +379,11 @@ test("a refund goes only to the payer's associated token account", async () => {
   const good = { resolver, id, refund: true };
   // The resolver's own account, the kept account, the vault, and another mint's account.
   const resolverAccount = await tokens(mint, resolver.publicKey);
-  for (const destination of [resolverAccount, keptAccount, addresses.vault(mint)])
+  for (const destination of [
+    resolverAccount,
+    keptAccount,
+    addresses.vault(mint),
+  ])
     await refuses(
       resolve({ ...good, accounts: { destination } }),
       /WrongDestination/,
@@ -419,7 +440,10 @@ test("a refund goes only to the payer's associated token account", async () => {
   assert.equal(await balance(keptAccount), 0n);
   assert.equal(await balance(resolverAccount), 0n);
   assert.equal(await balance(addresses.vault(mint)), 3n * FEE);
-  assert.equal((await readLedger(mint)).openTotal.toString(), (3n * FEE).toString());
+  assert.equal(
+    (await readLedger(mint)).openTotal.toString(),
+    (3n * FEE).toString(),
+  );
   // The record's rent returned to the payer, not to the resolver.
   assert.equal((await lamports(alice.publicKey)) - sol, rent);
   assert.equal(await lamports(resolver.publicKey), resolverSol);
@@ -435,7 +459,11 @@ test("a kept deposit goes only to the kept wallet's associated token account", a
   const before = await snapshot(mint, [aliceAccount, keptAccount]);
   const good = { resolver, id, refund: false };
   const resolverAccount = ata(resolver.publicKey, mint);
-  for (const destination of [resolverAccount, aliceAccount, addresses.vault(mint)])
+  for (const destination of [
+    resolverAccount,
+    aliceAccount,
+    addresses.vault(mint),
+  ])
     await refuses(
       resolve({ ...good, accounts: { destination } }),
       /WrongDestination/,
@@ -467,7 +495,10 @@ test("a kept deposit goes only to the kept wallet's associated token account", a
   assert.equal(await balance(keptAccount), FEE);
   assert.equal(await balance(aliceAccount), 8n * FEE);
   assert.equal(await balance(addresses.vault(mint)), 2n * FEE);
-  assert.equal((await readLedger(mint)).openTotal.toString(), (2n * FEE).toString());
+  assert.equal(
+    (await readLedger(mint)).openTotal.toString(),
+    (2n * FEE).toString(),
+  );
   // Even when the fee is kept, the rent of the record goes back to the payer.
   assert.equal((await lamports(alice.publicKey)) - sol, rent);
   assert.equal(await lamports(kept), keptSol);
@@ -477,7 +508,10 @@ test("a kept deposit goes only to the kept wallet's associated token account", a
 });
 
 test("a deposit settles once", async () => {
-  const before = await snapshot(mint, [ata(alice.publicKey, mint), keptAccount]);
+  const before = await snapshot(mint, [
+    ata(alice.publicKey, mint),
+    keptAccount,
+  ]);
   for (const id of [1n, 2n]) {
     for (const refund of [true, false])
       await refuses(
@@ -545,9 +579,24 @@ test("a deposit settles once", async () => {
 test("a frozen or missing payer account blocks only the refund; the deposit can still be kept or refunded later", async () => {
   const carol = await fund(Keypair.generate());
   const carolAccount = await tokens(mint, carol.publicKey, 3n * FEE);
-  const frozen = await deposit({ from: carol, mint, amount: FEE, keptTo: kept });
-  const closed = await deposit({ from: carol, mint, amount: FEE, keptTo: kept });
-  const changed = await deposit({ from: carol, mint, amount: FEE, keptTo: kept });
+  const frozen = await deposit({
+    from: carol,
+    mint,
+    amount: FEE,
+    keptTo: kept,
+  });
+  const closed = await deposit({
+    from: carol,
+    mint,
+    amount: FEE,
+    keptTo: kept,
+  });
+  const changed = await deposit({
+    from: carol,
+    mint,
+    amount: FEE,
+    keptTo: kept,
+  });
   const keptBefore = await balance(keptAccount);
   const vaultBefore = await balance(addresses.vault(mint));
 
@@ -639,7 +688,10 @@ test("several deposits settle in one transaction, each its own way, or none at a
   };
   // One payout that cannot succeed takes the whole transaction down with it.
   await freezeAccount(connection, payer, erinAccount, mint, payer);
-  await refuses(batch([false, false, true]), /frozen|custom program error: 0x11\b/i);
+  await refuses(
+    batch([false, false, true]),
+    /frozen|custom program error: 0x11\b/i,
+  );
   assert.equal(await snapshot(mint, [erinAccount, keptAccount]), before);
   for (const id of ids) assert.ok(await readDeposit(id));
   await thawAccount(connection, payer, erinAccount, mint, payer);
@@ -686,7 +738,11 @@ test("reclaim: only the payer, only after the delay, only while open, only to th
   await waitForChainTime(reachable);
   for (const signer of [stranger, resolver, owner])
     await refuses(
-      reclaim({ from: signer, id: first.id, destination: ata(signer.publicKey, mint) }),
+      reclaim({
+        from: signer,
+        id: first.id,
+        destination: ata(signer.publicKey, mint),
+      }),
       /NotPayer/,
     );
   // The payer cannot send it to an account they do not own, the vault included.
@@ -702,7 +758,12 @@ test("reclaim: only the payer, only after the delay, only while open, only to th
   assert.equal(await snapshot(mint, [frankAccount, keptAccount]), before);
 
   // A deposit made now has its own clock: the older one is reclaimable, this one is not.
-  const second = await deposit({ from: frank, mint, amount: FEE, keptTo: kept });
+  const second = await deposit({
+    from: frank,
+    mint,
+    amount: FEE,
+    keptTo: kept,
+  });
   await refuses(reclaim({ from: frank, id: second.id }), /ReclaimTooEarly/);
   const rent = await lamports(addresses.deposit(first.id));
   const sol = await lamports(frank.publicKey);
@@ -819,11 +880,23 @@ test("tokens sent to the vault without a deposit belong to no deposit", async ()
   const ivanAccount = await tokens(mint, ivan.publicKey, 4n * FEE);
   const open = (await readLedger(mint)).openTotal.toString();
   const vaultBefore = await balance(addresses.vault(mint));
-  await transfer(connection, payer, ivanAccount, addresses.vault(mint), ivan, FEE);
+  await transfer(
+    connection,
+    payer,
+    ivanAccount,
+    addresses.vault(mint),
+    ivan,
+    FEE,
+  );
   assert.equal((await readLedger(mint)).openTotal.toString(), open);
   // Deposits beside the stray tokens settle for exactly their own amounts.
   const first = await deposit({ from: ivan, mint, amount: FEE, keptTo: kept });
-  const second = await deposit({ from: ivan, mint, amount: 2n * FEE, keptTo: kept });
+  const second = await deposit({
+    from: ivan,
+    mint,
+    amount: 2n * FEE,
+    keptTo: kept,
+  });
   const keptBefore = await balance(keptAccount);
   await resolve({ resolver, id: first.id, refund: true });
   await resolve({ resolver, id: second.id, refund: false });
@@ -845,9 +918,17 @@ test("mints of zero and nine decimals and the largest amount round-trip exactly"
     await openVault(some);
     const account = await tokens(some, jo.publicKey, amount);
     const keptHere = await tokens(some, kept);
-    const refunded = await deposit({ from: jo, mint: some, amount, keptTo: kept });
+    const refunded = await deposit({
+      from: jo,
+      mint: some,
+      amount,
+      keptTo: kept,
+    });
     assert.equal(await balance(addresses.vault(some)), amount);
-    assert.equal((await readLedger(some)).openTotal.toString(), amount.toString());
+    assert.equal(
+      (await readLedger(some)).openTotal.toString(),
+      amount.toString(),
+    );
     assert.equal(await balance(account), 0n);
     await resolve({ resolver, id: refunded.id, refund: true });
     assert.equal(await balance(account), amount);
@@ -930,13 +1011,19 @@ test("ownership moves in two steps and a cancelled handover cannot be accepted",
   // Cancel, then the named owner can no longer accept.
   await transferOwnership(owner, PublicKey.default);
   await refuses(acceptOwnership(next), /NotPendingOwner/);
-  assert.equal((await readConfig()).owner.toBase58(), owner.publicKey.toBase58());
+  assert.equal(
+    (await readConfig()).owner.toBase58(),
+    owner.publicKey.toBase58(),
+  );
   // Name again and accept.
   await transferOwnership(owner, next.publicKey);
   const accepted = await acceptOwnership(next);
   const [acceptedEvent] = await events(accepted);
   assert.equal(acceptedEvent.name, "ownershipTransferred");
-  assert.equal(acceptedEvent.data.previous.toBase58(), owner.publicKey.toBase58());
+  assert.equal(
+    acceptedEvent.data.previous.toBase58(),
+    owner.publicKey.toBase58(),
+  );
   assert.equal(acceptedEvent.data.owner.toBase58(), next.publicKey.toBase58());
   const config = await readConfig();
   assert.equal(config.owner.toBase58(), next.publicKey.toBase58());
@@ -953,7 +1040,10 @@ test("ownership moves in two steps and a cancelled handover cannot be accepted",
   // Hand ownership back to the fixture owner for the suites that follow.
   await transferOwnership(next, owner.publicKey);
   await acceptOwnership(owner);
-  assert.equal((await readConfig()).owner.toBase58(), owner.publicKey.toBase58());
+  assert.equal(
+    (await readConfig()).owner.toBase58(),
+    owner.publicKey.toBase58(),
+  );
 });
 
 test("the delay, the count and every settled deposit are as the suite left them", async () => {
@@ -966,5 +1056,6 @@ test("the delay, the count and every settled deposit are as the suite left them"
   assert.equal((await readLedger(mint)).openTotal.toNumber(), 0);
   assert.equal(await balance(addresses.vault(mint)), FEE);
   const count = BigInt(config.depositCount.toString());
-  for (let id = 1n; id <= count; id++) assert.equal(await readDeposit(id), null);
+  for (let id = 1n; id <= count; id++)
+    assert.equal(await readDeposit(id), null);
 });

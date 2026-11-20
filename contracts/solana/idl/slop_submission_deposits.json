@@ -8,16 +8,7 @@
   "instructions": [
     {
       "name": "accept_ownership",
-      "discriminator": [
-        172,
-        23,
-        43,
-        13,
-        238,
-        213,
-        85,
-        150
-      ],
+      "discriminator": [172, 23, 43, 13, 238, 213, 85, 150],
       "accounts": [
         {
           "name": "pending_owner",
@@ -30,14 +21,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -53,16 +37,7 @@
         "here and never change. Refused while deposits are paused, for a zero amount, and for a",
         "zero `kept_to` or one of this program's own accounts as `kept_to`."
       ],
-      "discriminator": [
-        242,
-        35,
-        198,
-        137,
-        82,
-        225,
-        242,
-        182
-      ],
+      "discriminator": [242, 35, 198, 137, 82, 225, 242, 182],
       "accounts": [
         {
           "name": "payer",
@@ -76,14 +51,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -95,14 +63,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  100,
-                  103,
-                  101,
-                  114
-                ]
+                "value": [108, 101, 100, 103, 101, 114]
               },
               {
                 "kind": "account",
@@ -113,15 +74,11 @@
         },
         {
           "name": "mint",
-          "relations": [
-            "ledger"
-          ]
+          "relations": ["ledger"]
         },
         {
           "name": "source",
-          "docs": [
-            "Any token account of the mint that the payer owns."
-          ],
+          "docs": ["Any token account of the mint that the payer owns."],
           "writable": true
         },
         {
@@ -131,13 +88,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -156,15 +107,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  112,
-                  111,
-                  115,
-                  105,
-                  116
-                ]
+                "value": [100, 101, 112, 111, 115, 105, 116]
               },
               {
                 "kind": "account",
@@ -187,10 +130,7 @@
         {
           "name": "item",
           "type": {
-            "array": [
-              "u8",
-              32
-            ]
+            "array": ["u8", 32]
           }
         },
         {
@@ -210,16 +150,7 @@
         "authority can sign it, so nobody else can initialize first, and it must run before the",
         "upgrade authority is removed. No instruction changes the delay or closes the Config."
       ],
-      "discriminator": [
-        175,
-        175,
-        109,
-        31,
-        13,
-        152,
-        155,
-        237
-      ],
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
       "accounts": [
         {
           "name": "authority",
@@ -233,14 +164,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -278,16 +202,7 @@
         "Creates the ledger and the vault token account of one classic SPL mint. Anyone may",
         "call it and pays the rent of both accounts, which are never closed."
       ],
-      "discriminator": [
-        181,
-        248,
-        228,
-        67,
-        6,
-        175,
-        37,
-        167
-      ],
+      "discriminator": [181, 248, 228, 67, 6, 175, 37, 167],
       "accounts": [
         {
           "name": "funder",
@@ -307,14 +222,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  100,
-                  103,
-                  101,
-                  114
-                ]
+                "value": [108, 101, 100, 103, 101, 114]
               },
               {
                 "kind": "account",
@@ -330,13 +238,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -361,23 +263,12 @@
       "docs": [
         "Stops or resumes new deposits. It never blocks `resolve` or `reclaim`."
       ],
-      "discriminator": [
-        206,
-        186,
-        203,
-        153,
-        253,
-        61,
-        206,
-        122
-      ],
+      "discriminator": [206, 186, 203, 153, 253, 61, 206, 122],
       "accounts": [
         {
           "name": "owner",
           "signer": true,
-          "relations": [
-            "config"
-          ]
+          "relations": ["config"]
         },
         {
           "name": "config",
@@ -386,14 +277,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -413,24 +297,13 @@
         "Only the payer may call it, and the tokens go to a token account the payer owns. It",
         "works while deposits are paused and whoever the resolver is."
       ],
-      "discriminator": [
-        44,
-        177,
-        236,
-        249,
-        145,
-        109,
-        163,
-        186
-      ],
+      "discriminator": [44, 177, 236, 249, 145, 109, 163, 186],
       "accounts": [
         {
           "name": "payer",
           "writable": true,
           "signer": true,
-          "relations": [
-            "deposit"
-          ]
+          "relations": ["deposit"]
         },
         {
           "name": "config",
@@ -438,14 +311,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -457,15 +323,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  112,
-                  111,
-                  115,
-                  105,
-                  116
-                ]
+                "value": [100, 101, 112, 111, 115, 105, 116]
               },
               {
                 "kind": "account",
@@ -482,14 +340,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  100,
-                  103,
-                  101,
-                  114
-                ]
+                "value": [108, 101, 100, 103, 101, 114]
               },
               {
                 "kind": "account",
@@ -500,10 +351,7 @@
         },
         {
           "name": "mint",
-          "relations": [
-            "deposit",
-            "ledger"
-          ]
+          "relations": ["deposit", "ledger"]
         },
         {
           "name": "vault",
@@ -512,13 +360,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -529,9 +371,7 @@
         },
         {
           "name": "destination",
-          "docs": [
-            "Any token account of the mint that the payer owns."
-          ],
+          "docs": ["Any token account of the mint that the payer owns."],
           "writable": true
         },
         {
@@ -549,23 +389,12 @@
         "has no other choice of destination. The Deposit account is closed and its rent returns",
         "to the payer. Works while deposits are paused."
       ],
-      "discriminator": [
-        246,
-        150,
-        236,
-        206,
-        108,
-        63,
-        58,
-        10
-      ],
+      "discriminator": [246, 150, 236, 206, 108, 63, 58, 10],
       "accounts": [
         {
           "name": "resolver",
           "signer": true,
-          "relations": [
-            "config"
-          ]
+          "relations": ["config"]
         },
         {
           "name": "config",
@@ -573,14 +402,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -592,15 +414,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  112,
-                  111,
-                  115,
-                  105,
-                  116
-                ]
+                "value": [100, 101, 112, 111, 115, 105, 116]
               },
               {
                 "kind": "account",
@@ -617,14 +431,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  100,
-                  103,
-                  101,
-                  114
-                ]
+                "value": [108, 101, 100, 103, 101, 114]
               },
               {
                 "kind": "account",
@@ -635,10 +442,7 @@
         },
         {
           "name": "mint",
-          "relations": [
-            "deposit",
-            "ledger"
-          ]
+          "relations": ["deposit", "ledger"]
         },
         {
           "name": "vault",
@@ -647,13 +451,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -672,13 +470,9 @@
         },
         {
           "name": "payer",
-          "docs": [
-            "fixes it to the recorded payer."
-          ],
+          "docs": ["fixes it to the recorded payer."],
           "writable": true,
-          "relations": [
-            "deposit"
-          ]
+          "relations": ["deposit"]
         },
         {
           "name": "token_program",
@@ -698,23 +492,12 @@
         "Replaces the resolver. The owner and the pending owner may not become the resolver, so",
         "one key never holds both roles."
       ],
-      "discriminator": [
-        137,
-        108,
-        27,
-        51,
-        202,
-        16,
-        33,
-        119
-      ],
+      "discriminator": [137, 108, 27, 51, 202, 16, 33, 119],
       "accounts": [
         {
           "name": "owner",
           "signer": true,
-          "relations": [
-            "config"
-          ]
+          "relations": ["config"]
         },
         {
           "name": "config",
@@ -723,14 +506,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -749,23 +525,12 @@
         "Names a pending owner, who takes over with `accept_ownership`. The all-zero address",
         "cancels a pending handover. The resolver may not be named."
       ],
-      "discriminator": [
-        65,
-        177,
-        215,
-        73,
-        53,
-        45,
-        99,
-        47
-      ],
+      "discriminator": [65, 177, 215, 73, 53, 45, 99, 47],
       "accounts": [
         {
           "name": "owner",
           "signer": true,
-          "relations": [
-            "config"
-          ]
+          "relations": ["config"]
         },
         {
           "name": "config",
@@ -774,14 +539,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [99, 111, 110, 102, 105, 103]
               }
             ]
           }
@@ -798,161 +556,53 @@
   "accounts": [
     {
       "name": "Config",
-      "discriminator": [
-        155,
-        12,
-        170,
-        224,
-        30,
-        250,
-        204,
-        130
-      ]
+      "discriminator": [155, 12, 170, 224, 30, 250, 204, 130]
     },
     {
       "name": "Deposit",
-      "discriminator": [
-        148,
-        146,
-        121,
-        66,
-        207,
-        173,
-        21,
-        227
-      ]
+      "discriminator": [148, 146, 121, 66, 207, 173, 21, 227]
     },
     {
       "name": "Ledger",
-      "discriminator": [
-        43,
-        41,
-        21,
-        213,
-        180,
-        176,
-        95,
-        32
-      ]
+      "discriminator": [43, 41, 21, 213, 180, 176, 95, 32]
     }
   ],
   "events": [
     {
       "name": "Deposited",
-      "discriminator": [
-        111,
-        141,
-        26,
-        45,
-        161,
-        35,
-        100,
-        57
-      ]
+      "discriminator": [111, 141, 26, 45, 161, 35, 100, 57]
     },
     {
       "name": "DepositsPaused",
-      "discriminator": [
-        148,
-        244,
-        198,
-        121,
-        18,
-        138,
-        222,
-        13
-      ]
+      "discriminator": [148, 244, 198, 121, 18, 138, 222, 13]
     },
     {
       "name": "Initialized",
-      "discriminator": [
-        208,
-        213,
-        115,
-        98,
-        115,
-        82,
-        201,
-        209
-      ]
+      "discriminator": [208, 213, 115, 98, 115, 82, 201, 209]
     },
     {
       "name": "OwnershipTransferStarted",
-      "discriminator": [
-        183,
-        253,
-        239,
-        246,
-        140,
-        179,
-        133,
-        105
-      ]
+      "discriminator": [183, 253, 239, 246, 140, 179, 133, 105]
     },
     {
       "name": "OwnershipTransferred",
-      "discriminator": [
-        172,
-        61,
-        205,
-        183,
-        250,
-        50,
-        38,
-        98
-      ]
+      "discriminator": [172, 61, 205, 183, 250, 50, 38, 98]
     },
     {
       "name": "Reclaimed",
-      "discriminator": [
-        230,
-        25,
-        32,
-        135,
-        40,
-        167,
-        137,
-        130
-      ]
+      "discriminator": [230, 25, 32, 135, 40, 167, 137, 130]
     },
     {
       "name": "Resolved",
-      "discriminator": [
-        148,
-        46,
-        187,
-        66,
-        35,
-        1,
-        255,
-        147
-      ]
+      "discriminator": [148, 46, 187, 66, 35, 1, 255, 147]
     },
     {
       "name": "ResolverChanged",
-      "discriminator": [
-        6,
-        235,
-        225,
-        252,
-        79,
-        239,
-        195,
-        145
-      ]
+      "discriminator": [6, 235, 225, 252, 79, 239, 195, 145]
     },
     {
       "name": "VaultOpened",
-      "discriminator": [
-        198,
-        250,
-        195,
-        25,
-        26,
-        107,
-        197,
-        16
-      ]
+      "discriminator": [198, 250, 195, 25, 26, 107, 197, 16]
     }
   ],
   "errors": [
@@ -1029,9 +679,7 @@
           },
           {
             "name": "pending_owner",
-            "docs": [
-              "All zero when no handover is pending."
-            ],
+            "docs": ["All zero when no handover is pending."],
             "type": "pubkey"
           },
           {
@@ -1065,9 +713,7 @@
     },
     {
       "name": "Deposit",
-      "docs": [
-        "Exists exactly while the deposit is open."
-      ],
+      "docs": ["Exists exactly while the deposit is open."],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1096,10 +742,7 @@
           {
             "name": "item",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
@@ -1129,10 +772,7 @@
           {
             "name": "item",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
@@ -1188,9 +828,7 @@
     },
     {
       "name": "Ledger",
-      "docs": [
-        "One per mint. It is the token authority of that mint's vault."
-      ],
+      "docs": ["One per mint. It is the token authority of that mint's vault."],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1200,9 +838,7 @@
           },
           {
             "name": "open_total",
-            "docs": [
-              "Sum of the mint's open deposits, in base units."
-            ],
+            "docs": ["Sum of the mint's open deposits, in base units."],
             "type": "u64"
           },
           {
