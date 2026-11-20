@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "f3ed4aac4000552c112ecee6d58bf1b83069f7b0b279fd53146164c4ab34670b",
+      "sha256": "39bfa1c36878fc3d2d05e037a7108395af20ba353a4daf8a95f4af3d7a3c5583",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 54, 250, 383, 493, 521, 522, 596, 649, 706, 786, 791, 906, 912, 980,
-        983, 1009, 1010, 1031, 1043, 1075, 1113, 1343, 1371, 1463, 1476, 1567,
-        1675, 1677, 1678, 1882, 1965, 2118, 2120, 2150, 2265, 2287, 2358, 2369,
-        2394, 2465, 2478, 2491, 2500, 2501, 2502, 2519
+        44, 62, 258, 393, 503, 532, 533, 607, 660, 717, 797, 802, 917, 923, 991,
+        994, 1020, 1021, 1042, 1054, 1086, 1124, 1354, 1382, 1474, 1487, 1578,
+        1686, 1688, 1689, 1893, 1976, 2129, 2131, 2161, 2276, 2298, 2369, 2380,
+        2405, 2476, 2489, 2502, 2511, 2512, 2513, 2530
       ],
       "review": "mapped-abstraction"
     },
@@ -5384,7 +5384,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "47f02ee4a8b547e9619c352772cbbe7b9f368a11e53d374bae7033cd2e21637d",
+      "sha256": "6b9b6154772e6b7c374eeaaba39068a3894a44d662a22f9a4502f5f88a2ead5c",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5395,7 +5395,7 @@
       ],
       "candidateLines": [
         80, 91, 131, 190, 191, 192, 193, 195, 196, 285, 286, 287, 289, 290, 942,
-        962, 1252, 1288, 1327, 1351
+        971, 1261, 1297, 1336, 1360
       ],
       "review": "mapped-abstraction"
     },
@@ -10418,7 +10418,7 @@
     },
     {
       "path": "wrangler.toml",
-      "sha256": "c8ee4d32dc0de5636b7e1caa9ea078926d7811224255b7f48051b5798475dc0e",
+      "sha256": "c0c3af6eaebe6ab6db89076cde6686cb34e4f6e63c15f9b3d719f503ef18991e",
       "models": ["formal/models/api/api_points_session_lifetime.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",

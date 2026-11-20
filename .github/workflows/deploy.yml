@@ -48,6 +48,14 @@ on:
         description: "Manual main or development release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
         type: boolean
         default: false
+      defer_retained_attribution:
+        description: "Manual main release only: hold the retained-copy attribution check for merged pull requests that replaced a closed submission; held pull requests keep their prior scoring until a later collection resolves them"
+        type: boolean
+        default: false
+      parallel_collection:
+        description: "Manual main release only: collect on GitHub-hosted runners in a separate lane beside a collection that is already running"
+        type: boolean
+        default: false
 
 concurrency:
   # PR supersessions cancel. Development pushes share one lane: a running
@@ -243,21 +251,23 @@ jobs:
       # has no 6-hour job limit (operator decision, 20 November 2026). The
       # runner refuses any job that is not a main-branch run of this
       # workflow. Clearing the repository variable returns it to hosted runners.
-      SLOP_COLLECTION_DEADLINE_S: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '') && '72000' || '18000' }}
-    runs-on: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '') && vars.SLOP_COLLECTOR_RUNNER || 'ubuntu-24.04' }}
+      SLOP_COLLECTION_DEADLINE_S: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '18000' }}
+    runs-on: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && vars.SLOP_COLLECTOR_RUNNER || 'ubuntu-24.04' }}
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
       # Every fresh main collection, push or manual, shares one lane: they
       # spend one collector App allowance, so a second waits for the first
       # (operator decision, 19 November 2026). Manual retained-data
-      # production can prepare beside live collection.
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || 'collect') || github.event_name }}
+      # production can prepare beside live collection, and a manual
+      # parallel_collection run collects on hosted runners in its own lane
+      # (operator decision, 20 November 2026).
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || inputs.parallel_collection == true && 'collect-parallel' || 'collect') || github.event_name }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
     # The three-hour window expired before the complete census was written.
-    timeout-minutes: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '') && 1440 || 360 }}
+    timeout-minutes: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && 1440 || 360 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -495,6 +505,7 @@ jobs:
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
           # Empty unless the clone step above made at least one clone.
           SLOP_LOCAL_GIT_DIR: ${{ steps.local_git.outputs.directory }}
+          SLOP_DEFER_RETAINED_ATTRIBUTION: ${{ inputs.defer_retained_attribution == true && '1' || '' }}
         run: |
           set -euo pipefail
           leaderboard_origin="https://slop.cash"
