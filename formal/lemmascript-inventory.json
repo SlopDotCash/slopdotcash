@@ -16,11 +16,11 @@
     "build outputs"
   ],
   "counts": {
-    "files": 849,
-    "functions": 13326,
+    "files": 852,
+    "functions": 13334,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 13138,
-    "nonTypeScriptFiles": 67
+    "unprovedFunctions": 13146,
+    "nonTypeScriptFiles": 69
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
@@ -2383,6 +2383,9 @@
 {"path":"contracts/solana/programs/slop-escrow/src/token_policy.rs","sha256":"3ef54af0a483a0e463f8763bc554781c4daa1dfee90b42fe9387741f9bd1d79d","language":"rust","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
+{"path":"contracts/solana/programs/slop-submission-deposits/src/lib.rs","sha256":"ab23f8089011e139856420338bb423ea8b17b51be66eff31cb5ca57d248f40ee","language":"rust","disposition":"outside-typescript-toolchain","functions":[
+
+]},
 {"path":"contracts/solana/scripts/acceptance-extended.ts","sha256":"85d9ed32a3b9618b2429d8993d1cbb97597a0a4343a63714e5f80ff2152907db","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"sha256","kind":"ArrowFunction","line":70,"sha256":"19c911f5bf64a0e78ddb8e3f0cb3715245adb3a7926feb99fc460d2268aecfb8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"text","kind":"ArrowFunction","line":72,"sha256":"96fb7379dcca6e58dc79a3b10d8940ff984147e5262d7de44496d918dfc56344","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -2583,7 +2586,7 @@
 {"path":"contracts/solana/scripts/bootstrap-linux.sh","sha256":"85d5c889a4332ca6481e3d52d84c236c1aa7544a7240f2488f52b02cebc27569","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/solana/scripts/build-local.sh","sha256":"0039c233cb536086ea49ebe4af1993352f3f08339ebc8967b1e1715dca75ead8","language":"shell","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/scripts/build-local.sh","sha256":"e873e14c58c8233a87a9dfd72559f95bb235ba50fd5946aad911e5614fe86b14","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/scripts/config-plan.mjs","sha256":"0b7ae7948196f7fc70a16fe8bd1a78f1b7b231724249ba2f4d8ff77f583a11de","language":"javascript","disposition":"callables-inventoried","functions":[
@@ -2600,7 +2603,7 @@
 {"name":"<ArrowFunction@206>","kind":"ArrowFunction","line":206,"sha256":"43aac5b504fbc64799470c4844ef8bded2dd273c411f576ca1a59a69d0d28082","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@216>","kind":"ArrowFunction","line":216,"sha256":"9dc0c7ac343294bc515a61d3b48bd14718759cb825664bb2de5b9bf26e31c4a9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"contracts/solana/scripts/deploy-testnet.sh","sha256":"091a8bf7660d143f48d9c88a39341d18c083f58a7226f1156b25f15f8f815554","language":"shell","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/scripts/deploy-testnet.sh","sha256":"8994d387217797654b7ecf43a0e07f945c802b95c718c232566a2c5cee564310","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/scripts/failure-evidence.mjs","sha256":"68a46e76510aa92b4d0c7a989d13b9e3d94376acbadab006582223710e448efe","language":"javascript","disposition":"callables-inventoried","functions":[
@@ -2621,15 +2624,28 @@
 {"name":"ownerPlan","kind":"FunctionDeclaration","line":94,"sha256":"6907b8de3f9d65ce3ef5df2738a20f898e7ed8ed28842ee0883c7ac29970863c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"pda","kind":"ArrowFunction","line":114,"sha256":"35fb1aaf675c8e57a3d0af541941dabb20138d6404ae3b4c7ec93449a52202ea","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"contracts/solana/scripts/prepare-test-program.mjs","sha256":"24b80f77baa4484a3bb8d03d9028cb13aeea1d7cf63d0d4352bbd41970188bf9","language":"javascript","disposition":"callables-inventoried","functions":[
-{"name":"prepareTestProgram","kind":"FunctionDeclaration","line":17,"sha256":"702fd930f394af5b843a1b1ed37ba8b72eb7712dbbeaed5b7e784dddec833e11","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"git","kind":"ArrowFunction","line":36,"sha256":"e0c4035b4a928044a16d0974fcafbde5ee5c0c242c9d09327b19625da2f379a3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@97>","kind":"ArrowFunction","line":97,"sha256":"5fa8c711247d70f5c653bac436acb6b2959231e50344d054ff9cf6093cc71a2c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"contracts/solana/scripts/prepare-test-program.mjs","sha256":"2e382dfeae3ea3b369a2adbf5774de158f0b06a17c7b49505699fc2e42c85b2b","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"prepareTestProgram","kind":"FunctionDeclaration","line":27,"sha256":"3ff480561b985958a9ab89c195d96e3cc28bdde1dce241c144cf67b8a84a6d42","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"git","kind":"ArrowFunction","line":51,"sha256":"e0c4035b4a928044a16d0974fcafbde5ee5c0c242c9d09327b19625da2f379a3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@112>","kind":"ArrowFunction","line":112,"sha256":"5fa8c711247d70f5c653bac436acb6b2959231e50344d054ff9cf6093cc71a2c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"contracts/solana/scripts/run-test-stage.sh","sha256":"adaade297256078ebeea26ac1f3f094b02885bcfced64175e2b09bae7d82c8f5","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/solana/scripts/test-e2e.sh","sha256":"34dc544a42f1f8fe80f08f966f27243ed50d4a97b394a3e9815b6d57a251cf6e","language":"shell","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/scripts/submission-deposits-plan.mjs","sha256":"65a734ae1533bb4eb87555933bb896962a1b4a86550a25bb2cff9087c79c23ef","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"connect","kind":"FunctionDeclaration","line":38,"sha256":"ca02a6b77249f0b09d7ff36a51d8cfd3123078ece962e0bfda7627ede3387251","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"address","kind":"ArrowFunction","line":55,"sha256":"35fb1aaf675c8e57a3d0af541941dabb20138d6404ae3b4c7ec93449a52202ea","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"ledger","kind":"ArrowFunction","line":61,"sha256":"6a3378fe8aaba65d9a54b0b01e5fd1e34ddc6dc5eee63a0c8ba6efc7c1ad3c67","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"vault","kind":"ArrowFunction","line":62,"sha256":"5d7d354e4d70e4d85ebb2ab52e299d15188d0635869bcfdb5d288533e98e4fc9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"unsigned","kind":"ArrowFunction","line":66,"sha256":"4a3ea977f428852f48a3efafbfe74f8aa730645bfb64af84405dc2cd997fcea7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"initializePlan","kind":"FunctionDeclaration","line":73,"sha256":"ce888cdad114fcb04400d0737bb0281973c9b95b9a233b23d24558a9b5b88669","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"vaultPlan","kind":"FunctionDeclaration","line":118,"sha256":"0282b9d325d2ac206cf8ead61f073b5ae24a09e2625158b8e2b76c2a1b6990d2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"status","kind":"FunctionDeclaration","line":159,"sha256":"f36b27ef74f90998181feded8d2d58dc05deb9b4209747afed009e8c15ba0627","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+]},
+{"path":"contracts/solana/scripts/test-e2e.sh","sha256":"fdf95f07ef9ef96466df92760931b0269bbea634ba7afb891d88780a941f1d1c","language":"shell","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/solana/scripts/test-submission-deposits.sh","sha256":"ee87154fa4b0c77cc6a4cbcbb820832b0d7653d9c14e65624527eff5cb6f1662","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/token-extensions.ts","sha256":"0a8fddf8372b4b8b905995e8abc46914941ec0b57b230222a61a1447f1ef92dd","language":"typescript","disposition":"callables-inventoried","functions":[

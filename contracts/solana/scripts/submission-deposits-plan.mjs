@@ -162,7 +162,10 @@ export async function status(input, runtime) {
     runtime,
   );
   await verifyProgram(connection, program.programId, input);
-  const stored = await program.account.config.fetchNullable(config, "finalized");
+  const stored = await program.account.config.fetchNullable(
+    config,
+    "finalized",
+  );
   const result = {
     programId: input.programId,
     codeSha256: input.codeSha256,

@@ -42,12 +42,12 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "0c9cbe8991ea8f0dbb529b9e96bc3f78a491d9f61d2bf44ab83a293adb19b0b5",
+      "sha256": "887e6eeac08c40a915c007eafe737c113ab3e75c2142ae19d750925240f9df22",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [196],
+      "candidateLines": [225],
       "review": "mapped-abstraction"
     },
     {
@@ -1887,7 +1887,7 @@
     },
     {
       "path": "contracts/solana/Anchor.toml",
-      "sha256": "242ee1a295f1fa420027356b76f97be4db6b08e64ab4f021e40683f1bb6cee34",
+      "sha256": "2a8b5b301e391380f8d44a3f4e6025b9a9172a1018d2dd25d1b0f8dadc690586",
       "models": ["formal/models/contracts/contract_build_profile.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1977,6 +1977,24 @@
       "sha256": "7d5f3ea4afc079d24b555fb60fae5437579fd394a46cbb1ac63d15af7765c2a5",
       "models": ["formal/models/contracts/solana_fixture_config.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/integration/submission-deposits-preload.mjs",
+      "sha256": "1392104761eadb246f2162b32bb808c7d4f2061da8776b87c8612ec92b7a6bdb",
+      "models": [
+        "formal/models/contracts/solana_submission_deposits_suite.qnt"
+      ],
+      "candidateLines": [4, 93],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/integration/submission-deposits.mjs",
+      "sha256": "9859fefaaafd119dc9d039bbba032a5a38aefba5de52a7f8ef545054d88d6a79",
+      "models": [
+        "formal/models/contracts/solana_submission_deposits_suite.qnt"
+      ],
+      "candidateLines": [38, 166, 356],
       "review": "mapped-abstraction"
     },
     {
@@ -2081,6 +2099,20 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "contracts/solana/programs/slop-submission-deposits/Cargo.toml",
+      "sha256": "cf392e320b2687ce819142ee5b5b39fd121df5404b3e75cece05e28d35114471",
+      "models": ["formal/models/contracts/solana_submission_deposits.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/programs/slop-submission-deposits/src/lib.rs",
+      "sha256": "ab23f8089011e139856420338bb423ea8b17b51be66eff31cb5ca57d248f40ee",
+      "models": ["formal/models/contracts/solana_submission_deposits.qnt"],
+      "candidateLines": [12, 21, 219, 250, 251, 446, 539],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "contracts/solana/scripts/acceptance-extended.ts",
       "sha256": "85d9ed32a3b9618b2429d8993d1cbb97597a0a4343a63714e5f80ff2152907db",
       "models": [
@@ -2129,7 +2161,7 @@
     },
     {
       "path": "contracts/solana/scripts/build-local.sh",
-      "sha256": "0039c233cb536086ea49ebe4af1993352f3f08339ebc8967b1e1715dca75ead8",
+      "sha256": "e873e14c58c8233a87a9dfd72559f95bb235ba50fd5946aad911e5614fe86b14",
       "models": ["formal/models/contracts/deployment_artifact.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2143,7 +2175,7 @@
     },
     {
       "path": "contracts/solana/scripts/deploy-testnet.sh",
-      "sha256": "091a8bf7660d143f48d9c88a39341d18c083f58a7226f1156b25f15f8f815554",
+      "sha256": "8994d387217797654b7ecf43a0e07f945c802b95c718c232566a2c5cee564310",
       "models": ["formal/models/contracts/test_contract_deployment.qnt"],
       "candidateLines": [20],
       "review": "mapped-abstraction"
@@ -2169,9 +2201,9 @@
     },
     {
       "path": "contracts/solana/scripts/prepare-test-program.mjs",
-      "sha256": "24b80f77baa4484a3bb8d03d9028cb13aeea1d7cf63d0d4352bbd41970188bf9",
+      "sha256": "2e382dfeae3ea3b369a2adbf5774de158f0b06a17c7b49505699fc2e42c85b2b",
       "models": ["formal/models/contracts/deployment_artifact.qnt"],
-      "candidateLines": [8, 10, 73, 94, 95, 107],
+      "candidateLines": [8, 10, 88, 109, 110, 122],
       "review": "mapped-abstraction"
     },
     {
@@ -2182,13 +2214,33 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "contracts/solana/scripts/submission-deposits-plan.mjs",
+      "sha256": "65a734ae1533bb4eb87555933bb896962a1b4a86550a25bb2cff9087c79c23ef",
+      "models": [
+        "formal/models/contracts/solana_submission_deposits_deployment.qnt"
+      ],
+      "candidateLines": [
+        11, 39, 87, 123, 129, 159, 167, 192, 195, 212, 214, 228
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "contracts/solana/scripts/test-e2e.sh",
-      "sha256": "34dc544a42f1f8fe80f08f966f27243ed50d4a97b394a3e9815b6d57a251cf6e",
+      "sha256": "fdf95f07ef9ef96466df92760931b0269bbea634ba7afb891d88780a941f1d1c",
       "models": [
         "formal/models/contracts/deployment_artifact.qnt",
         "formal/models/contracts/solana_validator_callers.qnt"
       ],
       "candidateLines": [17, 21, 23, 29, 32, 36, 38, 62],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/scripts/test-submission-deposits.sh",
+      "sha256": "ee87154fa4b0c77cc6a4cbcbb820832b0d7653d9c14e65624527eff5cb6f1662",
+      "models": [
+        "formal/models/contracts/solana_submission_deposits_suite.qnt"
+      ],
+      "candidateLines": [28, 35, 37, 51, 54, 58, 60, 107],
       "review": "mapped-abstraction"
     },
     {
@@ -3699,9 +3751,9 @@
     },
     {
       "path": "package.json",
-      "sha256": "033c09e7f55ed27789e3ea4b64c6268f2b26766a27b81acd62ede78d193fbe12",
+      "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [80, 84, 86, 87],
+      "candidateLines": [81, 85, 87, 88],
       "review": "mapped-abstraction"
     },
     {
@@ -12895,6 +12947,113 @@
         "failedReceiptStillConfirmedTest",
         "receiptWinsExpiryRaceTest",
         "wrongBlockhashRejectedTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/solana_submission_deposits.qnt",
+      "sha256": "63838c1ae553939b969062d6d8c65496120967b2031f5ddbd0053b9c9b9019b5",
+      "sources": [
+        "contracts/solana/programs/slop-submission-deposits/Cargo.toml",
+        "contracts/solana/programs/slop-submission-deposits/src/lib.rs"
+      ],
+      "scenarios": [
+        "blockedKeptAccountBlocksKeptTest",
+        "blockedKeptAccountStillAllowsTheRefundTest",
+        "blockedPayerAccountBlocksTheRefundTest",
+        "blockedPayerAccountRecoversTest",
+        "blockedPayerAccountStillAllowsKeptTest",
+        "blockedPayerCannotReclaimToThatAccountTest",
+        "blockedPayerReclaimsToAnotherAccountTest",
+        "cancelledOwnershipCannotBeAcceptedTest",
+        "earlyReclaimRefusedTest",
+        "initializeRefusesABadDelayTest",
+        "initializeRefusesAMissingOwnerTest",
+        "initializeRefusesAMissingResolverTest",
+        "initializeRefusesASharedRoleTest",
+        "initializesOnceTest",
+        "keptCannotGoToThePayerTest",
+        "keptCannotGoToTheResolverTest",
+        "keptGoesToTheKeptWalletTest",
+        "missingKeptWalletRefusedTest",
+        "newResolverCannotRedirectTest",
+        "newResolverStillHasOnlyTheTwoOutcomesTest",
+        "noDepositBeforeInitializeTest",
+        "onlyTheAuthorityInitializesTest",
+        "ownerCannotBecomeResolverTest",
+        "ownerCannotReclaimTest",
+        "ownerCannotSettleTest",
+        "pauseNeverBlocksReclaimTest",
+        "pauseNeverBlocksSettlementTest",
+        "pausedDepositRefusedTest",
+        "payerCannotSettleTest",
+        "pendingOwnerCannotBecomeResolverTest",
+        "programWorksWithoutTheAuthorityTest",
+        "reclaimNeverReachesTheKeptWalletTest",
+        "reclaimNeverReachesTheResolverTest",
+        "reclaimedCannotBeSettledTest",
+        "refundCannotGoToAnotherPayerAccountTest",
+        "refundCannotGoToTheKeptWalletTest",
+        "refundCannotGoToTheResolverTest",
+        "refundGoesToThePayerTest",
+        "removedAuthorityCannotInitializeTest",
+        "removedAuthorityDoesNotReturnTest",
+        "replacedResolverLosesPowerTest",
+        "resolverCannotBeNamedOwnerTest",
+        "resolvesOnceTest",
+        "secondDepositHasItsOwnClockTest",
+        "settledCannotBeReclaimedTest",
+        "skippedIdRefusedTest",
+        "twoDepositsSettleIndependentlyTest",
+        "usedIdRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/solana_submission_deposits_deployment.qnt",
+      "sha256": "c9d94a77132c1b4921d7c99f1806c70814581dc8650cdc85a5909dbec7ad11ba",
+      "sources": ["contracts/solana/scripts/submission-deposits-plan.mjs"],
+      "scenarios": [
+        "initializeIsSentOnceTest",
+        "nonClassicMintHasNoVaultPlanTest",
+        "nothingBeforeDeploymentTest",
+        "openVaultIsNotPlannedTwiceTest",
+        "plannedButUnsentInitializeDiesWithTheAuthorityTest",
+        "removedAuthorityIsNeverPlannedForTest",
+        "runbookOrderTest",
+        "secondInitializeIsNotPlannedTest",
+        "sharedRolesPlanNothingTest",
+        "strangerCannotSendTheInitializePlanTest",
+        "unreviewedBytesPlanNothingTest",
+        "vaultNeedsNoAuthorityTest",
+        "wrongAuthorityPlansNothingTest",
+        "wrongClusterPlansNothingTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/solana_submission_deposits_suite.qnt",
+      "sha256": "8733e7c6e2b7ecdc64204ecdc44fe4ddbc31cd7cffe0d3f6f4ff6d63bb7c6e8b",
+      "sources": [
+        "contracts/solana/integration/submission-deposits-preload.mjs",
+        "contracts/solana/integration/submission-deposits.mjs",
+        "contracts/solana/scripts/test-submission-deposits.sh"
+      ],
+      "scenarios": [
+        "artifactRunTest",
+        "campaignNeedsTheLifecycleSuiteTest",
+        "campaignNeverRunsOnTheRehearsalStageTest",
+        "completeRunTest",
+        "failedLifecycleIsTheExitStatusTest",
+        "failedLifecycleSkipsTheCampaignTest",
+        "failedRehearsalEndsTheRunAfterCleanupTest",
+        "failedUnitTestsStartNothingTest",
+        "firstFailureIsTheExitStatusTest",
+        "lifecycleNeverRunsOnTheRehearsalStageTest",
+        "refusedArtifactStartsNothingTest",
+        "remoteEndpointPassesNothingTest",
+        "secondValidatorWaitsForTheFirstTest",
+        "staleIdlStartsNothingTest",
+        "unconfirmedStopFailsAPassedRunTest",
+        "validatorThatNeverBecomesReadyFailsTest",
+        "validatorThatNeverBecomesReadyRunsNothingTest"
       ]
     },
     {

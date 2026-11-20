@@ -16,8 +16,8 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  SystemProgram,
   SYSVAR_CLOCK_PUBKEY,
+  SystemProgram,
   sendAndConfirmTransaction,
   Transaction,
 } from "@solana/web3.js";
@@ -147,13 +147,17 @@ export async function tokens(mint, wallet, amount = 0n) {
 
 export const balance = async (account) =>
   (await getAccount(connection, account, "confirmed", TOKEN_PROGRAM_ID)).amount;
-export const lamports = (address) => connection.getBalance(address, "confirmed");
+export const lamports = (address) =>
+  connection.getBalance(address, "confirmed");
 export const exists = async (address) =>
   (await connection.getAccountInfo(address, "confirmed")) !== null;
 
 /** The cluster clock the program reads, in seconds. */
 export async function chainTime() {
-  const info = await connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY, "confirmed");
+  const info = await connection.getAccountInfo(
+    SYSVAR_CLOCK_PUBKEY,
+    "confirmed",
+  );
   return Number(info.data.readBigInt64LE(32));
 }
 export async function waitForChainTime(target) {

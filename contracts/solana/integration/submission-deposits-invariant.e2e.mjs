@@ -30,8 +30,12 @@ import {
   waitForChainTime,
 } from "./submission-deposits.mjs";
 
-const STEPS = Number(process.env.SLOP_SUBMISSION_DEPOSITS_INVARIANT_STEPS ?? 240);
-const SEED = Number(process.env.SLOP_SUBMISSION_DEPOSITS_INVARIANT_SEED ?? 20261120);
+const STEPS = Number(
+  process.env.SLOP_SUBMISSION_DEPOSITS_INVARIANT_STEPS ?? 240,
+);
+const SEED = Number(
+  process.env.SLOP_SUBMISSION_DEPOSITS_INVARIANT_SEED ?? 20261120,
+);
 const START = 1_000_000_000n;
 const owner = fixtureKey("owner");
 const resolver = fixtureKey("resolver");
@@ -54,7 +58,10 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
   const payers = [];
   for (let index = 0; index < 3; index++)
     payers.push(await fund(Keypair.generate()));
-  const keptWallets = [Keypair.generate().publicKey, Keypair.generate().publicKey];
+  const keptWallets = [
+    Keypair.generate().publicKey,
+    Keypair.generate().publicKey,
+  ];
   const stranger = await fund(Keypair.generate());
   const mints = [await newMint(6), await newMint(9)];
   // Model: token balance of every wallet per mint, and the deposits by id.
@@ -71,7 +78,11 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
       await tokens(mint, payer.publicKey, START);
       held.set(key(mint, payer.publicKey), START);
     }
-    for (const wallet of [...keptWallets, stranger.publicKey, resolver.publicKey]) {
+    for (const wallet of [
+      ...keptWallets,
+      stranger.publicKey,
+      resolver.publicKey,
+    ]) {
       await tokens(mint, wallet);
       held.set(key(mint, wallet), 0n);
     }
@@ -83,7 +94,8 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
     has: (outcome) => tally.has(outcome),
   };
   let paused = false;
-  const open = () => [...deposits.values()].filter((entry) => entry.state === "open");
+  const open = () =>
+    [...deposits.values()].filter((entry) => entry.state === "open");
   const move = (mint, wallet, change) =>
     held.set(key(mint, wallet), held.get(key(mint, wallet)) + change);
 
@@ -94,7 +106,11 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
         .reduce((sum, entry) => sum + entry.amount, 0n);
       const where = `step ${step}, mint ${mint.toBase58()}`;
       assert.equal(await balance(addresses.vault(mint)), expected, where);
-      assert.equal((await readLedger(mint)).openTotal.toString(), expected.toString(), where);
+      assert.equal(
+        (await readLedger(mint)).openTotal.toString(),
+        expected.toString(),
+        where,
+      );
       for (const [name, amount] of held)
         if (name.startsWith(mint.toBase58()))
           assert.equal(
@@ -133,7 +149,10 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
       const amount = BigInt(1 + Math.floor(random() * 5_000_000));
       const keptTo = pick(keptWallets);
       if (paused) {
-        await refuses(deposit({ from, mint, amount, keptTo }), /DepositsArePaused/);
+        await refuses(
+          deposit({ from, mint, amount, keptTo }),
+          /DepositsArePaused/,
+        );
         reached.add("deposit refused while paused");
       } else {
         const { id } = await deposit({ from, mint, amount, keptTo });
@@ -172,7 +191,10 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
       const due = entry.depositedAt + SHORT_DELAY;
       const early = (await chainTime()) < due - 2;
       if (early && random() < 0.5) {
-        await refuses(reclaim({ from: entry.payer, id: entry.id }), /ReclaimTooEarly/);
+        await refuses(
+          reclaim({ from: entry.payer, id: entry.id }),
+          /ReclaimTooEarly/,
+        );
         reached.add("reclaim refused early");
       } else {
         await waitForChainTime(due);
@@ -184,9 +206,16 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
     } else {
       const entry = pick(candidates);
       const refund = random() < 0.5;
-      const attack = pick(["stranger resolves", "resolver redirects", "stranger reclaims"]);
+      const attack = pick([
+        "stranger resolves",
+        "resolver redirects",
+        "stranger reclaims",
+      ]);
       if (attack === "stranger resolves")
-        await refuses(resolve({ resolver: stranger, id: entry.id, refund }), /NotResolver/);
+        await refuses(
+          resolve({ resolver: stranger, id: entry.id, refund }),
+          /NotResolver/,
+        );
       else if (attack === "resolver redirects")
         await refuses(
           resolve({
@@ -224,7 +253,8 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
   await check("final");
   for (const mint of mints) {
     let total = 0n;
-    for (const [name, amount] of held) if (name.startsWith(mint.toBase58())) total += amount;
+    for (const [name, amount] of held)
+      if (name.startsWith(mint.toBase58())) total += amount;
     assert.equal(total, 3n * START, "no token was created or lost");
   }
   console.log(

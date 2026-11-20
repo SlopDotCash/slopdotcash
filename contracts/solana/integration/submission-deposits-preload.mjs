@@ -20,7 +20,6 @@ import {
   fixtureKey,
   localPayer,
   PRODUCTION_DELAY,
-  PROGRAM_NAME,
   PROGRAM_PATH,
   programId,
 } from "./submission-deposits.mjs";
@@ -52,7 +51,8 @@ function account(label, address, owner, data, executable = false) {
       pubkey: address.toBase58(),
       account: {
         // Local genesis funds only, comfortably above rent.
-        lamports: executable || label === "program-data" ? 100_000_000_000 : 10_000_000,
+        lamports:
+          executable || label === "program-data" ? 100_000_000_000 : 10_000_000,
         data: [data.toString("base64"), "base64"],
         owner: owner.toBase58(),
         executable,
@@ -104,7 +104,9 @@ function tokenAccount({ mint: ofMint, owner, amount }) {
 
 async function main() {
   if (stage !== "rehearsal" && stage !== "lifecycle")
-    throw new Error("Usage: submission-deposits-preload.mjs rehearsal|lifecycle");
+    throw new Error(
+      "Usage: submission-deposits-preload.mjs rehearsal|lifecycle",
+    );
   mkdirSync(".local", { recursive: true });
   const programData = addresses.programData();
   const pointer = Buffer.alloc(36);
@@ -172,7 +174,10 @@ async function main() {
       ["aged-early", AGED_EARLY, now - PRODUCTION_DELAY + 3600],
     ]) {
       const [, bump] = PublicKey.findProgramAddressSync(
-        [Buffer.from("deposit"), new BN(id.toString()).toArrayLike(Buffer, "le", 8)],
+        [
+          Buffer.from("deposit"),
+          new BN(id.toString()).toArrayLike(Buffer, "le", 8),
+        ],
         programId,
       );
       account(
@@ -196,4 +201,3 @@ async function main() {
 }
 
 if (process.argv[1]?.endsWith("submission-deposits-preload.mjs")) await main();
-export { PROGRAM_NAME };
