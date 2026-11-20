@@ -4536,9 +4536,9 @@
     },
     {
       "path": "scripts/maintainer-decisions.ts",
-      "sha256": "8c524eda7ab33965cfcce88075875aada56fd1335d1f04a94be7e43c87e4217f",
+      "sha256": "ccfd1995462efa2707294b33a4d9c5de2ef59371756149858183defbe164c70a",
       "models": ["formal/models/rewards/maintainer_share.qnt"],
-      "candidateLines": [147, 155, 253, 275, 276, 277, 279, 283],
+      "candidateLines": [109, 211, 219, 317, 339, 340, 341, 343, 347],
       "review": "mapped-abstraction"
     },
     {
