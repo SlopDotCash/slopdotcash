@@ -6,7 +6,9 @@
  * records one of four results for each:
  *
  * 1. Duplicate: the same bytes as an earlier report in the program, or two
- *    independent model calls name the same earlier report.
+ *    independent model calls name the same earlier report. The calls see
+ *    only earlier reports that may still be the first qualifying report of
+ *    their finding.
  * 2. Does not qualify: two independent model calls name the same published
  *    line and neither finds a plausible theft or permanent freeze of funds.
  * 3. Needs proof: no reproduction steps or runnable proof. The reporter is
@@ -418,7 +420,15 @@ async function earlierSameDigest(
   return match?.id ?? null;
 }
 
-/** Slopbot's own summaries of earlier reports; never another report's text. */
+/**
+ * Slopbot's own summaries of earlier reports that may still be the first
+ * qualifying report of their finding; never another report's text. A call
+ * can name only these as the same finding. The published line is
+ * "Duplicates: only the first qualifying reporter is considered", so these
+ * are left out: a report closed as rejected, out of scope or a duplicate
+ * (its original is supplied on its own), one disputed on appeal from such a
+ * close, and one waiting on this pass's own request for proof.
+ */
 async function earlierReports(
   deps: RoutineDependencies,
   row: CaseRow,
@@ -433,11 +443,22 @@ async function earlierReports(
          FROM security_cases c
         WHERE c.project_id = ?1 AND c.id <> ?2
           AND c.submission_state = 'verified'
+          AND c.receipt_state NOT IN ('rejected', 'out-of-scope', 'duplicate')
+          AND NOT (c.receipt_state = 'disputed' AND c.appeal_from_state IN
+            ('rejected', 'out-of-scope', 'duplicate'))
+          AND NOT (c.receipt_state = 'needs-information'
+            AND c.next_action IS ?5)
           AND (c.received_at < ?3 OR (c.received_at = ?3 AND c.rowid <
             (SELECT rowid FROM security_cases WHERE id = ?2)))
         ORDER BY c.received_at DESC, c.rowid DESC LIMIT ?4`,
     )
-    .bind(row.project_id, row.id, row.received_at, EARLIER_REPORT_LIMIT)
+    .bind(
+      row.project_id,
+      row.id,
+      row.received_at,
+      EARLIER_REPORT_LIMIT,
+      ROUTINE_PROOF_NEXT_ACTION,
+    )
     .all<{ id: string; summary: string | null }>();
   return (result.results ?? [])
     .filter((entry): entry is { id: string; summary: string } =>
