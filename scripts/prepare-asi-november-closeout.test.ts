@@ -3,18 +3,25 @@ import { monthlyOwnerService } from "../backend/payments/monthly";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import {
+  assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
   type ScoreEvent,
 } from "../src/lib/leaderboard";
 import { ASI_NOVEMBER_CLOSEOUT as approved } from "../src/lib/payments/asi-november-closeout";
 import { escrowAwardOrigin } from "../src/lib/payments/escrow-cycle";
 import { PRD_MONTHLY_SCHEDULE } from "../src/lib/payments/monthly-allocation";
+import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { VALUE_RUBRIC_VERSION } from "../src/lib/value-assessment";
 import { closedMonthLedger } from "../tests/closed-month-ledger";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { octoberRunnerFixture } from "../tests/october-runner-fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
+import {
+  type WorkUnitRecord,
+  workUnitIdentity,
+} from "../workers/slopbot/value-work-unit-journal";
 import {
   asiCloseoutCoverage,
   prepareAsiNovemberCloseout,
@@ -22,6 +29,7 @@ import {
 import {
   asiCloseoutPreviewDigest,
   executeAsiCloseout,
+  readAsiHeldWorkUnitRecords,
   readAsiPointsBatch,
 } from "./run-asi-november-closeout";
 
@@ -160,15 +168,153 @@ function fixture() {
   return { manifest, repository, packet, registry, snapshot, vault };
 }
 
-function compile(input = fixture()) {
+function compile(
+  input = fixture(),
+  heldWorkUnitRecords?: Parameters<
+    typeof prepareAsiNovemberCloseout
+  >[0]["heldWorkUnitRecords"],
+) {
   const reviewedPacket = encode(input.packet);
   return prepareAsiNovemberCloseout({
     reviewedPacket,
     reviewedPacketSha256: sha256Hex(reviewedPacket),
     currentRegistry: encode(input.registry),
     snapshot: input.snapshot,
+    heldWorkUnitRecords,
     now,
   });
+}
+
+function heldSource(
+  projectId: "asi" | "eliza",
+  pullRequestNumber: number,
+): WorkUnitRecord["sources"][number] {
+  const project = fixtureProject(projectId);
+  const repository = project.repositories[0].id;
+  const identity = repositoryIdentity(project, repository);
+  if (!identity) throw new Error("Missing held source repository identity");
+  return {
+    repository,
+    repositoryNodeId: identity.nodeId,
+    repositoryDatabaseId: Number(identity.githubId),
+    pullRequestNodeId: `PR_held_fixture_${pullRequestNumber}`,
+    pullRequestNumber,
+    headSha: "a".repeat(40),
+    mergeSha: "b".repeat(40),
+    occurredAt: "2026-11-18T23:59:59.999Z",
+    policySha: "c".repeat(40),
+    sourceDigest: sha256Hex(`fixture source ${pullRequestNumber}`),
+  };
+}
+
+async function fixtureWithHeldWork({
+  otherMember = "eliza",
+  standaloneUnavailable = false,
+}: {
+  otherMember?: "eliza" | "asi";
+  standaloneUnavailable?: boolean;
+} = {}) {
+  const primary = heldSource("eliza", 701);
+  const sources = [primary, heldSource(otherMember, 702)];
+  const claim = {
+    id: sha256Hex("fixture implementation claim"),
+    repositoryNodeId: primary.repositoryNodeId,
+    commitSha: primary.headSha,
+    path: "fixture.ts",
+    carrierPullRequestIds: [primary.pullRequestNodeId],
+    creditPullRequestId: primary.pullRequestNodeId,
+    implementationActorNodeIds: ["U_held_fixture"],
+  };
+  const unit = {
+    claimIds: [claim.id],
+    assessment: {
+      status: "assessed",
+      tier: "micro",
+      rationale: "An accepted fixture with a temporarily unavailable source.",
+      dimensions: {
+        alignment: "Accepted requirement.",
+        impact: "Observed outcome.",
+        complexity: "Small change.",
+        verification: "Fixture evidence.",
+        maintenance: "Focused change.",
+        overlap: "Joint assessment fixture.",
+      },
+      evidenceUrls: [
+        `https://github.com/${primary.repository}/pull/${primary.pullRequestNumber}`,
+      ],
+      relatedPullRequests: [],
+      limitations: [],
+      reviews: [],
+    },
+  } satisfies Pick<WorkUnitRecord["units"][number], "claimIds" | "assessment">;
+  const record: WorkUnitRecord = {
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: "eliza",
+    sourceDigest: sha256Hex("fixture joint source"),
+    sources,
+    claims: [claim],
+    units: [{ ...unit, workUnitId: await workUnitIdentity(unit) }],
+    rubricVersion: VALUE_RUBRIC_VERSION,
+    producerRevision: "d".repeat(40),
+    assessedAt: collectedAt,
+    supersedes: [],
+    legacyPredecessors: [],
+    revisionReason: null,
+    model: {
+      provider: "surplus",
+      requested: "gpt-6.1-sol",
+      reported: "gpt-6.1-sol",
+    },
+  };
+  const recordJson = JSON.stringify(record);
+  const recordDigest = sha256Hex(recordJson);
+  const input = fixture();
+  const snapshot: unknown = JSON.parse(
+    new TextDecoder().decode(input.snapshot),
+  );
+  assertLeaderboardSnapshot(snapshot);
+  snapshot.source.heldWorkUnits = [
+    {
+      recordDigest,
+      sourceNodeIds: sources.map(({ pullRequestNodeId }) => pullRequestNodeId),
+      unavailableNodeIds: [primary.pullRequestNodeId],
+    },
+  ];
+  snapshot.source.unavailableSources = [
+    { nodeId: primary.pullRequestNodeId, reason: "NOT_FOUND" },
+  ];
+  if (standaloneUnavailable)
+    snapshot.source.unavailableSources.push({
+      nodeId: "PR_standalone_fixture",
+      reason: "NOT_FOUND",
+    });
+  snapshot.source.counts.heldWorkUnits = 1;
+  snapshot.source.counts.unavailableSources =
+    snapshot.source.unavailableSources.length;
+  snapshot.source.counts.unavailableMergedPullRequests = 0;
+  input.snapshot = encode(snapshot);
+  input.packet.snapshotSha256 = sha256Hex(input.snapshot);
+  return { input, record, recordDigest, recordJson };
+}
+
+function insertHeldWorkRecord(
+  sqlite: ReturnType<typeof sqliteD1>["sqlite"],
+  held: Awaited<ReturnType<typeof fixtureWithHeldWork>>,
+  recordJson = held.recordJson,
+) {
+  sqlite
+    .query(
+      `INSERT INTO slopbot_work_unit_journal(record_digest,assessment_key,project_id,source_digest,record_json,recorded_at)
+     VALUES(?,?,?,?,?,?)`,
+    )
+    .run(
+      held.recordDigest,
+      sha256Hex("fixture held assessment"),
+      held.record.projectId,
+      held.record.sourceDigest,
+      recordJson,
+      collectedAt,
+    );
 }
 
 test("ASI owner finalizes the exact cutoff allocation early via the normal award pipeline", async () => {
@@ -353,4 +499,80 @@ test("ASI compilation refuses a complete but stale canonical snapshot", () => {
   );
   input.packet.snapshotSha256 = sha256Hex(input.snapshot);
   expect(() => compile(input)).toThrow("complete verified coverage");
+});
+
+test("canonical unrelated held work preserves the reviewed 150 USDG ASI closeout", async () => {
+  const held = await fixtureWithHeldWork();
+  const { sqlite } = sqliteD1();
+  const query = async (sql: string) =>
+    sqlite.query<Record<string, unknown>, []>(sql).all();
+  try {
+    insertHeldWorkRecord(sqlite, held);
+    const records = await readAsiHeldWorkUnitRecords(
+      query,
+      held.input.snapshot,
+    );
+    const { monthlyBase, feeBasisPoints } = compile(held.input, records).review;
+    expect({
+      closeAt: monthlyBase.earlyCloseAt,
+      cap: monthlyBase.capBase,
+      feeBasisPoints,
+      payments: monthlyBase.rows.map(({ githubUserId, grossBase }) => [
+        githubUserId,
+        grossBase,
+      ]),
+    }).toEqual({
+      closeAt: approved.cutoff,
+      cap: "150000000",
+      feeBasisPoints: 200,
+      payments: [
+        ["7101", "50000000"],
+        ["7102", "100000000"],
+      ],
+    });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("ASI closeout refuses a missing journal row and material from altered raw bytes", async () => {
+  const held = await fixtureWithHeldWork();
+  const { sqlite } = sqliteD1();
+  const query = async (sql: string) =>
+    sqlite.query<Record<string, unknown>, []>(sql).all();
+  const read = () => readAsiHeldWorkUnitRecords(query, held.input.snapshot);
+  try {
+    await expect(read()).rejects.toThrow(/canonical journal row/u);
+    insertHeldWorkRecord(sqlite, held, `${held.recordJson}\n`);
+    await expect(
+      read().then((records) => compile(held.input, records)),
+    ).rejects.toThrow(/coverage|digest|held/iu);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test.each([
+  ["an ASI member in the held work unit", { otherMember: "asi" }],
+  [
+    "an additional standalone unavailable source",
+    { standaloneUnavailable: true },
+  ],
+] as const)("ASI closeout refuses %s", async (_reason, options) => {
+  const held = await fixtureWithHeldWork(options);
+  const { sqlite } = sqliteD1();
+  const query = async (sql: string) =>
+    sqlite.query<Record<string, unknown>, []>(sql).all();
+  try {
+    insertHeldWorkRecord(sqlite, held);
+    const records = await readAsiHeldWorkUnitRecords(
+      query,
+      held.input.snapshot,
+    );
+    expect(() => compile(held.input, records)).toThrow(
+      "complete verified coverage",
+    );
+  } finally {
+    sqlite.close();
+  }
 });

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "0bd65f8a38a96b2b41889978118b3f68bf3ae898042fbb75fab171bdc68c5234",
+  "inventorySha256": "e1208d0c4975f3431b08ab13e80ab0e9bbed2a759d0f1b46f4aa1c6642210bbf",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2626,7 +2626,7 @@
     },
     {
       "path": "scripts/run-asi-november-closeout.ts",
-      "line": 36,
+      "line": 38,
       "name": "mode",
       "kind": "string-union",
       "values": ["preflight", "readback"],

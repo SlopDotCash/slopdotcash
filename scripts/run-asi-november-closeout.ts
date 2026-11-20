@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { publicRestrictionOf } from "../backend/projects/enforcement";
+import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import type { AsiHeldWorkUnitRecord } from "../src/lib/payments/asi-november-closeout";
 import { ASI_NOVEMBER_CLOSEOUT as approved } from "../src/lib/payments/asi-november-closeout";
 import { sha256Hex } from "../src/lib/sha256";
 import { downloadLeaderboard } from "./download-leaderboard";
@@ -76,6 +78,44 @@ export async function readAsiPointsBatch(
   if (rows.length !== 1 || rows[0].digest !== digest)
     throw new Error("Points do not cover the published ASI cutoff snapshot.");
   return digest;
+}
+
+export async function readAsiHeldWorkUnitRecords(
+  query: Query,
+  snapshotBytes: Uint8Array,
+): Promise<AsiHeldWorkUnitRecord[]> {
+  const snapshot: unknown = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(snapshotBytes),
+  );
+  assertLeaderboardSnapshot(snapshot);
+  const records: AsiHeldWorkUnitRecord[] = [];
+  for (const { recordDigest } of snapshot.source.heldWorkUnits ?? []) {
+    if (!sha256.test(recordDigest))
+      throw new Error("Invalid held work digest.");
+    const rows = await query(
+      `SELECT j.record_digest AS recordDigest, j.project_id AS projectId,
+        j.record_json AS recordJson,
+        (SELECT json_group_array(json_array(repository_node_id, pull_request_node_id))
+         FROM slopbot_work_unit_sources WHERE record_digest = j.record_digest) AS sourceKeys
+       FROM slopbot_work_unit_journal j WHERE j.record_digest='${recordDigest}'`,
+    );
+    const [row] = rows;
+    if (
+      rows.length !== 1 ||
+      row?.recordDigest !== recordDigest ||
+      typeof row.projectId !== "string" ||
+      typeof row.recordJson !== "string" ||
+      typeof row.sourceKeys !== "string"
+    )
+      throw new Error("A held work unit has no exact canonical journal row.");
+    records.push({
+      recordDigest,
+      projectId: row.projectId,
+      recordJson: row.recordJson,
+      sourceKeys: row.sourceKeys,
+    });
+  }
+  return records;
 }
 
 export async function executeAsiCloseout(
@@ -173,9 +213,19 @@ async function runAsiCloseout() {
       throw new Error("The ASI registry revision changed.");
     const now = new Date();
     const snapshot = await readFile(ledger);
+    stage = "canonical held work source provenance";
+    const heldWorkUnitRecords = await readAsiHeldWorkUnitRecords(
+      query,
+      snapshot,
+    );
     if (mode === "inspect") {
       stage = "published cutoff and canonical Points coverage";
-      buildAsiCloseoutCycle(snapshot, row.manifest, now.toISOString());
+      buildAsiCloseoutCycle(
+        snapshot,
+        row.manifest,
+        now.toISOString(),
+        heldWorkUnitRecords,
+      );
       const snapshotSha256 = sha256Hex(snapshot);
       const pointsBatch = await readAsiPointsBatch(
         query,
@@ -225,6 +275,7 @@ async function runAsiCloseout() {
         }),
       ),
       snapshot,
+      heldWorkUnitRecords,
       now,
     });
     stage = "current reviewer authority";
