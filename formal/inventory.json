@@ -13,22 +13,30 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/daily-collection.yml",
+      "sha256": "aba6f909a80280844881291fc37ac9a783e9bc2e52f040cc118a09710327f22b",
+      "models": ["formal/models/release/daily_collection.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "f872ee9edb9a66ae1e09ac31ab8c384804e4440398d30061c98e9a0e9970d6d9",
+      "sha256": "0261aa2dd70ac300bf6a61cc755accfe3ee3e68460d3d752a843529f2e2e1529",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt",
+        "formal/models/release/daily_collection.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        40, 50, 164, 301, 371, 372, 448, 501, 558, 638, 643, 758, 764, 832, 835,
-        861, 862, 883, 895, 927, 965, 1195, 1223, 1315, 1328, 1419, 1527, 1529,
-        1530, 1734, 1817, 1970, 1972, 2002, 2117, 2139, 2210, 2221, 2246, 2317,
-        2330, 2343, 2352, 2353, 2354, 2371
+        40, 50, 164, 304, 374, 375, 451, 504, 561, 641, 646, 761, 767, 835, 838,
+        864, 865, 886, 898, 930, 968, 1198, 1226, 1318, 1331, 1422, 1530, 1532,
+        1533, 1737, 1820, 1973, 1975, 2005, 2120, 2142, 2213, 2224, 2249, 2320,
+        2333, 2346, 2355, 2356, 2357, 2374
       ],
       "review": "mapped-abstraction"
     },
@@ -3928,6 +3936,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/daily-collection.ts",
+      "sha256": "522e0702b36f19b5112b1804b5c4013308203626be4ebc5034da5513d0cabcd4",
+      "models": ["formal/models/release/daily_collection.qnt"],
+      "candidateLines": [
+        40, 46, 52, 117, 163, 164, 165, 172, 178, 205, 208, 213, 279, 447, 477
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/dev-backend-notify.ts",
       "sha256": "21a102b61f63ad7101d24899d0b94c7b7cdd569c18b044a36c0e4e8568a16534",
       "models": ["formal/models/tooling/development_stack.qnt"],
@@ -4963,9 +4980,9 @@
     },
     {
       "path": "scripts/release-submission-fee.ts",
-      "sha256": "e489e8076bc009b6035d0e24f23e6166549dcb4badbeaaeeb863e12065dfb8e5",
+      "sha256": "c7f6f70aef18786e2098911c1f40f17a06eb38075083598a9f99167c9b7e21e9",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
-      "candidateLines": [158, 160, 167],
+      "candidateLines": [183, 217, 219, 226],
       "review": "mapped-abstraction"
     },
     {
@@ -9824,7 +9841,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "5104fec5023f0fcbb4a226e4a9a0c58bec202a8fd246f80397d9d10cad34eba8",
+      "sha256": "2c3681bc3cc149808537d03f923664058ca767d0475e821d26fccf7537780bb1",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -9846,34 +9863,35 @@
     },
     {
       "path": "workers/submission-fee/config.ts",
-      "sha256": "5c18cff7cdc8917b1c05cccdf79c7e770f13fc71a1d9d7e87d6a314ab2fe76ad",
+      "sha256": "f3597c37ab5398e05a683752578ab490ff130063431f62f526061dd51193dc61",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "sha256": "27106dd12c7cfffa139c2e4e7ebd9cb6a44a9526f68b2e8a509ae33637540ab6",
+      "sha256": "e511934fdb0ab3bb335782fafd16d56e3a860d9a67270871baa293ac59667e19",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
         5, 30, 92, 109, 128, 144, 165, 166, 172, 178, 203, 215, 226, 250, 257,
-        294, 338, 383, 384, 392, 393, 400, 403, 420, 448, 465, 468, 498, 558,
-        572, 578, 579, 606, 633, 636, 637, 639, 641, 643, 651, 652, 658, 667,
-        673, 726, 727, 743, 804, 816, 851, 877, 895, 907
+        294, 368, 379, 390, 391, 394, 413, 458, 459, 467, 468, 475, 478, 495,
+        523, 540, 543, 573, 633, 647, 653, 654, 681, 708, 711, 712, 714, 716,
+        718, 726, 727, 733, 742, 748, 801, 802, 818, 879, 891, 926, 952, 970,
+        982
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "sha256": "b2917898d127135b1bcc4b8a3c2dbc2893dee7aa2238140a14ddba81711b0b30",
+      "sha256": "d1c150599aebebf40341d2aa1e65b51f81e66cc8522d7eb42a2846c7589e5a8a",
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
-      "candidateLines": [47, 48, 50, 71, 73, 82, 115, 174],
+      "candidateLines": [54, 55, 57, 81, 83, 92, 137, 196],
       "review": "mapped-abstraction"
     },
     {
@@ -9901,7 +9919,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "801d2c73dcb18eff2b037363aa6c235399afd5eb04903faee80a694828645300",
+      "sha256": "e991e7ec5b3c6859187872efc507384c3251622af59be8596a763d5469992d6d",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -15613,6 +15631,25 @@
         "modelSourceSelectsAffectedModelsTest",
         "pushCannotSkipTest",
         "releaseCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/daily_collection.qnt",
+      "sha256": "5f91b952854fb62b5b8af6f655bbaeaec5f224ce5cc07f98e402575115f13dcd",
+      "sources": [
+        ".github/workflows/daily-collection.yml",
+        ".github/workflows/deploy.yml",
+        "scripts/daily-collection.ts"
+      ],
+      "scenarios": [
+        "failedCollectionResumesOnceTest",
+        "newDayStartsNewResumeChainTest",
+        "noCheckpointNoResumeTest",
+        "olderDataNeverReplacesNewerTest",
+        "resumeWaitsForRunningCollectionTest",
+        "supersededCollectionPublishesTest",
+        "supersededPublishRetriesThenStopsTest",
+        "tickSkipsWhileCollectingTest"
       ]
     },
     {
