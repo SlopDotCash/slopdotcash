@@ -1635,7 +1635,7 @@
     },
     {
       "path": "spec/backend/projectComposition.md",
-      "sha256": "4cb97a8dd8319bdc226708cdc0ee36dcd820ead85fec84757b530e3213bef1c7",
+      "sha256": "aa1b3a72819b5d06601b6c47db167bdb9c0038bec861d833c5c2c238d9984267",
       "module": "backend__projectComposition",
       "stories": [
         {
@@ -1644,7 +1644,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project",
-          "line": 364
+          "line": 378
         }
       ],
       "rules": [
@@ -1664,7 +1664,7 @@
         },
         {
           "heading": "Story: Perform every project action on registry and security together / Account bans and registry conflicts refuse new projects and owner writes",
-          "line": 74,
+          "line": 75,
           "definitions": [
             "BanRead",
             "AccountStanding",
@@ -1686,7 +1686,7 @@
         },
         {
           "heading": "Story: Perform every project action on registry and security together / Payout exclusions change only with a revision and only for later months",
-          "line": 119,
+          "line": 120,
           "definitions": [
             "exclusionsMayBecome",
             "stepExclusionsProspective",
@@ -1698,7 +1698,7 @@
         },
         {
           "heading": "Story: Perform every project action on registry and security together / Scans are queued and recorded against the project's current repositories",
-          "line": 141,
+          "line": 142,
           "definitions": [
             "ManifestPolicy",
             "PolicyCheck",
@@ -1716,9 +1716,12 @@
         },
         {
           "heading": "Story: Perform every project action on registry and security together / Activation needs current clearance and no restriction, and owner writes need a clear project",
-          "line": 179,
+          "line": 180,
           "definitions": [
             "clearanceOf",
+            "canReadSetup",
+            "readSetup",
+            "fair_readSetup",
             "canActivate",
             "activate",
             "ownerWriteAllowed",
@@ -1744,7 +1747,7 @@
         },
         {
           "heading": "Story: Perform every project action on registry and security together / Flags, restrictions and reinstatement change the registry only through their revisions",
-          "line": 273,
+          "line": 287,
           "definitions": [
             "canFlag",
             "flag",
@@ -1791,7 +1794,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / Collection and skills need an active, unrestricted, cleared project at the current revision",
-          "line": 366,
+          "line": 380,
           "definitions": [
             "RegistryObservation",
             "Coverage",
@@ -1815,7 +1818,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / Slopbot scope and monthly eligibility derive from the same state",
-          "line": 423,
+          "line": 437,
           "definitions": [
             "ReviewScope",
             "RetirementEvidence",
@@ -1829,7 +1832,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / The setup status names one next state from the same checks",
-          "line": 463,
+          "line": 477,
           "definitions": [
             "SetupState",
             "setupState",
@@ -1839,7 +1842,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / A cleared, ready project is activated by the setup refresh",
-          "line": 491,
+          "line": 505,
           "definitions": [
             "readyToActivate",
             "leadsToActivation",
@@ -1848,7 +1851,7 @@
         },
         {
           "heading": "Story: Consumers read one derived view of the project / Reachable composed outcomes",
-          "line": 510,
+          "line": 524,
           "definitions": [
             "sometimesCollectable",
             "sometimesFlagPausedActiveManifest",
@@ -1885,7 +1888,6 @@
             "evidenceReadValues",
             "renderedSkill",
             "skillValues",
-            "observedValues",
             "exceptionValues",
             "revokeValues",
             "identityValues",
@@ -1895,6 +1897,7 @@
             "weight_requestAssessment",
             "weight_recordResult",
             "weight_activate",
+            "weight_readSetup",
             "weight_flag",
             "weight_requestAppeal",
             "weight_reinstate",
@@ -1943,15 +1946,15 @@
         },
         {
           "target": "../settlement/payoutExclusions.md",
-          "line": 123
+          "line": 124
         },
         {
           "target": "./accessComposition.md",
-          "line": 288
+          "line": 302
         },
         {
           "target": "../contributor/skillRendering.md",
-          "line": 376
+          "line": 390
         }
       ]
     },
