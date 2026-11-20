@@ -219,13 +219,25 @@ export function localInstallHelpers(files: Input[], roots: CommandSource[]) {
       }
       let command = words[offset++];
       if (!command) continue;
-      if (/^(?:env|sudo)$/u.test(posix.basename(command.value))) {
+      const invocation = posix.basename(command.value);
+      if (invocation === "env" || invocation === "sudo") {
         let expanded = false;
         while (words[offset]?.value.startsWith("-")) {
           const option = words[offset++].value;
           if (option === "--") break;
           if (option === "-i" || option === "--ignore-environment") continue;
-          if (option === "-S" || option === "--split-string") {
+          // sudo -S/--stdin reads the password from stdin; the command is
+          // the words that follow. env -S/--split-string is a different
+          // flag: it splits one argument into that command.
+          if (
+            invocation === "sudo" &&
+            (option === "-S" || option === "--stdin")
+          )
+            continue;
+          if (
+            invocation === "env" &&
+            (option === "-S" || option === "--split-string")
+          ) {
             const body = words[offset];
             if (body && !body.dynamic && directory !== null)
               queue.push({ ...source, directory, text: body.value });

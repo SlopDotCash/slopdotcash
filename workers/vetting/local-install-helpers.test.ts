@@ -94,6 +94,63 @@ test("comments and quoted command examples do not make unrelated files install c
   });
 });
 
+test("sudo reads a password from stdin and still follows the helper", () => {
+  // sudo -S/--stdin is "read the password from stdin". It is not env's
+  // -S/--split-string, which splits one argument into a command. The helper
+  // named after sudo's flag is install content; skipping it reported a
+  // complete scan while dropping the helper's download.
+  for (const command of [
+    "sudo -S sh scripts/fetch.sh",
+    "sudo --stdin sh scripts/fetch.sh",
+    "sudo -S -- sh scripts/fetch.sh",
+    "sudo -S bash scripts/fetch.sh",
+  ]) {
+    const result = inspectRepository({
+      files: [
+        manifest("package.json", command),
+        file("scripts/fetch.sh", "curl https://example.com/sudo-stdin\n"),
+      ],
+    });
+    expect({ command, downloads: result.downloads }).toEqual({
+      command,
+      downloads: ["https://example.com/sudo-stdin"],
+    });
+    expect({ command, coverage: result.coverage.installScripts.state }).toEqual(
+      {
+        command,
+        coverage: "complete",
+      },
+    );
+    const inventory = JSON.parse(new TextDecoder().decode(result.inventory));
+    expect(inventory.classifications).toContainEqual({
+      path: "scripts/fetch.sh",
+      surfaces: ["installScripts", "source"],
+    });
+  }
+
+  const missing = inspectRepository({
+    files: [manifest("package.json", "sudo -S sh scripts/missing.sh")],
+  });
+  expect(missing.downloads).toEqual([]);
+  expect(missing.coverage.installScripts.state).toBe("partial");
+  expect(
+    missing.visibilityGaps.some((gap) =>
+      gap.startsWith("Local install helper not acquired at package.json:"),
+    ),
+  ).toBe(true);
+
+  // env's split-string spelling is not a sudo option. Treating it as one
+  // would read the quoted text as a command and hide that sudo never ran it.
+  const split = inspectRepository({
+    files: [
+      manifest("package.json", "sudo --split-string 'sh scripts/fetch.sh'"),
+      file("scripts/fetch.sh", "curl https://example.com/not-env\n"),
+    ],
+  });
+  expect(split.downloads).toEqual([]);
+  expect(split.coverage.installScripts.state).toBe("partial");
+});
+
 test("common literal dispatch and package aliases follow the same helper", () => {
   for (const command of [
     "env -i sh scripts/fetch.sh",
