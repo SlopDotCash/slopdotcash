@@ -14,7 +14,7 @@ platform tools v1.52, `anchor-lang` and `anchor-spl` 0.32.1 from the workspace
 `Cargo.lock`. The local build is 432,704 bytes with SHA-256
 `078cb016274d46ddb114fa47af5b0238a942dde06367c30330801800b7988c33`; a
 local build is not the pinned image's build and its hash is not the deployable
-one.
+one (the pinned image's is below).
 
 ## Result
 
@@ -36,17 +36,45 @@ All on 20 November 2026, on macOS arm64 with a host `solana-test-validator`
 | Rehearsal suite, 30-day delay, mint at the USDC address | 9 passed |
 | Lifecycle suite, six-second delay | 24 passed |
 | Invariant campaign, 240 steps, seed 20261120 | passed: 90 deposits, 35 kept, 34 refunded, 14 reclaimed, 8 early reclaims refused, 20 deposits refused while paused, 9 refused attacks, 30 pause changes |
-| Deliberate defects (single changes to the program, whole suite each) | 20 of 40 prepared defects had run when this note was written; all 20 made a stage fail. The other 20 had not run yet (list below) |
+| Deliberate defects (40 single changes to the program, whole suite each) | 37 made a stage fail; 3 survived, each explained below |
 | Quint models `solana_submission_deposits`, `solana_submission_deposits_suite`, `solana_submission_deposits_deployment` | typecheck, scenarios, sampling and exhaustive TLC verification pass |
 | The runbook's CLI steps on a local validator (write buffer, compare, deploy at a keypair address, read back, remove the authority) | pass; the deployed bytes equal the build, and closing the program afterwards is refused |
 | The escrow's program bytes with and without this program in the workspace | identical (SHA-256 `fc72521d8f0374b44ee49f447538fb403ff541e27ac3640b436d6b0013527521`, local build) |
 
-The deliberate defects that had run, each caught: kept sent to the payer; refund sent to the kept wallet; anyone resolves; no reclaim delay; reclaim one day early; anyone reclaims; refund to any account the payer owns, not only the associated one; refund to the associated address whoever owns it now; pausing does not stop deposits; pausing blocks settlement; pausing blocks reclaim; open total not reduced on a payout; open total not raised on a deposit; a resolved deposit stays open; a reclaimed deposit stays open; the rent of a resolved deposit goes to any account; the owner may be the resolver; the pending owner may be the resolver; the resolver may be named owner; anyone accepts a pending handover. Prepared and not yet
-run when this note was written: the remaining role rules, `initialize` and the
-pause by anyone, the refusals of `deposit`, each recorded field, the account
-ownership checks of `deposit` and `reclaim`, and the two solvency checks, which
-are expected to survive (item 6). The script and its results are kept with the
-build notes, outside the repository.
+The deliberate defects were: kept sent to the payer; refund sent to the kept
+wallet; anyone resolves; no reclaim delay; reclaim one day early; anyone
+reclaims; a refund to any account the payer owns; a refund to the associated
+address whoever owns it now; pausing does not stop deposits; pausing blocks
+settlement; pausing blocks reclaim; the open total not reduced on a payout; not
+raised on a deposit; a resolved deposit stays open; a reclaimed deposit stays
+open; the rent of a resolved deposit to any account; the owner may be the
+resolver; the pending owner may be the resolver; the resolver may be named
+owner; anyone accepts a pending handover; a cancelled handover can be accepted;
+one-step ownership; anyone initializes; anyone pauses; a zero kept wallet; the
+program's own accounts as kept wallet; a zero amount; a zero delay; any delay;
+the owner equal to the resolver at `initialize`; a wrong deposit time; a count
+that does not advance; a wrong payer, kept wallet, amount or item recorded; a
+reclaim to an account the payer does not own; a deposit from an account the
+payer does not own; no vault check after a payout; no exact-receipt check on a
+deposit.
+
+Three survive, and none is a gap in the tests. "A cancelled handover can be
+accepted" removes the check that the pending owner is not the all-zero address;
+that address is the System Program's, nobody can sign as it, so the check cannot
+be reached (the EVM contract's zero-address check is the same). "No vault check
+after a payout" and "no exact-receipt check on a deposit" remove the two last-line
+checks of item 6, which the classic Token program never lets fail. The script and
+its results are kept with the build notes, outside the repository.
+
+The pinned image built both programs in CI for this change's pull request (run
+44731581604, source commit `8eed8a2ca9ee1aa3247b60cfb410ed93e8f334b8`):
+`slop_submission_deposits.so` is 432,856 bytes with SHA-256
+`81223522313e9d2e32899d442fbc6e6471d2d19a15a7e1d06106a207cf23ffb8`, which holds
+only while the placeholder program id is in the source; `slop_escrow.so` has
+SHA-256 `871796f06fb10ed1f87143eb3b7ed184b076ca5cf5e42e4f55f1876626110e79`, the
+same as the scheduled run on `main` of 19 November 2026 (44560021713), so the
+escrow's deployable bytes are unchanged. A pull request's artifact does not
+prove the build of `main`.
 
 ## For a second reader
 
@@ -118,7 +146,11 @@ build notes, outside the repository.
   `solana` jobs of `escrow-tests.yml` have not run with this change. The
   `solana` job runs on the nightly schedule and on manual dispatch, not on pull
   requests.
-- No build in the pinned image, so no deployable hash exists yet.
+- The pinned image's build exists for the placeholder program id only (above).
+  The deployable hash exists once the owner's program address is in the source.
+- The `solana` job on `main` failed on 17, 18 and 19 November 2026 at steps that
+  this change does not touch, so a red scheduled run after merge says nothing
+  about these suites by itself; read which step failed.
 - No transaction on devnet or mainnet. The mint at the USDC address in the
   rehearsal is local bytes with local authorities; Circle's mint was not cloned.
 - The Worker's Solana reader, the pay page's Solana flow and the fee tables do
