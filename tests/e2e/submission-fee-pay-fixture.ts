@@ -67,14 +67,33 @@ export function feeRecord(
   };
 }
 
-/** Serves one pull request's fee record; `current` is read on every request. */
+/** The body `GET /api/v1/submission-fee/rate` serves while that one rate is in force. */
+export const FEE_RATE_REPLY = {
+  schema: "slop-submission-fee-rate-v1",
+  slopShareBps: 5000,
+  rate: RATES[0],
+  previous: null,
+};
+
+/**
+ * Serves one pull request's fee record and the published SLOP rate; both
+ * `current` and `rate` are read on every request. A null rate reply answers
+ * 503, as an unreachable rate route would.
+ */
 export async function serveFeeRecord(
   page: Page,
   repositoryId: number,
   pullNumber: number,
   current: () => FeeRecord | null,
+  rate: () => unknown = () => FEE_RATE_REPLY,
 ) {
   let reads = 0;
+  await page.route("**/api/v1/submission-fee/rate", (route) => {
+    const reply = rate();
+    return reply === null
+      ? route.fulfill({ status: 503, json: { error: "unavailable" } })
+      : route.fulfill({ json: reply });
+  });
   await page.route(
     `**/api/v1/submission-fee/items/${repositoryId}/${pullNumber}`,
     (route) => {

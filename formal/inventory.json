@@ -6303,11 +6303,11 @@
     },
     {
       "path": "src/SubmissionFeePage.tsx",
-      "sha256": "57b906cf3cc15b67f0e4416eadab07ced74ecc7d524b52a1efe15fe1bded6fd9",
+      "sha256": "f2b706e76915ef3ddaed2a917d90efa11a44cf3a3262f9cbe7bf9fd1b45930ff",
       "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
       "candidateLines": [
-        2, 70, 126, 220, 312, 325, 333, 334, 335, 337, 338, 341, 344, 345, 354,
-        387, 389, 393, 399, 409, 410
+        2, 73, 158, 252, 353, 366, 374, 375, 376, 378, 379, 382, 385, 386, 395,
+        428, 430, 434, 440, 450, 451
       ],
       "review": "mapped-abstraction"
     },
@@ -7564,9 +7564,9 @@
     },
     {
       "path": "src/lib/submission-fee-page.ts",
-      "sha256": "7caa19f124bb84dfefb5a90a98ab08652435029fe30b8fe8ae57f7b28031294d",
+      "sha256": "67659a78a7db1c383ce69e17fa08f5610d9ff26f5f8f5f932e33beee7b8cbcdd",
       "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
-      "candidateLines": [61, 329, 341],
+      "candidateLines": [63, 422, 434],
       "review": "mapped-abstraction"
     },
     {
@@ -20269,7 +20269,7 @@
     },
     {
       "path": "formal/models/ui/ui_submission_fee_pay.qnt",
-      "sha256": "99cd7ffc466913ec10e13dec251c23a64ddbc9ede7cb579740b9cc662d616d16",
+      "sha256": "073915a9c3d6a87f40c2fa7c02e853bba1c87d967518ea5918104b8a2012f8f2",
       "sources": [
         "src/SubmissionFeePage.tsx",
         "src/SubmissionFeePay.tsx",

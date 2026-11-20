@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f97d751f9516484fed7c2b3767597a989f5274b4950da9cd15e2bfb001e5af03",
+  "inventorySha256": "bdc942d65840978aa14ca056bb7d22deda8e3e5c6331ff4abec6469fc5c28bf2",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4004,7 +4004,7 @@
     },
     {
       "path": "src/lib/submission-fee-page.ts",
-      "line": 49,
+      "line": 51,
       "name": "FeeOutcome",
       "kind": "string-union",
       "values": ["kept", "kept_due", "refund_due", "refunded"],

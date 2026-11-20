@@ -11,7 +11,10 @@
 // request and one visitor. The address only names the pull request. The page
 // shows a way to pay only when the fee is switched on, the registry lists the
 // repository, and the stored fee record matches the published address tables;
-// a record that does not match is refused whole. A wallet is asked for an
+// a record that does not match is refused whole. A SLOP amount must also be
+// the recorded fee at a published SLOP rate; a record whose SLOP amount is
+// not is "tampered" here, and with the rate unread SLOP is simply not a way
+// to pay (the one way modeled is then a stablecoin). A wallet is asked for an
 // approval, then for the deposit, or for both in one atomic request. The
 // record is read again just before each wallet request, so a pull request
 // that someone else paid meanwhile is never paid twice from this page. One
