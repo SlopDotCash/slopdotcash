@@ -4357,7 +4357,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "4b38070fc3ee4ddc54f84a3f19307f8600a27c3864278e62ec98fff6a492136d",
+      "sha256": "9fcd24462b0d4257f06e509f331910681bb92b9fb98452845a70aeb76d777590",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -4368,7 +4368,7 @@
       ],
       "candidateLines": [
         2, 37, 50, 86, 129, 151, 154, 167, 174, 183, 191, 199, 278, 310, 316,
-        319, 323, 324, 325, 326, 416, 702, 709, 710, 712, 717, 721, 725
+        319, 323, 324, 325, 326, 416, 819, 826, 827, 829, 834, 838, 842
       ],
       "review": "mapped-abstraction"
     },
