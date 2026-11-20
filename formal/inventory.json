@@ -4322,7 +4322,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "5776e21712f0d7c84ddcedf7bb7cf9d5805cb1f6a20730946db6c975ec586760",
+      "sha256": "09f0c23b4f8c7d38e0a262589eaecae8ffd2544cf87284927e29391c921b0446",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
@@ -4335,15 +4335,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        42, 201, 212, 221, 301, 313, 315, 318, 537, 625, 646, 682, 713, 778,
-        810, 901, 934, 943, 955, 991, 1088, 1284, 1519, 1581, 1589, 1647, 1700,
-        1703, 1896, 1905, 1910, 1917, 2000, 2001, 2167, 2168, 2251, 2284, 2312,
-        2314, 2318, 2328, 2330, 2342, 2352, 2362, 2387, 2390, 2391, 2394, 2396,
-        2421, 2473, 2684, 2687, 2979, 3099, 3220, 3233, 3244, 3245, 3432, 3433,
-        3624, 3640, 3652, 3659, 3685, 3695, 3699, 3703, 3707, 3762, 3781, 3808,
-        3825, 3859, 3860, 3862, 3878, 3895, 3896, 3897, 3906, 3911, 4091, 4449,
-        4471, 4480, 4530, 4565, 4571, 4578, 4647, 4738, 4896, 5156, 5166, 5168,
-        5181, 5212, 5214, 5215, 5219, 5223, 5279, 5333, 5384, 5387, 5481, 5541
+        42, 201, 212, 221, 309, 321, 323, 326, 550, 638, 659, 695, 726, 791,
+        823, 914, 947, 956, 968, 1004, 1101, 1297, 1532, 1594, 1602, 1660, 1713,
+        1716, 1909, 1918, 1923, 1930, 2013, 2014, 2180, 2181, 2264, 2297, 2325,
+        2327, 2331, 2341, 2343, 2355, 2365, 2375, 2400, 2403, 2404, 2407, 2409,
+        2434, 2486, 2697, 2700, 2992, 3112, 3233, 3246, 3257, 3258, 3445, 3446,
+        3637, 3653, 3665, 3672, 3698, 3708, 3712, 3716, 3720, 3775, 3794, 3821,
+        3838, 3872, 3873, 3875, 3891, 3908, 3909, 3910, 3919, 3924, 4104, 4462,
+        4484, 4493, 4543, 4578, 4584, 4591, 4660, 4792, 4950, 5211, 5221, 5223,
+        5236, 5267, 5269, 5270, 5274, 5278, 5334, 5388, 5441, 5444, 5538, 5598
       ],
       "review": "mapped-abstraction"
     },
@@ -15470,13 +15470,17 @@
     },
     {
       "path": "formal/models/points/ingestion_retry.qnt",
-      "sha256": "c849045fea46d6056d26f81e2e89d5113af6dba605287eacfda8c23ad507e00e",
+      "sha256": "5e9710071f0562f2eaf36a4b73c49c4e9ad82d603ddd617f1cee0c78a312f0e5",
       "sources": ["scripts/generate-leaderboard.ts", "scripts/github-token.ts"],
       "scenarios": [
         "cleanupFailureDoesNotUndoPublishedOutputTest",
+        "confirmedJointHoldPublishesFirstAttemptTest",
+        "differingJointProbeRecollectsOnceTest",
         "oneCompleteRetryTest",
         "retryPreservesCostTest",
         "secondCensusChangeStopsTest",
+        "secondDifferingJointProbeStopsTest",
+        "unconfirmedJointProbeCannotHoldFirstAttemptTest",
         "writeFailureRetainsOldSnapshotTest"
       ]
     },
