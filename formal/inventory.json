@@ -9520,13 +9520,13 @@
     },
     {
       "path": "workers/slopbot/value-group-collection.ts",
-      "sha256": "82c1de92e9591a9d3740b82fb97af1c3395d8cf0e126d13d25b2fac57af735a6",
+      "sha256": "5dc2476cd144fac6c9f4310abb837b1242f64e50dfad17048062158358df45e4",
       "models": [
         "formal/models/slopbot/bot_accepted_census.qnt",
         "formal/models/slopbot/bot_source_leases.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt"
       ],
-      "candidateLines": [55, 69, 101, 167],
+      "candidateLines": [61, 75, 107, 178, 193],
       "review": "mapped-abstraction"
     },
     {
