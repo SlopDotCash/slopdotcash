@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"
+// spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/operations/notifications.md, "Account closure suppresses every waiting notice of the account in the same write"
 export const writes = [
   "points_members",
   "points_sessions",
@@ -11,4 +11,6 @@ export const writes = [
   "notification_email_destinations",
   "notification_email_verifications",
   "notification_email_unsubscribe_tokens",
+  "security_notification_outbox",
+  "activity_notification_outbox",
 ] as const;

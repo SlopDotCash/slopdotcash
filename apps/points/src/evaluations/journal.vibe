@@ -52,7 +52,7 @@ effect function keyed(store: Store, prior: Row, retired: Retired | undefined, ma
       previous: 1,
       priorAmount: first.amount,
       sourceDigest: retirementZeroDigest,
-      decision: { basis: "RetirementBatch", effectiveAt: dayOf(prior.recordedAt), reason: "retired evaluator batch", delta: -first.amount },
+      decision: { basis: "RetirementBatch", effectiveAt: dayOf(prior.recordedAt), reason: "retired evaluator batch", delta: -first.amount, source: retirementZeroDigest, valued: false },
     }]
     : [first]
   const admitted = manifest === undefined ? [] : [{ ...manifest, actor: 1, source: 1, workKey: 1 }]

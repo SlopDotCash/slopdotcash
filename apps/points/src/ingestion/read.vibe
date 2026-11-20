@@ -4,7 +4,7 @@ import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { ConfigInvalid } from "@repo/platform/config"
 import { GitHub, github, rateLimitHints, secondaryLimitMessage } from "@repo/platform/github"
-import { type Event, type Method, type Origin, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
+import { type Event, type Method, type Origin, type Page, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
 import { type CachedDiscussion, type DiscussionCache, type DiscussionEntry, parsedJson } from "./discussions.vibe"
 import { replayed } from "./replayed.ts"
 
@@ -117,6 +117,17 @@ function methodOf(method: string): Method {
   return method.toUpperCase() === "GET" ? "Get" : "Write"
 }
 
+/** The GitHub API pages read again on a transient answer: a pull request's file page, an exact commit's pull-request association page and an exact commit's file page. */
+function pageOf(url: string): Page {
+  const parsed = URL.parse(url)
+  if (parsed?.origin !== githubApiOrigin) return "OtherPage"
+  const path = parsed.pathname.replace(/\/+$/u, "")
+  if (/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/files$/u.test(path)) return "PullFiles"
+  if (/^\/repos\/[^/]+\/[^/]+\/commits\/[0-9a-f]{40}\/pulls$/iu.test(path)) return "CommitPulls"
+  if (/^\/repos\/[^/]+\/[^/]+\/commits\/[0-9a-f]{40}$/iu.test(path)) return "CommitFiles"
+  return "OtherPage"
+}
+
 export function ingestion(options: TransportOptions = {}) {
   return Layer.effect(Ingestion, effect {
     const timeoutMs = options.requestTimeoutMs ?? requestTimeoutMs
@@ -182,7 +193,9 @@ export function ingestion(options: TransportOptions = {}) {
 
     effect function waited(machine: Machine.Shape, request: HttpClientRequest.HttpClientRequest) {
       let state = try machine.get()
-      try Console.warn(JSON.stringify({ event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
+      try Console.warn(JSON.stringify(state.pageWait
+        ? { event: "github_ingestion_page_retry_wait", pageRetries: state.pageRetries, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }
+        : { event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
       while (state.phase === "Waiting" && state.now < state.wakeAt) {
         try sleeping(state.wakeAt - state.now)
         state = try advanced(machine)
@@ -195,7 +208,7 @@ export function ingestion(options: TransportOptions = {}) {
       const url = request.url
       const headers = plainHeaders(request.headers)
       const machine = try run.next(try Clock.currentTimeMillis)
-      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi" }) catch effect () => {
+      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi", page: pageOf(url) }) catch effect () => {
         throw transportError(request, checkpointMessage)
       }
       if (begun.phase === "Checkpointed") throw transportError(request, checkpointMessage)

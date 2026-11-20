@@ -84,7 +84,6 @@ effect function screeningOf(id: string, [intakeRows, ownerRows, digestRows, noti
     noticeVersions: notices,
     reportDigests: digests,
     exclusions: noExclusions,
-    matchedLine: 0,
   })
   return { screening, row, reporterGithubId: owner.reporter_github_id } satisfies Loaded
 }

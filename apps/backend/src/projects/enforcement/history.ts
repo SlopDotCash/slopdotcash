@@ -1,5 +1,5 @@
 //@ backend dafny
-// spec/security/enforcement.md, "Restriction state, appeals and findings stay consistent"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"
+// spec/security/enforcement.md, "Restriction state, appeals and findings stay consistent"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"
 
 export interface HistoryRow {
   action: string;

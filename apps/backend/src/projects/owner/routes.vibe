@@ -6,7 +6,7 @@ import { type Actor, Refused, admission, body, handleRaw, json } from "@repo/pla
 import { Roles } from "@repo/platform/roles"
 import type { AccountStanding, Event, Registry, RegistryRead } from "../../../gen/backend__projectComposition.effect.vibe"
 import { Rejected, clearanceOf, exclusionsMayBecome, unbanned } from "../../../gen/backend__projectComposition.effect.vibe"
-import type { AuthorityRead, Creation, OwnerChange, RepositoryFacts } from "../../../gen/backend__projects.effect.vibe"
+import type { AuthorityRead, Creation, NewRepository, OwnerChange, RepositoryFacts } from "../../../gen/backend__projects.effect.vibe"
 import { licenseRecorded } from "../../../gen/backend__projects.effect.vibe"
 import { type Exclusion, covers, validList } from "../../../gen/settlement__payoutExclusions.effect.vibe"
 import { type AccessActor, type Checked, type RepositoryIdentity, currentPath, decided, modelRead, readAccess } from "../../authority/live.vibe"
@@ -15,7 +15,7 @@ import { CheckRequest, CreateRequest, EmptyRequest, RemoveRequest, type Reposito
 import { getProjectGithubOwnedRepositories, getProjectSetupById, postProjectApplicationsByIdCancel, postProjectApplicationsByIdPublish, postProjectSetupByIdCheck, postProjects, postProjectsByIdRemove, putProjectsById } from "../../client/refusals.vibe"
 import { listedById } from "../../projectRegistry/claims.vibe"
 import { factsByPath, githubLogin, lookupActor, lookupRepository, ownedRepositories as ownedOf, validRepositoryPath } from "../github/lookup.vibe"
-import { idOf, nextMonth } from "../store/codec.vibe"
+import { idOf, nextMonth, rewardPromiseOf } from "../store/codec.vibe"
 import { accountStanding } from "../store/facts.vibe"
 import { manifestOf } from "../store/rows.vibe"
 import { isRepositoryConflict, loadProject, send } from "../store/store.vibe"
@@ -31,7 +31,6 @@ const projectIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
 const applicationIdPattern = /^app_[A-Za-z0-9_-]{8,72}$/u
 const maxGithubNames = 5
 const githubRetry = "GitHub could not be checked. Try again."
-const oneChangeAtATime = "Publish one change at a time: content and policy edits, each added repository and the automatic-closure setting are separate revisions."
 
 function answer(value: unknown, status = 200) {
   return json(value, status, contract)
@@ -243,6 +242,7 @@ effect function creationOf(manifest: Json, checked: Checked, by: number, referre
     fundingChoice: fundingChoiceOf(manifest),
     closureChecked: checkedIn(manifest),
     referrer,
+    reward: rewardPromiseOf(objectOf(manifest.reward)),
   } satisfies Creation
 }
 
@@ -338,17 +338,13 @@ effect function verifiedAppend(entry: Json, actor: AccessActor, countsFrom: stri
   return { entry, checked, facts: { repository: idOf(githubId), owner: idOf(facts.owner.actorId), public: true, archived: false, fork: false, branch: 1 } } satisfies Appended
 }
 
-interface Step {
-  readonly event: Event
-  readonly manifest: Json
-}
-
 interface StepInput {
   readonly current: Json
   readonly prospective: Json
   readonly added: ReadonlyArray<Json>
   readonly consent: { readonly checked: boolean; readonly saved: ReturnType<typeof savedConsentOf> }
-  readonly ownerEdit: boolean
+  readonly consentChanged: boolean
+  readonly changes: { readonly presentation: number; readonly executable: number; readonly financial: number; readonly restricted: number }
   readonly stored: boolean
   readonly actor: AccessActor
   readonly projectId: string
@@ -360,34 +356,36 @@ interface StepInput {
   readonly clearance: OwnerChange["clearance"]
 }
 
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision": one owner save is one
+// revision that may carry content and policy edits, the closure consent and appended repositories together.
 effect function ownerStep(input: StepInput) {
   const { authority, expectedRevision } = input
-  if (input.ownerEdit) {
-    const changes = classified(input.current, input.prospective)
-    const change: OwnerChange = {
-      authority,
-      expectedRevision,
-      presentation: changes.presentation.length > 0,
-      executable: changes.executable.length > 0,
-      financial: changes.financial.length > 0,
-      restrictedField: changes.restricted.length > 0,
-      fieldsComplete: input.fieldsComplete,
-      network: 0,
-      asset: 0,
-      exclusionsChanged: false,
-      clearance: input.clearance,
-    }
-    return { event: input.stored ? { type: "publishUpdate", change, account: closedAccount, exclusions: [] } : { type: "publishOwnerRevision", change, account: closedAccount, exclusions: [] }, manifest: input.prospective } satisfies Step
-  }
-  const entry = input.added[0]
-  if (entry !== undefined) {
+  const appends: NewRepository[] = []
+  for (const entry of input.added) {
     const append = try verifiedAppend(entry, input.actor, nextUtcMonthStart(input.now), input.projectId)
-    return {
-      event: { type: "appendRepository", appendEvidence: { expectedRevision, authority, appended: modelRead(append.checked, input.by, append.facts.repository), facts: append.facts }, account: closedAccount, registry: closedRegistry },
-      manifest: { ...input.prospective, repositories: [...entries(input.current), entry] },
-    } satisfies Step
+    appends.push({ appended: modelRead(append.checked, input.by, append.facts.repository), facts: append.facts })
   }
-  return { event: { type: "editConsent", edit: { authority, expectedRevision, checked: input.consent.checked }, account: closedAccount }, manifest: withConsent(input.prospective, input.consent.saved) } satisfies Step
+  const manifest = withConsent({ ...input.prospective, repositories: [...entries(input.current), ...input.added] }, input.consent.saved)
+  const change: OwnerChange = {
+    authority,
+    expectedRevision,
+    presentation: input.changes.presentation > 0,
+    executable: input.changes.executable > 0 || appends.length > 0,
+    financial: input.changes.financial > 0,
+    restrictedField: input.changes.restricted > 0,
+    fieldsComplete: input.fieldsComplete,
+    network: 0,
+    asset: 0,
+    exclusionsChanged: false,
+    clearance: input.clearance,
+    consent: !input.consentChanged ? "ConsentUntouched" : input.consent.checked ? "ConsentChecked" : "ConsentUnchecked",
+    appends,
+    reward: rewardPromiseOf(objectOf(manifest.reward)),
+  }
+  const event: Event = input.stored
+    ? { type: "publishUpdate", change, account: closedAccount, exclusions: [], appendReads: [] }
+    : { type: "publishOwnerRevision", change, account: closedAccount, exclusions: [], appendReads: [] }
+  return { event, manifest }
 }
 
 function summaryOf(changes: { readonly presentation: ReadonlyArray<string>; readonly executable: ReadonlyArray<string>; readonly financial: ReadonlyArray<string> }, added: ReadonlyArray<Json>, scanRequired: boolean): string {
@@ -436,16 +434,15 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   const listedRepositories = entries(current.manifest)
   const ownerManifest = withConsent({ ...prepared, repositories: listedRepositories }, savedConsentOf(current.manifest))
   const ownerChanges = classified(current.manifest, ownerManifest)
-  const ownerEdit = ownerChanges.presentation.length + ownerChanges.executable.length + ownerChanges.financial.length > 0
   const consentChanged = savedConsentOf(current.manifest) !== consent.saved
-  if ((ownerEdit ? 1 : 0) + added.length + (consentChanged ? 1 : 0) > 1) throw refusal(putProjectsById.invalidManifest, oneChangeAtATime)
   const prospective = ownerChanges.financial.length > 0 ? prospectiveFinancialChange(current.manifest, ownerManifest, now) : ownerManifest
   if (prospective instanceof Refused) throw prospective
   const clearance = clearanceOf(state.security)
   const scanRequired = changes.executable.length > 0 && clearance !== "ClearanceRetained"
   const summary = `Owner update by @${actor.login}: ${summaryOf(changes, added, scanRequired)}.${note === null ? "" : ` ${note}`}`
   const authority = modelRead(checked, by, idOf(primaryOf(current.manifest).githubId))
-  const step = try ownerStep({ current: current.manifest, prospective, added, consent, ownerEdit, stored: stored !== undefined, actor: accessActor(actor), projectId, now, by, expectedRevision, authority, fieldsComplete: try fieldsComplete(prospective), clearance })
+  const counts = { presentation: ownerChanges.presentation.length, executable: ownerChanges.executable.length, financial: ownerChanges.financial.length, restricted: ownerChanges.restricted.length }
+  const step = try ownerStep({ current: current.manifest, prospective, added, consent, consentChanged, changes: counts, stored: stored !== undefined, actor: accessActor(actor), projectId, now, by, expectedRevision, authority, fieldsComplete: try fieldsComplete(prospective), clearance })
   try decodedManifest(step.manifest, trusted)
   try transitionFits(current.manifest, step.manifest, now)
   try registryFits(step.manifest, true)
@@ -461,11 +458,11 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
 }
 
 function ownerRefusal(event: Event, state: Registry, by: number, stale: Refused): Refused {
-  if (event.type === "publishOwnerRevision" || event.type === "publishUpdate" || event.type === "editConsent" || event.type === "appendRepository") {
+  if (event.type === "publishOwnerRevision" || event.type === "publishUpdate") {
     const banned = banRefusal(event.account, by)
     if (banned !== undefined) return banned
+    if (event.appendReads.some((read) => read.restricted)) return refusal(putProjectsById.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
   }
-  if (event.type === "appendRepository" && event.registry.restricted) return refusal(putProjectsById.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
   if ((event.type === "publishOwnerRevision" || event.type === "publishUpdate") && !event.change.fieldsComplete && state.project.status === "Active") return refusal(putProjectsById.skillContentIncomplete)
   if ((event.type === "publishOwnerRevision" || event.type === "publishUpdate") && state.project.funded && (event.change.network !== state.project.network || event.change.asset !== state.project.asset)) return refusal(putProjectsById.financialChangeRestrictedAFundedProjectKeeps)
   if ((event.type === "publishOwnerRevision" || event.type === "publishUpdate") && !exclusionsMayBecome(state, event.exclusions)) return exclusionsRefusal(state, event.exclusions)

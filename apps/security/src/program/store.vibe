@@ -131,7 +131,7 @@ export effect function publication(input: PublicationInput) {
   const effectiveStatus = input.status ?? member(input.next, "status")
   const nowMs = try Clock.currentTimeMillis
   const funds = input.next === undefined ? undefined : try programFunds(projectId, input.next)
-  const observed = funds === undefined ? history.program : (try stepped(history.program, { type: "observeFunding", snapshot: funds.snapshot, nowMs }, by)) ?? history.program
+  const observed = funds === undefined || input.next === undefined ? history.program : (try stepped(history.program, { type: "observeFunding", snapshot: funds.snapshot, nowMs, offer: offerOf(input.next) }, by)) ?? history.program
   const funded = observed.funding === "VerifiedAvailable" && funds?.observedAt !== undefined
   const verdict = ownerVerdict(ownerChangeOf({ previous, next: input.next, effectiveStatus, actorGithubId: actor.githubId, canManageContacts: input.canManageContacts, splitApprover: administrator, fundsAvailable: funded }))
   if (verdict !== "Allowed") return refusedWith({ kind: "Owner", reason: verdict })

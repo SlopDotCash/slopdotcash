@@ -110,7 +110,7 @@ export interface VaultRegistered {
 }
 
 export error VaultRegistrationRefused {
-  code: "github_unavailable" | "slopbot_required" | "authority_required" | "vault_authority_required" | "maintainer_banned" | "project_restricted" | "vault_already_registered" | "vault_policy_changed" | "stale_revision"
+  code: "github_unavailable" | "slopbot_required" | "authority_required" | "vault_authority_required" | "maintainer_banned" | "project_restricted" | "vault_already_registered" | "vault_policy_changed" | "vault_setup_unavailable" | "stale_revision"
 }
 
 export service Registry {

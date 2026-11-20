@@ -1,0 +1,130 @@
+// spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"
+import { isoNow } from "@repo/platform/clock"
+import { D1 } from "@repo/platform/d1"
+import { type VaultRegistration, VaultRegistrationRefused } from "@repo/ports/backend"
+import type { AccountStanding, Event, Registry } from "../../../gen/backend__projectComposition.effect.vibe"
+import { vaultSetup } from "../../../gen/backend__projects.effect.vibe"
+import { modelRead, repositoryAdmin } from "../../authority/live.vibe"
+import { type Json, objectOf, same } from "../owner/revisionChanges.ts"
+import { utcPeriod } from "../owner/manifest.vibe"
+import { storedProject } from "../owner/records.vibe"
+import { primaryAuthority, primaryOf } from "../owner/setup.vibe"
+import { idOf } from "../store/codec.vibe"
+import { revisionRead, revisionsOf } from "../store/rows.vibe"
+import { send } from "../store/store.vibe"
+
+// The store reads the actor's and steward's standing inside the write; this placeholder is replaced there.
+const unread: AccountStanding = { actor: 0, steward: 0, actorBan: "BanUnavailable", stewardBan: "BanUnavailable" }
+
+function refused(code: VaultRegistrationRefused["code"]) {
+  return new VaultRegistrationRefused({ code })
+}
+
+function listOf(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : []
+}
+
+function recordedDeployments(manifest: Json, ordinary: boolean): ReadonlyArray<unknown> {
+  if (ordinary) return listOf(objectOf(manifest.escrow)?.deployments)
+  return listOf(objectOf(objectOf(manifest.securityBounty)?.settlement)?.deployments)
+}
+
+effect function attached(manifest: Json, deployment: Json, ordinary: boolean) {
+  if (ordinary) {
+    const escrow = objectOf(manifest.escrow)
+    if (escrow === undefined) throw refused("vault_setup_unavailable")
+    const next: Json = { ...manifest, escrow: { ...escrow, deployments: [deployment] } }
+    return next
+  }
+  const program = objectOf(manifest.securityBounty)
+  const amount = objectOf(program?.amount)
+  if (program === undefined || typeof amount?.network !== "string" || amount.network === "" || amount.currency !== "USDC") throw refused("vault_setup_unavailable")
+  const settlement = objectOf(program.settlement) ?? {}
+  const effectiveCycle = utcPeriod(try isoNow())
+  const next: Json = {
+    ...manifest,
+    securityBounty: {
+      ...program,
+      settlement: { schemaVersion: "1", effectiveCycle, chain: amount.network, feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] },
+    },
+  }
+  return next
+}
+
+// The creation's reviewed revision may be earlier than the current one only when its asset and vault policy equal
+// the current ones (409 vault_policy_changed otherwise).
+function samePolicy(reviewed: Json, current: Json, ordinary: boolean): boolean {
+  if (!ordinary) {
+    const left = objectOf(reviewed.securityBounty)
+    const right = objectOf(current.securityBounty)
+    const leftAmount = objectOf(left?.amount)
+    const rightAmount = objectOf(right?.amount)
+    return left !== undefined && right !== undefined && leftAmount?.currency === rightAmount?.currency && leftAmount?.network === rightAmount?.network &&
+      leftAmount?.decimals === rightAmount?.decimals && same(leftAmount?.asset, rightAmount?.asset) && same(left.settlement, right.settlement)
+  }
+  const left = objectOf(reviewed.reward)
+  const right = objectOf(current.reward)
+  return left?.kind === right?.kind && left?.chain === right?.chain && same(reviewed.escrow, current.escrow) && same(reviewed.rewardAsset, current.rewardAsset)
+}
+
+effect function policyMatches(projectId: string, expectedRevision: number, current: Json, currentRevision: number, ordinary: boolean) {
+  if (expectedRevision === currentRevision) return true
+  if (expectedRevision < 1 || expectedRevision > currentRevision) throw refused("stale_revision")
+  const [read] = try (try D1).batch([revisionRead(projectId)])
+  const revisions = try revisionsOf(projectId, read?.rows ?? [])
+  const reviewed = revisions.find((entry) => entry.row.revision === expectedRevision)
+  if (reviewed === undefined) throw refused("stale_revision")
+  const parsed = objectOf(try Effect.try({ try: () => JSON.parse(reviewed.row.manifest) as unknown, catch: () => refused("stale_revision") }))
+  if (parsed === undefined || !samePolicy(parsed, current, ordinary)) throw refused("vault_policy_changed")
+  return true
+}
+
+function rejection(event: Event, state: Registry): VaultRegistrationRefused {
+  if (state.security.restriction !== "Clear" || state.project.retirement === "RestrictionRetired") return refused("project_restricted")
+  if (event.type !== "registerVault") return refused("stale_revision")
+  if (event.account.actorBan === "BanUnavailable" || event.account.stewardBan === "BanUnavailable") return refused("github_unavailable")
+  if (event.account.actorBan === "AccountBanned" || event.account.stewardBan === "AccountBanned") return refused("maintainer_banned")
+  return refused("stale_revision")
+}
+
+export interface Registered {
+  readonly manifest: Json
+}
+
+// One finalized creation, verified by settlement against the reviewed factory or program and the project's policy,
+// appends one VaultRegistered revision by the vault setup service for the owner whose current authority it reads here.
+export effect function registerOwnerVault(registration: VaultRegistration) {
+  const ordinary = registration.purpose === "ordinary"
+  const deployment = objectOf(registration.deployment)
+  if (deployment === undefined) throw refused("vault_setup_unavailable")
+  const current = try storedProject(registration.projectId)
+  if (current === undefined) throw refused("stale_revision")
+  const recorded = recordedDeployments(current.manifest, ordinary)
+  if (recorded.some((entry) => same(entry, deployment))) return { manifest: current.manifest } satisfies Registered
+  if (recorded.length > 0) throw refused("vault_already_registered")
+  const matches = try policyMatches(registration.projectId, registration.expectedRevision, current.manifest, current.row.revision, ordinary)
+  const owner = idOf(registration.actor.githubId)
+  const primary = primaryOf(current.manifest)
+  const checked = try primaryAuthority(current.manifest, { githubId: registration.actor.githubId, login: registration.actor.login })
+  const authority = modelRead(checked, owner, idOf(primary.githubId))
+  if (authority.permission === "PermissionUnavailable" && authority.installation === "InstallationUnavailable") throw refused("github_unavailable")
+  if (authority.installation !== "Installed") throw refused("slopbot_required")
+  if (authority.permission !== "PermissionVerified") throw refused("authority_required")
+  const admin = repositoryAdmin(checked.access)
+  if (!admin && String(objectOf(objectOf(current.manifest.steward)?.github)?.actorId ?? "") !== registration.actor.githubId) throw refused("vault_authority_required")
+  const next = try attached(current.manifest, deployment, ordinary)
+  const reason = registration.path === "saved"
+    ? "Slop finished the owner's saved vault registration after finality, verified against the reviewed factory and project policy."
+    : "Owner registered a finalized vault verified against the reviewed factory and project policy."
+  send({
+    projectId: registration.projectId,
+    event: { type: "registerVault", registration: { authority, repositoryAdmin: admin, expectedRevision: current.row.revision, purpose: ordinary ? "OrdinaryVault" : "BountyVault", finalized: registration.evidence === "finalized", policyMatches: matches }, account: unread },
+    by: vaultSetup,
+    revision: { manifestText: JSON.stringify(next), reason, actor: { githubId: registration.actor.githubId, login: registration.actor.login } },
+  }) catch effect (error) => {
+    if (error._tag === "Rejected") throw rejection(error.event, error.state)
+    if (error._tag === "Conflict") throw refused("stale_revision")
+    throw error
+  }
+  return { manifest: next } satisfies Registered
+}

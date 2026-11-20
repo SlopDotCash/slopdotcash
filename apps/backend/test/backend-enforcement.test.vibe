@@ -149,7 +149,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal")', () => effect {
+  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal")', () => effect {
     const area = try Area
     const a = try member(moderatorA)
     const b = try member(moderatorB)
