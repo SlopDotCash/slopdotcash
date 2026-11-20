@@ -1535,6 +1535,12 @@ lemma Initial_alwaysPledgedMonthUnadmitted()
   assert initial.vault.pledges == [];
 }
 
+lemma Initial_alwaysAdmittedInWindow()
+  ensures alwaysAdmittedInWindow(initial)
+{
+  assert initial.vault.months == [];
+}
+
 lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, by_: string)
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysClockStarted(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysFactoryRolesSeparate(pledgeMonths(e, fromPeriod, count, amount, by_)))
@@ -2722,6 +2728,44 @@ lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledg
   }
 }
 
+lemma step_ensures(current: Escrow, event: Event, by_: string)
+  requires inv(current)
+  ensures inv(step(current, event, by_))
+{
+  hide *;
+  reveal step, inv;
+  match event {
+    case initializeFactory(i_registrar, i_feeRecipient, i_identity, i_delay, i_upgrader, i_factoryLogic, i_logic, i_uups) => initializeFactory_ensures(current, i_registrar, i_feeRecipient, i_identity, i_delay, i_upgrader, i_factoryLogic, i_logic, i_uups);
+    case tick(i_timestamp) => tick_ensures(current, i_timestamp);
+    case proposeUpgradeAuthority(i_successor) => proposeUpgradeAuthority_ensures(current, i_successor, by_);
+    case acceptUpgradeAuthority => acceptUpgradeAuthority_ensures(current, by_);
+    case setVaultImplementation(i_logic, i_uups) => setVaultImplementation_ensures(current, i_logic, i_uups, by_);
+    case upgradeFactory(i_logic, i_uups) => upgradeFactory_ensures(current, i_logic, i_uups, by_);
+    case upgradeVault(i_logic, i_uups) => upgradeVault_ensures(current, i_logic, i_uups, by_);
+    case proposeIdentityAuthority(i_successor) => proposeIdentityAuthority_ensures(current, i_successor, by_);
+    case cancelIdentityAuthorityRotation => cancelIdentityAuthorityRotation_ensures(current, by_);
+    case executeIdentityAuthorityRotation => executeIdentityAuthorityRotation_ensures(current);
+    case create(i_project, i_token, i_purpose, i_tokenReady) => create_ensures(current, i_project, i_token, i_purpose, i_tokenReady, by_);
+    case createWithMonthlyCommitment(i_project, i_token, i_cap, i_on, i_tokenReady) => createWithMonthlyCommitment_ensures(current, i_project, i_token, i_cap, i_on, i_tokenReady, by_);
+    case deposit(i_amount, i_sent, i_transferExact) => deposit_ensures(current, i_amount, i_sent, i_transferExact);
+    case transferIn(i_amount) => transferIn_ensures(current, i_amount);
+    case commitAward(i_source, i_actor, i_gross) => commitAward_ensures(current, i_source, i_actor, i_gross, by_);
+    case commitBountyAward(i_source, i_actor, i_gross) => commitBountyAward_ensures(current, i_source, i_actor, i_gross, by_);
+    case setMonthlyCommitment(i_cap, i_on) => setMonthlyCommitment_ensures(current, i_cap, i_on, by_);
+    case commitMonthly(i_period, i_entries, i_signer) => commitMonthly_ensures(current, i_period, i_entries, i_signer);
+    case reserveMonthly(i_period, i_reservation, i_sequence, i_signer) => reserveMonthly_ensures(current, i_period, i_reservation, i_sequence, i_signer);
+    case commitMonthlyLeaf(i_period, i_leaf) => commitMonthlyLeaf_ensures(current, i_period, i_leaf);
+    case releaseMonthlyReserve(i_period, i_expectedRemaining, i_releasedGross, i_signer) => releaseMonthlyReserve_ensures(current, i_period, i_expectedRemaining, i_releasedGross, i_signer, by_);
+    case pledgeMonths(i_fromPeriod, i_count, i_amount) => pledgeMonths_ensures(current, i_fromPeriod, i_count, i_amount, by_);
+    case expirePledge(i_period) => expirePledge_ensures(current, i_period);
+    case bindDestination(i_actor, i_destination, i_expectedVersion, i_claim, i_expiresAt, i_walletSigned) => bindDestination_ensures(current, i_actor, i_destination, i_expectedVersion, i_claim, i_expiresAt, i_walletSigned, by_);
+    case cancelBinding(i_actor, i_expectedVersion) => cancelBinding_ensures(current, i_actor, i_expectedVersion, by_);
+    case pay(i_source, i_expectedVersion, i_transferOk) => pay_ensures(current, i_source, i_expectedVersion, i_transferOk);
+    case withdrawUnused(i_gross, i_transferOk) => withdrawUnused_ensures(current, i_gross, i_transferOk, by_);
+    case claimFees(i_transferOk) => claimFees_ensures(current, i_transferOk);
+  }
+}
+
 lemma initialHolds_ensures()
   ensures inv(initialHolds())
 {
@@ -2744,5 +2788,8 @@ lemma initialHolds_ensures()
   Initial_alwaysMonthsWellFormed();
   Initial_alwaysPendingMatchesMonths();
   Initial_alwaysBountyHasNoMonthly();
+  Initial_alwaysAdmittedInWindow();
+  Initial_alwaysPledgesCovered();
+  Initial_alwaysPledgedMonthUnadmitted();
   Initial_alwaysBindingsWellFormed();
 }
