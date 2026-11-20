@@ -173,6 +173,7 @@ pure def failCalls(r: Routine): Routine =
 pure def closedNow(c: C::PrivateCase): bool = c.routine.closed
 pure def alwaysCaseRoutineMarks(r: Routine): bool = C::alwaysRoutineCloseIsUnappealedRefusal(r.privateCase)
   and C::alwaysRoutineClockOnItsRequest(r.privateCase) and C::alwaysRoutineReturnRecorded(r.privateCase)
+  and C::alwaysAppealState(r.privateCase) and r.privateCase.submission == C::Verified and r.privateCase.reportVersion > 0
 pure def alwaysOnlyLiveApplies(r: Routine): bool = r.records.every(d => d.applied == (d.mode == Live))
 pure def stepOnlyLiveChangesTheCase(before: Routine, via: str, after: Routine): bool =
   (via == "failCalls" or (via == "decideReport" and before.mode != Live)) implies after.privateCase == before.privateCase
