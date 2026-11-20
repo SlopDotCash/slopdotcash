@@ -188,6 +188,64 @@ lemma publishOwnerRevision_ensures(p: Project, by_: int, change: OwnerChange)
   }
 }
 
+lemma publishUpdate_ensures(p: Project, by_: int, change: OwnerChange)
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysHistoryNumbered(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysCurrentRevisionIsState(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysPublishedApplicationCreated(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysCreatedFacts(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysActiveRequirements(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysEconomicTermsPrecedeNothing(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysClockStarted(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysRepositoryBound(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysRepositoryStarts(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysOrdinaryVaultFunds(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysRestrictedParticipationPaused(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> alwaysRetirementConsistent(publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepHistoryRetained(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepRevisionAdvancesByOne(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepCreatorFixed(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepCancellationFinal(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepCancellationAppendsNothing(p, "publishUpdate", publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepEconomicTermsRetained(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepFundedAssetFixed(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepRepositoryStartsRetained(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepRepositoriesRetained(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepConsentChangesOnlyByOwnerRevision(p, "publishUpdate", publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepOwnerRemovalPermanent(p, "publishUpdate", publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepRemovalReplayAppendsNothing(p, "publishUpdate", publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepRemovalAlwaysRetires(p, "publishUpdate", publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepVaultRecordsRetained(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepNoRegistryEventUnretires(p, "publishUpdate", publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepEveryManifestChangeAppendsRevision(p, publishUpdate(p, by_, change)))
+  ensures (inv(p) ==> canPublishUpdate(p, by_, change) ==> stepClockMonotone(p, publishUpdate(p, by_, change)))
+{
+  if inv(p) && canPublishUpdate(p, by_, change) {
+    StartsMeaning(p);
+    var appends := change.appends;
+    var added := seq(|appends|, i requires 0 <= i < |appends| => appends[i].facts.repository);
+    var after := publishUpdate(p, by_, change);
+    assert after.repositories == p.repositories + added;
+    assert after.starts == p.starts + seq(|added|, i requires 0 <= i < |added| => RepositoryStart(added[i], p.month + 1));
+    forall i, j | 0 <= i < j < |added|
+      ensures added[i] != added[j]
+    {
+      if added[i] == added[j] {
+        var a := appends[i];
+        assert a in appends;
+        ProofLib.FilterTwo((b: NewRepository) => (b.facts.repository == a.facts.repository), appends, i, j);
+      }
+    }
+    forall r | r in added
+      ensures r !in p.repositories
+    {
+      var k :| 0 <= k < |added| && added[k] == r;
+      assert appends[k] in appends;
+    }
+    AppendedStarts(p.repositories, p.starts, added, p.month + 1);
+    StartsMeaning(after);
+  }
+}
+
 lemma initialHolds_ensures()
   ensures inv(initialHolds())
 {
