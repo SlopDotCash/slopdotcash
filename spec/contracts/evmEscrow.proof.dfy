@@ -888,6 +888,17 @@ lemma TracedSameMonths(e: Escrow, after: Escrow)
   TracedFrame(e, after);
 }
 
+// A transition that keeps the months, the origins and the awards keeps the trace.
+lemma TracedSame(e: Escrow, after: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  requires after.vault.months == e.vault.months && after.vault.origins == e.vault.origins
+  requires after.vault.awards == e.vault.awards
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedSameMonths(e, after);
+}
+
 // Appending a month for a period without one, with nothing committed, keeps the trace.
 lemma TracedAppendMonth(e: Escrow, after: Escrow, nm: Month)
   requires alwaysCommittedLeavesTraced(e)
@@ -2054,6 +2065,7 @@ lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, 
 {
   if inv(e) && canPledgeMonths(e, fromPeriod, count, amount, by_) {
     SameAwards(e, pledgeMonths(e, fromPeriod, count, amount, by_));
+    TracedSame(e, pledgeMonths(e, fromPeriod, count, amount, by_));
     AwardsFrame(e, pledgeMonths(e, fromPeriod, count, amount, by_));    PledgeMonthsKeeps(e, fromPeriod, count, amount, by_);
     PledgeMonthsCovers(e, fromPeriod, count, amount, by_);
   }
@@ -2096,6 +2108,7 @@ lemma expirePledge_ensures(e: Escrow, period: int)
 {
   if inv(e) && canExpirePledge(e, period) {
     SameAwards(e, expirePledge(e, period));
+    TracedSame(e, expirePledge(e, period));
     AwardsFrame(e, expirePledge(e, period));
     ClosePledgeCovers(e, period);
     PledgedMonthAfterClose(e, period, expirePledge(e, period));
@@ -2143,6 +2156,7 @@ lemma tick_ensures(e: Escrow, timestamp: int)
 
   if inv(e) && canTick(e, timestamp) {
     SameAwards(e, tick(e, timestamp));
+    TracedSame(e, tick(e, timestamp));
     AwardsFrame(e, tick(e, timestamp));
   }
 }
@@ -2188,6 +2202,7 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
 
   if inv(e) && canProposeUpgradeAuthority(e, successor, by_) {
     SameAwards(e, proposeUpgradeAuthority(e, successor, by_));
+    TracedSame(e, proposeUpgradeAuthority(e, successor, by_));
     AwardsFrame(e, proposeUpgradeAuthority(e, successor, by_));
   }
 }
@@ -2233,6 +2248,7 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
 
   if inv(e) && canAcceptUpgradeAuthority(e, by_) {
     SameAwards(e, acceptUpgradeAuthority(e, by_));
+    TracedSame(e, acceptUpgradeAuthority(e, by_));
     AwardsFrame(e, acceptUpgradeAuthority(e, by_));
   }
 }
@@ -2278,6 +2294,7 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
 
   if inv(e) && canSetVaultImplementation(e, logic, uups, by_) {
     SameAwards(e, setVaultImplementation(e, logic, uups, by_));
+    TracedSame(e, setVaultImplementation(e, logic, uups, by_));
     AwardsFrame(e, setVaultImplementation(e, logic, uups, by_));
   }
 }
@@ -2323,6 +2340,7 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
 
   if inv(e) && canUpgradeFactory(e, logic, uups, by_) {
     SameAwards(e, upgradeFactory(e, logic, uups, by_));
+    TracedSame(e, upgradeFactory(e, logic, uups, by_));
     AwardsFrame(e, upgradeFactory(e, logic, uups, by_));
   }
 }
@@ -2368,6 +2386,7 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
 
   if inv(e) && canUpgradeVault(e, logic, uups, by_) {
     SameAwards(e, upgradeVault(e, logic, uups, by_));
+    TracedSame(e, upgradeVault(e, logic, uups, by_));
     AwardsFrame(e, upgradeVault(e, logic, uups, by_));
   }
 }
@@ -2413,6 +2432,7 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
 
   if inv(e) && canProposeIdentityAuthority(e, successor, by_) {
     SameAwards(e, proposeIdentityAuthority(e, successor, by_));
+    TracedSame(e, proposeIdentityAuthority(e, successor, by_));
     AwardsFrame(e, proposeIdentityAuthority(e, successor, by_));
   }
 }
@@ -2458,6 +2478,7 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
 
   if inv(e) && canCancelIdentityAuthorityRotation(e, by_) {
     SameAwards(e, cancelIdentityAuthorityRotation(e, by_));
+    TracedSame(e, cancelIdentityAuthorityRotation(e, by_));
     AwardsFrame(e, cancelIdentityAuthorityRotation(e, by_));
   }
 }
@@ -2503,6 +2524,7 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
 
   if inv(e) && canExecuteIdentityAuthorityRotation(e) {
     SameAwards(e, executeIdentityAuthorityRotation(e));
+    TracedSame(e, executeIdentityAuthorityRotation(e));
     AwardsFrame(e, executeIdentityAuthorityRotation(e));
   }
 }
@@ -2548,6 +2570,7 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
 
   if inv(e) && canDeposit(e, amount, sent, transferExact) {
     SameAwards(e, deposit(e, amount, sent, transferExact));
+    TracedSame(e, deposit(e, amount, sent, transferExact));
     AwardsFrame(e, deposit(e, amount, sent, transferExact));
   }
 }
@@ -2593,6 +2616,7 @@ lemma transferIn_ensures(e: Escrow, amount: int)
 
   if inv(e) && canTransferIn(e, amount) {
     SameAwards(e, transferIn(e, amount));
+    TracedSame(e, transferIn(e, amount));
     AwardsFrame(e, transferIn(e, amount));
   }
 }
@@ -2638,6 +2662,7 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
 
   if inv(e) && canSetMonthlyCommitment(e, cap, on, by_) {
     SameAwards(e, setMonthlyCommitment(e, cap, on, by_));
+    TracedSame(e, setMonthlyCommitment(e, cap, on, by_));
     AwardsFrame(e, setMonthlyCommitment(e, cap, on, by_));
   }
 }
@@ -2684,6 +2709,7 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
 
   if inv(e) && canWithdrawUnused(e, gross, transferOk, by_) {
     SameAwards(e, withdrawUnused(e, gross, transferOk, by_));
+    TracedSame(e, withdrawUnused(e, gross, transferOk, by_));
     AwardsFrame(e, withdrawUnused(e, gross, transferOk, by_));
   }
 }
@@ -2729,6 +2755,7 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
 
   if inv(e) && canClaimFees(e, transferOk) {
     SameAwards(e, claimFees(e, transferOk));
+    TracedSame(e, claimFees(e, transferOk));
     AwardsFrame(e, claimFees(e, transferOk));
   }
 }
@@ -2779,6 +2806,7 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
     }
     assert after.vault.awards == e.vault.awards;
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
     KeysAppend(e, after, keyOf(by_, project, token, purpose));
   }
@@ -2830,6 +2858,7 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
     }
     assert after.vault.awards == e.vault.awards;
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
     KeysAppend(e, after, keyOf(by_, project, token, contracts__ledger_Purpose.Ordinary));
   }
@@ -3127,6 +3156,7 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
     ReplaceBinding(e, after, nb);
     ReplaceBindingAttested(e, after, nb);
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
   }
 }
@@ -3179,6 +3209,7 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
     ReplaceBinding(e, after, nb);
     ReplaceBindingAttested(e, after, nb);
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
   }
 }
