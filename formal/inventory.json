@@ -6,6 +6,13 @@
   "exclusions": "Dependencies, generated build outputs, test/fixture trees, declarations and integration test entry points are not production state machines. Generated registry source remains inventoried through its generator.",
   "sources": [
     {
+      "path": ".github/workflows/asi-november-closeout.yml",
+      "sha256": "81ab953818e43c80c027d4055482158e5670b0118bc8f935c40db83d5bd53a53",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/cancel-closed-pr-runs.yml",
       "sha256": "687b67ce2a3967dc79662c13340cc2380169a3f62619c9ec3a29398656e563ba",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -4390,12 +4397,12 @@
     },
     {
       "path": "scripts/guarded-monthly-import.ts",
-      "sha256": "bea053086f2efe9f73ffe982357cc96b047d9b8dea6d223c595e4df235053aea",
+      "sha256": "a6249fc62d0b1f622abc677b96fcb8379777fe900bbf6b8fcc0178466991c9b6",
       "models": [
         "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
-      "candidateLines": [15, 60],
+      "candidateLines": [15, 70],
       "review": "mapped-abstraction"
     },
     {
@@ -4647,9 +4654,9 @@
     },
     {
       "path": "scripts/prepare-asi-november-closeout.ts",
-      "sha256": "92d86e6d30f02e6b1b905dc888bb5242fb84b4c754e583c1d8bd483c4d4ee827",
+      "sha256": "dee473bc1ac27f57edc1e3d363d17eaa1c461f5985f5b771039333de922dbd16",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
-      "candidateLines": [1, 156, 157, 158, 255],
+      "candidateLines": [1, 159, 160, 161, 259],
       "review": "mapped-abstraction"
     },
     {
@@ -5142,6 +5149,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/run-asi-november-closeout.ts",
+      "sha256": "89d57bec11fe11985ea7613dc636067a86597efe221453601d180986366bbb47",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "candidateLines": [2, 135, 185],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/run-e2e-phase.mjs",
       "sha256": "08d0368c0b925438b62d8dc80b4bd4d6c2b65c038c22929d377e1e8d845dcab1",
       "models": [
@@ -5184,7 +5198,7 @@
     },
     {
       "path": "scripts/run-october-rewards.ts",
-      "sha256": "725b83035217988ec4efcd23c3fe43e65fbc6af20c25ecfde12ad2cf10f47e86",
+      "sha256": "719f77a54a953f17da413f28892b0c771c846076407c7f86d861c492e4795c56",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
       "candidateLines": [3, 171, 324, 328, 341, 549, 553, 557],
       "review": "mapped-abstraction"
@@ -5849,8 +5863,9 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "f61037a1d194bf57e934076e8c035cc77b171addc0a6d19c328ae298f903969b",
+      "sha256": "5a64d4d6f46802b7e18235b51e87979be6135b5341bf07e5e3ddb71873095860",
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_owner_awards.qnt",
@@ -5859,9 +5874,9 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        14, 17, 97, 108, 136, 138, 141, 148, 149, 157, 158, 169, 175, 176, 177,
-        178, 179, 182, 183, 233, 291, 293, 301, 319, 320, 421, 446, 506, 529,
-        655, 669, 832, 845, 867, 898, 899, 903, 908, 910, 913, 920, 938
+        14, 17, 98, 109, 145, 147, 150, 157, 158, 166, 167, 178, 184, 185, 186,
+        187, 188, 191, 192, 242, 300, 302, 310, 328, 329, 430, 455, 515, 538,
+        664, 678, 854, 867, 889, 920, 921, 925, 930, 932, 935, 942, 960
       ],
       "review": "mapped-abstraction"
     },
@@ -16214,13 +16229,16 @@
     },
     {
       "path": "formal/models/rewards/asi_november_closeout.qnt",
-      "sha256": "6e5e1c68cc7cd765d688ab57f272799f441098005bd93e1c94798fd41e1a2c8c",
+      "sha256": "c7cf6c6ed57786fb04563a1f68b807bfa667e108723aae080a9932c4e69b6cba",
       "sources": [
+        ".github/workflows/asi-november-closeout.yml",
         "backend/payments/monthly.ts",
         "migrations/0143_asi_november_closeout.sql",
         "scripts/guarded-monthly-import.ts",
         "scripts/prepare-asi-november-closeout.ts",
         "scripts/prepare-monthly-rewards.ts",
+        "scripts/run-asi-november-closeout.ts",
+        "src/OwnerAwards.tsx",
         "src/lib/payments/asi-november-closeout.ts",
         "src/lib/payments/escrow-cycle.ts"
       ],

@@ -12,7 +12,7 @@ import {
 } from "../src/lib/record-validation.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import { sha256Hex } from "../src/lib/sha256";
-import { guardedMonthlyImportSql } from "./guarded-monthly-import";
+import { guardedMonthlyImportPlan } from "./guarded-monthly-import";
 
 const decode = new TextDecoder("utf-8", { fatal: true });
 const period = periodBounds(approved.period);
@@ -33,6 +33,16 @@ function timestamp(value: unknown): string {
 function integer(value: unknown, min: number): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min)
     throw new Error("Invalid registry revision or enforcement generation.");
+  return value;
+}
+
+function githubActorId(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^[1-9][0-9]{0,19}$/u.test(value) ||
+    BigInt(value) > (1n << 64n) - 1n
+  )
+    throw new Error("Record the producer and reviewer by numeric GitHub ID.");
   return value;
 }
 
@@ -81,15 +91,8 @@ export function prepareAsiNovemberCloseout(input: {
     throw new Error(
       "The packet does not bind the approved ASI November closeout.",
     );
-  for (const actor of [packet.producerGithubId, packet.reviewerGithubId]) {
-    if (
-      typeof actor !== "string" ||
-      !/^[1-9][0-9]{0,19}$/u.test(actor) ||
-      BigInt(actor) > (1n << 64n) - 1n
-    )
-      throw new Error("Record the producer and reviewer by numeric GitHub ID.");
-  }
-  if (packet.producerGithubId === packet.reviewerGithubId)
+  const reviewerGithubId = githubActorId(packet.reviewerGithubId);
+  if (githubActorId(packet.producerGithubId) === reviewerGithubId)
     throw new Error("The producer and independent reviewer must be different.");
   const reviewedAt = timestamp(packet.reviewedAt);
   const sourceSnapshotSha256 = digest(packet.snapshotSha256);
@@ -211,7 +214,7 @@ export function prepareAsiNovemberCloseout(input: {
     }),
   );
   return {
-    sql: guardedMonthlyImportSql({
+    ...guardedMonthlyImportPlan({
       capturedAt,
       enforcementGeneration,
       pointsBatch,
@@ -219,6 +222,7 @@ export function prepareAsiNovemberCloseout(input: {
     }),
     review: {
       reviewedPacketSha256,
+      reviewerGithubId,
       pointsBatch,
       capturedAt,
       revision,

@@ -68,7 +68,18 @@ it. Review the exact output before any separately approved protected main
 operation. The import atomically checks the current registry, restrictions,
 Points coverage with the exact source digest, and duplicate or protected
 history. It stores the approved earning cutoff in the immutable proposal.
-Confirm the header and each recipient row by readback. The owner can then
-finalize this proposal using the existing monthly controls after the recorded
-cutoff and reserve the funded obligations with the existing owner wallet flow.
-The automatic commitment window still follows the ordinary calendar.
+The trusted `asi-november-closeout.yml` dispatch uses the shared
+`slop-production` lock and environment. Set the private reviewed packet as
+`ASI_CLOSEOUT_REVIEWED_PACKET` in that environment and dispatch the current
+`main` with the packet SHA-256 and `apply: false`. The runner downloads the
+exact published collector snapshot, checks the current reviewer’s GitHub
+owner authority and evaluates the SQL import guards with read-only queries.
+It reports only the reviewed digest, deterministic preview digest and recipient
+count. Review that preview and dispatch `apply: true` with both digests. The
+same current registry and source checks, atomic database guards and full
+header/recipient readback confirm an import or exact replay.
+
+After confirmation, the owner can open **Monthly awards** on ASI’s funding page,
+review the fixed November proposal, finalize it and reserve eligible awards
+with the existing owner wallet flow. The on-chain automatic commitment window
+keeps its ordinary calendar.

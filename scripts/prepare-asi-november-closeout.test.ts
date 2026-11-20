@@ -16,6 +16,10 @@ import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { octoberRunnerFixture } from "../tests/october-runner-fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { prepareAsiNovemberCloseout } from "./prepare-asi-november-closeout";
+import {
+  asiCloseoutPreviewDigest,
+  executeAsiCloseout,
+} from "./run-asi-november-closeout";
 
 const encode = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value));
@@ -231,18 +235,34 @@ test("ASI owner finalizes the exact cutoff allocation early via the normal award
       );
     input.packet.pointsBatch = "3".repeat(64);
     const reviewed = compile(input);
-    sqlite
-      .transaction(() => {
-        for (const statement of reviewed.sql.trimEnd().split("\n"))
-          sqlite.query(statement).run();
-      })
-      .immediate();
-    sqlite
-      .transaction(() => {
-        for (const statement of reviewed.sql.trimEnd().split("\n"))
-          sqlite.query(statement).run();
-      })
-      .immediate();
+    const query = async (sql: string) =>
+      sqlite.query<Record<string, unknown>, []>(sql).all();
+    let applyCount = 0;
+    const importFile = async () => {
+      applyCount += 1;
+      sqlite
+        .transaction(() => {
+          for (const statement of reviewed.sql.trimEnd().split("\n"))
+            sqlite.query(statement).run();
+        })
+        .immediate();
+      throw new Error("Simulated lost import response");
+    };
+    const preview = asiCloseoutPreviewDigest(reviewed);
+    expect(await executeAsiCloseout(reviewed, query, null, importFile)).toBe(
+      "preview",
+    );
+    await expect(
+      executeAsiCloseout(reviewed, query, "f".repeat(64), importFile),
+    ).rejects.toThrow("differs from the approved preview");
+    expect(applyCount).toBe(0);
+    expect(await executeAsiCloseout(reviewed, query, preview, importFile)).toBe(
+      "applied",
+    );
+    expect(await executeAsiCloseout(reviewed, query, preview, importFile)).toBe(
+      "already-imported",
+    );
+    expect(applyCount).toBe(1);
     expect(
       sqlite.query("SELECT COUNT(*) AS n FROM monthly_reward_base_rows").get(),
     ).toEqual({ n: 2 });

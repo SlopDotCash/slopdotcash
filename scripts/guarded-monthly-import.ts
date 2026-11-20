@@ -32,11 +32,21 @@ interface GuardedMonthlyImport {
   }[];
 }
 
-export function guardedMonthlyImportSql(reviews: GuardedMonthlyImport): string {
+export function guardedMonthlyImportPlan(reviews: GuardedMonthlyImport) {
   const pointsBatch = quote(reviews.pointsBatch);
   const registryReady = `(SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=${reviews.enforcementGeneration}`;
   const currentPoints = `(SELECT digest FROM points_batches ORDER BY revision_count DESC,generated_at DESC,digest DESC LIMIT 1)=${pointsBatch}`;
   const sql: string[] = [];
+  const preflight: string[] = [];
+  const readback: string[] = [];
+  const requireBefore = (condition: string) => {
+    preflight.push(condition);
+    sql.push(requireSql(condition));
+  };
+  const requireAfter = (condition: string) => {
+    readback.push(condition);
+    sql.push(requireSql(condition));
+  };
   for (const {
     monthlyBase: base,
     manifest,
@@ -71,20 +81,18 @@ export function guardedMonthlyImportSql(reviews: GuardedMonthlyImport): string {
       registryReady,
       unprotected,
     ])
-      sql.push(requireSql(`${hasBase} OR ${condition}`));
+      requireBefore(`${hasBase} OR ${condition}`);
     for (const entry of coverage ?? []) {
       const covered = exists(
         `SELECT 1 FROM points_batches b,json_each(b.coverage) c WHERE b.digest=${pointsBatch} AND lower(json_extract(c.value,'$.repository'))=lower(${quote(entry.repository)}) AND json_extract(c.value,'$.from')<=${quote(entry.from)} AND json_extract(c.value,'$.to')>=${quote(entry.cutoff)} AND json_extract(c.value,'$.digest')=${quote(entry.snapshotSha256)}`,
       );
-      sql.push(requireSql(`${hasBase} OR ${covered}`));
+      requireBefore(`${hasBase} OR ${covered}`);
     }
-    sql.push(requireSql(`NOT ${hasBase} OR ${exactHeader}`));
-    sql.push(requireSql(`NOT ${hasBase} OR ${exactCount}`));
+    requireBefore(`NOT ${hasBase} OR ${exactHeader}`);
+    requireBefore(`NOT ${hasBase} OR ${exactCount}`);
     // An unexpected orphan can never be reattached to new reviewed terms.
-    sql.push(
-      requireSql(
-        `${hasBase} OR NOT ${exists(`SELECT 1 FROM monthly_reward_base_rows WHERE ${key}`)}`,
-      ),
+    requireBefore(
+      `${hasBase} OR NOT ${exists(`SELECT 1 FROM monthly_reward_base_rows WHERE ${key}`)}`,
     );
     const exactRows = base.rows.map((row) =>
       exists(
@@ -92,14 +100,14 @@ export function guardedMonthlyImportSql(reviews: GuardedMonthlyImport): string {
       ),
     );
     for (const condition of exactRows)
-      sql.push(requireSql(`NOT ${hasBase} OR ${condition}`));
+      requireBefore(`NOT ${hasBase} OR ${condition}`);
     for (const { githubUserId } of base.rows) {
       const banned = exists(
         PARTICIPATION_BAN_QUERY.replace(/\s+/gu, " ")
           .trim()
           .replace("?", quote(githubUserId)),
       );
-      sql.push(requireSql(`${hasBase} OR NOT ${banned}`));
+      requireBefore(`${hasBase} OR NOT ${banned}`);
     }
     sql.push(
       monthlyBasesSql(
@@ -110,7 +118,7 @@ export function guardedMonthlyImportSql(reviews: GuardedMonthlyImport): string {
     // Independent exact readback is still inside the import. If the writer
     // silently skipped a row or a later guard fails, none of the bases commit.
     for (const condition of [exactHeader, exactCount, ...exactRows])
-      sql.push(requireSql(condition));
+      requireAfter(condition);
   }
   const text = `${sql.join("\n")}\n`;
   // The canonical writer serializes a statement per line. Detect a statement
@@ -119,5 +127,9 @@ export function guardedMonthlyImportSql(reviews: GuardedMonthlyImport): string {
     throw new Error(
       "A proposal import SQL statement exceeds D1's 100 KB limit",
     );
-  return text;
+  return { sql: text, preflight, readback };
+}
+
+export function guardedMonthlyImportSql(reviews: GuardedMonthlyImport): string {
+  return guardedMonthlyImportPlan(reviews).sql;
 }

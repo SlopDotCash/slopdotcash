@@ -78,7 +78,7 @@ test("a finalized ordinary D1 month earns recognition without a Git-backed cycle
     ).toEqual([]);
     sqlite
       .query(
-        "INSERT INTO monthly_reward_bases VALUES('asi','2026-10','{}',?,?, '10000',1,?)",
+        "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES('asi','2026-10','{}',?,?, '10000',1,?)",
       )
       .run("e".repeat(64), "f".repeat(64), indexedAt);
     sqlite
