@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "4ad0e99dae230194e8971ee10c513e65b284a8df74fbc74e31e089ec69eb37c4",
+      "sha256": "89a700d0b03453122de8d393873faca4de7ea8fbf3b2e71bd007f1e50cca61eb",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        40, 50, 184, 317, 366, 386, 387, 448, 501, 558, 638, 643, 758, 764, 832,
-        835, 861, 862, 883, 895, 927, 965, 1195, 1223, 1315, 1328, 1419, 1527,
-        1529, 1530, 1734, 1817, 1970, 1972, 2002, 2117, 2139, 2210, 2221, 2246,
-        2317, 2330, 2343, 2352, 2353, 2354, 2371
+        44, 54, 250, 383, 449, 475, 476, 550, 603, 660, 740, 745, 860, 866, 934,
+        937, 963, 964, 985, 997, 1029, 1067, 1297, 1325, 1417, 1430, 1521, 1629,
+        1631, 1632, 1836, 1919, 2072, 2074, 2104, 2219, 2241, 2312, 2323, 2348,
+        2419, 2432, 2445, 2454, 2455, 2456, 2473
       ],
       "review": "mapped-abstraction"
     },
@@ -80,9 +80,9 @@
     },
     {
       "path": ".github/workflows/monthly-rewards.yml",
-      "sha256": "1c77d043a54756f8857e15a056b6784082773e013bce1f9264066885354aae95",
+      "sha256": "d264c7c90a5db1e595d10d2becc773a4ccd0b6762c88ca0771170faa3643b937",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [52, 58, 61, 153, 185],
+      "candidateLines": [57, 63, 66, 160, 207],
       "review": "mapped-abstraction"
     },
     {
@@ -3725,6 +3725,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/attribution-memo.ts",
+      "sha256": "990f9c51eba3ba7bdd1d49a576c010cf185923cfdd76e0182cab0f95f49056cf",
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "candidateLines": [10, 78, 80, 81, 82, 118, 121, 124, 142, 286, 329, 341],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/backfill-points.ts",
       "sha256": "d75815739ac3789852fb1b6bdda23e4c1991a5c4b3abcfd81a6c9ff604bd3f93",
       "models": ["formal/models/points/source_import.qnt"],
@@ -3899,6 +3906,15 @@
       "sha256": "8766b3c2784f856bcc0321f801ec2166d179e00bd036891ea1b82d5c7a54154d",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [2, 84, 86],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/collection-memo.ts",
+      "sha256": "22bc9cbdf2e3d0a876348f57affa4abdbabfd4dad1fec0b98c54bf08f4189dae",
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "candidateLines": [
+        50, 201, 206, 212, 372, 374, 375, 378, 393, 401, 406, 499
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -4235,7 +4251,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "d2cceb6c018d7df82d5605112fcef9f5a20c057ffe608db99dedd7129f9271a2",
+      "sha256": "774e40419301f29108edbc8a1225e173df0a651e8802d307db43a68d920e5196",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
@@ -4248,15 +4264,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        35, 190, 201, 210, 290, 302, 304, 307, 519, 607, 628, 664, 695, 760,
-        792, 882, 915, 924, 933, 952, 1042, 1238, 1473, 1535, 1543, 1601, 1654,
-        1657, 1850, 1859, 1864, 1871, 1954, 1955, 2121, 2122, 2205, 2238, 2266,
-        2268, 2272, 2282, 2284, 2296, 2306, 2316, 2341, 2344, 2345, 2348, 2350,
-        2375, 2427, 2638, 2641, 2933, 3053, 3174, 3187, 3198, 3199, 3386, 3387,
-        3578, 3594, 3606, 3613, 3639, 3649, 3653, 3657, 3661, 3716, 3735, 3762,
-        3779, 3813, 3814, 3816, 3832, 3849, 3850, 3851, 3860, 3865, 4045, 4403,
-        4425, 4434, 4484, 4519, 4525, 4532, 4601, 4687, 4845, 5100, 5110, 5112,
-        5125, 5156, 5158, 5159, 5163, 5167, 5223, 5277, 5328, 5331, 5367
+        42, 197, 208, 217, 297, 309, 311, 314, 531, 619, 640, 676, 707, 772,
+        804, 895, 928, 937, 949, 985, 1082, 1278, 1513, 1575, 1583, 1641, 1694,
+        1697, 1890, 1899, 1904, 1911, 1994, 1995, 2161, 2162, 2245, 2278, 2306,
+        2308, 2312, 2322, 2324, 2336, 2346, 2356, 2381, 2384, 2385, 2388, 2390,
+        2415, 2467, 2678, 2681, 2973, 3093, 3214, 3227, 3238, 3239, 3426, 3427,
+        3618, 3634, 3646, 3653, 3679, 3689, 3693, 3697, 3701, 3756, 3775, 3802,
+        3819, 3853, 3854, 3856, 3872, 3889, 3890, 3891, 3900, 3905, 4085, 4443,
+        4465, 4474, 4524, 4559, 4565, 4572, 4641, 4732, 4890, 5149, 5159, 5161,
+        5174, 5205, 5207, 5208, 5212, 5216, 5272, 5326, 5377, 5380, 5466, 5515
       ],
       "review": "mapped-abstraction"
     },
@@ -5031,6 +5047,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/restore-collection-memo.py",
+      "sha256": "3bf108f1ed9dfa419a760a920fcf46423f0c7fc79bc6e4720b1b335f72cceb73",
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "candidateLines": [62, 106, 137],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/restore-leaderboard-discussions.py",
       "sha256": "1d1b7a6e3815a85212f775653c1cf8cc6283d3a0dc15448108319c00e2d83926",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
@@ -5292,7 +5315,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "4728fed628f41ef9c5f55013713da044a46aea657aeabbf113d827505c93f717",
+      "sha256": "47f02ee4a8b547e9619c352772cbbe7b9f368a11e53d374bae7033cd2e21637d",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5302,8 +5325,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        69, 80, 120, 179, 180, 181, 182, 184, 185, 274, 275, 276, 278, 279, 847,
-        867, 989, 1025, 1064, 1088
+        80, 91, 131, 190, 191, 192, 193, 195, 196, 285, 286, 287, 289, 290, 942,
+        962, 1252, 1288, 1327, 1351
       ],
       "review": "mapped-abstraction"
     },
@@ -15180,6 +15203,24 @@
         "heldSourceKeepsPriorPointsTest",
         "missingOwnershipIsNotDuplicateProofTest",
         "transportFailureDoesNotBecomeCreditTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/incremental_collection.qnt",
+      "sha256": "e0f7a200383ce0ab4406033acfc39cef8e9b9f96ff9dfc8be0941ad214a1b626",
+      "sources": [
+        "scripts/attribution-memo.ts",
+        "scripts/collection-memo.ts",
+        "scripts/restore-collection-memo.py"
+      ],
+      "scenarios": [
+        "auditDiscardsEveryReuseTest",
+        "changedCodeIsFullTest",
+        "changedInputIsRecomputedTest",
+        "forcedFullNeverReusesTest",
+        "missingMemoIsFullTest",
+        "unchangedAnswerIsReusedTest",
+        "weeklyFullTest"
       ]
     },
     {
