@@ -239,7 +239,12 @@ jobs:
     env:
       RELEASE_SHA: ${{ github.sha }}
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
-    runs-on: ubuntu-24.04
+      # A fresh main collection runs on Slop's own collector runner, which
+      # has no 6-hour job limit (operator decision, 20 November 2026). The
+      # runner refuses any job that is not a main-branch run of this
+      # workflow. Clearing the repository variable returns it to hosted runners.
+      SLOP_COLLECTION_DEADLINE_S: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '') && '72000' || '18000' }}
+    runs-on: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '') && vars.SLOP_COLLECTOR_RUNNER || 'ubuntu-24.04' }}
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
@@ -252,7 +257,7 @@ jobs:
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
     # The three-hour window expired before the complete census was written.
-    timeout-minutes: 360
+    timeout-minutes: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '') && 1440 || 360 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -454,7 +459,7 @@ jobs:
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
             mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
-            export SLOP_DISCUSSION_DEADLINE_MS="$(( $(date +%s) * 1000 + 18000000 ))"
+            export SLOP_DISCUSSION_DEADLINE_MS="$(( ( $(date +%s) + SLOP_COLLECTION_DEADLINE_S ) * 1000 ))"
             # Incremental collection: reuse the previous trusted memo when
             # one was restored, and always write this collection's memo.
             if [ -f "$RUNNER_TEMP/restored-collection/collection-memo.json" ]; then
@@ -463,7 +468,7 @@ jobs:
             export SLOP_COLLECTION_MEMO_OUT="$RUNNER_TEMP/collection-memo/collection-memo.json"
             # Reserve time to retain the latest journal of public reads before
             # the job limit, even when an unrelated live endpoint stalls.
-            collect=(timeout --signal=TERM --kill-after=10s 18100 "${collect[@]}")
+            collect=(timeout --signal=TERM --kill-after=10s "$(( SLOP_COLLECTION_DEADLINE_S + 100 ))" "${collect[@]}")
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
