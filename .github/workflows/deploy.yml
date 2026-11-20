@@ -442,6 +442,50 @@ jobs:
           permission-issues: read
           permission-pull-requests: read
 
+      # The value evidence walks Git trees and commits through the GitHub
+      # REST API, which spent most of a collection's hourly allowance (19
+      # November 2026: over an hour on one pull request's tree walk). The
+      # collector answers those exact reads from local bare clones instead,
+      # and reads GitHub whenever a clone cannot answer one exactly
+      # (operator decision, 20 November 2026). The clones live in the
+      # runner's temporary directory, never in the published bundle. Each
+      # directory name must be the repository's canonical GitHub name.
+      # LOCAL_GIT_REPOSITORIES may add more public repositories.
+      - name: Clone repositories for local Git object reads
+        id: local_git
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          github.event_name != 'pull_request' &&
+          inputs.use_published_data != true
+        continue-on-error: true
+        env:
+          LOCAL_GIT_REPOSITORIES: ${{ github.repository }} ${{ vars.LOCAL_GIT_REPOSITORIES }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -uo pipefail
+          root="$RUNNER_TEMP/local-git"
+          for repository in $LOCAL_GIT_REPOSITORIES; do
+            if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+              echo "::warning::Skipping invalid repository name $repository"
+              continue
+            fi
+            target="$root/$repository.git"
+            [ -d "$target" ] && continue
+            mkdir -p "$(dirname "$target")"
+            if timeout 900 git clone --bare --quiet --no-tags \
+                "https://github.com/$repository.git" "$target" &&
+              timeout 900 git -C "$target" fetch --quiet --no-tags origin \
+                '+refs/pull/*/head:refs/pull/*/head'; then
+              echo "Cloned $repository ($(du -sh "$target" | cut -f1))"
+            else
+              echo "::warning::Could not clone $repository; its Git objects are read from GitHub"
+              rm -rf "$target"
+            fi
+          done
+          if compgen -G "$root/*/*.git" > /dev/null; then
+            echo "directory=$root" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate live contribution data
         id: live_ledger
         # Pull-request code is untrusted, so this step never explicitly injects
@@ -459,6 +503,8 @@ jobs:
           # Retry one value-feed read after a temporary outage instead of
           # restarting the whole collection (19 November 2026).
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
+          # Empty unless the clone step above made at least one clone.
+          SLOP_LOCAL_GIT_DIR: ${{ steps.local_git.outputs.directory }}
           SLOP_DEFER_RETAINED_ATTRIBUTION: ${{ inputs.defer_retained_attribution == true && '1' || '' }}
         run: |
           set -euo pipefail

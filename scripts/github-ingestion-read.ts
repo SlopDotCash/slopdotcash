@@ -2,6 +2,7 @@ import {
   type DiscussionCacheOptions,
   githubDiscussionCache,
 } from "./github-discussion-cache";
+import type { LocalGitObjects } from "./local-git-objects";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const IMMUTABLE_CACHE_BYTES = 16 * 1024 * 1024;
@@ -144,6 +145,8 @@ export class GitHubIngestionCheckpointError extends Error {
 interface IngestionReadOptions {
   discussionCache?: DiscussionCacheOptions;
   quotaDeadlineMs?: number;
+  /** Answers exact Git object reads from local clones; a miss reads GitHub. */
+  localGitObjects?: LocalGitObjects;
 }
 
 export type IngestionReadTransport = typeof fetch & {
@@ -234,6 +237,20 @@ export function githubIngestionReadTransport(
       callerSignal?.throwIfAborted();
       checkDeadline();
       const headers = new Headers(init?.headers ?? request?.headers);
+      const accept = headers.get("accept");
+      if (
+        options.localGitObjects &&
+        (accept === null || accept === "application/vnd.github+json") &&
+        !headers.has("range") &&
+        ![...headers.keys()].some((name) => name.startsWith("if-"))
+      ) {
+        const local = await options.localGitObjects.read(url);
+        if (local)
+          return new Response(local, {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+      }
       const verifiesRepresentation =
         !(init?.integrity ?? request?.integrity) &&
         (init?.cache ?? request?.cache ?? "default") === "default";
