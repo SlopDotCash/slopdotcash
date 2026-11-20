@@ -13,6 +13,7 @@ import { projectActivityCollected } from "./project-view";
 import {
   findHistoricalProject,
   findHistoricalRepository,
+  findHistoricalRepositoryIdentity,
   isHistoricalProjectId,
   isHistoricalRepositoryId,
 } from "./projects.mjs";
@@ -1199,14 +1200,15 @@ export function applyPointsSnapshot(
  * an uppercase `/PULL/` variant, evading the evaluated-review suppression
  * (PRD section 14 anti-duplication rule).
  *
- * The owner/repo is resolved through the registered project repository
- * inventory (registry and removed projects via findHistoricalRepository), so a
- * registered alias maps to the canonical repository id: the validator
- * accepts alias paths as review sources, and without this the same PR
- * reached through the canonical id and through an alias would get different
- * identities and evade the evaluated-review suppression (PRD section 14
- * anti-duplication rule). URLs outside the registry keep the case-folded
- * owner/repo path as their identity.
+ * The owner/repo is resolved with findHistoricalRepositoryIdentity, which
+ * joins every recorded name of one repository. An alias on the same registry
+ * record already shares that record's id. A transfer does not:
+ * findHistoricalRepository keeps the old name on the removed pre-registry
+ * record and the current name on the registry record, so the same pull
+ * request gets two identities. An evaluated award on the current name then
+ * misses the substantive review recorded under the old name, and both count
+ * (PRD section 7, no duplicate credit). URLs outside the registry keep the
+ * case-folded owner/repo path as their identity.
  *
  * It returns undefined for anything else, so genuinely different URLs
  * (other hosts, other paths, other PR numbers, non-review fragments) and
@@ -1234,14 +1236,12 @@ export function canonicalReviewIdentity(url: string): string | undefined {
   const fragment = parsed.hash.toLowerCase();
   if (!/^#(pullrequestreview-|discussion_r)\d+$/.test(fragment))
     return undefined;
-  // Canonicalize registered repository aliases: the validator accepts a
-  // review source URL through any registered alias, so keying on the raw
-  // owner/repo would let an evaluated award on the canonical id and a
-  // substantive review on an alias (or vice versa) miss the dedup set and
-  // double-count.
+  // Join a transferred repository's old and current names. Keying on
+  // findHistoricalRepository's per-record id leaves the pre-transfer review
+  // and the post-transfer award as two pull requests.
   const ownerRepo = `${path[1]}/${path[2]}`;
   const repositoryId = (
-    findHistoricalRepository(ownerRepo)?.repositoryId ?? ownerRepo
+    findHistoricalRepositoryIdentity(ownerRepo) ?? ownerRepo
   ).toLowerCase();
   return `${repositoryId}/pull/${path[3]}`;
 }
