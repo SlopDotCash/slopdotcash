@@ -16,7 +16,7 @@ export const meta: ComponentMeta<PayoutRowProps> = {
     TestNetworkToken: { network: "base-sepolia", amount: { amount: "1500000000000000000", decimals: 18, token: "0x1111111111111111111111111111111111111111" }, note: "October 2026" },
   },
   play: {
-    // spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+    // spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
     NeedsWallet: async () => {
       await expect(screen.getByRole("link", { name: "Awaiting wallet: add or confirm your Base wallet" }).getAttribute("href")).toBe("/account#wallets");
     },
