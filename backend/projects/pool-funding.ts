@@ -25,7 +25,6 @@ import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type {
   MonthPledge,
   MonthStart,
-  PoolFundingIndex,
   VaultFreeBalance,
 } from "../../src/lib/pool-funding";
 import type { D1Database, D1QueryStatement } from "../d1";
@@ -161,26 +160,6 @@ export async function readPoolFundingProjects(
     projects.set(row.project_id, list);
   }
   return [...projects].map(([projectId, vaults]) => ({ projectId, vaults }));
-}
-
-/**
- * The same vault rows as an index for the shared listing rule
- * (`listedThisMonth` in src/lib/pool-funding.ts). Throws when D1 cannot be
- * read; callers fail open.
- */
-export async function readPoolFundingIndex(
-  db: Database,
-  tier: "production" | "staging" | string,
-  now: Date,
-): Promise<PoolFundingIndex> {
-  const index: PoolFundingIndex = new Map();
-  for (const { projectId, vaults } of await readPoolFundingProjects(
-    db,
-    tier,
-    now,
-  ))
-    index.set(projectId, vaults);
-  return index;
 }
 
 export async function handlePoolFundingApi(

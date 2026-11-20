@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import {
   asShown,
-  homePoolReward,
   listedThisMonth,
+  listingPoolReward,
   monthsCovered,
   monthsCoveredLabel,
   type PoolFundingIndex,
@@ -54,10 +54,12 @@ test("a vault holding the monthly amount shows the money", () => {
   expect(asShown(project("250000000"), index({}), NOW).reward).toMatchObject({
     monthlyCapMinor: "250000000",
   });
-  expect(homePoolReward(project("250000000"), index({}), NOW)).toMatchObject({
-    fundingTag: "Vaulted",
-    warning: null,
-  });
+  expect(listingPoolReward(project("250000000"), index({}), NOW)).toMatchObject(
+    {
+      fundingTag: "Vaulted",
+      warning: null,
+    },
+  );
 });
 
 test("a vault short of the monthly amount reads as points only", () => {
@@ -80,7 +82,7 @@ test("an owner promise distinguishes a short vault from an unread vault", () => 
   const missing = index({ freeBalance: null });
   const unread = publicPoolReward(optedIn, missing, NOW);
   expect(unread.promise).toBe("Promised · Vault funding unverified");
-  expect(homePoolReward(optedIn, missing, NOW)).toMatchObject({
+  expect(listingPoolReward(optedIn, missing, NOW)).toMatchObject({
     fundingTag: "Promised",
     warning: "Vault funding unverified",
   });
@@ -90,12 +92,12 @@ test("an owner promise distinguishes a short vault from an unread vault", () => 
   expect(promised.project.reward.monthlyCapDisplay).toBe("$250");
   expect(poolFunded(optedIn, short, NOW)).toBe(false);
   expect(publicPoolReward(optedIn, index({}), NOW).promise).toBeNull();
-  expect(homePoolReward(optedIn, short, NOW)).toEqual({
+  expect(listingPoolReward(optedIn, short, NOW)).toEqual({
     project: promised.project,
     fundingTag: "Promised",
     warning: "Not vaulted",
   });
-  expect(homePoolReward(optedIn, index({}), NOW)).toMatchObject({
+  expect(listingPoolReward(optedIn, index({}), NOW)).toMatchObject({
     fundingTag: "Vaulted",
     warning: null,
   });
@@ -103,14 +105,14 @@ test("an owner promise distinguishes a short vault from an unread vault", () => 
 
 test("home shows a configured amount without treating it as an owner promise or verified funding", () => {
   const configured = project("250000000");
-  const unread = homePoolReward(configured, null, NOW);
+  const unread = listingPoolReward(configured, null, NOW);
   expect(unread).toMatchObject({
     fundingTag: "Configured",
     warning: "Vault funding unverified",
   });
   expect(unread.project.reward.monthlyCapMinor).toBe("250000000");
   const short = index({ freeBalance: "249999999" });
-  const shown = homePoolReward(configured, short, NOW);
+  const shown = listingPoolReward(configured, short, NOW);
   expect(shown).toMatchObject({
     fundingTag: "Configured",
     warning: "Not vaulted",
@@ -128,7 +130,7 @@ test("home does not replace a zero current-month override with the positive base
     honorSystem: true,
     cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
   });
-  const home = homePoolReward(capped, index({}), NOW);
+  const home = listingPoolReward(capped, index({}), NOW);
   expect(home).toMatchObject({ fundingTag: null, warning: null });
   expect(home.project.reward.monthlyCapMinor).toBe("0");
   expect(home.project.reward.monthlyCapDisplay).toBe("$0");
@@ -168,7 +170,7 @@ test("this month's amount comes from the month's own cap when one is listed", ()
   } as Partial<ProjectDefinition["reward"]>);
   expect(poolFunded(capped, index({}), NOW)).toBe(false);
   expect(asShown(capped, index({}), NOW).reward.cycleCaps).toBeUndefined();
-  expect(homePoolReward(capped, index({}), NOW)).toMatchObject({
+  expect(listingPoolReward(capped, index({}), NOW)).toMatchObject({
     project: { reward: { monthlyCapMinor: "500000000" } },
     fundingTag: "Configured",
     warning: "Not vaulted",
@@ -183,7 +185,7 @@ test("a points-only pool and other reward kinds pass through unchanged", () => {
     reward: { kind: "external-prize-share" },
   } as unknown as ProjectDefinition;
   expect(asShown(prize, null, NOW)).toBe(prize);
-  expect(homePoolReward(prize, null, NOW)).toEqual({
+  expect(listingPoolReward(prize, null, NOW)).toEqual({
     project: prize,
     fundingTag: null,
     warning: null,
@@ -309,7 +311,7 @@ test("a vault with pledge support is funded by the month pledged on chain", () =
     poolFundingStatus(project("250000000"), locked, DEC("20T00:00:00")).state,
   ).toBe("funded");
   expect(
-    homePoolReward(
+    listingPoolReward(
       project("250000000", "base-mainnet", { honorSystem: true }),
       locked,
       DEC("20T00:00:00"),
@@ -491,28 +493,30 @@ function active(
   return { ...project(cap), status: "active", ...patch } as ProjectDefinition;
 }
 
-test("only a funded monthly pool is listed this month", () => {
-  expect(listedThisMonth(active("250000000"), index({}), NOW)).toBe(true);
+test("discovery uses the current UTC monthly amount", () => {
+  const configured = active("250000000", { escrow: undefined });
+  expect(listedThisMonth(configured, NOW)).toBe(true);
   expect(
     listedThisMonth(
-      active("250000000"),
-      index({ freeBalance: "249999999" }),
+      {
+        ...configured,
+        reward: {
+          ...configured.reward,
+          cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
+        },
+      },
       NOW,
     ),
   ).toBe(false);
-  // A points-only pool and a project with no vault are not funded either.
-  expect(listedThisMonth(active("0"), index({}), NOW)).toBe(false);
-  expect(listedThisMonth(active("250000000"), new Map(), NOW)).toBe(false);
+  expect(listedThisMonth(active("0"), NOW)).toBe(false);
 });
 
 test("an open security program and other reward kinds stay listed", () => {
-  const empty: PoolFundingIndex = new Map();
   expect(
     listedThisMonth(
       active("0", {
         securityBounty: { status: "open" },
       } as unknown as Partial<ProjectDefinition>),
-      empty,
       NOW,
     ),
   ).toBe(true);
@@ -522,7 +526,6 @@ test("an open security program and other reward kinds stay listed", () => {
       active("0", {
         securityBounty: { status: "draft" },
       } as unknown as Partial<ProjectDefinition>),
-      empty,
       NOW,
     ),
   ).toBe(false);
@@ -531,19 +534,13 @@ test("an open security program and other reward kinds stay listed", () => {
       active("0", {
         reward: { kind: "external-prize-share" },
       } as unknown as Partial<ProjectDefinition>),
-      empty,
       NOW,
     ),
   ).toBe(true);
-  // A paused project keeps its existing listing.
-  expect(listedThisMonth(active("0", { status: "paused" }), empty, NOW)).toBe(
+  expect(listedThisMonth(active("250000000", { status: "paused" }), NOW)).toBe(
     true,
   );
-});
-
-test("unread funding lists every project as before", () => {
-  expect(listedThisMonth(active("250000000"), null, NOW)).toBe(true);
-  expect(listedThisMonth(active("0"), null, NOW)).toBe(true);
+  expect(listedThisMonth(active("0", { status: "paused" }), NOW)).toBe(false);
 });
 
 test("extra money covers more months of the owner's monthly amount", () => {
