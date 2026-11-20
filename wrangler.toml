@@ -24,7 +24,7 @@ SLOP_PRIVATE_INTAKE_MODE = "on"
 # decision of 17 November 2026): off, dry_run or live. dry_run records what a
 # pass would decide and changes no case and notifies nobody. Moving to live
 # needs its own reviewed change after the dry-run counts are read.
-SECURITY_ROUTINE_DECISIONS = "dry_run"
+SECURITY_ROUTINE_DECISIONS = "live"
 
 [[d1_databases]]
 binding = "SLOP_DB"
