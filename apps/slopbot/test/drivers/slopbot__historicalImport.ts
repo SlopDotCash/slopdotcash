@@ -41,7 +41,6 @@ const rubricVersion = "slop-value-rubric:v1";
 const channels: Readonly<Record<Channel, { readonly channel: string; readonly provider: string }>> = {
   ChatgptSubscription: { channel: "chatgpt-subscription", provider: "openai" },
   ClaudeSubscription: { channel: "claude-subscription", provider: "anthropic" },
-  CodexSubscription: { channel: "codex-subscription", provider: "openai" },
 };
 
 const retirements: Readonly<Record<RegistryObservation["retirement"], Retirement>> = {
@@ -60,7 +59,9 @@ const enforcements: ReadonlyArray<{ readonly restriction: RegistryObservation["r
 ];
 
 let generation = 0;
-let platformProject = 0;
+// 1 November 2026 UTC in seconds, the value API start and the cutoff without a configured start.
+const apiStart = Date.UTC(2026, 10, 1) / 1000;
+let cutoff = apiStart;
 let installs: number[] = [];
 let records: ImportedRecord[] = [];
 let last: Imports["last"] = "NoImport";
@@ -109,6 +110,7 @@ function pullInput(repository: string, number: number, source: ImportSource | un
   if (source === undefined || source.read === "PullUnreadable") return { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(1_790_000_000) };
   if (source.read === "PullOpen") return { repo: repository, number, author: "bo", state: "open" as const };
   if (source.occurredAt <= 0) unrealizable("a closed pull request always has a closing time");
+  if (!source.merged) return { repo: repository, number, author: "bo", state: "closed" as const, closedAt: iso(source.occurredAt) };
   return { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(source.occurredAt) };
 }
 
@@ -307,7 +309,7 @@ async function submit(request: ImportRequest) {
     http,
     Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), userAgent: "slopbot" }), http),
     rolesFrom({ ADMIN_GITHUB_IDS: administrator, PROJECT_MODERATOR_GITHUB_IDS: "" }),
-    importSettings({ SLOPBOT_PRODUCER_REVISION: revision, ...platformProject > 0 ? { SLOPBOT_PLATFORM_PROJECT_ID: `project-${platformProject}` } : {} }),
+    importSettings({ SLOPBOT_PRODUCER_REVISION: revision, ...cutoff !== apiStart ? { SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only", SLOPBOT_VALUE_START_AT: new Date(cutoff * 1000).toISOString() } : {} }),
     registry,
     Layer.provide(recordingPublication, registry),
   );
@@ -336,18 +338,19 @@ function view(state: Imports): Observed {
 export const driver: Driver<Observed> & AsyncDisposable = {
   reset: () => {
     generation++;
-    platformProject = 0;
+    cutoff = apiStart;
     installs = [];
     records = [];
     last = "NoImport";
     refusals = 0;
     keyOfDigest.clear();
   },
-  dispatch: (_key, event: Event) => {
+  dispatch: async (_key, event: Event) => {
     switch (event.type) {
-      case "recordPlatformProject": {
-        if (platformProject > 0 || event.project <= 0) return "refused";
-        platformProject = event.project;
+      case "recordCutoff": {
+        // The configured start is read again for every import; the driver sets the consumer's configuration.
+        if (event.cutoff < apiStart || event.cutoff === cutoff) return "refused";
+        cutoff = event.cutoff;
         return "accepted";
       }
       case "applyInstallation": {
@@ -366,7 +369,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
   },
   observe: async () => {
     const install = await runtime.runPromise(installationState(installationId(), installDeliveries()));
-    return view({ records, keys: records.map((record) => record.key), last, refusals, platformProject, install });
+    return view({ records, keys: records.map((record) => record.key), last, refusals, cutoff, install });
   },
   [Symbol.asyncDispose]: async () => {
     await runtime.dispose();

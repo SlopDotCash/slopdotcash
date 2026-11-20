@@ -90,8 +90,23 @@ effect function reinstatementRead(projectId: string) {
   } satisfies ReinstatementRead
 }
 
+// A reinstatement read also needs the retained evidence bucket, the live skill template and GitHub. Workers that never
+// decide a reinstatement (Slopbot, for one) are composed without them, so the read takes them from the worker that
+// asks and fails loudly when they are absent.
+effect function reinstatementServices(services: Context.Context<D1 | Roles | Notices | ContributorAudience | Registry | RegistryManifests | Experimental.Crypto.Crypto>, built: Context.Context<never>) {
+  const merged = Context.merge(Context.merge(built, try Effect.context<never>()), services)
+  const missing = [
+    Option.isNone(Context.getOption(merged, GitHub)) ? "GitHub" : "",
+    Option.isNone(Context.getOption(merged, SkillTemplate)) ? "SkillTemplate" : "",
+    Option.isNone(Context.getOption(merged, EvidenceBucket)) ? "EvidenceBucket" : "",
+  ].filter((name) => name !== "")
+  if (missing.length > 0) return try die(new Error(`A reinstatement read needs ${missing.join(", ")} in this worker`))
+  return merged as Context.Context<D1 | Roles | Notices | ContributorAudience | Registry | RegistryManifests | GitHub | SkillTemplate | EvidenceBucket | Experimental.Crypto.Crypto>
+}
+
 export const EnforcementRowsLive = Layer.provide(Layer.effect(EnforcementRows, effect {
-  const services = try Effect.context<D1 | Roles | Notices | ContributorAudience | Registry | RegistryManifests | GitHub | SkillTemplate | EvidenceBucket | Experimental.Crypto.Crypto>()
+  const services = try Effect.context<D1 | Roles | Notices | ContributorAudience | Registry | RegistryManifests | Experimental.Crypto.Crypto>()
+  const built = try Effect.context<never>()
   return {
     scope: (projectId) => succeed({ version: scopeVersion(projectId), reads: scopeReads(projectId) }),
     decode: (projectId, rows, registry) => Effect.provide(effect {
@@ -116,7 +131,9 @@ export const EnforcementRowsLive = Layer.provide(Layer.effect(EnforcementRows, e
     recordedAt: (ids) => Effect.provide(effect {
       return isNonEmpty(ids) ? try earliestRecorded(ids) : undefined
     }, services),
-    reinstatement: (projectId) => Effect.provide(reinstatementRead(projectId), services),
+    reinstatement: (projectId) => effect {
+      return try Effect.provide(reinstatementRead(projectId), try reinstatementServices(services, built))
+    },
   } satisfies EnforcementRows.Shape
 }), Layer.merge(RegistryLive, RegistryManifestsLive))
 

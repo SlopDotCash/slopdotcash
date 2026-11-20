@@ -13,23 +13,28 @@ import { observe, unregistered } from "../scope/facts.vibe"
 import { type ContextSelection, validContextSelections } from "../value/evidence/context.vibe"
 import { assessmentKeyStored, storedAssessmentKey, valueAssessmentKey, workUnitAssessmentKey } from "../value/history/read.vibe"
 import { reached, withHistoricalIntakeDiagnostics } from "./diagnostics.vibe"
+import { type ValueSettingsVars, valueSettings } from "../value/inference/settings.vibe"
+import { apiStart } from "../../gen/slopbot__valueRequests.effect.vibe"
 
-export interface ImportVars {
+export interface ImportVars extends ValueSettingsVars {
   readonly SLOPBOT_PRODUCER_REVISION?: string
-  readonly SLOPBOT_PLATFORM_PROJECT_ID?: string
 }
 
+// spec/slopbot/historicalImport.md: the cutoff is the value consumer's configured start, or 1 November 2026 UTC when
+// the consumer has no valid settings (seconds, as the import machine counts them).
 export service ImportSettings {
   readonly producerRevision: string
-  readonly platformProjectId: string | undefined
+  readonly cutoff: number
 }
 
 export function importSettings(vars: ImportVars) {
   const revision = vars.SLOPBOT_PRODUCER_REVISION ?? ""
-  const platform = vars.SLOPBOT_PLATFORM_PROJECT_ID ?? ""
-  return Layer.succeed(ImportSettings, {
-    producerRevision: /^[a-f0-9]{40}$/u.test(revision) ? revision : "",
-    platformProjectId: platform === "" ? undefined : platform,
+  return Layer.effect(ImportSettings, effect {
+    const settings = try valueSettings(vars)
+    return {
+      producerRevision: /^[a-f0-9]{40}$/u.test(revision) ? revision : "",
+      cutoff: settings === undefined ? apiStart : Math.floor(settings.start / 1000),
+    }
   })
 }
 
@@ -95,7 +100,6 @@ interface SourceFacts {
 const channels = {
   "chatgpt-subscription": { channel: "ChatgptSubscription", provider: "openai" },
   "claude-subscription": { channel: "ClaudeSubscription", provider: "anthropic" },
-  "codex-subscription": { channel: "CodexSubscription", provider: "openai" },
 } as const
 
 const digestPattern = /^[a-f0-9]{64}$/u
@@ -206,7 +210,7 @@ function projectNumber(projects: Map<string, number>, projectId: string | undefi
 
 function unread(selection: Selection): SourceFacts {
   return {
-    source: { repository: 0, project: 0, pull: selection.number, registry: unregistered, visibility: "VisibilityUnknown", read: "PullUnreadable", occurredAt: 0 },
+    source: { repository: 0, project: 0, pull: selection.number, registry: unregistered, visibility: "VisibilityUnknown", read: "PullUnreadable", occurredAt: 0, merged: false, indirectAcceptance: false, claimed: false },
     admitted: { ...selection, repositoryDatabaseId: 0, repositoryNodeId: "", pullRequestNodeId: "", projectId: "" },
   }
 }
@@ -244,11 +248,15 @@ effect function sourceFacts(selection: Selection, projects: Map<string, number>,
   const identity = { ...selection, repositoryDatabaseId: repository.id, repositoryNodeId: repository.node_id, projectId: registered.projectId ?? "" }
   try reached("source-installation", index, count)
   if (!(try installationCovers(repository.id, repository.node_id))) {
-    return { source: { ...known, read: "PullUnreadable", occurredAt: 0 }, admitted: { ...identity, pullRequestNodeId: "" } } satisfies SourceFacts
+    return { source: { ...known, read: "PullUnreadable", occurredAt: 0, merged: false, indirectAcceptance: false, claimed: false }, admitted: { ...identity, pullRequestNodeId: "" } } satisfies SourceFacts
   }
   const pull = try github.json(`/repos/${selection.repository}/pulls/${selection.number}`, PullFacts, { limitBytes: githubLimitBytes })
+  // Whether a later closed, unmerged source was indirectly accepted, or credits, carries or accepts a claim, is known
+  // only from the prepared work-unit evidence, which admission does not hold. Until it is proven otherwise such a
+  // source is treated as accepted and claimed, so it is never admitted as context.
+  const unproven = pull.merged_at === null
   return {
-    source: { ...known, read: pull.state === "closed" ? "PullClosed" : "PullOpen", occurredAt: secondsOf(pull.merged_at ?? pull.closed_at) },
+    source: { ...known, read: pull.state === "closed" ? "PullClosed" : "PullOpen", occurredAt: secondsOf(pull.merged_at ?? pull.closed_at), merged: pull.merged_at !== null, indirectAcceptance: unproven, claimed: unproven },
     admitted: { ...identity, pullRequestNodeId: pull.node_id },
   } satisfies SourceFacts
 }
@@ -279,8 +287,9 @@ export effect function importsMachine(start: Imports) {
   return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
 }
 
-effect function admissionState(install: Installation, platformProject: number, keyStored: boolean, request: ImportRequest) {
-  const recorded = platformProject > 0 ? try apply({ ...initial, install }, { type: "recordPlatformProject", project: platformProject }) : { ...initial, install }
+effect function admissionState(install: Installation, cutoff: number, keyStored: boolean, request: ImportRequest) {
+  const start = { ...initial, install }
+  const recorded = cutoff !== start.cutoff ? try apply(start, { type: "recordCutoff", cutoff }) : start
   if (!keyStored) return recorded
   return try decodeState({ ...recorded, records: [{ key: request.assessmentKey, producer: request.producer, sources: sourceIds(request.sources) }], keys: [request.assessmentKey] })
 }
@@ -294,7 +303,6 @@ export effect function publishSubscription(administratorGithubId: string, input:
   if (bundle !== undefined && !joint) throw new ImportRefused({ reason: "Joint merge reconstruction is unavailable" })
   const settings = try ImportSettings
   const projects = new Map<string, number>()
-  const platformProject = projectNumber(projects, settings.platformProjectId)
   try reached("installation", null, count)
   const install = try installationState(envelope.installationId)
   const facts = active(install) ? try installedFacts(envelope.installationId, envelope.sources, projects) : envelope.sources.map(unread)
@@ -309,8 +317,10 @@ export effect function publishSubscription(administratorGithubId: string, input:
     sources: facts.map((fact) => fact.source),
     producer: envelope.producer,
     assessmentKey: 1,
+    limitations: 0,
+    claims: 0,
   }
-  const machine = try importsMachine(try admissionState(install, platformProject, try assessmentKeyStored(assessmentKey), request))
+  const machine = try importsMachine(try admissionState(install, settings.cutoff, try assessmentKeyStored(assessmentKey), request))
   const decided = try machine.send({ type: "submit", request })
   if (decided.last !== "Imported") throw new ImportRefused({ reason: "Historical assessment was refused" })
   const receipt = try (try HistoricalPublication).publish({

@@ -18,7 +18,7 @@ effect function answerDraft(session: AppealSession, appealKey: string, loaded: L
   const authority: AuthorityCheck = { actor: sender, item: loaded.appeal.subject.item, role }
   const banned = try commitAppeal(appealKey, {}, (current) => [
     { event: { type: "observeBan", status: current.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
-    { event: { type: "escalateBanAtAnswer" }, by: 0, optional: true },
+    { event: { type: "escalateBanAtAnswer", authority }, by: sender, optional: true },
   ])
   if (banned.applied.includes("escalateBanAtAnswer")) try publishStage(session, appealKey, "escalation")
   if (banned.appeal.escalation !== "NotEscalated") {
@@ -36,7 +36,7 @@ effect function answerDraft(session: AppealSession, appealKey: string, loaded: L
     { event: { type: "observeBan", status: current.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
     { event: { type: "escalateByCriteria" }, by: 0, optional: true },
     { event: { type: "accept", authority }, by: sender, optional: true },
-    { event: { type: "escalateBanAtAnswer" }, by: 0, optional: true },
+    { event: { type: "escalateBanAtAnswer", authority }, by: sender, optional: true },
   ])
   if (accepted.applied.includes("accept")) return try finishAppeal(session, appealKey)
   if (accepted.applied.includes("escalateByCriteria") || accepted.applied.includes("escalateBanAtAnswer")) try publishStage(session, appealKey, "escalation")

@@ -35,6 +35,7 @@ export const runMillis = 4 * 60 * 1000
 const passing: Omit<Gathered, "registry" | "occurredAt"> = {
   threw: false,
   configured: true,
+  valueStart: apiStart,
   repositoryMatches: true,
   pull: "PullClosed",
   evidenceComplete: true,
@@ -249,6 +250,8 @@ effect function gather(job: ValueRequest, claim: Claim) {
   const config = try InferenceConfig
   const configured = budgetConfigured(config.settings) && config.producerRevision !== undefined && (try Gateways).configured.size > 0
   if (!configured) return { gathered: { ...start, configured: false }, sources: [] } satisfies Gathering
+  // spec/slopbot/valueRequests.md: work accepted before the consumer's configured start is historical.
+  const valueStart = Math.floor((config.settings?.start ?? apiStart * 1000) / 1000)
   const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
   const repository = registered === undefined ? undefined : findRepository(registered.repositories, `${job.owner}/${job.repo}`)
   if (registered === undefined || repository === undefined) return { gathered: { ...start, repositoryMatches: false }, sources: [] } satisfies Gathering
@@ -261,8 +264,8 @@ effect function gather(job: ValueRequest, claim: Claim) {
     if (pull === "missing") return { gathered: { ...start, pull: "PullMissing" }, sources: [] } satisfies Gathering
     if (pull === "unreadable") return { gathered: { ...start, pull: "PullUnreadable" }, sources: [] } satisfies Gathering
     if (pull.state !== "closed") return { gathered: { ...start, pull: "PullOpen" }, sources: [] } satisfies Gathering
-    const occurred: Gathered = { ...start, occurredAt: seconds(pull.merged_at ?? pull.closed_at) }
-    if (occurred.occurredAt <= 0 || occurred.occurredAt < apiStart) return { gathered: occurred, sources: [] } satisfies Gathering
+    const occurred: Gathered = { ...start, valueStart, occurredAt: seconds(pull.merged_at ?? pull.closed_at) }
+    if (occurred.occurredAt <= 0 || occurred.occurredAt < valueStart) return { gathered: occurred, sources: [] } satisfies Gathering
     const evidence = try collectEvidence({ repository: repository.id, number: job.number, policy: repository })
     if (evidence.limitations.length > 0 && !noChangePromotionDeferralOnly(evidence) && !nativeMergeDeferralOnly(evidence))
       return { gathered: { ...occurred, evidenceComplete: false }, sources: [] } satisfies Gathering

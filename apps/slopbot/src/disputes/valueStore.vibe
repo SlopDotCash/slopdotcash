@@ -281,6 +281,7 @@ effect function writesFor(key: string, options: ValueOptions, loaded: LoadedDisp
     case "escalateOverdue":
       return try escalationStatements(key, itemNodeId, escalationTextOf(next.escalation, "appellant"), next.notices, at)
     case "reject":
+    case "escalateBanAtAnswer":
       return try escalationStatements(key, itemNodeId, escalationTextOf(next.escalation, answeredBy(before, step.by)), next.notices, at)
     case "accept":
       return [resolvedWrite(key, next.resolution, answeredBy(before, step.by), at)]
