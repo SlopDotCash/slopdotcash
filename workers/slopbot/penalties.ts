@@ -8,7 +8,7 @@ import { penaltyDebit } from "../verified-policy";
 import type { Category } from "./contracts";
 import type { D1Database } from "./persistence";
 
-const PENALTY_TABLE_VERSION = "slopbot-penalties-v1";
+const PENALTY_TABLE_VERSION = "slopbot-penalties-v2";
 
 type PenaltyRule = {
   /** "label" means Slopbot never closes this category. */
@@ -53,7 +53,11 @@ export const PENALTY_TABLE: Readonly<
   gaming: QUOTED_RULE,
   // Not in the published table: no debit.
   empty: NO_DEBIT,
-  missing_evidence: NO_DEBIT,
+  missing_evidence: {
+    action: "close",
+    debitThirds: penaltyDebit("missing_evidence"),
+    moderatorReview: false,
+  },
 };
 
 export function penaltyFor(category: Category): PenaltyRule | null {
