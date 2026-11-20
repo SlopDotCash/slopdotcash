@@ -381,7 +381,14 @@ pure def sometimesLatestAdmittedAfterSourceChange(c: Commitment): bool = c.phase
 These input sets bound simulation only. Discovered by simulation: a view at
 the second source sequence that admits r1 lets the latest attempt be admitted
 whichever root the walk signs first, and the same view admits a superseded
-root when r1 was signed first.
+root when r1 was signed first. Discovered by simulation: with the earlier
+weights the walk usually observed past every unadmitted view before it
+authorized and signed, so a second attempt at a newer source sequence was
+almost never signed and the search for a reattested
+admission did not finish in its time limit. Authorization is now chosen
+first, a newer view is observed rarely, signing and the facts it needs are
+chosen often, and an unadmitted view and an admitting view at the second
+source sequence give the walk a second chance to sign and admit.
 
 ```quint
 pure val familyValues = Set(EvmV2, SolanaV3)
@@ -395,6 +402,8 @@ pure val viewValues = Set(
   { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(4) },
   { ...emptyView, height: 3, time: 1796342600, cap: List(8), admittedRoot: "r1", remaining: List(5) },
   { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r1", remaining: List(4) },
+  { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1") },
+  { ...emptyView, height: 4, time: 1796342700, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r1", remaining: List(4) },
   { ...emptyView, height: 4, time: 1796342700, cap: List(8), admittedRoot: "r1", remaining: List(0), monthlyEnabled: false },
   { ...emptyView, height: 4, time: 1796342700, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(0), authority: "next" },
   { ...emptyView, height: 5, time: 1799020800, cap: List(8) },
@@ -414,8 +423,9 @@ pure val legacyValues = Set({ root: "v1", snapshotDigest: "d1", wholeGross: List
 pure val attemptIdValues = Set(1, 2)
 pure val rootValues = Set("r1", "r2")
 pure val byValues = Set("attester", "next", "anyone")
-pure val weight_observe = 6
-pure val weight_observeFacts = 8
-pure val weight_signEvm = 6
+pure val weight_authorize = 10
+pure val weight_observe = 1
+pure val weight_observeFacts = 30
+pure val weight_signEvm = 30
 pure val weight_signSolana = 4
 ```

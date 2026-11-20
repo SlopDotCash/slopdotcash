@@ -23553,7 +23553,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "df5758f117b3e5521214201cd0d1b1748f6f84233b00746a1ff6f6d602d29364",
+      "sha256": "3a6823935bac9f5363559205510e2c2267060e5749103534a0cc2559b0ed1e04",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -23752,6 +23752,7 @@
             "attemptIdValues",
             "rootValues",
             "byValues",
+            "weight_authorize",
             "weight_observe",
             "weight_observeFacts",
             "weight_signEvm",
