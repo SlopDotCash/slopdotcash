@@ -103,18 +103,20 @@ pure def resolveRepository(s: MaintainerSession, by: int, repositoryId: int, amb
   if (ambiguous or repositoryId <= 0) { ...s, phase: Idle, task: NoTask }
   else { ...s, phase: Working, repositoryId: repositoryId }
 pure def siteServes(task: MaintainerTask, act: SiteAction): bool =
-  if (task == AddOrResume) Set(RunSetupCheck, PublishRevision).contains(act)
+  if (task == AddOrResume) act == RunSetupCheck or act == PublishRevision
   else if (task == MaintainRules) act == PublishRevision
-  else if (task == ManageCases) Set(ReadCase, RecordDecision).contains(act)
-  else if (task == ManageRewards) Set(AdjustAllocation, FinalizeAllocation, RecordDecision).contains(act)
+  else if (task == ManageCases) act == ReadCase or act == RecordDecision
+  else if (task == ManageRewards) act == AdjustAllocation or act == FinalizeAllocation or act == RecordDecision
   else if (task == RemoveProject) act == RemoveListing
   else if (task == CancelApplication) act == CancelPending
   else false
 pure def repoServes(task: MaintainerTask, act: RepoAction): bool =
-  act != SelfApprove and Set(ReviewIncoming, RepairCI, MaintainRules).contains(task)
-pure def lawEntryFlowServesNoPolicyChange(task: MaintainerTask): bool =
-  Set(ClearRestriction, ChangeClosureConsent, ChangeFundingRequirement, ChangePaymentPolicy, ActivateProduction, SignTransfer)
-    .forall(a => not(siteServes(task, a)))
+  act != SelfApprove and (task == ReviewIncoming or task == RepairCI or task == MaintainRules)
+pure def policyAction(act: SiteAction): bool =
+  act == ClearRestriction or act == ChangeClosureConsent or act == ChangeFundingRequirement
+    or act == ChangePaymentPolicy or act == ActivateProduction or act == SignTransfer
+pure def lawEntryFlowServesNoPolicyChange(task: MaintainerTask, act: SiteAction): bool =
+  policyAction(act) implies not(siteServes(task, act))
 pure def alwaysWorkHasOneMatchedRepository(s: MaintainerSession): bool =
   (s.phase == Working or s.phase == Finished) implies (s.repositoryId > 0 and s.task != NoTask)
 pure def sometimesAmbiguousTargetAsked(s: MaintainerSession): bool = s.phase == Idle and s.browser
@@ -163,7 +165,7 @@ pure def alwaysSessionNeedsBrowser(s: MaintainerSession): bool = s.slopSession i
 pure def stepRestrictionClearedOnlyByAuthority(before: MaintainerSession, via: str, after: MaintainerSession): bool =
   (before.restricted and not(after.restricted)) implies via == "observeRestriction"
 pure def sometimesAccountChangeDiscardedCase(s: MaintainerSession): bool =
-  s.accountEpoch > 0 and s.applied.includes(ReadCase) and not(s.privateView)
+  s.accountEpoch > 0 and s.applied.some(x => x == ReadCase) and not(s.privateView)
 ```
 
 ### Website actions run through existing controls; without a browser they are only prepared
@@ -189,7 +191,7 @@ pure def giveDecision(s: MaintainerSession, by: int, d: Decision): MaintainerSes
   { ...s, decisions: s.decisions.append(d) }
 pure def mayAct(s: MaintainerSession, act: SiteAction, decision: Decision, ownRecord: bool): bool =
   siteServes(s.task, act) and holds(s, required(act)) and s.slopSession and s.browser
-    and (act != RecordDecision or s.decisions.includes(decision))
+    and (act != RecordDecision or s.decisions.some(x => x == decision))
     and not(ownRecord and (act == AdjustAllocation or act == FinalizeAllocation))
 pure def canSiteAct(s: MaintainerSession, by: int, act: SiteAction, decision: Decision, ownRecord: bool, answer: Outcome): bool =
   by == agent and s.phase == Working and not(s.uncertain) and s.browser
@@ -206,8 +208,7 @@ pure def canPrepare(s: MaintainerSession, by: int, act: SiteAction): bool =
 pure def prepare(s: MaintainerSession, by: int, act: SiteAction): MaintainerSession =
   { ...s, prepared: s.prepared.append(act) }
 pure def alwaysNoPolicyActionApplied(s: MaintainerSession): bool =
-  s.applied.every(a => not(Set(ClearRestriction, ChangeClosureConsent, ChangeFundingRequirement, ChangePaymentPolicy,
-    ActivateProduction, SignTransfer).contains(a)))
+  s.applied.every(a => not(policyAction(a)))
 pure def alwaysAppliedServesTheTask(s: MaintainerSession): bool = s.applied.every(a => siteServes(s.task, a))
 pure def alwaysWithoutBrowserNothingApplied(s: MaintainerSession): bool = not(s.browser) implies s.applied == List()
 pure def stepDecisionRecordedOnlyWhenGiven(before: MaintainerSession, after: MaintainerSession): bool =
@@ -218,9 +219,9 @@ pure def unchangedActions(before: MaintainerSession, after: MaintainerSession): 
     and after.prepared.length() == before.prepared.length() and after.refused == before.refused
 pure def stepNoActionWhileUncertain(before: MaintainerSession, via: str, after: MaintainerSession): bool =
   (before.uncertain and via == "siteAct") implies unchangedActions(before, after)
-pure def sometimesSetupCheckApplied(s: MaintainerSession): bool = s.applied.includes(RunSetupCheck)
+pure def sometimesSetupCheckApplied(s: MaintainerSession): bool = s.applied.some(x => x == RunSetupCheck)
 pure def sometimesUncertainReadBackApplied(s: MaintainerSession): bool = s.readBacks > 0 and s.applied.length() > 0
-pure def sometimesDecisionRecorded(s: MaintainerSession): bool = s.applied.includes(RecordDecision)
+pure def sometimesDecisionRecorded(s: MaintainerSession): bool = s.applied.some(x => x == RecordDecision)
 pure def sometimesPreparedWithoutBrowser(s: MaintainerSession): bool = s.prepared.length() > 0 and s.applied == List()
 pure def sometimesRefusedWithoutHumanDecision(s: MaintainerSession): bool =
   s.task == ManageCases and s.refused > 0 and s.decisions == List()
@@ -241,17 +242,17 @@ pure def authorizeWrite(s: MaintainerSession, by: int, act: RepoAction): Maintai
   { ...s, authorizedWrites: s.authorizedWrites.append(act) }
 pure def repoPermitted(s: MaintainerSession, act: RepoAction): bool =
   repoServes(s.task, act) and holds(s, RepoWrite)
-    and ((act != MergePR and act != ReleaseOrDeploy) or s.authorizedWrites.includes(act))
+    and ((act != MergePR and act != ReleaseOrDeploy) or s.authorizedWrites.some(x => x == act))
 pure def canRepoWrite(s: MaintainerSession, by: int, act: RepoAction): bool = by == agent and s.phase == Working
 pure def repoWrite(s: MaintainerSession, by: int, act: RepoAction): MaintainerSession =
   if (repoPermitted(s, act)) { ...s, repoWrites: s.repoWrites.append(act) } else { ...s, refused: s.refused + 1 }
-pure def alwaysNoSelfApproval(s: MaintainerSession): bool = not(s.repoWrites.includes(SelfApprove))
+pure def alwaysNoSelfApproval(s: MaintainerSession): bool = not(s.repoWrites.some(x => x == SelfApprove))
 pure def alwaysMergeAndReleaseAuthorized(s: MaintainerSession): bool =
-  (s.repoWrites.includes(MergePR) implies s.authorizedWrites.includes(MergePR))
-    and (s.repoWrites.includes(ReleaseOrDeploy) implies s.authorizedWrites.includes(ReleaseOrDeploy))
+  (s.repoWrites.some(x => x == MergePR) implies s.authorizedWrites.some(x => x == MergePR))
+    and (s.repoWrites.some(x => x == ReleaseOrDeploy) implies s.authorizedWrites.some(x => x == ReleaseOrDeploy))
 pure def sometimesReviewedWithoutMerge(s: MaintainerSession): bool =
-  s.repoWrites.includes(PostReview) and not(s.repoWrites.includes(MergePR)) and s.refused > 0
-pure def sometimesAuthorizedMerge(s: MaintainerSession): bool = s.repoWrites.includes(MergePR)
+  s.repoWrites.some(x => x == PostReview) and not(s.repoWrites.some(x => x == MergePR)) and s.refused > 0
+pure def sometimesAuthorizedMerge(s: MaintainerSession): bool = s.repoWrites.some(x => x == MergePR)
 ```
 
 ### The session finishes with its actual results and nothing uncertain left unread
