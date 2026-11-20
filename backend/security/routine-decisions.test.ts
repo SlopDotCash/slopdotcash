@@ -230,12 +230,13 @@ function fixture() {
     as: Actor,
     summary: string,
     description = `${summary}. At commit abc a local test with synthetic funds shows it.`,
+    extra: Record<string, unknown> = {},
   ) => {
     const created = await call(as, "POST", "security-submissions", {
       projectId: PROJECT,
       idempotencyKey: `routine-key-${++sequence}`.padEnd(20, "0"),
       origin: "slop",
-      report: { summary, description },
+      report: { summary, description, ...extra },
     });
     expect(created.status).toBe(201);
     const submission = created.body.submission;
@@ -391,7 +392,7 @@ describe("routine decisions on private reports", () => {
         exclusion_line: PHISHING_LINE,
         applied: 0,
         model_calls: 2,
-        prompt_revision: "slop-security-routine-decision-1",
+        prompt_revision: "slop-security-routine-decision-2",
       },
     ]);
     // A repeat pass decides nothing twice.
@@ -669,6 +670,43 @@ describe("routine decisions on private reports", () => {
       basis: "two-calls",
       hold_reason: null,
     });
+  });
+
+  test("a proof-of-concept file is proof present: the calls read it and no request for proof follows", async () => {
+    const t = fixture();
+    const proofOfConcept = {
+      fileName: "FeeOverflow.t.sol",
+      patch:
+        "--- a/test/Fee.t.sol\n+++ b/test/Fee.t.sol\n@@ -1 +1,2 @@\n+function testFeeOverflow() public {}\n",
+    };
+    const filed = await t.report(
+      ALICE,
+      "Fee math overflows on large deposits",
+      "Fee math overflows on large deposits at commit abc; see the attached test.",
+      { proofOfConcept },
+    );
+    t.answers.set("Fee math overflows on large deposits", () => [
+      answer({ proof: "missing", missing: ["runnable-proof"] }),
+      answer({ proof: "missing", missing: ["reproduction-steps"] }),
+    ]);
+    await t.pass();
+    expect(t.routineInputs.at(-1)?.report.proofOfConcept).toEqual(
+      proofOfConcept,
+    );
+    expect(t.caseRow(filed.caseId)).toMatchObject({
+      receipt_state: "triaging",
+      next_action_due_at: null,
+    });
+    expect(t.decisions(filed.caseId)).toMatchObject([
+      { outcome: "acknowledged", basis: "two-calls", applied: 1 },
+    ]);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT proof_present FROM security_routine_decisions WHERE case_id=?",
+        )
+        .get(filed.caseId),
+    ).toEqual({ proof_present: 1 });
   });
 
   test("a report without proof that a call reads as a plausible loss of funds goes straight to the owner, with no clock", async () => {

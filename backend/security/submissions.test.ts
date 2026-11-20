@@ -1255,6 +1255,23 @@ describe("private intake: recorded repository rename", () => {
 });
 
 describe("private intake: send outcomes", () => {
+  test("a proof-of-concept file is forwarded as its own fenced section before the reference line", async () => {
+    const t = setup();
+    const submission = await t.ready();
+    const patch =
+      "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,2 @@\n+// a ```` run of four backticks\n+function testDrain() public {}";
+    const sent = await t.send(submission.id, 1, {
+      ...REPORT,
+      proofOfConcept: { fileName: "drain.patch", patch },
+    });
+    expect(sent.status).toBe(200);
+    const [advisory] = t.github.advisories;
+    const marker = t.row(submission.id).marker;
+    expect(advisory.advisory.description).toBe(
+      `${REPORT.description}\n\n### Proof of concept: drain.patch\n\n\`\`\`\`\`diff\n${patch}\n\`\`\`\`\`\n\nReport reference: ${marker}`,
+    );
+  });
+
   test("a report is filed as the reporter and its receipt is verified with GitHub", async () => {
     const t = setup();
     const submission = await t.ready();
