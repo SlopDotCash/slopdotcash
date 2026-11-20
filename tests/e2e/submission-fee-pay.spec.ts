@@ -17,6 +17,7 @@ import {
 import { expect, expectAccessibleReflow, test } from "./fixtures";
 import {
   expectedCalls,
+  FEE_RATE_REPLY,
   type FeeRecord,
   feeRecord,
   installWallet,
@@ -218,6 +219,85 @@ test("a record that names another contract, token or destination is refused and 
   record = feeRecord(REPOSITORY, 8);
   await page.goto(PAGE, { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText("could not be checked");
+});
+
+test("a SLOP amount that is not the fee at Slop's published rate is refused, and without the rate SLOP is not offered", async ({
+  diagnostics,
+  page,
+}) => {
+  await switchFeeOn(page);
+  let record = feeRecord(REPOSITORY, 7);
+  let rate: unknown = FEE_RATE_REPLY;
+  await serveFeeRecord(
+    page,
+    REPOSITORY,
+    7,
+    () => record,
+    () => rate,
+  );
+  await installWallet(page, scriptedWallet(PAYER).answer);
+  // Ten times the published amount, with or without a matching least amount.
+  for (const change of [
+    { amount: "750000000000000000000" },
+    {
+      amount: "750000000000000000000",
+      minimumAccepted: "750000000000000000000",
+    },
+  ]) {
+    record = feeRecord(REPOSITORY, 7);
+    expect(record.due[2].symbol).toBe("SLOP");
+    record.due[2] = { ...record.due[2], ...change };
+    await page.goto(PAGE, { waitUntil: "networkidle" });
+    await expect(page.getByRole("alert")).toContainText(
+      "could not be checked against Slop's published addresses. Do not pay from this page.",
+    );
+    await expect(page.getByText("750 SLOP", { exact: false })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /pay|connect/iu }),
+    ).toHaveCount(0);
+  }
+  // The rate changed between the two reads: the record names the previous
+  // rate's amount, which is still published for its 48 hours.
+  record = feeRecord(REPOSITORY, 7);
+  rate = {
+    ...FEE_RATE_REPLY,
+    rate: { effectiveAt: "2026-12-05T12:00:00.000Z", slopPerUsd: "100" },
+    previous: {
+      ...FEE_RATE_REPLY.rate,
+      acceptedUntil: "2026-12-07T12:00:00.000Z",
+    },
+  };
+  await page.goto(PAGE, { waitUntil: "networkidle" });
+  const due = page.getByRole("region", { name: "Fee due" });
+  await expect(due.getByRole("listitem")).toHaveCount(3);
+  await expect(due).toContainText("75 SLOP on Robinhood Chain");
+  // After those 48 hours the same record is refused.
+  rate = { ...(rate as typeof FEE_RATE_REPLY), previous: null };
+  await page.goto(PAGE, { waitUntil: "networkidle" });
+  await expect(page.getByRole("alert")).toContainText("could not be checked");
+
+  // The rate route cannot be read: the stablecoin ways only, and a sentence why.
+  rate = null;
+  diagnostics.allowResponse(503, "GET", "/api/v1/submission-fee/rate");
+  record = feeRecord(REPOSITORY, 7);
+  record.due[2] = { ...record.due[2], amount: "750000000000000000000" };
+  await page.goto(PAGE, { waitUntil: "networkidle" });
+  await expect(due.getByRole("listitem")).toHaveText([
+    "2 USDC on Base",
+    "2 USDG on Robinhood Chain",
+  ]);
+  await expect(
+    due.getByText("SLOP is not offered right now", { exact: false }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Pay from a wallet", exact: true })
+    .click();
+  const pay = page.getByRole("region", { name: "Pay the fee" });
+  await pay
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(pay.getByRole("radio")).toHaveCount(2);
+  await expect(pay.getByText("SLOP", { exact: false })).toHaveCount(0);
 });
 
 test("a wallet on another network approves, then deposits exactly the published call, and the page follows it to final", async ({

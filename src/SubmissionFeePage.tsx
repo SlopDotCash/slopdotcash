@@ -11,7 +11,9 @@ import {
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
 } from "./lib/submission-fee.mjs";
 import {
+  FEE_RATE_PATH,
   type FeeItem,
+  type FeeRates,
   FeeRecordError,
   type FeeTables,
   type FeeWay,
@@ -21,6 +23,7 @@ import {
   feeRepository,
   feeRoute,
   readFeeItem,
+  readFeeRates,
 } from "./lib/submission-fee-page";
 import { feePageSetup } from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
@@ -69,12 +72,41 @@ async function loadFeeItem(
   );
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("The fee record is unavailable.");
+  const body = await readBoundedJson(response, 65_536, "submission fee record");
+  // The rates are read after the record, so they are never the older of the two.
+  const listsSlop =
+    Array.isArray((body as { due?: unknown } | null)?.due) &&
+    (body as { due: { symbol?: unknown }[] }).due.some(
+      (entry) => entry?.symbol === "SLOP",
+    );
   return readFeeItem(
-    await readBoundedJson(response, 65_536, "submission fee record"),
+    body,
     repositoryId,
     pullNumber,
     tables,
+    listsSlop ? await loadFeeRates(signal) : null,
   );
+}
+
+/**
+ * Slop's published SLOP rates, or null when they cannot be read. A SLOP
+ * amount is checked against them; without them SLOP is not offered.
+ */
+async function loadFeeRates(signal?: AbortSignal): Promise<FeeRates | null> {
+  try {
+    const response = await fetchWithDeadline(FEE_RATE_PATH, {
+      signal,
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return readFeeRates(
+      await readBoundedJson(response, 4_096, "submission fee rate"),
+    );
+  } catch {
+    // An aborted page read ends with the record read; anything else is "unread".
+    signal?.throwIfAborted();
+    return null;
+  }
 }
 
 function TransactionLink({
@@ -235,7 +267,9 @@ function Due({
         throw new Error(
           latest?.paid
             ? "This pull request is already recorded as paid. Nothing was sent."
-            : "The fee due for this pull request changed. Nothing was sent. Review the payment again.",
+            : way.kind === "slop" && latest?.slopWithheld
+              ? "Slop's published SLOP rate could not be read just now, so the SLOP amount could not be checked. Nothing was sent. Try again, or pay in a stablecoin."
+              : "The fee due for this pull request changed. Nothing was sent. Review the payment again.",
         );
       }
     },
@@ -262,6 +296,13 @@ function Due({
                 </li>
               ))}
             </ul>
+            {item.slopWithheld ? (
+              <p>
+                SLOP is not offered right now: Slop's published SLOP rate could
+                not be read, so the SLOP amount could not be checked. Reload the
+                page to try again.
+              </p>
+            ) : null}
           </section>
           <Terms ways={item.due} />
         </>

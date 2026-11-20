@@ -23,6 +23,8 @@ import {
   SUBMISSION_FEE_STABLE_DECIMALS,
   SUBMISSION_FEE_TOKENS,
   type SubmissionFeeTerms,
+  slopFeeBase,
+  slopRateScaled,
   submissionFeeItem,
   submissionFeeTokenKind,
   validStableFee,
@@ -69,11 +71,23 @@ export type FeeItem = {
   stableMinor: string;
   askedAt: string;
   due: FeeWay[];
+  /**
+   * True when the record lists SLOP but the published SLOP rate could not be
+   * read, so the SLOP amount could not be checked and SLOP is not offered.
+   */
+  slopWithheld: boolean;
   paid: FeePayment | null;
   outcome: FeeOutcome | null;
   outcomeAt: string | null;
   resolveTransaction: string | null;
 };
+
+/**
+ * Slop's published SLOP rates, as `GET /api/v1/submission-fee/rate` serves
+ * them: whole SLOP per 1.00 of stablecoin for the rate in force (null before
+ * the first one) and, during its 48 hours, for the rate before it.
+ */
+export type FeeRates = { current: string | null; previous: string | null };
 
 /** The published tables, with every key present. */
 export type FeeTables = Required<SubmissionFeeTerms>;
@@ -284,17 +298,79 @@ export function savedFeeWay(
   return way(value, null, tables);
 }
 
+/** The API path of the published SLOP rates. */
+export const FEE_RATE_PATH = "/api/v1/submission-fee/rate";
+
+/**
+ * Reads the published SLOP rates. A reply that is not exactly the rate
+ * record throws an ordinary error: the rates then count as unread, and SLOP
+ * is not offered.
+ */
+export function readFeeRates(value: unknown): FeeRates {
+  const unreadable = new Error("The published SLOP rate could not be read.");
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw unreadable;
+  const body = value as Record<string, unknown>;
+  const rate = (entry: unknown): string | null => {
+    if (entry === null) return null;
+    if (typeof entry !== "object" || Array.isArray(entry)) throw unreadable;
+    const slopPerUsd = (entry as Record<string, unknown>).slopPerUsd;
+    try {
+      slopRateScaled(slopPerUsd as string);
+    } catch {
+      throw unreadable;
+    }
+    return slopPerUsd as string;
+  };
+  if (body.schema !== "slop-submission-fee-rate-v1") throw unreadable;
+  const current = rate(body.rate);
+  const previous = rate(body.previous);
+  // A previous rate exists only beside the rate that replaced it.
+  if (current === null && previous !== null) throw unreadable;
+  return { current, previous };
+}
+
+/**
+ * The SLOP amounts the published rates allow for a stablecoin fee, as
+ * (amount to pay, least accepted) pairs. With the rate in force the amount is
+ * the fee at that rate, and the least accepted is the lower of it and the
+ * previous rate's amount during the previous rate's 48 hours. During those 48
+ * hours a record made just before the change may still name the previous
+ * rate's amount for both. Nothing else is a published amount.
+ */
+export function publishedSlopAmounts(
+  stableMinor: string,
+  rates: FeeRates,
+): { amount: string; minimumAccepted: string }[] {
+  if (rates.current === null) return [];
+  const now = slopFeeBase(stableMinor, rates.current);
+  if (rates.previous === null) return [{ amount: now, minimumAccepted: now }];
+  const before = slopFeeBase(stableMinor, rates.previous);
+  return [
+    {
+      amount: now,
+      minimumAccepted: BigInt(before) < BigInt(now) ? before : now,
+    },
+    { amount: before, minimumAccepted: before },
+  ];
+}
+
 /**
  * Reads the API's fee record for one pull request. It must be the record of
  * exactly this repository and number, its item must be the hash computed
  * here, and each way to pay must name the published contract, chain, token
- * and kept-to address. Anything else throws; nothing is offered from it.
+ * and kept-to address. A stablecoin amount must be the pull request's
+ * recorded fee, and a SLOP amount must be that fee at a published rate
+ * (`rates`). Anything else throws; nothing is offered from it. With `rates`
+ * null (the published rate could not be read) a SLOP amount cannot be
+ * checked, so SLOP is left out and only the stablecoin ways remain.
  */
 export function readFeeItem(
   value: unknown,
   repositoryId: string,
   pullNumber: number,
   tables: FeeTables = PUBLISHED_FEE_TABLES,
+  rates: FeeRates | null = null,
 ): FeeItem {
   const body = record(value);
   const item = submissionFeeItem(repositoryId, pullNumber);
@@ -311,12 +387,29 @@ export function readFeeItem(
   )
     throw new FeeRecordError();
   const stableMinor = body.stableMinor;
-  const due = body.due.map((entry) => way(entry, stableMinor, tables));
+  const listed = body.due.map((entry) => way(entry, stableMinor, tables));
   if (
-    new Set(due.map((entry) => `${entry.network}:${entry.token.toLowerCase()}`))
-      .size !== due.length
+    new Set(
+      listed.map((entry) => `${entry.network}:${entry.token.toLowerCase()}`),
+    ).size !== listed.length
   )
     throw new FeeRecordError();
+  const allowed =
+    rates === null ? [] : publishedSlopAmounts(stableMinor, rates);
+  const due = listed.filter((entry) => {
+    if (entry.kind !== "slop") return true;
+    // Unread rates: the amount cannot be checked, so SLOP is not offered.
+    if (rates === null) return false;
+    if (
+      !allowed.some(
+        (pair) =>
+          pair.amount === entry.amount &&
+          pair.minimumAccepted === entry.minimumAccepted,
+      )
+    )
+      throw new FeeRecordError();
+    return true;
+  });
   let paid: FeePayment | null = null;
   if (body.paid !== null && body.paid !== undefined) {
     const payment = record(body.paid);
@@ -353,6 +446,7 @@ export function readFeeItem(
     stableMinor,
     askedAt: instant(body.askedAt),
     due,
+    slopWithheld: due.length !== listed.length,
     paid,
     outcome: outcome as FeeOutcome | null,
     outcomeAt:
