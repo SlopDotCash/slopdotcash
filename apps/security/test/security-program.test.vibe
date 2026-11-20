@@ -64,7 +64,7 @@ function fixture(projectId: string): ProjectView {
 
 function shellOf(program: Program.Shape) {
   const ports = Layer.mergeAll(
-    Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
+    Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), pausedProjects: () => succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
     Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: read.actorGithubId === administrator ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
     Layer.succeed(Restrictions, { account: () => succeed({ banned: false }), project: () => succeed({ restricted: false }), fence: () => succeed(sql`SELECT 1`), unbanned: () => succeed(sql`1`) } satisfies Restrictions.Shape),
     Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies SecurityProgramFunds.Shape),

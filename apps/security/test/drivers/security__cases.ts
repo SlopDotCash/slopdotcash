@@ -53,7 +53,7 @@ const fixture: ProjectView = {
 };
 
 const ports = Layer.mergeAll(
-  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
+  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
     account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),
@@ -245,6 +245,9 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   if ("checkedEpoch" in event && event.checkedEpoch !== snapshot.epoch) return "refused";
   if (event.type === "receive") return cases.has(caseKey) ? "refused" : receive(caseKey, event);
   if (event.type === "claim") return cases.has(caseKey) ? "refused" : claim(caseKey, by);
+  // The application has no route yet that records a maintainer-attested receipt without a claim (the "record"
+  // case mode) or that settles a claim from the program's complete GitHub private-report list (check-receipt).
+  if (event.type === "recordAttested" || event.type === "settleClaim") return "refused";
   const caseId = cases.get(caseKey);
   if (caseId === undefined) return "refused";
   switch (event.type) {

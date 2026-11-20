@@ -58,8 +58,8 @@ const modelled = (revision: RevisionFact): RevisionFact => ({
 
 const ports = Layer.mergeAll(
   Layer.succeed(Registry, {
-    project: () => Effect.succeed({ projectId: PROJECT, revision: 1, manifestSha256: "", rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: STEWARD, repositories: [], closureConsent: false } satisfies ProjectView),
-    byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([]), fence: () => Effect.succeed(sql`1`) }),
+    project: () => Effect.succeed({ projectId: PROJECT, revision: 1, manifestSha256: "", rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: STEWARD, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [], closureConsent: false } satisfies ProjectView),
+    byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(Restrictions, { account: () => Effect.succeed({ banned: false }), project: () => Effect.succeed({ restricted: false }), fence: () => Effect.succeed(sql`SELECT 1`), unbanned: () => Effect.succeed(sql`1`) }),
   Layer.succeed(Notices, {
     statements: (batch) => Effect.succeed(batch.notices.map((notice) => sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at) SELECT ${notice.eventKey}, ${notice.recipientGithubId}, 'payout_exception', ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${notice.sourceAt} WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)),

@@ -175,6 +175,8 @@ function registryOf(request: ImportRequest) {
       byRepository: (repositoryId) => Effect.succeed([...views.values()].find((entry) => entry.view.repositories.some((repository) => repository.id === repositoryId))?.view),
       byPath: (fullName) => Effect.succeed(lookups.get(fullName.toLowerCase())),
       active: () => Effect.succeed([...views.values()].map((entry) => entry.view)),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => Effect.succeed(sql`1`),
     }),
     Layer.succeed(Restrictions, {

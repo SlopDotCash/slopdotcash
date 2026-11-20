@@ -158,6 +158,11 @@ async function send(key: string, event: Event, by: unknown): Promise<"accepted" 
       return qualifiedObserved(entry, event.version);
     case "observeAuthority":
       return outcome(authorityAfter(entry.caseId, entry.authority, event.snapshot), (authority) => { entry.authority = authority; });
+    case "observeReceiptQualified":
+      // Every case this driver opens is received through Slop intake, whose stored receipt source is SlopReceived;
+      // the shell passes that stored source, so a GitHub-verified or maintainer-attested receipt qualification is not
+      // reachable through these cases.
+      return "refused";
   }
 }
 

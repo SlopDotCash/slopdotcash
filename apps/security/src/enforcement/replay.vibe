@@ -4,7 +4,7 @@ import { RowMismatch } from "@repo/platform/d1"
 import type { JournalRow, RegistryMirror } from "@repo/ports/security"
 import type { Disposition } from "../../gen/security__admission.ts"
 import type { Enforcement, Fence, Issuer, PinRead, RecordAction, RevisionPlan } from "../../gen/security__enforcement.ts"
-import { advanceDay, ban, canDenyAppeal, canObserveIdentity, canObserveRevision, canRequestAppeal, decideMalice, denyAppeal, flag, grantExemption, identityOf, initial, latestOf, observeIdentity, observeRevision, platform, quarantine, recognizeFrozen, recordResult, reinstate, reinstateFlagPause, requestAppeal, requestAssessment, requeueTemplate, revokeExemption, settlePendingRevision, withdrawFlag } from "../../gen/security__enforcement.effect.vibe"
+import { advanceDay, ban, canDenyAppeal, canJournalAccountAppeal, canJournalAccountDenial, canJournalAccountReinstatement, canObserveIdentity, canObserveRevision, canRequestAppeal, decideMalice, denyAppeal, flag, grantExemption, identityOf, initial, journalAccountAppeal, journalAccountDenial, journalAccountReinstatement, latestOf, observeIdentity, observeRevision, platform, quarantine, recognizeFrozen, recordResult, reinstate, reinstateFlagPause, requestAppeal, requestAssessment, requeueTemplate, revokeExemption, settlePendingRevision, withdrawFlag } from "../../gen/security__enforcement.effect.vibe"
 import { type AssessmentRow, type GrantRow, type ProjectHistory, jsonOf } from "./rows.vibe"
 
 export const dayMillis = 86_400_000
@@ -105,34 +105,59 @@ function unproducible(row: JournalRow, issue: string) {
 }
 
 interface Expected {
-  readonly kind: RecordAction
+  readonly kinds: ReadonlyArray<RecordAction>
   readonly issuer: Issuer
 }
 
-const kinds: Readonly<Record<string, RecordAction>> = { quarantine: "RecordQuarantine", ban: "RecordBan", request_reinstatement: "RecordAppeal", reinstate: "RecordReinstate", deny_reinstatement: "RecordDeny" }
-
-function expectedOf(row: Pick<JournalRow, "action" | "actor_role">): Expected | undefined {
-  const kind = kinds[row.action]
-  if (kind === undefined) return undefined
-  if (row.actor_role === "contributor-flags") return { kind, issuer: "ByContributorFlags" }
-  if (row.actor_role === "vetting-service") return { kind, issuer: "ByVettingService" }
-  if (row.action === "request_reinstatement") return { kind, issuer: "ByAppellant" }
-  return { kind, issuer: "ByModerator" }
+// spec/security/enforcement.md: a banned account's own appeal, a moderator's denial of the open account appeals and a
+// reinstatement of selected accounts take their sequence numbers in the project journal beside project records. A
+// denial is the project denial while a project appeal is open and the account denial otherwise.
+const kinds: Readonly<Record<string, ReadonlyArray<RecordAction>>> = {
+  quarantine: ["RecordQuarantine"],
+  ban: ["RecordBan"],
+  request_reinstatement: ["RecordAppeal"],
+  reinstate: ["RecordReinstate"],
+  deny_reinstatement: ["RecordDeny", "RecordAccountDenial"],
+  reinstate_accounts: ["RecordAccountReinstatement"],
 }
 
-effect function journalStep(e: Enforcement, row: JournalRow, accounts: ReadonlyArray<number>, named: Named) {
+function accountAppeal(row: Pick<JournalRow, "action" | "actor_role">): boolean {
+  return row.action === "request_reinstatement" && row.actor_role === "banned-account"
+}
+
+function expectedOf(row: Pick<JournalRow, "action" | "actor_role">): Expected | undefined {
+  const listed = accountAppeal(row) ? ["RecordAccountAppeal" as const] : kinds[row.action]
+  if (listed === undefined) return undefined
+  if (row.actor_role === "contributor-flags") return { kinds: listed, issuer: "ByContributorFlags" }
+  if (row.actor_role === "vetting-service") return { kinds: listed, issuer: "ByVettingService" }
+  if (row.action === "request_reinstatement") return { kinds: listed, issuer: "ByAppellant" }
+  return { kinds: listed, issuer: "ByModerator" }
+}
+
+effect function journalStep(e: Enforcement, row: JournalRow, accounts: ReadonlyArray<number>, released: ReadonlyArray<number>, named: Named) {
   if (row.actor_role === "contributor-flags" || row.actor_role === "vetting-service" && row.action === "ban") return e
   const by = idOf(row.actor_github_id)
   switch (row.action) {
     case "quarantine": return quarantine(e, by, fenceOf(e), try planOf(row))
     case "ban": return e.restriction === "ServiceBan" ? decideMalice(e, by, fenceOf(e), [...accounts]) : ban(e, by, fenceOf(e), try planOf(row))
     case "request_reinstatement":
+      if (accountAppeal(row)) {
+        if (!canJournalAccountAppeal(e, by)) throw unproducible(row, "is an account appeal the account's bans do not admit")
+        return journalAccountAppeal(e, by)
+      }
       if (!canRequestAppeal(e, by)) throw unproducible(row, "is an appeal the project appeal does not admit")
       return requestAppeal(e, by)
     case "reinstate": return row.actor_role === "vetting-service" ? reinstateFlagPause(e, 0, pinsFor(e, named)) : reinstate(e, by, fenceOf(e))
     case "deny_reinstatement":
+      if (e.appeal !== "AppealRequested") {
+        if (!canJournalAccountDenial(e, by, fenceOf(e))) throw unproducible(row, "denies no open account appeal")
+        return journalAccountDenial(e, by, fenceOf(e))
+      }
       if (!canDenyAppeal(e, by, fenceOf(e))) throw unproducible(row, "denies no open project appeal")
       return denyAppeal(e, by, fenceOf(e))
+    case "reinstate_accounts":
+      if (!canJournalAccountReinstatement(e, by, fenceOf(e), [...released])) throw unproducible(row, "reinstates accounts the account bans and appeals do not admit")
+      return journalAccountReinstatement(e, by, fenceOf(e), [...released])
     default: throw unproducible(row, "has no enforcement transition")
   }
 }
@@ -186,7 +211,6 @@ function grantRequestOf(grant: GrantRow) {
   const steward = idOf(grant.steward_id)
   return {
     id: grant.sequence,
-    kind: "OwnerApproved" as const,
     repository,
     revision: grant.revision,
     manifestDigest: grant.revision,
@@ -194,10 +218,6 @@ function grantRequestOf(grant: GrantRow) {
     check: { actor: steward, repository, access: "AccessVerified" as const },
     decision: 1,
     reason: 1,
-    branch: "IntegrationBranch" as const,
-    head: 1,
-    scope: 1,
-    limitations: 1,
     confirmed: true,
   }
 }
@@ -314,7 +334,8 @@ effect function items(history: ProjectHistory, revisions: ReadonlyArray<Revision
   }
   for (const row of history.journal) {
     const accounts = history.bans.filter((each) => each.enforcement_id === row.id).map((each) => idOf(each.github_id))
-    found.push({ at: journalTimes.get(row.id) ?? 0, order: 8, index: row.sequence, apply: (e) => journalStep(e, row, accounts, named.get(row.id) ?? unnamed) })
+    const released = [...new Set(history.releases.filter((each) => each.enforcement_id === row.id).map((each) => idOf(each.github_id)))]
+    found.push({ at: journalTimes.get(row.id) ?? 0, order: 8, index: row.sequence, apply: (e) => journalStep(e, row, accounts, released, named.get(row.id) ?? unnamed) })
   }
   return found.toSorted((left, right) => left.at - right.at || left.order - right.order || left.index - right.index)
 }
@@ -338,7 +359,7 @@ export effect function replay(start: Start, history: ProjectHistory, today: numb
   for (const [index, row] of history.journal.entries()) {
     const produced = state.journal[index]
     const expected = expectedOf(row)
-    if (produced === undefined || expected === undefined || produced.seq !== row.sequence || produced.kind !== expected.kind || produced.issuer !== expected.issuer) {
+    if (produced === undefined || expected === undefined || produced.seq !== row.sequence || !expected.kinds.includes(produced.kind) || produced.issuer !== expected.issuer) {
       throw new RowMismatch({ text: "project enforcements", issue: `record ${row.id} does not replay as stored` })
     }
     const listed = named.get(row.id)

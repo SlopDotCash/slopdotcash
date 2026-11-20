@@ -5,9 +5,11 @@
   "type": "module",
   "exports": {
     "./client": "./src/client/index.vibe",
+    "./controlPlane": "./src/qualification/recovery/account.vibe",
     "./live": "./src/live.vibe",
     "./notify": "./src/workers/notify.vibe",
-    "./rpc": "./src/release/rpc/command.vibe"
+    "./rpc": "./src/release/rpc/command.vibe",
+    "./wrangler": "./src/release/wrangler/cloudflare.vibe"
   },
   "scripts": {
     "build": "vite build",

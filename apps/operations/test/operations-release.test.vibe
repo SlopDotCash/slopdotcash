@@ -125,6 +125,7 @@ function recorder(calls: string[]) {
     prepare: () => refused("prepare"),
     publish: (service) => refused(`publish ${service}`),
     feeSettings: () => refused("feeSettings"),
+    feeVersions: () => refused("feeVersions"),
     site: () => refused("site"),
     deployments: () => refused("deployments"),
     served: () => refused("served"),
