@@ -1,0 +1,96 @@
+name: Daily contribution collection
+
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+  workflow_run:
+    workflows: [slop.cash]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  start:
+    name: Start the daily collection
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: slop-daily-collection-start
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || 'refs/heads/main' }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Mint dispatch token
+        id: dispatch-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: write
+      - name: Dispatch a fresh collection unless one is running
+        env:
+          FALLBACK_TOKEN: ${{ github.token }}
+          DISPATCH_APP_CLIENT_ID: ${{ steps.dispatch-token.outputs.installation-id && vars.SCAN_DISPATCH_APP_CLIENT_ID || '' }}
+          DISPATCH_APP_PRIVATE_KEY: ${{ steps.dispatch-token.outputs.installation-id && secrets.SCAN_DISPATCH_APP_PRIVATE_KEY || '' }}
+          DISPATCH_APP_INSTALLATION_ID: ${{ steps.dispatch-token.outputs.installation-id }}
+        run: bun --no-env-file scripts/daily-collection.ts start
+
+  follow-up:
+    name: Publish or resume a main collection
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.id == github.event.repository.id &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: slop-collection-follow-up-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Mint dispatch token
+        id: dispatch-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: write
+      - name: Publish a superseded collection or resume a failed one
+        env:
+          FALLBACK_TOKEN: ${{ github.token }}
+          DISPATCH_APP_CLIENT_ID: ${{ steps.dispatch-token.outputs.installation-id && vars.SCAN_DISPATCH_APP_CLIENT_ID || '' }}
+          DISPATCH_APP_PRIVATE_KEY: ${{ steps.dispatch-token.outputs.installation-id && secrets.SCAN_DISPATCH_APP_PRIVATE_KEY || '' }}
+          DISPATCH_APP_INSTALLATION_ID: ${{ steps.dispatch-token.outputs.installation-id }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: bun --no-env-file scripts/daily-collection.ts follow-up "$RELEASE_RUN_ID"
