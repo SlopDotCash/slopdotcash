@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "953efab15bcc553c47b952c3c9e23dc64c56aa476e189bfe4db2b2634387b4c5",
+  "inventorySha256": "aa56fac5f53d09c9e7fa04ee7214be0c8d1eeb2fb9a00c3fbbb9da8282019594",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -50,11 +50,12 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1016,
+      "line": 1044,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt",
@@ -68,11 +69,12 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1628,
+      "line": 1663,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt",
@@ -2620,6 +2622,16 @@
       "values": ["CLOSED", "OPEN"],
       "models": ["formal/models/points/github_census.qnt"],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/run-asi-november-closeout.ts",
+      "line": 36,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["preflight", "readback"],
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
+      "lexicallyUnmentionedValues": ["preflight", "readback"],
       "review": "candidate-only"
     },
     {

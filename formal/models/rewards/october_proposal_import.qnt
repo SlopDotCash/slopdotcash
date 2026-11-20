@@ -1,5 +1,6 @@
 // @source scripts/october-reward-review.ts
 // @source scripts/prepare-october-rewards.ts
+// @source scripts/guarded-monthly-import.ts
 // @source scripts/run-october-rewards.ts
 // @source .github/workflows/october-rewards.yml
 // @source scripts/prepare-monthly-rewards.ts
