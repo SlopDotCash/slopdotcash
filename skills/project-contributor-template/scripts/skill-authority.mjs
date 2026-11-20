@@ -372,6 +372,36 @@ def branch_code(value):
     return f"{fence} {value} {fence}"
 
 
+def published_repository(repository):
+    # Mirror src/lib/project-skill.mjs publishedRepository. A recorded rename
+    # keeps the original path as id; githubUrl is the live path the skill uses.
+    repository_id = repository["id"]
+    github_url = repository.get("githubUrl")
+    if not isinstance(github_url, str) or not github_url:
+        return repository_id
+    parsed = urllib.parse.urlsplit(github_url)
+    path = parsed.path[1:] if parsed.path.startswith("/") else parsed.path
+    if path.endswith("/"):
+        path = path[:-1]
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() != "github.com"
+        or parsed.username
+        or parsed.password
+        or not repository_id_pattern.fullmatch(path)
+    ):
+        raise ValueError(f"{repository_id} githubUrl is not the current repository")
+    names = [repository_id]
+    aliases = repository.get("aliases")
+    if isinstance(aliases, list):
+        names.extend(alias for alias in aliases if isinstance(alias, str))
+    if not any(name.lower() == path.lower() for name in names):
+        raise ValueError(f"{repository_id} githubUrl is not a registered repository name")
+    if path.lower() == repository_id.lower():
+        return repository_id
+    return path
+
+
 def generated_skill_role():
     return project_skill_templates.get(skill_repository_path)
 
@@ -449,10 +479,11 @@ def render_project_skill(role, template_files, manifest, binding):
     if "SKILL.md" not in template_files or "project.json" in template_files:
         raise ValueError("canonical skill template has an invalid identity")
     text = template_files["SKILL.md"].decode("utf-8")
+    repository_name = published_repository(repository_record)
     values = {
         "{{SLOP_SKILL_NAME}}": skill["id"],
         "{{SLOP_PROJECT_ID}}": project_id,
-        "{{SLOP_REPOSITORY}}": repository_record["id"],
+        "{{SLOP_REPOSITORY}}": repository_name,
         "{{SLOP_INTEGRATION_BRANCH}}": repository_record["integrationBranch"],
     }
     checked = text
@@ -473,6 +504,10 @@ def render_project_skill(role, template_files, manifest, binding):
         "schemaVersion": "1",
         "projectId": project_id,
         "repositoryId": repository_record["id"],
+    }
+    if repository_name != repository_record["id"]:
+        project["currentRepository"] = repository_name
+    project.update({
         "skillName": skill["id"],
         "skillSourcePath": skill_repository_path,
         "publicOrigin": f"https://slop.cash/projects/{project_id}",
@@ -483,7 +518,7 @@ def render_project_skill(role, template_files, manifest, binding):
             "manifestSha256": binding["manifestSha256"],
         },
         "contribution": fields,
-    }
+    })
     rendered = dict(template_files)
     rendered["SKILL.md"] = text.encode("utf-8")
     rendered["project.json"] = (

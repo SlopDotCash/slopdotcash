@@ -388,11 +388,22 @@ export function readProjectSelectionPolicy(scriptUrl = import.meta.url) {
     );
   }
   const record = asRecord(project, "skill project");
-  const repositoryId = asStringField(record, "repositoryId", "skill project");
-  if (!REPOSITORY_RE.test(repositoryId)) {
+  const registered = asStringField(record, "repositoryId", "skill project");
+  if (!REPOSITORY_RE.test(registered)) {
     throw new TypeError(
       "skill project.repositoryId must use the owner/name form",
     );
+  }
+  // A recorded rename keeps repositoryId as the original path. Query the
+  // live path so discovery does not depend on GitHub redirecting the old name.
+  let repositoryId = registered;
+  if (record.currentRepository !== undefined) {
+    repositoryId = asStringField(record, "currentRepository", "skill project");
+    if (!REPOSITORY_RE.test(repositoryId)) {
+      throw new TypeError(
+        "skill project.currentRepository must use the owner/name form",
+      );
+    }
   }
   if (record.selection === undefined) {
     return {

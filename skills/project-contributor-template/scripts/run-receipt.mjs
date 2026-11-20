@@ -957,6 +957,8 @@ function git(repositoryRoot, args) {
   const result = spawnSync("git", ["-C", repositoryRoot, ...args], {
     encoding: "utf8",
     timeout: 10_000,
+    // Bun keeps the environment from process start unless it is passed here.
+    env: process.env,
   });
   if (result.status !== 0 || result.signal || result.error) {
     fail(`git ${args[0]} failed for the contribution repository`);
@@ -969,22 +971,47 @@ export function isRepositoryRoot(repositoryRoot) {
   return git(root, ["rev-parse", "--show-prefix"]) === "";
 }
 
-function requireRepository(repositoryRoot) {
-  const root = realpathSync(resolve(repositoryRoot));
-  if (!isRepositoryRoot(root)) {
-    fail("--repo-root must be the Git repository root");
-  }
-  const remote = git(root, ["remote", "get-url", "origin"]);
-  const normalizedRemote = remote
+const REPOSITORY_PATH = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+
+/** The registry id, plus the live path when a rename recorded one. */
+function repositoryPaths() {
+  const names = [];
+  const add = (name, field) => {
+    if (typeof name !== "string" || !REPOSITORY_PATH.test(name))
+      fail(`project.json ${field} is not a repository`);
+    if (names.some((existing) => existing.toLowerCase() === name.toLowerCase()))
+      return;
+    names.push(name);
+  };
+  add(PROJECT.repositoryId, "repositoryId");
+  if (Object.hasOwn(PROJECT, "currentRepository"))
+    add(PROJECT.currentRepository, "currentRepository");
+  return names;
+}
+
+function normalizeGitHubRemote(remote) {
+  return remote
     .replace(/^git@github\.com:/u, "https://github.com/")
     .replace(/^ssh:\/\/git@github\.com\//u, "https://github.com/")
     .replace(/\.git$/u, "")
     .toLowerCase();
+}
+
+export function requireRepository(repositoryRoot) {
+  const root = realpathSync(resolve(repositoryRoot));
+  if (!isRepositoryRoot(root)) {
+    fail("--repo-root must be the Git repository root");
+  }
+  const normalizedRemote = normalizeGitHubRemote(
+    git(root, ["remote", "get-url", "origin"]),
+  );
+  const accepted = repositoryPaths();
   if (
-    normalizedRemote !==
-    `https://github.com/${PROJECT.repositoryId}`.toLowerCase()
+    !accepted.some(
+      (name) => normalizedRemote === `https://github.com/${name}`.toLowerCase(),
+    )
   ) {
-    fail(`origin must be ${PROJECT.repositoryId}`);
+    fail(`origin must be ${accepted.join(" or ")}`);
   }
   return root;
 }
@@ -1807,7 +1834,7 @@ export async function uploadPrivateTrace(
 
 const PULL_REQUEST_NODE_ID_PATTERN = /^PR_[A-Za-z0-9_-]{1,110}$/u;
 
-function projectPullRequestUrl(value) {
+export function projectPullRequestUrl(value) {
   let url;
   try {
     url = new URL(value);
@@ -1820,6 +1847,11 @@ function projectPullRequestUrl(value) {
       : /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]{0,9})$/u.exec(
           url.pathname,
         );
+  const accepted = repositoryPaths();
+  const matched =
+    match === null
+      ? undefined
+      : accepted.find((name) => name.toLowerCase() === match[1].toLowerCase());
   if (
     url === null ||
     url.protocol !== "https:" ||
@@ -1828,14 +1860,13 @@ function projectPullRequestUrl(value) {
     url.password ||
     url.search ||
     url.hash ||
-    match === null ||
-    match[1].toLowerCase() !== PROJECT.repositoryId.toLowerCase()
+    matched === undefined
   ) {
     fail(
-      `--pull-request must be a https://github.com/${PROJECT.repositoryId}/pull/<number> URL`,
+      `--pull-request must be a https://github.com/${accepted.join(" or ")}/pull/<number> URL`,
     );
   }
-  return `https://github.com/${PROJECT.repositoryId}/pull/${match[2]}`;
+  return `https://github.com/${matched}/pull/${match[2]}`;
 }
 
 /**

@@ -30,6 +30,41 @@ function branchCode(value) {
   return `${fence} ${value} ${fence}`;
 }
 
+/**
+ * The GitHub path a generated skill works in. A recorded rename keeps the
+ * original path as `id` and publishes the live path as `githubUrl`. The same
+ * path, ignoring case, stays the registry id so existing skill bytes do not
+ * change. Any other githubUrl must be one of that repository's aliases.
+ */
+function publishedRepository(repository) {
+  const id = repository.id;
+  const githubUrl = repository.githubUrl;
+  if (typeof githubUrl !== "string" || githubUrl.length === 0) return id;
+  let parsed;
+  try {
+    parsed = new URL(githubUrl);
+  } catch {
+    throw new TypeError(`${id} githubUrl is not the current repository`);
+  }
+  const path = parsed.pathname.replace(/^\/|\/$/gu, "");
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== "github.com" ||
+    parsed.username ||
+    parsed.password ||
+    !REPOSITORY.test(path)
+  )
+    throw new TypeError(`${id} githubUrl is not the current repository`);
+  const names = [id];
+  if (Array.isArray(repository.aliases)) {
+    for (const alias of repository.aliases)
+      if (typeof alias === "string") names.push(alias);
+  }
+  if (!names.some((name) => name.toLowerCase() === path.toLowerCase()))
+    throw new TypeError(`${id} githubUrl is not a registered repository name`);
+  return path.toLowerCase() === id.toLowerCase() ? id : path;
+}
+
 function bytes(value) {
   return typeof value === "string" ? encoder.encode(value) : value;
 }
@@ -68,10 +103,11 @@ export function renderProjectSkill({
     throw new TypeError(`${template} has no SKILL.md`);
   if (Object.hasOwn(templateFiles, "project.json"))
     throw new TypeError(`${template} cannot ship a project.json`);
+  const repositoryName = publishedRepository(repository);
   const values = {
     "{{SLOP_SKILL_NAME}}": skill.id,
     "{{SLOP_PROJECT_ID}}": manifest.id,
-    "{{SLOP_REPOSITORY}}": repository.id,
+    "{{SLOP_REPOSITORY}}": repositoryName,
     "{{SLOP_INTEGRATION_BRANCH}}": repository.integrationBranch,
   };
   let skillText = decoder.decode(bytes(templateFiles["SKILL.md"]));
@@ -90,6 +126,9 @@ export function renderProjectSkill({
     schemaVersion: "1",
     projectId: manifest.id,
     repositoryId: repository.id,
+    ...(repositoryName === repository.id
+      ? {}
+      : { currentRepository: repositoryName }),
     skillName: skill.id,
     skillSourcePath: template,
     publicOrigin: `https://slop.cash/projects/${manifest.id}`,
