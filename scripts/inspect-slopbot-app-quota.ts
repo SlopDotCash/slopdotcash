@@ -8,6 +8,12 @@ const api = "https://api.github.com";
 // The production App identity is documented in workers/slopbot/README.md.
 const productionAppId = "5257625";
 const pageOnePath = "/installation/repositories?per_page=100&page=1";
+// The reviewed recovery cases identify immutable commits. The registry still
+// supplies the repository and its authority for both observation modes.
+const reviewedCommits = {
+  slop360: "2ab9e1bcd82da29b9639859948eb6ad70556a75c",
+  slop367: "6446f3e94529786cd32ec7d0c3f8880fea493eaa",
+} as const;
 const query =
   "query SlopValueReferenceRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner} rateLimit{cost limit remaining resetAt}}";
 
@@ -74,6 +80,21 @@ function budget(value: CoreBudget | undefined) {
   };
 }
 
+function coreHeaders(response: Response) {
+  check(response.headers.get("x-ratelimit-resource") === "core");
+  const header = (part: string) => {
+    const value = response.headers.get(`x-ratelimit-${part}`);
+    check(typeof value === "string" && /^[0-9]{1,16}$/u.test(value));
+    return Number(value);
+  };
+  return budget({
+    limit: header("limit"),
+    remaining: header("remaining"),
+    used: header("used"),
+    reset: header("reset"),
+  });
+}
+
 async function request(
   path: string,
   token: string,
@@ -114,6 +135,14 @@ export async function observe(
   const manifestSha256 = env.SLOP_QUOTA_MANIFEST_SHA256 ?? "";
   const planSha256 = env.SLOP_QUOTA_PLAN_SHA256 ?? "";
   const appId = env.SLOPBOT_APP_ID ?? "";
+  const commitWitness = env.SLOP_QUOTA_COMMIT_WITNESS || "none";
+  check(
+    commitWitness === "none" ||
+      commitWitness === "slop360" ||
+      commitWitness === "slop367",
+  );
+  const commit =
+    commitWitness === "none" ? null : reviewedCommits[commitWitness];
   check(/^[a-z0-9][a-z0-9-]{0,63}$/u.test(project));
   check(
     /^[a-f0-9]{64}$/u.test(manifestSha256) &&
@@ -154,6 +183,13 @@ export async function observe(
       typeof nodeId === "string" &&
       nodeId.length > 0,
   );
+  if (commit) {
+    // GitHub sets these runner values independently of the dispatch inputs.
+    check(
+      String(repositoryId) === env.GITHUB_REPOSITORY_ID &&
+        cleanPath.toLowerCase() === env.GITHUB_REPOSITORY?.toLowerCase(),
+    );
+  }
 
   const key = env.SLOPBOT_APP_PRIVATE_KEY;
   check(typeof key === "string" && key.length > 0);
@@ -171,12 +207,15 @@ export async function observe(
       installation.id > 0 &&
       String(installation.app_id) === appId,
   );
+  const permissions = commit
+    ? { metadata: "read", contents: "read" }
+    : { metadata: "read" };
   const minted = (
     await read<Token>(
       `/app/installations/${installation.id}/access_tokens`,
       jwt,
       "POST",
-      { repository_ids: [repositoryId], permissions: { metadata: "read" } },
+      { repository_ids: [repositoryId], permissions },
       fetchImpl,
     )
   ).value;
@@ -185,8 +224,11 @@ export async function observe(
   try {
     check(Date.parse(minted.expires_at) > Date.now() + 60_000);
     check(
-      Object.keys(minted.permissions).length === 1 &&
-        minted.permissions.metadata === "read",
+      Object.keys(minted.permissions).length ===
+        Object.keys(permissions).length &&
+        Object.entries(permissions).every(
+          ([permission, access]) => minted.permissions[permission] === access,
+        ),
     );
     const snapshot = budget(
       (await get<{ resources?: { core?: CoreBudget } }>("/rate_limit", token))
@@ -205,32 +247,46 @@ export async function observe(
       typeof repository.full_name === "string" &&
       repository.full_name.toLowerCase() === cleanPath.toLowerCase();
     check(page.repositories.filter(matchRepository).length === 1);
+
+    let commitBudget: CoreBudget | undefined;
+    if (commit) {
+      const { response, value } = await get<{ sha: string; files: unknown[] }>(
+        `/repos/${cleanPath}/commits/${commit}?per_page=100&page=1`,
+        token,
+      );
+      check(
+        response.status === 200 &&
+          value.sha === commit &&
+          Array.isArray(value.files) &&
+          value.files.length <= 100,
+      );
+      commitBudget = coreHeaders(response);
+    }
+
     const { response, value: repository } = await get<Repository>(
       `/repos/${cleanPath}`,
       token,
     );
     check(matchRepository(repository));
-    check(response.headers.get("x-ratelimit-resource") === "core");
-    const header = (part: string) => {
-      const value = response.headers.get(`x-ratelimit-${part}`);
-      check(typeof value === "string" && /^[0-9]{1,16}$/u.test(value));
-      return Number(value);
-    };
-    const currentBudget = budget({
-      limit: header("limit"),
-      remaining: header("remaining"),
-      used: header("used"),
-      reset: header("reset"),
-    });
+    const currentBudget = coreHeaders(response);
     const resetDeltaSeconds = currentBudget.reset - snapshot.reset;
     const usedDelta = currentBudget.used - snapshot.used;
     const remainingDelta = snapshot.remaining - currentBudget.remaining;
     check(
       currentBudget.limit === snapshot.limit &&
         Math.abs(resetDeltaSeconds) <= 1 &&
-        usedDelta >= 2 &&
+        usedDelta >= (commit ? 3 : 2) &&
         usedDelta === remainingDelta,
     );
+    if (commitBudget) {
+      check(
+        commitBudget.limit === snapshot.limit &&
+          Math.abs(commitBudget.reset - snapshot.reset) <= 1 &&
+          Math.abs(commitBudget.reset - currentBudget.reset) <= 1 &&
+          commitBudget.used >= snapshot.used + 2 &&
+          currentBudget.used > commitBudget.used,
+      );
+    }
     const [owner, name] = cleanPath.split("/");
     const data = (
       await read<GraphqlResponse>(
@@ -259,6 +315,7 @@ export async function observe(
     );
     const observedAt = Date.now();
     check(Math.min(currentBudget.reset, snapshot.reset) * 1000 > observedAt);
+    if (commitBudget) check(commitBudget.reset * 1000 > observedAt);
     check(Date.parse(graph.resetAt) > observedAt);
     return {
       schemaVersion: "protected-slopbot-app-quota:v1",
@@ -279,7 +336,7 @@ export async function observe(
       tokenExpiresAt: minted.expires_at,
       temporaryTokenRevoked: true,
       restCleanupAllowance: 1,
-      scopedTokenMetadataOnly: true,
+      scopedTokenMetadataOnly: commit === null,
       coreResource: "core",
       core: snapshot,
       restProbe: currentBudget,
@@ -295,6 +352,19 @@ export async function observe(
         remaining: graph.remaining,
         resetAt: graph.resetAt,
       },
+      ...(commit && commitBudget
+        ? {
+            exactCommitGet: {
+              repository: cleanPath,
+              commit,
+              installationId: installation.id,
+              method: "GET" as const,
+              http: 200 as const,
+              remaining: commitBudget.remaining,
+              sameInstallationToken: true as const,
+            },
+          }
+        : {}),
       productionWrites: false,
     };
   } finally {

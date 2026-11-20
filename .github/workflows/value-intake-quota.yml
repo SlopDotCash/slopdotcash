@@ -14,6 +14,14 @@ on:
         description: SHA-256 of the local reviewed singleton plan
         required: true
         type: string
+      commit_witness:
+        description: Optional reviewed commit-files read with the quota token
+        type: choice
+        default: 'none'
+        options:
+          - 'none'
+          - 'slop360'
+          - 'slop367'
 permissions:
   contents: read
 jobs:
@@ -35,6 +43,7 @@ jobs:
           SLOP_QUOTA_PROJECT: ${{ inputs.project }}
           SLOP_QUOTA_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
           SLOP_QUOTA_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          SLOP_QUOTA_COMMIT_WITNESS: ${{ inputs.commit_witness }}
           SLOPBOT_APP_ID: ${{ secrets.SLOPBOT_APP_ID }}
           SLOPBOT_APP_PRIVATE_KEY: ${{ secrets.SLOPBOT_APP_PRIVATE_KEY }}
         run: bun --no-env-file scripts/inspect-slopbot-app-quota.ts
