@@ -271,3 +271,127 @@ test("a pending repository can be removed before publication", async ({
     page.getByRole("button", { name: `Remove ${ADDED}`, exact: true }),
   ).toBeVisible();
 });
+
+test("a maintainer reloads a moved branch head and publishes routing with its contribution guide", async ({
+  diagnostics,
+  page,
+}) => {
+  const project = elizaProject();
+  const branch = "proof-routing";
+  const guide =
+    "Work from proof-routing and show evidence in each pull request.";
+  let head = "a".repeat(40);
+  const published: unknown[] = [];
+  await serveProjectMaintainer(page, () => project);
+  const primary = project.repositories[0];
+  await page.route(
+    `**/api/v1/project-github/repositories/${primary.id}`,
+    (route) =>
+      route.fulfill({
+        json: {
+          repository: lookup({
+            repository: primary.id,
+            numericId: project.authority.repositoryId,
+            nodeId: project.authority.repositoryNodeId,
+            defaultBranch: branch,
+            branches: [primary.integrationBranch, branch],
+            branchCommits: {
+              [primary.integrationBranch]: "b".repeat(40),
+              [branch]: head,
+            },
+          }),
+        },
+      }),
+  );
+  await page.route(/\/api\/v1\/projects\/eliza(?:\?.*)?$/u, (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    const body = route.request().postDataJSON();
+    published.push(body);
+    if (published.length === 1)
+      return route.fulfill({
+        status: 409,
+        json: {
+          error: "branch_head_changed",
+          message:
+            "The GitHub branch moved. Reload and verify its current head.",
+        },
+      });
+    return route.fulfill({
+      json: {
+        project: {
+          id: project.id,
+          revision: 2,
+          status: project.status,
+          manifest: {
+            ...project,
+            contribution: { ...project.contribution, contributionGuide: guide },
+            repositories: [
+              { ...primary, integrationBranch: branch },
+              ...project.repositories.slice(1),
+            ],
+          },
+        },
+        changes: {
+          presentation: [],
+          executable: ["repositories", "contribution"],
+          financial: [],
+        },
+        setup: {
+          projectId: project.id,
+          name: project.name,
+          slug: project.slug,
+          revision: 2,
+          state: "ready",
+          status: project.status,
+          nextAction: { kind: "none", message: "Project active.", href: null },
+          checks: {
+            authority: { state: "verified", message: "Verified." },
+            installation: { state: "installed", message: "Installed." },
+            scan: { state: "cleared", message: "Cleared." },
+          },
+          funding: { mode: "none" },
+          activatedRevision: null,
+          checkedAt: new Date().toISOString(),
+        },
+      },
+    });
+  });
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  const disclosure = page.locator("summary", { hasText: /^Repositories$/u });
+  await disclosure.click();
+  const group = page.locator("details", { has: disclosure });
+  const loadBranches = group.getByRole("button", {
+    name: "Change integration branch",
+  });
+  const pickBranch = group.getByLabel("New integration branch");
+  const publish = page.getByRole("button", {
+    name: "Publish changes",
+    exact: true,
+  });
+  await loadBranches.click();
+  await pickBranch.selectOption(branch);
+  await page.locator("summary", { hasText: /^Contribution rules$/u }).click();
+  await page.locator("summary", { hasText: /^More rules$/u }).click();
+  await page.getByLabel("Contribution guide", { exact: true }).fill(guide);
+  diagnostics.allowResponse(409, "PUT", "/api/v1/projects/eliza");
+  await publish.click();
+  await expect(
+    page.getByText("The GitHub branch moved.", { exact: false }),
+  ).toBeVisible();
+  head = "c".repeat(40);
+  await loadBranches.click();
+  await pickBranch.selectOption(branch);
+  await expectAccessibleReflow(page, "project-integration-branch");
+  await publish.click();
+  await expect(
+    page.getByRole("status").filter({ hasText: /Rev 2(?!\d)/u }),
+  ).toBeVisible();
+  await expect(group.locator("li code").first()).toHaveText(branch);
+  expect(published).toEqual(
+    ["a".repeat(40), head].map((commitSha) => ({
+      expectedRevision: 1,
+      integrationBranch: { name: branch, commitSha },
+      contribution: { ...project.contribution, contributionGuide: guide },
+    })),
+  );
+});
