@@ -4349,7 +4349,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "9e42a969553af04c9dbfa4db9828d5bf77cc8fb5047f63766bf47b1599d25720",
+      "sha256": "4b38070fc3ee4ddc54f84a3f19307f8600a27c3864278e62ec98fff6a492136d",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -4359,8 +4359,8 @@
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 37, 50, 86, 125, 147, 150, 163, 170, 179, 187, 195, 274, 306, 312,
-        315, 319, 320, 321, 322, 412, 698, 705, 706, 708, 713, 717, 721
+        2, 37, 50, 86, 129, 151, 154, 167, 174, 183, 191, 199, 278, 310, 316,
+        319, 323, 324, 325, 326, 416, 702, 709, 710, 712, 717, 721, 725
       ],
       "review": "mapped-abstraction"
     },
@@ -6134,17 +6134,17 @@
     },
     {
       "path": "src/ProfilePage.tsx",
-      "sha256": "075a7508274db6f1cb3712de8c5214df061695bca5ba20b0cb58ec696c3db731",
+      "sha256": "0e962f250a1b4c84e78dccda69cb77214dc8b673a96b64973a56113af289ba8f",
       "models": [
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        2, 39, 40, 43, 44, 50, 52, 54, 55, 61, 65, 70, 73, 75, 78, 87, 93, 95,
-        96, 100, 108, 109, 110, 115, 120, 132, 139, 146, 150, 155, 158, 164,
-        166, 183, 273, 275, 279, 282, 283, 286, 294, 317, 318, 333, 335, 339,
-        342, 345, 358, 368, 389, 396, 405, 406, 412, 413, 414, 415
+        2, 40, 41, 44, 45, 51, 53, 55, 56, 62, 66, 71, 74, 76, 79, 88, 94, 96,
+        97, 101, 109, 110, 111, 116, 121, 133, 140, 147, 151, 156, 159, 165,
+        167, 184, 274, 276, 280, 283, 284, 287, 295, 318, 319, 334, 336, 340,
+        343, 346, 359, 369, 390, 397, 406, 407, 413, 414, 415, 416
       ],
       "review": "mapped-abstraction"
     },
@@ -7168,7 +7168,7 @@
     },
     {
       "path": "src/lib/penalty-guide.ts",
-      "sha256": "7bbcec2bf7fdeb4fa7dfd172de64492c03276b0ca9a9da2d7ab822cdfa5c83de",
+      "sha256": "af75709e903e7bcb6552d5e438c1112e9d948c302830560e43f274e1eb3d5e61",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -9187,13 +9187,14 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "sha256": "a2321d1f660bedc8a9e329e433279ddfaf924bb48c4d79091862bc2aacc0a85c",
+      "sha256": "a801c5d15fe2edd0037519ee2feb9c96d61dfb45e8faa7aaa5665df1cab71747",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
-        "formal/models/slopbot/bot_review_admission.qnt"
+        "formal/models/slopbot/bot_review_admission.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt"
       ],
-      "candidateLines": [407],
+      "candidateLines": [404],
       "review": "mapped-abstraction"
     },
     {
@@ -9240,7 +9241,7 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "2ec2e1be65a8b1e6aedc38680368c9b2d8dc783e1685741de0de8ab5b8e1f7b9",
+      "sha256": "231b91644d47a7aefbd0f9b16b23da17c7a4c15ddf70c6d8828dd89189804597",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_ready_label.qnt",
@@ -9248,9 +9249,9 @@
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 255, 262, 263, 286, 292, 318, 347, 358, 397, 406, 418, 427, 432, 439,
-        449, 451, 461, 464, 467, 471, 558, 573, 582, 586, 613, 622, 705, 711,
-        721
+        3, 258, 265, 266, 289, 295, 321, 350, 361, 400, 409, 421, 430, 435, 442,
+        452, 454, 464, 467, 470, 474, 561, 576, 595, 599, 626, 635, 718, 724,
+        734
       ],
       "review": "mapped-abstraction"
     },
@@ -9283,12 +9284,13 @@
     },
     {
       "path": "workers/slopbot/penalties.ts",
-      "sha256": "0ca11c771f1424bc8d559cc11480bbf8253ad495c3672d9c9d2d9bddf8794622",
+      "sha256": "b928ee7b3956e8b880a2d4acbd8037773345d4e1aca881e70eac2cfc2d92eb93",
       "models": [
         "formal/models/slopbot/bot_appeal.qnt",
-        "formal/models/slopbot/bot_penalty_once.qnt"
+        "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt"
       ],
-      "candidateLines": [73, 95, 119, 153],
+      "candidateLines": [77, 99, 123, 157],
       "review": "mapped-abstraction"
     },
     {
@@ -9409,7 +9411,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "d7fc2f837eec76e5fe3b5842913712f6c211e321f54c163d8bf92e31b5e1c2be",
+      "sha256": "7a54c26ac0a7b580cc58cd6301c4e8d4ae7eb7d8d4a8f47951be76b18b4b4ea5",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9419,18 +9421,19 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 167, 282, 297, 306, 316, 319, 511, 665, 812, 841, 851, 986, 991, 996,
-        998, 1001, 1003, 1004, 1015, 1018, 1020, 1077, 1078, 1080, 1081, 1097,
-        1103, 1154, 1176, 1177, 1185, 1190, 1291, 1293, 1313, 1332, 1415, 1420,
-        1573, 1688, 1695, 1696, 1731, 1748, 1751, 1752, 1914, 1919, 1981, 1994,
-        1999, 2006, 2007, 2011, 2012, 2020, 2036, 2093, 2240, 2300, 2306, 2317,
-        2343, 2373, 2398, 2406, 2429, 2434, 2510, 2511, 2561, 2596, 2647, 2792,
-        3049, 3124, 3290, 3301, 3309, 3407, 3408, 3448, 3498, 3512, 3528
+        3, 169, 284, 299, 308, 318, 321, 513, 667, 846, 875, 885, 1020, 1025,
+        1030, 1032, 1035, 1037, 1038, 1049, 1052, 1054, 1111, 1112, 1114, 1115,
+        1131, 1137, 1188, 1216, 1217, 1225, 1230, 1331, 1333, 1353, 1372, 1455,
+        1460, 1618, 1740, 1753, 1754, 1791, 1808, 1811, 1812, 1975, 1980, 2042,
+        2055, 2060, 2067, 2068, 2072, 2073, 2081, 2097, 2154, 2307, 2367, 2373,
+        2384, 2410, 2440, 2465, 2473, 2496, 2501, 2577, 2578, 2628, 2663, 2714,
+        2859, 3125, 3200, 3366, 3377, 3385, 3483, 3484, 3524, 3574, 3588, 3604
       ],
       "review": "mapped-abstraction"
     },
@@ -9459,6 +9462,13 @@
         "formal/models/slopbot/bot_notice_delivery.qnt"
       ],
       "candidateLines": [11, 27, 31, 45, 65],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/submission-evidence.ts",
+      "sha256": "475dbd115fffb5d7cd8f629619d39f187ebf362f56efbc1c8b5e446cc47918d2",
+      "models": ["formal/models/slopbot/bot_submission_evidence.qnt"],
+      "candidateLines": [46],
       "review": "mapped-abstraction"
     },
     {
@@ -10002,7 +10012,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "2c3681bc3cc149808537d03f923664058ca767d0475e821d26fccf7537780bb1",
+      "sha256": "eec0717c0df576808e1efbd9c9d205690ede9818c47d1e1c4d92bbd42d9de68b",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -10105,7 +10115,7 @@
     },
     {
       "path": "workers/verified-policy.ts",
-      "sha256": "5865e61d6befa600d31d08229689fdfff86609740c64983274763cfa04bae941",
+      "sha256": "3fd1c2ff5c34b5f65d23d82e0f8ef2b801000ca311354c7138b99eeb6a79a10d",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -15608,13 +15618,15 @@
     },
     {
       "path": "formal/models/points/points_projection_transport.qnt",
-      "sha256": "7042f1fc0921629d11d954dae56bec2e51742654d9bfa2c0bc353287d1c4f766",
+      "sha256": "2e6acec180203f6309cd41e4c71081c3058b97e390d3b4a37d338958f976b3f3",
       "sources": ["scripts/generate-points.ts"],
       "scenarios": [
         "invalidReadNeverRetriesTest",
         "oneChangedIndexCanRepairMismatchTest",
         "resetResumesSameReadTest",
         "secondMismatchRefusesTest",
+        "siblingExhaustionBeforeRefusalTest",
+        "siblingRetriesBeforeRefusalTest",
         "thirdResetRefusesTest",
         "unchangedIndexCannotRepairMismatchTest"
       ]
@@ -17268,6 +17280,22 @@
         "expiredGroupCanBeReclaimedTest",
         "overlapBlocksSecondOwnerTest",
         "separateSourcesMayProceedTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/bot_submission_evidence.qnt",
+      "sha256": "711cb823e677faaf53c8d81dc5496325cef36fcb9b4b9949ef2a4228947f67c0",
+      "sources": [
+        "workers/slopbot/contracts.ts",
+        "workers/slopbot/penalties.ts",
+        "workers/slopbot/review.ts",
+        "workers/slopbot/submission-evidence.ts"
+      ],
+      "scenarios": [
+        "evidenceAddedBeforeCloseTest",
+        "missingFieldsCanCloseTest",
+        "optOutCannotCloseTest",
+        "unsignedCannotCloseTest"
       ]
     },
     {

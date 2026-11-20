@@ -306,6 +306,10 @@ Automatic closure requires all of the following:
 
 A copied marker or footer proves none of these facts. Closure alone does not authorize a penalty.
 
+Operator decision, 18 November 2026: contributor skills must require evidence before submission. The target branch's contribution instructions govern project-specific checks. The PR body uses `## Evidence` with `Change types:`, `Test results:`, and `Proof of change:`, plus `UI video:`, `Runtime logs:`, `Benchmarks:`, and `On-device testing:` for applicable changes. Tests and artifacts must demonstrate the actual outcome. Unnecessary complexity on speculative paths is a violation when the repository's guidance prohibits it.
+
+For an eligible PR carrying the standalone `Made via @slopdotcash` footer, Slopbot may close for objectively missing required evidence when the published contribution guide defines this evidence format. A deterministic check identifies absent, empty or placeholder fields, and the final fresh GitHub read must independently reproduce the same finding. Judgments about the merits, omitted change types or the quality of supplied artifacts remain advisory under this category. This path has its own production activation, preserves project consent and category opt-outs, and applies a 10-Point debit once per confirmed close under the existing appeals and reversal rules.
+
 New project drafts start with closure selected. Keep the control editable and save an explicit opt-out. Missing saved consent means false. Registration and installation alone are not consent. Do not alter existing projects' consent. No separate `.github/slopbot.json` is required, but preserve existing file opt-outs and category restrictions.
 
 Uncertain findings go to the maintainer. After seven days without action, Slopbot may apply the verdict as a label only. An uncertain finding never closes a PR. Preserve maintainer reopen decisions.
