@@ -76,12 +76,9 @@ function rebindTransferredRepositoryPresentation(
     ) {
       throw new TypeError(`${path} must publish exactly the registry fields`);
     }
-    for (const key of [
-      "id",
-      "description",
-      "integrationBranch",
-      "projectId",
-    ] as const) {
+    // A verified owner revision may move the integration branch (PRD
+    // section 4); the current registry branch replaces the collected one.
+    for (const key of ["id", "description", "projectId"] as const) {
       if (deployed[key] !== current[key]) {
         throw new TypeError(`${path}.${key} cannot change during a transfer`);
       }
