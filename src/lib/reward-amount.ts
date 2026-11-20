@@ -3,6 +3,19 @@ import type { ProjectDefinition } from "./projects.mjs";
 import { formatAssetSymbol } from "./reward-asset.mjs";
 import { roundedUsdcCents } from "./verified-frontend";
 
+/**
+ * Parts per million as a percent, half up to two decimal places.
+ * 10,000 ppm is 1%. 150 ppm is 0.015% and displays as 0.02%.
+ * The ratio is exact in integers; binary `toFixed` rounds 0.015 down to 0.01.
+ */
+export function formatPercent(partsPerMillion: number): string {
+  const negative = partsPerMillion < 0;
+  const magnitude = Math.abs(partsPerMillion);
+  const hundredths = Math.floor((magnitude + 50) / 100);
+  const text = `${Math.floor(hundredths / 100)}.${String(hundredths % 100).padStart(2, "0")}`;
+  return `${negative ? "-" : ""}${text}%`;
+}
+
 export function formatMicroUsdc(value: string): string {
   const amount = BigInt(value);
   const fraction = amount % 1_000_000n;

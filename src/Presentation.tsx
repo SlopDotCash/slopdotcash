@@ -32,6 +32,8 @@ import {
 import { scoreThirdsToPoints } from "./lib/score-units";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
+export { formatPercent } from "./lib/reward-amount";
+
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
 
 /** A reference section that stays reachable through existing section links. */
@@ -607,10 +609,6 @@ export function Avatar({
 /** Legacy credit-thirds in the displayed whole Slop Points unit. */
 export function formatPointsFromThirds(thirds: number): string {
   return scoreThirdsToPoints(thirds).toLocaleString();
-}
-
-export function formatPercent(partsPerMillion: number): string {
-  return `${(partsPerMillion / 10_000).toFixed(2)}%`;
 }
 
 /** A pledged pool never headlines its cap; the cap is small print only. */

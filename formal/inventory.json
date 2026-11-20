@@ -6017,7 +6017,7 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "92f5a57309dfa98f8ed9b3d9a1def0f7e713ac68fa8709512f4fd20ae164f7fa",
+      "sha256": "890519fa500ddef2a104ce6fa710d679571aed0f0acb340f3cc7faf3eb2279cd",
       "models": [
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_navigation.qnt",
@@ -6025,10 +6025,10 @@
         "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "candidateLines": [
-        10, 54, 56, 181, 243, 244, 246, 247, 249, 252, 257, 258, 264, 266, 268,
-        269, 276, 278, 280, 353, 356, 365, 493, 503, 504, 509, 523, 525, 530,
-        533, 537, 545, 549, 554, 556, 557, 558, 588, 680, 684, 688, 689, 694,
-        696, 793
+        10, 56, 58, 183, 245, 246, 248, 249, 251, 254, 259, 260, 266, 268, 270,
+        271, 278, 280, 282, 355, 358, 367, 495, 505, 506, 511, 525, 527, 532,
+        535, 539, 547, 551, 556, 558, 559, 560, 590, 678, 682, 686, 687, 692,
+        694, 791
       ],
       "review": "mapped-abstraction"
     },
@@ -7415,7 +7415,7 @@
     },
     {
       "path": "src/lib/reward-amount.ts",
-      "sha256": "32b1112829119d45499d178a9e8c28d0f159060dd708a74b1bffa85bca735cda",
+      "sha256": "b5ee1dce2c8130946794da8aea79035a56f8429ef68b1f32c139bb4eda3a98b6",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
