@@ -189,7 +189,9 @@ function previousPeriod(period: string): string {
 }
 
 /** The vault's contract supports month pledges. */
-export function hasPledgeSupport(vault: VaultFreeBalance): boolean {
+export function hasPledgeSupport(vault: {
+  openPledgedGross?: string | null;
+}): boolean {
   return typeof vault.openPledgedGross === "string";
 }
 
@@ -282,15 +284,19 @@ export function poolFundingStatus(
  * How many whole months of this month's amount the free funds of the
  * project's recorded vaults on paying networks cover (operator decision,
  * 18 November 2026). Anyone may deposit, but only the owner sets the monthly
- * amount, so extra money covers more months. Null when the project has no
- * monthly amount this month or no such vault has a free balance on record.
- * It is a reading of today's balance, not a promise: the owner can withdraw
- * free funds.
+ * amount, so extra money covers more months. A vault with pledge support is
+ * omitted: only a pledge funds its month, and its free balance does not.
+ * Null when the project has no monthly amount this month or no such vault
+ * has a free balance on record. It is a reading of today's balance, not a
+ * promise: the owner can withdraw free funds.
  */
 export function monthsCovered(
   project: ProjectDefinition,
   vaults:
-    | readonly Pick<VaultFreeBalance, "network" | "vault" | "freeBalance">[]
+    | readonly Pick<
+        VaultFreeBalance,
+        "network" | "vault" | "freeBalance" | "openPledgedGross"
+      >[]
     | undefined,
   now: Date,
 ): number | null {
@@ -305,8 +311,12 @@ export function monthsCovered(
       recorded.has(vaultKey(vault.network, vault.vault)),
   );
   if (read.length === 0) return null;
+  // Pledge-support vaults fund a month only from pledges. Their free balance
+  // stays withdrawable and does not extend this runway (PRD section 6).
   const free = read.reduce(
-    (sum, vault) => sum + BigInt(vault.freeBalance as string),
+    (sum, vault) =>
+      sum +
+      (hasPledgeSupport(vault) ? 0n : BigInt(vault.freeBalance as string)),
     0n,
   );
   const months = free / cap;

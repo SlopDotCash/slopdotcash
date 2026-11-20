@@ -574,3 +574,50 @@ test("extra money covers more months of the owner's monthly amount", () => {
     ),
   ).toBe(2);
 });
+
+test("free funds in a pledge-support vault do not cover months", () => {
+  const pool = project("250000000");
+  // 750 USDC sits unpledged. The contract funds a month only from pledges,
+  // so the balance covers no month of the 250 USDC amount.
+  expect(
+    monthsCovered(
+      pool,
+      index({
+        freeBalance: "750000000",
+        openPledgedGross: "0",
+        pledges: [],
+      }).get("demo"),
+      NOW,
+    ),
+  ).toBe(0);
+  const twoVaults = {
+    ...project("250000000"),
+    escrow: {
+      deployments: [
+        { network: "base-mainnet", vault: VAULT },
+        { network: "base-mainnet", vault: OTHER_VAULT },
+      ],
+    },
+  } as unknown as ProjectDefinition;
+  // The older vault's 500 USDC covers two months. The upgraded vault's
+  // 900 USDC free balance is not added.
+  expect(
+    monthsCovered(
+      twoVaults,
+      index(
+        { freeBalance: "500000000" },
+        {
+          vault: OTHER_VAULT,
+          freeBalance: "900000000",
+          openPledgedGross: "0",
+          pledges: [],
+        },
+      ).get("demo"),
+      NOW,
+    ),
+  ).toBe(2);
+  // A vault whose contract has no pledges still uses its free balance.
+  expect(
+    monthsCovered(pool, index({ freeBalance: "750000000" }).get("demo"), NOW),
+  ).toBe(3);
+});

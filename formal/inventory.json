@@ -7136,13 +7136,13 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "40630d5cdcb82501004ddb7ab970f828759bb3d664bfcedc1506e1549c4dca71",
+      "sha256": "915644ad7314eccbcb775589a1394cd447ae6a4c71d1e1982dd7c41ed2cbcff0",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 328, 411, 428
+        14, 20, 203, 205, 207, 219, 243, 258, 279, 280, 338, 421, 438
       ],
       "review": "mapped-abstraction"
     },
