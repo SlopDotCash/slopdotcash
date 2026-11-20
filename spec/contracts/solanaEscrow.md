@@ -38,6 +38,8 @@ type SolBinding = { actor: int, network: str, authority: str, destination: str, 
   walletSigned: bool, paidVersion: int, vetoes: int }
 type Veto = { actor: int, version: int }
 type Pledge = { period: int, amount: int, open: bool }
+type Opening = { project: str, network: str, identity: str, feeRecipient: str, delay: int, rotationDelay: int,
+  purpose: L::Purpose }
 type SolMonth = { period: int, root: str, committed: int, total: int, released: int, frozenAt: int, cap: int,
   wholeReleased: bool, leaves: List[L::Leaf], settled: List[int] }
 type Program = { build: Build, upgradeAuthority: str, now: int,
@@ -129,7 +131,9 @@ identity authority and fee recipient must be the Config's, nonzero and
 distinct from each other and the owner, and the owner is not the rotation
 authority. Any project ID is accepted, the all-zero one included. The binding delay is zero through 30 days and the rotation delay
 zero through 90 days; new deployments use zero. A native vault keeps its
-rent-exempt minimum forever.
+rent-exempt minimum forever. The model passes the project ID, network,
+identity authority, fee recipient, both delays and the purpose together as
+one opening record.
 
 ```quint
 pure def projectKeysValid(p: Program, identity: str, feeRecipient: str, delay: int, rotationDelay: int, by: str): bool =
@@ -142,18 +146,19 @@ pure def opened(project: str, p: Program, network: str, identity: str, feeRecipi
   rotationDelay: int, purpose: L::Purpose, by: str): Program =
   { ...p, layout: CurrentLayout, owner: by, project: project, network: network, purpose: purpose,
     identityAuthority: identity, feeRecipient: feeRecipient, bindingDelay: delay, rotationDelay: rotationDelay }
-pure def canInitialize(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
-  rotationDelay: int, purpose: L::Purpose, mint: MintFacts, by: str): bool =
-  projectKeysValid(p, identity, feeRecipient, delay, rotationDelay, by) and admittedMint(mint)
-pure def initialize(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
-  rotationDelay: int, purpose: L::Purpose, mint: MintFacts, by: str): Program =
-  { ...opened(project, p, network, identity, feeRecipient, delay, rotationDelay, purpose, by), native: false, mint: mint }
-pure def canInitializeNative(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
-  rotationDelay: int, purpose: L::Purpose, rent: int, by: str): bool =
-  projectKeysValid(p, identity, feeRecipient, delay, rotationDelay, by) and rent > 0
-pure def initializeNative(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
-  rotationDelay: int, purpose: L::Purpose, rent: int, by: str): Program =
-  { ...opened(project, p, network, identity, feeRecipient, delay, rotationDelay, purpose, by), native: true, rent: rent }
+pure def openingValid(p: Program, opening: Opening, by: str): bool =
+  projectKeysValid(p, opening.identity, opening.feeRecipient, opening.delay, opening.rotationDelay, by)
+pure def openedWith(p: Program, opening: Opening, by: str): Program =
+  opened(opening.project, p, opening.network, opening.identity, opening.feeRecipient, opening.delay,
+    opening.rotationDelay, opening.purpose, by)
+pure def canInitialize(p: Program, opening: Opening, mint: MintFacts, by: str): bool =
+  openingValid(p, opening, by) and admittedMint(mint)
+pure def initialize(p: Program, opening: Opening, mint: MintFacts, by: str): Program =
+  { ...openedWith(p, opening, by), native: false, mint: mint }
+pure def canInitializeNative(p: Program, opening: Opening, rent: int, by: str): bool =
+  openingValid(p, opening, by) and rent > 0
+pure def initializeNative(p: Program, opening: Opening, rent: int, by: str): Program =
+  { ...openedWith(p, opening, by), native: true, rent: rent }
 ```
 
 ### The earlier build's project grows to the current layout with new counters at zero
@@ -793,6 +798,20 @@ pure def sometimesFeesClaimed(p: Program): bool = p.claimedFees > 0
 
 These sets bound simulation only.
 
+Discovered by simulation: the simulator tries every combination of an
+event's sample values before it treats the event as refused, and it tries
+the one-time project instructions in every later state, so seven separate
+opening parameters (7,680 combinations for `initialize`) made most of the
+invariant simulation the refusal of an already opened project. The opening
+records instead pair each Config key pair, including the refused one with
+equal keys, with each purpose, once with no delays and once with a nonzero
+binding or rotation delay; the all-zero project ID and the other network
+appear among them. Discovered by simulation: the attested monthly
+commitment, the token payment and the wallet binding, each refused in most
+states and each tried over about a thousand or more value combinations, at
+weights 25, 30 and 25 took most of the remaining simulation; they now weigh
+12, 15 and 12, which still reaches every goal.
+
 ```quint
 pure val byValues = Set("owner", "upgrader", "attester", "rotator", "other")
 pure val successorValues = Set("nextAttester", "owner", "rotator", "")
@@ -803,6 +822,21 @@ pure val projectValues = Set("slop", "")
 pure val networkValues = Set("solana", "other")
 pure val delayValues = Set(0, 1)
 pure val rotationDelayValues = Set(0, 1)
+pure val openingValues = Set(
+  { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
+  { project: "", network: "solana", identity: "attester", feeRecipient: "fees", delay: 1, rotationDelay: 1, purpose: L::Ordinary },
+  { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Bounty },
+  { project: "", network: "solana", identity: "attester", feeRecipient: "fees", delay: 1, rotationDelay: 1, purpose: L::Bounty },
+  { project: "slop", network: "other", identity: "attester", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
+  { project: "", network: "other", identity: "attester", feeRecipient: "owner", delay: 1, rotationDelay: 0, purpose: L::Ordinary },
+  { project: "", network: "other", identity: "attester", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Bounty },
+  { project: "slop", network: "other", identity: "attester", feeRecipient: "owner", delay: 0, rotationDelay: 1, purpose: L::Bounty },
+  { project: "slop", network: "solana", identity: "fees", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
+  { project: "", network: "solana", identity: "fees", feeRecipient: "owner", delay: 0, rotationDelay: 1, purpose: L::Ordinary },
+  { project: "slop", network: "solana", identity: "fees", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Bounty },
+  { project: "", network: "solana", identity: "fees", feeRecipient: "owner", delay: 1, rotationDelay: 0, purpose: L::Bounty },
+  { project: "slop", network: "solana", identity: "fees", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
+  { project: "", network: "other", identity: "fees", feeRecipient: "fees", delay: 1, rotationDelay: 1, purpose: L::Bounty })
 pure val rentValues = Set(890880)
 pure val mintValues = Set(
   { kind: ClassicSpl, bytes: 82, mintAuthority: true, freezeAuthority: true, extensions: List(),
@@ -855,10 +889,10 @@ pure val weight_deposit = 25
 pure val weight_depositNative = 25
 pure val weight_commit = 20
 pure val weight_commitBounty = 15
-pure val weight_bindWallet = 25
-pure val weight_pay = 30
+pure val weight_bindWallet = 12
+pure val weight_pay = 15
 pure val weight_payNative = 30
-pure val weight_commitMonthly = 25
+pure val weight_commitMonthly = 12
 pure val weight_commitMonthlyAward = 30
 pure val weight_releaseMonthlyAward = 30
 pure val weight_releaseMonthlyReserve = 25
