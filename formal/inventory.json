@@ -6244,9 +6244,9 @@
     },
     {
       "path": "src/ReportProofFields.tsx",
-      "sha256": "3f3362588a5526e0c73a7486bcdcf00211798439c4080cace3a3f9e741ee4fb1",
+      "sha256": "c83eaef4185934ca4e77280cbafdb6fd31c282c3f72324ccb55263696253cb23",
       "models": ["formal/models/ui/ui_private_intake.qnt"],
-      "candidateLines": [2, 86, 133, 215],
+      "candidateLines": [2, 87, 134, 216],
       "review": "mapped-abstraction"
     },
     {
