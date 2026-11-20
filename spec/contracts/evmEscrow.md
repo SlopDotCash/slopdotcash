@@ -521,7 +521,8 @@ pure def stepMonthsRetained(before: Escrow, after: Escrow): bool = before.vault.
 ### Each committed leaf's award traces to a leaf of its own period, and a period's committed gross is exactly the gross of those awards
 
 `ProjectEscrow` keeps no period on an award, and `commitMonthlyLeaf` emits
-only `AwardCommitted`, so `origins` is a model-only log: each committed leaf
+only `AwardCommitted` (PRD section 6, "Monthly allocation"; development
+`bf73d46fa`), so `origins` is a model-only log: each committed leaf
 appends its period and leaf, and nothing else changes it. The conformance
 driver drops it from the observed vault and never compares it, since the
 chain cannot report it. Every logged leaf
@@ -553,7 +554,8 @@ A leaf is stranded when it is proved, fits its period's remainder, and its
 source already has an award that did not come from this leaf of this period:
 the same source in another period's root, a legacy entry or an earlier
 award. The allocation builder can sign a root at the current source
-sequence that still lists a source the owner committed by hand, since
+sequence that still lists a source the owner committed by hand (PRD section
+6, "Monthly allocation"; development `bf73d46fa`), since
 `reserveMonthly` checks the sequence, not the leaves. `commitMonthlyLeaf`
 refuses a stranded leaf because the award ID exists, and once any leaf of
 the period has committed, `releaseMonthlyReserve` refuses the period (its
