@@ -142,11 +142,13 @@ pure def required(act: SiteAction): Permission =
   else Steward
 pure def holds(s: MaintainerSession, p: Permission): bool = s.verified.getOr(p, -1) == s.accountEpoch
 pure def countsAsSlopSession(via: SessionSource): bool = via == SlopBrowserSession
-pure def canCheckPermission(s: MaintainerSession, by: int, p: Permission, granted: bool): bool = by == authorityService
+pure def canCheckPermission(s: MaintainerSession, by: int, p: Permission, granted: bool): bool =
+  by == authorityService and s.phase == Working
 pure def checkPermission(s: MaintainerSession, by: int, p: Permission, granted: bool): MaintainerSession =
   { ...s, verified: s.verified.put(p, if (granted) s.accountEpoch else -1),
     privateView: s.privateView and (p != CaseAccess or granted) }
-pure def canConfirmSession(s: MaintainerSession, by: int, via: SessionSource): bool = by == authorityService
+pure def canConfirmSession(s: MaintainerSession, by: int, via: SessionSource): bool =
+  by == authorityService and s.phase == Working
 pure def confirmSession(s: MaintainerSession, by: int, via: SessionSource): MaintainerSession =
   { ...s, slopSession: countsAsSlopSession(via) and s.browser, privateView: s.privateView and countsAsSlopSession(via) and s.browser }
 pure def canChangeAccount(s: MaintainerSession, by: int): bool = by == authorityService
@@ -181,7 +183,8 @@ removal, closure consent, funding requirements, payment policy and
 production activation are never actions of this flow.
 
 ```quint
-pure def canGiveDecision(s: MaintainerSession, by: int, d: Decision): bool = by == user and d != NoDecision
+pure def canGiveDecision(s: MaintainerSession, by: int, d: Decision): bool =
+  by == user and s.phase == Working and d != NoDecision
 pure def giveDecision(s: MaintainerSession, by: int, d: Decision): MaintainerSession =
   { ...s, decisions: s.decisions.append(d) }
 pure def mayAct(s: MaintainerSession, act: SiteAction, decision: Decision, ownRecord: bool): bool =
@@ -210,8 +213,11 @@ pure def alwaysWithoutBrowserNothingApplied(s: MaintainerSession): bool = not(s.
 pure def stepDecisionRecordedOnlyWhenGiven(before: MaintainerSession, after: MaintainerSession): bool =
   (after.applied.length() > before.applied.length() and after.applied.nthOr(after.applied.length() - 1, ReadCase) == RecordDecision)
     implies before.decisions.length() > 0
+pure def unchangedActions(before: MaintainerSession, after: MaintainerSession): bool =
+  after.applied.length() == before.applied.length() and after.repoWrites.length() == before.repoWrites.length()
+    and after.prepared.length() == before.prepared.length() and after.refused == before.refused
 pure def stepNoActionWhileUncertain(before: MaintainerSession, via: str, after: MaintainerSession): bool =
-  (before.uncertain and via == "siteAct") implies after == before
+  (before.uncertain and via == "siteAct") implies unchangedActions(before, after)
 pure def sometimesSetupCheckApplied(s: MaintainerSession): bool = s.applied.includes(RunSetupCheck)
 pure def sometimesUncertainReadBackApplied(s: MaintainerSession): bool = s.readBacks > 0 and s.applied.length() > 0
 pure def sometimesDecisionRecorded(s: MaintainerSession): bool = s.applied.includes(RecordDecision)
@@ -261,8 +267,13 @@ pure def alwaysFinishedHasNoUnreadAttempt(s: MaintainerSession): bool =
   s.phase == Finished implies (not(s.uncertain) and not(s.privateView))
 pure def stepFinishedIsFinal(before: MaintainerSession, via: str, after: MaintainerSession): bool =
   (before.phase == Finished and (via == "siteAct" or via == "repoWrite" or via == "prepare"))
-    implies after == before
+    implies unchangedActions(before, after)
 pure def sometimesFinishedAfterPreparing(s: MaintainerSession): bool = s.phase == Finished and s.prepared.length() > 0
 pure val byValues = Set(user, agent, authorityService)
+pure val weight_siteAct = 20
+pure val weight_checkPermission = 8
+pure val weight_confirmSession = 4
+pure val weight_readBack = 4
+pure val weight_giveDecision = 4
 pure val repositoryIdValues = Set(0, 7)
 ```

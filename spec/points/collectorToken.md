@@ -51,8 +51,11 @@ pure def chooseCredential(r: CollectorRun, onMain: bool, pullRequest: bool, useP
   { ...r, phase: Collecting, credential: if (app) AppToken else WorkflowToken,
     mainLive: onMain and not(pullRequest) and not(usePublishedData), renewal: app,
     tokenExpiry: if (app) r.now + tokenLifetime else 0 }
+pure def sameGrant(a: CollectorGrant, b: CollectorGrant): bool =
+  a.contents == b.contents and a.issues == b.issues and a.pullRequests == b.pullRequests
+    and a.thisRepositoryOnly == b.thisRepositoryOnly
 pure def lawGrantIsReadOnly(g: CollectorGrant): bool =
-  g == collectorGrant implies (g.contents != WriteAccess and g.issues != WriteAccess
+  sameGrant(g, collectorGrant) implies (g.contents != WriteAccess and g.issues != WriteAccess
     and g.pullRequests != WriteAccess and g.thisRepositoryOnly)
 pure def alwaysAppTokenOnlyOnMainLiveCollection(r: CollectorRun): bool =
   (r.credential == AppToken implies r.mainLive and r.renewal) and (r.renewal implies r.credential == AppToken)
