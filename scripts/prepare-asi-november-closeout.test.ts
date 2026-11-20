@@ -15,10 +15,14 @@ import { closedMonthLedger } from "../tests/closed-month-ledger";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { octoberRunnerFixture } from "../tests/october-runner-fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { prepareAsiNovemberCloseout } from "./prepare-asi-november-closeout";
+import {
+  asiCloseoutCoverage,
+  prepareAsiNovemberCloseout,
+} from "./prepare-asi-november-closeout";
 import {
   asiCloseoutPreviewDigest,
   executeAsiCloseout,
+  readAsiPointsBatch,
 } from "./run-asi-november-closeout";
 
 const encode = (value: unknown) =>
@@ -191,6 +195,15 @@ test("ASI owner finalizes the exact cutoff allocation early via the normal award
       "INSERT INTO points_batches(digest,generated_at,coverage,revision_count) VALUES(?,?,'[]',0)",
       [packet.pointsBatch, at],
     );
+    const coverage = asiCloseoutCoverage(
+      assertProjectDefinition(JSON.parse(manifest)),
+      packet.snapshotSha256,
+    );
+    const query = async (sql: string) =>
+      sqlite.query<Record<string, unknown>, []>(sql).all();
+    await expect(readAsiPointsBatch(query, coverage)).rejects.toThrow(
+      "Points do not cover the published ASI cutoff snapshot",
+    );
 
     const persistence = new CloudflareProjectPersistence(db);
     const service = monthlyOwnerService({
@@ -235,8 +248,7 @@ test("ASI owner finalizes the exact cutoff allocation early via the normal award
       );
     input.packet.pointsBatch = "3".repeat(64);
     const reviewed = compile(input);
-    const query = async (sql: string) =>
-      sqlite.query<Record<string, unknown>, []>(sql).all();
+    expect(await readAsiPointsBatch(query, coverage)).toBe(packet.pointsBatch);
     let applyCount = 0;
     const importFile = async () => {
       applyCount += 1;

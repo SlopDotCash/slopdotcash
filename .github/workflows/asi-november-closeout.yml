@@ -3,16 +3,19 @@ on:
   workflow_dispatch:
     inputs:
       reviewed_packet_sha256:
-        description: "Exact SHA-256 of the owner-reviewed private ASI packet"
-        required: true
+        description: "Exact SHA-256 of the owner-reviewed private ASI packet, required for preview and apply"
         type: string
       preview_sha256:
         description: "Exact SHA-256 returned by the reviewed preview, required to apply"
         type: string
-      apply:
-        description: "Import the verified proposal into production"
-        type: boolean
-        default: false
+      mode:
+        description: "Inspect input digests, preview the reviewed proposal, or apply the approved preview"
+        type: choice
+        options:
+          - inspect
+          - preview
+          - apply
+        default: inspect
 permissions:
   contents: read
 concurrency:
@@ -46,5 +49,5 @@ jobs:
           ASI_CLOSEOUT_REVIEWED_PACKET: ${{ secrets.ASI_CLOSEOUT_REVIEWED_PACKET }}
           REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
           ASI_CLOSEOUT_PREVIEW_SHA256: ${{ inputs.preview_sha256 }}
-          ASI_CLOSEOUT_APPLY: ${{ inputs.apply }}
+          ASI_CLOSEOUT_MODE: ${{ inputs.mode }}
         run: bun --no-env-file scripts/run-asi-november-closeout.ts

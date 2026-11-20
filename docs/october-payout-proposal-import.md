@@ -37,9 +37,12 @@ The independently reviewed packet binds ASI, November 2026, the exclusive
 collector snapshot bytes. The snapshot must verify the entire approved window.
 When the verified source extends beyond the cutoff, calculate only from
 accepted-work events and debits before the cutoff. Preserve the original
-bytes, timestamps and digest. Obtain the current
-canonical Points batch, registry revision and enforcement generation from the
-protected production environment. Verify the corrected accepted work and
+bytes, timestamps and digest. Dispatch the protected ASI closeout workflow on
+current `main` with `mode: inspect` before preparing the packet.
+It validates the published source against the cutoff and the exact matching
+coverage in the current canonical Points batch. Its output gives the source
+and batch digests, verified registry manifest digest, revision and enforcement
+generation. It does not require the packet or write to D1. Verify the corrected accepted work and
 protected settlement history before recording the producer and independent
 reviewer's numeric GitHub IDs and reviewed packet digest. Preserve the packet
 and exact ASI manifest privately.
@@ -71,11 +74,11 @@ history. It stores the approved earning cutoff in the immutable proposal.
 The trusted `asi-november-closeout.yml` dispatch uses the shared
 `slop-production` lock and environment. Set the private reviewed packet as
 `ASI_CLOSEOUT_REVIEWED_PACKET` in that environment and dispatch the current
-`main` with the packet SHA-256 and `apply: false`. The runner downloads the
+`main` with the packet SHA-256 and `mode: preview`. The runner downloads the
 exact published collector snapshot, checks the current reviewer’s GitHub
 owner authority and evaluates the SQL import guards with read-only queries.
 It reports only the reviewed digest, deterministic preview digest and recipient
-count. Review that preview and dispatch `apply: true` with both digests. The
+count. Review that preview and dispatch `mode: apply` with both digests. The
 same current registry and source checks, atomic database guards and full
 header/recipient readback confirm an import or exact replay.
 

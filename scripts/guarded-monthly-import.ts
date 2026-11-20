@@ -15,6 +15,25 @@ function requireSql(condition: string): string {
   return `INSERT INTO monthly_reward_bases(project_id) SELECT NULL WHERE NOT COALESCE((${condition}),0);`;
 }
 
+export const currentPointsBatchSql =
+  "SELECT digest FROM points_batches ORDER BY revision_count DESC,generated_at DESC,digest DESC LIMIT 1";
+
+export interface MonthlyImportCoverage {
+  repository: string;
+  from: string;
+  cutoff: string;
+  snapshotSha256: string;
+}
+
+export function monthlyImportCoverageSql(
+  pointsBatch: string,
+  entry: MonthlyImportCoverage,
+): string {
+  return exists(
+    `SELECT 1 FROM points_batches b,json_each(b.coverage) c WHERE b.digest=${quote(pointsBatch)} AND lower(json_extract(c.value,'$.repository'))=lower(${quote(entry.repository)}) AND json_extract(c.value,'$.from')<=${quote(entry.from)} AND json_extract(c.value,'$.to')>=${quote(entry.cutoff)} AND json_extract(c.value,'$.digest')=${quote(entry.snapshotSha256)}`,
+  );
+}
+
 interface GuardedMonthlyImport {
   capturedAt: string;
   enforcementGeneration: number;
@@ -23,19 +42,13 @@ interface GuardedMonthlyImport {
     monthlyBase: MonthlyBaseWithShare;
     manifest: string;
     revision: number;
-    coverage?: readonly {
-      repository: string;
-      from: string;
-      cutoff: string;
-      snapshotSha256: string;
-    }[];
+    coverage?: readonly MonthlyImportCoverage[];
   }[];
 }
 
 export function guardedMonthlyImportPlan(reviews: GuardedMonthlyImport) {
-  const pointsBatch = quote(reviews.pointsBatch);
   const registryReady = `(SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=${reviews.enforcementGeneration}`;
-  const currentPoints = `(SELECT digest FROM points_batches ORDER BY revision_count DESC,generated_at DESC,digest DESC LIMIT 1)=${pointsBatch}`;
+  const currentPoints = `(${currentPointsBatchSql})=${quote(reviews.pointsBatch)}`;
   const sql: string[] = [];
   const preflight: string[] = [];
   const readback: string[] = [];
@@ -83,9 +96,7 @@ export function guardedMonthlyImportPlan(reviews: GuardedMonthlyImport) {
     ])
       requireBefore(`${hasBase} OR ${condition}`);
     for (const entry of coverage ?? []) {
-      const covered = exists(
-        `SELECT 1 FROM points_batches b,json_each(b.coverage) c WHERE b.digest=${pointsBatch} AND lower(json_extract(c.value,'$.repository'))=lower(${quote(entry.repository)}) AND json_extract(c.value,'$.from')<=${quote(entry.from)} AND json_extract(c.value,'$.to')>=${quote(entry.cutoff)} AND json_extract(c.value,'$.digest')=${quote(entry.snapshotSha256)}`,
-      );
+      const covered = monthlyImportCoverageSql(reviews.pointsBatch, entry);
       requireBefore(`${hasBase} OR ${covered}`);
     }
     requireBefore(`NOT ${hasBase} OR ${exactHeader}`);

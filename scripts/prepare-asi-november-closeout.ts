@@ -46,6 +46,36 @@ function githubActorId(value: unknown): string {
   return value;
 }
 
+export function asiCloseoutCoverage(
+  policy: ReturnType<typeof assertProjectDefinition>,
+  snapshotSha256: string,
+) {
+  return repositoriesCountedFor(policy, Date.parse(from)).map(({ id }) => ({
+    repository: id,
+    from,
+    cutoff: approved.cutoff,
+    snapshotSha256,
+  }));
+}
+
+export function buildAsiCloseoutCycle(
+  snapshot: Uint8Array,
+  manifest: string,
+  generatedAt: string,
+) {
+  return buildEscrowCycle(
+    {
+      projectId: approved.projectId,
+      cycleId: approved.period,
+      generatedAt,
+      earlyCloseAt: approved.cutoff,
+    },
+    snapshot,
+    null,
+    new TextEncoder().encode(manifest),
+  );
+}
+
 export function prepareAsiNovemberCloseout(input: {
   reviewedPacket: Uint8Array;
   reviewedPacketSha256: string;
@@ -176,17 +206,7 @@ export function prepareAsiNovemberCloseout(input: {
       "The registered ASI pool, asset, or vault differs from the approved closeout.",
     );
 
-  const proposal = buildEscrowCycle(
-    {
-      projectId: approved.projectId,
-      cycleId: approved.period,
-      generatedAt: reviewedAt,
-      earlyCloseAt: approved.cutoff,
-    },
-    input.snapshot,
-    null,
-    new TextEncoder().encode(manifest),
-  );
+  const proposal = buildAsiCloseoutCycle(input.snapshot, manifest, reviewedAt);
   if (proposal.grossCapMicro !== approved.grossBase)
     throw new Error("The proposal does not use the approved cap.");
   const monthlyBase = {
@@ -205,14 +225,7 @@ export function prepareAsiNovemberCloseout(input: {
         sourceDigest: award.sourceDigest,
       })),
   };
-  const coverage = repositoriesCountedFor(policy, Date.parse(from)).map(
-    ({ id }) => ({
-      repository: id,
-      from,
-      cutoff: approved.cutoff,
-      snapshotSha256: sourceSnapshotSha256,
-    }),
-  );
+  const coverage = asiCloseoutCoverage(policy, sourceSnapshotSha256);
   return {
     ...guardedMonthlyImportPlan({
       capturedAt,

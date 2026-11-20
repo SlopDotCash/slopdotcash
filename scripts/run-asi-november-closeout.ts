@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
@@ -7,7 +7,16 @@ import { publicRestrictionOf } from "../backend/projects/enforcement";
 import { ASI_NOVEMBER_CLOSEOUT as approved } from "../src/lib/payments/asi-november-closeout";
 import { sha256Hex } from "../src/lib/sha256";
 import { downloadLeaderboard } from "./download-leaderboard";
-import { prepareAsiNovemberCloseout } from "./prepare-asi-november-closeout";
+import {
+  currentPointsBatchSql,
+  type MonthlyImportCoverage,
+  monthlyImportCoverageSql,
+} from "./guarded-monthly-import";
+import {
+  asiCloseoutCoverage,
+  buildAsiCloseoutCycle,
+  prepareAsiNovemberCloseout,
+} from "./prepare-asi-november-closeout";
 import {
   currentOwnerVerifier,
   octoberQueryRows,
@@ -51,6 +60,24 @@ export function asiCloseoutPreviewDigest(plan: Plan): string {
   return sha256Hex(JSON.stringify(review));
 }
 
+export async function readAsiPointsBatch(
+  query: Query,
+  coverage: readonly MonthlyImportCoverage[],
+): Promise<string> {
+  const [{ digest } = {}] = await query(currentPointsBatchSql);
+  if (typeof digest !== "string" || !sha256.test(digest) || !coverage.length)
+    throw new Error("No canonical Points batch for the ASI closeout.");
+  const covered = coverage
+    .map((entry) => monthlyImportCoverageSql(digest, entry))
+    .join(" AND ");
+  const rows = await query(
+    `SELECT digest FROM (${currentPointsBatchSql}) WHERE digest='${digest}' AND ${covered}`,
+  );
+  if (rows.length !== 1 || rows[0].digest !== digest)
+    throw new Error("Points do not cover the published ASI cutoff snapshot.");
+  return digest;
+}
+
 export async function executeAsiCloseout(
   plan: Plan,
   query: Query,
@@ -90,32 +117,30 @@ async function assertCurrentMain(source: string) {
 
 async function runAsiCloseout() {
   let stage = "trusted invocation";
+  let directory: string | undefined;
   try {
     const env = process.env;
     const source = env.GITHUB_SHA;
     const reviewedPacketSha256 = env.REVIEWED_PACKET_SHA256;
     const reviewedPacket = env.ASI_CLOSEOUT_REVIEWED_PACKET;
+    const mode = env.ASI_CLOSEOUT_MODE;
     const expectedPreview =
-      env.ASI_CLOSEOUT_APPLY === "true"
-        ? (env.ASI_CLOSEOUT_PREVIEW_SHA256 ?? "")
-        : null;
+      mode === "apply" ? (env.ASI_CLOSEOUT_PREVIEW_SHA256 ?? "") : null;
     if (
       env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
       env.GITHUB_REPOSITORY !== "SlopDotCash/slopdotcash" ||
       env.GITHUB_REF !== "refs/heads/main" ||
       !source ||
       !/^[a-f0-9]{40}$/u.test(source) ||
-      !reviewedPacketSha256 ||
-      !sha256.test(reviewedPacketSha256) ||
-      !reviewedPacket ||
       !env.RUNNER_TEMP ||
-      !["true", "false"].includes(env.ASI_CLOSEOUT_APPLY ?? "") ||
+      (mode !== "inspect" && mode !== "preview" && mode !== "apply") ||
       (expectedPreview !== null && !sha256.test(expectedPreview))
     )
       throw new Error("Untrusted ASI invocation.");
     await assertCurrentMain(source);
     stage = "published snapshot";
-    const directory = await mkdtemp(join(env.RUNNER_TEMP, "asi-closeout-"));
+    directory = await mkdtemp(join(env.RUNNER_TEMP, "asi-closeout-"));
+    const sql = join(directory, "proposal.sql");
     const ledger = join(directory, "leaderboard.json");
     await downloadLeaderboard(
       "https://slop.cash/data/leaderboard.json",
@@ -142,10 +167,43 @@ async function runAsiCloseout() {
     if (
       row?.revision !== project.revision ||
       row?.manifest_sha256 !== project.manifestSha256 ||
-      typeof row.manifest !== "string"
+      typeof row.manifest !== "string" ||
+      sha256Hex(encoder.encode(row.manifest)) !== project.manifestSha256
     )
       throw new Error("The ASI registry revision changed.");
     const now = new Date();
+    const snapshot = await readFile(ledger);
+    if (mode === "inspect") {
+      stage = "published cutoff and canonical Points coverage";
+      buildAsiCloseoutCycle(snapshot, row.manifest, now.toISOString());
+      const snapshotSha256 = sha256Hex(snapshot);
+      const pointsBatch = await readAsiPointsBatch(
+        query,
+        asiCloseoutCoverage(project.manifest, snapshotSha256),
+      );
+      if ((await persistence.enforcementGeneration()) !== generation)
+        throw new Error("The registry enforcement state changed.");
+      console.log(
+        JSON.stringify({
+          schemaVersion: "1",
+          period: approved.period,
+          mode,
+          snapshotSha256,
+          pointsBatch,
+          manifestSha256: project.manifestSha256,
+          revision: project.revision,
+          enforcementGeneration: generation,
+        }),
+      );
+      return;
+    }
+    stage = "reviewed packet";
+    if (
+      !reviewedPacket ||
+      !reviewedPacketSha256 ||
+      !sha256.test(reviewedPacketSha256)
+    )
+      throw new Error("The exact reviewed packet is required.");
     const plan = prepareAsiNovemberCloseout({
       reviewedPacket: encoder.encode(reviewedPacket),
       reviewedPacketSha256,
@@ -166,7 +224,7 @@ async function runAsiCloseout() {
           ],
         }),
       ),
-      snapshot: await readFile(ledger),
+      snapshot,
       now,
     });
     stage = "current reviewer authority";
@@ -175,13 +233,12 @@ async function runAsiCloseout() {
       plan.review.reviewerGithubId,
     );
     stage = "bound preview or import";
-    const mode = await executeAsiCloseout(
+    const result = await executeAsiCloseout(
       plan,
       query,
       expectedPreview,
       async () => {
         await assertCurrentMain(source);
-        const sql = join(directory, "proposal.sql");
         await writeFile(sql, plan.sql, { flag: "wx", mode: 0o600 });
         await privateD1(["--file", sql]);
       },
@@ -190,7 +247,7 @@ async function runAsiCloseout() {
       JSON.stringify({
         schemaVersion: "1",
         period: approved.period,
-        mode,
+        mode: result,
         reviewedPacketSha256,
         previewSha256: asiCloseoutPreviewDigest(plan),
         recipients: plan.review.monthlyBase.rows.length,
@@ -198,6 +255,8 @@ async function runAsiCloseout() {
     );
   } catch {
     throw new Error(`ASI closeout refused during ${stage}.`);
+  } finally {
+    if (directory) await rm(directory, { force: true, recursive: true });
   }
 }
 
