@@ -16,7 +16,7 @@ test("retained and fresh preparation have separate lanes, fresh main collections
     .split("    # The public elizaOS")[0];
   const group =
     // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
-    "group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || 'collect') || github.event_name }}";
+    "group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || inputs.parallel_collection == true && 'collect-parallel' || 'collect') || github.event_name }}";
   const cancellation =
     // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
     "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";

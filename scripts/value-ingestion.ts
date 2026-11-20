@@ -949,6 +949,15 @@ export async function loadValueInputs(
     // Most unlinked commits have no replaced submission. Do not collect every
     // historical commit patch merely to discover that no claim can be made.
     if (!hasOriginal) return { kind: "none" };
+    // A manual release may defer the retained-copy comparison, which can read
+    // thousands of tree pages for one pull request. A held source keeps its
+    // prior journal row and is not memoized, so the next collection resolves
+    // it live (operator decision, 20 November 2026).
+    if (process.env.SLOP_DEFER_RETAINED_ATTRIBUTION === "1")
+      return {
+        kind: "hold",
+        limitations: ["Retained attribution deferred for this collection"],
+      };
     const accepted = await source(repositoryId, outcome.number, outcome.id);
     const sources = [accepted];
     for (const reference of accepted.evidence.relatedPullRequests) {
