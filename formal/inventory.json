@@ -1281,13 +1281,14 @@
     },
     {
       "path": "backend/slopbot/value-import.ts",
-      "sha256": "e5422c4b4ad0adab441a194fd793f2f15204c4a75eb7ebcb1a1d3088bbb3ab9e",
+      "sha256": "5c287cb0ae12f3cffebf2962a5c081e1ef3c194512c88fd2abdbe745904271b7",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
       "candidateLines": [
-        30, 32, 136, 141, 150, 155, 158, 161, 162, 164, 165, 181
+        19, 21, 48, 50, 161, 163, 165, 172, 183, 188, 197, 202, 205, 208, 209,
+        211, 212, 228
       ],
       "review": "mapped-abstraction"
     },
@@ -9558,19 +9559,19 @@
     },
     {
       "path": "workers/slopbot/value-import-diagnostics.ts",
-      "sha256": "f1c285b86165ed5ef2ab9ebfa52a2005dd9b5b66e2509fdc8c68a98df2be7c19",
+      "sha256": "bd5f4ac410fe6cb159f6d8020947d124a4c525fa9770aff90ef667f28ac59482",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
-      "candidateLines": [73, 76, 87, 88, 186],
+      "candidateLines": [116, 119, 130, 131, 229],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-import-service.ts",
-      "sha256": "74323860304da2081dacb0c299403994a86f17d01303773d1933fd361a4b0b3b",
+      "sha256": "7857c57516fb3153946e09362966672c9dedf7fa0b80baf8baff998d60a6e0c1",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [],
+      "candidateLines": [40, 42],
       "review": "mapped-abstraction"
     },
     {
