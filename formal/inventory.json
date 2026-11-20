@@ -171,7 +171,7 @@
     },
     {
       "path": ".github/workflows/value-intake-quota.yml",
-      "sha256": "30f0b536a90703fbc4499ac398403c57365f5fbe76e3c9572c597160ec53871c",
+      "sha256": "74d6055e728a4144c9ea99558b60ba7948a600838efd534b2d74bd0f4121b389",
       "models": ["formal/models/release/slopbot_app_quota_witness.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4410,9 +4410,9 @@
     },
     {
       "path": "scripts/inspect-slopbot-app-quota.ts",
-      "sha256": "786823584d469d5be5a04b20c556ebc75e2714e615a026f12e7c1309f62ed98c",
+      "sha256": "c94525ff0268419f2cdcb8bc216c826243aa91e91c6a3c6e45330bccfec03956",
       "models": ["formal/models/release/slopbot_app_quota_witness.qnt"],
-      "candidateLines": [32, 139, 141, 304, 308],
+      "candidateLines": [38, 168, 170, 258, 374, 378],
       "review": "mapped-abstraction"
     },
     {
@@ -16060,19 +16060,24 @@
     },
     {
       "path": "formal/models/release/slopbot_app_quota_witness.qnt",
-      "sha256": "648d665dcd11cb3ef8c16987a5a024030c5f3aab60f0633c6ddc69c102ea5b41",
+      "sha256": "a6d457d1ad7ba8b8662abf018812cb528cf272a07f373d6bc65d7c348c716cbb",
       "sources": [
         ".github/workflows/value-intake-quota.yml",
         "scripts/inspect-slopbot-app-quota.ts"
       ],
       "scenarios": [
         "cancellationMayLeaveGrantUntilExpiryTest",
+        "defaultCanReadAnotherRegisteredRepositoryTest",
+        "defaultRefusesContentsGrantTest",
         "invalidQuotaStillRevokesWithoutReceiptTest",
         "lostMintResponseExpiresWithoutReceiptTest",
+        "missingCommitStillRevokesWithoutReceiptTest",
         "nonMainCannotMintTest",
+        "optionalCommitUsesExactReadOnlyGrantTest",
         "revokeRefusalCannotPublishTest",
         "unexpectedPermissionsStillRevokeTest",
-        "verifiedGrantRevokesBeforeReceiptTest"
+        "verifiedGrantRevokesBeforeReceiptTest",
+        "wrongRepositoryCannotMintContentsGrantTest"
       ]
     },
     {
