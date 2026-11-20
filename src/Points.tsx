@@ -58,6 +58,7 @@ import {
   type PointsMember,
   pointMembers,
 } from "./lib/points";
+import { profileRead, unresolvedProfile } from "./lib/profile-actor";
 import { profileCounts } from "./lib/profiles";
 import {
   notifyProjectSessionChanged,
@@ -641,10 +642,39 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
+  // A retained directory or journal can omit someone a current read would
+  // name. Absence is only a current answer from both.
+  const recordsCurrent =
+    unresolvedProfile({
+      directory: profileRead(
+        census.state.status === "ready"
+          ? "current"
+          : census.state.status === "error"
+            ? "failed"
+            : "loading",
+        census.state.status === "ready" &&
+          census.state.refreshError !== undefined,
+      ),
+      journal: profileRead(
+        state.status === "ready"
+          ? "current"
+          : state.status === "error"
+            ? "failed"
+            : "loading",
+        state.status === "ready" && state.stale === true,
+      ),
+      snapshot: "current",
+      membership:
+        joinStatus === "loading"
+          ? "loading"
+          : joinStatus === "unavailable"
+            ? "unavailable"
+            : "settled",
+      session: "ready",
+    }) === "unknown";
   if (
     notFoundWhenUnrecorded &&
-    state.status === "ready" &&
-    census.state.status === "ready" &&
+    recordsCurrent &&
     joinStatus === "absent" &&
     !own &&
     !m &&

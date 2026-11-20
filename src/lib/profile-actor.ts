@@ -87,3 +87,54 @@ export function resolveProfileActor(args: {
   }
   return;
 }
+
+/**
+ * How far one profile read got. `retained` is a copy kept after a later read
+ * failed. It can omit someone a current read would name, so it cannot prove
+ * a login is absent.
+ */
+export type ProfileRead = "loading" | "failed" | "retained" | "current";
+
+/** Classify a finished or unfinished read. A failure is never current. */
+export function profileRead(
+  phase: "loading" | "failed" | "current",
+  retained = false,
+): ProfileRead {
+  if (phase !== "current") return phase;
+  return retained ? "retained" : "current";
+}
+
+/**
+ * What the profile page should show when no loaded source names the login.
+ *
+ * `pending` while any source is still loading, even if another has failed:
+ * the spinner stays until the reads that are still running finish.
+ * `unavailable` when a source failed or only a retained copy is left.
+ * `unknown` only when the directory, the Points journal, the leaderboard
+ * snapshot, membership and the session each have a current answer.
+ */
+export function unresolvedProfile(sources: {
+  directory: ProfileRead;
+  journal: ProfileRead;
+  snapshot: ProfileRead;
+  membership: "loading" | "unavailable" | "settled";
+  session: "loading" | "error" | "ready";
+}): "pending" | "unavailable" | "unknown" {
+  if (
+    sources.directory === "loading" ||
+    sources.journal === "loading" ||
+    sources.snapshot === "loading" ||
+    sources.membership === "loading" ||
+    sources.session === "loading"
+  )
+    return "pending";
+  if (
+    sources.directory !== "current" ||
+    sources.journal !== "current" ||
+    sources.snapshot !== "current" ||
+    sources.membership === "unavailable" ||
+    sources.session === "error"
+  )
+    return "unavailable";
+  return "unknown";
+}

@@ -10,7 +10,11 @@ import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
-import { resolveProfileActor } from "./lib/profile-actor";
+import {
+  profileRead,
+  resolveProfileActor,
+  unresolvedProfile,
+} from "./lib/profile-actor";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints, usePoints, useProfileMembership } from "./Points";
@@ -66,21 +70,43 @@ export function ProfilePage({
       </main>
     );
   if (!actor) {
-    const checking =
-      profiles.state.status === "loading" ||
-      membership.joinStatus === "loading" ||
-      membership.sessionStatus === "loading" ||
-      points.state.status === "loading";
-    const unavailable =
-      profiles.state.status === "error" ||
-      membership.joinStatus === "unavailable" ||
-      membership.sessionStatus === "error" ||
-      points.state.status === "error";
-    if (!checking && !unavailable) return <UnknownContributor login={login} />;
+    const absence = unresolvedProfile({
+      directory: profileRead(
+        profiles.state.status === "ready"
+          ? "current"
+          : profiles.state.status === "error"
+            ? "failed"
+            : "loading",
+        profiles.state.status === "ready" &&
+          profiles.state.refreshError !== undefined,
+      ),
+      journal: profileRead(
+        points.state.status === "ready"
+          ? "current"
+          : points.state.status === "error"
+            ? "failed"
+            : "loading",
+        points.state.status === "ready" && points.state.stale === true,
+      ),
+      snapshot: profileRead("current", state.refreshError !== undefined),
+      membership:
+        membership.joinStatus === "loading"
+          ? "loading"
+          : membership.joinStatus === "unavailable"
+            ? "unavailable"
+            : "settled",
+      session:
+        membership.sessionStatus === "loading"
+          ? "loading"
+          : membership.sessionStatus === "error"
+            ? "error"
+            : "ready",
+    });
+    if (absence === "unknown") return <UnknownContributor login={login} />;
     return (
       <main className="shell route-main">
         <UnverifiedIdentity login={login} />
-        {checking ? (
+        {absence === "pending" ? (
           <Spinner className="data-notice" label="Checking contributor" />
         ) : (
           <>
@@ -92,6 +118,7 @@ export function ProfilePage({
               type="button"
               aria-label="Retry profile"
               onClick={() => {
+                retry();
                 profiles.retry();
                 membership.retry();
                 points.refresh();

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "9f17b623bd12213d494ea69770261cfb9da3c656104efe141d9c970626b7d2d7",
+  "inventorySha256": "1780f26b81ffceeb773d035a589dfe948e0f0a9e48e939eeb4ed19213f05cf96",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2879,7 +2879,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 226,
+      "line": 227,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -2898,7 +2898,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 536,
+      "line": 537,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -2917,7 +2917,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1401,
+      "line": 1431,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -3732,6 +3732,16 @@
         "retained",
         "unchanged"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/profile-actor.ts",
+      "line": 100,
+      "name": "phase",
+      "kind": "string-union",
+      "values": ["current", "failed", "loading"],
+      "models": [],
+      "lexicallyUnmentionedValues": ["current", "failed", "loading"],
       "review": "candidate-only"
     },
     {
