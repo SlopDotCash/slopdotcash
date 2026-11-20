@@ -597,6 +597,469 @@ lemma PendingNonneg(e: Escrow)
 }
 
 
+// ---- Committed-leaf origins ------------------------------------------------------
+
+lemma OriginsView(e: Escrow)
+  ensures alwaysCommittedLeavesTraced(e) == (!((exists m :: m in e.vault.months && !((m.committedGross == originGross(e.vault.origins, m.period))))) && !((exists o :: o in e.vault.origins && !((((((hasMonth(e.vault.months, o.period) && leafProves(monthFor(e.vault.months, o.period), o.leaf)) && contracts__ledger_hasSource(e.vault.awards, o.leaf.source)) && (contracts__ledger_awardFor(e.vault.awards, o.leaf.source).actor == o.leaf.actor)) && (contracts__ledger_awardFor(e.vault.awards, o.leaf.source).gross == o.leaf.gross)) && (|ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), e.vault.origins)| == 1))))))
+{
+}
+
+// The trace's four parts, each over every month or every logged leaf.
+lemma TracedParts(e: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  ensures forall m :: m in e.vault.months ==> m.committedGross == originGross(e.vault.origins, m.period)
+  ensures forall o :: o in e.vault.origins ==> hasMonth(e.vault.months, o.period) && leafProves(monthFor(e.vault.months, o.period), o.leaf)
+  ensures forall o :: o in e.vault.origins ==> (contracts__ledger_hasSource(e.vault.awards, o.leaf.source)
+    && contracts__ledger_awardFor(e.vault.awards, o.leaf.source).actor == o.leaf.actor
+    && contracts__ledger_awardFor(e.vault.awards, o.leaf.source).gross == o.leaf.gross)
+  ensures forall o :: o in e.vault.origins ==> |ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), e.vault.origins)| == 1
+{
+  OriginsView(e);
+}
+
+// The four parts make the trace.
+lemma TracedBuild(e: Escrow)
+  requires forall m :: m in e.vault.months ==> m.committedGross == originGross(e.vault.origins, m.period)
+  requires forall o :: o in e.vault.origins ==> hasMonth(e.vault.months, o.period) && leafProves(monthFor(e.vault.months, o.period), o.leaf)
+  requires forall o :: o in e.vault.origins ==> (contracts__ledger_hasSource(e.vault.awards, o.leaf.source)
+    && contracts__ledger_awardFor(e.vault.awards, o.leaf.source).actor == o.leaf.actor
+    && contracts__ledger_awardFor(e.vault.awards, o.leaf.source).gross == o.leaf.gross)
+  requires forall o :: o in e.vault.origins ==> |ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), e.vault.origins)| == 1
+  ensures alwaysCommittedLeavesTraced(e)
+{
+  OriginsView(e);
+}
+
+lemma OriginGrossAppend(os: seq<LeafOrigin>, lo: LeafOrigin, period: int)
+  ensures originGross(os + [lo], period) == originGross(os, period) + (if lo.period == period then lo.leaf.gross else 0)
+{
+  ProofLib.FoldLeftAppend((t: int, o: LeafOrigin) => (if (o.period == period) then (t + o.leaf.gross) else t), 0, os, lo);
+}
+
+lemma OriginGrossNone(os: seq<LeafOrigin>, period: int)
+  requires forall o :: o in os ==> o.period != period
+  ensures originGross(os, period) == 0
+{
+  forall i | 0 <= i < |os|
+    ensures os[i].period != period
+  {
+    assert os[i] in os;
+  }
+  OriginFoldFixed((t: int, o: LeafOrigin) => (if (o.period == period) then (t + o.leaf.gross) else t), period, 0, os);
+}
+
+lemma OriginFoldFixed(f: (int, LeafOrigin) -> int, period: int, init: int, os: seq<LeafOrigin>)
+  requires forall t, x :: f(t, x) == (if (x.period == period) then (t + x.leaf.gross) else t)
+  requires forall i :: 0 <= i < |os| ==> os[i].period != period
+  ensures Std.Collections.Seq.FoldLeft(f, init, os) == init
+  decreases |os|
+{
+  if |os| > 0 {
+    OriginFoldFixed(f, period, init, os[1..]);
+  }
+}
+
+// One source's award is the same in a list of awards that keeps every award of another, both with one award per source.
+lemma AwardKept(xs: seq<contracts__ledger_Award>, ys: seq<contracts__ledger_Award>, s: int)
+  requires contracts__ledger_uniqueSources(xs) && contracts__ledger_uniqueSources(ys)
+  requires forall a :: a in xs ==> a in ys
+  requires contracts__ledger_hasSource(xs, s)
+  ensures contracts__ledger_hasSource(ys, s) && contracts__ledger_awardFor(ys, s) == contracts__ledger_awardFor(xs, s)
+{
+  var a :| a in xs && a.source == s;
+  var k :| 0 <= k < |xs| && xs[k] == a;
+  AwardForAt(xs, k);
+  assert a in ys;
+  var j :| 0 <= j < |ys| && ys[j] == a;
+  AwardForAt(ys, j);
+}
+
+// Awards that keep every award of a list, both with one award per source, keep each source's award.
+lemma AwardsSuperset(xs: seq<contracts__ledger_Award>, ys: seq<contracts__ledger_Award>)
+  requires contracts__ledger_uniqueSources(xs) && contracts__ledger_uniqueSources(ys)
+  requires forall a :: a in xs ==> a in ys
+  ensures forall s :: contracts__ledger_hasSource(xs, s) ==> (contracts__ledger_hasSource(ys, s)
+    && contracts__ledger_awardFor(ys, s) == contracts__ledger_awardFor(xs, s))
+{
+  forall s | contracts__ledger_hasSource(xs, s)
+    ensures contracts__ledger_hasSource(ys, s) && contracts__ledger_awardFor(ys, s) == contracts__ledger_awardFor(xs, s)
+  {
+    AwardKept(xs, ys, s);
+  }
+}
+
+// One source's actor and gross are the same in awards changed in place that keep each one's source, actor and gross.
+lemma AwardMatched(xs: seq<contracts__ledger_Award>, ys: seq<contracts__ledger_Award>, s: int)
+  requires contracts__ledger_uniqueSources(xs) && contracts__ledger_uniqueSources(ys)
+  requires |xs| == |ys| && forall k :: 0 <= k < |xs| ==> ys[k].source == xs[k].source && ys[k].actor == xs[k].actor && ys[k].gross == xs[k].gross
+  requires contracts__ledger_hasSource(xs, s)
+  ensures contracts__ledger_hasSource(ys, s)
+    && contracts__ledger_awardFor(ys, s).actor == contracts__ledger_awardFor(xs, s).actor
+    && contracts__ledger_awardFor(ys, s).gross == contracts__ledger_awardFor(xs, s).gross
+{
+  var a :| a in xs && a.source == s;
+  var k :| 0 <= k < |xs| && xs[k] == a;
+  AwardForAt(xs, k);
+  assert ys[k] in ys;
+  AwardForAt(ys, k);
+}
+
+// Awards changed in place, keeping each one's source, actor and gross, keep each source's actor and gross.
+lemma AwardsPointwise(xs: seq<contracts__ledger_Award>, ys: seq<contracts__ledger_Award>)
+  requires contracts__ledger_uniqueSources(xs) && contracts__ledger_uniqueSources(ys)
+  requires |xs| == |ys| && forall k :: 0 <= k < |xs| ==> ys[k].source == xs[k].source && ys[k].actor == xs[k].actor && ys[k].gross == xs[k].gross
+  ensures forall s :: contracts__ledger_hasSource(xs, s) ==> (contracts__ledger_hasSource(ys, s)
+    && contracts__ledger_awardFor(ys, s).actor == contracts__ledger_awardFor(xs, s).actor
+    && contracts__ledger_awardFor(ys, s).gross == contracts__ledger_awardFor(xs, s).gross)
+{
+  forall s | contracts__ledger_hasSource(xs, s)
+    ensures contracts__ledger_hasSource(ys, s)
+      && contracts__ledger_awardFor(ys, s).actor == contracts__ledger_awardFor(xs, s).actor
+      && contracts__ledger_awardFor(ys, s).gross == contracts__ledger_awardFor(xs, s).gross
+  {
+    AwardMatched(xs, ys, s);
+  }
+}
+
+// The last award of a list is its source's award.
+lemma AwardForAppendSelf(xs: seq<contracts__ledger_Award>, n: contracts__ledger_Award)
+  ensures contracts__ledger_awardFor(xs + [n], n.source) == n
+{
+  AwardForLast(xs, n, n.source);
+}
+
+lemma AwardForLast(xs: seq<contracts__ledger_Award>, n: contracts__ledger_Award, source: int)
+  requires n.source == source
+  ensures contracts__ledger_awardFor(xs + [n], source) == n
+{
+  ProofLib.FoldLeftAppend((found: contracts__ledger_Award, a: contracts__ledger_Award) => (if (a.source == source) then a else found), contracts__ledger_noAward, xs, n);
+}
+
+// withMonth puts the new month exactly where its period was.
+lemma WithMonthAt(ms: seq<Month>, nm: Month, k: int)
+  requires 0 <= k < |ms|
+  ensures |withMonth(ms, nm)| == |ms|
+  ensures withMonth(ms, nm)[k] == (if ms[k].period == nm.period then nm else ms[k])
+  ensures withMonth(ms, nm)[k].period == ms[k].period
+{
+}
+
+// Well-formed months have distinct periods.
+lemma MonthsDistinct(e: Escrow)
+  requires alwaysMonthsWellFormed(e)
+  ensures forall j, k :: 0 <= j < |e.vault.months| && 0 <= k < |e.vault.months| && e.vault.months[j].period == e.vault.months[k].period ==> j == k
+{
+  forall j, k | 0 <= j < |e.vault.months| && 0 <= k < |e.vault.months| && e.vault.months[j].period == e.vault.months[k].period
+    ensures j == k
+  {
+    MonthPeriodUnique(e, j, k);
+  }
+}
+
+// The only month of a period is that period's month.
+lemma MonthForAt(ms: seq<Month>, i: int, period: int)
+  requires 0 <= i < |ms| && ms[i].period == period
+  requires forall j :: 0 <= j < |ms| && j != i ==> ms[j].period != period
+  ensures hasMonth(ms, period) && monthFor(ms, period) == ms[i]
+{
+  assert ms[i] in ms;
+  LastMatch((found: Month, m: Month) => (if (m.period == period) then m else found), (m: Month) => m.period == period, noMonth, ms, i);
+}
+
+// Replacing one period's month in months with distinct periods keeps each period that has a month, and each other period's month.
+lemma MonthForWith(ms: seq<Month>, nm: Month, i: int, period: int)
+  requires 0 <= i < |ms| && ms[i].period == nm.period
+  requires forall j, k :: 0 <= j < |ms| && 0 <= k < |ms| && ms[j].period == ms[k].period ==> j == k
+  requires hasMonth(ms, period)
+  ensures hasMonth(withMonth(ms, nm), period)
+  ensures monthFor(withMonth(ms, nm), period) == (if period == nm.period then nm else monthFor(ms, period))
+{
+  var ys := withMonth(ms, nm);
+  var m :| m in ms && m.period == period;
+  var k :| 0 <= k < |ms| && ms[k] == m;
+  forall j | 0 <= j < |ms| && j != k
+    ensures ms[j].period != period
+  {
+  }
+  MonthForAt(ms, k, period);
+  WithMonthAt(ms, nm, k);
+  forall j | 0 <= j < |ys| && j != k
+    ensures ys[j].period != period
+  {
+    WithMonthAt(ms, nm, j);
+  }
+  MonthForAt(ys, k, period);
+}
+
+// Appending a month for a new period keeps every other period's month.
+lemma MonthForAppendOther(ms: seq<Month>, nm: Month, period: int)
+  requires period != nm.period
+  ensures monthFor(ms + [nm], period) == monthFor(ms, period)
+{
+  ProofLib.FoldLeftAppend((found: Month, m: Month) => (if (m.period == period) then m else found), noMonth, ms, nm);
+}
+
+lemma HasMonthAppend(ms: seq<Month>, nm: Month, period: int)
+  requires hasMonth(ms, period)
+  ensures hasMonth(ms + [nm], period)
+{
+  var m :| m in ms && m.period == period;
+  assert m in ms + [nm];
+}
+
+// Replacing one period's month, adding to its committed gross, adds to that period's month alone.
+lemma GrossWithMonth(ms: seq<Month>, nm: Month, i: int, os: seq<LeafOrigin>, added: int, k: int)
+  requires 0 <= i < |ms| && ms[i].period == nm.period && nm.committedGross == ms[i].committedGross + added
+  requires forall m :: m in ms ==> m.committedGross == originGross(os, m.period)
+  requires 0 <= k < |ms|
+  ensures withMonth(ms, nm)[k].committedGross == originGross(os, ms[k].period) + (if ms[k].period == nm.period then added else 0)
+{
+  assert ms[i] in ms;
+  assert ms[k] in ms;
+  WithMonthAt(ms, nm, k);
+}
+
+// A leaf proved by its period's month stays proved after a month with the same proof fields replaces that period's month.
+lemma ProvedWithMonth(ms: seq<Month>, nm: Month, i: int, period: int, leaf: contracts__ledger_Leaf)
+  requires 0 <= i < |ms| && ms[i].period == nm.period
+  requires forall j, k :: 0 <= j < |ms| && 0 <= k < |ms| && ms[j].period == ms[k].period ==> j == k
+  requires nm.version2 == ms[i].version2 && nm.leaves == ms[i].leaves && nm.count == ms[i].count && nm.total == ms[i].total
+  requires hasMonth(ms, period) && leafProves(monthFor(ms, period), leaf)
+  ensures hasMonth(withMonth(ms, nm), period) && leafProves(monthFor(withMonth(ms, nm), period), leaf)
+{
+  MonthForWith(ms, nm, i, period);
+  if period == nm.period {
+    forall j | 0 <= j < |ms| && j != i
+      ensures ms[j].period != period
+    {
+    }
+    MonthForAt(ms, i, period);
+  }
+}
+
+// Logging a leaf whose source no logged leaf has keeps each logged source logged once.
+lemma OriginCountAppend(os: seq<LeafOrigin>, lo: LeafOrigin, o: LeafOrigin)
+  requires forall x :: x in os ==> x.leaf.source != lo.leaf.source
+  requires o in os ==> |ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), os)| == 1
+  requires o in os + [lo]
+  ensures |ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), os + [lo])| == 1
+{
+  ProofLib.FilterAppend((x: LeafOrigin) => (x.leaf.source == o.leaf.source), os, lo);
+  if o !in os {
+    assert o == lo;
+    forall j | 0 <= j < |os|
+      ensures !(os[j].leaf.source == o.leaf.source)
+    {
+      assert os[j] in os;
+    }
+    ProofLib.FilterNone((x: LeafOrigin) => (x.leaf.source == o.leaf.source), os);
+  }
+}
+
+// A transition that keeps the origins, gives each month its period's logged gross, keeps each logged leaf
+// proved by its period's month, and keeps each award's actor and gross keeps the trace.
+lemma TracedFrame(e: Escrow, after: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  requires after.vault.origins == e.vault.origins
+  requires forall m :: m in after.vault.months ==> m.committedGross == originGross(e.vault.origins, m.period)
+  requires forall o :: o in e.vault.origins ==> (hasMonth(after.vault.months, o.period)
+    && leafProves(monthFor(after.vault.months, o.period), o.leaf))
+  requires forall s :: contracts__ledger_hasSource(e.vault.awards, s) ==> (contracts__ledger_hasSource(after.vault.awards, s)
+    && contracts__ledger_awardFor(after.vault.awards, s).actor == contracts__ledger_awardFor(e.vault.awards, s).actor
+    && contracts__ledger_awardFor(after.vault.awards, s).gross == contracts__ledger_awardFor(e.vault.awards, s).gross)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedParts(e);
+  TracedBuild(after);
+}
+
+// A transition that keeps the months and the origins, and each award's actor and gross, keeps the trace.
+lemma TracedSameMonths(e: Escrow, after: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  requires after.vault.months == e.vault.months && after.vault.origins == e.vault.origins
+  requires forall s :: contracts__ledger_hasSource(e.vault.awards, s) ==> (contracts__ledger_hasSource(after.vault.awards, s)
+    && contracts__ledger_awardFor(after.vault.awards, s).actor == contracts__ledger_awardFor(e.vault.awards, s).actor
+    && contracts__ledger_awardFor(after.vault.awards, s).gross == contracts__ledger_awardFor(e.vault.awards, s).gross)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedParts(e);
+  TracedFrame(e, after);
+}
+
+// A transition that keeps the months, the origins and the awards keeps the trace.
+lemma TracedSame(e: Escrow, after: Escrow)
+  requires alwaysCommittedLeavesTraced(e)
+  requires after.vault.months == e.vault.months && after.vault.origins == e.vault.origins
+  requires after.vault.awards == e.vault.awards
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedSameMonths(e, after);
+}
+
+// Appending a month for a period without one, with nothing committed, keeps the trace.
+lemma TracedAppendMonth(e: Escrow, after: Escrow, nm: Month)
+  requires alwaysCommittedLeavesTraced(e)
+  requires !hasMonth(e.vault.months, nm.period) && nm.committedGross == 0
+  requires after.vault.months == e.vault.months + [nm] && after.vault.origins == e.vault.origins
+  requires forall s :: contracts__ledger_hasSource(e.vault.awards, s) ==> (contracts__ledger_hasSource(after.vault.awards, s)
+    && contracts__ledger_awardFor(after.vault.awards, s).actor == contracts__ledger_awardFor(e.vault.awards, s).actor
+    && contracts__ledger_awardFor(after.vault.awards, s).gross == contracts__ledger_awardFor(e.vault.awards, s).gross)
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedParts(e);
+  var ms := e.vault.months;
+  var os := e.vault.origins;
+  forall o | o in os
+    ensures o.period != nm.period
+  {
+  }
+  OriginGrossNone(os, nm.period);
+  forall o | o in os
+    ensures hasMonth(ms + [nm], o.period) && leafProves(monthFor(ms + [nm], o.period), o.leaf)
+  {
+    HasMonthAppend(ms, nm, o.period);
+    MonthForAppendOther(ms, nm, o.period);
+  }
+  forall m | m in ms + [nm]
+    ensures m.committedGross == originGross(os, m.period)
+  {
+    if m != nm {
+      assert m in ms;
+    }
+  }
+  TracedFrame(e, after);
+}
+
+// Replacing one period's month, keeping its proof fields and committed gross, keeps the trace.
+lemma TracedReplaceMonth(e: Escrow, after: Escrow, i: int, nm: Month)
+  requires alwaysCommittedLeavesTraced(e)
+  requires forall j, k :: 0 <= j < |e.vault.months| && 0 <= k < |e.vault.months| && e.vault.months[j].period == e.vault.months[k].period ==> j == k
+  requires 0 <= i < |e.vault.months| && e.vault.months[i].period == nm.period
+  requires after.vault.months == withMonth(e.vault.months, nm) && after.vault.origins == e.vault.origins
+  requires nm.version2 == e.vault.months[i].version2 && nm.leaves == e.vault.months[i].leaves
+    && nm.count == e.vault.months[i].count && nm.total == e.vault.months[i].total
+    && nm.committedGross == e.vault.months[i].committedGross
+  requires after.vault.awards == e.vault.awards
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedParts(e);
+  var ms := e.vault.months;
+  var ys := after.vault.months;
+  var os := e.vault.origins;
+  assert |ys| == |ms|;
+  forall o | o in os
+    ensures hasMonth(ys, o.period) && leafProves(monthFor(ys, o.period), o.leaf)
+  {
+    ProvedWithMonth(ms, nm, i, o.period, o.leaf);
+  }
+  forall m | m in ys
+    ensures m.committedGross == originGross(os, m.period)
+  {
+    var k :| 0 <= k < |ys| && ys[k] == m;
+    WithMonthAt(ms, nm, k);
+    GrossWithMonth(ms, nm, i, os, 0, k);
+  }
+  TracedFrame(e, after);
+}
+
+// Committing a proved leaf adds its gross to its period's month alone.
+lemma CommitLeafGross(ms: seq<Month>, nm: Month, i: int, os: seq<LeafOrigin>, lo: LeafOrigin, k: int)
+  requires 0 <= i < |ms| && ms[i].period == lo.period && nm.period == lo.period
+  requires nm.committedGross == ms[i].committedGross + lo.leaf.gross
+  requires forall m :: m in ms ==> m.committedGross == originGross(os, m.period)
+  requires 0 <= k < |ms|
+  ensures withMonth(ms, nm)[k].committedGross == originGross(os + [lo], withMonth(ms, nm)[k].period)
+{
+  WithMonthAt(ms, nm, k);
+  GrossWithMonth(ms, nm, i, os, lo.leaf.gross, k);
+  OriginGrossAppend(os, lo, ms[k].period);
+}
+
+// Committing a proved leaf logs it with its period: the trace holds after it.
+lemma CommitLeafTraced(e: Escrow, after: Escrow, i: int, nm: Month, lo: LeafOrigin, n: contracts__ledger_Award)
+  requires alwaysCommittedLeavesTraced(e)
+  requires forall j, k :: 0 <= j < |e.vault.months| && 0 <= k < |e.vault.months| && e.vault.months[j].period == e.vault.months[k].period ==> j == k
+  requires contracts__ledger_uniqueSources(e.vault.awards) && contracts__ledger_uniqueSources(after.vault.awards)
+  requires 0 <= i < |e.vault.months| && e.vault.months[i].period == lo.period && leafProves(e.vault.months[i], lo.leaf)
+  requires nm.period == lo.period && nm.version2 == e.vault.months[i].version2 && nm.leaves == e.vault.months[i].leaves
+    && nm.count == e.vault.months[i].count && nm.total == e.vault.months[i].total
+    && nm.committedGross == e.vault.months[i].committedGross + lo.leaf.gross
+  requires after.vault.months == withMonth(e.vault.months, nm)
+  requires after.vault.origins == e.vault.origins + [lo]
+  requires after.vault.awards == e.vault.awards + [n] && !contracts__ledger_hasSource(e.vault.awards, n.source)
+  requires n.source == lo.leaf.source && n.actor == lo.leaf.actor && n.gross == lo.leaf.gross
+  ensures alwaysCommittedLeavesTraced(after)
+  ensures stepOriginsRetained(e, after)
+{
+  TracedParts(e);
+  var ms := e.vault.months;
+  var ys := after.vault.months;
+  var os := e.vault.origins;
+  assert |ys| == |ms|;
+  forall m | m in ys
+    ensures m.committedGross == originGross(os + [lo], m.period)
+  {
+    var k :| 0 <= k < |ys| && ys[k] == m;
+    CommitLeafGross(ms, nm, i, os, lo, k);
+  }
+  assert ms[i] in ms;
+  forall o | o in os + [lo]
+    ensures hasMonth(ys, o.period) && leafProves(monthFor(ys, o.period), o.leaf)
+  {
+    if o in os {
+      ProvedWithMonth(ms, nm, i, o.period, o.leaf);
+    } else {
+      assert o == lo;
+      MonthForWith(ms, nm, i, lo.period);
+    }
+  }
+  forall a | a in e.vault.awards
+    ensures a in after.vault.awards
+  {
+  }
+  AwardsSuperset(e.vault.awards, after.vault.awards);
+  AwardForAppendSelf(e.vault.awards, n);
+  assert n in after.vault.awards;
+  forall o | o in os + [lo]
+    ensures contracts__ledger_hasSource(after.vault.awards, o.leaf.source)
+      && contracts__ledger_awardFor(after.vault.awards, o.leaf.source).actor == o.leaf.actor
+      && contracts__ledger_awardFor(after.vault.awards, o.leaf.source).gross == o.leaf.gross
+  {
+  }
+  forall x | x in os
+    ensures x.leaf.source != lo.leaf.source
+  {
+  }
+  forall o | o in os + [lo]
+    ensures |ProofLib.Filter((x: LeafOrigin) => (x.leaf.source == o.leaf.source), os + [lo])| == 1
+  {
+    OriginCountAppend(os, lo, o);
+  }
+  TracedBuild(after);
+}
+
+lemma Initial_alwaysCommittedLeavesTraced()
+  ensures alwaysCommittedLeavesTraced(initial)
+{
+  assert initial.vault.months == [] && initial.vault.origins == [];
+  OriginsView(initial);
+}
+
+// In well-formed months, a period with committed gross keeps its remainder below its total.
+lemma lawTouchedMonthNeverReleases_ensures(e: Escrow, period: int, expectedRemaining: int, releasedGross: int, signer: string, by_: string)
+  ensures (lawTouchedMonthNeverReleases(e, period, expectedRemaining, releasedGross, signer, by_) == true)
+{
+  if alwaysMonthsWellFormed(e) && hasMonth(e.vault.months, period) {
+    var i := MonthForIndex(e, period);
+    assert e.vault.months[i] in e.vault.months;
+  }
+}
+
 lemma KeysAppend(e: Escrow, after: Escrow, k: VaultKey)
   requires alwaysOneVaultPerKey(e)
   requires after.vaultKeys == e.vaultKeys + [k] && k !in e.vaultKeys
@@ -949,6 +1412,12 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   ensures alwaysAdmittedInWindow(commitMonthly(e, period, entries, signer))
   ensures stepFreeRisesOnlyByDepositOrRelease(e, "commitMonthly", commitMonthly(e, period, entries, signer))
   ensures stepSourceSequenceCountsOrdinaryAwards(e, commitMonthly(e, period, entries, signer))
+  ensures commitMonthly(e, period, entries, signer).vault.origins == e.vault.origins
+  ensures forall a :: a in e.vault.awards ==> a in commitMonthly(e, period, entries, signer).vault.awards
+  ensures |commitMonthly(e, period, entries, signer).vault.months| == |e.vault.months| + 1
+  ensures commitMonthly(e, period, entries, signer).vault.months[..|e.vault.months|] == e.vault.months
+  ensures commitMonthly(e, period, entries, signer).vault.months[|e.vault.months|].period == period
+  ensures commitMonthly(e, period, entries, signer).vault.months[|e.vault.months|].committedGross == 0
 {
   var after := commitMonthly(e, period, entries, signer);
   var newEntries := freshEntries(e.vault, entries);
@@ -1006,6 +1475,24 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   assert after.vault.free == e.vault.free - contracts__ledger_leafTotal(newEntries);
   assert after.vault.sourceSequence == e.vault.sourceSequence + |newEntries|;
   assert |after.vault.awards| == |e.vault.awards| + |newEntries|;
+  assert after.vault.months[..|e.vault.months|] == e.vault.months;
+}
+
+// A legacy allocation appends a month with nothing committed, logs no leaf and keeps every award, so it keeps the trace.
+lemma CommitMonthlyTraced(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, signer: string)
+  requires inv(e) && canCommitMonthly(e, period, entries, signer)
+  ensures alwaysCommittedLeavesTraced(commitMonthly(e, period, entries, signer))
+  ensures stepOriginsRetained(e, commitMonthly(e, period, entries, signer))
+{
+  var after := commitMonthly(e, period, entries, signer);
+  CommitMonthlyView(e, period, entries, signer);
+  CommitMonthlyFacts(e, period, entries, signer);
+  var n := |e.vault.months|;
+  var nm := after.vault.months[n];
+  assert after.vault.months == after.vault.months[..n] + [nm];
+  assert after.vault.months == e.vault.months + [nm];
+  AwardsSuperset(e.vault.awards, after.vault.awards);
+  TracedAppendMonth(e, after, nm);
 }
 
 // ---- Month pledges -------------------------------------------------------------
@@ -1559,6 +2046,7 @@ lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, 
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPendingMatchesMonths(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBountyHasNoMonthly(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysAdmittedInWindow(pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysCommittedLeavesTraced(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysPledgedMonthUnadmitted(pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> alwaysBindingsWellFormed(pledgeMonths(e, fromPeriod, count, amount, by_)))
@@ -1568,6 +2056,7 @@ lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, 
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepAwardsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepMonthlyPolicyByOwner(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepMonthsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepOriginsRetained(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepPledgeIrrevocable(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepNewBindingAttested(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
   ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, by_) ==> stepPaidToLiveBinding(e, pledgeMonths(e, fromPeriod, count, amount, by_)))
@@ -1576,6 +2065,7 @@ lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: int, 
 {
   if inv(e) && canPledgeMonths(e, fromPeriod, count, amount, by_) {
     SameAwards(e, pledgeMonths(e, fromPeriod, count, amount, by_));
+    TracedSame(e, pledgeMonths(e, fromPeriod, count, amount, by_));
     AwardsFrame(e, pledgeMonths(e, fromPeriod, count, amount, by_));    PledgeMonthsKeeps(e, fromPeriod, count, amount, by_);
     PledgeMonthsCovers(e, fromPeriod, count, amount, by_);
   }
@@ -1599,6 +2089,7 @@ lemma expirePledge_ensures(e: Escrow, period: int)
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPendingMatchesMonths(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBountyHasNoMonthly(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysAdmittedInWindow(expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysCommittedLeavesTraced(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPledgesCovered(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysPledgedMonthUnadmitted(expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> alwaysBindingsWellFormed(expirePledge(e, period)))
@@ -1608,6 +2099,7 @@ lemma expirePledge_ensures(e: Escrow, period: int)
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepAwardsRetained(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepMonthlyPolicyByOwner(e, "expirePledge", expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepMonthsRetained(e, expirePledge(e, period)))
+  ensures (inv(e) ==> canExpirePledge(e, period) ==> stepOriginsRetained(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepPledgeIrrevocable(e, "expirePledge", expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepNewBindingAttested(e, expirePledge(e, period)))
   ensures (inv(e) ==> canExpirePledge(e, period) ==> stepPaidToLiveBinding(e, expirePledge(e, period)))
@@ -1616,6 +2108,7 @@ lemma expirePledge_ensures(e: Escrow, period: int)
 {
   if inv(e) && canExpirePledge(e, period) {
     SameAwards(e, expirePledge(e, period));
+    TracedSame(e, expirePledge(e, period));
     AwardsFrame(e, expirePledge(e, period));
     ClosePledgeCovers(e, period);
     PledgedMonthAfterClose(e, period, expirePledge(e, period));
@@ -1640,6 +2133,7 @@ lemma tick_ensures(e: Escrow, timestamp: int)
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysPendingMatchesMonths(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysBountyHasNoMonthly(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysAdmittedInWindow(tick(e, timestamp)))
+  ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysCommittedLeavesTraced(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysPledgesCovered(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysPledgedMonthUnadmitted(tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> alwaysBindingsWellFormed(tick(e, timestamp)))
@@ -1649,6 +2143,7 @@ lemma tick_ensures(e: Escrow, timestamp: int)
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepAwardsRetained(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepMonthlyPolicyByOwner(e, "tick", tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepMonthsRetained(e, tick(e, timestamp)))
+  ensures (inv(e) ==> canTick(e, timestamp) ==> stepOriginsRetained(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepPledgeIrrevocable(e, "tick", tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepNewBindingAttested(e, tick(e, timestamp)))
   ensures (inv(e) ==> canTick(e, timestamp) ==> stepPaidToLiveBinding(e, tick(e, timestamp)))
@@ -1661,6 +2156,7 @@ lemma tick_ensures(e: Escrow, timestamp: int)
 
   if inv(e) && canTick(e, timestamp) {
     SameAwards(e, tick(e, timestamp));
+    TracedSame(e, tick(e, timestamp));
     AwardsFrame(e, tick(e, timestamp));
   }
 }
@@ -1683,6 +2179,7 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysPendingMatchesMonths(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysBountyHasNoMonthly(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysAdmittedInWindow(proposeUpgradeAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysCommittedLeavesTraced(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysPledgesCovered(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysPledgedMonthUnadmitted(proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> alwaysBindingsWellFormed(proposeUpgradeAuthority(e, successor, by_)))
@@ -1692,6 +2189,7 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepAwardsRetained(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepMonthlyPolicyByOwner(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepMonthsRetained(e, proposeUpgradeAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepOriginsRetained(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepPledgeIrrevocable(e, "proposeUpgradeAuthority", proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepNewBindingAttested(e, proposeUpgradeAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeUpgradeAuthority(e, successor, by_) ==> stepPaidToLiveBinding(e, proposeUpgradeAuthority(e, successor, by_)))
@@ -1704,6 +2202,7 @@ lemma proposeUpgradeAuthority_ensures(e: Escrow, successor: string, by_: string)
 
   if inv(e) && canProposeUpgradeAuthority(e, successor, by_) {
     SameAwards(e, proposeUpgradeAuthority(e, successor, by_));
+    TracedSame(e, proposeUpgradeAuthority(e, successor, by_));
     AwardsFrame(e, proposeUpgradeAuthority(e, successor, by_));
   }
 }
@@ -1726,6 +2225,7 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysPendingMatchesMonths(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysBountyHasNoMonthly(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysAdmittedInWindow(acceptUpgradeAuthority(e, by_)))
+  ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysCommittedLeavesTraced(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysPledgesCovered(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysPledgedMonthUnadmitted(acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> alwaysBindingsWellFormed(acceptUpgradeAuthority(e, by_)))
@@ -1735,6 +2235,7 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepAwardsRetained(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepMonthlyPolicyByOwner(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepMonthsRetained(e, acceptUpgradeAuthority(e, by_)))
+  ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepOriginsRetained(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepPledgeIrrevocable(e, "acceptUpgradeAuthority", acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepNewBindingAttested(e, acceptUpgradeAuthority(e, by_)))
   ensures (inv(e) ==> canAcceptUpgradeAuthority(e, by_) ==> stepPaidToLiveBinding(e, acceptUpgradeAuthority(e, by_)))
@@ -1747,6 +2248,7 @@ lemma acceptUpgradeAuthority_ensures(e: Escrow, by_: string)
 
   if inv(e) && canAcceptUpgradeAuthority(e, by_) {
     SameAwards(e, acceptUpgradeAuthority(e, by_));
+    TracedSame(e, acceptUpgradeAuthority(e, by_));
     AwardsFrame(e, acceptUpgradeAuthority(e, by_));
   }
 }
@@ -1769,6 +2271,7 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysPendingMatchesMonths(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysBountyHasNoMonthly(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysAdmittedInWindow(setVaultImplementation(e, logic, uups, by_)))
+  ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysCommittedLeavesTraced(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysPledgesCovered(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysPledgedMonthUnadmitted(setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> alwaysBindingsWellFormed(setVaultImplementation(e, logic, uups, by_)))
@@ -1778,6 +2281,7 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepAwardsRetained(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepMonthlyPolicyByOwner(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepMonthsRetained(e, setVaultImplementation(e, logic, uups, by_)))
+  ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepOriginsRetained(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepPledgeIrrevocable(e, "setVaultImplementation", setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepNewBindingAttested(e, setVaultImplementation(e, logic, uups, by_)))
   ensures (inv(e) ==> canSetVaultImplementation(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, setVaultImplementation(e, logic, uups, by_)))
@@ -1790,6 +2294,7 @@ lemma setVaultImplementation_ensures(e: Escrow, logic: int, uups: bool, by_: str
 
   if inv(e) && canSetVaultImplementation(e, logic, uups, by_) {
     SameAwards(e, setVaultImplementation(e, logic, uups, by_));
+    TracedSame(e, setVaultImplementation(e, logic, uups, by_));
     AwardsFrame(e, setVaultImplementation(e, logic, uups, by_));
   }
 }
@@ -1812,6 +2317,7 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysPendingMatchesMonths(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysBountyHasNoMonthly(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysAdmittedInWindow(upgradeFactory(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysCommittedLeavesTraced(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysPledgesCovered(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysPledgedMonthUnadmitted(upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> alwaysBindingsWellFormed(upgradeFactory(e, logic, uups, by_)))
@@ -1821,6 +2327,7 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepAwardsRetained(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepMonthlyPolicyByOwner(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepMonthsRetained(e, upgradeFactory(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepOriginsRetained(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepPledgeIrrevocable(e, "upgradeFactory", upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepNewBindingAttested(e, upgradeFactory(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeFactory(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, upgradeFactory(e, logic, uups, by_)))
@@ -1833,6 +2340,7 @@ lemma upgradeFactory_ensures(e: Escrow, logic: int, uups: bool, by_: string)
 
   if inv(e) && canUpgradeFactory(e, logic, uups, by_) {
     SameAwards(e, upgradeFactory(e, logic, uups, by_));
+    TracedSame(e, upgradeFactory(e, logic, uups, by_));
     AwardsFrame(e, upgradeFactory(e, logic, uups, by_));
   }
 }
@@ -1855,6 +2363,7 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysPendingMatchesMonths(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysBountyHasNoMonthly(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysAdmittedInWindow(upgradeVault(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysCommittedLeavesTraced(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysPledgesCovered(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysPledgedMonthUnadmitted(upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> alwaysBindingsWellFormed(upgradeVault(e, logic, uups, by_)))
@@ -1864,6 +2373,7 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepAwardsRetained(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepMonthlyPolicyByOwner(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepMonthsRetained(e, upgradeVault(e, logic, uups, by_)))
+  ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepOriginsRetained(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepPledgeIrrevocable(e, "upgradeVault", upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepNewBindingAttested(e, upgradeVault(e, logic, uups, by_)))
   ensures (inv(e) ==> canUpgradeVault(e, logic, uups, by_) ==> stepPaidToLiveBinding(e, upgradeVault(e, logic, uups, by_)))
@@ -1876,6 +2386,7 @@ lemma upgradeVault_ensures(e: Escrow, logic: int, uups: bool, by_: string)
 
   if inv(e) && canUpgradeVault(e, logic, uups, by_) {
     SameAwards(e, upgradeVault(e, logic, uups, by_));
+    TracedSame(e, upgradeVault(e, logic, uups, by_));
     AwardsFrame(e, upgradeVault(e, logic, uups, by_));
   }
 }
@@ -1898,6 +2409,7 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysPendingMatchesMonths(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysBountyHasNoMonthly(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysAdmittedInWindow(proposeIdentityAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysCommittedLeavesTraced(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysPledgesCovered(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysPledgedMonthUnadmitted(proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> alwaysBindingsWellFormed(proposeIdentityAuthority(e, successor, by_)))
@@ -1907,6 +2419,7 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepAwardsRetained(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepMonthlyPolicyByOwner(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepMonthsRetained(e, proposeIdentityAuthority(e, successor, by_)))
+  ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepOriginsRetained(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepPledgeIrrevocable(e, "proposeIdentityAuthority", proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepNewBindingAttested(e, proposeIdentityAuthority(e, successor, by_)))
   ensures (inv(e) ==> canProposeIdentityAuthority(e, successor, by_) ==> stepPaidToLiveBinding(e, proposeIdentityAuthority(e, successor, by_)))
@@ -1919,6 +2432,7 @@ lemma proposeIdentityAuthority_ensures(e: Escrow, successor: string, by_: string
 
   if inv(e) && canProposeIdentityAuthority(e, successor, by_) {
     SameAwards(e, proposeIdentityAuthority(e, successor, by_));
+    TracedSame(e, proposeIdentityAuthority(e, successor, by_));
     AwardsFrame(e, proposeIdentityAuthority(e, successor, by_));
   }
 }
@@ -1941,6 +2455,7 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysPendingMatchesMonths(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysBountyHasNoMonthly(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysAdmittedInWindow(cancelIdentityAuthorityRotation(e, by_)))
+  ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysCommittedLeavesTraced(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysPledgesCovered(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysPledgedMonthUnadmitted(cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> alwaysBindingsWellFormed(cancelIdentityAuthorityRotation(e, by_)))
@@ -1950,6 +2465,7 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepAwardsRetained(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepMonthlyPolicyByOwner(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepMonthsRetained(e, cancelIdentityAuthorityRotation(e, by_)))
+  ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepOriginsRetained(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepPledgeIrrevocable(e, "cancelIdentityAuthorityRotation", cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepNewBindingAttested(e, cancelIdentityAuthorityRotation(e, by_)))
   ensures (inv(e) ==> canCancelIdentityAuthorityRotation(e, by_) ==> stepPaidToLiveBinding(e, cancelIdentityAuthorityRotation(e, by_)))
@@ -1962,6 +2478,7 @@ lemma cancelIdentityAuthorityRotation_ensures(e: Escrow, by_: string)
 
   if inv(e) && canCancelIdentityAuthorityRotation(e, by_) {
     SameAwards(e, cancelIdentityAuthorityRotation(e, by_));
+    TracedSame(e, cancelIdentityAuthorityRotation(e, by_));
     AwardsFrame(e, cancelIdentityAuthorityRotation(e, by_));
   }
 }
@@ -1984,6 +2501,7 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysPendingMatchesMonths(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysBountyHasNoMonthly(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysAdmittedInWindow(executeIdentityAuthorityRotation(e)))
+  ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysCommittedLeavesTraced(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysPledgesCovered(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysPledgedMonthUnadmitted(executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> alwaysBindingsWellFormed(executeIdentityAuthorityRotation(e)))
@@ -1993,6 +2511,7 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepAwardsRetained(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepMonthlyPolicyByOwner(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepMonthsRetained(e, executeIdentityAuthorityRotation(e)))
+  ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepOriginsRetained(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepPledgeIrrevocable(e, "executeIdentityAuthorityRotation", executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepNewBindingAttested(e, executeIdentityAuthorityRotation(e)))
   ensures (inv(e) ==> canExecuteIdentityAuthorityRotation(e) ==> stepPaidToLiveBinding(e, executeIdentityAuthorityRotation(e)))
@@ -2005,6 +2524,7 @@ lemma executeIdentityAuthorityRotation_ensures(e: Escrow)
 
   if inv(e) && canExecuteIdentityAuthorityRotation(e) {
     SameAwards(e, executeIdentityAuthorityRotation(e));
+    TracedSame(e, executeIdentityAuthorityRotation(e));
     AwardsFrame(e, executeIdentityAuthorityRotation(e));
   }
 }
@@ -2027,6 +2547,7 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysPendingMatchesMonths(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysBountyHasNoMonthly(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysAdmittedInWindow(deposit(e, amount, sent, transferExact)))
+  ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysCommittedLeavesTraced(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysPledgesCovered(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysPledgedMonthUnadmitted(deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> alwaysBindingsWellFormed(deposit(e, amount, sent, transferExact)))
@@ -2036,6 +2557,7 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepAwardsRetained(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepMonthlyPolicyByOwner(e, "deposit", deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepMonthsRetained(e, deposit(e, amount, sent, transferExact)))
+  ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepOriginsRetained(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepPledgeIrrevocable(e, "deposit", deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepNewBindingAttested(e, deposit(e, amount, sent, transferExact)))
   ensures (inv(e) ==> canDeposit(e, amount, sent, transferExact) ==> stepPaidToLiveBinding(e, deposit(e, amount, sent, transferExact)))
@@ -2048,6 +2570,7 @@ lemma deposit_ensures(e: Escrow, amount: int, sent: int, transferExact: bool)
 
   if inv(e) && canDeposit(e, amount, sent, transferExact) {
     SameAwards(e, deposit(e, amount, sent, transferExact));
+    TracedSame(e, deposit(e, amount, sent, transferExact));
     AwardsFrame(e, deposit(e, amount, sent, transferExact));
   }
 }
@@ -2070,6 +2593,7 @@ lemma transferIn_ensures(e: Escrow, amount: int)
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysPendingMatchesMonths(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysBountyHasNoMonthly(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysAdmittedInWindow(transferIn(e, amount)))
+  ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysCommittedLeavesTraced(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysPledgesCovered(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysPledgedMonthUnadmitted(transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> alwaysBindingsWellFormed(transferIn(e, amount)))
@@ -2079,6 +2603,7 @@ lemma transferIn_ensures(e: Escrow, amount: int)
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepAwardsRetained(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepMonthlyPolicyByOwner(e, "transferIn", transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepMonthsRetained(e, transferIn(e, amount)))
+  ensures (inv(e) ==> canTransferIn(e, amount) ==> stepOriginsRetained(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepPledgeIrrevocable(e, "transferIn", transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepNewBindingAttested(e, transferIn(e, amount)))
   ensures (inv(e) ==> canTransferIn(e, amount) ==> stepPaidToLiveBinding(e, transferIn(e, amount)))
@@ -2091,6 +2616,7 @@ lemma transferIn_ensures(e: Escrow, amount: int)
 
   if inv(e) && canTransferIn(e, amount) {
     SameAwards(e, transferIn(e, amount));
+    TracedSame(e, transferIn(e, amount));
     AwardsFrame(e, transferIn(e, amount));
   }
 }
@@ -2113,6 +2639,7 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysPendingMatchesMonths(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysBountyHasNoMonthly(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysAdmittedInWindow(setMonthlyCommitment(e, cap, on, by_)))
+  ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysCommittedLeavesTraced(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysPledgesCovered(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysPledgedMonthUnadmitted(setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> alwaysBindingsWellFormed(setMonthlyCommitment(e, cap, on, by_)))
@@ -2122,6 +2649,7 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepAwardsRetained(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepMonthlyPolicyByOwner(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepMonthsRetained(e, setMonthlyCommitment(e, cap, on, by_)))
+  ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepOriginsRetained(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepPledgeIrrevocable(e, "setMonthlyCommitment", setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepNewBindingAttested(e, setMonthlyCommitment(e, cap, on, by_)))
   ensures (inv(e) ==> canSetMonthlyCommitment(e, cap, on, by_) ==> stepPaidToLiveBinding(e, setMonthlyCommitment(e, cap, on, by_)))
@@ -2134,6 +2662,7 @@ lemma setMonthlyCommitment_ensures(e: Escrow, cap: int, on: bool, by_: string)
 
   if inv(e) && canSetMonthlyCommitment(e, cap, on, by_) {
     SameAwards(e, setMonthlyCommitment(e, cap, on, by_));
+    TracedSame(e, setMonthlyCommitment(e, cap, on, by_));
     AwardsFrame(e, setMonthlyCommitment(e, cap, on, by_));
   }
 }
@@ -2156,6 +2685,7 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysPendingMatchesMonths(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysBountyHasNoMonthly(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysAdmittedInWindow(withdrawUnused(e, gross, transferOk, by_)))
+  ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysCommittedLeavesTraced(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysPledgesCovered(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysPledgedMonthUnadmitted(withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> alwaysBindingsWellFormed(withdrawUnused(e, gross, transferOk, by_)))
@@ -2165,6 +2695,7 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepAwardsRetained(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepMonthlyPolicyByOwner(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepMonthsRetained(e, withdrawUnused(e, gross, transferOk, by_)))
+  ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepOriginsRetained(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepPledgeIrrevocable(e, "withdrawUnused", withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepNewBindingAttested(e, withdrawUnused(e, gross, transferOk, by_)))
   ensures (inv(e) ==> canWithdrawUnused(e, gross, transferOk, by_) ==> stepPaidToLiveBinding(e, withdrawUnused(e, gross, transferOk, by_)))
@@ -2178,6 +2709,7 @@ lemma withdrawUnused_ensures(e: Escrow, gross: int, transferOk: bool, by_: strin
 
   if inv(e) && canWithdrawUnused(e, gross, transferOk, by_) {
     SameAwards(e, withdrawUnused(e, gross, transferOk, by_));
+    TracedSame(e, withdrawUnused(e, gross, transferOk, by_));
     AwardsFrame(e, withdrawUnused(e, gross, transferOk, by_));
   }
 }
@@ -2200,6 +2732,7 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysPendingMatchesMonths(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysBountyHasNoMonthly(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysAdmittedInWindow(claimFees(e, transferOk)))
+  ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysCommittedLeavesTraced(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysPledgesCovered(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysPledgedMonthUnadmitted(claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> alwaysBindingsWellFormed(claimFees(e, transferOk)))
@@ -2209,6 +2742,7 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepAwardsRetained(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepMonthlyPolicyByOwner(e, "claimFees", claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepMonthsRetained(e, claimFees(e, transferOk)))
+  ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepOriginsRetained(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepPledgeIrrevocable(e, "claimFees", claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepNewBindingAttested(e, claimFees(e, transferOk)))
   ensures (inv(e) ==> canClaimFees(e, transferOk) ==> stepPaidToLiveBinding(e, claimFees(e, transferOk)))
@@ -2221,6 +2755,7 @@ lemma claimFees_ensures(e: Escrow, transferOk: bool)
 
   if inv(e) && canClaimFees(e, transferOk) {
     SameAwards(e, claimFees(e, transferOk));
+    TracedSame(e, claimFees(e, transferOk));
     AwardsFrame(e, claimFees(e, transferOk));
   }
 }
@@ -2243,6 +2778,7 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysPendingMatchesMonths(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysBountyHasNoMonthly(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysAdmittedInWindow(create(e, project, token, purpose, tokenReady, by_)))
+  ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysCommittedLeavesTraced(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysPledgesCovered(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysPledgedMonthUnadmitted(create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> alwaysBindingsWellFormed(create(e, project, token, purpose, tokenReady, by_)))
@@ -2252,6 +2788,7 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepAwardsRetained(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepMonthlyPolicyByOwner(e, "create", create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepMonthsRetained(e, create(e, project, token, purpose, tokenReady, by_)))
+  ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepOriginsRetained(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepPledgeIrrevocable(e, "create", create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepNewBindingAttested(e, create(e, project, token, purpose, tokenReady, by_)))
   ensures (inv(e) ==> canCreate(e, project, token, purpose, tokenReady, by_) ==> stepPaidToLiveBinding(e, create(e, project, token, purpose, tokenReady, by_)))
@@ -2269,6 +2806,7 @@ lemma create_ensures(e: Escrow, project: string, token: string, purpose: contrac
     }
     assert after.vault.awards == e.vault.awards;
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
     KeysAppend(e, after, keyOf(by_, project, token, purpose));
   }
@@ -2292,6 +2830,7 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysPendingMatchesMonths(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysBountyHasNoMonthly(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysAdmittedInWindow(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
+  ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysCommittedLeavesTraced(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysPledgesCovered(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysPledgedMonthUnadmitted(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> alwaysBindingsWellFormed(createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
@@ -2301,6 +2840,7 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepAwardsRetained(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepMonthlyPolicyByOwner(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepMonthsRetained(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
+  ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepOriginsRetained(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepPledgeIrrevocable(e, "createWithMonthlyCommitment", createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepNewBindingAttested(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
   ensures (inv(e) ==> canCreateWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_) ==> stepPaidToLiveBinding(e, createWithMonthlyCommitment(e, project, token, cap, on, tokenReady, by_)))
@@ -2318,6 +2858,7 @@ lemma createWithMonthlyCommitment_ensures(e: Escrow, project: string, token: str
     }
     assert after.vault.awards == e.vault.awards;
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
     KeysAppend(e, after, keyOf(by_, project, token, contracts__ledger_Purpose.Ordinary));
   }
@@ -2341,6 +2882,7 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysPendingMatchesMonths(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysBountyHasNoMonthly(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysAdmittedInWindow(commitAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysCommittedLeavesTraced(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysPledgesCovered(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysPledgedMonthUnadmitted(commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> alwaysBindingsWellFormed(commitAward(e, source, actor, gross, by_)))
@@ -2350,6 +2892,7 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepAwardsRetained(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepMonthlyPolicyByOwner(e, "commitAward", commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepMonthsRetained(e, commitAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepOriginsRetained(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepPledgeIrrevocable(e, "commitAward", commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepNewBindingAttested(e, commitAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitAward(e, source, actor, gross, by_) ==> stepPaidToLiveBinding(e, commitAward(e, source, actor, gross, by_)))
@@ -2364,6 +2907,8 @@ lemma commitAward_ensures(e: Escrow, source: int, actor: int, gross: int, by_: s
   if inv(e) && canCommitAward(e, source, actor, gross, by_) {
     var after := commitAward(e, source, actor, gross, by_);
     RecordAward(e, after, contracts__ledger_newAward(source, actor, gross, contracts__ledger_awardFee(e.vault.key.purpose, gross), e.now));
+    AwardsSuperset(e.vault.awards, after.vault.awards);
+    TracedSameMonths(e, after);
   }
 }
 
@@ -2385,6 +2930,7 @@ lemma commitBountyAward_ensures(e: Escrow, source: int, actor: int, gross: int, 
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysPendingMatchesMonths(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysBountyHasNoMonthly(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysAdmittedInWindow(commitBountyAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysCommittedLeavesTraced(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysPledgesCovered(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysPledgedMonthUnadmitted(commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> alwaysBindingsWellFormed(commitBountyAward(e, source, actor, gross, by_)))
@@ -2394,6 +2940,7 @@ lemma commitBountyAward_ensures(e: Escrow, source: int, actor: int, gross: int, 
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepAwardsRetained(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepMonthlyPolicyByOwner(e, "commitBountyAward", commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepMonthsRetained(e, commitBountyAward(e, source, actor, gross, by_)))
+  ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepOriginsRetained(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepPledgeIrrevocable(e, "commitBountyAward", commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepNewBindingAttested(e, commitBountyAward(e, source, actor, gross, by_)))
   ensures (inv(e) ==> canCommitBountyAward(e, source, actor, gross, by_) ==> stepPaidToLiveBinding(e, commitBountyAward(e, source, actor, gross, by_)))
@@ -2403,6 +2950,8 @@ lemma commitBountyAward_ensures(e: Escrow, source: int, actor: int, gross: int, 
   if inv(e) && canCommitBountyAward(e, source, actor, gross, by_) {
     var after := commitBountyAward(e, source, actor, gross, by_);
     RecordAward(e, after, contracts__ledger_newAward(source, actor, gross, contracts__ledger_awardFee(e.vault.key.purpose, gross), e.now));
+    AwardsSuperset(e.vault.awards, after.vault.awards);
+    TracedSameMonths(e, after);
   }
 }
 
@@ -2424,6 +2973,7 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysPendingMatchesMonths(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysBountyHasNoMonthly(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysAdmittedInWindow(commitMonthlyLeaf(e, period, leaf)))
+  ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysCommittedLeavesTraced(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysPledgesCovered(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysPledgedMonthUnadmitted(commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> alwaysBindingsWellFormed(commitMonthlyLeaf(e, period, leaf)))
@@ -2433,6 +2983,7 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepAwardsRetained(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepMonthlyPolicyByOwner(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepMonthsRetained(e, commitMonthlyLeaf(e, period, leaf)))
+  ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepOriginsRetained(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepPledgeIrrevocable(e, "commitMonthlyLeaf", commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepNewBindingAttested(e, commitMonthlyLeaf(e, period, leaf)))
   ensures (inv(e) ==> canCommitMonthlyLeaf(e, period, leaf) ==> stepPaidToLiveBinding(e, commitMonthlyLeaf(e, period, leaf)))
@@ -2451,6 +3002,8 @@ lemma commitMonthlyLeaf_ensures(e: Escrow, period: int, leaf: contracts__ledger_
     RecordAward(e, after, contracts__ledger_newAward(leaf.source, leaf.actor, leaf.gross, settlement__money_ordinaryFee(leaf.gross), e.now));
     assert m.released == 0;
     ReplaceMonth(e, after, i, m.(remaining := (m.remaining - leaf.gross), committedGross := (m.committedGross + leaf.gross)));
+    MonthsDistinct(e);
+    CommitLeafTraced(e, after, i, m.(remaining := (m.remaining - leaf.gross), committedGross := (m.committedGross + leaf.gross)), LeafOrigin(period, leaf), contracts__ledger_newAward(leaf.source, leaf.actor, leaf.gross, settlement__money_ordinaryFee(leaf.gross), e.now));
   }
 }
 
@@ -2472,6 +3025,7 @@ lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: i
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPendingMatchesMonths(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysBountyHasNoMonthly(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysAdmittedInWindow(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysCommittedLeavesTraced(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPledgesCovered(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysPledgedMonthUnadmitted(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> alwaysBindingsWellFormed(releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
@@ -2481,6 +3035,7 @@ lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: i
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepAwardsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepMonthlyPolicyByOwner(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepMonthsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
+  ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepOriginsRetained(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepPledgeIrrevocable(e, "releaseMonthlyReserve", releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepNewBindingAttested(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
   ensures (inv(e) ==> canReleaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_) ==> stepPaidToLiveBinding(e, releaseMonthlyReserve(e, period, expectedRemaining, releasedGross, signer, by_)))
@@ -2499,6 +3054,8 @@ lemma releaseMonthlyReserve_ensures(e: Escrow, period: int, expectedRemaining: i
     SameAwards(e, after);
     AwardsFrame(e, after);
     ReplaceMonth(e, after, i, m.(remaining := 0, released := releasedGross));
+    MonthsDistinct(e);
+    TracedReplaceMonth(e, after, i, m.(remaining := 0, released := releasedGross));
   }
 }
 
@@ -2520,6 +3077,7 @@ lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, s
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPendingMatchesMonths(reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysBountyHasNoMonthly(reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysAdmittedInWindow(reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysCommittedLeavesTraced(reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPledgesCovered(reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysPledgedMonthUnadmitted(reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> alwaysBindingsWellFormed(reserveMonthly(e, period, reservation, sequence, signer)))
@@ -2529,6 +3087,7 @@ lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, s
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepAwardsRetained(e, reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepMonthlyPolicyByOwner(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepMonthsRetained(e, reserveMonthly(e, period, reservation, sequence, signer)))
+  ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepOriginsRetained(e, reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepPledgeIrrevocable(e, "reserveMonthly", reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepNewBindingAttested(e, reserveMonthly(e, period, reservation, sequence, signer)))
   ensures (inv(e) ==> canReserveMonthly(e, period, reservation, sequence, signer) ==> stepPaidToLiveBinding(e, reserveMonthly(e, period, reservation, sequence, signer)))
@@ -2541,6 +3100,7 @@ lemma reserveMonthly_ensures(e: Escrow, period: int, reservation: Reservation, s
     AwardsFrame(e, after);
     ClosePledgeFrame(e.vault, period);
     AppendMonth(e, after, Month(period, true, reservation.digest, reservation.root, reservation.wholeGross, reservation.remainingGross, reservation.remainingGross, reservation.count, 0, 0, e.now, capFor(e.vault, period), reservation.leaves));
+    TracedAppendMonth(e, after, Month(period, true, reservation.digest, reservation.root, reservation.wholeGross, reservation.remainingGross, reservation.remainingGross, reservation.count, 0, 0, e.now, capFor(e.vault, period), reservation.leaves));
     ClosePledgeCovers(e, period);
     PledgedMonthAfterClose(e, period, after);
   }
@@ -2564,6 +3124,7 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysPendingMatchesMonths(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysBountyHasNoMonthly(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysAdmittedInWindow(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
+  ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysCommittedLeavesTraced(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysPledgesCovered(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysPledgedMonthUnadmitted(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> alwaysBindingsWellFormed(bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
@@ -2573,6 +3134,7 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepAwardsRetained(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepMonthlyPolicyByOwner(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepMonthsRetained(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
+  ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepOriginsRetained(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepPledgeIrrevocable(e, "bindDestination", bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepNewBindingAttested(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
   ensures (inv(e) ==> canBindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_) ==> stepPaidToLiveBinding(e, bindDestination(e, actor, destination, expectedVersion, claim, expiresAt, walletSigned, by_)))
@@ -2594,6 +3156,7 @@ lemma bindDestination_ensures(e: Escrow, actor: int, destination: string, expect
     ReplaceBinding(e, after, nb);
     ReplaceBindingAttested(e, after, nb);
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
   }
 }
@@ -2616,6 +3179,7 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysPendingMatchesMonths(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysBountyHasNoMonthly(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysAdmittedInWindow(cancelBinding(e, actor, expectedVersion, by_)))
+  ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysCommittedLeavesTraced(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysPledgesCovered(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysPledgedMonthUnadmitted(cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> alwaysBindingsWellFormed(cancelBinding(e, actor, expectedVersion, by_)))
@@ -2625,6 +3189,7 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepAwardsRetained(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepMonthlyPolicyByOwner(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepMonthsRetained(e, cancelBinding(e, actor, expectedVersion, by_)))
+  ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepOriginsRetained(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepPledgeIrrevocable(e, "cancelBinding", cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepNewBindingAttested(e, cancelBinding(e, actor, expectedVersion, by_)))
   ensures (inv(e) ==> canCancelBinding(e, actor, expectedVersion, by_) ==> stepPaidToLiveBinding(e, cancelBinding(e, actor, expectedVersion, by_)))
@@ -2644,6 +3209,7 @@ lemma cancelBinding_ensures(e: Escrow, actor: int, expectedVersion: int, by_: st
     ReplaceBinding(e, after, nb);
     ReplaceBindingAttested(e, after, nb);
     SameAwards(e, after);
+    TracedSame(e, after);
     AwardsFrame(e, after);
   }
 }
@@ -2666,6 +3232,7 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysPendingMatchesMonths(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysBountyHasNoMonthly(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysAdmittedInWindow(pay(e, source, expectedVersion, transferOk)))
+  ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysCommittedLeavesTraced(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysPledgesCovered(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysPledgedMonthUnadmitted(pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> alwaysBindingsWellFormed(pay(e, source, expectedVersion, transferOk)))
@@ -2675,6 +3242,7 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepAwardsRetained(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepMonthlyPolicyByOwner(e, "pay", pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepMonthsRetained(e, pay(e, source, expectedVersion, transferOk)))
+  ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepOriginsRetained(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepPledgeIrrevocable(e, "pay", pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepNewBindingAttested(e, pay(e, source, expectedVersion, transferOk)))
   ensures (inv(e) ==> canPay(e, source, expectedVersion, transferOk) ==> stepPaidToLiveBinding(e, pay(e, source, expectedVersion, transferOk)))
@@ -2687,6 +3255,10 @@ lemma pay_ensures(e: Escrow, source: int, expectedVersion: int, transferOk: bool
 
   if inv(e) && canPay(e, source, expectedVersion, transferOk) {
     PayFacts(e, source, expectedVersion, transferOk);
+    var after := pay(e, source, expectedVersion, transferOk);
+    assert |after.vault.awards| == |e.vault.awards|;
+    AwardsPointwise(e.vault.awards, after.vault.awards);
+    TracedSameMonths(e, after);
   }
 }
 
@@ -2708,6 +3280,7 @@ lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledg
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPendingMatchesMonths(commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysBountyHasNoMonthly(commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysAdmittedInWindow(commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysCommittedLeavesTraced(commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPledgesCovered(commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysPledgedMonthUnadmitted(commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> alwaysBindingsWellFormed(commitMonthly(e, period, entries, signer)))
@@ -2717,6 +3290,7 @@ lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledg
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepAwardsRetained(e, commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepMonthlyPolicyByOwner(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepMonthsRetained(e, commitMonthly(e, period, entries, signer)))
+  ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepOriginsRetained(e, commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepPledgeIrrevocable(e, "commitMonthly", commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepNewBindingAttested(e, commitMonthly(e, period, entries, signer)))
   ensures (inv(e) ==> canCommitMonthly(e, period, entries, signer) ==> stepPaidToLiveBinding(e, commitMonthly(e, period, entries, signer)))
@@ -2725,6 +3299,7 @@ lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledg
 {
   if inv(e) && canCommitMonthly(e, period, entries, signer) {
     CommitMonthlyFacts(e, period, entries, signer);
+    CommitMonthlyTraced(e, period, entries, signer);
   }
 }
 
@@ -2792,4 +3367,5 @@ lemma initialHolds_ensures()
   Initial_alwaysPledgesCovered();
   Initial_alwaysPledgedMonthUnadmitted();
   Initial_alwaysBindingsWellFormed();
+  Initial_alwaysCommittedLeavesTraced();
 }
