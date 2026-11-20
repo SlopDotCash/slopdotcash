@@ -21671,7 +21671,7 @@
     },
     {
       "path": "spec/settlement/escrow.md",
-      "sha256": "9659bc0908045d8d0edf7a80a0e41261ceb6f61f09a66164c7fe25866e430009",
+      "sha256": "7858fe40ab9de3f52b1febf23e7b0b679a8536b4b81a79165abf2f8924e9b47e",
       "module": "settlement__escrow",
       "stories": [
         {

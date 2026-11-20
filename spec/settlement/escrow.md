@@ -641,8 +641,8 @@ version and transaction. Each withdrawal fee is `ceil(gross / 50)`. Each
 admitted month is unique by period, never holds more remainder than it
 admitted, and a monthly leaf belongs to an admitted month. The pledged total
 is the sum of the open pledges and the free balance always covers it; each
-period holds one positive pledge, a bounty vault holds none, and on EVM an
-open pledge's period has no admitted root.
+period holds one positive pledge, a bounty vault and a vault not yet created
+hold none, and on EVM an open pledge's period has no admitted root.
 
 ```quint
 pure def validAward(e: Escrow, a: Award): bool =
@@ -664,7 +664,7 @@ pure def alwaysPledgesCovered(e: Escrow): bool =
     and e.pledges.every(p => validPeriod(p.period) and M::validAmount(p.amount) and M::positiveAmount(p.amount)
       and e.pledges.select(o => o.period == p.period).length() == 1
       and (p.open and hasMonth(e, p.period) implies e.asset.network == Solana))
-    and (e.purpose == BountyPurpose implies e.pledges.length() == 0)
+    and ((e.purpose == BountyPurpose or not(e.deployed)) implies e.pledges.length() == 0)
 pure def alwaysUndeployedEmpty(e: Escrow): bool = not(e.deployed) implies e.at == origin and e.awards.length() == 0
   and e.months.length() == 0 and e.withdrawals.length() == 0 and M::equalAmounts(e.deposited, M::zero)
 ```
