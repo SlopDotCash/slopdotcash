@@ -134,7 +134,8 @@ and a 204 revocation. It holds identifiers, digests and quota numbers, never
 the token, states whether the token was metadata-only, records the commit
 read (repository, SHA, installation, HTTP 200 and remaining quota) only in
 commit mode, and states that nothing was written to production. A cancelled run
-writes nothing, and a grant it held stays unknown until expiry.
+writes nothing, and a grant it held stays unknown until expiry. Each phase
+fixes what the run may hold, so the steps occur only in this order.
 
 ```quint
 pure def canCleanup(w: QuotaWitness, confirmed: bool): bool = w.phase == Cleaning
@@ -154,6 +155,21 @@ pure def alwaysReceiptNeedsVerifiedRevokedGrant(w: QuotaWitness): bool =
     and (w.revoked204 implies w.grant == RevokedGrant)
 pure def alwaysNoGrantLeftHeld(w: QuotaWitness): bool =
   w.phase == WitnessDone implies not(w.grant == ScopedGrant or w.grant == WrongGrant)
+pure def alwaysPhaseFixesWhatTheRunHolds(w: QuotaWitness): bool =
+  val untouched = w.grant == NoGrant and w.scope == NoScope and not(w.verified) and not(w.commitVerified)
+    and not(w.revoked204) and not(w.receipt)
+  (w.phase == Queued implies untouched and not(w.authorized) and not(w.commitRequested))
+    and (w.phase == Minting implies untouched and w.authorized)
+    and (w.phase == Reading implies w.authorized and w.grant == ScopedGrant and w.scope == requiredScope(w)
+      and not(w.verified) and not(w.commitVerified) and not(w.revoked204) and not(w.receipt))
+    and (w.phase == Cleaning implies w.authorized and not(w.revoked204) and not(w.receipt)
+      and (w.grant == ScopedGrant or w.grant == WrongGrant)
+      and (w.grant == ScopedGrant implies w.scope == requiredScope(w))
+      and (w.grant == WrongGrant implies w.scope == NoScope and not(w.verified) and not(w.commitVerified)))
+    and (w.phase == Writing implies w.authorized and w.verified and w.revoked204 and w.grant == RevokedGrant
+      and w.scope == requiredScope(w) and not(w.receipt))
+    and (w.scope != NoScope implies w.scope == requiredScope(w))
+    and ((w.grant == UnknownGrant or w.grant == ExpiredGrant) implies not(w.revoked204) and not(w.receipt))
 pure def stepReceiptOnlyWritten(before: QuotaWitness, via: str, after: QuotaWitness): bool =
   (after.receipt and not(before.receipt)) implies via == "writeReceipt"
 pure def sometimesReceiptWritten(w: QuotaWitness): bool = w.receipt
