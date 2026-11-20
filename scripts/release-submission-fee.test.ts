@@ -1,6 +1,6 @@
 // The release check of the submission-fee Worker, on the checked-in file.
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "../src/lib/submission-fee.mjs";
 import {
   assertSubmissionFeeRelease,
@@ -100,6 +100,21 @@ test("the settings page says the fee is switched on only while Slopbot asks for 
   expect(SUBMISSION_FEE_SWITCHED_ON).toBe(
     slopbot.vars.SUBMISSION_FEE_MODE === "live",
   );
+});
+
+test("no release workflow or package script builds the site with the pay page's test seam", () => {
+  // `VITE_SLOP_FEE_FIXTURE` lets a browser test supply the pay page's address
+  // tables and switch. Only the browser-test fixture build may set it.
+  const named = (path: string) =>
+    readFileSync(path, "utf8").includes("VITE_SLOP_FEE_FIXTURE");
+  for (const workflow of readdirSync(".github/workflows"))
+    expect([workflow, named(`.github/workflows/${workflow}`)]).toEqual([
+      workflow,
+      false,
+    ]);
+  for (const path of ["package.json", "vite.config.ts", "wrangler.toml"])
+    expect([path, named(path)]).toEqual([path, false]);
+  expect(named("scripts/prepare-e2e-fixture.mjs")).toBe(true);
 });
 
 test("another database, a route, a missing schedule, a key in the file or a bad value is refused", () => {

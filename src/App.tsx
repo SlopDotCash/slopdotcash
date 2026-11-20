@@ -148,6 +148,7 @@ const SecurityProgramPage = lazy(() =>
     default: module.SecurityProgramPage,
   })),
 );
+const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -210,7 +211,8 @@ type Route =
   | { kind: PageRouteKind }
   | { kind: ProjectRouteKind; projectId: string }
   | { kind: "cycle"; projectId: string; cycleId: string }
-  | { kind: "profile"; login: string };
+  | { kind: "profile"; login: string }
+  | { kind: "fee"; owner: string; repo: string; number: string };
 
 /**
  * Each page's data needs. `snapshot` loads the public snapshot. `registry`
@@ -261,6 +263,8 @@ const ROUTES: Record<
   "security-program": { snapshot: false, registry: "current" },
   cycle: { snapshot: true, registry: "cached" },
   profile: { snapshot: true, registry: "cached" },
+  // The registry names the repository; its numeric id never changes.
+  fee: { snapshot: false, registry: "cached" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -316,6 +320,9 @@ function internalRoute(pathname: string): Route {
     return { kind: "profile", login: second };
   if (first === "cycles" && segments.length === 3)
     return { kind: "cycle", projectId: second, cycleId: third };
+  // Slopbot's fee comment links /fee/<owner>/<repo>/<number>.
+  if (first === "fee" && segments.length === 4)
+    return { kind: "fee", owner: second, repo: third, number: segments[3] };
   return { kind: "unknown" };
 }
 
@@ -391,6 +398,9 @@ function routeHead(route: Route): { title: string; path: string | null } {
       path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
     };
   }
+  // One page per pull request: titled, never indexed.
+  if (route.kind === "fee")
+    return { title: pageTitle("Submission fee"), path: null };
   if (route.kind === "profile") {
     return {
       title: pageTitle(route.login),
@@ -1918,7 +1928,16 @@ function AppContent({ route }: { route: Route }) {
     ) : (
       <NotFound title="Project not found" />
     );
-  } else content = <NotFound />;
+  } else if (route.kind === "fee")
+    content = (
+      <SubmissionFeePage
+        key={`${route.owner}/${route.repo}/${route.number}`.toLowerCase()}
+        owner={route.owner}
+        repo={route.repo}
+        number={route.number}
+      />
+    );
+  else content = <NotFound />;
   return (
     <>
       <Header />

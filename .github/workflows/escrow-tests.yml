@@ -222,7 +222,7 @@ jobs:
           SLOP_E2E_VAULT_ACTIONS: '1'
           SLOP_E2E_VIDEO: '1'
           SLOP_E2E_LANE: preview
-        run: bun run test:e2e tests/e2e/vault-actions.spec.ts --workers=1
+        run: bun run test:e2e tests/e2e/vault-actions.spec.ts tests/e2e/submission-fee-pay-chain.spec.ts --workers=1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
