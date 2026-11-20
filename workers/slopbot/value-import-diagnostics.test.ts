@@ -5,6 +5,8 @@ import { importSubscriptionAssessment } from "./value-import";
 import {
   historicalIntakeFailure,
   projectHistoricalIntakeFailure,
+  projectTerminalIntakeFailure,
+  terminalIntakeFailure,
   withHistoricalIntakeDiagnostics,
 } from "./value-import-diagnostics";
 
@@ -294,4 +296,37 @@ test("strict source refusal projection refuses nested extras and contradictory m
     projectHistoricalIntakeFailure({ ...safe, httpStatus: 500 }),
   ).toBeNull();
   expect(projectHistoricalIntakeFailure(safe)).toEqual(safe);
+});
+
+test("terminal diagnostics omit all fields except the exact six-field projection", async () => {
+  const original = Object.assign(new Error(secret), { status: 403 });
+  const logs: string[] = [];
+  const projected: unknown[] = [];
+  await expect(
+    withHistoricalIntakeDiagnostics(
+      async (observe) => {
+        observe(progress);
+        throw original;
+      },
+      (safe) => logs.push(safe),
+      (failure) => projected.push(terminalIntakeFailure(failure)),
+    ),
+  ).rejects.toBe(original);
+  const expected = {
+    ...progress,
+    errorName: "Error",
+    httpStatus: 403,
+    messageSha256: createHash("sha256").update(secret).digest("hex"),
+  };
+  expect(logs).toHaveLength(1);
+  expect(projected).toEqual([expected]);
+  expect(projectTerminalIntakeFailure(projected[0])).toEqual(expected);
+  for (const invalid of [
+    { ...expected, stack: secret },
+    { ...expected, sourceReadRefusal: {} },
+    { ...expected, sourceIndex: expected.sourceCount },
+    { ...expected, stage: secret },
+    { ...expected, messageSha256: secret },
+  ])
+    expect(projectTerminalIntakeFailure(invalid)).toBeNull();
 });
