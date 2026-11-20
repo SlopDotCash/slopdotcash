@@ -583,6 +583,98 @@ export function pointsSummary(
   };
 }
 
+export interface ProtectedPointMonth {
+  projectId: string;
+  period: string;
+}
+
+/**
+ * Operator decision, 20 November 2026 (PRD section 7): the Points of a project
+ * month that has a recorded payment are frozen. The atomic import in
+ * pointsSql refuses a whole batch that changes one of them, which stopped
+ * every fresh collection after the first monthly payments. Hold exactly the
+ * candidate revisions that import would refuse, so the rest of the collection
+ * can publish. `data/points/protected-months.json` mirrors the private
+ * settlement tables; a month missing from it still fails closed at import.
+ */
+export function holdProtectedPointAwards(
+  journal: PointsJournal,
+  known: ReadonlySet<string>,
+  months: readonly ProtectedPointMonth[],
+): { journal: PointsJournal; held: number } {
+  if (months.length === 0) return { journal, held: 0 };
+  const scopes = new Set(months.map((m) => `${m.projectId}\0${m.period}`));
+  const scope = (award: PointAward) =>
+    `${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+  // The same identity pointsSql freezes: economic and source fields, never
+  // GitHub presentation.
+  const economic = (award: PointAward) =>
+    JSON.stringify([
+      award.key,
+      award.actor.id,
+      award.projectId,
+      award.category,
+      award.amount,
+      award.occurredAt,
+      award.sourceId,
+      award.workUnitId,
+      award.category === "substantive-review" ? award.provisional : null,
+      award.category === "substantive-review" ||
+      award.category === "evaluated-contribution"
+        ? award.sourceUrl
+        : null,
+    ]);
+  const byId = new Map(journal.revisions.map((r) => [r.id, r]));
+  const held = new Set<string>();
+  // Revisions are append-only, so a predecessor is always seen first.
+  for (const revision of journal.revisions) {
+    if (known.has(revision.id)) continue;
+    if (revision.previous !== null && held.has(revision.previous)) {
+      held.add(revision.id);
+      continue;
+    }
+    if (revision.award.category === "payout-received") continue;
+    const prior =
+      revision.previous !== null && known.has(revision.previous)
+        ? byId.get(revision.previous)
+        : undefined;
+    if (prior && economic(prior.award) === economic(revision.award)) continue;
+    if (
+      scopes.has(scope(revision.award)) ||
+      (prior !== undefined && scopes.has(scope(prior.award)))
+    )
+      held.add(revision.id);
+  }
+  if (held.size === 0) return { journal, held: 0 };
+  return {
+    journal: {
+      ...journal,
+      revisions: journal.revisions.filter((r) => !held.has(r.id)),
+    },
+    held: held.size,
+  };
+}
+
+async function loadProtectedPointMonths(): Promise<ProtectedPointMonth[]> {
+  const months: unknown = JSON.parse(
+    await readFile("data/points/protected-months.json", "utf8"),
+  );
+  if (
+    !Array.isArray(months) ||
+    months.some(
+      (m) =>
+        typeof m !== "object" ||
+        m === null ||
+        typeof m.projectId !== "string" ||
+        !m.projectId ||
+        typeof m.period !== "string" ||
+        !/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(m.period) ||
+        Object.keys(m).length !== 2,
+    )
+  )
+    throw new Error("Invalid protected Points months");
+  return months as ProtectedPointMonth[];
+}
 export async function generatePoints(
   options: {
     online?: boolean;
@@ -624,11 +716,31 @@ export async function generatePoints(
     a.snapshot.generatedAt.localeCompare(b.snapshot.generatedAt),
   );
   // Replaying an older archive after a newer batch must not roll back corrections.
+  // Only a release that loaded the published history can tell a candidate
+  // revision from a known one.
+  const knownRevisions = published
+    ? new Set(published.revisions.map((r) => r.id))
+    : null;
+  const protectedMonths = knownRevisions
+    ? await loadProtectedPointMonths()
+    : [];
+  let heldRevisions = 0;
+  const holdProtected = () => {
+    if (!knownRevisions) return;
+    const result = holdProtectedPointAwards(
+      journal,
+      knownRevisions,
+      protectedMonths,
+    );
+    journal = result.journal;
+    heldRevisions += result.held;
+  };
   const applied = new Set(journal.coverage.map((c) => c.digest));
   for (const { snapshot, digest } of snapshots) {
     if (!applied.has(digest))
       journal = applyPointsSnapshot(journal, snapshot, digest, now);
   }
+  holdProtected();
   const cycles = await syncCycleIndex({
     checkOnly: true,
     generatedAt: now,
@@ -676,6 +788,11 @@ export async function generatePoints(
     hash(JSON.stringify(reviewed)),
     now,
   );
+  holdProtected();
+  if (heldRevisions > 0)
+    console.log(
+      `[points] held ${heldRevisions} candidate revisions in months with a recorded payment`,
+    );
   journal.generatedAt = now;
   assertPointsJournal(journal);
   await mkdir("public/data", { recursive: true });
