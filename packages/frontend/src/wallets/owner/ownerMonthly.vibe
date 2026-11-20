@@ -52,6 +52,7 @@ const noticeMessages: Readonly<Record<Notice, string>> = {
   Finalized: "This month is finalized. Its allocations can no longer change.",
   StorageBlocked: storageBlockedMessage,
   Occupied: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+  NoticeWindow: "A cut's 24-hour notice ends after this month's cutoff. Turn automatic finalization on once the notice ends, or finalize the month yourself then.",
 }
 
 export function monthlyNotice(notice: Notice): string {

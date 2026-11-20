@@ -1,0 +1,34 @@
+// spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
+import { RecoveryAnswer, type RecoveryRequest } from "../client/operator.vibe"
+import { BindingRecovery, RecoveryRefused, RecoveryUnavailable } from "./operatorReconcile.vibe"
+
+// The production attester of each EVM network serves its binding recovery entrypoint to the site worker; the release
+// binds it under these names (operations release publisher, attesterBindings). The attester decides the winner from
+// finalized evidence; the site only forwards the audited request.
+export interface RecoveryEntrypoint {
+  reconcile(request: RecoveryRequest): Promise<unknown>
+}
+
+export interface RecoveryBindings {
+  readonly BINDING_RECOVERY?: RecoveryEntrypoint
+  readonly BINDING_RECOVERY_ETHEREUM?: RecoveryEntrypoint
+  readonly BINDING_RECOVERY_ROBINHOOD?: RecoveryEntrypoint
+}
+
+function entrypointFor(env: RecoveryBindings, network: string): RecoveryEntrypoint | undefined {
+  if (network === "base-mainnet") return env.BINDING_RECOVERY
+  if (network === "ethereum") return env.BINDING_RECOVERY_ETHEREUM
+  if (network === "robinhood-mainnet") return env.BINDING_RECOVERY_ROBINHOOD
+  return undefined
+}
+
+export function bindingRecovery(env: RecoveryBindings) {
+  return Layer.succeed(BindingRecovery, {
+    reconcile: (request) => effect {
+      const entrypoint = entrypointFor(env, request.network)
+      if (entrypoint === undefined) throw new RecoveryRefused({ code: "binding_recovery_unavailable" })
+      const answered = try tryPromise({ try: () => entrypoint.reconcile(request), catch: () => new RecoveryUnavailable() })
+      return Schema.decodeUnknownEffect(RecoveryAnswer)(answered, { onExcessProperty: "error" }) catch effect () => { throw new RecoveryUnavailable() }
+    },
+  } satisfies BindingRecovery.Shape)
+}

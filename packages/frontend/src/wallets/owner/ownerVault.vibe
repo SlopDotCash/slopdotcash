@@ -209,7 +209,7 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
         try Effect.sleep(spacingMs)
         const state = try machine.get()
         const flow = flowOf(state, target)
-        if (flow.phase !== "Sent" || flow.stopped || (flow.autoAsks >= autoAskLimit && (target !== "Creation" || flow.hiddenAsks >= hiddenAskLimit))) return state
+        if (flow.phase !== "Sent" || flow.stopped || (flow.autoAsks >= autoAskLimit(target) && (target !== "Creation" || flow.hiddenAsks >= hiddenAskLimit))) return state
         if (!canAsk(state, target, "AutoCheck", timer)) continue
         const after = try answered(target, "AutoCheck", check)
         if (flowOf(after, target).phase !== "Sent") return after

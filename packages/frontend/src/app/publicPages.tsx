@@ -38,7 +38,7 @@ function useListing(reads: Reads, boot: RegistryBoot): { readonly projects: Show
     const project = projectOf(record);
     if (project === undefined) return [];
     const funding = projectFunding({ project, read: { status: pool.status, vaults: pool.value?.get(project.id) }, networkPays, nowMs });
-    return [{ ...shownReward(project, funding), pool: funding.display, escrow: { deployments: project.deployments } } satisfies ListedProject];
+    return [{ ...shownReward(project, funding), funding: funding.facts, escrow: { deployments: project.deployments } } satisfies ListedProject];
   });
   const mergeLine: MergeLine = (project) => (merge.status === "Current" || merge.status === "Stale" ? mergeActivityCardLine(merge.value?.get(project.id), nowMs) : null);
   return { projects: { status: registryStatus(boot), value: boot.error === undefined ? listed : undefined }, mergeLine };

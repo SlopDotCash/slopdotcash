@@ -1,7 +1,7 @@
 // spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
 import { base58Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
 import { randomId } from "@repo/platform/crypto"
-import { type Event, type Keyed, Machine, Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
+import { type Event, type HistoryResult, type Keyed, Machine, Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { modelNumber } from "../../flows/security/private.vibe"
 import { storageKeys } from "../../platform/storage.vibe"
@@ -185,8 +185,9 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     try authorize
   }
 
+  // Whether the browser slot can keep the signature: a signed reply that cannot be stored asks the owner to keep it.
   effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string) {
-    return try prompt.written({ type: "walletReply", identity, reply, signature }, adapter)
+    return try prompt.written({ type: "walletReply", identity, reply, signature, stored: slotWritable(storage) }, adapter)
   }
 
   effect function send<R>(connection: SolanaConnection, authority: Authority<R>) {
@@ -297,9 +298,9 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     return after.request
   }
 
-  effect function endHistory(request: number, paymentFound: boolean) {
+  effect function endHistory(request: number, history: HistoryResult) {
     const state = try current()
-    if (canHistoryReply(state, lifetime, request, paymentFound, server)) try prompt.written({ type: "historyReply", lifetime, request, found: paymentFound }, server)
+    if (canHistoryReply(state, lifetime, request, history, server)) try prompt.written({ type: "historyReply", lifetime, request, history }, server)
     return try current()
   }
 

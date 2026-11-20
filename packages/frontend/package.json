@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./app": "./src/app/index.ts",
+    "./presentation": "./gen/frontend__presentation.ts",
     "./platform/api": "./src/platform/api.vibe",
     "./platform/bounded": "./src/platform/bounded.vibe",
     "./platform/clipboard": "./src/platform/clipboard.vibe",

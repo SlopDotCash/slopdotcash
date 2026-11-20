@@ -119,7 +119,9 @@ export effect function reviewSolanaLock(vault: SolanaVault, connection: SolanaCo
   if (plan === undefined || plan.wallet !== connection.address || typeof plan.amountMinor !== "string" || !positive.test(plan.amountMinor) || decimals === undefined
     || periods === undefined || requested === undefined || requested.length !== count || !periods.every((period) => requested.includes(period))
     || transaction === undefined || (transaction !== null && periods.length === 0)) throw refused(solanaLockMessages.invalidLock)
-  const checked = checkedPlan(vault, { action: "lock", wallet: connection.address, periods, requested, amountMinor: BigInt(plan.amountMinor), decimals, transaction, wire: undefined }, solanaLockMessages.invalidLock)
+  const amountText = plan.amountMinor
+  const amountMinor = try Effect.try({ try: () => BigInt(amountText), catch: () => refused(solanaLockMessages.invalidLock) })
+  const checked = checkedPlan(vault, { action: "lock", wallet: connection.address, periods, requested, amountMinor, decimals, transaction, wire: undefined }, solanaLockMessages.invalidLock)
   if (typeof checked === "string") throw refused(checked)
   return checked
 }
@@ -129,7 +131,9 @@ export effect function reviewSolanaRelease(vault: SolanaVault, connection: Solan
   const plan = recordOf(answer.plan)
   const transaction = transactionOf(plan?.transaction)
   if (plan === undefined || plan.wallet !== connection.address || plan.period !== period || typeof plan.amountMinor !== "string" || !canonical.test(plan.amountMinor) || transaction === undefined) throw refused(solanaLockMessages.invalidRelease)
-  const checked = checkedPlan(vault, { action: "release", wallet: connection.address, periods: [period], requested: [period], amountMinor: BigInt(plan.amountMinor), decimals: undefined, transaction, wire: undefined }, solanaLockMessages.invalidRelease)
+  const amountText = plan.amountMinor
+  const amountMinor = try Effect.try({ try: () => BigInt(amountText), catch: () => refused(solanaLockMessages.invalidRelease) })
+  const checked = checkedPlan(vault, { action: "release", wallet: connection.address, periods: [period], requested: [period], amountMinor, decimals: undefined, transaction, wire: undefined }, solanaLockMessages.invalidRelease)
   if (typeof checked === "string") throw refused(checked)
   return checked
 }

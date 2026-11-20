@@ -4,6 +4,7 @@ import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settleme
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
 import type { ListingFacts } from "../../../gen/frontend__poolListing.ts";
+import { promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
@@ -71,6 +72,15 @@ export function projectFunding({ project, read, networkPays, nowMs }: { project:
 /** The project page's listing facts for this month's pool funding. @throws {never} */
 export function projectListing({ project, funding }: { project: ShownProject; funding: PoolFunding }): ListingFacts {
   return listingOf({ status: project.status, securityBounty: project.securityBounty, funding: funding.facts });
+}
+
+/**
+ * Whether an owner's honor-system promise shows for this month (spec/frontend/projections.md, "An owner's honor-system
+ * promise shows this month's amount as promised, never as vault-backed"). The promise replaces the not-listed notice.
+ * @throws {never}
+ */
+export function promised(project: ShownProject, funding: PoolFunding): boolean {
+  return promiseWarning({ pool: funding.facts, honorSystem: project.reward.honorSystem === true, vaultUnread: funding.facts.read !== "PoolCurrent" }) !== "NoPromise";
 }
 
 /** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */

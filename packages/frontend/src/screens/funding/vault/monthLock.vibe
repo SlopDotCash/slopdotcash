@@ -124,7 +124,8 @@ export effect function readCard(row: FundingVault | undefined, free: bigint | nu
   if (canReadVault(try lock.get(), supported, ownerSender, freeAmount, locked, reader)) try sent({ type: "readVault", supported, owner: ownerSender, free: freeAmount, locked }, reader)
   for (const pledge of row?.pledges ?? []) {
     const month = try chainPledge(pledge)
-    if (lockedLine(month, nowSeconds) !== "ReleasableMonth") continue
+    const line = try Effect.orDie(Effect.try({ try: () => lockedLine(month, nowSeconds), catch: (error) => error }))
+    if (line !== "ReleasableMonth") continue
     if (canLapse(try lock.get(), month.amount, reader)) try sent({ type: "lapse", monthAmount: month.amount }, reader)
   }
   return try lock.get()
@@ -180,7 +181,7 @@ effect function answered(reply: LockReply) {
   if (canWalletAnswer(try lock.get(), reply, adapter)) try sent({ type: "walletAnswer", reply }, adapter)
 }
 
-effect function prompted<A, E extends { readonly _tag: string }>(work: A!E) {
+effect function prompted<A, E extends { readonly _tag: string }, R>(work: A!E!R) {
   const lock = try Machine
   const result: A | undefined = work catch effect (error) => {
     if ((try lock.get()).phase !== "LockAwaiting") throw error
@@ -198,8 +199,10 @@ export effect function sendCard(connection: LockConnection) {
   const reviewed = (try Ref.get(memory)).reviewed
   if (reviewed === undefined) throw stopped(lockMessages.reviewAgain)
   const before = effect {
-    if (!canRequestLock(try lock.get(), id)) throw stopped(lockMessages.reviewAgain)
-    try sent({ type: "requestLock" }, id)
+    provide Machine = lock {
+      if (!canRequestLock(try lock.get(), id)) throw stopped(lockMessages.reviewAgain)
+      try sent({ type: "requestLock" }, id)
+    }
   }
   let next: Sent | undefined
   if (reviewed.kind === "evm") {
@@ -222,8 +225,10 @@ export effect function releaseCard(connection: LockConnection, period: number, m
   const monthAmount = try amountOf(monthMinor)
   if ((try lock.get()).wallet !== id) throw stopped(lockMessages.connect)
   const before = effect {
-    if (!canRequestRelease(try lock.get(), monthAmount, id)) throw stopped(lockMessages.reviewAgain)
-    try sent({ type: "requestRelease", monthAmount }, id)
+    provide Machine = lock {
+      if (!canRequestRelease(try lock.get(), monthAmount, id)) throw stopped(lockMessages.reviewAgain)
+      try sent({ type: "requestRelease", monthAmount }, id)
+    }
   }
   let next: Sent | undefined
   if (connection.family === "evm") {
