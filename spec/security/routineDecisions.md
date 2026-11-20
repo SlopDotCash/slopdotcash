@@ -173,7 +173,7 @@ pure def failCalls(r: Routine): Routine =
 pure def closedNow(c: C::PrivateCase): bool = c.routine.closed
 pure def alwaysCaseRoutineMarks(r: Routine): bool = C::alwaysRoutineCloseIsUnappealedRefusal(r.privateCase)
   and C::alwaysRoutineClockOnItsRequest(r.privateCase) and C::alwaysRoutineReturnRecorded(r.privateCase)
-  and C::alwaysAppealState(r.privateCase) and r.privateCase.submission == C::Verified and r.privateCase.reportVersion > 0
+  and C::alwaysAppealState(r.privateCase) and C::alwaysAppealSource(r.privateCase) and r.privateCase.submission == C::Verified and r.privateCase.reportVersion > 0
 pure def alwaysOnlyLiveApplies(r: Routine): bool = r.records.every(d => d.applied == (d.mode == Live))
 pure def stepOnlyLiveChangesTheCase(before: Routine, via: str, after: Routine): bool =
   (via == "failCalls" or (via == "decideReport" and before.mode != Live)) implies after.privateCase == before.privateCase
@@ -262,14 +262,19 @@ pure def sometimesModeratorAfterReturn(r: Routine): bool = r.privateCase.routine
 ### Simulation samples
 
 Actor 1 is the reporter, 2 a technical approver and 4 a moderator. The
-readings cover clean, loss, duplicate, line and missing-proof answers.
+readings cover clean, loss, duplicate, line and missing-proof answers; the
+calls pair each reading with itself and with one disagreeing reading of each
+kind, and the laws cover every pair.
 
 ```quint
 pure val clean: Reading = { lossPlausible: false, duplicateOf: 0, line: 0, proofPresent: true, severity: 3 }
 pure val readingValues = Set(clean, { ...clean, lossPlausible: true, line: 1, severity: 5 }, { ...clean, duplicateOf: 7 },
-  { ...clean, duplicateOf: 9 }, { ...clean, line: 1 }, { ...clean, line: 2, severity: 1 }, { ...clean, proofPresent: false, severity: 2 })
-pure val foundValues = readingValues.fold(Set(NoCallNeeded, NotStored, SameDigest({ earlier: 7 })), (acc, a) =>
-  acc.union(readingValues.map(b => Calls({ first: a, second: b }))))
+  { ...clean, duplicateOf: 9 }, { ...clean, line: 1 }, { ...clean, line: 2, severity: 1 }, missing)
+pure val missing: Reading = { ...clean, proofPresent: false, severity: 2 }
+pure val foundValues = Set(NoCallNeeded, NotStored, SameDigest({ earlier: 7 }), Calls({ first: clean, second: missing }),
+  Calls({ first: clean, second: { ...clean, duplicateOf: 7 } }), Calls({ first: { ...clean, line: 1 }, second: clean }),
+  Calls({ first: { ...clean, duplicateOf: 7 }, second: { ...clean, duplicateOf: 9 } }))
+  .union(readingValues.map(a => Calls({ first: a, second: a })))
 pure val screenedValues = S::observationValues
 pure val firstValues = readingValues
 pure val secondValues = readingValues
@@ -282,8 +287,9 @@ pure val upholdValues = Set(true, false)
 pure val decisionValues = Set(
   { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false },
   { finding: C::Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false })
-pure val weight_decideReport = 30
-pure val weight_failCalls = 4
+pure val weight_decideReport = 16
+pure val weight_failCalls = 10
+pure val weight_saveVersion = 6
 pure val weight_setMode = 6
 pure val weight_advance = 6
 pure val weight_appeal = 8
