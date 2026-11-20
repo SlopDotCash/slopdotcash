@@ -410,6 +410,14 @@ function analysisReport(report: ReportInput): SecurityAnalysisReport {
     cvss: report.cvssVectorString ?? null,
     cweIds: [...(report.cweIds ?? [])],
     packages: [],
+    ...(report.proofOfConcept
+      ? {
+          proofOfConcept: {
+            fileName: report.proofOfConcept.fileName,
+            patch: report.proofOfConcept.patch,
+          },
+        }
+      : {}),
   };
 }
 async function storeReport(

@@ -11,7 +11,9 @@
  *    line and neither finds a plausible theft or permanent freeze of funds.
  * 3. Needs proof: no reproduction steps or runnable proof. The reporter is
  *    asked for it with a 14-day clock; the report closes only when the clock
- *    runs out with no new report version.
+ *    runs out with no new report version. A report version that carries a
+ *    proof-of-concept file always has proof present (operator decision,
+ *    20 November 2026), whatever the calls answer.
  * 4. Everything else: acknowledged and ranked for the program owner.
  *
  * It never closes a report when a call finds loss of funds plausible, when a
@@ -644,10 +646,17 @@ async function evaluate(
     console.error("security routine decision call failed");
     return unavailable(calls);
   }
+  // A proof-of-concept file is proof present by rule, not by a reading.
+  const withFile = (
+    answer: SecurityRoutineProposal,
+  ): SecurityRoutineProposal =>
+    input.report.proofOfConcept
+      ? { ...answer, proof: "present", missing: [] }
+      : answer;
   return {
     decision: combineRoutineCalls(
-      first.value,
-      second.value,
+      withFile(first.value),
+      withFile(second.value),
       { now, askedForProofBefore: asked !== null },
       calls,
     ),

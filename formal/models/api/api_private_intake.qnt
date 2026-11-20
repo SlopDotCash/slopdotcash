@@ -5,6 +5,7 @@
 // @source backend/security/submissions.ts
 // @source backend/security/intake-grant.ts
 // @source backend/security/github-advisories.ts
+// @source src/lib/report-proof.ts
 // @source backend/security/reporting-readiness.ts
 // @source backend/security/case-store.ts
 // @source backend/security/submission-store.ts

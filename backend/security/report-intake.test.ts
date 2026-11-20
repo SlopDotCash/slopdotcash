@@ -76,11 +76,12 @@ type Case = {
 type Body = {
   recipientGithubId?: string;
   error?: string;
+  message?: string;
   authorityUnavailable?: boolean;
   replayed?: boolean;
   submission?: Submission;
   submissions?: Submission[];
-  report?: typeof REPORT;
+  report?: Record<string, unknown>;
   case?: Case;
   cases?: Case[];
 };
@@ -355,7 +356,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const create = (
     key = `intake-key-${++sequence}`,
     as: Actor = REPORTER,
-    report: typeof REPORT = REPORT,
+    report: Record<string, unknown> = REPORT,
   ) =>
     call(as, "POST", "security-submissions", {
       projectId: PROJECT,
@@ -1112,6 +1113,95 @@ describe("durable private report controls", () => {
         JSON.stringify(t.sqlite.query(`SELECT * FROM ${table}`).all()),
       ).not.toContain("PRIVATE-REPORT-SENTINEL");
     }
+  });
+
+  test("keeps a proof-of-concept file with the report and shows it to screening, analysis and the owner", async () => {
+    const t = fixture();
+    const proofOfConcept = {
+      fileName: "WithdrawRounding.t.sol",
+      patch:
+        "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,3 @@\n+function testWithdrawRounding() public {\n+  // ``` inside the test\n+}\n",
+    };
+    const accepted = await t.create(undefined, REPORTER, {
+      ...REPORT,
+      proofOfConcept,
+    });
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(t.screened[0]?.report.proofOfConcept).toEqual(proofOfConcept);
+    await t.call(OWNER, "GET", `security-cases/${submission.caseId}`);
+    expect(t.analyzed[0]?.report.proofOfConcept).toEqual(proofOfConcept);
+    for (const as of [OWNER, REPORTER]) {
+      const read = await t.call(
+        as,
+        "GET",
+        `security-submissions/${submission.id}`,
+      );
+      expect(read.body.report).toEqual({ ...REPORT, proofOfConcept });
+    }
+  });
+
+  test("a report without a proof file keeps its stored shape and digest", async () => {
+    const t = fixture();
+    const submission = required((await t.create()).body.submission);
+    const stored = [...t.objects.values()][0];
+    expect(JSON.parse(new TextDecoder().decode(stored?.bytes))).toEqual(REPORT);
+    expect(t.screened[0]?.report).not.toHaveProperty("proofOfConcept");
+    const read = await t.call(
+      OWNER,
+      "GET",
+      `security-submissions/${submission.id}`,
+    );
+    expect(read.body.report).toEqual(REPORT);
+  });
+
+  test.each([
+    ["an unsafe file name", { fileName: "../test.patch", patch: "+x\n" }],
+    ["a name with a space", { fileName: "my test.patch", patch: "+x\n" }],
+    [
+      "a file ending that is not a test or patch",
+      { fileName: "exploit.sh", patch: "+x\n" },
+    ],
+    ["an extension with no name", { fileName: ".patch", patch: "+x\n" }],
+    ["a long name", { fileName: `${"a".repeat(195)}.patch`, patch: "+x\n" }],
+    ["an empty file", { fileName: "test.patch", patch: "  \n" }],
+    ["a NUL byte", { fileName: "test.patch", patch: "+x\u0000y\n" }],
+    ["invalid UTF-16 text", { fileName: "test.patch", patch: "+x\ud800y\n" }],
+    [
+      "a file over 60,000 bytes",
+      { fileName: "test.patch", patch: "\u00e9".repeat(30_001) },
+    ],
+    ["an extra field", { fileName: "test.patch", patch: "+x\n", extra: true }],
+    ["a missing name", { patch: "+x\n" }],
+    ["a string", "+x\n"],
+  ])("refuses a proof file with %s and stores nothing", async (_, proof) => {
+    const t = fixture();
+    const refused = await t.create(undefined, REPORTER, {
+      ...REPORT,
+      proofOfConcept: proof,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe("invalid_report");
+    expect(t.objects.size).toBe(0);
+    expect(t.screeningCalls()).toBe(0);
+  });
+
+  test("refuses a description and proof file too long together for GitHub", async () => {
+    const t = fixture();
+    const refused = await t.create(undefined, REPORTER, {
+      summary: REPORT.summary,
+      description: "d".repeat(64_000),
+      proofOfConcept: { fileName: "test.patch", patch: "+x\n".repeat(400) },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toContain("Shorten the description");
+    expect(t.objects.size).toBe(0);
+    const fits = await t.create(undefined, REPORTER, {
+      summary: REPORT.summary,
+      description: "d".repeat(60_000),
+      proofOfConcept: { fileName: "test.patch", patch: "+x\n".repeat(400) },
+    });
+    expect(fits.status).toBe(201);
   });
 
   test("identical evidence digest holds screening without a model call", async () => {
