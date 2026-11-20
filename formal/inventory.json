@@ -4351,7 +4351,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "9e42a969553af04c9dbfa4db9828d5bf77cc8fb5047f63766bf47b1599d25720",
+      "sha256": "4b38070fc3ee4ddc54f84a3f19307f8600a27c3864278e62ec98fff6a492136d",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -4361,8 +4361,8 @@
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 37, 50, 86, 125, 147, 150, 163, 170, 179, 187, 195, 274, 306, 312,
-        315, 319, 320, 321, 322, 412, 698, 705, 706, 708, 713, 717, 721
+        2, 37, 50, 86, 129, 151, 154, 167, 174, 183, 191, 199, 278, 310, 316,
+        319, 323, 324, 325, 326, 416, 702, 709, 710, 712, 717, 721, 725
       ],
       "review": "mapped-abstraction"
     },
@@ -15627,13 +15627,15 @@
     },
     {
       "path": "formal/models/points/points_projection_transport.qnt",
-      "sha256": "7042f1fc0921629d11d954dae56bec2e51742654d9bfa2c0bc353287d1c4f766",
+      "sha256": "2e6acec180203f6309cd41e4c71081c3058b97e390d3b4a37d338958f976b3f3",
       "sources": ["scripts/generate-points.ts"],
       "scenarios": [
         "invalidReadNeverRetriesTest",
         "oneChangedIndexCanRepairMismatchTest",
         "resetResumesSameReadTest",
         "secondMismatchRefusesTest",
+        "siblingExhaustionBeforeRefusalTest",
+        "siblingRetriesBeforeRefusalTest",
         "thirdResetRefusesTest",
         "unchangedIndexCannotRepairMismatchTest"
       ]
