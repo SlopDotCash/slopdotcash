@@ -327,7 +327,8 @@ pure val byValues = Set("owner")
 pure def monthKey(actor: int): E::SourceKey = { origin: "eliza", period: 202611, actor: actor }
 pure val sourceValues = Set(monthKey(1)).union(Set(monthKey(4)))
 pure val rootSample: E::RootAuthorization = { period: 202611, vault: "vault", network: E::Base, allocationDigest: "a", root: "r",
-  wholeGross: List(10), remainingGross: List(10), leafCount: 3, sourceSequence: 0, frozenAt: 0, signer: "attester" }
+  wholeGross: List(10), remainingGross: List(10), leafCount: 3, sourceSequence: 0, frozenAt: 0, signer: "attester",
+  pledgeAccount: false }
 pure val authorizationValues = Set(rootSample, { ...rootSample, root: "q", remainingGross: List(8), leafCount: 2, sourceSequence: 1 })
 pure val leafBase: E::LeafProof = { period: 202611, index: 0, root: "r", rootTotal: List(10), source: monthKey(1), actor: 1, gross: List(2) }
 pure val proofValues = Set(leafBase).union(Set({ ...leafBase, index: 1, source: monthKey(2), actor: 2, gross: List(6) }))

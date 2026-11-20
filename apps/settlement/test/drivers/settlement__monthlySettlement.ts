@@ -111,6 +111,7 @@ function initialEscrow(): Escrow {
     bindingDelay: 0, implementation: "PreRelease", at: { block: 0, index: 0, time: START, transaction: "" }, clock: START, monthlyEnabled: false, monthlyCap: [0], sourceSequence: 0,
     deposited: [0], held: [0], committed: [0], spent: [0], free: [0], pending: [0], reserved: [0], reservedPrincipal: [0], reservedFees: [0], paid: [0], paidNet: [0], payoutFees: [0],
     grossWithdrawn: [0], withdrawalFees: [0], accruedFees: [0], claimedFees: [0], months: [], awards: [], releasedLeaves: [], withdrawals: [], depositsWhilePending: 0,
+    pledges: [], pledged: [0],
   };
 }
 
