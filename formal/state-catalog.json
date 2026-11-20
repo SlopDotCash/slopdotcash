@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6e12bcf6ee6df79dac2743ddfe7c9a2f88c54d85114b610bb64afe941e9822dc",
+  "inventorySha256": "e193440e750acb441a12e018979a7a23aa94a0dcf4195618c9272950f1e1db87",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4503,14 +4503,15 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "line": 36,
+      "line": 33,
       "name": "CategoryMode",
       "kind": "string-union",
       "values": ["close", "label", "off"],
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
-        "formal/models/slopbot/bot_review_admission.qnt"
+        "formal/models/slopbot/bot_review_admission.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt"
       ],
       "lexicallyUnmentionedValues": ["label", "off"],
       "review": "candidate-only"
@@ -4557,7 +4558,7 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "line": 227,
+      "line": 230,
       "name": "INSTALLATION_STATES",
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
@@ -4602,13 +4603,14 @@
     },
     {
       "path": "workers/slopbot/penalties.ts",
-      "line": 148,
+      "line": 152,
       "name": "reason",
       "kind": "string-union",
       "values": ["appeal_upheld", "maintainer_reopen"],
       "models": [
         "formal/models/slopbot/bot_appeal.qnt",
-        "formal/models/slopbot/bot_penalty_once.qnt"
+        "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -4686,7 +4688,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2919,
+      "line": 2995,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -4699,6 +4701,7 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
@@ -4708,7 +4711,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2993,
+      "line": 3069,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4721,6 +4724,7 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
@@ -4730,7 +4734,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3056,
+      "line": 3132,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4743,6 +4747,7 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"

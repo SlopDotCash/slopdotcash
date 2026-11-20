@@ -80,8 +80,9 @@ only after their line counts match the accepted file metadata.
      from their own authenticated Slop session for this project and repository
      with a `pull_request_opened` event naming this exact pull request node ID;
    - category set to close, and `penaltyFor(category).action === "close"` (the
-     published table keeps `out_of_scope` label-only; `missing_evidence` and
-     `none` cannot close);
+     published table keeps `out_of_scope` label-only; `missing_evidence` can
+     close only for a deterministic missing-field finding on a Slop submission
+     under a published Evidence policy);
    - verified evidence; for guidance categories, a rule quoted verbatim from
      the named file;
    - confidence ≥ `CLOSE_CONFIDENCE` (0.9);
@@ -93,8 +94,11 @@ only after their line counts match the accepted file metadata.
    - no reopen-rate breaker (`REOPEN_BREAKER_RATIO = 0.1` over 7 days of
      maintainer reopen or upheld appeal reversals) and no repository
      `dailyCloseCap` hit;
-   - a confirming second model verdict; no unresolved limitations; unchanged
-     item just before acting.
+   - a confirming second model verdict, or a repeated deterministic evidence
+     finding from the unchanged GitHub body and published guide for
+     `missing_evidence`; no unresolved limitations; unchanged item just before
+     acting. Missing-evidence closure uses
+     `SLOPBOT_EVIDENCE_CLOSURE_ENABLED` independently of the general switch.
 
    The daily close slot is reserved in D1 before the GitHub request. Confirmed
    closes in the rolling day and every unresolved close attempt consume
