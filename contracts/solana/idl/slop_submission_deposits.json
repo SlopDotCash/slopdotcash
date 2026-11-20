@@ -1,0 +1,948 @@
+{
+  "address": "HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t",
+  "metadata": {
+    "name": "slop_submission_deposits",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "accept_ownership",
+      "discriminator": [172, 23, 43, 13, 238, 213, 85, 150],
+      "accounts": [
+        {
+          "name": "pending_owner",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "docs": [
+        "Moves exactly `amount` from the payer's token account into the vault and records it",
+        "against `item` as deposit number `deposit_count + 1`. The payer and `kept_to` are fixed",
+        "here and never change. Refused while deposits are paused, for a zero amount, and for a",
+        "zero `kept_to` or one of this program's own accounts as `kept_to`."
+      ],
+      "discriminator": [242, 35, 198, 137, 82, 225, 242, 182],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        },
+        {
+          "name": "ledger",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [108, 101, 100, 103, 101, 114]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": ["ledger"]
+        },
+        {
+          "name": "source",
+          "docs": ["Any token account of the mint that the payer owns."],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "deposit",
+          "docs": [
+            "The next id is part of the address, so an id is used once and ids have no gap."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [100, 101, 112, 111, 115, 105, 116]
+              },
+              {
+                "kind": "account",
+                "path": "config.deposit_count.wrapping_add(1)",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "item",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "kept_to",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Writes the owner, the resolver and the reclaim delay once. Only the program's upgrade",
+        "authority can sign it, so nobody else can initialize first, and it must run before the",
+        "upgrade authority is removed. No instruction changes the delay or closes the Config."
+      ],
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t"
+        },
+        {
+          "name": "program_data"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "owner",
+          "type": "pubkey"
+        },
+        {
+          "name": "resolver",
+          "type": "pubkey"
+        },
+        {
+          "name": "reclaim_delay",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "open_vault",
+      "docs": [
+        "Creates the ledger and the vault token account of one classic SPL mint. Anyone may",
+        "call it and pays the rent of both accounts, which are never closed."
+      ],
+      "discriminator": [181, 248, 228, 67, 6, 175, 37, 167],
+      "accounts": [
+        {
+          "name": "funder",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "A mint of the classic SPL Token program; any other owner is refused."
+          ]
+        },
+        {
+          "name": "ledger",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [108, 101, 100, 103, 101, 114]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pause_deposits",
+      "docs": [
+        "Stops or resumes new deposits. It never blocks `resolve` or `reclaim`."
+      ],
+      "discriminator": [206, 186, 203, 153, 253, 61, 206, 122],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["config"]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "reclaim",
+      "docs": [
+        "Returns an open deposit to its payer once `reclaim_delay` has passed since the deposit.",
+        "Only the payer may call it, and the tokens go to a token account the payer owns. It",
+        "works while deposits are paused and whoever the resolver is."
+      ],
+      "discriminator": [44, 177, 236, 249, 145, 109, 163, 186],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true,
+          "relations": ["deposit"]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        },
+        {
+          "name": "deposit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [100, 101, 112, 111, 115, 105, 116]
+              },
+              {
+                "kind": "account",
+                "path": "deposit.id",
+                "account": "Deposit"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ledger",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [108, 101, 100, 103, 101, 114]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": ["deposit", "ledger"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": ["Any token account of the mint that the payer owns."],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "resolve",
+      "docs": [
+        "Settles one open deposit, once: `refund` sends its amount to the payer's associated",
+        "token account, otherwise to the associated token account of its `kept_to`. The resolver",
+        "has no other choice of destination. The Deposit account is closed and its rent returns",
+        "to the payer. Works while deposits are paused."
+      ],
+      "discriminator": [246, 150, 236, 206, 108, 63, 58, 10],
+      "accounts": [
+        {
+          "name": "resolver",
+          "signer": true,
+          "relations": ["config"]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        },
+        {
+          "name": "deposit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [100, 101, 112, 111, 115, 105, 116]
+              },
+              {
+                "kind": "account",
+                "path": "deposit.id",
+                "account": "Deposit"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ledger",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [108, 101, 100, 103, 101, 114]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": ["deposit", "ledger"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The handler requires the associated token account of the payer (refund) or of the",
+            "kept wallet (kept), still owned by that wallet."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "docs": ["fixes it to the recorded payer."],
+          "writable": true,
+          "relations": ["deposit"]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "refund",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_resolver",
+      "docs": [
+        "Replaces the resolver. The owner and the pending owner may not become the resolver, so",
+        "one key never holds both roles."
+      ],
+      "discriminator": [137, 108, 27, 51, 202, 16, 33, 119],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["config"]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "next",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "transfer_ownership",
+      "docs": [
+        "Names a pending owner, who takes over with `accept_ownership`. The all-zero address",
+        "cancels a pending handover. The resolver may not be named."
+      ],
+      "discriminator": [65, 177, 215, 73, 53, 45, 99, 47],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["config"]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_owner",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [155, 12, 170, 224, 30, 250, 204, 130]
+    },
+    {
+      "name": "Deposit",
+      "discriminator": [148, 146, 121, 66, 207, 173, 21, 227]
+    },
+    {
+      "name": "Ledger",
+      "discriminator": [43, 41, 21, 213, 180, 176, 95, 32]
+    }
+  ],
+  "events": [
+    {
+      "name": "Deposited",
+      "discriminator": [111, 141, 26, 45, 161, 35, 100, 57]
+    },
+    {
+      "name": "DepositsPaused",
+      "discriminator": [148, 244, 198, 121, 18, 138, 222, 13]
+    },
+    {
+      "name": "Initialized",
+      "discriminator": [208, 213, 115, 98, 115, 82, 201, 209]
+    },
+    {
+      "name": "OwnershipTransferStarted",
+      "discriminator": [183, 253, 239, 246, 140, 179, 133, 105]
+    },
+    {
+      "name": "OwnershipTransferred",
+      "discriminator": [172, 61, 205, 183, 250, 50, 38, 98]
+    },
+    {
+      "name": "Reclaimed",
+      "discriminator": [230, 25, 32, 135, 40, 167, 137, 130]
+    },
+    {
+      "name": "Resolved",
+      "discriminator": [148, 46, 187, 66, 35, 1, 255, 147]
+    },
+    {
+      "name": "ResolverChanged",
+      "discriminator": [6, 235, 225, 252, 79, 239, 195, 145]
+    },
+    {
+      "name": "VaultOpened",
+      "discriminator": [198, 250, 195, 25, 26, 107, 197, 16]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotUpgradeAuthority",
+      "msg": "Only the program's upgrade authority initializes it"
+    },
+    {
+      "code": 6001,
+      "name": "NotOwner",
+      "msg": "Only the owner may do this"
+    },
+    {
+      "code": 6002,
+      "name": "NotPendingOwner",
+      "msg": "Only the pending owner may accept ownership"
+    },
+    {
+      "code": 6003,
+      "name": "NotResolver",
+      "msg": "Only the resolver may resolve a deposit"
+    },
+    {
+      "code": 6004,
+      "name": "NotPayer",
+      "msg": "Only the payer may reclaim a deposit"
+    },
+    {
+      "code": 6005,
+      "name": "DepositsArePaused",
+      "msg": "New deposits are paused"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidInput",
+      "msg": "Invalid input"
+    },
+    {
+      "code": 6007,
+      "name": "ReclaimTooEarly",
+      "msg": "The reclaim delay has not passed"
+    },
+    {
+      "code": 6008,
+      "name": "WrongDestination",
+      "msg": "The destination is not the token account this deposit may be paid to"
+    },
+    {
+      "code": 6009,
+      "name": "TransferNotExact",
+      "msg": "The vault did not receive exactly the amount"
+    },
+    {
+      "code": 6010,
+      "name": "VaultShort",
+      "msg": "The vault would not cover the open deposits"
+    },
+    {
+      "code": 6011,
+      "name": "Arithmetic",
+      "msg": "Arithmetic overflow"
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_owner",
+            "docs": ["All zero when no handover is pending."],
+            "type": "pubkey"
+          },
+          {
+            "name": "resolver",
+            "type": "pubkey"
+          },
+          {
+            "name": "reclaim_delay",
+            "docs": [
+              "Seconds a payer waits before reclaiming an unresolved deposit. Set once."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "deposit_count",
+            "docs": [
+              "Deposits ever made. Ids count up from 1, so this is also the latest id."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deposits_paused",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposit",
+      "docs": ["Exists exactly while the deposit is open."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "payer",
+            "docs": [
+              "The wallet that paid. Refunds and reclaims go to token accounts it owns."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "kept_to",
+            "docs": [
+              "The wallet whose associated token account receives a kept deposit."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "item",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "deposited_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "item",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "kept_to",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepositsPaused",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Initialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "resolver",
+            "type": "pubkey"
+          },
+          {
+            "name": "reclaim_delay",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Ledger",
+      "docs": ["One per mint. It is the token authority of that mint's vault."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "open_total",
+            "docs": ["Sum of the mint's open deposits, in base units."],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnershipTransferStarted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_owner",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnershipTransferred",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Reclaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Resolved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "refunded",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ResolverChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "pubkey"
+          },
+          {
+            "name": "next",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultOpened",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          }
+        ]
+      }
+    }
+  ]
+}
