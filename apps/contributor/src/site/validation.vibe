@@ -7,7 +7,7 @@ export const validatorPath = "apps/contributor/tools/quick_validate.py"
 const maxSkillFileBytes = 1024 * 1024
 const pinnedYaml = "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)"
 
-interface Runtime {
+export interface Runtime {
   readonly executable: string
   readonly prefix: ReadonlyArray<string>
   readonly probe: ReadonlyArray<string>
@@ -37,14 +37,31 @@ effect function inspection(root: string, skillPath: string) {
   }
 }
 
+export effect function probeRuntime(state: SkillValidation, runtime: Runtime, root: string) {
+  return try apply(state, { type: "probeRuntime", matches: try succeeds(runtime.executable, runtime.probe, root) })
+}
+
+export effect function inspectSkill(state: SkillValidation, runtime: Runtime, root: string, skillPath: string) {
+  const path = try Path.Path
+  const facts = try inspection(root, skillPath)
+  const output = ran(runtime.executable, [...runtime.prefix, "-B", path.join(root, validatorPath), path.join(root, skillPath)], { cwd: root }) catch effect () => {
+    throw refused("the skill validator could not run")
+  }
+  try Console.log((try utf8Text(output.stdout, "the skill validator's report")).trimEnd())
+  return try apply(state, { type: "inspect", realDirectory: facts.realDirectory, bounded: facts.bounded, yaml: output.status === 0 })
+}
+
+export effect function decideSkill(state: SkillValidation) {
+  return try apply(state, { type: "decide" })
+}
+
 export effect function validateSkill(root: string, skillPath: string) {
   const configured = try Config.option(Config.String("SLOP_PYTHON"))
   let state: SkillValidation = initial
   let chosen: Runtime | undefined
   for (const runtime of runtimes(Option.getOrUndefined(configured))) {
-    const matches = try succeeds(runtime.executable, runtime.probe, root)
-    state = try apply(state, { type: "probeRuntime", matches })
-    if (matches) {
+    state = try probeRuntime(state, runtime, root)
+    if (state.runtime) {
       chosen = runtime
       break
     }
@@ -52,14 +69,7 @@ export effect function validateSkill(root: string, skillPath: string) {
   if (chosen === undefined) {
     throw refused("skill packaging requires Python with PyYAML 6.0.3 or uv; set SLOP_PYTHON to an interpreter with that exact version")
   }
-  const path = try Path.Path
-  const facts = try inspection(root, skillPath)
-  const output = ran(chosen.executable, [...chosen.prefix, "-B", path.join(root, validatorPath), path.join(root, skillPath)], { cwd: root }) catch effect () => {
-    throw refused("the skill validator could not run")
-  }
-  try Console.log((try utf8Text(output.stdout, "the skill validator's report")).trimEnd())
-  state = try apply(state, { type: "inspect", realDirectory: facts.realDirectory, bounded: facts.bounded, yaml: output.status === 0 })
-  state = try apply(state, { type: "decide" })
+  state = try decideSkill(try inspectSkill(state, chosen, root, skillPath))
   if (state.outcome !== "Valid") throw refused(`skill validation refused ${skillPath}`)
   return state
 }
