@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "aa56fac5f53d09c9e7fa04ee7214be0c8d1eeb2fb9a00c3fbbb9da8282019594",
+  "inventorySha256": "edf90db83f8ec52bbd149108827bc18f5be1038c241319d1e7d7e5182eb2e6c2",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -150,7 +150,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2714,
+      "line": 2879,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -187,7 +187,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2918,
+      "line": 3083,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -3160,6 +3160,32 @@
     {
       "path": "src/ProjectProposalPage.tsx",
       "line": 2636,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["idle", "loading"],
+      "models": [
+        "formal/models/api/api_intake_cap.qnt",
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/ProjectProposalPage.tsx",
+      "line": 2639,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
