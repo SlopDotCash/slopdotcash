@@ -6,10 +6,8 @@ import {
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { githubApiOrigin } from "../backend/projects/github-lookup";
 import { readIntakeCounts } from "../backend/projects/merge-activity";
-import { readPoolFundingIndex } from "../backend/projects/pool-funding";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { referralRedirect } from "../backend/referrals/codes";
-import { deploymentTier } from "../src/lib/deployment";
 import { onRequest as socialMetadata } from "./index";
 
 export async function onRequest(
@@ -41,12 +39,6 @@ export async function onRequest(
           project.revision,
           (repositoryId) =>
             livePin(project.manifest, repositoryId, templateSha256),
-        ),
-      poolFunding: () =>
-        readPoolFundingIndex(
-          db,
-          deploymentTier(env.SLOP_ENVIRONMENT),
-          new Date(),
         ),
       intakeCounts: () => readIntakeCounts(db),
     });

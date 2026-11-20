@@ -66,7 +66,6 @@ async function discovered(
         assessment: null,
         grandfathered: true,
       }),
-      poolFunding: async () => null,
       ...(intakeCounts ? { intakeCounts } : {}),
       now: () => NOW,
     },
