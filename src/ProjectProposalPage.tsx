@@ -2635,6 +2635,19 @@ function ProjectUpdateForm({
   const [repositoryLookup, setRepositoryLookup] = useState<
     { state: "idle" | "loading" } | { state: "error"; message: string }
   >({ state: "idle" });
+  const [branchChoices, setBranchChoices] = useState<
+    | { state: "idle" | "loading" }
+    | { state: "error"; message: string }
+    | {
+        state: "ready";
+        choices: ReadonlyArray<{ name: string; commitSha: string }>;
+      }
+  >({ state: "idle" });
+  const [branchName, setBranchName] = useState("");
+  const branchChange =
+    branchChoices.state === "ready"
+      ? branchChoices.choices.find((entry) => entry.name === branchName)
+      : undefined;
   const repositoryLookupController = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
@@ -2664,6 +2677,35 @@ function ProjectUpdateForm({
     };
   }, [project.id, reload]);
   const current = base?.project ?? project;
+  const integrationBranch = current.repositories[0].integrationBranch;
+  async function loadIntegrationBranches() {
+    setBranchName("");
+    setBranchChoices({ state: "loading" });
+    try {
+      const path = new URL(current.repositories[0].githubUrl).pathname.replace(
+        /^\/|\/$/gu,
+        "",
+      );
+      const facts = await lookupGitHubRepository(
+        path,
+        AbortSignal.timeout(15000),
+      );
+      if (
+        facts.numericId !== current.authority.repositoryId ||
+        facts.nodeId !== current.authority.repositoryNodeId
+      )
+        throw new Error("GitHub returned a different repository.");
+      const choices = Object.entries(facts.branchCommits ?? {})
+        .filter(([name]) => name !== integrationBranch)
+        .map(([name, commitSha]) => ({ name, commitSha }));
+      setBranchChoices({ state: "ready", choices });
+    } catch (error) {
+      setBranchChoices({
+        state: "error",
+        message: errorMessage(error, "Cannot load integration branches."),
+      });
+    }
+  }
   const bountyOnly = hasBountyOverview(current);
   const reward = current.reward;
   const monthly = reward.kind === "monthly-pool";
@@ -3020,11 +3062,19 @@ function ProjectUpdateForm({
     } as unknown as ProjectDefinition;
   })();
   const changes = classifyRevisionChanges(current, next);
+  const branchProblem =
+    branchChange &&
+    (changes.presentation.length > 0 ||
+      changes.financial.length > 0 ||
+      changes.executable.some((field) => field !== "contribution"))
+      ? "Save the other settings before changing the integration branch."
+      : undefined;
   const changed =
+    branchChange !== undefined ||
     changes.presentation.length +
       changes.executable.length +
       changes.financial.length >
-    0;
+      0;
   // An added repository always needs its own scan, cleared project or not.
   const executableCleared = scanCleared && addedRepositories.length === 0;
   const fundingText = (minor: string, digits: number, symbol: string) =>
@@ -3072,6 +3122,12 @@ function ProjectUpdateForm({
           },
         ]
       : []),
+    {
+      field: "integrationBranch",
+      label: "Integration branch",
+      before: integrationBranch,
+      after: branchChange?.name ?? integrationBranch,
+    },
     {
       field: "repositories",
       label: "Repositories",
@@ -3156,7 +3212,8 @@ function ProjectUpdateForm({
         ]
       : []),
   ].filter((change) => change.before !== change.after);
-  const valid = Object.values(errors).every((error) => !error);
+  const valid =
+    !branchProblem && Object.values(errors).every((error) => !error);
   const shown = (field: string) => (attempted ? errors[field] : undefined);
   async function publish() {
     if (!mounted.current || publishInFlight.current) return;
@@ -3186,17 +3243,32 @@ function ProjectUpdateForm({
     try {
       await requireEditorActor(actorId);
       if (!mounted.current) return;
-      const result = await publishProjectRevision(
-        project.id,
-        next,
-        base.revision,
-        "",
-        !bountyOnly && choice.mode === "monthly" && changes.financial.length > 0
-          ? value.monthlyAmount.trim()
-          : null,
-        null,
-        actorId,
-      );
+      const result = branchChange
+        ? await projectApiRequest<RevisionResult>(
+            "PUT",
+            `projects/${encodeURIComponent(project.id)}`,
+            {
+              expectedRevision: base.revision,
+              integrationBranch: branchChange,
+              ...(changes.executable.includes("contribution")
+                ? { contribution: next.contribution }
+                : {}),
+            },
+            { expectedActorGithubId: actorId },
+          )
+        : await publishProjectRevision(
+            project.id,
+            next,
+            base.revision,
+            "",
+            !bountyOnly &&
+              choice.mode === "monthly" &&
+              changes.financial.length > 0
+              ? value.monthlyAmount.trim()
+              : null,
+            null,
+            actorId,
+          );
       if (!mounted.current) return;
       await requireEditorActor(actorId);
       if (!mounted.current) return;
@@ -3207,6 +3279,10 @@ function ProjectUpdateForm({
         project: result.project.manifest,
       });
       setSubmission({ state: "published", result });
+      if (branchChange) {
+        setBranchName("");
+        setBranchChoices({ state: "idle" });
+      }
       // Edits typed while the request was in flight are not part of what was
       // published; keep them as the new draft, rebased on the new revision.
       // Only clear when nothing changed since the request went out.
@@ -3238,6 +3314,13 @@ function ProjectUpdateForm({
       if (editorAccessLost(failure)) {
         onAccessLost();
         return;
+      }
+      if (
+        failure instanceof ProjectApiError &&
+        failure.code === "branch_head_changed"
+      ) {
+        setBranchName("");
+        setBranchChoices({ state: "idle" });
       }
       setSubmission({
         state: "error",
@@ -3387,8 +3470,13 @@ function ProjectUpdateForm({
   const changeEffect = (field: string): ChangeEffect =>
     field === "vault" || field === "monthly" || field === "maintainerShare"
       ? "next-month"
-      : ["slopbot", "image", "headline", "description"].includes(field) ||
-          executableCleared
+      : [
+            "slopbot",
+            "image",
+            "headline",
+            "description",
+            "integrationBranch",
+          ].includes(field) || executableCleared
         ? "live"
         : "rescan";
   const effectChip = (effect: ChangeEffect) =>
@@ -3565,9 +3653,15 @@ function ProjectUpdateForm({
         <details className="proposal-advanced">
           <summary>Repositories</summary>
           <ul>
-            {current.repositories.map((entry) => (
+            {current.repositories.map((entry, index) => (
               <li key={entry.id}>
                 {entry.id}
+                {index === 0 ? (
+                  <small className="field-hint">
+                    {" "}
+                    Integration branch <code>{integrationBranch}</code>
+                  </small>
+                ) : null}
                 {entry.countsFrom ? (
                   <>
                     {" "}
@@ -3620,6 +3714,46 @@ function ProjectUpdateForm({
               </li>
             ))}
           </ul>
+          <button
+            className="button secondary-button"
+            disabled={
+              base === null ||
+              branchChoices.state === "loading" ||
+              submission.state === "publishing"
+            }
+            onClick={() => void loadIntegrationBranches()}
+            type="button"
+          >
+            {branchChoices.state === "loading"
+              ? "Loading branches…"
+              : branchChoices.state === "ready"
+                ? "Refresh integration branches"
+                : "Change integration branch"}
+          </button>
+          {branchChoices.state === "ready" &&
+          branchChoices.choices.length > 0 ? (
+            <SelectField
+              disabled={submission.state === "publishing"}
+              error={branchProblem}
+              label="New integration branch"
+              name="integrationBranch"
+              onChange={setBranchName}
+              options={[
+                ["", `Keep ${integrationBranch}`],
+                ...branchChoices.choices.map(({ name }): [string, string] => [
+                  name,
+                  name,
+                ]),
+              ]}
+              value={branchName}
+            />
+          ) : branchChoices.state === "error" ? (
+            <p className="field-error" role="alert">
+              {branchChoices.message}
+            </p>
+          ) : branchChoices.state === "ready" ? (
+            <p role="status">No other branch head is available.</p>
+          ) : null}
           <TextField
             error={
               repositoryLookup.state === "error"
