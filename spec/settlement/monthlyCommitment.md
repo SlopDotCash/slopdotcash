@@ -164,16 +164,26 @@ manual award changes the sequence before admission, the attempt can no
 longer be admitted and the next attempt is appended with a fresh identity.
 Earlier attempts and their signatures are retained unchanged.
 
+D1 keeps at most one attempt per source sequence and only appends one above
+every stored sequence: `monthly_payment_authorization_attempts` has the
+primary key (project, period, network, source sequence), and the insert in
+development `apps/settlement/src/monthlyCommitment/store.vibe` `signedWrites`
+skips a sequence that is not above the highest stored one, so publication of
+any other signature conflicts and is refused. A new EVM attempt is therefore
+signed only when the view's source sequence is above the latest attempt's,
+and attempt sequences strictly increase. A rotated identity authority alone
+does not make a new attempt.
+
 ```quint
 pure def remainingLeaves(c: Commitment): List[Leaf] = c.month.leaves.select(l => not(c.view.consumed.includes(l.source)))
 pure def latestAttempt(c: Commitment): Attempt = c.attempts.nthOr(c.attempts.length() - 1,
   { id: 0, height: 0, sourceSequence: -1, root: "", remainingGross: M::zero, leafCount: 0, frozenAt: 0, signer: "", publishedAt: 0 })
-pure def stale(c: Commitment): bool = c.attempts.length() == 0 or latestAttempt(c).sourceSequence != c.view.sourceSequence
-  or latestAttempt(c).signer != c.view.authority
+pure def stale(c: Commitment): bool = c.attempts.length() == 0 or latestAttempt(c).sourceSequence < c.view.sourceSequence
 pure def canSignEvm(c: Commitment, attemptId: int, root: str, by: str): bool =
   c.family == EvmV2 and c.phase == Authorized and c.view.admittedRoot == "" and by == c.view.authority
     and c.view.height > 0 and signingRefusal(c) == NoRefusal and stale(c) and root != "" and root != c.legacy.root
     and attemptId > 0 and not(c.attempts.some(a => a.id == attemptId or a.root == root))
+    and c.attempts.every(a => a.sourceSequence < c.view.sourceSequence)
 pure def signEvm(c: Commitment, attemptId: int, root: str, by: str): Commitment =
   val leaves = remainingLeaves(c)
   { ...c, attempts: c.attempts.append({ id: attemptId, height: c.view.height, sourceSequence: c.view.sourceSequence,
@@ -208,9 +218,34 @@ pure def signSolana(c: Commitment, attemptId: int, root: str, by: str): Commitme
 After admission no new attempt is signed. A V2 or V3 admission must equal
 one of the journal's signed attempts.
 
+### Only the latest authorization, the one with the highest source sequence, is admitted
+
+The monthly executor submits and resumes only the current authorization,
+which D1's `monthly_payment_current_authorizations` view chooses as the
+attempt with the highest source sequence, and keys its leaf cursor by that
+tree's root (development `apps/settlement/src/keeper/monthly.vibe`
+`submitReserve`, `${key}:${root}:finalized-cursor`). A finalized admitted
+root that differs from that tree is refused there ("Another monthly reserve
+is already admitted") and execution halts. The journal does the same: it
+admits a V2 or V3 root only when it is the latest attempt's root, and holds
+any other root of the journal for investigation, like a root it never
+signed.
+
+On a consistent finalized chain that hold is never reached. `reserveMonthly`
+in `packages/contracts/evm/src/ProjectEscrow.sol` accepts a reservation only
+when its source sequence equals the current `ordinarySourceSequence`, which
+only increases. The latest attempt was signed at a view with no admitted root
+and with that attempt's sequence, so the chain's sequence had already reached
+it before any admission; every older attempt has a lower sequence and can no
+longer be admitted. The hold is the fail-closed answer to a chain or journal
+that contradicts this.
+
 ```quint
 pure def canAdmit(c: Commitment): bool =
   c.phase == Authorized and c.view.admittedRoot != "" and not(c.view.legacyRoot) and c.attempts.some(a => a.root == c.view.admittedRoot)
+    and c.view.admittedRoot == latestAttempt(c).root
+pure def supersededRoot(c: Commitment): bool = c.view.admittedRoot != "" and c.attempts.some(a => a.root == c.view.admittedRoot)
+  and c.view.admittedRoot != latestAttempt(c).root and not(c.view.legacyRoot and c.legacy.root != "" and c.view.admittedRoot == c.legacy.root)
 pure def admit(c: Commitment): Commitment = { ...c, phase: Admitted, admittedRoot: c.view.admittedRoot }
 ```
 
@@ -246,7 +281,7 @@ root as its own admission.
 ```quint
 pure def unknownRoot(c: Commitment): bool = c.view.admittedRoot != "" and not(c.attempts.some(a => a.root == c.view.admittedRoot))
   and not(c.view.legacyRoot and c.legacy.root != "" and c.view.admittedRoot == c.legacy.root)
-pure def canInvestigate(c: Commitment): bool = c.phase == Authorized and unknownRoot(c)
+pure def canInvestigate(c: Commitment): bool = c.phase == Authorized and (unknownRoot(c) or supersededRoot(c))
 pure def investigate(c: Commitment): Commitment = { ...c, phase: Investigating, refusal: UnsignedRootObserved }
 ```
 
@@ -289,6 +324,8 @@ pure def stepAdmissionPermanent(before: Commitment, after: Commitment): bool =
   (before.phase == Admitted implies (after.phase == Admitted or after.phase == Completed) and after.admittedRoot == before.admittedRoot)
     and (before.phase == Completed implies after.phase == Completed) and (before.phase == Refused implies after.phase == Refused)
     and (before.phase == Investigating implies after.phase == Investigating)
+pure def stepViewSequenceMonotone(before: Commitment, after: Commitment): bool =
+  after.view.sourceSequence >= before.view.sourceSequence
 pure def stepLegacyRetainedOnce(before: Commitment, after: Commitment): bool = before.legacy.root != "" implies after.legacy == before.legacy
 ```
 
@@ -296,7 +333,9 @@ pure def stepLegacyRetainedOnce(before: Commitment, after: Commitment): bool = b
 
 Each attempt was signed by the identity authority in force at its view,
 covers at most the frozen leaves, and never signs more than the whole gross.
-An admitted root is one of the journal's attempts.
+An admitted root is one of the journal's attempts. Attempt sequences strictly
+increase, so the latest attempt is the one with the highest source sequence,
+and a V2 or V3 admission is always that latest attempt's root.
 
 ```quint
 pure def alwaysAttemptsBounded(c: Commitment): bool = c.attempts.every(a => a.id > 0 and a.root != "" and a.signer != ""
@@ -307,6 +346,10 @@ pure def alwaysAuthorizedWithinCap(c: Commitment): bool =
 pure def alwaysAdmittedRootSigned(c: Commitment): bool =
   (c.phase == Admitted or c.phase == Completed) implies c.admittedRoot != ""
     and (if (c.admittedLegacy) c.admittedRoot == c.legacy.root and c.family == EvmV2 else c.attempts.some(a => a.root == c.admittedRoot))
+pure def alwaysAttemptSequencesIncrease(c: Commitment): bool =
+  c.attempts.foldl(-1, (highest, a) => if (highest >= -1 and a.sourceSequence > highest) a.sourceSequence else -2) != -2
+pure def alwaysAdmittedIsLatestAttempt(c: Commitment): bool =
+  ((c.phase == Admitted or c.phase == Completed) and not(c.admittedLegacy)) implies c.admittedRoot == latestAttempt(c).root
 pure def alwaysWindowFromPeriod(c: Commitment): bool = c.phase != NoIntent implies
   c.opensAt == windowOpensAt(c.month.period) and c.closesAt == windowClosesAt(c.month.period) and c.opensAt < c.closesAt
 pure def alwaysAttemptsSignedInWindow(c: Commitment): bool = c.attempts.every(a => a.publishedAt >= c.opensAt and a.publishedAt < c.closesAt)
@@ -329,11 +372,16 @@ pure def sometimesPledgedSignedWithAutomaticOff(c: Commitment): bool = c.attempt
   and not(c.facts.automaticOn) and c.facts.restricted
 pure def sometimesBeforeWindowRefused(c: Commitment): bool = c.phase == Authorized and c.held == WindowNotOpen
 pure def sometimesChainCapRefused(c: Commitment): bool = c.phase == Authorized and c.held == ChainCapExceeded
+pure def sometimesLatestAdmittedAfterSourceChange(c: Commitment): bool = c.phase == Admitted and not(c.admittedLegacy)
+  and c.attempts.length() >= 2 and latestAttempt(c).sourceSequence > c.attempts.nthOr(0, latestAttempt(c)).sourceSequence
 ```
 
 ### Simulation samples
 
-These input sets bound simulation only.
+These input sets bound simulation only. Discovered by simulation: a view at
+the second source sequence that admits r1 lets the latest attempt be admitted
+whichever root the walk signs first, and the same view admits a superseded
+root when r1 was signed first.
 
 ```quint
 pure val familyValues = Set(EvmV2, SolanaV3)
@@ -346,6 +394,7 @@ pure val viewValues = Set(
   { ...emptyView, height: 2, time: 1796342500, sourceSequence: 1, cap: List(8), consumed: List("s1") },
   { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(4) },
   { ...emptyView, height: 3, time: 1796342600, cap: List(8), admittedRoot: "r1", remaining: List(5) },
+  { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r1", remaining: List(4) },
   { ...emptyView, height: 4, time: 1796342700, cap: List(8), admittedRoot: "r1", remaining: List(0), monthlyEnabled: false },
   { ...emptyView, height: 4, time: 1796342700, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(0), authority: "next" },
   { ...emptyView, height: 5, time: 1799020800, cap: List(8) },
