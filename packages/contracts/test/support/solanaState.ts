@@ -1,7 +1,7 @@
 // spec/contracts/solanaEscrow.md, "The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve"; spec/contracts/solanaEscrow.md, "Reserves are exactly the unpaid awards plus outstanding monthly gross, and paid totals are exactly the paid awards"; spec/contracts/solanaEscrow.md, "Each period has one month within the cap at admission, and outstanding gross is the sum of unsettled totals"; spec/contracts/solanaEscrow.md, "Open pledges never exceed the free balance, and a closed pledge's period was committed or its window closed"
 // What the chain holds for the one project the spec models, read back from its accounts, and the part of the spec's
 // state that the chain records.
-import { base58Encode } from "../../../platform/src/chain/solanaWire.ts";
+import { base58Encode } from "./solanaWire.ts";
 import type { AccountFacts, MintFacts, Pledge, Program, SolBinding, SolMonth, Veto } from "../../gen/contracts__solanaEscrow.ts";
 import type { Award, Purpose } from "../../gen/contracts__ledger.ts";
 import {

@@ -15,7 +15,6 @@ import { promisify } from "node:util";
 import { sbfBuild } from "@repo/platform/testing/chains";
 import {
   type Address,
-  type Blockhash,
   type Message,
   ASSOCIATED_TOKEN_PROGRAM,
   SYSTEM_PROGRAM,
@@ -28,7 +27,8 @@ import {
   encodeMessage,
   encodeTransaction,
   findPda,
-} from "../../../platform/src/chain/solanaWire.ts";
+} from "./solanaWire.ts";
+type Blockhash = string;
 
 export { ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, type Address };
 
@@ -154,8 +154,10 @@ interface RpcFailure {
   readonly message: string;
 }
 class RpcError extends Error {
-  constructor(readonly method: string, readonly failure: RpcFailure) {
+  readonly failure: RpcFailure;
+  constructor(method: string, failure: RpcFailure) {
     super(`${method} failed: ${failure.code} ${failure.message}`);
+    this.failure = failure;
   }
 }
 
@@ -260,6 +262,33 @@ async function validatorVersion(): Promise<void> {
   if (!stdout.startsWith(`solana-test-validator ${SOLANA_VERSION} `)) throw new Error(`solana-test-validator ${SOLANA_VERSION} must be on PATH; found ${stdout.trim()}`);
 }
 
+/**
+ * The test validator votes with its vote account's own keypair, where solana-genesis makes the identity the voter.
+ * The bootstrap vote account is therefore the test validator's genesis one, with this fixture's keys in it.
+ */
+async function templateVote(ledger: string): Promise<GenesisAccount> {
+  const genesis = new Uint8Array(await readFile(join(ledger, "genesis.bin")));
+  const keyOfFile = async (name: string) => new Uint8Array(JSON.parse(await readFile(join(ledger, name), "utf8"))).slice(32, 64);
+  const [identity, vote] = [await keyOfFile("validator-keypair.json"), await keyOfFile("vote-account-keypair.json")];
+  let at = 16;
+  for (let left = Number(readU64(genesis, 8)); left > 0; left--) {
+    const address = genesis.slice(at, at + 32);
+    const lamports = readU64(genesis, at + 32);
+    const length = Number(readU64(genesis, at + 40));
+    const data = genesis.slice(at + 48, at + 48 + length);
+    const owner = addressOf(genesis.slice(at + 48 + length, at + 80 + length));
+    at += 48 + length + 32 + 1 + 8;
+    if (owner !== "Vote111111111111111111111111111111111111111" || !address.every((byte, index) => byte === vote[index])) continue;
+    const replace = (from: Uint8Array, to: Uint8Array) => {
+      for (let i = 0; i + 32 <= data.length; i++) if (from.every((byte, index) => data[i + index] === byte)) data.set(to, i);
+    };
+    replace(vote, bootstrap.vote.publicKey);
+    replace(identity, bootstrap.identity.publicKey);
+    return { address: bootstrap.vote.address, lamports, owner, data, executable: false };
+  }
+  throw new Error("the test validator's genesis holds no vote account");
+}
+
 /** The bytes of the program with its declared ID changed, so that every instruction fails as no current one exists. */
 function earlierBuild(current: Uint8Array): Uint8Array {
   const id = keyBytes(PROGRAM);
@@ -338,13 +367,15 @@ export async function launch(): Promise<Chain> {
     return account;
   });
   const upgradeable = programs.filter((account) => account.owner === LOADER).map((account) => keyAt(account.data, 4));
+  const voting = await templateVote(template);
   const data = (await rpc("getMultipleAccounts", [upgradeable, { encoding: "base64" }])) as { value: unknown[] };
-  const base = [...programs, ...upgradeable.map((address, index) => {
+  const base: GenesisAccount[] = [...programs, ...upgradeable.map((address, index) => {
     const account = decoded(address, data.value[index]);
     if (account === undefined) throw new Error(`the test validator's genesis holds no program data ${address}`);
     return account;
   })];
   await halt();
+  base.push(voting);
 
   const keys = Object.fromEntries(roles.map((role) => [role, keypair(role)])) as Record<Role, Keypair>;
   const byAddress = new Map<string, Keypair>([...Object.values(keys)].map((key) => [key.address, key]));
@@ -388,7 +419,6 @@ export async function launch(): Promise<Chain> {
     const role = (key: Address) => seen.get(key) as { signer: boolean; writable: boolean };
     const signers = keysInOrder.filter((key) => role(key).signer);
     return {
-      version: "legacy",
       header: {
         requiredSignatures: signers.length,
         readonlySigned: signers.filter((key) => !role(key).writable).length,
@@ -421,15 +451,13 @@ export async function launch(): Promise<Chain> {
     for (let attempt = 0; attempt < 5; attempt++) {
       const message = compile(keys.deployer.address, [unique, ...instructions], await blockhash());
       const bytes = encodeMessage(message);
-      if (bytes === undefined) throw new Error("the transaction message cannot be encoded");
       const required = message.accountKeys.slice(0, message.header.requiredSignatures);
       const signatures = required.map((key) => {
         const signer = byAddress.get(key);
         if (signer === undefined) throw new Unrepresentable(`no key signs for ${key}`);
         return signed(signer, bytes);
       });
-      const wire = encodeTransaction({ signatures, message });
-      if (wire === undefined) throw new Error("the transaction cannot be encoded");
+      const wire = encodeTransaction(signatures, bytes);
       if (wire.length > 1232) throw new Unrepresentable(`a transaction of ${wire.length} bytes is too large`);
       try {
         await rpc("sendTransaction", [base64Encode(wire), { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 10 }]);

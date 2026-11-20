@@ -5,7 +5,7 @@ import type { AccountFacts, MintFacts } from "../../gen/contracts__solanaEscrow.
 import type { Purpose } from "../../gen/contracts__ledger.ts";
 import { leafNode, sumNode } from "../../../../apps/settlement/src/chain/solana/allocationRoot.ts";
 import { type Digest, type U64, digestBytes, digestOf } from "../../../../apps/settlement/src/chain/solana/bytes.ts";
-import { findPda } from "../../../platform/src/chain/solanaWire.ts";
+import { findPda } from "./solanaWire.ts";
 import {
   type Address,
   type GenesisAccount,
