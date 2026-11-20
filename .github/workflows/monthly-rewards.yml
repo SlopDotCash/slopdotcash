@@ -20,6 +20,11 @@ on:
         description: "Closed UTC month to propose (YYYY-MM); blank means previous month"
         required: false
         type: string
+      full_collection:
+        description: "Recompute every commit attribution live instead of reusing the newest trusted collection's fenced answers"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: slop-monthly-allocations-${{ github.ref }}
@@ -73,6 +78,8 @@ jobs:
       # Ledger generation must use the same registry tier as this proposal.
       VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
     permissions:
+      # Reads the newest trusted collection memo (an Actions artifact).
+      actions: read
       contents: read
       issues: read
       pull-requests: read
@@ -174,6 +181,20 @@ jobs:
           permission-issues: read
           permission-pull-requests: read
 
+      # Incremental collection (PRD section 9): reuse the newest trusted main
+      # collection's immutable commit statistics and fenced commit
+      # attributions. Without a verified memo the close collects in full.
+      - name: Restore the newest trusted collection memo
+        if: github.ref == 'refs/heads/main'
+        # The memo only saves reads; failing to restore it means a full
+        # collection, never a failed release.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESTORE_OUTPUT: ${{ runner.temp }}/restored-collection
+          RESTORE_DISCUSSIONS: "false"
+        run: python3 scripts/restore-collection-memo.py
+
       - name: Generate complete cycle ledger
         env:
           COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
@@ -182,10 +203,17 @@ jobs:
           COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
           GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
           # Retry one value-feed read after a temporary outage instead of
           # restarting the whole collection (19 November 2026).
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
-        run: bun run leaderboard:generate -- --cutoff "${{ steps.cycle.outputs.cutoff }}"
+          CUTOFF: ${{ steps.cycle.outputs.cutoff }}
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/restored-collection/collection-memo.json" ]; then
+            export SLOP_COLLECTION_MEMO="$RUNNER_TEMP/restored-collection/collection-memo.json"
+          fi
+          bun run leaderboard:generate -- --cutoff "$CUTOFF"
 
       - name: Propose private allocations
         id: propose

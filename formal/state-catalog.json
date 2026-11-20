@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "e03b2cff7ade8d817aa05be5a639dcd7b6e32af8c9e12e97c2713b16e4413e96",
+  "inventorySha256": "dbf55ed042ce85d74be0da9ce74b48c8480c8ca4f4250d43a43e5f353856dfc0",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2265,6 +2265,26 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/collection-memo.ts",
+      "line": 50,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["CLOSED", "MERGED", "OPEN"],
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "lexicallyUnmentionedValues": ["CLOSED", "MERGED", "OPEN"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/collection-memo.ts",
+      "line": 455,
+      "name": "CollectionMode",
+      "kind": "string-union",
+      "values": ["full", "incremental"],
+      "models": ["formal/models/points/incremental_collection.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/escrow-acceptance/shared.ts",
       "line": 199,
       "name": "status",
@@ -2363,7 +2383,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 242,
+      "line": 249,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2383,7 +2403,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 484,
+      "line": 491,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2419,7 +2439,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3830,
+      "line": 3870,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2439,7 +2459,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4434,
+      "line": 4474,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2669,7 +2689,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 514,
+      "line": 525,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2692,7 +2712,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 523,
+      "line": 534,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
