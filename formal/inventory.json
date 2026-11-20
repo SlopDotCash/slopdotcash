@@ -809,11 +809,8 @@
     },
     {
       "path": "backend/projects/pool-funding.ts",
-      "sha256": "2ad6fb4dc749fb8ffa86d88435440548e219b4644d792522068ddd30a17d4280",
-      "models": [
-        "formal/models/ui/ui_pool_funding.qnt",
-        "formal/models/ui/ui_project_listing.qnt"
-      ],
+      "sha256": "a27f9db1bc2dc1c2f4edcbed3d172efade932d968fd2d760029ab3bd83f5fda8",
+      "models": ["formal/models/ui/ui_pool_funding.qnt"],
       "candidateLines": [8, 13],
       "review": "mapped-abstraction"
     },
@@ -849,7 +846,7 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "sha256": "0e16e3482658e95d80c93dbbd17b1420ad33a027117c82a6112c104fa5e4e2d9",
+      "sha256": "34535cc0bbd7ed43fbe2f69f82dabdfa6929e37bb7454bd5d0e3169489a8b8a9",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
@@ -858,7 +855,7 @@
         "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "candidateLines": [
-        160, 162, 172, 197, 246, 258, 285, 288, 296, 314, 319, 355
+        150, 152, 162, 187, 219, 231, 258, 261, 269, 287, 292, 328
       ],
       "review": "mapped-abstraction"
     },
@@ -2310,7 +2307,7 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "defbc99c86f7d750e39b364087f3235399e6a41bdcac82f1752619d193c5622a",
+      "sha256": "d2b5e974ebb67fe7f0e278b64856b238ef54f5839a5b20e4bcdaa08f2f7cab54",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/project_skill_publication.qnt",
@@ -5609,7 +5606,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "e7cff5205ac163edeb64bfef0721175d8b440006bc9f03cfcf633aec96226fdb",
+      "sha256": "7ce21f30b705666ca58b98fd763066386c0ea5975344408849925841b005b37c",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5630,14 +5627,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 338, 348, 358, 369, 378, 379, 380, 381, 382, 384, 385, 449, 505,
-        506, 507, 510, 533, 599, 630, 667, 773, 841, 919, 920, 933, 943, 944,
-        1168, 1183, 1201, 1247, 1251, 1256, 1258, 1261, 1328, 1331, 1333, 1337,
-        1338, 1343, 1360, 1364, 1372, 1373, 1376, 1378, 1386, 1417, 1463, 1466,
-        1481, 1482, 1532, 1535, 1539, 1540, 1541, 1542, 1548, 1551, 1571, 1573,
-        1590, 1595, 1657, 1658, 1663, 1664, 1669, 1675, 1716, 1717, 1720, 1721,
-        1724, 1725, 1746, 1747, 1753, 1758, 1760, 1764, 1765, 1804, 1827, 1837,
-        1868, 1870, 1895, 1896, 1912, 1913, 1924, 1926, 1948, 1951
+        21, 23, 337, 347, 357, 368, 377, 378, 379, 380, 381, 383, 384, 448, 504,
+        505, 506, 509, 532, 598, 629, 666, 772, 840, 918, 919, 928, 938, 939,
+        1162, 1177, 1195, 1235, 1240, 1242, 1245, 1312, 1315, 1317, 1321, 1322,
+        1327, 1344, 1348, 1356, 1357, 1360, 1362, 1370, 1401, 1447, 1450, 1465,
+        1466, 1516, 1519, 1523, 1524, 1525, 1526, 1530, 1550, 1552, 1569, 1574,
+        1636, 1637, 1642, 1643, 1648, 1654, 1695, 1696, 1699, 1700, 1703, 1704,
+        1725, 1726, 1732, 1737, 1739, 1743, 1744, 1783, 1806, 1816, 1847, 1849,
+        1874, 1875, 1891, 1892, 1903, 1905, 1927, 1930
       ],
       "review": "mapped-abstraction"
     },
@@ -6237,15 +6234,15 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "833e3e95b1c4e4a43893aa04469aca9806eff444094e34c7983ad8b2e30b1186",
+      "sha256": "928c0c668baa2e6b77f40bddecc5b678ab43d20783634acabfa9e31cf89dc9ed",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        187, 335, 368, 369, 371, 372, 403, 405, 415, 563, 564, 566, 567, 574,
-        602, 605, 633, 638, 710
+        187, 335, 376, 377, 379, 380, 411, 413, 423, 571, 572, 574, 575, 582,
+        610, 613, 641, 646, 718
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6805,9 +6802,9 @@
     },
     {
       "path": "src/lib/home-projects.ts",
-      "sha256": "805a5b495bf8625e6244ffe6627448d5eb5ce7bcf2bdee2bb66ffc18ad47713d",
+      "sha256": "f422550f3f9b248c678b2fd3d8899b69e910fc9036ca0d9783b7d464d9495e74",
       "models": ["formal/models/ui/ui_project_listing.qnt"],
-      "candidateLines": [1, 7, 8],
+      "candidateLines": [1, 8, 9],
       "review": "mapped-abstraction",
       "statelessReason": "Pure filters over the immutable runtime registry and bounty status. Registry transitions are owned by project policy/boot models."
     },
@@ -7178,13 +7175,13 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "4a94ba49e61628c6c355b5afa1431b4a0a3d544bca1ba061cbff55e521b89827",
+      "sha256": "40630d5cdcb82501004ddb7ab970f828759bb3d664bfcedc1506e1549c4dca71",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 328, 411, 441, 443
+        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 328, 411, 428
       ],
       "review": "mapped-abstraction"
     },
@@ -19846,9 +19843,8 @@
     },
     {
       "path": "formal/models/ui/ui_project_listing.qnt",
-      "sha256": "6ff7d101adda410e3430d5ff39fbb4c8c0a5a323fe958f5a215d999bb66634d4",
+      "sha256": "7fe4ea806414808a011190e230a94f87cbc8482f3b32d78e4540fb2648c08292",
       "sources": [
-        "backend/projects/pool-funding.ts",
         "backend/projects/skill-publication.ts",
         "functions/[[path]].ts",
         "src/App.tsx",
@@ -19858,24 +19854,22 @@
       ],
       "scenarios": [
         "communityPagesCoverRowsOnceTest",
+        "configuredPoolIsListedTest",
         "emptiedRegistryKeepsNoVisibleRowsTest",
         "emptyCommunityHasNoNextPageTest",
         "emptyCommunityHasNoPreviousPageTest",
+        "existingSurfaceGatesApplyTest",
         "externalPrizeStaysListedTest",
-        "failedFundingReadListsHomeCardTest",
-        "failedReadsListAsBeforeTest",
-        "fundedPoolIsListedTest",
-        "fundingLossRemovesHomeCardTest",
+        "failedFundingReadDoesNotShowPointsOnlyTest",
+        "failedFundingReadShowsConfiguredPoolTest",
         "fundingReadsDoNotChangeCommunityPageTest",
-        "fundingTheMonthListsItTest",
         "homeWaitsForFundingReadTest",
-        "honorSystemDoesNotQualifyForDiscoveryTest",
-        "loadingListsAsBeforeTest",
-        "pausedProjectKeepsItsListingTest",
-        "registryEligibilityStillGatesHomeTest",
+        "pausedPositivePoolRemainsOnSponsorsTest",
+        "pointsOnlyPoolIsHiddenTest",
         "registryShrinkClampsRenderedPageTest",
+        "retiredPoolIsHiddenTest",
         "securityProgramStaysListedTest",
-        "unfundedPoolLeavesHomeTest"
+        "zeroingTheCurrentCapHidesPoolTest"
       ]
     },
     {
