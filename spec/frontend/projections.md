@@ -426,7 +426,7 @@ pure val noRefundDisclosure = "Anyone can fund this project from their own walle
 pure def publicFunding(active: bool, countersOnRecord: bool, saved: SavedFunding): PublicFunding =
   if (not(active) or not(countersOnRecord)) OfferNothing
   else if (saved == NoSavedRequest) OfferDeposit else CheckSavedRequest
-pure def publicSendAllowed(funding: PublicFunding, withdrawal: bool): bool = funding == OfferDeposit and not(withdrawal)
+pure def publicSendAllowed(funding: PublicFunding, sendsWithdrawal: bool): bool = funding == OfferDeposit and not(sendsWithdrawal)
 pure def lawPublicPageNeverSendsAWithdrawal(active: bool, countersOnRecord: bool, saved: SavedFunding): bool =
   not(publicSendAllowed(publicFunding(active, countersOnRecord, saved), true))
 pure def lawSavedRequestIsCheckedNotRepeated(active: bool, countersOnRecord: bool, saved: SavedFunding): bool =
