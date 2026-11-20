@@ -247,3 +247,53 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("the submission deposit program has its own manifest, file and receipt", async () => {
+  const f = await fixture();
+  try {
+    const name = "slop-submission-deposits";
+    const second = {
+      ...f.manifest,
+      command: `cargo build-sbf --manifest-path programs/${name}/Cargo.toml --tools-version v1.52 -- --locked`,
+      file: "slop_submission_deposits.so",
+    };
+    await writeFile(
+      join(f.artifact, `${name}.manifest.json`),
+      JSON.stringify(second),
+    );
+    await writeFile(join(f.artifact, second.file), program);
+    const options = { ...f.options, program: name };
+    const receipt = await prepareTestProgram(f.artifact, options);
+    expect(
+      await readFile(
+        join(f.repositoryRoot, "contracts/solana/target/deploy", second.file),
+      ),
+    ).toEqual(program);
+    expect(
+      JSON.parse(
+        await readFile(
+          join(
+            f.repositoryRoot,
+            `contracts/solana/.local/${name}.test-program.json`,
+          ),
+          "utf8",
+        ),
+      ),
+    ).toEqual(receipt);
+    // The escrow's program file was not replaced by the other program's artifact.
+    expect(await readFile(f.target, "utf8")).toBe("old native build");
+    // One program's manifest never qualifies the other's bytes.
+    await writeFile(
+      join(f.artifact, `${name}.manifest.json`),
+      JSON.stringify(f.manifest),
+    );
+    await expect(prepareTestProgram(f.artifact, options)).rejects.toThrow(
+      "does not match",
+    );
+    await expect(
+      prepareTestProgram(f.artifact, { ...f.options, program: "../other" }),
+    ).rejects.toThrow("Unknown Solana test program");
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
