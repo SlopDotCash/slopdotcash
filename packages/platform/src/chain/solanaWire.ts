@@ -181,7 +181,10 @@ export interface DecodedTransaction extends Transaction {
 export type Decoded<A, I> = { readonly kind: "decoded"; readonly value: A } | { readonly kind: "malformed"; readonly issue: I };
 
 class Malformed<I> {
-  constructor(readonly issue: I) {}
+  readonly issue: I;
+  constructor(issue: I) {
+    this.issue = issue;
+  }
 }
 
 function decodedBy<A, I>(read: () => A): Decoded<A, I> {
@@ -195,7 +198,10 @@ function decodedBy<A, I>(read: () => A): Decoded<A, I> {
 
 class Cursor {
   at = 0;
-  constructor(readonly bytes: Uint8Array) {}
+  readonly bytes: Uint8Array;
+  constructor(bytes: Uint8Array) {
+    this.bytes = bytes;
+  }
 
   take(length: number): Uint8Array {
     if (length > this.bytes.length - this.at) throw new Malformed<WireIssue>("truncated");
@@ -635,7 +641,10 @@ export interface SendOptions {
 }
 
 class Unreadable {
-  constructor(readonly issue: string) {}
+  readonly issue: string;
+  constructor(issue: string) {
+    this.issue = issue;
+  }
 }
 
 function readable<A>(read: () => A): Decoded<A, string> {

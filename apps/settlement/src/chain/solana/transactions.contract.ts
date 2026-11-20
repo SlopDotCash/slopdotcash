@@ -1,7 +1,7 @@
 // spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project's network"
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { type Address, type Blockhash, type Message, addressOf, decodeMessage } from "@repo/platform/chain/solana";
+import { type Address, type Blockhash, type Message, addressOf, decodeMessage } from "@repo/platform/chain/solanaWire";
 import { Arbitrary, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { sameBytes, u32le } from "./bytes.ts";
