@@ -322,6 +322,11 @@ Actors follow the case samples: 1 is the reporter, 2 and 3 are technical, 4
 and 7 moderators and 5 the financial approver. The later snapshots revoke
 or ban the financial approver.
 
+Discovered by simulation: with no related decision and no moderator among
+the deciding actors, no related-party proposal ever reached a moderator's
+review, so the samples include a confirmed decision that declares the
+reporter related and moderator 4 among the actors.
+
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
 pure val idValues = Set(1, 2)
@@ -333,8 +338,9 @@ pure val versionValues = Set(1)
 pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List() }, { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
-pure val byValues = Set(1, 2, 5)
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false },
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: true })
+pure val byValues = Set(1, 2, 4, 5)
 pure val checkedEpochValues = Set(1, 2)
 pure val amountValues = Set(List(4))
 pure val grossValues = Set(List(4))
@@ -378,6 +384,7 @@ pure val weight_observeAuthority = 3
 pure val weight_decide = 10
 pure val weight_showAmounts = 15
 pure val weight_decideAward = 15
+pure val weight_reviewRelated = 15
 pure val weight_reconcile = 10
 pure val weight_admitDirect = 25
 pure val weight_observeWallets = 15
