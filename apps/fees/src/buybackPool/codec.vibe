@@ -3,7 +3,7 @@ import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
 import { zero } from "../../gen/settlement__money.effect.vibe"
-import { type Event, type Pool, type PoolDecision, type PoolLeg, type PoolReason, type PoolState, apply, burn, decodeState, initial, loseSend, purchase, settleBurn, settlePurchase } from "../../gen/fees__buybackPool.effect.vibe"
+import { type Event, type Pool, type PoolDecision, type PoolLeg, type PoolReason, type PoolState, apply, burn, decodeState, initial, loseSend, purchase, settleBurn, settlePurchase, usdg as usdgAsset } from "../../gen/fees__buybackPool.effect.vibe"
 import { deadAddress } from "../../gen/fees__buyback.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
 import { type IncomeEntry, amountOf } from "../buyback/codec.vibe"
@@ -159,10 +159,11 @@ effect function credited(instance: PoolInstance, start: Pool) {
   let state = start
   for (const fee of instance.fees) {
     const label = `Robinhood fee ${fee.kind} ${fee.text}`
-    const robinhoodFee = { receipt: receiptOf(names, fee), amount: try whole(amountText(fee), label), chainTime: fee.chainTime }
+    // The fee evidence is the Robinhood Chain fee wallet's finalized USDG receipts, so each share is credited to USDG.
+    const robinhoodFee = { receipt: receiptOf(names, fee), asset: usdgAsset, amount: try whole(amountText(fee), label), chainTime: fee.chainTime }
     state = try admitted(state, { type: "recordRobinhoodFee", robinhoodFee }, label)
   }
-  for (const amount of instance.reserved) state = try admitted(state, { type: "reserveLocalShare", amount }, "Robinhood fee share")
+  for (const amount of instance.reserved) state = try admitted(state, { type: "reserveLocalShare", asset: usdgAsset, amount }, "Robinhood fee share")
   for (const fee of instance.slopFees) state = try admitted(state, { type: "receiveSlopFee", fee: { receipt: receiptOf(names, fee), quantity: fee.amount, chainTime: fee.chainTime } }, `SLOP fee ${fee.kind} ${fee.text}`)
   for (const arrival of instance.arrivals) state = try admitted(state, { type: "creditArrival", arrival: arrivalOf(names, arrival) }, `bridge arrival ${arrival.order}`)
   return state
@@ -230,7 +231,7 @@ export effect function decodePool(instance: PoolInstance, [sent, reserved, repla
       purchases += 1
       if (instance.runs > 0 && purchases > instance.runFrom) runSpent += spent
       const minimum = amountOf(try exactAmount(row.min_amount_out ?? "0", label))
-      state = { ...purchase(at, { route: "RouteFound", tx, spent, minimum, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: spent }), clock }
+      state = { ...purchase(at, { route: "RouteFound", tx, asset: usdgAsset, amountIn: spent, spent, minimum, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: spent }), clock }
       if (row.state === "unknown") state = loseSend(state, tx)
       if (row.state === "finalized" || row.state === "failed") {
         const output = succeeded ? amountOf(try exactAmount(row.amount_out ?? "0", label)) : zero

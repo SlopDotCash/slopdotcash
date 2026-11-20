@@ -35,8 +35,11 @@ export function admission(state: Fee, candidate: VaultClaim, value: bigint, cost
   if (valueMicro === undefined) return skipped("claim value exceeds safe integer accounting")
   const gasValue = cost === undefined ? undefined : safeNumber(cost)
   if (gasValue === undefined) return skipped("claim network fee could not be priced")
-  if (!claimAdmitted(state, { ...candidate, valueMicro: maximumSafeValue, gasValue: 0 })) return skipped("the reviewed vault, fee wallet or accrued amount does not admit the claim")
-  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue: 0 })) return skipped("below the minimum conversion value")
-  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue })) return skipped("below the gas-cost multiple")
+  // The final priced native fee is checked when the claim is signed; here the quoted gas value stands for it, and the
+  // earlier checks use the least fee the network admits (a Solana fee is positive).
+  const least = state.network === "Solana" ? 1 : 0
+  if (!claimAdmitted(state, { ...candidate, valueMicro: maximumSafeValue, gasValue: 0, pricedFeeMicro: least })) return skipped("the reviewed vault, fee wallet or accrued amount does not admit the claim")
+  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue: 0, pricedFeeMicro: least })) return skipped("below the minimum conversion value")
+  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue, pricedFeeMicro: Math.max(gasValue, least) })) return skipped("below the gas-cost multiple")
   return { kind: "admitted", valueMicro, gasValue }
 }

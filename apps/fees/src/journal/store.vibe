@@ -3,7 +3,7 @@ import { D1, RowMismatch, type Statement, sql } from "@repo/platform/d1"
 import { isoAt } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Event, type Fee, NotAState, type ProviderFinding, type Reservation, type Row, apply, day, decodeEvent, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
+import { type Event, type Fee, NotAState, type ProviderFinding, type Reservation, type Row, apply, day, decodeEvent, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, recordedMaximum, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, type Sender, dailyCeilingOf, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, type Intent, type Journal, type NameKind, type Names, amountOf, decodeJournal, networkNames, reasonText, revertedText, runText, stateName, unitsOf, weiAmount, weiOf } from "./codec.vibe"
 import { type EvmSend, type ReservedSend, verifiedEvmSend, verifiedSolanaSend } from "./signedSend.ts"
@@ -141,7 +141,7 @@ effect function admitted(journal: Journal, current: Fee, nonce: number, maximum:
   const active = journal.foreign.map((entry) => entry.reservation).filter((entry) => entry.state !== "Abandoned" && !entry.settled)
   if (fresh && active.some((entry) => entry.nonce >= nonce)) throw new JournalRefused({ event: event.type, issue: "a buyback send holds this nonce or a later one" })
   const shared = journal.foreign.filter((entry) => entry.purpose === "fees").map((entry) => entry.reservation)
-  const candidate: Reservation = { id: current.gas.length + shared.length + 1, runId: 0, nonce, maximum, state: "Signed", row: 0, tx: 0, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0 }
+  const candidate: Reservation = { id: current.gas.length + shared.length + 1, runId: 0, nonce, maximum, state: "Signed", row: 0, tx: 0, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0, imported: false }
   const keyed = [...current.gas, ...shared.map((entry, index) => ({ ...entry, id: current.gas.length + index + 1 }))]
   if (liabilityOf([...keyed, candidate], day(current)) > dailyCeilingOf(current.network)) throw new JournalRefused({ event: event.type, issue: "the network's native budget for today is reached" })
 }
@@ -236,6 +236,7 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
     case "addToken":
     case "receiveFee":
     case "receiveTopUp":
+    case "observeBalance":
     case "accrue":
       return []
     case "acquireLease": {
@@ -432,6 +433,24 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
           now,
         }),
       ]
+    }
+    case "importRecorded": {
+      // A historical send an earlier Worker signed without a reservation: its existing row takes a signed, unsettled
+      // reservation of its own worst case, under the run's lease, outside both ceilings (development native-gas.ts
+      // importRecorded). The row is the recorded one, found by its transaction.
+      const recorded = event.recorded
+      const txId = try sameTx(names, facts.txId, recorded.tx, event)
+      const intentHash = try need(facts.intentHash, event, "the recorded send's intent hash is missing")
+      const feeWallet = try walletText(wallet(current))
+      const run = try runOf(event.runId)
+      const maximumWei = try weiOf(recordedMaximum(current, recorded), current.network)
+      return [sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose)
+        SELECT ${`fee-gas-${try randomId()}`}, ${network}, ${feeWallet}, ${recorded.nonce}, ${intentHash}, ${run}, ${maximumWei}, ${try weiOf(transactionCeilingOf(current.network), current.network)}, ${try weiOf(dailyCeilingOf(current.network), current.network)}, 'signed', ${txId}, c.id, ${now}, 'fees'
+          FROM fee_conversions c
+         WHERE c.network = ${network} AND c.mode = 'live' AND (c.tx_id = ${txId} OR c.approval_tx_id = ${txId})
+           AND NOT EXISTS (SELECT 1 FROM fee_native_gas g WHERE g.network = ${network} AND g.tx_id = ${txId})
+           AND EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${network} AND run_id = ${run} AND expires_at >= ${now})
+         LIMIT 1`]
     }
     default: {
       const _exhaustive: never = event
