@@ -398,3 +398,119 @@ pure val rowValues = Set(
   { present: true, observedAt: 5, lastAttemptFailed: false, lastMergedAt: 0, waitingOutside: 0, mergedOutside30d: 0, medianDoubled: 3 }
 )
 ```
+
+## Story: Let anyone fund a project from its public page and see who funded
+
+> As a funder, I want to deposit from the project's public page and see my
+> finalized deposit listed, knowing before I choose a wallet that I have no
+> refund right.
+
+### The public page offers only a deposit, after the no-refund disclosure
+
+PRD section 6 (operator decision, 18 November 2026; Slop development
+`b67e98e36`, `src/PublicVaultFunding.tsx`, `src/VaultActions.tsx` and
+`formal/models/ui/ui_public_vault_funding.qnt`): an active project whose
+vault counters are on record offers any connected wallet, the owner's
+included, a deposit into its recorded vault, and never a withdrawal;
+withdrawals stay on the owner's manage page. Before a wallet is chosen the
+page states that depositors have no refund right and that the project owner
+can withdraw free funds, less the 2% withdrawal fee. A withdrawal saved on
+the manage page in the same tab is still checked here and never sent again;
+once it settles the page offers a deposit again. A deposit never changes the
+monthly amount, which only the owner sets.
+
+```quint
+type SavedFunding = NoSavedRequest | SavedDeposit | SavedWithdrawal
+type PublicFunding = OfferNothing | OfferDeposit | CheckSavedRequest
+pure val noRefundDisclosure = "Anyone can fund this project from their own wallet. Depositors have no refund right. The project owner can withdraw free funds, less a 2% fee."
+pure def publicFunding(active: bool, countersOnRecord: bool, saved: SavedFunding): PublicFunding =
+  if (not(active) or not(countersOnRecord)) OfferNothing
+  else if (saved == NoSavedRequest) OfferDeposit else CheckSavedRequest
+pure def publicSendAllowed(funding: PublicFunding, sendsWithdrawal: bool): bool = funding == OfferDeposit and not(sendsWithdrawal)
+pure def lawPublicPageNeverSendsAWithdrawal(active: bool, countersOnRecord: bool, saved: SavedFunding): bool =
+  not(publicSendAllowed(publicFunding(active, countersOnRecord, saved), true))
+pure def lawSavedRequestIsCheckedNotRepeated(active: bool, countersOnRecord: bool, saved: SavedFunding): bool =
+  saved != NoSavedRequest implies not(publicSendAllowed(publicFunding(active, countersOnRecord, saved), false))
+pure def lawInactiveProjectOffersNothing(countersOnRecord: bool, saved: SavedFunding): bool =
+  publicFunding(false, countersOnRecord, saved) == OfferNothing
+pure val savedValues = Set(NoSavedRequest, SavedDeposit, SavedWithdrawal)
+pure val countersOnRecordValues = Set(true, false)
+pure val activeValues = Set(true, false)
+```
+
+### Free funds show how many whole months of the current amount they cover
+
+The project page and the funding page show how many whole months of the
+current monthly amount the free funds of the project's recorded vaults on
+paying networks cover (development `src/lib/pool-funding.ts` `monthsCovered`,
+`monthsCoveredLabel`): the free balances on record, summed, divided by the
+month's amount and rounded down, at most 1,200, shown as "Covers 1 month",
+"Covers <n> months" or, for zero, "Covers less than one month". With no monthly amount this
+month, or no such vault with a free balance on record, it shows nothing. It
+is a reading of today's balance, not a promise: the owner can withdraw free
+funds, and [pool funding](#pool-funding-is-funded-withdrawn-or-points-only)
+still decides whether the month's amount shows.
+
+```quint
+type FreeRead = { recorded: bool, read: bool, free: M::Amount }
+type Coverage = NoCoverage | Covers({ months: M::Amount })
+pure val maxCoveredMonths = 1200
+pure def monthsCovered(monthlyPool: bool, amount: M::Amount, vaults: List[FreeRead]): Coverage =
+  val counted = vaults.select(v => v.recorded and v.read and M::validAmount(v.free))
+  val free = counted.foldl(M::zero, (sum, v) => M::addAmounts(sum, v.free))
+  val months = M::divideAmounts(free, amount).quotient
+  if (not(monthlyPool) or not(M::positiveAmount(amount)) or counted.length() == 0) NoCoverage
+  else if (M::compareAmounts(months, M::smallAmount(maxCoveredMonths)) > 0) Covers({ months: M::smallAmount(maxCoveredMonths) })
+  else Covers({ months: months })
+pure val lessThanOneMonthText = "Covers less than one month"
+pure def hasCoverage(c: Coverage): bool = match c { | NoCoverage => false | _ => true }
+pure def lawNoAmountNoCoverage(monthlyPool: bool, vaults: List[FreeRead]): bool =
+  not(hasCoverage(monthsCovered(monthlyPool, M::zero, vaults)))
+pure def lawUnreadVaultsNoCoverage(monthlyPool: bool, amount: M::Amount, vaults: List[FreeRead]): bool =
+  vaults.every(v => not(v.recorded) or not(v.read)) implies not(hasCoverage(monthsCovered(monthlyPool, amount, vaults)))
+pure val vaultsValues = Set(List(), List({ recorded: true, read: true, free: List(25) }),
+  List({ recorded: true, read: false, free: List(0) }, { recorded: false, read: true, free: List(40) }),
+  List({ recorded: true, read: true, free: List(5) }, { recorded: true, read: true, free: List(0, 3) }))
+pure val monthlyPoolValues = Set(true, false)
+pure val amountValues = Set(List(0), List(10), List(0, 1))
+```
+
+### "Funded by" lists finalized deposits, naming a depositor only by a single public account
+
+The list reads the stored [deposit records](../settlement/vaultDeposits.md)
+through the project's funders route, newest first, 50 a page with the full
+count, and shows each deposit's depositor, network, amount and block date.
+It is read only beside vault counters that are on record. Loading, empty
+("No deposits recorded yet"), listed and failed are distinct, and a failed
+read offers Retry and is left only by a retry. A depositor is named by GitHub
+login only when exactly one public, open Slop account currently has that
+address registered (on Solana for a Solana deposit, on any EVM network for
+an EVM deposit); otherwise the address alone is shown. Private bounty vaults
+are not listed. The list is display evidence only: balances, funded months,
+listing and payment come from the finalized vault counters.
+
+```quint
+type Registration = { login: str, publicAccount: bool, closed: bool }
+type FundersView = FundersHidden | FundersLoading | FundersError | NoFunders | FundersListed
+pure val noFundersText = "No deposits recorded yet"
+pure val fundersPage = 50
+pure def depositorLogin(registrations: List[Registration]): str =
+  val named = registrations.select(r => r.publicAccount and not(r.closed))
+  if (named.length() == 1) named.nthOr(0, { login: "", publicAccount: false, closed: false }).login else ""
+pure def fundersView(countersOnRecord: bool, status: R::ReadStatus): FundersView =
+  if (not(countersOnRecord)) FundersHidden
+  else if (status == R::Idle or status == R::Loading) FundersLoading
+  else if (status == R::Current or status == R::Stale) FundersListed
+  else if (status == R::Empty) NoFunders
+  else FundersError
+pure def lawTwoAccountsNameNobody(a: Registration, b: Registration): bool =
+  (a.publicAccount and not(a.closed) and b.publicAccount and not(b.closed)) implies depositorLogin(List(a, b)) == ""
+pure def lawPrivateOrClosedAccountNamesNobody(a: Registration): bool =
+  (not(a.publicAccount) or a.closed) implies depositorLogin(List(a)) == ""
+pure def lawFundersNeedCounters(status: R::ReadStatus): bool = fundersView(false, status) == FundersHidden
+pure def lawFailedFundersReadOffersRetry(status: R::ReadStatus): bool =
+  (status == R::Failed or status == R::Invalid or status == R::Unavailable) implies fundersView(true, status) == FundersError
+pure val aValues = Set({ login: "alice", publicAccount: true, closed: false }, { login: "bob", publicAccount: false, closed: false },
+  { login: "carol", publicAccount: true, closed: true })
+pure val bValues = aValues
+```
