@@ -61,8 +61,11 @@ contract EscrowLemmas {
         assert(nextOpensAt == 0 || nextOpensAt == closesAt);
     }
 
-    /// @notice currentPeriod is always a calendar month: its last two digits are 1 to 12.
+    /// @notice currentPeriod is a calendar month, its last two digits 1 to 12, for every time before 00:00 UTC
+    /// on 1 January of year 42949673, 1355298602169600. From then on YYYYMM exceeds 2^32 - 1 and periodAt's
+    /// uint32 conversion truncates it: at type(uint64).max the period ends in 51.
     function periodIsACalendarMonth(uint64 time) external pure {
+        if (time >= 1355298602169600) return;
         uint32 period = MonthlyCalendar.periodAt(time);
         assert(period % 100 >= 1 && period % 100 <= 12);
     }
