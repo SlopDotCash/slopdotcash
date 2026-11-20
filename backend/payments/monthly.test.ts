@@ -4119,4 +4119,77 @@ describe("owner cuts (operator decision, 15 November 2026)", () => {
     // The public list names no owner.
     expect(JSON.stringify(await publicCuts())).not.toContain(OWNER);
   });
+
+  test("restoring a cut ends its notice, and a cut that remains still holds the month", async () => {
+    clock = afterCutoff;
+    await service().setAutomatic(project.id, actor, false);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: A,
+      grossBase: "500",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    clock = new Date(afterCutoff.getTime() + 60 * 60 * 1000);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 1,
+      reason: "A duplicate pull request was merged by mistake.",
+    });
+    clock = new Date(afterCutoff.getTime() + 2 * 60 * 60 * 1000);
+    const restored = await service().changeAllocation(
+      project.id,
+      "2082-11",
+      actor,
+      { githubUserId: B, grossBase: "400", expectedSequence: 2 },
+    );
+    // B's cut is no longer current. A's cut, two hours old, still is.
+    expect(restored.proposal?.latestCutAt).toBe(afterCutoff.toISOString());
+    expect(await publicCuts()).toEqual({
+      projectId: project.id,
+      period: "2082-11",
+      cuts: [
+        {
+          githubUserId: A,
+          login: "first",
+          proposedGrossBase: "600",
+          grossBase: "500",
+          reason: REASON,
+          cutAt: afterCutoff.toISOString(),
+        },
+      ],
+    });
+    const early = await service()
+      .finalize(project.id, "2082-11", actor, 3)
+      .catch((error: unknown) => error);
+    expect(early).toMatchObject({ status: 409, code: "cut_notice_pending" });
+    // 24 hours after A's cut. B's reversed cut is only 23 hours old and
+    // must not keep the month locked.
+    clock = new Date(afterCutoff.getTime() + CUT_NOTICE_MS);
+    const finalized = await service().finalize(project.id, "2082-11", actor, 3);
+    expect(finalized.run?.awards.map((award) => award.grossBase)).toEqual([
+      "500",
+      "400",
+    ]);
+  });
+
+  test("turning automatic finalization on ignores a cut the owner already restored", async () => {
+    clock = new Date(afterCutoff.getTime() - 12 * 60 * 60 * 1000);
+    await service().setAutomatic(project.id, actor, false);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    clock = new Date(afterCutoff.getTime() - 11 * 60 * 60 * 1000);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "400",
+      expectedSequence: 1,
+    });
+    expect(await service().setAutomatic(project.id, actor, true)).toEqual({
+      automatic: true,
+    });
+  });
 });

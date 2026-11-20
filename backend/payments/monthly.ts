@@ -239,12 +239,21 @@ async function loadChanges(
  * Owner cuts (PRD section 6, operator decision of 15 November 2026). A change
  * below the proposed amount needs a public reason of this length after trim,
  * and the contributor gets this much notice before the month can lock.
+ * A later change back to or above the proposal ends that notice.
  */
 export const CUT_REASON_MIN = 20;
 export const CUT_REASON_MAX = 500;
 export const CUT_NOTICE_MS = 24 * 60 * 60 * 1000;
 
-/** The newest cut of a month, or null when the owner made none. */
+/**
+ * A cut row that is still that contributor's latest change. A later change
+ * back to or above the proposal is not a cut, so the old row no longer
+ * gives notice. The public cut list uses the same condition.
+ */
+const CURRENT_CUT =
+  "x.sequence=(SELECT MAX(c.sequence) FROM monthly_allocation_changes c WHERE c.project_id=x.project_id AND c.period=x.period AND c.github_user_id=x.github_user_id)";
+
+/** The newest cut that is still below the proposal, or null when none is. */
 async function latestCutAt(
   db: D1Database,
   projectId: string,
@@ -252,7 +261,7 @@ async function latestCutAt(
 ): Promise<string | null> {
   const row = await db
     .prepare(
-      "SELECT MAX(created_at) latest FROM monthly_allocation_cut_reasons WHERE project_id=? AND period=?",
+      `SELECT MAX(x.created_at) latest FROM monthly_allocation_cut_reasons x WHERE x.project_id=? AND x.period=? AND ${CURRENT_CUT}`,
     )
     .bind(projectId, period)
     .first<{ latest: string | null }>();
@@ -286,7 +295,7 @@ export async function monthlyCuts(
            FROM monthly_allocation_cut_reasons x
            JOIN monthly_reward_base_rows b ON b.project_id=x.project_id AND b.period=x.period AND b.github_user_id=x.github_user_id
           WHERE x.project_id=?1 AND x.period=?2
-            AND x.sequence=(SELECT MAX(c.sequence) FROM monthly_allocation_changes c WHERE c.project_id=?1 AND c.period=?2 AND c.github_user_id=x.github_user_id)
+            AND ${CURRENT_CUT}
           ORDER BY x.created_at,x.sequence)`,
     )
     .bind(projectId, period)
@@ -950,7 +959,7 @@ export interface MonthlyOwnerView {
     capBase: string;
     allocationSequence: number;
     allocations: MonthlyAllocation[];
-    /** The newest cut below a proposed amount; finalize waits 24 hours after it. */
+    /** The newest cut still below its proposal; finalize waits 24 hours after it. */
     latestCutAt: string | null;
   } | null;
   run: {
@@ -1462,7 +1471,7 @@ export function monthlyOwnerService(deps: {
       if (on && schedule) {
         const open = await deps.db
           .prepare(
-            "SELECT json_group_array(json_object('period',period,'latest',latest)) items FROM (SELECT x.period, MAX(x.created_at) latest FROM monthly_allocation_cut_reasons x WHERE x.project_id=? AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id=x.project_id AND r.period=x.period) GROUP BY x.period)",
+            `SELECT json_group_array(json_object('period',period,'latest',latest)) items FROM (SELECT x.period, MAX(x.created_at) latest FROM monthly_allocation_cut_reasons x WHERE x.project_id=? AND ${CURRENT_CUT} AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id=x.project_id AND r.period=x.period) GROUP BY x.period)`,
           )
           .bind(project.id)
           .first<{ items: string }>();
