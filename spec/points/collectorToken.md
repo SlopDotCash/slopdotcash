@@ -71,7 +71,8 @@ collector does not know the original token's age, so the first such request
 mints a fresh token, and every later one mints again from ten minutes before
 the known expiry. A renewal requests the same read-only grant for this
 repository. A failed mint keeps the current token and is not tried again for
-one minute. A request sent with an expired token is refused with HTTP 401,
+one minute. A run renews or fails a mint only after it has chosen its
+credential. A request sent with an expired token is refused with HTTP 401,
 and the collection fails rather than publishing a partial ledger.
 
 ```quint
@@ -94,6 +95,8 @@ pure def canFinishCollection(r: CollectorRun): bool = r.phase == Collecting and 
 pure def finishCollection(r: CollectorRun): CollectorRun = { ...r, phase: CollectedAll }
 pure def alwaysRenewalsOnlyForTheAppToken(r: CollectorRun): bool =
   (r.renewals > 0 or r.failedMints > 0) implies r.renewal
+pure def alwaysNoMintBeforeTheCredential(r: CollectorRun): bool =
+  r.phase == Deciding implies r.renewals == 0 and r.failedMints == 0
 pure def alwaysCollectedNeverUnauthorized(r: CollectorRun): bool =
   (r.phase == CollectedAll implies not(r.unauthorized)) and (r.unauthorized iff r.phase == CollectionFailed)
 pure def stepRenewOnlyWhenDue(before: CollectorRun, after: CollectorRun): bool =
