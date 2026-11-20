@@ -63,6 +63,11 @@ import {
   submissionStatus,
 } from "./PrivateReportSummary";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
+import {
+  LoadDescriptionButton,
+  ProofFileField,
+  ProofFileView,
+} from "./ReportProofFields";
 import { SecurityOffer } from "./SecurityOffer";
 import {
   type DirectSolanaPlan,
@@ -577,6 +582,11 @@ function reportBody(draft: ReportDraft): Record<string, unknown> {
         ? { severity: draft.severity }
         : {}),
     ...(cweIds.length > 0 ? { cweIds } : {}),
+    ...(draft.proofName && draft.proofText
+      ? {
+          proofOfConcept: { fileName: draft.proofName, patch: draft.proofText },
+        }
+      : {}),
   };
 }
 
@@ -643,6 +653,19 @@ function ReportFields({
           value={draft.description}
         />
       </label>
+      <LoadDescriptionButton
+        disabled={disabled}
+        onLoad={(text) => onChange({ ...draft, description: text })}
+      />
+      <ProofFileField
+        description={draft.description}
+        disabled={disabled}
+        fileName={draft.proofName}
+        onChange={(proofName, proofText) =>
+          onChange({ ...draft, proofName, proofText })
+        }
+        text={draft.proofText}
+      />
       <details
         className="security-classification"
         open={classificationOpen}
@@ -1667,6 +1690,7 @@ type PrivateReport = {
   severity?: string;
   cvssVectorString?: string;
   cweIds?: string[];
+  proofOfConcept?: { fileName: string; patch: string };
 };
 
 function RevisePrivateReport({
@@ -1685,6 +1709,8 @@ function RevisePrivateReport({
     severity: report.severity ?? "",
     cvss: report.cvssVectorString ?? "",
     cwe: (report.cweIds ?? []).join(", "),
+    proofName: report.proofOfConcept?.fileName ?? "",
+    proofText: report.proofOfConcept?.patch ?? "",
   }));
   const { busy, error, run } = useAction();
   return (
@@ -1784,6 +1810,12 @@ function PrivateReportDetail({
           >
             {detail.value.report.description}
           </pre>
+          {detail.value.report.proofOfConcept ? (
+            <ProofFileView
+              labelledBy={`submission-${submission.id}`}
+              proof={detail.value.report.proofOfConcept}
+            />
+          ) : null}
           {submission.intake?.canRevise ? (
             <RevisePrivateReport
               key={submission.intake.revision}

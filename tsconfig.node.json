@@ -58,6 +58,7 @@
     "src/lib/funding-review-data.ts",
     "src/lib/contribution-quality.ts",
     "src/lib/browser-json.ts",
+    "src/lib/report-proof.ts",
     "src/lib/paged-history.ts",
     "src/lib/pool-funding.ts",
     "src/lib/owner-commitment-actions.ts",

@@ -58,7 +58,12 @@ function restore(owner: string, project: string): SavedReport {
     }
     const raw = sessionStorage.getItem(`${accountPrefix}${project}`);
     if (!raw) return fresh;
-    const saved = JSON.parse(raw) as SavedReport;
+    const parsed = JSON.parse(raw) as SavedReport;
+    // A draft saved before a field existed gets that field empty.
+    const saved =
+      parsed && typeof parsed.draft === "object" && parsed.draft !== null
+        ? { ...parsed, draft: { ...EMPTY_DRAFT, ...parsed.draft } }
+        : parsed;
     if (
       typeof saved.key !== "string" ||
       typeof saved.attempted !== "boolean" ||
@@ -454,6 +459,12 @@ export function PrivateReportForm({
           <SecurityOffer project={project} compact />
           <h4>{String(reviewed.summary)}</h4>
           <pre className="report-preview">{String(reviewed.description)}</pre>
+          {saved.draft.proofName && saved.draft.proofText ? (
+            <>
+              <p>Proof of concept: {saved.draft.proofName}</p>
+              <pre className="report-preview">{saved.draft.proofText}</pre>
+            </>
+          ) : null}
           {reviewed.severity || reviewed.cvssVectorString || reviewed.cweIds ? (
             <p>
               Classification:{" "}
