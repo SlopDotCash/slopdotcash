@@ -16,15 +16,27 @@ on:
           - preview
           - apply
         default: inspect
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+      reviewed_packet_sha256:
+        type: string
+      preview_sha256:
+        type: string
 permissions:
   contents: read
-concurrency:
-  group: slop-production
-  cancel-in-progress: false
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'SlopDotCash/slopdotcash' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
     environment: slop-production
+    concurrency:
+      group: slop-production
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

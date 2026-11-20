@@ -7,7 +7,7 @@
   "sources": [
     {
       "path": ".github/workflows/asi-november-closeout.yml",
-      "sha256": "c90c3fa1546671f3d7aefb71b8eb279b9f9e1452653b2369a999f59080fc3e00",
+      "sha256": "58e2c4f2d1e67ff2d1339935e623072a7ee5749bc523d67ecc7e762aa5df4e65",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -99,6 +99,13 @@
         "formal/models/release/workflow_authority.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": ".github/workflows/operator.yml",
+      "sha256": "5972c4c31596a82c500166e254e93289be8555eff1ccb76af91f2c26f65898fe",
+      "models": ["formal/models/rewards/asi_november_closeout.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -16314,9 +16321,10 @@
     },
     {
       "path": "formal/models/rewards/asi_november_closeout.qnt",
-      "sha256": "c7cf6c6ed57786fb04563a1f68b807bfa667e108723aae080a9932c4e69b6cba",
+      "sha256": "61342811b622622c0df21dd40731a0494bee4394cd3fe05be5aa0c6fcef7a14f",
       "sources": [
         ".github/workflows/asi-november-closeout.yml",
+        ".github/workflows/operator.yml",
         "backend/payments/monthly.ts",
         "migrations/0143_asi_november_closeout.sql",
         "scripts/guarded-monthly-import.ts",
@@ -16327,7 +16335,11 @@
         "src/lib/payments/asi-november-closeout.ts",
         "src/lib/payments/escrow-cycle.ts"
       ],
-      "scenarios": ["ordinaryCalendarTest", "ownerEarlyCloseTest"]
+      "scenarios": [
+        "dispatchAuthorityTest",
+        "ordinaryCalendarTest",
+        "ownerEarlyCloseTest"
+      ]
     },
     {
       "path": "formal/models/rewards/bucket_aggregation.qnt",

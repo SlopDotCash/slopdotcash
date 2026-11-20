@@ -1,0 +1,29 @@
+name: Operator operations
+on:
+  workflow_dispatch:
+    inputs:
+      asi_mode:
+        description: Inspect input digests, preview the reviewed ASI proposal, or apply the approved preview
+        type: choice
+        options: [inspect, preview, apply]
+        default: inspect
+      reviewed_packet_sha256:
+        description: Exact SHA-256 of the private reviewed ASI packet for preview and apply
+        type: string
+      preview_sha256:
+        description: Exact SHA-256 returned by the reviewed ASI preview for apply
+        type: string
+permissions:
+  contents: read
+jobs:
+  asi-november-closeout:
+    if: >-
+      github.repository == 'SlopDotCash/slopdotcash' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/asi-november-closeout.yml
+    with:
+      mode: ${{ inputs.asi_mode }}
+      reviewed_packet_sha256: ${{ inputs.reviewed_packet_sha256 }}
+      preview_sha256: ${{ inputs.preview_sha256 }}
+    secrets: inherit
