@@ -912,6 +912,14 @@ test("same-repository branch changes require a live GitHub admin and preserve hi
   expect(await persistence.getProject(current.id)).toEqual(current);
   head = commitSha;
 
+  state.clearance = { state: "unscanned" };
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "vetting_required" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(current);
+  state.clearance = CLEARED;
+
   const cache = new Map<string, Response>();
   deps.cache = {
     match: async (request) => cache.get(request.url)?.clone(),

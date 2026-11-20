@@ -100,9 +100,10 @@ An optional `contribution` object updates the full contribution instructions
 in the same revision. Slop verifies the administrator and repository through
 the current Slopbot installation, reads the declaration at the exact commit,
 and checks that commit still heads the requested branch. Reload after a
-conflict. The revision preserves project status, repository identity,
-admission requirements, terms, funding, and previous revisions. Verify the
-public project and both generated skill manifests after publication.
+conflict. An active project must still clear the existing admission check
+at publication. The revision preserves project status, repository identity,
+terms, funding, and previous revisions. Verify the public project and both
+generated skill manifests after publication.
 
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
