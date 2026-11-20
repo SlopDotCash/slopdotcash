@@ -1240,7 +1240,14 @@
         {
           "spec": "spec/settlement/monthlyExecution.md",
           "rules": [
-            "Story: Execute every published month fairly and in a safe order"
+            "Story: Execute every published month fairly and in a safe order",
+            "Story: Complete a version 2 month only from its journal"
+          ]
+        },
+        {
+          "spec": "spec/settlement/executorJournal.md",
+          "rules": [
+            "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it"
           ]
         },
         {
@@ -1458,7 +1465,14 @@
         {
           "spec": "spec/settlement/monthlyExecution.md",
           "rules": [
-            "Story: Execute every published month fairly and in a safe order"
+            "Story: Execute every published month fairly and in a safe order",
+            "Story: Complete a version 2 month only from its journal"
+          ]
+        },
+        {
+          "spec": "spec/settlement/executorJournal.md",
+          "rules": [
+            "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it"
           ]
         },
         {

@@ -35951,11 +35951,11 @@
             "canSubmit",
             "submit"
           ],
-          "note": "Newest-first ordering is carried as a guard: an older-period row is not submitted while a newer EVM v2 root of the same vault is incomplete, so no older leaf reverts the newer reservation."
+          "note": "Newest-first ordering is carried as an in-run guard: a row is submitted only after every newer pending row attempted in the same run was processed; across runs the stated sameSignerNonceOrder assumption (recorded send nonces) keeps an older leaf from landing before a newer root sent earlier."
         },
         "runPassOldestFirst": {
           "status": "abstraction",
-          "note": "Counter-example ordering that is never part of step; the successor excludes it by the canSubmit/newerRootPending guard and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
+          "note": "Counter-example ordering that is never part of step; the successor excludes it within a run by the canSubmit/newerRootPending guard and across runs by the recorded send nonces (sameSignerNonceOrder), and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
         },
         "tick": {
           "status": "rule",
@@ -36016,7 +36016,7 @@
             "observeFinality",
             "alwaysNoReorderingRevert"
           ],
-          "note": "The successor keeps the revert mechanics (invalidated rows count reverts in observeFinality) but its guard makes the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
+          "note": "The successor keeps the revert mechanics (invalidated rows count reverts in observeFinality) but its in-run guard and the recorded send nonces make the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
         },
         "prerequisiteAddedForLruCandidateTest": {
           "status": "rule",
@@ -36030,9 +36030,14 @@
           "note": "An omitted newer v2 root of the same vault that a selected older row waits on is added to the run as a prerequisite."
         },
         "prerequisiteFailureStillRunsOriginalTest": {
-          "status": "gap",
+          "status": "rule",
           "spec": "spec/settlement/monthlyExecution.md",
-          "note": "Legacy runs the original older item after its newer-root prerequisite fails (the leaf advances the source sequence and the newer root is later reattested); the successor's canSubmit refuses any older-period row while a newer v2 root of the vault is not Complete and has no rule releasing it when that root's send fails or its window closes unadmitted, so add a rule (and a liveness check) that lets the older row proceed once the newer root failed this run or was refused, with reattestation via monthlyCommitment signEvm."
+          "defs": [
+            "newerRootPending",
+            "canSubmit",
+            "submit"
+          ],
+          "note": "A failed newer-root prerequisite is processed in the run (SendResult Failed), so newerRootPending no longer blocks the original older row, which is then submitted in the same run; the newer root is later reattested via monthlyCommitment signEvm."
         },
         "raceRun": {
           "status": "abstraction",

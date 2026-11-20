@@ -17,6 +17,7 @@ PRD sections 2, 3, 6, 7, 8, 10, 11 and 12 govern these financial state machines.
 - [Monthly root authorization journal](./monthlyCommitment.md)
 - [Monthly settlement across the allocation and the vault](./monthlySettlement.md)
 - [Monthly commitment execution](./monthlyExecution.md)
+- [Monthly executor exact-byte journal](./executorJournal.md)
 - [October 2026 reviewed proposal import](./octoberImport.md)
 - [Owner-signed vault transactions](./ownerTransactions.md)
 - [Payment evidence](./payment.md)
