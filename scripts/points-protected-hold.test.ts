@@ -8,7 +8,7 @@ import { holdProtectedPointAwards } from "./generate-points";
 
 const award = (over: Partial<PointAward>): PointAward => ({
   key: "k",
-  actor: { id: 1, login: "a" },
+  actor: { id: "1", login: "a" },
   projectId: "asi",
   category: "substantive-review",
   amount: 30,
@@ -52,7 +52,7 @@ test("a changed award in a paid month is held with its successors; other months 
     // Unpaid project, same month: published.
     revision("b2", "b1", { key: "b", projectId: "eliza", amount: 0 }),
     // Paid month, only presentation changes: published.
-    revision("c2", "c1", { key: "c", actor: { id: 1, login: "renamed" } }),
+    revision("c2", "c1", { key: "c", actor: { id: "1", login: "renamed" } }),
     // New award in the paid month: held.
     revision("d1", null, { key: "d" }),
     // New award in a later month of the same project: published.
