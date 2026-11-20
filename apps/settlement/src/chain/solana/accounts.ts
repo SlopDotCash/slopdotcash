@@ -45,7 +45,10 @@ const discriminators = {
 };
 
 class Refused {
-  constructor(readonly issue: AccountIssue) {}
+  readonly issue: AccountIssue;
+  constructor(issue: AccountIssue) {
+    this.issue = issue;
+  }
 }
 
 function decodedBy<A>(read: () => A): Decoded<A, AccountIssue> {
