@@ -18,8 +18,8 @@ program_id=$(solana-keygen pubkey "$SLOP_TEST_PROGRAM_KEYPAIR")
 # Program identity must be explicitly reviewed in source before building.
 rg -F "declare_id!(\"$program_id\");" programs/slop-escrow/src/lib.rs >/dev/null
 [[ -z "$(git status --porcelain -- .)" ]] || { echo 'Commit and review the exact deployment source first.' >&2; exit 1; }
-anchor build --no-idl -- --tools-version v1.52 -- --locked
-anchor idl build --out target/idl/slop_escrow.json
+anchor build -p slop_escrow --no-idl -- --tools-version v1.52 -- --locked
+anchor idl build -p slop_escrow --out target/idl/slop_escrow.json
 solana --url "$rpc" --keypair "$SLOP_TEST_PAYER" program deploy target/deploy/slop_escrow.so --program-id "$SLOP_TEST_PROGRAM_KEYPAIR" --upgrade-authority "$SLOP_TEST_UPGRADE_AUTHORITY"
 solana --url "$rpc" program show "$program_id" --output json
 mkdir -p .local

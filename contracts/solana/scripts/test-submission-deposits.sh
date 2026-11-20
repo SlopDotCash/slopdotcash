@@ -89,6 +89,7 @@ start_validator() {
     # --mint names the local payer, so the host validator never reads a default keypair.
     solana-test-validator --reset --quiet --ledger "$PWD/.local/submission-deposits-ledger" \
       --bind-address 127.0.0.1 --rpc-port "$rpc_port" --faucet-port "$faucet_port" \
+      --gossip-port "$((rpc_port + 32))" \
       --dynamic-port-range "$dynamic_ports" --mint "$(solana-keygen pubkey .local/payer.json)" \
       "${arguments[@]}" >.local/submission-deposits-validator.log 2>&1 &
     validator_pid=$!

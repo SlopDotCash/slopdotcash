@@ -69,6 +69,7 @@
     "test:payments": "bun run test:security-payments && bun backend/payments/evm.integration.ts && bun workers/payments/recovery.integration.ts && bun workers/payments/reconcile.integration.ts && bun workers/payments/registry.integration.ts && bun workers/payment-executor/bind-trigger.integration.ts && bun workers/payment-executor/binding-nonce-limit.integration.ts",
     "build:contracts:solana": "bash contracts/solana/scripts/build-local.sh",
     "test:contracts:solana": "bash contracts/solana/scripts/test-e2e.sh",
+    "test:contracts:solana:submission-deposits": "bash contracts/solana/scripts/test-submission-deposits.sh",
     "escrow:acceptance": "bun scripts/escrow-acceptance.ts",
     "test:escrow-acceptance:local": "bun scripts/escrow-acceptance/local.ts",
     "test:vetting:sandbox": "bun workers/vetting-sandbox/workflow.ts",

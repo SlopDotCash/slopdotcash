@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { freezeAccount, mintTo, thawAccount } from "@solana/spl-token";
 import {
@@ -16,6 +17,12 @@ import {
 } from "@solana/web3.js";
 import { submissionFeeItem } from "../../../src/lib/submission-fee.mjs";
 import {
+  initializePlan,
+  RECLAIM_DELAY_SECONDS,
+  status,
+  vaultPlan,
+} from "../scripts/submission-deposits-plan.mjs";
+import {
   addresses,
   ata,
   balance,
@@ -26,8 +33,8 @@ import {
   fixtureKey,
   fund,
   initialize,
-  openVault,
   PRODUCTION_DELAY,
+  PROGRAM_PATH,
   programId,
   readConfig,
   readDeposit,
@@ -57,6 +64,34 @@ const FEE = 2_000_000n; // 2.00 USDC
 const note = (line) => console.log(`  rehearsal: ${line}`);
 const discriminator = (kind, name) =>
   createHash("sha256").update(`${kind}:${name}`).digest().subarray(0, 8);
+// What the owner writes into the runbook's reviewed input file.
+const reviewed = {
+  programId: programId.toBase58(),
+  upgradeAuthority: payer.publicKey.toBase58(),
+  codeSha256: createHash("sha256").update(readFileSync(PROGRAM_PATH)).digest("hex"),
+  owner: owner.publicKey.toBase58(),
+  resolver: resolver.publicKey.toBase58(),
+  mint: USDC_MINT.toBase58(),
+  payer: payer.publicKey.toBase58(),
+};
+const runtime = async () => ({
+  rpcUrl: connection.rpcEndpoint,
+  expectedGenesis: await connection.getGenesisHash(),
+  recentBlockhash: (await connection.getLatestBlockhash("finalized")).blockhash,
+});
+/** Signs a plan's unsigned transaction as its one required signer would, and sends it. */
+async function signAndSend(plan, signer) {
+  assert.equal(plan.format, "solana-unsigned-legacy-transaction-v1");
+  assert.equal(plan.requiredSigner, signer.publicKey.toBase58());
+  const transaction = Transaction.from(Buffer.from(plan.transactionBase64, "base64"));
+  assert.equal(transaction.instructions.length, 1);
+  assert.equal(transaction.instructions[0].programId.toBase58(), programId.toBase58());
+  transaction.sign(signer);
+  const signature = await connection.sendRawTransaction(transaction.serialize());
+  const latest = await connection.getLatestBlockhash();
+  await connection.confirmTransaction({ signature, ...latest }, "finalized");
+  return signature;
+}
 
 test("fixtures", async () => {
   for (const key of [owner, resolver, contributor, agedPayer, usdcAuthority])
@@ -75,19 +110,55 @@ test("fixtures", async () => {
   );
 });
 
-test("initialize fixes the thirty-day delay", async () => {
-  await initialize({
-    owner: owner.publicKey,
-    resolver: resolver.publicKey,
-    delay: PRODUCTION_DELAY,
-  });
+test("the runbook's plan builds the one initialize transaction and refuses a wrong cluster, build, authority or roles", async () => {
+  const at = await runtime();
+  assert.equal(RECLAIM_DELAY_SECONDS, PRODUCTION_DELAY);
+  await assert.rejects(
+    initializePlan(reviewed, { ...at, expectedGenesis: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" }),
+    /Wrong cluster genesis/,
+  );
+  await assert.rejects(
+    initializePlan({ ...reviewed, codeSha256: "0".repeat(64) }, at),
+    /Reviewed program digest mismatch/,
+  );
+  await assert.rejects(
+    initializePlan({ ...reviewed, upgradeAuthority: owner.publicKey.toBase58() }, at),
+    /Upgrade authority mismatch/,
+  );
+  await assert.rejects(
+    initializePlan({ ...reviewed, programId: USDC_MINT.toBase58() }, at),
+    /IDL program identity mismatch/,
+  );
+  await assert.rejects(
+    initializePlan({ ...reviewed, resolver: reviewed.owner }, at),
+    /nonzero and distinct/,
+  );
+  const plan = await initializePlan(reviewed, at);
+  assert.equal(plan.config, addresses.config().toBase58());
+  assert.equal(plan.reclaimDelaySeconds, 2_592_000);
+  assert.equal(plan.owner, reviewed.owner);
+  assert.equal(plan.resolver, reviewed.resolver);
+  await signAndSend(plan, payer);
   const config = await readConfig();
   assert.equal(config.reclaimDelay.toNumber(), 2_592_000);
+  assert.equal(config.owner.toBase58(), reviewed.owner);
+  assert.equal(config.resolver.toBase58(), reviewed.resolver);
+  await assert.rejects(initializePlan(reviewed, await runtime()), /Config already exists/);
   note(`program ${programId.toBase58()}, config ${addresses.config().toBase58()}`);
 });
 
-test("the USDC vault opens and the fee wallet's USDC account is the kept destination", async () => {
-  await openVault(USDC_MINT);
+test("the USDC vault opens through the plan and the fee wallet's USDC account is the kept destination", async () => {
+  // An account that is not a mint has no vault.
+  await assert.rejects(
+    vaultPlan({ ...reviewed, mint: ata(contributor.publicKey, USDC_MINT).toBase58() }, await runtime()),
+    /not a classic SPL Token mint/,
+  );
+  const plan = await vaultPlan(reviewed, await runtime());
+  assert.equal(plan.decimals, 6);
+  assert.equal(plan.freezeAuthority, usdcAuthority.publicKey.toBase58());
+  assert.equal(plan.vault, addresses.vault(USDC_MINT).toBase58());
+  await signAndSend(plan, payer);
+  await assert.rejects(vaultPlan(reviewed, await runtime()), /already open/);
   // Anyone can create the associated token account of any wallet; no key of the fee wallet
   // is used. On mainnet this account must exist before a fee can be kept.
   const keptAccount = await tokens(USDC_MINT, FEE_WALLET);
@@ -296,6 +367,22 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
   assert.deepEqual(settledData.subarray(0, 8), discriminator("global", "resolve"));
   assert.equal(settledData[8], 1); // refunded
   note(`finalized read of ${count} ids: open ${present.join(", ")}`);
+
+  // 5. The runbook's read-back of the same finalized state.
+  const read = await status(reviewed, await runtime());
+  assert.equal(read.upgradeable, true);
+  assert.deepEqual(read.config, {
+    address: addresses.config().toBase58(),
+    owner: reviewed.owner,
+    pendingOwner: null,
+    resolver: reviewed.resolver,
+    reclaimDelaySeconds: 2_592_000,
+    depositCount: count.toString(),
+    depositsPaused: false,
+  });
+  assert.equal(read.vault.address, addresses.vault(USDC_MINT).toBase58());
+  assert.equal(read.vault.openTotal, (2n * FEE).toString());
+  assert.equal(read.vault.balance, read.vault.openTotal);
 });
 
 test("with the upgrade authority removed the program keeps working and cannot be initialized again", async () => {
@@ -310,7 +397,7 @@ test("with the upgrade authority removed the program keeps working and cannot be
   // `solana program set-upgrade-authority <program> --final` sends.
   const instruction = Buffer.alloc(4);
   instruction.writeUInt32LE(4);
-  await sendAndConfirmTransaction(
+  const removal = await sendAndConfirmTransaction(
     connection,
     new Transaction().add(
       new TransactionInstruction({
@@ -323,6 +410,17 @@ test("with the upgrade authority removed the program keeps working and cannot be
       }),
     ),
     [payer],
+  );
+  const latest = await connection.getLatestBlockhash();
+  await connection.confirmTransaction({ signature: removal, ...latest }, "finalized");
+  // The read-back now says nobody can replace the code, and the old input is refused.
+  const read = await status({ ...reviewed, upgradeAuthority: null }, await runtime());
+  assert.equal(read.upgradeable, false);
+  assert.equal(read.config.reclaimDelaySeconds, 2_592_000);
+  await assert.rejects(status(reviewed, await runtime()), /Upgrade authority mismatch/);
+  await assert.rejects(
+    initializePlan(reviewed, await runtime()),
+    /Upgrade authority mismatch/,
   );
   const after = await connection.getAccountInfo(programData);
   assert.equal(after.data[12], 0, "no upgrade authority remains");
