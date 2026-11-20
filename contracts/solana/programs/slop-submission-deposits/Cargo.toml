@@ -1,0 +1,22 @@
+[package]
+name = "slop-submission-deposits"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "slop_submission_deposits"
+[features]
+default = []
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+custom-heap = []
+custom-panic = []
+anchor-debug = []
+[dependencies]
+# The same two crates and versions as slop-escrow, so this program adds nothing to Cargo.lock
+# but itself.
+anchor-lang = { version = "=0.32.1" }
+anchor-spl = { version = "=0.32.1", features = ["token", "associated_token"] }
