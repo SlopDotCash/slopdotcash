@@ -207,6 +207,8 @@ Project contains the repository, integration branch, and contribution rules. Pro
 
 Verify permanent repository and actor IDs, current write or maintain authority, license facts, integration branch, and reward terms. Record the license URL, commit, and digest. Read Slopbot installation status before creation.
 
+A current GitHub administrator of the same registered repository can change its primary integration branch. Require the current registry revision and an exact GitHub head with a committed Slop authority declaration matching the project, repository, steward, branch, and policy revision. Append one immutable revision and preserve identity, restrictions, admission requirements, reward terms, prior revisions, and frozen allocations. Both generated skills use the new branch. The same revision can update its contribution instructions.
+
 Collect scope, contribution guidance, supported tasks, required tests, review expectations, security contact, closure policy, and maintainer notes. Preview both generated skills. Missing required skill fields prevent skill publication.
 
 Rewards offers a monthly pool or Private bounty. New monthly projects use one contribution pool, not a second review budget. Preserve historical review-budget commitments. Bounty-only projects have no monthly pool.
