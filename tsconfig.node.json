@@ -115,6 +115,7 @@
     "src/lib/use-snapshot.ts",
     "src/lib/profile-activity.ts",
     "src/lib/profile-actor.ts",
+    "src/lib/contribution-window.ts",
     "src/lib/reward-amount.ts",
     "src/lib/project-reward-summary.ts",
     "src/lib/reward-cycle.ts",

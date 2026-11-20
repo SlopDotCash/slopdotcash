@@ -50,6 +50,7 @@
   "src/lib/canonical-json.ts": "Recursive deterministic serialization over the supplied value; no retained state or I/O.",
   "src/lib/commit-credit.ts": "Pure immutable actor-ID/kind eligibility predicate; no retained state or I/O. Accepted-source lifecycle is owned by the ledger.",
   "src/lib/contact.ts": "Static public contact constants; no transitions.",
+  "src/lib/contribution-window.ts": "Pure UTC date formatting of a supplied half-open contribution window; no state, I/O, clock read or transition. The stored window bounds remain owned by the cycle record.",
   "src/lib/contribution-fields.ts": "Static labels and derived field arrays; no retained state, events, requests or mutations.",
   "src/lib/deployment.ts": "Pure deployment-tier/origin selection and local-origin predicate; no runtime effect or transition.",
   "src/lib/errors.ts": "Pure error-to-message projection; caller owns error state and recovery.",

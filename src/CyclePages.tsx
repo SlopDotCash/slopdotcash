@@ -1,6 +1,7 @@
 import { CalendarDays, CircleAlert, History, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
+import { formatContributionWindow } from "./lib/contribution-window";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
@@ -175,7 +176,7 @@ export function CyclePage({
           ? 0
           : 1;
   const stages = [
-    ["Contribution", `${formatDate(from)}–${formatDate(to)}`],
+    ["Contribution", formatContributionWindow(from, to)],
     ownerCutoff
       ? [
           "Owner changes",
@@ -251,11 +252,7 @@ export function CyclePage({
             </>
           }
           icon={<CalendarDays />}
-          lead={
-            <>
-              {formatDate(from)}–{formatDate(to)}
-            </>
-          }
+          lead={formatContributionWindow(from, to)}
         >
           <StatusBadge
             tone={

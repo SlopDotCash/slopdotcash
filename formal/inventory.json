@@ -5646,7 +5646,7 @@
     },
     {
       "path": "src/CyclePages.tsx",
-      "sha256": "d96b8feec2074049b7127f022c6a8c19d5086e4461e06b05d9d8df1761caa20a",
+      "sha256": "51a8b9d38d6b2622fcf79ba23d604c0ef3e1081236fba9a677b9a73e89ba46ad",
       "models": [
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_cycle_publication.qnt",
@@ -5654,12 +5654,12 @@
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        2, 48, 49, 55, 56, 65, 75, 76, 82, 84, 85, 91, 108, 113, 116, 117, 120,
-        121, 126, 128, 131, 133, 152, 164, 170, 172, 202, 210, 213, 215, 220,
-        236, 241, 277, 289, 300, 314, 337, 338, 356, 362, 363, 364, 365, 367,
-        368, 371, 375, 459, 476, 477, 519, 523, 537, 542, 543, 545, 546, 549,
-        550, 556, 557, 570, 575, 584, 586, 590, 599, 601, 605, 606, 611, 625,
-        633, 634, 641, 647, 649, 655, 656, 657, 686, 696, 707, 732
+        2, 49, 50, 56, 57, 66, 76, 77, 83, 85, 86, 92, 109, 114, 117, 118, 121,
+        122, 127, 129, 132, 134, 153, 165, 171, 173, 203, 211, 214, 216, 221,
+        237, 242, 274, 286, 297, 311, 334, 335, 353, 359, 360, 361, 362, 364,
+        365, 368, 372, 456, 473, 474, 516, 520, 534, 539, 540, 542, 543, 546,
+        547, 553, 554, 567, 572, 581, 583, 587, 596, 598, 602, 603, 608, 622,
+        630, 631, 638, 644, 646, 652, 653, 654, 683, 693, 704, 729
       ],
       "review": "mapped-abstraction"
     },
@@ -6564,6 +6564,14 @@
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/contribution-window.ts",
+      "sha256": "a5b82b1e1bd11810e7bac8ef1ff4fd2652294426a57f80202234519b41251b65",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure UTC date formatting of a supplied half-open contribution window; no state, I/O, clock read or transition. The stored window bounds remain owned by the cycle record."
     },
     {
       "path": "src/lib/contributor-allocation.ts",
