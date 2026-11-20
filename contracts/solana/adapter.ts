@@ -109,6 +109,25 @@ const COMMIT = anchorDiscriminator("commit"),
   COMMIT_MONTHLY_AWARD = anchorDiscriminator("commit_monthly_award"),
   PAY = anchorDiscriminator("pay"),
   PAY_NATIVE = anchorDiscriminator("pay_native");
+/**
+ * Whether `data` is one award instruction the program can execute.
+ * Anchor 0.32 deserializes arguments with Borsh `deserialize`, which stops
+ * at the last field and does not require the buffer to end there, so a
+ * successful pay or commit may carry bytes after its layout. A shorter
+ * buffer is a different instruction.
+ */
+export function solanaAwardArgumentsFit(data: Uint8Array): boolean {
+  const tag = data.length >= 8 ? hex(data.slice(0, 8)) : "";
+  if (tag === PAY || tag === PAY_NATIVE) return data.length >= 16;
+  if (tag === COMMIT || tag === COMMIT_BOUNTY) return data.length >= 88;
+  if (tag !== COMMIT_MONTHLY_AWARD || data.length < 104) return false;
+  const nodes = new DataView(
+    data.buffer,
+    data.byteOffset,
+    data.byteLength,
+  ).getUint32(100, true);
+  return data.length >= 104 + 40 * nodes;
+}
 export const CONFIG_DISCRIMINATOR = hex(
   sha256(encoder.encode("account:Config")).slice(0, 8),
 );
@@ -799,14 +818,7 @@ export function solanaPaymentAdapter(
         // proof); accounts: payer, project, vault, month, origin, obligation, settled. Ordinary only.
         if (
           config.payoutPolicy === "security-bounty" ||
-          data.length < 104 ||
-          data.length !==
-            104 +
-              40 *
-                new DataView(data.buffer, data.byteOffset).getUint32(
-                  100,
-                  true,
-                ) ||
+          !solanaAwardArgumentsFit(data) ||
           accounts[1] !== config.projectPda ||
           accounts[5] !== awardAddress ||
           hex(data.slice(12, 44)) !== hex(award) ||
@@ -822,7 +834,7 @@ export function solanaPaymentAdapter(
             (config.payoutPolicy === "security-bounty"
               ? COMMIT_BOUNTY
               : COMMIT) ||
-          data.length !== 88 ||
+          !solanaAwardArgumentsFit(data) ||
           accounts[1] !== config.projectPda ||
           accounts[4] !== awardAddress ||
           hex(data.slice(8, 40)) !== hex(award) ||
@@ -834,7 +846,7 @@ export function solanaPaymentAdapter(
       } else {
         // pay(expected_version); accounts: project, obligation, binding, mint, vault, destination.
         if (
-          data.length !== 16 ||
+          !solanaAwardArgumentsFit(data) ||
           obligation[136] !== 1 ||
           accounts[0] !== config.projectPda ||
           accounts[1] !== awardAddress ||

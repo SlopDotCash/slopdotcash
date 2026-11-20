@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   PRE_PLEDGE_PROJECT_SIZE,
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
   readVaultTotals,
+  solanaAwardArgumentsFit,
   solanaBase58,
   solanaConfigAddress,
   solanaMintDecimals,
@@ -377,5 +379,52 @@ describe("program addresses", () => {
       "9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS",
     );
     expect(VAULT).toBe("DmCm1opZm61cYKAHYQ24LTVvh8UqPu5hpkRChccaCa6n");
+  });
+});
+
+/** Anchor instruction data: 8-byte discriminator, then Borsh arguments, then `extra` unread bytes. */
+function awardInstruction(
+  name: string,
+  argumentBytes: number,
+  extra = 0,
+): Uint8Array {
+  const tag = createHash("sha256")
+    .update(`global:${name}`)
+    .digest()
+    .subarray(0, 8);
+  const data = new Uint8Array(tag.length + argumentBytes + extra);
+  data.set(tag, 0);
+  return data;
+}
+
+describe("Solana award instruction length", () => {
+  test("a pay or commit with bytes after its arguments still matches", () => {
+    for (const name of ["pay", "pay_native"] as const) {
+      const exact = awardInstruction(name, 8);
+      expect(exact.length).toBe(16);
+      expect(solanaAwardArgumentsFit(exact)).toBe(true);
+      expect(solanaAwardArgumentsFit(exact.subarray(0, 15))).toBe(false);
+      const trailing = awardInstruction(name, 8, 1);
+      expect(trailing.length).toBe(17);
+      expect(solanaAwardArgumentsFit(trailing)).toBe(true);
+    }
+    for (const name of ["commit", "commit_bounty"] as const) {
+      const exact = awardInstruction(name, 80);
+      expect(exact.length).toBe(88);
+      expect(solanaAwardArgumentsFit(exact)).toBe(true);
+      expect(solanaAwardArgumentsFit(exact.subarray(0, 87))).toBe(false);
+      expect(solanaAwardArgumentsFit(awardInstruction(name, 80, 3))).toBe(true);
+    }
+    // One proof node is 40 bytes after the 104-byte header. A byte after that
+    // node is still this instruction.
+    const monthly = awardInstruction("commit_monthly_award", 96 + 40, 1);
+    new DataView(monthly.buffer).setUint32(100, 1, true);
+    expect(monthly.length).toBe(145);
+    expect(solanaAwardArgumentsFit(monthly)).toBe(true);
+    expect(solanaAwardArgumentsFit(monthly.subarray(0, 144))).toBe(true);
+    expect(solanaAwardArgumentsFit(monthly.subarray(0, 143))).toBe(false);
+    expect(solanaAwardArgumentsFit(awardInstruction("deposit", 8, 8))).toBe(
+      false,
+    );
   });
 });

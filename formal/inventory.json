@@ -1901,16 +1901,16 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "4e37538cb85e4da6d15284b78cc0ce9b0d72c8beade532f7b22b53eb9cb66a53",
+      "sha256": "56e0994b4295a09f2fbc55be2dac7e6ccf960fc5d392bdae34d125281462552f",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt"
       ],
       "candidateLines": [
-        47, 68, 82, 84, 196, 212, 244, 252, 271, 292, 305, 315, 333, 376, 395,
-        404, 449, 456, 457, 460, 714, 720, 723, 725, 730, 754, 895, 896, 924,
-        953, 966, 974, 981, 1010, 1025, 1242, 1264
+        47, 68, 82, 84, 215, 231, 263, 271, 290, 311, 324, 334, 352, 395, 414,
+        423, 468, 475, 476, 479, 733, 739, 742, 744, 749, 773, 907, 908, 936,
+        965, 978, 986, 993, 1022, 1037, 1254, 1276
       ],
       "review": "mapped-abstraction"
     },
