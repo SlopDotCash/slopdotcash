@@ -144,6 +144,9 @@ export async function prepareE2eFixture({ runCommand = run } = {}) {
       // This isolated workspace must use the matching frozen profile inventory.
       SLOP_PROFILES_INPUT: join(workspace, "data", "profiles", "seed.json"),
       VITE_SLOP_PROJECT_REGISTRY_URL: "/data/fixture-project-registry.json",
+      // The pay page's test seam (src/lib/submission-fee-setup.ts). No
+      // release build sets it.
+      VITE_SLOP_FEE_FIXTURE: "1",
     });
     return workspace;
   } catch (error) {

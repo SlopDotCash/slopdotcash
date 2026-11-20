@@ -171,13 +171,23 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
       - name: Load the newest trusted collection memo
         id: restore
         # The memo only saves reads; failing to restore it means a full
         # collection, never a failed release.
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
           RESTORE_OUTPUT: ${{ runner.temp }}/restored-collection
           # An explicit discussion resume keeps its own restore job.
           RESTORE_DISCUSSIONS: ${{ (github.event_name != 'workflow_dispatch' || !inputs.discussion_resume_run) && 'true' || 'false' }}
