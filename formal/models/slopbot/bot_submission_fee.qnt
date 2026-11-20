@@ -120,8 +120,9 @@ module bot_submission_fee {
   action review(monthOpen: bool): bool = all { s.opened, s.pr == "open",
     not(s.reviewed),
     if (s.mode == "off") s' = s.with("reviewed", true)
-    // Record what would be asked; the review runs as today.
-    else if (s.mode == "dry") s' = recordedOnly
+    // Record what would be asked; the review runs as today. A review the
+    // monthly cap refuses is not asked live, so nothing is recorded for it.
+    else if (s.mode == "dry") s' = (if (monthOpen) recordedOnly else s)
     else if (s.paid) s' = s.with("reviewed", true)
     // Exempt: an earlier ask is taken back; the author is not reviewed.
     else if (not(s.outsider)) s' = (if (askStands) released(s) else s)
@@ -262,6 +263,9 @@ module bot_submission_fee {
     .expect(s.comments == 1 and s.gate == "asked")
   run fullMonthIsNotAskedTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(false))
+    .expect(s.gate == "none" and not(s.row) and s.comments == 0)
+  run fullMonthIsNotRecordedInDryRunTest = init.then(ownerTurnsOn)
+    .then(setMode("dry")).then(opens(true)).then(review(false))
     .expect(s.gate == "none" and not(s.row) and s.comments == 0)
   run withdrawnPaymentAsksAgainTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)

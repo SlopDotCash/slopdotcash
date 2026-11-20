@@ -9436,7 +9436,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "156054fe1e6a47a705359497c0525d34567f32c569e2e2898d813163dcf129eb",
+      "sha256": "fafcee158efb759a9d57b8d818864e2cbd0380010e250121c9c70826b53f59ce",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
@@ -17239,7 +17239,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "17b4680b2f1fe6ceacb9a98edd8a861d2ee99b3bfcf9ff7a580455892242e7c0",
+      "sha256": "27f8f9f268af77062c9b3a8ec47b3accc3cdb40fc3f88f4f61ad9aea856f4687",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
@@ -17259,6 +17259,7 @@
         "exemptAuthorIsNeverAskedTest",
         "firstSightAsksOnceTest",
         "fullMonthIsNotAskedTest",
+        "fullMonthIsNotRecordedInDryRunTest",
         "mergedIsDueBackTest",
         "offDoesNothingTest",
         "openedBeforeTheSettingIsReviewedTest",
