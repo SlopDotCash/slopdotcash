@@ -9560,7 +9560,10 @@
     {
       "path": "workers/slopbot/value-import-diagnostics.ts",
       "sha256": "bd5f4ac410fe6cb159f6d8020947d124a4c525fa9770aff90ef667f28ac59482",
-      "models": ["formal/models/slopbot/bot_historical_import.qnt"],
+      "models": [
+        "formal/models/slopbot/bot_historical_import.qnt",
+        "formal/models/slopbot/historical_subscription_intake.qnt"
+      ],
       "candidateLines": [116, 119, 130, 131, 229],
       "review": "mapped-abstraction"
     },
@@ -17490,13 +17493,14 @@
     },
     {
       "path": "formal/models/slopbot/historical_subscription_intake.qnt",
-      "sha256": "d459527ff68c5ea77c12fa2cd18f36f38297bde023a4a190be21801ecadb77cc",
+      "sha256": "11705fa5539fcee088955ef0a74b832cb985bbefb151720f66e32327d50fdbfa",
       "sources": [
         "backend/slopbot/value-import-observation.ts",
         "backend/slopbot/value-import.ts",
         "migrations/0038_slopbot_value_journal.sql",
         "migrations/0042_slopbot_value_no_replace.sql",
         "migrations/0046_slopbot_work_unit_journal.sql",
+        "workers/slopbot/value-import-diagnostics.ts",
         "workers/slopbot/value-import-service.ts",
         "workers/slopbot/value-import.ts",
         "workers/slopbot/value-journal.ts",
@@ -17511,7 +17515,10 @@
         "apiEraSourceRefusedTest",
         "changedResultDigestRefusesTest",
         "concurrentReplayAfterPauseReturnsExistingRowTest",
+        "diagnosticAfterReadbackFailurePreservesRecordTest",
+        "differentCorrelationReturnsOnlyOrdinaryFailureTest",
         "differentKeysCannotForkOnePredecessorTest",
+        "foreignOriginCannotReceiveDiagnosticsTest",
         "foreignOriginRefusedTest",
         "invalidBundleRecipeWritesNothingTest",
         "invalidProducerEnvelopeRefusedTest",
@@ -17526,13 +17533,17 @@
         "malformedBodyRefusedTest",
         "methodRefusedBeforeSessionTest",
         "missingSessionRefusedTest",
+        "nonAdminCannotReceiveDiagnosticsTest",
         "nonAdminRefusedTest",
         "oneInvalidJointSourceWritesNothingTest",
+        "optInSuccessReturnsOnlyReceiptTest",
         "retryAfterLostReplyUsesStoredRowTest",
         "sameKeyReturnsFirstPayloadTest",
+        "sameOriginOwnerReceivesOnlyMatchingDiagnosticsTest",
         "singleBundleRefusedTest",
         "sourceChangeAfterFinalReadIsNotContinuousFenceTest",
         "sourceChangeBeforeRefreshRefusesTest",
+        "terminalDiagnosticBoundaryTest",
         "validJointBundlePublishesAllIndexesTest",
         "validSingleImportTest"
       ]
