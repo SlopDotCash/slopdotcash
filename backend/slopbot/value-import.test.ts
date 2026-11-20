@@ -1,4 +1,9 @@
 import { expect, spyOn, test } from "bun:test";
+import {
+  INTAKE_DIAGNOSTIC_HEADER,
+  INTAKE_TERMINAL_V1,
+} from "../../workers/slopbot/value-import-diagnostics";
+import type { HistoricalValueBinding } from "./value-import";
 import { handleHistoricalValueImport } from "./value-import";
 import { INTAKE_CORRELATION_HEADER } from "./value-import-observation";
 
@@ -321,5 +326,156 @@ test("RPC refusal keeps the fixed 409 and a failed diagnostics sink leaves the r
   } finally {
     warning.mockRestore();
     log.mockRestore();
+  }
+});
+
+test("only explicit owner opt-in returns a fixed correlated terminal failure", async () => {
+  const nonce = "e".repeat(64);
+  const failure = {
+    stage: "source-evidence",
+    sourceIndex: 4,
+    sourceCount: 132,
+    errorName: "Error",
+    httpStatus: 403,
+    messageSha256: "b".repeat(64),
+  } as const;
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const warning = spyOn(console, "error").mockImplementation(() => {});
+  let ordinaryCalls = 0;
+  let diagnosedCalls = 0;
+  try {
+    const publisher: HistoricalValueBinding = {
+      async publishSubscription() {
+        ordinaryCalls++;
+        throw Error("untrusted private body");
+      },
+      async publishSubscriptionDiagnosed(input, correlation) {
+        expect(input).toEqual({});
+        expect(correlation).toBe(nonce);
+        diagnosedCalls++;
+        return { status: 409, correlation, diagnostic: failure };
+      },
+    };
+    const deps = { ...dependencies(), publisher };
+    const makeRequest = (optIn?: string, correlation = nonce) => {
+      const value = request("application/x-ndjson");
+      value.headers.set(INTAKE_CORRELATION_HEADER, correlation);
+      if (optIn !== undefined)
+        value.headers.set(INTAKE_DIAGNOSTIC_HEADER, optIn);
+      return value;
+    };
+    const denied = await handleHistoricalValueImport(
+      makeRequest(INTAKE_TERMINAL_V1),
+      { ...deps, sessionActor: async () => ({ githubId: "other" }) },
+    );
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ error: "forbidden" });
+    expect(diagnosedCalls).toBe(0);
+    expect(ordinaryCalls).toBe(0);
+
+    for (const value of [
+      makeRequest(),
+      makeRequest("terminal-v2"),
+      makeRequest(INTAKE_TERMINAL_V1, "invalid-opaque-input"),
+    ]) {
+      const ordinary = await handleHistoricalValueImport(value, deps);
+      const frames = (await ordinary.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(frames).toEqual([
+        { status: "pending" },
+        { status: 409, body: { error: "assessment_not_published" } },
+      ]);
+    }
+    expect(ordinaryCalls).toBe(3);
+    expect(diagnosedCalls).toBe(0);
+
+    const approved = await handleHistoricalValueImport(
+      makeRequest(INTAKE_TERMINAL_V1),
+      deps,
+    );
+    expect(approved.headers.get("cache-control")).toContain(
+      "private, no-store",
+    );
+    const terminal = (await approved.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .at(-1);
+    expect(terminal).toEqual({
+      status: 409,
+      body: {
+        error: "assessment_not_published",
+        diagnostic: { correlation: nonce, failure },
+      },
+    });
+    expect(ordinaryCalls).toBe(3);
+    expect(diagnosedCalls).toBe(1);
+  } finally {
+    log.mockRestore();
+    warning.mockRestore();
+  }
+});
+
+test("diagnostic opt-in keeps approved success and discards malformed Worker diagnostics", async () => {
+  const nonce = "e".repeat(64);
+  const failure = {
+    stage: "source-evidence",
+    sourceIndex: 4,
+    sourceCount: 132,
+    errorName: "Error",
+    httpStatus: 403,
+    messageSha256: "a".repeat(64),
+  } as const;
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const warning = spyOn(console, "error").mockImplementation(() => {});
+  const makeRequest = () => {
+    const value = request();
+    value.headers.set(INTAKE_CORRELATION_HEADER, nonce);
+    value.headers.set(INTAKE_DIAGNOSTIC_HEADER, INTAKE_TERMINAL_V1);
+    return value;
+  };
+
+  try {
+    const deps = dependencies();
+    const ordinary = await handleHistoricalValueImport(makeRequest(), deps);
+    expect(ordinary.status).toBe(200);
+    expect(await ordinary.json()).toEqual(receipt);
+
+    const diagnosed = await handleHistoricalValueImport(makeRequest(), {
+      ...deps,
+      publisher: {
+        ...deps.publisher,
+        publishSubscriptionDiagnosed: async () => ({ status: 200, receipt }),
+      },
+    });
+    expect(diagnosed.status).toBe(200);
+    expect(await diagnosed.json()).toEqual(receipt);
+
+    for (const [correlation, diagnostic] of [
+      ["f".repeat(64), failure],
+      [nonce, { ...failure, message: "private Worker body" }],
+      [nonce, null],
+    ] as const) {
+      const response = await handleHistoricalValueImport(makeRequest(), {
+        ...deps,
+        publisher: {
+          ...deps.publisher,
+          publishSubscriptionDiagnosed: async () => ({
+            status: 409,
+            correlation,
+            diagnostic,
+          }),
+        },
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "assessment_not_published",
+      });
+    }
+  } finally {
+    log.mockRestore();
+    warning.mockRestore();
   }
 });
