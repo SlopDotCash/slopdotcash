@@ -295,6 +295,9 @@ effect function startOf(plan: Plan, collection: Collection, source: number, appl
   const digest = collection.manifestDigest
   return {
     ...initial,
+    // A correction whose digest the journal already holds was committed: it is Applied (alwaysOpenUnapplied), and
+    // preparing it again classifies it as Replayed.
+    phase: applied ? "Applied" : initial.phase,
     project: plan.candidate.projectId,
     source,
     occurredAt,
