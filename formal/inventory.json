@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "fe8b7164e7125852f4e4786c41e38f18ccacdfc57cb3e95e5e302cb06764faf5",
+      "sha256": "5b4506c6f53be617fb249a1c43824a4c92f045c2fcd09b920e57181ddb6dcdd7",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 54, 250, 383, 449, 475, 476, 550, 603, 660, 740, 745, 860, 866, 934,
-        937, 963, 964, 985, 997, 1029, 1067, 1297, 1325, 1417, 1430, 1521, 1629,
-        1631, 1632, 1836, 1919, 2072, 2074, 2104, 2219, 2241, 2312, 2323, 2348,
-        2419, 2432, 2445, 2454, 2455, 2456, 2473
+        44, 62, 258, 393, 459, 486, 487, 561, 614, 671, 751, 756, 871, 877, 945,
+        948, 974, 975, 996, 1008, 1040, 1078, 1308, 1336, 1428, 1441, 1532,
+        1640, 1642, 1643, 1847, 1930, 2083, 2085, 2115, 2230, 2252, 2323, 2334,
+        2359, 2430, 2443, 2456, 2465, 2466, 2467, 2484
       ],
       "review": "mapped-abstraction"
     },
@@ -5367,7 +5367,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "47f02ee4a8b547e9619c352772cbbe7b9f368a11e53d374bae7033cd2e21637d",
+      "sha256": "6b9b6154772e6b7c374eeaaba39068a3894a44d662a22f9a4502f5f88a2ead5c",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5378,7 +5378,7 @@
       ],
       "candidateLines": [
         80, 91, 131, 190, 191, 192, 193, 195, 196, 285, 286, 287, 289, 290, 942,
-        962, 1252, 1288, 1327, 1351
+        971, 1261, 1297, 1336, 1360
       ],
       "review": "mapped-abstraction"
     },
