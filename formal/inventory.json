@@ -5290,7 +5290,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "c795ab09e5eb974b1a7f079588c6f64eddd82e513fed25c4c88737bf7d1646f9",
+      "sha256": "cabae995ef8b4afbbc7678ab9f86286eb89971ebe45c358219b8678be3a23a0f",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5300,8 +5300,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        69, 80, 127, 128, 129, 130, 132, 133, 200, 201, 202, 204, 205, 773, 793,
-        915, 951, 990, 1014
+        69, 80, 127, 128, 129, 130, 132, 133, 200, 203, 204, 205, 206, 208, 209,
+        777, 797, 919, 955, 994, 1018
       ],
       "review": "mapped-abstraction"
     },
