@@ -701,11 +701,19 @@ test("ASI's reviewed closeout can finalize in November from monthly awards", asy
 }, info) => {
   const cutoff = "2026-11-19T00:00:00.000Z";
   const now = "2026-11-19T12:00:00.000Z";
+  const project = stagingPaymentProject("robinhood-mainnet", "asi");
   await page.clock.setFixedTime(new Date(now));
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: PROJECTS } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
