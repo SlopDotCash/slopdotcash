@@ -23929,7 +23929,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "96a535451a9335384fa2972a77d62afd7517308d32dd37a7361886505dd8a8aa",
+      "sha256": "81df7e416b31e1f258e567423524cf2e4e44a3a02ba19dd2dbf4b62bbde0ce0e",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -23938,7 +23938,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree",
-          "line": 256
+          "line": 362
         }
       ],
       "rules": [
@@ -23946,7 +23946,9 @@
           "heading": "Story: Fund, reserve and pay one month through its own vault / The month and the vault start independently",
           "line": 25,
           "definitions": [
+            "LeafCursor",
             "MonthlySettlement",
+            "noCursor",
             "initial",
             "sourceOf",
             "canDeploy",
@@ -23977,7 +23979,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / Obligations are created only when the vault's finalized free balance covers the month",
-          "line": 77,
+          "line": 80,
           "definitions": [
             "canObserveHead",
             "observeHead",
@@ -23990,7 +23992,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may prepare one funded obligation by hand, and only while no pool gross is pending",
-          "line": 107,
+          "line": 110,
           "definitions": [
             "obligationOf",
             "awardFact",
@@ -24000,7 +24002,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may also commit any source by hand on chain; the month observes it",
-          "line": 130,
+          "line": 133,
           "definitions": [
             "canCommitManualAward",
             "commitManualAward",
@@ -24022,7 +24024,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / Anyone admits the attester-signed root of exactly the month's unreserved obligations",
-          "line": 172,
+          "line": 175,
           "definitions": [
             "canAdmitRoot",
             "admitRoot",
@@ -24032,7 +24034,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized",
-          "line": 199,
+          "line": 202,
           "definitions": [
             "leavesPerCall",
             "leafInCall",
@@ -24042,24 +24044,64 @@
           ]
         },
         {
+          "heading": "Story: Fund, reserve and pay one month through its own vault / The executor's cursor passes a leaf only on a matching finalized award, or once the reserve is exhausted",
+          "line": 241,
+          "definitions": [
+            "admittedMonth",
+            "leafMatches",
+            "leafConflicts",
+            "cursorAt",
+            "passLeaf",
+            "canAdvanceCursor",
+            "advanceCursor",
+            "canAdvanceZeroRemaining",
+            "advanceZeroRemaining",
+            "lawConflictHaltsCursor",
+            "lawCursorWaitsForNonce"
+          ]
+        },
+        {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The vault keeps its other operations while the month is reserved",
-          "line": 238,
+          "line": 303,
           "definitions": [
             "canWithdraw",
             "withdraw",
+            "canUpgradeToRelease",
+            "upgradeToRelease",
             "canReleaseReserve",
             "releaseReserve"
           ]
         },
         {
+          "heading": "Story: Fund, reserve and pay one month through its own vault / An approved service release is exactly the release the vault accepts",
+          "line": 327,
+          "definitions": [
+            "releaseFor",
+            "lawApprovedReleaseAccepted",
+            "lawFinalizedReleaseMatchesEscrow",
+            "lawOnlyOwnerSubmitsRelease"
+          ]
+        },
+        {
           "heading": "Story: The month and the vault always agree / An obligation is reserved, paid or conflicted only as the vault's finalized award shows",
-          "line": 258,
+          "line": 364,
           "definitions": [
             "obligationMatches",
             "alwaysObligationsMatchVault",
             "alwaysOneAwardPerObligation",
             "alwaysPoolWithinUnreserved",
             "alwaysChildRules",
+            "alwaysAdmittedOnlyWhenFunded",
+            "alwaysPoolOnlyWhenAdmitted",
+            "alwaysUnreservedSourcesFreeWhilePooled",
+            "alwaysLeafAwardsAreObligations",
+            "alwaysCursorInRange",
+            "alwaysCursorSourceBacked",
+            "alwaysReleasedMonthHasNoLeafAward",
+            "stepCursorMonotoneByOne",
+            "stepRootAdmitsOnlyFreeSources",
+            "sometimesCursorPassedLeaf",
+            "sometimesReleasedMonthPassed",
             "sometimesManualObligation",
             "sometimesLeafObligation",
             "sometimesMonthReserved",
@@ -24072,7 +24114,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 294,
+          "line": 444,
           "definitions": [
             "assetValues",
             "mintValues",
@@ -24093,7 +24135,8 @@
             "snapshotValues",
             "earlierUnreservedValues",
             "otherOpenPledgesValues",
-            "depositValues",
+            "fundsValues",
+            "blockEvent",
             "evValues",
             "actorValues",
             "byValues",
@@ -24107,6 +24150,16 @@
             "destinationValues",
             "versionValues",
             "releaseValues",
+            "nonceSettledValues",
+            "sampleFrozen",
+            "sampleFunded",
+            "sampleAdmitted",
+            "sampleUpgraded",
+            "sValues",
+            "onAwardValues",
+            "approvalSample",
+            "approvalValues",
+            "receiptValues",
             "weight_materialize",
             "weight_deposit",
             "weight_propose",
@@ -24117,6 +24170,11 @@
             "weight_observeClock",
             "weight_withdraw",
             "weight_releaseReserve",
+            "weight_upgradeToRelease",
+            "weight_advanceCursor",
+            "weight_advanceZeroRemaining",
+            "weight_deploy",
+            "weight_openMonth",
             "weight_observeHead",
             "weight_observeRevision",
             "weight_commitManualAward",
@@ -24136,7 +24194,8 @@
         "settlement__escrow",
         "settlement__money",
         "settlement__allocation",
-        "settlement__payoutExclusions"
+        "settlement__payoutExclusions",
+        "settlement__reserveRelease"
       ],
       "references": [
         {
@@ -24157,15 +24216,27 @@
         },
         {
           "target": "./monthPledges.md",
-          "line": 86
+          "line": 89
         },
         {
           "target": "./paymentInvestigation.md",
-          "line": 242
+          "line": 307
         },
         {
           "target": "./bindingAuthority.md",
-          "line": 243
+          "line": 308
+        },
+        {
+          "target": "./escrow.md",
+          "line": 312
+        },
+        {
+          "target": "./reserveRelease.md",
+          "line": 329
+        },
+        {
+          "target": "./signer.md",
+          "line": 331
         }
       ]
     },
