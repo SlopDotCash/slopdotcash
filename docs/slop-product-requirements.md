@@ -62,7 +62,7 @@ Numeric growth, availability, latency, and response-time targets are not approve
 | Repository identity, permissions, work, and merge acceptance | GitHub, using permanent repository and actor IDs. |
 | Project inventory and published terms | D1 `projects`, `project_revisions`, and `project_applications`; each change appends an immutable revision. |
 | Sessions, preferences, wallet records, and private decisions | Authenticated account and case services. |
-| Points and corrections | Append-only journal with source identity, occurrence time, and recording time. |
+| Points and corrections | Append-only journal with source identity, occurrence time, and recording time. Operator decision, 20 November 2026: the Points of a project month with a recorded payment are frozen; the generator holds a candidate revision that would change them and publishes the rest, and the import still refuses a batch that changes one. |
 | Monthly proposals and final allocations | D1 allocation records; owner cuts and their reasons are public. |
 | Deposits, reservations, and completed payments | Exact finalized chain evidence, reconciled with the applicable obligation. |
 
