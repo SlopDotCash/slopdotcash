@@ -509,6 +509,20 @@ pure def stepPeriodFixed(before: Monthly, after: Monthly): bool = before.phase !
 In the samples November 2026 ends at 1796083200, its cuts close at
 1796256000 while the default is on, and its cutoff is 1796342400.
 
+Discovered by simulation: a cut withdrawn by a later change was not reached
+in 50,000 sampled runs of 20 events, and only about one run in a
+thousand was ever proposed, because the clock usually passed the proposal
+window before the month observed its eligibility and revision; the clock is
+therefore tried least often and the proposal most often. Discovered by
+simulation: once a month observes eligibility revision 2, which it never
+leaves, every sampled authority fact was stale, so no change, cut or owner
+finalization could follow; an owner fact under revision 2 is sampled too.
+Discovered by simulation: a withdrawal needs a cut and then a change of that
+contributor back to the proposed amount before the month freezes, so changes
+and cuts are tried far more often and owner finalization less often than
+other events; a month allows only as many changes as there are sampled
+expected sequences, so this cannot crowd out later events.
+
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
   and m.obligations.some(o => o.progress != Paid)
@@ -554,7 +568,8 @@ pure val actorValues = Set(1, 2, 3)
 pure val amountValues = Set(List(0), List(2), List(5), List(6))
 pure val expectedSequenceValues = Set(0, 1, 2)
 pure val factValues = Set({ actor: 9, role: ProjectOwner, banned: false, revision: 1 }, { actor: 2, role: Steward, banned: false, revision: 1 },
-  { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 })
+  { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 },
+  { actor: 9, role: ProjectOwner, banned: false, revision: 2 })
 pure val automaticValues = Set(true, false)
 pure val settingsSequenceValues = Set(1, 2)
 pure val observationValues = Set({ observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
@@ -568,13 +583,13 @@ pure def awardFact(actor: int, gross: M::Amount, paid: bool): AwardFact =
 pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, List(2), true))).union(Set(awardFact(2, List(6), true)))
   .union(Set(awardFact(3, List(2), true))).union(Set(awardFact(1, List(3), true))).union(Set(awardFact(1, List(3), false)))
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
-pure val weight_observeClock = 6
-pure val weight_propose = 6
+pure val weight_observeClock = 1
+pure val weight_propose = 60
 pure val weight_observeRevision = 2
-pure val weight_adjust = 5
-pure val weight_cut = 5
+pure val weight_adjust = 90
+pure val weight_cut = 40
 pure val weight_observeSettings = 2
-pure val weight_finalize = 8
+pure val weight_finalize = 4
 pure val weight_autoFreeze = 3
 pure val weight_noteUnderfunded = 4
 pure val weight_createObligations = 6

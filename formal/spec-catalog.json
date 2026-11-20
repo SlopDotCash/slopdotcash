@@ -23210,7 +23210,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "eb6b5899e4f72a972cdd0a50c47f8ded4056d2bf7483a71166355881cbb7337b",
+      "sha256": "2d79a51089b76a4f3556293daa09cf2e11feee21f1600e8323db4d3ec644340e",
       "module": "settlement__monthly",
       "stories": [
         {
