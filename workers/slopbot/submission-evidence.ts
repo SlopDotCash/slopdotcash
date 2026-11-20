@@ -98,9 +98,11 @@ export function missingSubmissionEvidence(
   );
   const section =
     start === -1 ? [] : lines.slice(start + 1, end === -1 ? undefined : end);
+  // A sentence-ending period is punctuation, not part of the last type.
   const types =
     evidenceValue(section, "Change types")
-      ?.split(",")
+      ?.replace(/\.$/u, "")
+      .split(",")
       .map((type) => type.trim()) ?? [];
   const validTypes =
     types.length > 0 &&
