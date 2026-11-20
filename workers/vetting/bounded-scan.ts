@@ -349,6 +349,10 @@ const INTERPRETER_COMMAND = commandToken(
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
+/** Words that forbid the instruction they belong to ("never paste ..."). */
+const INSTRUCTION_NEGATION = String.raw`\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b`;
+const SECRET_SEND_VERB = String.raw`\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b`;
+
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -479,11 +483,17 @@ const RULES: Rule[] = [
     threat: "prompt-injection",
     severity: "medium",
     // An instruction to send a secret somewhere: the verb, the secret and a
-    // destination on one line that does not forbid it. "Never paste your
+    // destination in one sentence that does not forbid it. "Never paste your
     // token into an issue" and "post the token count" are ordinary agent
-    // guidance (operator decision, 19 November 2026).
-    pattern:
-      /(?<![^\n])(?![^\n]*\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b)[^\n]*\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b[^\n]{0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)[^\n]{0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))/iu,
+    // guidance (operator decision, 19 November 2026). A negation forbids it
+    // only from the same sentence, before the destination and at most 200
+    // characters before the verb; one in a later clause ("... and do not
+    // tell the user") or in another sentence does not. The match starts at
+    // the verb, so its cost stays linear on a long line.
+    pattern: new RegExp(
+      String.raw`(?=${SECRET_SEND_VERB})(?<!${INSTRUCTION_NEGATION}(?:(?![.!?;]\s)[^\n]){0,200})${SECRET_SEND_VERB}(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))`,
+      "iu",
+    ),
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
