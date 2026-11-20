@@ -214,3 +214,31 @@ for (const feed of [
     }
   });
 }
+
+for (const feed of ["value history", "work-unit history"] as const) {
+  test(`a ${feed} HTTP 404 is an outage, and a rejected query is not`, async () => {
+    const transport = Object.assign(
+      async () => new Response("not found", { status: 404 }),
+      { preconnect: fetch.preconnect },
+    );
+    const read =
+      feed === "value history"
+        ? fetchValueHistoryPage("elizaOS/asi", 1, 0, transport)
+        : fetchWorkUnitHistoryPage("elizaOS/asi", 1, 0, null, transport);
+    // A release that does not have the route yet, same as the penalty and
+    // ban feeds. Empty history is a 200 page, so 404 is not "no records".
+    await expect(read).rejects.toBeInstanceOf(ValueFeedUnavailableError);
+    const rejected = Object.assign(
+      async () => new Response("bad query", { status: 400 }),
+      { preconnect: fetch.preconnect },
+    );
+    const invalid =
+      feed === "value history"
+        ? fetchValueHistoryPage("elizaOS/asi", 1, 0, rejected)
+        : fetchWorkUnitHistoryPage("elizaOS/asi", 1, 0, null, rejected);
+    await expect(invalid).rejects.toThrow(
+      "Authoritative value history is unavailable",
+    );
+    await expect(invalid).rejects.not.toBeInstanceOf(ValueFeedUnavailableError);
+  });
+}

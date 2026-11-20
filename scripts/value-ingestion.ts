@@ -196,7 +196,11 @@ async function fetchHistoryPage(
     throw new ValueFeedUnavailableError(error);
   }
   assertFeedDeadline(signal);
+  // A Slopbot release without this route answers 404, the same outage as the
+  // penalty and ban feeds: retry, then keep the last published snapshot.
+  // Empty history is a 200 page. A rejected query stays an integrity failure.
   if (
+    response.status === 404 ||
     response.status === 408 ||
     response.status === 429 ||
     response.status >= 500
