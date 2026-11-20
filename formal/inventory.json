@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "10ba5601511788bc24c6bd60910af1b1b0bda23e6e98d986c2f5a8b3eae4e8b0",
+      "sha256": "a3ce77d77953704d8ef46caf3a9e84982be8dee8c0e9886f5893289a9ebd17d3",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -32,10 +32,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 54, 215, 348, 414, 440, 441, 515, 568, 625, 705, 710, 825, 831, 899,
-        902, 928, 929, 950, 962, 994, 1032, 1262, 1290, 1382, 1395, 1486, 1594,
-        1596, 1597, 1801, 1884, 2037, 2039, 2069, 2184, 2206, 2277, 2288, 2313,
-        2384, 2397, 2410, 2419, 2420, 2421, 2438
+        44, 54, 245, 378, 444, 470, 471, 545, 598, 655, 735, 740, 855, 861, 929,
+        932, 958, 959, 980, 992, 1024, 1062, 1292, 1320, 1412, 1425, 1516, 1624,
+        1626, 1627, 1831, 1914, 2067, 2069, 2099, 2214, 2236, 2307, 2318, 2343,
+        2414, 2427, 2440, 2449, 2450, 2451, 2468
       ],
       "review": "mapped-abstraction"
     },
@@ -4323,11 +4323,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "5966d5d312df8cf9f5a1cf7575e36ecc2d1138c7c1d92af5c6df648e33c83928",
+      "sha256": "b91daaf594f47e231bf8343def3c8cfb07c02fe5d41fbe78da03a5377e193960",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 226, 228, 263, 285, 295, 300, 304, 308,
-        312, 315, 316, 326, 335, 357, 367, 376, 384
+        35, 53, 86, 107, 109, 127, 165, 228, 230, 265, 287, 297, 302, 306, 310,
+        311, 312, 316, 319, 320, 330, 339, 361, 371, 380, 388
       ],
       "review": "mapped-abstraction"
     },
@@ -9897,7 +9897,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "328fe5615e9c8a21caf6f890a1ada31c8f0367550ea844e741bd2816932a93e1",
+      "sha256": "e991e7ec5b3c6859187872efc507384c3251622af59be8596a763d5469992d6d",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
