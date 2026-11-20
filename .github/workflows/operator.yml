@@ -26,4 +26,3 @@ jobs:
       mode: ${{ inputs.asi_mode }}
       reviewed_packet_sha256: ${{ inputs.reviewed_packet_sha256 }}
       preview_sha256: ${{ inputs.preview_sha256 }}
-    secrets: inherit

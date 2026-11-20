@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/operator.yml",
-      "sha256": "5972c4c31596a82c500166e254e93289be8555eff1ccb76af91f2c26f65898fe",
+      "sha256": "0f4ef63944f5dc173417ee0934c14812260b5753b2e11d98e7f7ab379b4cf8d0",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
