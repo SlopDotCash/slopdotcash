@@ -14,8 +14,8 @@ type PenaltyRowDef = {
  * only. Debits and actions are not copied here — PENALTY_ROWS derives
  * them from PENALTY_TABLE in workers/slopbot/penalties.ts, so the guide
  * cannot drift from the bot. The quoted-rule row covers both busywork and
- * gaming, which share one rule there. The bot's `empty` and
- * `missing_evidence` categories carry no debit and are not published rows.
+ * gaming, which share one rule there. The bot's `empty` category carries
+ * no debit and has no published row.
  */
 const PENALTY_ROW_DEFS: readonly PenaltyRowDef[] = [
   { category: "Spam", slopbotCategories: ["spam"] },
@@ -23,6 +23,10 @@ const PENALTY_ROW_DEFS: readonly PenaltyRowDef[] = [
   {
     category: "Clear violation of a quoted project rule",
     slopbotCategories: ["busywork", "gaming"],
+  },
+  {
+    category: "Required evidence missing from a signed Slop PR",
+    slopbotCategories: ["missing_evidence"],
   },
   { category: "Low quality", slopbotCategories: ["low_quality"] },
   { category: "Duplicate", slopbotCategories: ["duplicate"] },
