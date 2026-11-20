@@ -1401,8 +1401,12 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   ensures alwaysAdmittedInWindow(commitMonthly(e, period, entries, signer))
   ensures stepFreeRisesOnlyByDepositOrRelease(e, "commitMonthly", commitMonthly(e, period, entries, signer))
   ensures stepSourceSequenceCountsOrdinaryAwards(e, commitMonthly(e, period, entries, signer))
-  ensures alwaysCommittedLeavesTraced(commitMonthly(e, period, entries, signer))
-  ensures stepOriginsRetained(e, commitMonthly(e, period, entries, signer))
+  ensures commitMonthly(e, period, entries, signer).vault.origins == e.vault.origins
+  ensures forall a :: a in e.vault.awards ==> a in commitMonthly(e, period, entries, signer).vault.awards
+  ensures |commitMonthly(e, period, entries, signer).vault.months| == |e.vault.months| + 1
+  ensures commitMonthly(e, period, entries, signer).vault.months[..|e.vault.months|] == e.vault.months
+  ensures commitMonthly(e, period, entries, signer).vault.months[|e.vault.months|].period == period
+  ensures commitMonthly(e, period, entries, signer).vault.months[|e.vault.months|].committedGross == 0
 {
   var after := commitMonthly(e, period, entries, signer);
   var newEntries := freshEntries(e.vault, entries);
@@ -1460,6 +1464,22 @@ lemma CommitMonthlyFacts(e: Escrow, period: int, entries: seq<contracts__ledger_
   assert after.vault.free == e.vault.free - contracts__ledger_leafTotal(newEntries);
   assert after.vault.sourceSequence == e.vault.sourceSequence + |newEntries|;
   assert |after.vault.awards| == |e.vault.awards| + |newEntries|;
+  assert after.vault.months[..|e.vault.months|] == e.vault.months;
+}
+
+// A legacy allocation appends a month with nothing committed, logs no leaf and keeps every award, so it keeps the trace.
+lemma CommitMonthlyTraced(e: Escrow, period: int, entries: seq<contracts__ledger_Leaf>, signer: string)
+  requires inv(e) && canCommitMonthly(e, period, entries, signer)
+  ensures alwaysCommittedLeavesTraced(commitMonthly(e, period, entries, signer))
+  ensures stepOriginsRetained(e, commitMonthly(e, period, entries, signer))
+{
+  var after := commitMonthly(e, period, entries, signer);
+  CommitMonthlyView(e, period, entries, signer);
+  CommitMonthlyFacts(e, period, entries, signer);
+  var n := |e.vault.months|;
+  var nm := after.vault.months[n];
+  assert after.vault.months == after.vault.months[..n] + [nm];
+  assert after.vault.months == e.vault.months + [nm];
   AwardsSuperset(e.vault.awards, after.vault.awards);
   TracedAppendMonth(e, after, nm);
 }
@@ -3248,6 +3268,7 @@ lemma commitMonthly_ensures(e: Escrow, period: int, entries: seq<contracts__ledg
 {
   if inv(e) && canCommitMonthly(e, period, entries, signer) {
     CommitMonthlyFacts(e, period, entries, signer);
+    CommitMonthlyTraced(e, period, entries, signer);
   }
 }
 
