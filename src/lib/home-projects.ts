@@ -1,4 +1,5 @@
 /** Project discovery follows the current admin placement and project state. */
+import { listedThisMonth } from "./pool-funding";
 import { hasProjectCardBounty } from "./project-reward-summary";
 import { PROJECTS, type ProjectDefinition } from "./projects.mjs";
 
@@ -13,12 +14,13 @@ function isOpenProject(project: ProjectDefinition): boolean {
  * Every open project for the homepage's Featured and Community sections.
  * A bounty-only card belongs in the Security bounties section instead.
  */
-export function homeProjects() {
+export function homeProjects(now = new Date()) {
   return PROJECTS.filter(
     (project) =>
       (project.listingTier === "featured" ||
         project.listingTier === "community") &&
       isOpenProject(project) &&
+      listedThisMonth(project, now) &&
       !hasProjectCardBounty(project),
   );
 }
