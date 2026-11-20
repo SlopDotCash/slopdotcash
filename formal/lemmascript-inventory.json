@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 854,
-    "functions": 13363,
+    "functions": 13365,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 13175,
+    "unprovedFunctions": 13177,
     "nonTypeScriptFiles": 69
   },
   "limits": [
@@ -4789,19 +4789,21 @@
 {"name":"<ArrowFunction@372>","kind":"ArrowFunction","line":372,"sha256":"1c84c305d555f953dbd1c1b2308b7a3d0e8e062fa5ce1ff10951b474d436a6cb","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
 {"name":"<ArrowFunction@457>","kind":"ArrowFunction","line":457,"sha256":"3cff6c9bd40f7f21d36dc22279f5168836d97ac09c56bbb8a4deec2da25835fa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/maintainer-decisions.ts","sha256":"8c524eda7ab33965cfcce88075875aada56fd1335d1f04a94be7e43c87e4217f","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"object","kind":"FunctionDeclaration","line":73,"sha256":"dee3ad050bbdc488d41b2a6beccec93544c397f2c8a7dfb131be425ecddd6f89","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"instant","kind":"FunctionDeclaration","line":79,"sha256":"c50587159be54d9d190b5420def7254ecad12d083cf90f825f7bdcee2d4c81bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"decider","kind":"FunctionDeclaration","line":87,"sha256":"ec191c5caf050beee2c179c0b00af5cfd116154eeba1bae891f6cf70bfb4375c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"repositoryDecisions","kind":"FunctionDeclaration","line":115,"sha256":"cd3e5005ed80b64acdb3f9fa9761eb198ab30b1a5dbca4451f00a0031bc3e038","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"collectMaintainerDecisions","kind":"FunctionDeclaration","line":198,"sha256":"04969ca950e2bb8ff86ad162d2ba3251db392ad21ce164bd3f3d00b413755512","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
-{"name":"<ArrowFunction@205>","kind":"ArrowFunction","line":205,"sha256":"320dcc1cd911b537c4e2d909fbbe05d2ad73d544e437edb5019b0d60678e8eaa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@213>","kind":"ArrowFunction","line":213,"sha256":"939994f8ed85cbb8b322af9f714ca3be5c7e7de9adab7d52634a9e4ea9cd7695","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
-{"name":"maintainerDecisionBytes","kind":"FunctionDeclaration","line":229,"sha256":"6f043236f31d75d5ae4682c38f5dd771ea6575a81368bef6b33bc0c4b3bc005d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"githubGraphql","kind":"FunctionDeclaration","line":240,"sha256":"2298169d870a899c296e1e47e5f4b7da52ee764edfe5c9ca9e31b491b51fb0b1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect","throw-unreachable-model"]},
-{"name":"<ArrowFunction@252>","kind":"ArrowFunction","line":252,"sha256":"a3a5c32fe3b5321eb0298f814c27a962064ad1e49b40edcf85c211a956c9e6fd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["promise-construction","runtime-effect"]},
-{"name":"<ArrowFunction@253>","kind":"ArrowFunction","line":253,"sha256":"f507e4568ecfae73a25f0e180ff8eef3779e89fed76056a44784d96539645c97","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
-{"name":"<ArrowFunction@255>","kind":"ArrowFunction","line":255,"sha256":"03b850e4691e6ce7567c126d85563bdb57ac517703d02e62007c14e40d563c28","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
+{"path":"scripts/maintainer-decisions.ts","sha256":"ccfd1995462efa2707294b33a4d9c5de2ef59371756149858183defbe164c70a","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"object","kind":"FunctionDeclaration","line":83,"sha256":"dee3ad050bbdc488d41b2a6beccec93544c397f2c8a7dfb131be425ecddd6f89","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"instant","kind":"FunctionDeclaration","line":89,"sha256":"c50587159be54d9d190b5420def7254ecad12d083cf90f825f7bdcee2d4c81bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"closedByHeadDeletion","kind":"FunctionDeclaration","line":103,"sha256":"95cf0dbc21be2e0718bcae40860c173f2132f18937eac7b02e410fb156a339ad","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]},
+{"name":"<ArrowFunction@125>","kind":"ArrowFunction","line":125,"sha256":"2800401ec63e180a9e8cf3b9811e7c0fb8b44bb578075dbd8b32acb76d15ef7f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"decider","kind":"FunctionDeclaration","line":141,"sha256":"ee16b7460fb716d080e38b568ab3a70cf81b4d0c0e2a23f4b944a3b53745ea02","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"repositoryDecisions","kind":"FunctionDeclaration","line":179,"sha256":"cd3e5005ed80b64acdb3f9fa9761eb198ab30b1a5dbca4451f00a0031bc3e038","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"collectMaintainerDecisions","kind":"FunctionDeclaration","line":262,"sha256":"04969ca950e2bb8ff86ad162d2ba3251db392ad21ce164bd3f3d00b413755512","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
+{"name":"<ArrowFunction@269>","kind":"ArrowFunction","line":269,"sha256":"320dcc1cd911b537c4e2d909fbbe05d2ad73d544e437edb5019b0d60678e8eaa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@277>","kind":"ArrowFunction","line":277,"sha256":"939994f8ed85cbb8b322af9f714ca3be5c7e7de9adab7d52634a9e4ea9cd7695","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"maintainerDecisionBytes","kind":"FunctionDeclaration","line":293,"sha256":"6f043236f31d75d5ae4682c38f5dd771ea6575a81368bef6b33bc0c4b3bc005d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"githubGraphql","kind":"FunctionDeclaration","line":304,"sha256":"2298169d870a899c296e1e47e5f4b7da52ee764edfe5c9ca9e31b491b51fb0b1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect","throw-unreachable-model"]},
+{"name":"<ArrowFunction@316>","kind":"ArrowFunction","line":316,"sha256":"a3a5c32fe3b5321eb0298f814c27a962064ad1e49b40edcf85c211a956c9e6fd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["promise-construction","runtime-effect"]},
+{"name":"<ArrowFunction@317>","kind":"ArrowFunction","line":317,"sha256":"f507e4568ecfae73a25f0e180ff8eef3779e89fed76056a44784d96539645c97","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
+{"name":"<ArrowFunction@319>","kind":"ArrowFunction","line":319,"sha256":"03b850e4691e6ce7567c126d85563bdb57ac517703d02e62007c14e40d563c28","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"scripts/october-reward-review.ts","sha256":"7cb741fdebd3da4f3a04c49be7bbd212d38658611055e8b9ce8bc7c4e5817a40","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"object","kind":"FunctionDeclaration","line":43,"sha256":"64b58501af8d4dede3aef8f4b826c409b7fb4cd9ae5d5dfa0ac02826f0341e2f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
