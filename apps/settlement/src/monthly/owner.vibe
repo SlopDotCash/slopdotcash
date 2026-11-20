@@ -419,11 +419,10 @@ export effect function setMonthlyAutomatic(projectId: string, actor: Actor, auto
   const expectedSequence = (try loadSettings(projectId)).state.sequence
   const authorized = try authorize(projectId, actor, "owner")
   if (authorized.fact.banned) throw refused(settingRows.accountBanned)
-  if (automatic) {
-    const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
-    if (blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
-  }
-  const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized) }) catch effect (error) => match (error) {
+  // spec/settlement/monthlySettings.md: the shell reads the latest cut of each unfrozen month and passes lateCutNotice.
+  const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
+  if (automatic && blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
+  const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized), lateCutNotice: blocked !== undefined }) catch effect (error) => match (error) {
     when Conflict: throw (try afterRace(authorized, settingRows.settingChanged));
     when ProjectChanged: throw (try afterRace(authorized, settingRows.settingChanged));
     default: throw error;

@@ -59,7 +59,7 @@ export effect function fundMonth(key: MonthKey) {
   const bans = [...settlement.bans]
   const observation = monthObservation(settlement, earlierUnreserved)
   if (canCreateObligations(state.month, observation, bans)) {
-    const outcome = settle(settlement, { type: "createObligations", earlierUnreserved, bans }, coordinator) catch effect (error) => match (error) {
+    const outcome = settle(settlement, { type: "createObligations", earlierUnreserved, otherOpenPledges: settlement.otherOpenPledges, bans }, coordinator) catch effect (error) => match (error) {
       when FundingStale: "StaleFunding" satisfies Funding;
       when Conflict: "StaleFunding" satisfies Funding;
       when Rejected: "StaleFunding" satisfies Funding;

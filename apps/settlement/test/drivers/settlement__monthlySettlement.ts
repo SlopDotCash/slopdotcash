@@ -64,6 +64,7 @@ const ports = Layer.mergeAll(
   Layer.succeed(Notices, {
     statements: (batch) => Effect.succeed(batch.notices.map((notice) => sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at) SELECT ${notice.eventKey}, ${notice.recipientGithubId}, 'payout_exception', ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${notice.sourceAt} WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)),
     fanout: () => Effect.succeed([]),
+    payoutRecipient: (project) => Effect.succeed(project.stewardGithubId),
   }),
 );
 

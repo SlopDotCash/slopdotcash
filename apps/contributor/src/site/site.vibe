@@ -1,10 +1,10 @@
-// spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
 import { bootstrapFiles } from "./bootstrap.vibe"
 import { protocolFiles } from "./protocol.vibe"
 import { type SiteFile, buildCommit, refused, repositoryRoot } from "./sources.vibe"
 import { templateFiles } from "./templates.vibe"
 
-const ownedPaths = ["SKILL.md", "llms.txt", "skill-manifest.json", ".well-known/agent-skills", "skill-templates", "protocol"]
+const ownedPaths = ["SKILL.md", "llms.txt", "skill-manifest.json", ".well-known/agent-skills", "contribute", "maintain", "skill-templates", "protocol"]
 
 effect function outDirectory(args: ReadonlyArray<string>) {
   const [flag, out = "", ...rest] = args

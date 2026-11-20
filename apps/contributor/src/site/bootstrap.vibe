@@ -1,13 +1,11 @@
-// spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
 import { isoNow } from "@repo/platform/clock"
-import { type BootstrapSource, bootstrapOutputs, bootstrapPublishable } from "../../gen/contributor__publication.effect.vibe"
+import { type GlobalOutput, type GlobalRole, type GlobalSource, globalOutputs, globalRoles, globalSetPublishable, globalSourcePublishable, manifestStatus, roleAlias, roleLabel, roleName, rolePath, roleSource } from "../../gen/contributor__publication.effect.vibe"
 import { publicSiteOrigin, templatePaths } from "../render/fields.ts"
 import { sha256Hex, sourceRepository } from "../render/templateIndex.ts"
 import { type SiteFile, committedDigests, jsonText, refused, regularFiles, sourceBytes, sourceText, statusText, textFile, utf8Text } from "./sources.vibe"
 import { validateSkill } from "./validation.vibe"
 
-const bootstrapPath = "skills/slop"
-const bootstrapSource = `${bootstrapPath}/SKILL.md`
 const discoverySchema = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
 
 const frontmatterPatterns = {
@@ -22,7 +20,7 @@ const inlinedTemplatePaths = {
 
 effect function frontmatterValue(source: string, field: keyof typeof frontmatterPatterns) {
   const match = frontmatterPatterns[field].exec(source)
-  if (match === null) throw refused(`bootstrap skill omitted ${field}`)
+  if (match === null) throw refused(`a global skill omitted ${field}`)
   const value = (match[1] ?? "").trim()
   if (value.startsWith('"')) {
     const parsed: unknown = Effect.try(() => JSON.parse(value) as unknown) catch () => undefined
@@ -30,7 +28,7 @@ effect function frontmatterValue(source: string, field: keyof typeof frontmatter
   } else if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)) {
     return value
   }
-  throw refused(`bootstrap skill has invalid ${field}`)
+  throw refused(`a global skill has invalid ${field}`)
 }
 
 effect function templatePathsAgree(root: string) {
@@ -41,41 +39,66 @@ effect function templatePathsAgree(root: string) {
   return true
 }
 
-function llmsText(digest: string, revision: string, status: string): string {
-  return `# Slop\n\n> Make money shipping open source. Pick important public work, ship an accepted result, and build a contributor record on GitHub.\n\n## Agent onboarding\n\n- [Slop bootstrap skill](${publicSiteOrigin}/SKILL.md): Inspect and install the repository-specific contribution skill. SHA-256: ${digest}.\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n\nThe bootstrap source revision is ${revision} (${status}). It never authorizes wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`
+function llmsText(outputs: ReadonlyArray<GlobalOutput>, descriptions: ReadonlyMap<GlobalRole, string>): string {
+  const lines = outputs.map((output) => `- [${roleLabel(output.role)}](${publicSiteOrigin}/${rolePath(output.role)}): ${descriptions.get(output.role) ?? ""} SHA-256: ${output.llmsDigest}. Source revision ${output.revision} (${statusText(output.status)}).`)
+  return `# Slop\n\n> Make money shipping open source. Pick important public work, ship an accepted result, and build a contributor record on GitHub.\n\n## Agent onboarding\n\n${lines.join("\n")}\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n- [Skill manifest](${publicSiteOrigin}/skill-manifest.json): The build commit and the source status of each global skill.\n\nThese skills never authorize wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`
+}
+
+interface Read {
+  readonly role: GlobalRole
+  readonly bytes: Uint8Array
+  readonly description: string
+  readonly source: GlobalSource
+}
+
+// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same
+// digest": every role is read and validated before any file is produced, so one refused source publishes nothing.
+effect function readRole(root: string, role: GlobalRole, commit: string) {
+  const name = roleName(role)
+  const directory = `skills/${name}`
+  const sourcePath = roleSource(role)
+  const validated = (try validateSkill(root, directory)).outcome === "Valid"
+  const listing = try regularFiles(root, directory)
+  const files = listing.irregular === undefined ? [...listing.paths] : []
+  const bytes = try sourceBytes(root, sourcePath)
+  const text = try utf8Text(bytes, sourcePath)
+  const named = try frontmatterValue(text, "name")
+  const description = try frontmatterValue(text, "description")
+  const committed = (try committedDigests(root, commit, [sourcePath])).get(sourcePath) ?? ""
+  const source: GlobalSource = { role, files, name: named, validated, bytes: { path: sourcePath, working: sha256Hex(bytes), committed } }
+  return { role, bytes, description, source } satisfies Read
 }
 
 export effect function bootstrapFiles(root: string, commit: string) {
-  const validated = (try validateSkill(root, bootstrapPath)).outcome === "Valid"
-  const listing = try regularFiles(root, bootstrapPath)
-  const files = listing.irregular === undefined ? [...listing.paths] : []
-  if (files.length !== 1 || files[0] !== "SKILL.md") throw refused("universal bootstrap must remain one reviewable SKILL.md")
-  const bytes = try sourceBytes(root, bootstrapSource)
-  const text = try utf8Text(bytes, bootstrapSource)
-  const name = try frontmatterValue(text, "name")
-  const description = try frontmatterValue(text, "description")
-  if (name !== "slop") throw refused("universal bootstrap must be named slop")
+  if (!/^[0-9a-f]{40}$/u.test(commit)) throw refused("the build commit must be 40 lowercase hexadecimal characters")
+  const reads: Read[] = []
+  for (const role of globalRoles) reads.push(try readRole(root, role, commit))
+  const sources = reads.map((read) => read.source)
+  for (const read of reads) if (!globalSourcePublishable(read.source)) throw refused(`the ${roleName(read.role)} skill is not publishable`)
   const agree = try templatePathsAgree(root)
   if (!agree) throw refused("generated skill template paths have drifted")
-  const committed = (try committedDigests(root, commit, [bootstrapSource])).get(bootstrapSource) ?? ""
-  const source: BootstrapSource = { files, name, validated, bytes: { path: "SKILL.md", working: sha256Hex(bytes), committed } }
-  if (!bootstrapPublishable(source, agree)) throw refused("the bootstrap skill is not publishable")
-  const outputs = bootstrapOutputs(source, commit)
-  const status = statusText(outputs.status)
+  if (!globalSetPublishable(sources, agree)) throw refused("the global skills are not publishable")
+  const outputs = globalOutputs(sources, commit)
+  const descriptions = new Map(reads.map((read) => [read.role, read.description] as const))
+  const copies: SiteFile[] = []
+  for (const read of reads) {
+    copies.push({ path: rolePath(read.role), bytes: read.bytes })
+    copies.push({ path: roleAlias(read.role), bytes: read.bytes })
+  }
   return [
-    { path: "SKILL.md", bytes },
-    { path: ".well-known/agent-skills/slop/SKILL.md", bytes },
+    ...copies,
     textFile(".well-known/agent-skills/index.json", jsonText({
       $schema: discoverySchema,
-      skills: [{ name, type: "skill-md", description, url: `${publicSiteOrigin}/SKILL.md`, digest: `sha256:${outputs.indexDigest}` }],
+      skills: outputs.map((output) => ({ name: roleName(output.role), type: "skill-md", description: descriptions.get(output.role) ?? "", url: `${publicSiteOrigin}/${rolePath(output.role)}`, digest: `sha256:${output.indexDigest}` })),
     })),
-    textFile("llms.txt", llmsText(outputs.llmsDigest, outputs.revision, status)),
+    textFile("llms.txt", llmsText(outputs, descriptions)),
     textFile("skill-manifest.json", jsonText({
       schemaVersion: "1",
       name: null,
       repository: sourceRepository,
-      revision: outputs.revision,
-      revisionStatus: status,
+      revision: commit,
+      revisionStatus: statusText(manifestStatus(sources)),
+      skills: outputs.map((output) => ({ name: roleName(output.role), source: roleSource(output.role), url: `${publicSiteOrigin}/${rolePath(output.role)}`, digest: `sha256:${output.manifestDigest}`, revision: output.revision, revisionStatus: statusText(output.status) })),
       generatedAt: try isoNow(),
     })),
   ] satisfies ReadonlyArray<SiteFile>

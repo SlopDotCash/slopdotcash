@@ -6,6 +6,7 @@
   "exports": {
     "./client": "./src/client/index.vibe",
     "./controlPlane": "./src/qualification/recovery/account.vibe",
+    "./evidence/records": "./src/release/evidence/records.schema.vibe",
     "./live": "./src/live.vibe",
     "./notify": "./src/workers/notify.vibe",
     "./rpc": "./src/release/rpc/command.vibe",
