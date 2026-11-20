@@ -1,5 +1,5 @@
 // spec/contracts/solanaEscrow.md, "Simulation samples cover admitted and refused assets, windows, allocations and signers"
-// The Solana wire format the driver needs: base58 keys, program addresses and legacy transactions. The platform's
+// The Solana wire format the driver needs: base58 keys, program addresses and version-less transactions. The platform's
 // solanaWire.ts has these too, but uses syntax Node cannot strip, which the driver's own Node must run.
 import { createHash } from "node:crypto";
 
@@ -17,7 +17,7 @@ export function base58Encode(bytes: Uint8Array): string {
   for (const byte of bytes) value = (value << 8n) | BigInt(byte);
   let text = "";
   while (value > 0n) {
-    text = (alphabet[Number(value % 58n)] as string) + text;
+    text = (alphabet[Number(value % 58n)]) + text;
     value /= 58n;
   }
   for (const byte of bytes) {
@@ -66,11 +66,11 @@ function inverse(value: bigint): bigint {
 /** Whether 32 bytes decode to a point of edwards25519, which no program address may be. */
 export function onCurve(bytes: Uint8Array): boolean {
   let y = 0n;
-  for (let at = 31; at >= 0; at--) y = (y << 8n) | BigInt(at === 31 ? (bytes[at] as number) & 0x7f : (bytes[at] as number));
+  for (let at = 31; at >= 0; at--) y = (y << 8n) | BigInt(at === 31 ? (bytes[at]) & 0x7f : (bytes[at]));
   if (y >= p) return false;
   const y2 = (y * y) % p;
   const x2 = (((y2 - 1n) * inverse((d * y2 + 1n) % p)) % p + p) % p;
-  if (x2 === 0n) return ((bytes[31] as number) & 0x80) === 0;
+  if (x2 === 0n) return ((bytes[31]) & 0x80) === 0;
   return power(x2, (p - 1n) / 2n) === 1n;
 }
 

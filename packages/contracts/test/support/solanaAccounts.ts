@@ -3,8 +3,6 @@
 // a mint or token account with exactly the facts an event names, and an earlier build's project.
 import type { AccountFacts, MintFacts } from "../../gen/contracts__solanaEscrow.ts";
 import type { Purpose } from "../../gen/contracts__ledger.ts";
-import { leafNode, sumNode } from "../../../../apps/settlement/src/chain/solana/allocationRoot.ts";
-import { type Digest, type U64, digestBytes, digestOf } from "../../../../apps/settlement/src/chain/solana/bytes.ts";
 import { findPda } from "./solanaWire.ts";
 import {
   type Address,
@@ -116,29 +114,38 @@ export interface Leaf {
   readonly source: number;
 }
 interface Node {
-  readonly hash: Digest;
-  readonly total: U64;
+  readonly hash: Uint8Array;
+  readonly total: bigint;
 }
 
-const node = (leaf: Leaf): Node => leafNode({ actor: uint(leaf.actor, 64) as U64, gross: uint(leaf.gross, 64) as U64, source: digestOf(numberWord(leaf.source)) as Digest });
+// The leaf and node hashes of apps/settlement/src/chain/solana/allocationRoot.ts, which this package cannot import.
+const node = (leaf: Leaf): Node => {
+  const gross = uint(leaf.gross, 64);
+  return { hash: sha256(Uint8Array.of(0), u64le(uint(leaf.actor, 64)), u64le(gross), numberWord(leaf.source)), total: gross };
+};
+const sumNode = (left: Node, right: Node): Node | undefined => {
+  const total = left.total + right.total;
+  if (total >= 1n << 64n) return undefined;
+  return { hash: sha256(Uint8Array.of(1), left.hash, u64le(left.total), right.hash, u64le(right.total)), total };
+};
 
-/** The Merkle-sum tree the program proves leaves against, with the settlement encoders' leaf and node hashes. */
+/** The Merkle-sum tree the program proves leaves against. */
 export function allocationTree(leaves: ReadonlyArray<Leaf>): { readonly root: Uint8Array; readonly proof: (index: number) => ReadonlyArray<Node> } | undefined {
   if (leaves.length === 0) return undefined;
   const levels: Node[][] = [leaves.map(node)];
-  for (let level = levels[0] as Node[]; level.length > 1; level = levels[levels.length - 1] as Node[]) {
+  for (let level = levels[0]; level.length > 1; level = levels[levels.length - 1]) {
     const next: Node[] = [];
     for (let at = 0; at < level.length; at += 2) {
       const right = level[at + 1];
-      const joined = right === undefined ? level[at] : sumNode(level[at] as Node, right);
+      const joined = right === undefined ? level[at] : sumNode(level[at], right);
       if (joined === undefined) throw new Unrepresentable("the allocation total overflows u64");
-      next.push(joined as Node);
+      next.push(joined);
     }
     levels.push(next);
   }
-  const top = (levels[levels.length - 1] as Node[])[0] as Node;
+  const top = (levels[levels.length - 1])[0];
   return {
-    root: digestBytes(top.hash),
+    root: top.hash,
     proof: (index) => {
       const siblings: Node[] = [];
       let at = index;
@@ -152,7 +159,7 @@ export function allocationTree(leaves: ReadonlyArray<Leaf>): { readonly root: Ui
   };
 }
 
-export const encodeProof = (proof: ReadonlyArray<Node>) => concat(u32le(proof.length), ...proof.map((step) => concat(digestBytes(step.hash), u64le(step.total))));
+export const encodeProof = (proof: ReadonlyArray<Node>) => concat(u32le(proof.length), ...proof.map((step) => concat(step.hash, u64le(step.total))));
 
 export const transferChecked = (program: Address, source: Address, mint: Address, destination: Address, owner: Address, amount: bigint): Instruction => ({
   program,

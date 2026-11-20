@@ -54,7 +54,7 @@ export class Unrepresentable extends Error {}
 
 const solanaRoot = fileURLToPath(new URL("../../solana/", import.meta.url));
 const scratch = join(solanaRoot, ".local");
-export const PROGRAM = JSON.parse(await readFile(join(solanaRoot, "idl", "slop_escrow.json"), "utf8")).address as Address;
+export const PROGRAM = (JSON.parse(await readFile(join(solanaRoot, "idl", "slop_escrow.json"), "utf8")) as { readonly address: Address }).address;
 
 export const utf8 = (text: string) => new TextEncoder().encode(text);
 export const sha256 = (...parts: ReadonlyArray<Uint8Array>): Uint8Array => {
@@ -468,7 +468,7 @@ export async function launch(): Promise<Chain> {
         if (/Blockhash not found/u.test(error.failure.message)) continue;
         throw error;
       }
-      const outcome = await confirmed(base58Encode(signatures[0] as Uint8Array));
+      const outcome = await confirmed(base58Encode(signatures[0]));
       if (outcome !== undefined) return outcome;
     }
     throw new Error("a transaction was neither confirmed nor refused after five attempts");

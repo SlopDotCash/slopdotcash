@@ -173,13 +173,13 @@ export async function observe(chain: Chain, walk: Walk, mints: ReadonlyMap<Addre
   });
   const sources = [...walk.sources];
   const exists = async (addresses: ReadonlyArray<Address>) => (await chain.accounts(addresses)).map((account) => account !== undefined && account.owner === PROGRAM);
-  const monthlySources = (await exists(sources.map((source) => monthlySourceAddress(address, source)))).flatMap((found, index) => (found ? [sources[index] as number] : []));
+  const monthlySources = (await exists(sources.map((source) => monthlySourceAddress(address, source)))).flatMap((found, index) => (found ? [sources[index]] : []));
   const allocations = await chain.programAccounts(PROGRAM, [discriminated("MonthlyAllocation"), ofProject(address, 8)]);
   const months: ObservedMonth[] = [];
   for (const { data } of allocations) {
     const period = readU32(data, 40);
     const root = base58Encode(data.slice(44, 76));
-    const settled = (await exists(sources.map((source) => settledAddress(monthAddress(address, period), source)))).flatMap((found, index) => (found ? [sources[index] as number] : []));
+    const settled = (await exists(sources.map((source) => settledAddress(monthAddress(address, period), source)))).flatMap((found, index) => (found ? [sources[index]] : []));
     const committed = count(readU64(data, 76));
     const total = count(readU64(data, 84));
     const released = count(readU64(data, 92));
@@ -201,7 +201,7 @@ export async function observe(chain: Chain, walk: Walk, mints: ReadonlyMap<Addre
     const version = count(readU64(data, 144));
     bindings.push({
       actor, network: wordName(data.slice(80, 112)), authority: name(keyAt(data, 40)), destination: name(keyAt(data, 112)), claim, version,
-      boundAt: count(readI64(data, 152)), paidVersion: count(readU64(data, 160)), vetoes: data[168] as number,
+      boundAt: count(readI64(data, 152)), paidVersion: count(readU64(data, 160)), vetoes: data[168],
     });
     const versions = Array.from({ length: version }, (_, index) => index + 1);
     const vetoed = await exists(versions.map((v) => vetoAddress(address, actor, v)));
