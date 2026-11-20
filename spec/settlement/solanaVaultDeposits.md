@@ -42,7 +42,7 @@ pure val idleRun: SolanaRun = { active: false, startPosition: 0, top: 0, cursorA
 pure val initial: SolanaDeposits = { newest: 1, position: 0, pending: 0, resume: 0, seen: Set(), recorded: Set(),
   first: idleRun, second: idleRun }
 pure def runOf(d: SolanaDeposits, slot: int): SolanaRun = if (slot == 1) d.first else d.second
-pure def withRun(d: SolanaDeposits, slot: int, r: SolanaRun): SolanaDeposits =
+pure def withRun(slot: int, d: SolanaDeposits, r: SolanaRun): SolanaDeposits =
   if (slot == 1) { ...d, first: r } else { ...d, second: r }
 pure def pageFrom(d: SolanaDeposits): int = if (d.resume > 0) d.resume - 1 else d.newest
 pure def captured(d: SolanaDeposits): SolanaRun =
@@ -54,24 +54,24 @@ pure def captured(d: SolanaDeposits): SolanaRun =
 pure def canArrive(d: SolanaDeposits, by: str): bool = by == chain and d.newest < 4
 pure def arrive(d: SolanaDeposits, by: str): SolanaDeposits = { ...d, newest: d.newest + 1 }
 pure def canStartRun(d: SolanaDeposits, slot: int, by: str): bool = by == worker and (slot == 1 or slot == 2) and not(runOf(d, slot).active)
-pure def startRun(d: SolanaDeposits, slot: int, by: str): SolanaDeposits = withRun(d, slot, captured(d))
+pure def startRun(d: SolanaDeposits, slot: int, by: str): SolanaDeposits = withRun(slot, d, captured(d))
 pure def canReadTransaction(d: SolanaDeposits, slot: int, by: str): bool =
   by == worker and (slot == 1 or slot == 2) and runOf(d, slot).active and runOf(d, slot).remaining > 0
 pure def readTransaction(d: SolanaDeposits, slot: int, by: str): SolanaDeposits =
   val r = runOf(d, slot)
   val stored = { ...d, seen: d.seen.union(Set(r.cursorAt)), recorded: d.recorded.union(depositTransactions.filter(t => t == r.cursorAt)) }
   if (d.position == r.startPosition)
-    withRun({ ...stored, pending: r.top, resume: r.cursorAt }, slot, { ...r, cursorAt: r.cursorAt - 1, remaining: r.remaining - 1 })
-  else withRun(stored, slot, idleRun)
+    withRun(slot, { ...stored, pending: r.top, resume: r.cursorAt }, { ...r, cursorAt: r.cursorAt - 1, remaining: r.remaining - 1 })
+  else withRun(slot, stored, idleRun)
 pure def canFailRun(d: SolanaDeposits, slot: int, by: str): bool = by == worker and (slot == 1 or slot == 2) and runOf(d, slot).active
-pure def failRun(d: SolanaDeposits, slot: int, by: str): SolanaDeposits = withRun(d, slot, idleRun)
+pure def failRun(d: SolanaDeposits, slot: int, by: str): SolanaDeposits = withRun(slot, d, idleRun)
 pure def canFinishRun(d: SolanaDeposits, slot: int, by: str): bool =
   by == worker and (slot == 1 or slot == 2) and runOf(d, slot).active and runOf(d, slot).remaining == 0
 pure def finishRun(d: SolanaDeposits, slot: int, by: str): SolanaDeposits =
   val r = runOf(d, slot)
   val finished = if (r.shortPage and d.position == r.startPosition)
     { ...d, position: if (r.top > 0) r.top else d.position, pending: 0, resume: 0 } else d
-  withRun(finished, slot, idleRun)
+  withRun(slot, finished, idleRun)
 ```
 
 ### Rules
@@ -95,6 +95,7 @@ pure def sometimesAllCovered(d: SolanaDeposits): bool = d.position == 4 and d.pe
 pure def sometimesIntervalOpen(d: SolanaDeposits): bool = d.pending > 0 and d.recorded.size() == 1
 pure def sometimesOvertakenRunStopped(d: SolanaDeposits): bool = d.first.active and d.first.startPosition < d.position
 pure val slotValues = Set(1, 2)
+pure val rValues = Set(idleRun, { active: true, startPosition: 0, top: 2, cursorAt: 2, remaining: 2, shortPage: true })
 pure val byValues = Set(worker, chain)
 pure val weight_readTransaction = 3
 pure val weight_finishRun = 2

@@ -69,7 +69,7 @@ pure val idleRun: Run = { active: false, fromBlock: 0, toBlock: 0 }
 pure val initial: EvmDeposits = { purpose: OrdinaryVault, chainMatches: true, finalized: 1, cursor: 0, recorded: Set(),
   first: idleRun, second: idleRun }
 pure def runOf(v: EvmDeposits, slot: int): Run = if (slot == 1) v.first else v.second
-pure def withRun(v: EvmDeposits, slot: int, r: Run): EvmDeposits = if (slot == 1) { ...v, first: r } else { ...v, second: r }
+pure def withRun(slot: int, v: EvmDeposits, r: Run): EvmDeposits = if (slot == 1) { ...v, first: r } else { ...v, second: r }
 pure def canFinalize(v: EvmDeposits, by: str): bool = by == chain and v.finalized < 6
 pure def finalize(v: EvmDeposits, by: str): EvmDeposits = { ...v, finalized: v.finalized + 1 }
 pure def canObserveChain(v: EvmDeposits, matches: bool, by: str): bool = by == worker and matches != v.chainMatches
@@ -77,15 +77,15 @@ pure def observeChain(v: EvmDeposits, matches: bool, by: str): EvmDeposits = { .
 pure def canStartPage(v: EvmDeposits, slot: int, by: str): bool = by == worker and (slot == 1 or slot == 2)
   and not(runOf(v, slot).active) and v.chainMatches and v.purpose == OrdinaryVault and v.cursor < v.finalized
 pure def startPage(v: EvmDeposits, slot: int, by: str): EvmDeposits =
-  withRun(v, slot, { active: true, fromBlock: v.cursor + 1,
+  withRun(slot, v, { active: true, fromBlock: v.cursor + 1,
     toBlock: if (v.cursor + pageBlocks < v.finalized) v.cursor + pageBlocks else v.finalized })
 pure def canCompletePage(v: EvmDeposits, slot: int, by: str): bool = by == worker and (slot == 1 or slot == 2) and runOf(v, slot).active
 pure def completePage(v: EvmDeposits, slot: int, by: str): EvmDeposits =
   val r = runOf(v, slot)
-  withRun({ ...v, recorded: v.recorded.union(chainDepositBlocks.filter(b => b >= r.fromBlock and b <= r.toBlock)),
-    cursor: if (r.toBlock > v.cursor) r.toBlock else v.cursor }, slot, idleRun)
+  withRun(slot, { ...v, recorded: v.recorded.union(chainDepositBlocks.filter(b => b >= r.fromBlock and b <= r.toBlock)),
+    cursor: if (r.toBlock > v.cursor) r.toBlock else v.cursor }, idleRun)
 pure def canFailPage(v: EvmDeposits, slot: int, by: str): bool = canCompletePage(v, slot, by)
-pure def failPage(v: EvmDeposits, slot: int, by: str): EvmDeposits = withRun(v, slot, idleRun)
+pure def failPage(v: EvmDeposits, slot: int, by: str): EvmDeposits = withRun(slot, v, idleRun)
 ```
 
 ### Rules
