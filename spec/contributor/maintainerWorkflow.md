@@ -210,7 +210,7 @@ pure def prepare(s: MaintainerSession, by: int, act: SiteAction): MaintainerSess
 pure def alwaysNoPolicyActionApplied(s: MaintainerSession): bool =
   s.applied.every(a => not(policyAction(a)))
 pure def alwaysAppliedServesTheTask(s: MaintainerSession): bool = s.applied.every(a => siteServes(s.task, a))
-pure def alwaysWithoutBrowserNothingApplied(s: MaintainerSession): bool = not(s.browser) implies s.applied == List()
+pure def alwaysWithoutBrowserNothingApplied(s: MaintainerSession): bool = not(s.browser) implies s.applied.length() == 0
 pure def stepDecisionRecordedOnlyWhenGiven(before: MaintainerSession, after: MaintainerSession): bool =
   (after.applied.length() > before.applied.length() and after.applied.nthOr(after.applied.length() - 1, ReadCase) == RecordDecision)
     implies before.decisions.length() > 0
@@ -222,9 +222,9 @@ pure def stepNoActionWhileUncertain(before: MaintainerSession, via: str, after: 
 pure def sometimesSetupCheckApplied(s: MaintainerSession): bool = s.applied.some(x => x == RunSetupCheck)
 pure def sometimesUncertainReadBackApplied(s: MaintainerSession): bool = s.readBacks > 0 and s.applied.length() > 0
 pure def sometimesDecisionRecorded(s: MaintainerSession): bool = s.applied.some(x => x == RecordDecision)
-pure def sometimesPreparedWithoutBrowser(s: MaintainerSession): bool = s.prepared.length() > 0 and s.applied == List()
+pure def sometimesPreparedWithoutBrowser(s: MaintainerSession): bool = s.prepared.length() > 0 and s.applied.length() == 0
 pure def sometimesRefusedWithoutHumanDecision(s: MaintainerSession): bool =
-  s.task == ManageCases and s.refused > 0 and s.decisions == List()
+  s.task == ManageCases and s.refused > 0 and s.decisions.length() == 0
 ```
 
 ### Repository work needs current write access, and a review or CI request never authorizes a merge or release
