@@ -7,7 +7,7 @@
   "sources": [
     {
       "path": ".github/workflows/asi-november-closeout.yml",
-      "sha256": "81ab953818e43c80c027d4055482158e5670b0118bc8f935c40db83d5bd53a53",
+      "sha256": "c90c3fa1546671f3d7aefb71b8eb279b9f9e1452653b2369a999f59080fc3e00",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4397,12 +4397,12 @@
     },
     {
       "path": "scripts/guarded-monthly-import.ts",
-      "sha256": "a6249fc62d0b1f622abc677b96fcb8379777fe900bbf6b8fcc0178466991c9b6",
+      "sha256": "8ee097d5e8d19b8217a31d71a4bf733e7343c3c23fbddcb1810a17071553c8fb",
       "models": [
         "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
-      "candidateLines": [15, 70],
+      "candidateLines": [15, 83],
       "review": "mapped-abstraction"
     },
     {
@@ -4654,9 +4654,9 @@
     },
     {
       "path": "scripts/prepare-asi-november-closeout.ts",
-      "sha256": "dee473bc1ac27f57edc1e3d363d17eaa1c461f5985f5b771039333de922dbd16",
+      "sha256": "a98b9c083ee51bb48b3ecf351e2bbff8a1452ee5123432929a6a4ae26ec0b74e",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
-      "candidateLines": [1, 159, 160, 161, 259],
+      "candidateLines": [1, 189, 190, 191, 272],
       "review": "mapped-abstraction"
     },
     {
@@ -5150,9 +5150,9 @@
     },
     {
       "path": "scripts/run-asi-november-closeout.ts",
-      "sha256": "89d57bec11fe11985ea7613dc636067a86597efe221453601d180986366bbb47",
+      "sha256": "3de3486a16f62feeae7ee43ef77311292a818c177112b2d70d89232f0ee8a1a8",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
-      "candidateLines": [2, 135, 185],
+      "candidateLines": [2, 160, 185, 242],
       "review": "mapped-abstraction"
     },
     {
@@ -6283,9 +6283,9 @@
     },
     {
       "path": "src/ReportProofFields.tsx",
-      "sha256": "3f3362588a5526e0c73a7486bcdcf00211798439c4080cace3a3f9e741ee4fb1",
+      "sha256": "c83eaef4185934ca4e77280cbafdb6fd31c282c3f72324ccb55263696253cb23",
       "models": ["formal/models/ui/ui_private_intake.qnt"],
-      "candidateLines": [2, 86, 133, 215],
+      "candidateLines": [2, 87, 134, 216],
       "review": "mapped-abstraction"
     },
     {
