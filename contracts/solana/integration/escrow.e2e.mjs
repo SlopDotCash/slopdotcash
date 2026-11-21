@@ -7,12 +7,14 @@ import anchor from "@coral-xyz/anchor";
 import {
   AuthorityType,
   createAccount,
+  createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   createMint,
   createSetAuthorityInstruction,
   createTransferInstruction,
   freezeAccount,
   getAccount,
+  getAssociatedTokenAddressSync,
   mintTo,
   setAuthority,
   TOKEN_PROGRAM_ID,
@@ -3584,7 +3586,12 @@ test("vault totals refuse a vault holding less than free, reserved and accrued f
   );
 });
 
-async function verifyClosedPayout(changedPreOwner) {
+// mode: `closed` (open before, closed after), `changed-owner` (its owner changed before
+// the payout and back for it) or `created` (created, paid, emptied and closed in one
+// transaction, so it is in neither token balance list).
+async function verifyClosedPayout(mode) {
+  const changedPreOwner = mode === "changed-owner";
+  const created = mode === "created";
   await ensureConfig(program);
   const closingRecipient = Keypair.generate();
   const priorOwner = Keypair.generate();
@@ -3601,12 +3608,14 @@ async function verifyClosedPayout(changedPreOwner) {
     closingMint,
     payer.publicKey,
   );
-  const closingDestination = await createAccount(
-    provider.connection,
-    payer,
-    closingMint,
-    closingRecipient.publicKey,
-  );
+  const closingDestination = created
+    ? getAssociatedTokenAddressSync(closingMint, closingRecipient.publicKey)
+    : await createAccount(
+        provider.connection,
+        payer,
+        closingMint,
+        closingRecipient.publicKey,
+      );
   await mintTo(
     provider.connection,
     payer,
@@ -3618,7 +3627,7 @@ async function verifyClosedPayout(changedPreOwner) {
   const closingProject = pda(
     seed("project"),
     key(payer.publicKey),
-    Buffer.from(hash(`closed-account:${changedPreOwner}:${RUN}`)),
+    Buffer.from(hash(`closed-account:${mode}:${RUN}`)),
     purposeSeed(),
   );
   const closingVault = pda(seed("vault"), key(closingProject));
@@ -3649,7 +3658,7 @@ async function verifyClosedPayout(changedPreOwner) {
   );
   await program.methods
     .initialize(
-      hash(`closed-account:${changedPreOwner}:${RUN}`),
+      hash(`closed-account:${mode}:${RUN}`),
       network,
       authority.publicKey,
       feeOwner.publicKey,
@@ -3726,6 +3735,16 @@ async function verifyClosedPayout(changedPreOwner) {
   const signature = await sendAndConfirmTransaction(
     provider.connection,
     new Transaction().add(
+      ...(created
+        ? [
+            createAssociatedTokenAccountIdempotentInstruction(
+              payer.publicKey,
+              closingDestination,
+              closingRecipient.publicKey,
+              closingMint,
+            ),
+          ]
+        : []),
       ...(changedPreOwner
         ? [
             createSetAuthorityInstruction(
@@ -3780,7 +3799,9 @@ async function verifyClosedPayout(changedPreOwner) {
     transaction.meta.preTokenBalances.find(
       (entry) => entry.accountIndex === destinationIndex,
     )?.owner,
-    (changedPreOwner ? priorOwner : closingRecipient).publicKey.toBase58(),
+    created
+      ? undefined
+      : (changedPreOwner ? priorOwner : closingRecipient).publicKey.toBase58(),
   );
   const [payment] = escrowInvocations(
     transaction,
@@ -3809,14 +3830,16 @@ async function verifyClosedPayout(changedPreOwner) {
     kind: "paid",
     obligationId: closingAward.toString("hex"),
   });
-  if (changedPreOwner)
-    await assert.rejects(verified, /Payout account balance missing/);
-  else
-    assert.equal(
-      (await verified).destination,
-      closingRecipient.publicKey.toBase58(),
-    );
+  // The program paid only the bound wallet's associated account, so each shape names
+  // that wallet whatever the token balance lists hold.
+  assert.equal(
+    (await verified).destination,
+    closingRecipient.publicKey.toBase58(),
+  );
 }
-for (const changedPreOwner of [false, true])
-  test(`payment verification ${changedPreOwner ? "refuses a different pre-owner on a closed payout account" : "handles a destination token account closed in the payout transaction"}`, () =>
-    verifyClosedPayout(changedPreOwner));
+for (const [mode, name] of [
+  ["closed", "a destination token account closed in the payout transaction"],
+  ["changed-owner", "a closed payout account whose owner changed before it"],
+  ["created", "a payout account created and closed in the payout transaction"],
+])
+  test(`payment verification handles ${name}`, () => verifyClosedPayout(mode));
