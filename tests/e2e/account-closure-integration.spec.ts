@@ -501,6 +501,24 @@ for (const withObligations of [false, true])
           },
         );
         expect(startedFlow.status).toBe(201);
+        // The flow is bound to the browser that started it; this tab is that
+        // browser, so it holds the binding cookie the start response set.
+        const [bindingName, bindingValue] = (
+          startedFlow.headers.getSetCookie()[0] ?? ""
+        )
+          .split(";")[0]
+          .split("=");
+        expect(bindingName).toMatch(/^__Host-slop_oauth_bind_flow_/u);
+        await context.addCookies([
+          {
+            name: bindingName,
+            value: bindingValue,
+            url: IDENTITY,
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+          },
+        ]);
         const flow = (await startedFlow.json()) as { authorizationUrl: string };
         interactiveGitHub = false;
         const callback = manual.waitForResponse(

@@ -3810,6 +3810,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0146_identity_browser_binding.sql",
+      "sha256": "7536791052306fb43a08b638ca49cc9890cddf21c3cf5358bf4344c2ee7db9f8",
+      "models": ["formal/models/api/identity_browser_binding.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -5504,9 +5511,9 @@
     },
     {
       "path": "scripts/verify-staging-backend.mjs",
-      "sha256": "7a556198be80671f88212e863839f3b80739e0ac4f6a80099d9403a89ea4838e",
+      "sha256": "81fc45b842c2fd70323ad5b5850c3bbb6130ef359f69b9223cb33c1947e78519",
       "models": ["formal/models/release/deployment_probe.qnt"],
-      "candidateLines": [15, 18, 27, 42, 50, 53, 54, 57, 61, 64],
+      "candidateLines": [19, 22, 45, 53, 70, 78, 81, 82, 85, 89, 92],
       "review": "mapped-abstraction"
     },
     {
@@ -6061,7 +6068,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "c6e84297a4f51b35af810c8991e6adb1da9755ca3a679b2937fea0373b11cec2",
+      "sha256": "f2611be86e5e7fa19048783839aea2fc0312c9ea588018014589df14c3b76e2c",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -6073,19 +6080,19 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        20, 25, 95, 112, 113, 114, 116, 122, 132, 141, 144, 152, 153, 155, 156,
-        172, 174, 224, 225, 226, 229, 230, 231, 232, 249, 255, 262, 270, 280,
-        287, 294, 308, 328, 345, 364, 365, 370, 394, 397, 398, 399, 400, 401,
-        403, 404, 421, 503, 504, 505, 507, 509, 510, 517, 518, 532, 534, 536,
-        538, 540, 543, 544, 548, 550, 552, 562, 563, 568, 570, 582, 583, 610,
-        614, 615, 625, 626, 637, 639, 646, 647, 666, 672, 698, 699, 700, 701,
-        704, 714, 739, 786, 799, 804, 813, 879, 899, 905, 914, 920, 925, 927,
-        930, 936, 937, 948, 957, 965, 967, 976, 979, 980, 981, 982, 984, 985,
-        988, 989, 1000, 1033, 1037, 1080, 1081, 1151, 1161, 1166, 1184, 1186,
-        1188, 1191, 1192, 1193, 1195, 1263, 1267, 1369, 1370, 1371, 1401, 1402,
-        1443, 1444, 1445, 1447, 1454, 1456, 1460, 1462, 1464, 1473, 1474, 1480,
-        1486, 1491, 1500, 1501, 1502, 1503, 1506, 1507, 1509, 1514, 1515, 1518,
-        1519, 1521, 1527, 1533, 1534, 1535, 1536, 1539, 1540, 1548, 1560
+        20, 25, 95, 112, 113, 114, 116, 122, 132, 141, 144, 152, 155, 157, 159,
+        160, 176, 178, 228, 229, 230, 233, 234, 235, 236, 253, 259, 266, 274,
+        284, 291, 298, 312, 332, 349, 368, 369, 374, 398, 401, 402, 403, 404,
+        405, 407, 408, 425, 507, 508, 509, 511, 513, 514, 521, 522, 536, 538,
+        540, 542, 544, 547, 548, 552, 554, 556, 566, 567, 572, 574, 586, 587,
+        614, 618, 619, 629, 630, 641, 643, 650, 651, 670, 676, 702, 703, 704,
+        705, 708, 718, 743, 792, 805, 810, 819, 885, 905, 911, 920, 926, 931,
+        933, 936, 942, 943, 954, 963, 971, 973, 982, 985, 986, 987, 988, 990,
+        991, 994, 995, 1006, 1039, 1043, 1086, 1087, 1157, 1167, 1172, 1190,
+        1192, 1194, 1197, 1198, 1199, 1201, 1269, 1273, 1375, 1376, 1377, 1407,
+        1408, 1449, 1450, 1451, 1453, 1460, 1462, 1466, 1468, 1470, 1479, 1480,
+        1486, 1492, 1497, 1506, 1507, 1508, 1509, 1512, 1513, 1515, 1520, 1521,
+        1524, 1525, 1527, 1533, 1539, 1540, 1541, 1542, 1545, 1546, 1554, 1566
       ],
       "review": "mapped-abstraction"
     },
@@ -6889,12 +6896,13 @@
     },
     {
       "path": "src/lib/identity-flow.ts",
-      "sha256": "13eb3a2af6ea663007783f1050975aaf34ee6fd5aea728a5d7a180eb30f45bd5",
+      "sha256": "757ffb5ad4c195e0e9e70b6a7293f16bcd59f157db069229946427bf80e8bc7f",
       "models": [
+        "formal/models/api/identity_browser_binding.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_session.qnt"
       ],
-      "candidateLines": [38, 59, 107, 135, 146, 147],
+      "candidateLines": [38, 59, 110, 138, 149, 150],
       "review": "mapped-abstraction"
     },
     {
@@ -8606,7 +8614,7 @@
     },
     {
       "path": "workers/identity/contracts.ts",
-      "sha256": "dde2a8dcbd24ae9ca089f8e05d848858469ed5e391263f8d7134e1abfcf7c01b",
+      "sha256": "236551d81b314c780dc61a171d6329ce2994dcc4fb930bf7cb2e0a075bec4bab",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
@@ -8627,19 +8635,20 @@
     },
     {
       "path": "workers/identity/handler.ts",
-      "sha256": "6beaf39a8dc09d936b7a73807c8dca50f4db3697ef2ed7917dc4f4f6e373b244",
+      "sha256": "586026bd6a20d68c51fea2d511e3dea2f8a3df54753c8c13dad43288e37a76b2",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/github_identity_exchange.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
+        "formal/models/api/identity_browser_binding.qnt",
         "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/pr_review_signin.qnt",
         "formal/models/tooling/dev_identity_bridge.qnt"
       ],
       "candidateLines": [
-        58, 60, 87, 93, 104, 108, 114, 115, 116, 191, 205, 210, 222, 238, 239,
-        244, 266, 274, 276, 284, 291, 293, 304, 430, 432, 435, 438, 441, 458,
-        504, 630, 668
+        59, 61, 88, 94, 105, 109, 115, 116, 117, 231, 245, 250, 264, 286, 287,
+        292, 321, 329, 331, 339, 346, 348, 359, 498, 500, 503, 506, 509, 526,
+        572, 703, 741
       ],
       "review": "mapped-abstraction"
     },
@@ -8662,18 +8671,19 @@
     },
     {
       "path": "workers/identity/persistence.ts",
-      "sha256": "8897e7283e2d1861fb1490f4854d0e7c0e863a662d895b02dc82b1edad8f5b1f",
+      "sha256": "dff62d86b2d4b7aed1093c972b272a14502bd2bd6c947ced5c1e98b9cc8bbea3",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
+        "formal/models/api/identity_browser_binding.qnt",
         "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/identity_scheduled_maintenance.qnt",
         "formal/models/tooling/dev_identity_bridge.qnt"
       ],
       "candidateLines": [
-        17, 46, 77, 79, 90, 109, 123, 130, 131, 132, 148, 149, 151, 169, 170,
-        198, 202, 208, 248, 249, 250, 264, 275, 279, 283, 287, 291
+        17, 47, 79, 81, 93, 113, 127, 134, 135, 136, 152, 153, 155, 173, 174,
+        202, 206, 212, 252, 253, 254, 268, 279, 283, 287, 291, 295
       ],
       "review": "mapped-abstraction"
     },
@@ -11978,6 +11988,22 @@
         "wrongAudienceDoesNotConsumeTest",
         "wrongPollModeCannotIssueTest",
         "wrongTokenDoesNotTouchAssertionTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/identity_browser_binding.qnt",
+      "sha256": "e7824fa3103c2ccd387fb2e54f408735ca908897db0d7408b5fc959dcc80cf49",
+      "sources": [
+        "migrations/0146_identity_browser_binding.sql",
+        "src/lib/identity-flow.ts",
+        "workers/identity/handler.ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "otherBrowserCannotAuthorizeTest",
+        "otherPollerGetsNothingTest",
+        "starterCompletesTest",
+        "terminalFlowStaysUnboundTest"
       ]
     },
     {
