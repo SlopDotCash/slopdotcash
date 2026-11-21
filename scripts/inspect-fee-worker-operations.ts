@@ -1,6 +1,7 @@
 /** Fixed read-only fee diagnostics. Raw tail messages never leave memory. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { sanitizeProviderFailure } from "../workers/fee-converter/core";
 import { inspectFeeWorkerBindings } from "./inspect-fee-worker-bindings";
 
 const worker = "slop-fee-converter";
@@ -158,6 +159,13 @@ export function sanitizeFeeTail(value: any) {
         row.errorCategory = feeErrorCategory(reason);
         const method = feeRpcMethod(reason);
         if (method) row.rpcMethod = method;
+      }
+      if (
+        event.event === "fee_claim_error" ||
+        event.event === "fee_conversion_error"
+      ) {
+        const failure = sanitizeProviderFailure(event.providerFailure);
+        if (failure) row.providerFailure = failure;
       }
       if (event.event === "fee_converter_run") {
         row.trigger =
