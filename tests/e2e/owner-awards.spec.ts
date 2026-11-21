@@ -7,7 +7,13 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { archivedPaidCycleIndex } from "../fixtures";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import { enlargeText } from "../text-size";
-import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
+import {
+  escapeRegExp,
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 import {
   holdProjectSessionUntilUnmount,
   leaveEditorWithHeldSession,
@@ -526,6 +532,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   page,
 }, info) => {
   const project = projectWithVault();
+  await servePublicProjectReads(page);
   await page.clock.setFixedTime(new Date("2026-10-02T12:00:00Z"));
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
@@ -649,7 +656,18 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect.poll(() => checkStarted).toBe(true);
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  // Finish the home's independent funding read before returning. Only the
+  // reserve verification is deliberately left pending across navigation.
+  const [funding] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === "/api/v1/pool-funding",
+    ),
+    page.getByRole("link", { name: "Slop home", exact: true }).click(),
+  ]);
+  expect(funding.ok()).toBe(true);
+  expect(await funding.finished()).toBeNull();
   await expect(details).toHaveCount(0);
   await page.goBack();
   await details.locator("summary").click();
