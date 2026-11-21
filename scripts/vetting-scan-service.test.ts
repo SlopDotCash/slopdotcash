@@ -738,6 +738,31 @@ test("gzip source passes the normal scan with its complete compressed evidence r
   expect(await retained.evidence.retained(result)).toBe(true);
 });
 
+test("a well-formed image is listed by digest and the scan clears admission with its evidence retained", async () => {
+  // A complete 1x1 PNG: signature, IHDR, IDAT and IEND with valid CRCs.
+  const png = Uint8Array.from(
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  await commit({ "assets/logo.png": png }, "Add a logo");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "clean",
+    outcome: "accepted",
+    evidence: "retained",
+  });
+  const result = (await vetting.getAssessment(pass.assessments[0].assessmentId))
+    ?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing image result");
+  expect(result.disposition).toBe("clean");
+  expect(result.artifacts).toEqual([]);
+  expect(await retained.evidence.retained(result)).toBe(true);
+  expect((await activate()).status).toBe(200);
+});
+
 test("gzip native payload retains both exact objects and cannot clear admission", async () => {
   const native = new Uint8Array([0x4d, 0x5a, 0, 0, 1, 2, 3, 4]);
   const compressed = new Uint8Array(gzipSync(native));

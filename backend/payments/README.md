@@ -270,8 +270,10 @@ newest first. Each page's rows and its cursor are one atomic write. It never
 throws: a failed read is logged by error name and retried on the next run,
 and it cannot fail or delay a payout step. Private bounty vaults are skipped.
 A depositor is named by GitHub login only when exactly one public, open Slop
-account currently has that address registered. The list is display evidence;
-no balance, funded month or payment reads it.
+account currently has that address registered and the wallet signed that
+registration (`payment_wallet_authorizations`); an unsigned registration
+neither names a depositor nor hides one. The list is display evidence; no
+balance, funded month or payment reads it.
 
 `GET /api/v1/payments/projects/<id>/vault` serves these rows with
 `staleAfterMs` (30 minutes). A page view reads D1 or the edge cache
