@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "bcf4b2841e6f1cfdc9d1bb4b610744945be7b91ebc3c4bf64bf0e257bb9a174c",
+  "inventorySha256": "5036fce9bebe88be5fd9725849b971a113450c6c9b793a8a6c6488d3929fce6a",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2697,7 +2697,7 @@
     },
     {
       "path": "scripts/run-asi-november-closeout.ts",
-      "line": 38,
+      "line": 39,
       "name": "mode",
       "kind": "string-union",
       "values": ["preflight", "readback"],
@@ -2869,7 +2869,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 522,
+      "line": 532,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2897,7 +2897,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1271,
+      "line": 1281,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -3128,7 +3128,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1174,
+      "line": 1213,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -3147,6 +3147,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
@@ -3155,7 +3156,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1669,
+      "line": 1712,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -3174,6 +3175,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
@@ -3182,7 +3184,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2675,
+      "line": 2730,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -3201,6 +3203,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
@@ -3209,7 +3212,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2680,
+      "line": 2735,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3228,6 +3231,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
@@ -3236,7 +3240,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2687,
+      "line": 2742,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3255,6 +3259,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
@@ -3263,7 +3268,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2690,
+      "line": 2745,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3282,6 +3287,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
@@ -3290,7 +3296,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 373,
+      "line": 387,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -3305,6 +3311,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3318,7 +3325,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1089,
+      "line": 1190,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3333,6 +3340,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3346,7 +3354,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1104,
+      "line": 1205,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3361,6 +3369,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3374,7 +3383,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1106,
+      "line": 1207,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -3389,6 +3398,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3402,7 +3412,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1122,
+      "line": 1223,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -3417,6 +3427,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3430,7 +3441,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1161,
+      "line": 1262,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3459,6 +3470,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3486,7 +3498,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1523,
+      "line": 1626,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3501,6 +3513,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -3514,7 +3527,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1768,
+      "line": 1874,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -3529,6 +3542,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_report_deposit.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
@@ -4138,6 +4152,23 @@
       "values": ["ready", "stale", "unknown"],
       "models": ["formal/models/referrals/referral_claim_review.qnt"],
       "lexicallyUnmentionedValues": ["ready", "stale"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/report-deposit-page.ts",
+      "line": 146,
+      "name": "ReportDepositState",
+      "kind": "string-union",
+      "values": [
+        "kept",
+        "kept_due",
+        "needed",
+        "paid",
+        "refund_due",
+        "refunded"
+      ],
+      "models": ["formal/models/ui/ui_report_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -5061,12 +5092,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 106,
+      "line": 118,
       "name": "SendState",
       "kind": "string-union",
       "values": ["failed", "finalized", "recorded", "submitted", "unknown"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -5074,12 +5106,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 120,
+      "line": 132,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -5087,12 +5120,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 152,
+      "line": 164,
       "name": "ParkReason",
       "kind": "string-union",
       "values": ["payout_failed", "reverted_alone"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["payout_failed", "reverted_alone"],
@@ -5100,12 +5134,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 155,
+      "line": 167,
       "name": "ProbeResult",
       "kind": "string-union",
       "values": ["ok", "payout_failed", "reverted"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["ok", "payout_failed"],
@@ -5113,12 +5148,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 215,
+      "line": 227,
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -5126,12 +5162,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 257,
+      "line": 287,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -5139,12 +5176,13 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 413,
+      "line": 443,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["chain_mismatch", "ran"],
@@ -5152,7 +5190,7 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 58,
+      "line": 60,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5165,13 +5203,14 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 108,
+      "line": 141,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -5179,13 +5218,14 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 531,
+      "line": 688,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
