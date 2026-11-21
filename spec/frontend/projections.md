@@ -191,12 +191,12 @@ pure def fundingPresentation(funding: FundingObservation): U::Presentation =
   else U::shown(D::Positive, U::Check, "Funded")
 pure def lawOnlyPaidLooksSettled(settlement: PaymentDisplay): bool =
   paymentPresentation(settlement).tone == D::Positive iff settlement == PaidPayment
-pure def lawPaymentStatesAreDistinguishable(a: PaymentDisplay, b: PaymentDisplay): bool =
-  a != b implies U::distinguishable(paymentPresentation(a), paymentPresentation(b))
-pure def lawAwardStatesAreDistinguishable(a: AwardDecision, b: AwardDecision): bool =
-  a != b implies U::distinguishable(awardPresentation(a), awardPresentation(b))
-pure def lawFundingStatesAreDistinguishable(a: FundingObservation, b: FundingObservation): bool =
-  a != b implies U::distinguishable(fundingPresentation(a), fundingPresentation(b))
+pure def lawPaymentStatesAreDistinguishable(one: PaymentDisplay, other: PaymentDisplay): bool =
+  one != other implies U::distinguishable(paymentPresentation(one), paymentPresentation(other))
+pure def lawAwardStatesAreDistinguishable(one: AwardDecision, other: AwardDecision): bool =
+  one != other implies U::distinguishable(awardPresentation(one), awardPresentation(other))
+pure def lawFundingStatesAreDistinguishable(one: FundingObservation, other: FundingObservation): bool =
+  one != other implies U::distinguishable(fundingPresentation(one), fundingPresentation(other))
 ```
 
 ## Story: Read Points standings with equal ranks for equal totals
