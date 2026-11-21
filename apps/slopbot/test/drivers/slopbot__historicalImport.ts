@@ -16,7 +16,7 @@ import { Enforcement, type Restriction } from "@repo/ports/security";
 import type { Driver, Options } from "../../gen/slopbot__historicalImport.conformance.ts";
 import type { Channel, Event, ImportRequest, ImportSource, ImportedRecord, Imports, Producer } from "../../gen/slopbot__historicalImport.ts";
 import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.ts";
-import { type AdmittedImport, HistoricalPublication, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
+import { type Admit, type AdmittedImport, HistoricalPublication, type PreparedFacts, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
 import { type Numbered, deliver, installationState } from "../../src/installation/store.vibe";
 import { appendValueRecord } from "../../src/value/history/store.vibe";
 
@@ -252,13 +252,27 @@ const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
 
 type Base = Layer.Success<typeof webCrypto> | D1 | Registry;
 
+// The publication prepares the work-unit evidence; the driver's evidence is the model request's own limitation and
+// claim counts and each source's indirect acceptance and claims.
+let submitted: ImportRequest | undefined;
+
+function preparedOf(admitted: AdmittedImport): PreparedFacts | undefined {
+  const request = submitted;
+  if (request === undefined || admitted.mode !== "work-unit") return undefined;
+  return {
+    limitations: request.limitations,
+    claims: request.claims,
+    sources: admitted.sources.map((source, index) => ({ pullRequestNodeId: source.pullRequestNodeId, indirectAcceptance: request.sources[index]?.indirectAcceptance ?? true, claimed: request.sources[index]?.claimed ?? true })),
+  };
+}
+
 const recordingPublication = Layer.effect(HistoricalPublication, Effect.gen(function* () {
   const context = yield* Effect.context<Base>();
   return {
-    publish: (admitted: AdmittedImport) => appendAdmitted(admitted).pipe(
+    publish: (admitted: AdmittedImport, admit: Admit) => admit(preparedOf(admitted)).pipe(
+      Effect.flatMap(() => appendAdmitted(admitted).pipe(Effect.mapError(() => new PublicationFailed()))),
       Effect.tap(() => Effect.sync(() => { published.push(admitted); })),
       Effect.provide(context),
-      Effect.mapError(() => new PublicationFailed()),
     ),
   };
 }));
@@ -314,6 +328,7 @@ async function submit(request: ImportRequest) {
     Layer.provide(recordingPublication, registry),
   );
   published.length = 0;
+  submitted = request;
   const envelope = envelopeOf(request, await heads(request, fake));
   const exit = await runtime.runPromiseExit(Effect.provide(publishSubscription(actorOf(request), envelope, undefined), services));
   const [admitted] = published;

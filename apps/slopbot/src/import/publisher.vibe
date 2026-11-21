@@ -60,17 +60,37 @@ export interface AdmittedImport {
   readonly legacyPredecessors: ReadonlyArray<string>
   readonly revisionReason: string | null
   readonly bundle: Uint8Array | undefined
+  // The import cutoff in seconds; a joint import may also carry later closed, unmerged context sources.
+  readonly cutoff: number
 }
 
+// spec/slopbot/historicalImport.md historicalWork: the prepared work-unit evidence of a joint import, which alone
+// shows its limitations and claims and whether a later source is indirectly accepted or credits, carries or accepts
+// a claim (development historicalSubscriptionWorkUnit).
+export interface PreparedSource {
+  readonly pullRequestNodeId: string
+  readonly indirectAcceptance: boolean
+  readonly claimed: boolean
+}
+
+export interface PreparedFacts {
+  readonly limitations: number
+  readonly claims: number
+  readonly sources: ReadonlyArray<PreparedSource>
+}
+
+export error ImportRefused { reason: string }
+
+// The admission decision a publication runs once its evidence is prepared and before it writes anything.
 export error PublicationFailed
 
 export type PublicationError = PublicationFailed | { readonly _tag: string }
 
-export service HistoricalPublication {
-  publish(admitted: AdmittedImport): typeof ImportReceipt.Type!PublicationError
-}
+export type Admit = (prepared: PreparedFacts | undefined) => void!PublicationError
 
-export error ImportRefused { reason: string }
+export service HistoricalPublication {
+  publish(admitted: AdmittedImport, admit: Admit): typeof ImportReceipt.Type!PublicationError
+}
 
 interface Selection {
   readonly repository: string
@@ -92,7 +112,7 @@ interface Envelope {
   readonly revisionReason: string | null
 }
 
-interface SourceFacts {
+export interface SourceFacts {
   readonly source: ImportSource
   readonly admitted: AdmittedSource
 }
@@ -251,12 +271,10 @@ effect function sourceFacts(selection: Selection, projects: Map<string, number>,
     return { source: { ...known, read: "PullUnreadable", occurredAt: 0, merged: false, indirectAcceptance: false, claimed: false }, admitted: { ...identity, pullRequestNodeId: "" } } satisfies SourceFacts
   }
   const pull = try github.json(`/repos/${selection.repository}/pulls/${selection.number}`, PullFacts, { limitBytes: githubLimitBytes })
-  // Whether a later closed, unmerged source was indirectly accepted, or credits, carries or accepts a claim, is known
-  // only from the prepared work-unit evidence, which admission does not hold. Until it is proven otherwise such a
-  // source is treated as accepted and claimed, so it is never admitted as context.
-  const unproven = pull.merged_at === null
+  // Whether a later closed, unmerged source is indirectly accepted, or credits, carries or accepts a claim, is known
+  // only from the prepared work-unit evidence; the publication supplies it before the decision (preparedRequest).
   return {
-    source: { ...known, read: pull.state === "closed" ? "PullClosed" : "PullOpen", occurredAt: secondsOf(pull.merged_at ?? pull.closed_at), merged: pull.merged_at !== null, indirectAcceptance: unproven, claimed: unproven },
+    source: { ...known, read: pull.state === "closed" ? "PullClosed" : "PullOpen", occurredAt: secondsOf(pull.merged_at ?? pull.closed_at), merged: pull.merged_at !== null, indirectAcceptance: false, claimed: false },
     admitted: { ...identity, pullRequestNodeId: pull.node_id },
   } satisfies SourceFacts
 }
@@ -285,6 +303,21 @@ effect function assessmentKeyOf(envelope: Envelope, revision: string, facts: Rea
 export effect function importsMachine(start: Imports) {
   const held = try Ref.make(start)
   return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+function acceptedBefore(source: ImportSource, cutoff: number) {
+  return source.read === "PullClosed" && source.occurredAt > 0 && source.occurredAt < cutoff
+}
+
+// The request with the prepared evidence's limitation and claim counts, and each source's indirect acceptance and
+// claims read from it.
+export function preparedRequest(request: ImportRequest, facts: ReadonlyArray<SourceFacts>, prepared: PreparedFacts): ImportRequest {
+  const sources = request.sources.map((source, index) => {
+    const node = facts[index]?.admitted.pullRequestNodeId ?? ""
+    const found = prepared.sources.find((entry) => entry.pullRequestNodeId === node)
+    return found === undefined ? { ...source, indirectAcceptance: true, claimed: true } : { ...source, indirectAcceptance: found.indirectAcceptance, claimed: found.claimed }
+  })
+  return { ...request, sources, limitations: prepared.limitations, claims: prepared.claims }
 }
 
 effect function admissionState(install: Installation, cutoff: number, keyStored: boolean, request: ImportRequest) {
@@ -321,8 +354,19 @@ export effect function publishSubscription(administratorGithubId: string, input:
     claims: 0,
   }
   const machine = try importsMachine(try admissionState(install, settings.cutoff, try assessmentKeyStored(assessmentKey), request))
-  const decided = try machine.send({ type: "submit", request })
-  if (decided.last !== "Imported") throw new ImportRefused({ reason: "Historical assessment was refused" })
+  const decide = (decided: ImportRequest) => effect {
+    const state = try machine.send({ type: "submit", request: decided })
+    if (state.last !== "Imported") throw new ImportRefused({ reason: "Historical assessment was refused" })
+  }
+  // A request whose every source was accepted before the cutoff is decided from its GitHub facts alone; a joint
+  // request with a later context source is decided once the publication has prepared its work-unit evidence.
+  const deferred = joint && request.sources.some((source) => !acceptedBefore(source, settings.cutoff))
+  if (!deferred) try decide(request)
+  const admit: Admit = (prepared) => effect {
+    if (!deferred) return
+    if (prepared === undefined) throw new ImportRefused({ reason: "Historical assessment was refused" })
+    try decide(preparedRequest(request, facts, prepared))
+  }
   const receipt = try (try HistoricalPublication).publish({
     mode: envelope.mode,
     installationId: envelope.installationId,
@@ -334,7 +378,8 @@ export effect function publishSubscription(administratorGithubId: string, input:
     legacyPredecessors: envelope.legacyPredecessors,
     revisionReason: envelope.revisionReason,
     bundle,
-  })
+    cutoff: settings.cutoff,
+  }, admit)
   if ((try storedAssessmentKey(receipt.recordDigest)) !== assessmentKey) throw new ImportRefused({ reason: "Published record does not match the admitted assessment" })
   return receipt
 }

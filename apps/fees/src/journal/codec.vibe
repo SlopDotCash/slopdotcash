@@ -183,7 +183,7 @@ schema ReplacementRow { conversion_id: string; tx_id: string; max_fee_per_gas: s
 schema GasRow {
   id: string; run_id: string; fee_wallet: string; nonce: number; maximum_wei: string; state: "reserved" | "signed" | "abandoned"
   tx_id: string | null; conversion_id: string | null; actual_wei: string | null; settled_day: string | null
-  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null
+  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null; imported: 0 | 1
 }
 schema StepRow { tx_id: string; operator: string; revision: number; run_id: string; scan_json: string; observed_at: string }
 schema ProofRow { tx_id: string; run_id: string; proof_json: string; observed_at: string }
@@ -429,7 +429,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   for (const row of gasRows) {
     const label = `fee native gas ${row.id}`
     const state = row.state === "reserved" ? "Reserved" : row.state === "signed" ? "Signed" : "Abandoned"
-    let reservation: Reservation = {
+    const reservation: Reservation = {
       id: 0,
       runId: runOf(row.run_id),
       nonce: row.nonce,
@@ -441,12 +441,10 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
       actual: try native(row.actual_wei, network, label),
       settledDay: row.settled_day === null ? 0 : Math.floor(ms(`${row.settled_day}T00:00:00.000Z`) / dayMs),
       blockhashSlot: state === "Signed" ? row.solana_blockhash_slot ?? 0 : 0,
-      imported: false,
+      // spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case": the
+      // stored import marker of the reservation, written only by importRecorded.
+      imported: row.imported === 1,
     }
-    // spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case": a signed
-    // reservation above the per-transaction ceiling can only be an imported historical send, which the journal
-    // charges at its own worst case outside both ceilings.
-    if (state === "Signed" && reservation.maximum > transactionCeilingOf(network)) reservation = { ...reservation, imported: true }
     if (isForeignGas(row)) {
       foreign.push({ purpose: row.purpose, reservation: { ...reservation, id: foreign.length + 1 } })
       continue

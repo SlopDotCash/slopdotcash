@@ -107,8 +107,9 @@ function appendedKeys(manifest: Manifest, held: ReadonlySet<string>, repository:
 }
 
 // spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project": the exception is the
-// replaced manifest's registry facts, read from the submitted manifest here and never from the client.
-function exceptionFacts(manifest: Manifest, rows: ProjectRows) {
+// replaced manifest's registry facts, read from the submitted manifest and never from the client. The administrator
+// route builds its event from these facts, and trusted reads them again from the stored revision text.
+export function exceptionFacts(manifest: Manifest, rows: ProjectRows) {
   const reward = manifest.reward
   return {
     status: statusOf(manifest.status),

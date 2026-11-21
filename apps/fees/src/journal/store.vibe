@@ -88,7 +88,7 @@ export function aggregate(instance: Instance, names: Names): Aggregate<Journal, 
       sql`SELECT run_id, expires_at, gas_revision FROM fee_converter_locks WHERE network = ${network}`,
       sql`SELECT id, kind, run_id, mode, fee_wallet, token, amount_in, route, min_amount_out, quote_value_micro, json_extract(quote, '$.journal') AS journal, CASE WHEN json_extract(quote, '$.journal') IS NULL AND tx_id IS NOT NULL THEN raw_tx END AS legacy_raw, approval_tx_id, tx_id, evm_nonce, expires_at, amount_out, token_balance_before, state, reason, created_at, submitted_at FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
       sql`SELECT conversion_id, tx_id, max_fee_per_gas, max_priority_fee_per_gas, created_at FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY conversion_id, attempt`,
-      sql`SELECT id, run_id, fee_wallet, nonce, maximum_wei, state, tx_id, conversion_id, actual_wei, settled_day, solana_blockhash_slot, purpose, created_at, intent_hash, solana_account_proof FROM fee_native_gas WHERE ${scope} ORDER BY rowid`,
+      sql`SELECT id, run_id, fee_wallet, nonce, maximum_wei, state, tx_id, conversion_id, actual_wei, settled_day, solana_blockhash_slot, purpose, created_at, intent_hash, solana_account_proof, imported FROM fee_native_gas WHERE ${scope} ORDER BY rowid`,
       sql`SELECT tx_id, operator, revision, run_id, scan_json, observed_at FROM fee_solana_expiry_scan_steps WHERE ${evidence(instance)} ORDER BY rowid`,
       sql`SELECT tx_id, run_id, proof_json, observed_at FROM fee_solana_expiry_proofs WHERE ${evidence(instance)} ORDER BY rowid`,
     ],
@@ -444,8 +444,8 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const feeWallet = try walletText(wallet(current))
       const run = try runOf(event.runId)
       const maximumWei = try weiOf(recordedMaximum(current, recorded), current.network)
-      return [sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose)
-        SELECT ${`fee-gas-${try randomId()}`}, ${network}, ${feeWallet}, ${recorded.nonce}, ${intentHash}, ${run}, ${maximumWei}, ${try weiOf(transactionCeilingOf(current.network), current.network)}, ${try weiOf(dailyCeilingOf(current.network), current.network)}, 'signed', ${txId}, c.id, ${now}, 'fees'
+      return [sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose, imported)
+        SELECT ${`fee-gas-${try randomId()}`}, ${network}, ${feeWallet}, ${recorded.nonce}, ${intentHash}, ${run}, ${maximumWei}, ${try weiOf(transactionCeilingOf(current.network), current.network)}, ${try weiOf(dailyCeilingOf(current.network), current.network)}, 'signed', ${txId}, c.id, ${now}, 'fees', 1
           FROM fee_conversions c
          WHERE c.network = ${network} AND c.mode = 'live' AND (c.tx_id = ${txId} OR c.approval_tx_id = ${txId})
            AND NOT EXISTS (SELECT 1 FROM fee_native_gas g WHERE g.network = ${network} AND g.tx_id = ${txId})

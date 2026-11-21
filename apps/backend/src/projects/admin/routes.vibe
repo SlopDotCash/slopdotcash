@@ -1,7 +1,7 @@
 // spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"
 import { rows, sql } from "@repo/platform/d1"
 import { type Actor, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
-import { type Event, type Registry, Rejected, clearanceOf } from "../../../gen/backend__projectComposition.effect.vibe"
+import { type Event, Rejected, clearanceOf } from "../../../gen/backend__projectComposition.effect.vibe"
 import { projectContract } from "../../access/routes.vibe"
 import { loadAccess } from "../../access/store.vibe"
 import { AdminRevisionRequest, adminManifest, adminProjects } from "../../client/admin.vibe"
@@ -9,8 +9,9 @@ import { getAdminProjects, putAdminProjectsByIdManifest } from "../../client/ref
 import { classified, same } from "../owner/revisionChanges.ts"
 import { ProjectRow, adminProjectView, boundedText, moderation, positiveInteger, projectColumns, projectIdPattern, projectRow, refused, requireAdmin } from "../enforcement/admission.vibe"
 import { enforcementState } from "../enforcement/views.vibe"
-import { manifestOf } from "../store/rows.vibe"
-import { loadProject, send } from "../store/store.vibe"
+import { exclusionsOf } from "../store/codec.vibe"
+import { type Manifest, manifestOf } from "../store/rows.vibe"
+import { type Loaded, exceptionFacts, loadProject, send } from "../store/store.vibe"
 
 const bodyBytes = 65536
 const manifestRows = putAdminProjectsByIdManifest
@@ -37,38 +38,28 @@ const factFields: ReadonlyArray<string> = ["status", "listingTier", "steward", "
 const executableFields: ReadonlyArray<string> = ["contribution", "repositories", "skill", "reviewSkill"]
 
 // spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project": a listing-tier change
-// alone on a listed project is a placement; every other replacement is one exception. The project API classifies the
-// replacement here; the store reads its registry facts from the submitted manifest.
-function eventOf(previous: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>, registry: Registry, expectedRevision: number): Event {
+// alone on a listed project is a placement; every other replacement is one exception, whose registry facts are those
+// of the submitted manifest (exceptionFacts, the same reading the store repeats).
+function eventOf(previous: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>, manifest: Manifest, loaded: Loaded, expectedRevision: number): Event {
+  const registry = loaded.state
   const changed = [...new Set([...Object.keys(previous), ...Object.keys(next)])].filter((key) => !same(previous[key], next[key]))
   const placement = changed.length === 1 && changed[0] === "listingTier" && registry.project.retirement === "NotRetired" && (next.listingTier === "featured" || next.listingTier === "community")
   if (placement) return { type: "place", tier: next.listingTier === "featured" ? "Featured" : "Community" }
   const classes = classified(previous, next)
   const executable = changed.some((field) => executableFields.includes(field))
   const otherFields = changed.some((field) => !factFields.includes(field) && !executableFields.includes(field) && !classes.financial.includes(field))
-  const project = registry.project
   return {
     type: "adminRevise",
     exception: {
       expectedRevision,
       reason: 1,
-      status: project.status,
-      tier: project.tier,
-      steward: project.steward,
-      participation: project.participation,
-      fieldsComplete: project.fieldsComplete,
-      network: project.network,
-      asset: project.asset,
+      ...exceptionFacts(manifest, loaded.rows),
       financial: classes.financial.length > 0,
       executable,
       otherFields,
-      funded: project.funded,
-      vaults: project.vaults,
-      reward: { monthlyPool: false, monthlyAmount: 0, honor: project.honorSystem ? "HonorTrue" : "HonorOmitted" },
       clearance: clearanceOf(registry.security),
-      license: project.license,
     },
-    exclusions: [],
+    exclusions: [...exclusionsOf(manifest)],
   }
 }
 
@@ -92,13 +83,13 @@ effect function revise(actor: Actor, projectId: string) {
   if (typeof submitted !== "object" || submitted === null || Array.isArray(submitted)) throw invalid("Project manifest is invalid")
   const next = submitted as Readonly<Record<string, unknown>>
   if (next.id !== projectId) throw refused(manifestRows.invalidManifestProjectIdCannotChange)
-  manifestOf(JSON.stringify(next), `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }
+  const manifest = manifestOf(JSON.stringify(next), `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }
   const previous = try orDie(Effect.try(() => JSON.parse(current.manifest) as Readonly<Record<string, unknown>>))
   if (same(previous, next)) throw refused(manifestRows.noChange)
-  const registry = (try loadProject(projectId)).state
+  const loaded = try loadProject(projectId)
   const text = JSON.stringify(next)
   const by = Number(actor.githubId)
-  send({ projectId, event: eventOf(previous, next, registry, expectedRevision), by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
+  send({ projectId, event: eventOf(previous, next, manifest, loaded, expectedRevision), by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
     when Rejected: throw try restricted(projectId, error);
     default: throw error;
   }

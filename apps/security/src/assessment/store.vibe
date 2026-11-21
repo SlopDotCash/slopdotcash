@@ -6,8 +6,8 @@ import { Refused } from "@repo/platform/http"
 import { StorageFailure } from "@repo/platform/r2"
 import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
 import type { Assessment, Attempt, AttemptState, Event, Mode } from "../../gen/security__assessment.ts"
-import { type NotAState, apply, decodeState, initial } from "../../gen/security__assessment.effect.vibe"
-import type { Authority } from "../../gen/security__cases.ts"
+import { type NotAState, apply, canObserveReceiptQualified, decodeState, initial } from "../../gen/security__assessment.effect.vibe"
+import type { Authority, ReceiptSource } from "../../gen/security__cases.ts"
 import { qualified } from "../../gen/security__screening.effect.vibe"
 import type { ExclusionContext } from "../../gen/security__terms.ts"
 import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
@@ -38,13 +38,14 @@ export schema AttemptRow {
   finished_at: string | null
 }
 
-schema CaseRow { project_id: string; submission_state: string; advisory_ghsa: string | null; policy_revision: number | null; terms: string | null; received_at: string | null }
+schema CaseRow { project_id: string; submission_state: string; advisory_ghsa: string | null; policy_revision: number | null; terms: string | null; received_at: string | null; received_at_source: string | null }
 schema PriorRow { id: string; root_cause_key: string | null; summary: string | null }
 
 export interface CaseAssessment {
   readonly caseId: string
   readonly projectId: string
-  readonly submissionId: string
+  // Absent for a case received without a Slop intake, whose report is the GitHub advisory.
+  readonly submissionId: string | undefined
   readonly advisoryGhsa: string | null
   readonly exclusions: ExclusionContext
   readonly scope: ReceiptScope
@@ -77,7 +78,7 @@ effect function exclusionsOf(row: Pick<CaseRow, "terms" | "policy_revision" | "r
 }
 
 export effect function caseReceipt(caseId: string) {
-  const row = try first(CaseRow, sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`)
+  const row = try first(CaseRow, sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at, received_at_source FROM security_cases WHERE id=${caseId}`)
   if (row === undefined) throw new NotAssessable({ caseId })
   const scope = try receiptScope(row.project_id, row.policy_revision)
   return { exclusions: try exclusionsOf(row, scope), scope }
@@ -107,12 +108,34 @@ function assessmentOf(intake: StoredIntake, found: ReadonlyArray<AttemptRow>, au
   }
 }
 
+// spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version": the case's
+// own stored receipt source, never a request's claim. A verified case without a recorded source was received by a
+// maintainer attestation (cases/rows.vibe sourceOf).
+function receiptSourceOf(row: CaseRow): ReceiptSource {
+  if (row.received_at_source === "github-verified") return "GithubVerified"
+  if (row.received_at_source === "slop-received") return "SlopReceived"
+  return "MaintainerAttested"
+}
+
+effect function receiptAssessment(row: CaseRow, found: ReadonlyArray<AttemptRow>, authority: Authority, exclusions: ExclusionContext) {
+  const received: Assessment = try decodeState({
+    reportVersion: 1,
+    qualifiedVersion: 0,
+    authority,
+    attempts: Object.fromEntries(found.map((attempt) => [String(attempt.attempt), attemptOf(attempt, found, exclusions)])),
+    count: found.reduce((count, attempt) => Math.max(count, attempt.attempt), 0),
+    shown: shownOf(found, 1),
+  })
+  const source = receiptSourceOf(row)
+  return canObserveReceiptQualified(received, source) ? try apply(received, { type: "observeReceiptQualified", source }, 0) : received
+}
+
 function aggregate(caseId: string, authority: Authority): Aggregate<CaseAssessment, NotAssessable | RowMismatch | NotAState, never> {
   return {
     name: `assessment of ${caseId}`,
     version: sql`SELECT coalesce((SELECT group_concat(attempt || ':' || state, ',') FROM (SELECT attempt, state FROM security_case_analyses WHERE case_id=${caseId} ORDER BY attempt)), '') || '|' || coalesce((SELECT report_version || ':' || revision FROM security_submission_intake WHERE case_id=${caseId}), '-') AS version`,
     reads: [
-      sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`,
+      sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at, received_at_source FROM security_cases WHERE id=${caseId}`,
       sql`SELECT submission_id, case_id, received_at, report_version, screening_state, screening_started_at, screening_reason, routed_at, reviewed_at, review_decision, review_reason, revision FROM security_submission_intake WHERE case_id=${caseId}`,
       sql`SELECT ${attemptColumns} FROM security_case_analyses WHERE case_id=${caseId} ORDER BY attempt`,
       receiptManifest(caseId),
@@ -121,17 +144,18 @@ function aggregate(caseId: string, authority: Authority): Aggregate<CaseAssessme
       const [record] = try decoded(CaseRow, cases ?? [], "security case")
       const [intake] = try decoded(StoredIntake, intakes ?? [], "security intake")
       const found = try decoded(AttemptRow, attempts ?? [], "security case analyses")
-      if (record === undefined || intake === undefined || record.submission_state !== "verified") throw new NotAssessable({ caseId })
+      if (record === undefined || record.submission_state !== "verified") throw new NotAssessable({ caseId })
+      if (intake === undefined && receiptSourceOf(record) === "SlopReceived") throw new NotAssessable({ caseId })
       const scope = try scopeOfRows(manifests ?? [])
       const exclusions = try exclusionsOf(record, scope)
       return {
         caseId,
         projectId: record.project_id,
-        submissionId: intake.submission_id,
+        submissionId: intake?.submission_id,
         advisoryGhsa: record.advisory_ghsa,
         exclusions,
         scope,
-        assessment: try decodeState(assessmentOf(intake, found, authority, exclusions)),
+        assessment: intake === undefined ? try receiptAssessment(record, found, authority, exclusions) : try decodeState(assessmentOf(intake, found, authority, exclusions)),
         rows: found,
       } satisfies CaseAssessment
     },
@@ -242,7 +266,9 @@ effect function stillCurrent(run: Run) {
 export effect function attempted(run: Run, timeoutMs: number) {
   const { current, attempt } = run
   if (!(try privateRouteReady())) return try unavailable(run, null)
-  const report = try exactReport(current.submissionId, current.assessment.reportVersion)
+  // A case without a Slop intake has its report in the GitHub advisory, which this worker does not read; the attempt
+  // records unavailable and stays retryable.
+  const report = current.submissionId === undefined ? undefined : try exactReport(current.submissionId, current.assessment.reportVersion)
   if (report === undefined) return try unavailable(run, null)
   const digest = try sha256Hex(digestInput(current.advisoryGhsa, report))
   const { scope } = current

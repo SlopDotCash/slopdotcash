@@ -45,6 +45,9 @@ interface Entry {
   readonly submissionId: string;
   authority: Authority;
   readonly runs: Map<number, Run>;
+  // Whether the case was received through Slop intake, and whether an intake version or qualification was recorded.
+  readonly intake: boolean;
+  screened: boolean;
 }
 
 const noAuthority: Authority = { epoch: 0, technical: [], financial: [], moderators: [], banned: [], relatedParties: [], programRestricted: false };
@@ -89,9 +92,35 @@ async function entryOf(key: string): Promise<Entry> {
       return yield* database.batch(statements);
     }),
   ));
-  const entry: Entry = { caseId, submissionId, authority: noAuthority, runs: new Map() };
+  const entry: Entry = { caseId, submissionId, authority: noAuthority, runs: new Map(), intake: true, screened: false };
   entries.set(key, entry);
   return entry;
+}
+
+// spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version": the driver
+// chooses the receipt route of a key's case when the walk first needs it. A case received through intake that has no
+// recorded version or qualification is still in the model's initial assessment (attempts need qualification), so the
+// key's case becomes one received without intake, verified with the stored receipt source the event names.
+async function receivedWithout(key: string, entry: Entry, source: "GithubVerified" | "MaintainerAttested"): Promise<Entry> {
+  const caseId = `sc_assessment_g${generation}_${key}_receipt`;
+  const githubId = String(6_100_000_000 + generation * 100 + entries.size + 1);
+  const receivedAt = new Date(base()).toISOString();
+  await db.prepare(`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, received_at_source, revision, created_at, updated_at)
+    VALUES (?1, ?2, 'slop-test/assessment', NULL, ?3, ?4, 'verified', ?5, ?5, '7000000001', 1, NULL, 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', ?6, 1, ?5, ?5)`)
+    .bind(caseId, project, githubId, `member-${githubId}`, receivedAt, source === "GithubVerified" ? "github-verified" : null).run();
+  const replaced: Entry = { caseId, submissionId: "", authority: entry.authority, runs: new Map(), intake: false, screened: false };
+  entries.set(key, replaced);
+  return replaced;
+}
+
+async function receiptQualified(key: string, entry: Entry, source: string): Promise<"accepted" | "refused"> {
+  if (source !== "GithubVerified" && source !== "MaintainerAttested") return "refused";
+  if (entry.intake && entry.screened) return "refused";
+  const target = entry.intake ? await receivedWithout(key, entry, source) : entry;
+  const before = entry.intake ? undefined : (await runtime.runPromise(assessmentAt(target.caseId, target.authority))).assessment;
+  if (before !== undefined) return "refused";
+  const loaded = await runtime.runPromise(assessmentAt(target.caseId, target.authority));
+  return loaded.assessment.qualifiedVersion === 1 ? "accepted" : "refused";
 }
 
 async function outcome<A>(program: Effect.Effect<A, unknown, Services>, accepted: (value: A) => void = () => undefined): Promise<"accepted" | "refused"> {
@@ -152,17 +181,20 @@ async function send(key: string, event: Event, by: unknown): Promise<"accepted" 
       finishing();
       return outcome(concluded(run, { kind: "unavailable", digest: null }));
     }
-    case "observeVersion":
-      return versionObserved(entry, event.version);
-    case "observeQualified":
-      return qualifiedObserved(entry, event.version);
+    case "observeVersion": {
+      const answered = await versionObserved(entry, event.version);
+      if (answered === "accepted") entry.screened = true;
+      return answered;
+    }
+    case "observeQualified": {
+      const answered = await qualifiedObserved(entry, event.version);
+      if (answered === "accepted") entry.screened = true;
+      return answered;
+    }
     case "observeAuthority":
       return outcome(authorityAfter(entry.caseId, entry.authority, event.snapshot), (authority) => { entry.authority = authority; });
     case "observeReceiptQualified":
-      // Every case this driver opens is received through Slop intake, whose stored receipt source is SlopReceived;
-      // the shell passes that stored source, so a GitHub-verified or maintainer-attested receipt qualification is not
-      // reachable through these cases.
-      return "refused";
+      return receiptQualified(key, entry, event.source);
   }
 }
 
