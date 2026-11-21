@@ -16,6 +16,7 @@ import {
   awardForScore,
   latestPoints,
   type PointsJournal,
+  pointKey,
 } from "../src/lib/points";
 import {
   AFTER_NOVEMBER,
@@ -377,4 +378,87 @@ test("a source absorbed into another PR's joint unit retains the value decision 
   expect(
     latestPoints(withoutBinding).get(awardForScore(original).key)?.decision,
   ).toBeUndefined();
+});
+
+test("a source's earlier joint award retains the value decision on its zero when another PR's joint unit absorbs the source", () => {
+  const before = createLeaderboardSnapshot(penaltyScoreInput([], GENERATED_AT));
+  const original = before.ledger.find(
+    (event) => event.source.id === "PR_november",
+  );
+  if (!original) throw new Error("original award missing");
+  // The source first completed its own joint unit, so its award key names
+  // that unit instead of being the ordinary source key.
+  const ordinary = awardForScore(original);
+  const earlierUnit = `wu_${"e".repeat(64)}`;
+  const earlierJoint = {
+    ...ordinary,
+    key: pointKey(
+      ordinary.projectId,
+      ordinary.actor.id,
+      ordinary.category,
+      ordinary.sourceId,
+      earlierUnit,
+    ),
+    workUnitId: earlierUnit,
+  };
+  const empty: PointsJournal = {
+    schemaVersion: "1",
+    ruleVersion: "slop-points-v1",
+    generatedAt: GENERATED_AT,
+    coverage: [],
+    revisions: [],
+  };
+  const journal = appendPointAwards(
+    empty,
+    [earlierJoint],
+    "a".repeat(64),
+    before.ruleVersion,
+    GENERATED_AT,
+    new Map([
+      [
+        earlierJoint.key,
+        {
+          sourceId: `value:${"9".repeat(64)}`,
+          effectiveAt: GENERATED_AT,
+          reason: "Earlier joint assessment of this source alone.",
+        },
+      ],
+    ]),
+  );
+  const snapshot = snapshotWithJointUnits([PROJECT_OWNER.id], [90, 10], {
+    completionInOtherPR: true,
+  });
+  assertLeaderboardSnapshot(snapshot);
+  const result = applyPointsSnapshot(
+    journal,
+    snapshot,
+    "b".repeat(64),
+    GENERATED_AT,
+  );
+  const removed = latestPoints(result).get(earlierJoint.key);
+  expect(removed?.award.amount).toBe(0);
+  // A reviewed historical packet can select only value-decided changes, so
+  // without this decision the earlier unit's award stays beside the new one.
+  expect(removed?.decision?.sourceId).toBe(`value:${"d".repeat(64)}`);
+  expect(removed?.decision?.reason).toContain("superseded");
+  expect(
+    [...latestPoints(result).values()]
+      .filter((row) => row.award.workUnitId === `wu_${"c".repeat(64)}`)
+      .reduce((sum, row) => sum + row.award.amount, 0),
+  ).toBe(240);
+  expect(
+    applyPointsSnapshot(result, snapshot, "c".repeat(64), GENERATED_AT)
+      .revisions,
+  ).toEqual(result.revisions);
+  const unrelated = structuredClone(snapshot);
+  const coverage = unrelated.valueAssessmentCoverage?.find(
+    (row) => row.pullRequestId === original.source.id,
+  );
+  if (!coverage) throw new Error("source coverage missing");
+  coverage.recordDigest = "f".repeat(64);
+  expect(
+    latestPoints(
+      applyPointsSnapshot(journal, unrelated, "e".repeat(64), GENERATED_AT),
+    ).get(earlierJoint.key)?.decision?.sourceId,
+  ).not.toBe(`value:${"d".repeat(64)}`);
 });
