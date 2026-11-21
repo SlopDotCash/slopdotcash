@@ -30,6 +30,9 @@ export interface Action {
   readonly revision?: Recorded
   readonly referrer?: Actor
   readonly alongside?: ReadonlyArray<Statement>
+  // The stored revision the action's manifest text was built from; a different revision at the write refuses it, so
+  // a revision built on an earlier read never replaces a later one.
+  readonly basedOn?: number
 }
 
 export interface Prospect {
@@ -339,6 +342,7 @@ effect function backendWrites(current: Loaded, after: Registry, action: Action, 
 }
 
 effect function decide(current: Loaded, action: Action) {
+  if (action.basedOn !== undefined && current.state.project.revision !== action.basedOn) throw new RevisionMismatch({ projectId: action.projectId, field: "revision" })
   const event = current.event ?? action.event
   const after = try apply(current.state, event, action.by)
   const at = try isoNow()

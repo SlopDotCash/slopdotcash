@@ -124,10 +124,11 @@ export effect function registerOwnerVault(registration: VaultRegistration) {
     projectId: registration.projectId,
     event: { type: "registerVault", registration: { authority, repositoryAdmin: admin, expectedRevision: registration.expectedRevision, purpose: ordinary ? "OrdinaryVault" : "BountyVault", finalized: registration.evidence === "finalized", policyMatches: matches }, account: unread },
     by: vaultSetup,
+    basedOn: current.row.revision,
     revision: { manifestText: JSON.stringify(next), reason, actor: { githubId: registration.actor.githubId, login: registration.actor.login } },
   }) catch effect (error) => {
     if (error._tag === "Rejected") throw rejection(error.event, error.state)
-    if (error._tag === "Conflict") throw refused("stale_revision")
+    if (error._tag === "Conflict" || (error._tag === "RevisionMismatch" && error.field === "revision")) throw refused("stale_revision")
     throw error
   }
   return { manifest: next } satisfies Registered

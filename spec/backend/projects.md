@@ -421,10 +421,13 @@ absent. A write that would change nothing is refused. The consent is part of
 `slopbot`, a presentation field, so a save may carry it together with other
 changes in one owner revision (above); a save whose only change is the
 consent records a `ConsentChanged` revision and keeps status and tier.
+Discovered by proof: the law reads the current revision, which is the new
+one only in a project whose history is numbered, so it assumes the
+`alwaysHistoryNumbered` rule every reachable project keeps.
 
 ```quint
 pure def lawConsentOnlySaveRecordsConsentChange(p: Project, by: int, change: OwnerChange): bool =
-  (canPublishOwnerRevision(p, by, change) and consentOnly(change)) implies
+  (alwaysHistoryNumbered(p) and canPublishOwnerRevision(p, by, change) and consentOnly(change)) implies
     (currentRevision(publishOwnerRevision(p, by, change)).kind == ConsentChanged and
      publishOwnerRevision(p, by, change).status == p.status and publishOwnerRevision(p, by, change).tier == p.tier and
      publishOwnerRevision(p, by, change).consent == consentAfter(p.consent, change.consent))
@@ -631,6 +634,9 @@ their own, and only the composition performs them, with the enforcement
 decision, in the same batch. No other registry event lists a retired project
 again, except an administrator exception on a project the owner removed or an
 administrator delisted (above).
+Discovered by proof: a removed project's listing tier is Retired only under
+the `alwaysRetirementConsistent` rule every reachable project keeps, so the
+law that a removal is never restored assumes it.
 
 ```quint
 pure def retirableForRestriction(p: Project): bool = p.revision > 0 and p.retirement == NotRetired
@@ -643,7 +649,7 @@ pure def withCommunityRestored(restore: bool, p: Project): Project =
 pure def lawRestorationIsPausedCommunity(p: Project): bool =
   restorable(p) implies (withCommunityRestored(true, p).status == Paused and withCommunityRestored(true, p).tier == Community)
 pure def lawRemovedNeverRestored(p: Project): bool =
-  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
+  (alwaysRetirementConsistent(p) and ownerRetired(p)) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
 pure def stepNoRegistryEventUnretires(before: Project, via: str, after: Project): bool =
   (before.retirement != NotRetired and after.retirement == NotRetired) implies
     (via == "adminRevise" and before.retirement != RestrictionRetired)
