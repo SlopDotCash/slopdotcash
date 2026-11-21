@@ -26,6 +26,7 @@ import {
   type ScanThreat,
   scanProblems,
   specialistRequired,
+  TEMPLATE_PREFIX,
   VETTING_SCAN_SCHEMA,
   type VettingScanResult,
 } from "../../backend/vetting/scan-result";
@@ -33,6 +34,7 @@ import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
 import type { QueuedAssessment } from "./assembly-manifest";
 import { expandGzipInputs } from "./gzip-inputs";
+import { localInstallHelpers } from "./local-install-helpers";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
@@ -57,6 +59,12 @@ export type ScanInputFile = {
   /** Trusted derived inputs retain the decoded name and exact archive lineage. */
   logicalPath?: string;
   parentArtifactSha256?: string;
+  /**
+   * Set only by the controller for the queued canonical skill-template
+   * inputs it reread by digest. A repository path never carries it, so a
+   * repository file under the template prefix is never trusted as template.
+   */
+  templateInput?: true;
   symlink?: {
     gitSha: string;
     sha256: string;
@@ -168,6 +176,9 @@ const INSTALL_FILES = new Set([
   "jenkinsfile",
   "vagrantfile",
   "rakefile",
+  "rakefile.rb",
+  "gemfile",
+  "gems.rb",
   "brewfile",
   "procfile",
   "cmakelists.txt",
@@ -210,7 +221,7 @@ const INSTALL_FILES = new Set([
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|rake|mk|make|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
@@ -269,6 +280,9 @@ export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
   const surfaces = new Set<ScanSurface>();
+  const rubyManifest =
+    !name.endsWith(".lock") &&
+    /^(?:gemfile(?:\..+)?|.+\.gemfile|gems\.rb)$/u.test(name);
   if (
     LOCKFILES.has(name) ||
     /^requirements[^/]*\.txt$/u.test(name) ||
@@ -277,7 +291,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     /(?:^|\/)requirements\/[^/]*\.txt$/u.test(lower)
   )
     surfaces.add("dependencies");
-  if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
+  if (MANIFESTS.has(name) || name.endsWith(".gemspec") || rubyManifest)
     surfaces.add("manifests");
   if (
     name.endsWith(".md") ||
@@ -293,6 +307,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    rubyManifest ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     inDirectory(lower, ".husky") ||
@@ -452,23 +467,35 @@ const RULES: Rule[] = [
   {
     threat: "prompt-injection",
     severity: "medium",
+    // Concealment needs an object: "do not tell the user about it" hides
+    // something, while "do not tell the user to buy tokens" protects the
+    // user and is ordinary agent guidance (operator decision, 19 November
+    // 2026).
     pattern:
-      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
+      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|\b(?:do\s+not|don['\u2019]?t)\s+(?:tell|inform|show|alert|notify)\s+the\s+(?:user|operator|human)\s+(?:about|that|what|this|these|it\b|anything)|\b(?:hide|conceal|keep)\s+(?:this|it|these|them)\s+(?:secret\s+)?from\s+the\s+(?:user|operator|human)\b|\b(?:do\s+not|don['\u2019]?t)\s+let\s+the\s+(?:user|operator|human)\s+(?:know|see|find\s+out)\b/iu,
     summary: "Text matches wording used to override agent instructions",
   },
   {
     threat: "prompt-injection",
     severity: "medium",
+    // An instruction to send a secret somewhere: the verb, the secret and a
+    // destination on one line that does not forbid it. "Never paste your
+    // token into an issue" and "post the token count" are ordinary agent
+    // guidance (operator decision, 19 November 2026).
     pattern:
-      /\b(?:send|post|upload|exfiltrate|paste)\b[^\n]{0,80}\b(?:api[ _-]?key|token|secret|credential|password|private key|\.env)\b/iu,
+      /(?<![^\n])(?![^\n]*\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b)[^\n]*\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b[^\n]{0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)[^\n]{0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))/iu,
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
   {
     threat: "prompt-injection",
     severity: "medium",
-    // Zero-width and bidirectional control characters hide text from reviewers.
-    pattern: /[​-‏‪-‮⁦-⁩]/u,
+    // Zero-width space, word joiner, bidirectional embeddings, overrides and
+    // isolates, and Unicode tag characters hide or reorder text from
+    // reviewers. Joiners inside emoji and the directional marks of
+    // right-to-left text are ordinary writing (operator decision,
+    // 19 November 2026).
+    pattern: /[\u200b\u2060\u202a-\u202e\u2066-\u2069\u{E0000}-\u{E007F}]/u,
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
   },
@@ -551,6 +578,10 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
+    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
+    imageFormats: "png-jpeg-gif-webp-whole-structure-v1",
+    templateReview: "queued-canonical-template-deterministic-only-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -594,6 +625,164 @@ function binaryMagic(bytes: Uint8Array): boolean {
     is(0xca, 0xfe, 0xba, 0xbe) || // Mach-O fat or Java class
     is(0x00, 0x61, 0x73, 0x6d) // WASM
   );
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const uint32 = (bytes: Uint8Array, at: number) =>
+  ((bytes[at] << 24) |
+    (bytes[at + 1] << 16) |
+    (bytes[at + 2] << 8) |
+    bytes[at + 3]) >>>
+  0;
+
+/** Every chunk length and CRC checks out, from IHDR to a final IEND. */
+function wellFormedPng(bytes: Uint8Array): boolean {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (!signature.every((value, i) => bytes[i] === value)) return false;
+  let at = 8;
+  let first = true;
+  while (at + 12 <= bytes.length) {
+    const length = uint32(bytes, at);
+    const end = at + 12 + length;
+    if (length > 0x7fffffff || end > bytes.length) return false;
+    const type = String.fromCharCode(...bytes.subarray(at + 4, at + 8));
+    if (!/^[A-Za-z]{4}$/u.test(type)) return false;
+    if (first && (type !== "IHDR" || length !== 13)) return false;
+    first = false;
+    if (
+      crc32(bytes.subarray(at + 4, at + 8 + length)) !==
+      uint32(bytes, at + 8 + length)
+    )
+      return false;
+    at = end;
+    if (type === "IEND") return length === 0 && at === bytes.length;
+  }
+  return false;
+}
+
+/** Marker segments with valid lengths up to the scan, then EOI as the last bytes. */
+function wellFormedJpeg(bytes: Uint8Array): boolean {
+  const n = bytes.length;
+  if (n < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
+  if (bytes[n - 2] !== 0xff || bytes[n - 1] !== 0xd9) return false;
+  let at = 2;
+  while (at + 4 <= n) {
+    if (bytes[at] !== 0xff) return false;
+    const marker = bytes[at + 1];
+    if (marker === 0xff) {
+      at += 1;
+      continue;
+    }
+    // Standalone markers carry no length.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      at += 2;
+      continue;
+    }
+    if (marker === 0xd8 || marker === 0xd9) return false;
+    const length = (bytes[at + 2] << 8) | bytes[at + 3];
+    if (length < 2 || at + 2 + length > n) return false;
+    // Entropy-coded data follows the start of scan; the file ends at EOI.
+    if (marker === 0xda) return at + 2 + length <= n - 2;
+    at += 2 + length;
+  }
+  return false;
+}
+
+/** Header, color table, extension and image blocks, then the trailer as the last byte. */
+function wellFormedGif(bytes: Uint8Array): boolean {
+  const header = String.fromCharCode(...bytes.subarray(0, 6));
+  if (header !== "GIF87a" && header !== "GIF89a") return false;
+  if (bytes.length < 14) return false;
+  let at = 13;
+  if (bytes[10] & 0x80) at += 3 * 2 ** ((bytes[10] & 0x07) + 1);
+  const subBlocks = () => {
+    for (;;) {
+      if (at >= bytes.length) return false;
+      const size = bytes[at];
+      at += 1 + size;
+      if (size === 0) return at <= bytes.length;
+    }
+  };
+  while (at < bytes.length) {
+    const block = bytes[at];
+    if (block === 0x3b) return at === bytes.length - 1;
+    if (block === 0x21) {
+      at += 2;
+      if (!subBlocks()) return false;
+    } else if (block === 0x2c) {
+      if (at + 10 > bytes.length) return false;
+      const packed = bytes[at + 9];
+      at += 10;
+      if (packed & 0x80) at += 3 * 2 ** ((packed & 0x07) + 1);
+      at += 1; // LZW minimum code size
+      if (!subBlocks()) return false;
+    } else return false;
+  }
+  return false;
+}
+
+/** The RIFF size covers the file exactly and its chunks fill it exactly. */
+function wellFormedWebp(bytes: Uint8Array): boolean {
+  const ascii = (at: number) =>
+    String.fromCharCode(...bytes.subarray(at, at + 4));
+  const le = (at: number) =>
+    (bytes[at] |
+      (bytes[at + 1] << 8) |
+      (bytes[at + 2] << 16) |
+      (bytes[at + 3] << 24)) >>>
+    0;
+  if (bytes.length < 20 || ascii(0) !== "RIFF" || ascii(8) !== "WEBP")
+    return false;
+  if (le(4) + 8 !== bytes.length) return false;
+  let at = 12;
+  let chunks = 0;
+  while (at < bytes.length) {
+    if (at + 8 > bytes.length) return false;
+    if (!/^[A-Z0-9 ]{4}$/u.test(ascii(at))) return false;
+    const size = le(at + 4);
+    at += 8 + size + (size % 2);
+    chunks += 1;
+  }
+  return chunks > 0 && at === bytes.length;
+}
+
+const IMAGE_FORMATS = [
+  { extension: /\.png$/iu, format: "png", check: wellFormedPng },
+  { extension: /\.jpe?g$/iu, format: "jpeg", check: wellFormedJpeg },
+  { extension: /\.gif$/iu, format: "gif", check: wellFormedGif },
+  { extension: /\.webp$/iu, format: "webp", check: wellFormedWebp },
+] as const;
+
+/**
+ * An ordinary image: its name and its whole byte structure agree on one of
+ * these formats, with nothing before the signature or after the end marker.
+ * No package manager, build tool or agent runs such a file, so it is listed
+ * by digest instead of quarantined as an unknown binary (operator decision,
+ * 19 November 2026). Code that reads it is source and is reviewed as such.
+ */
+export function wellFormedImage(
+  path: string,
+  bytes: Uint8Array,
+): (typeof IMAGE_FORMATS)[number]["format"] | null {
+  for (const entry of IMAGE_FORMATS)
+    if (entry.extension.test(path))
+      return entry.check(bytes) ? entry.format : null;
+  return null;
 }
 
 const NAMED_XML_ENTITIES: Readonly<Record<string, string>> = {
@@ -1023,7 +1212,7 @@ export type DeterministicRecord = {
   path: string;
   sha256: string;
   bytes: number;
-  class: "lockfile" | "data" | "generated" | "vendored";
+  class: "lockfile" | "data" | "generated" | "vendored" | "template";
   /** The model read every rule match and obfuscation signal as `<path>#signals`. */
   signals?: true;
 };
@@ -1049,6 +1238,15 @@ export type RepositoryInspection = {
   deterministic: DeterministicRecord[];
   /** Paths of reviewed items with a deterministic finding or obfuscation signal. */
   riskSignals: string[];
+  /** Well-formed images (`wellFormedImage`), listed by digest and not sent to the model. */
+  media: MediaRecord[];
+};
+
+export type MediaRecord = {
+  path: string;
+  sha256: string;
+  bytes: number;
+  format: NonNullable<ReturnType<typeof wellFormedImage>>;
 };
 
 /**
@@ -1676,10 +1874,16 @@ export function inspectRepository(input: {
     text: string;
     surfaces: ScanSurface[];
     flagged: boolean;
+    /** Unknown text is never assumed to be generated or vendored source. */
+    fullTextRequired: boolean;
     /** Rule patterns the deterministic pass proved cannot match `text`. */
     nonMatches?: ReadonlySet<RegExp>;
   };
   const candidates: Candidate[] = [];
+  const media: MediaRecord[] = [];
+  const templatePaths = new Set(
+    files.filter((file) => file.templateInput).map((file) => file.path),
+  );
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
   const gyp = gypIncludedPaths(files);
@@ -1689,6 +1893,36 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const texts = new Map(files.map((file) => [file.path, decode(file.bytes)]));
+  const helpers = localInstallHelpers(
+    files.map((file) => ({
+      path: file.path,
+      text: texts.get(file.path) ?? null,
+    })),
+    files.flatMap((file) => {
+      const text = texts.get(file.path);
+      if (text === null || text === undefined) return [];
+      const surfaces = surfacesOf(file.logicalPath ?? file.path);
+      const directory = file.path.includes("/")
+        ? file.path.slice(0, file.path.lastIndexOf("/"))
+        : "";
+      const commands = installHookCommands(file.path, text);
+      if (
+        (surfaces.includes("installScripts") ||
+          (surfaces.length === 0 && declaresInterpreter(file.bytes)) ||
+          gypIncludes.has(file.path) ||
+          cmakeIncludes.has(file.path)) &&
+        (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
+          /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
+      )
+        commands.push(text);
+      return commands.map((text) => ({ path: file.path, text, directory }));
+    }),
+  );
+  if (helpers.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...helpers.unacquired);
+  }
   for (const file of files) {
     const surfaces = surfacesOf(file.logicalPath ?? file.path);
     // Previously unclassified interpreter scripts still need review, even
@@ -1696,9 +1930,38 @@ export function inspectRepository(input: {
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
     // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      helpers.included.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
+    }
+    const unclassified = surfaces.length === 0;
+    if (
+      !file.templateInput &&
+      file.path.toLowerCase().startsWith(`${TEMPLATE_PREFIX}/`)
+    ) {
+      // The template namespace is reserved for queued template inputs. A
+      // repository file there could otherwise be mistaken for Slop's template.
+      partial.add("source");
+      gaps.push(
+        `Repository path in the reserved template namespace: ${file.path}`,
+      );
+    }
+    const image =
+      unclassified && !file.parentArtifactSha256 && !file.templateInput
+        ? wellFormedImage(file.logicalPath ?? file.path, file.bytes)
+        : null;
+    if (image !== null) {
+      media.push({
+        path: file.path.slice(0, 500),
+        sha256: sha256(file.bytes),
+        bytes: file.bytes.byteLength,
+        format: image,
+      });
+      continue;
     }
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
@@ -1729,20 +1992,42 @@ export function inspectRepository(input: {
       counts.downloads += 1;
       continue;
     }
-    const text = decode(file.bytes);
+    const text = texts.get(file.path) ?? null;
     // Ant imports may use any filename. Its project root identifies the
     // executable build document without parsing XML or resolving entities.
     if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
-    if (surfaces.length === 0) continue;
+    // An extension is a hint, not proof that acquired bytes cannot execute.
+    // Keep native/archive handling above. Every other acquired file enters
+    // source review; unreadable bytes below remain an explicit coverage gap.
+    if (unclassified) {
+      if (!surfaces.includes("source")) surfaces.push("source");
+      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
+    }
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
     if (text === null) {
       for (const surface of surfaces) partial.add(surface);
       gaps.push(`Undecodable executable content at ${file.path}`);
+      if (unclassified) {
+        // Unknown binary bytes are evidence too. Keep their digest and
+        // quarantine rather than reusing the same path-only visibility gap
+        // when an opaque input changes.
+        artifacts.push({
+          sha256: digest,
+          parentSha256: file.parentArtifactSha256 ?? null,
+          origin: file.parentArtifactSha256 ? "archive" : "repository",
+          path: file.path.slice(0, 500),
+          type: "binary",
+          state: "quarantined",
+          analysis: "pending",
+          requestedExecution: false,
+        });
+        counts.downloads += 1;
+      }
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
@@ -1784,6 +2069,7 @@ export function inspectRepository(input: {
       text,
       surfaces,
       flagged: found.length > 0 || hooks.length > 0,
+      fullTextRequired: unclassified,
       // The recorded non-matches were proven against `ruleText`; they are
       // only valid for the excerpt pass when that is the text it reads.
       ...(ruleText === text ? { nonMatches: provenNonMatches } : {}),
@@ -1811,8 +2097,22 @@ export function inspectRepository(input: {
       }),
     );
   });
-  let items = [...candidates.flatMap(itemsOf), ...links];
-  const deterministic: DeterministicRecord[] = [];
+  // The queued canonical template is Slop's own code at the digest the queue
+  // assigned. Every deterministic check reads it above; it is listed by
+  // digest and not sent to the model, so the models judge the project's own
+  // content (operator decision, 19 November 2026; issue #1991 option 2).
+  const deterministic: DeterministicRecord[] = candidates
+    .filter((candidate) => templatePaths.has(candidate.path))
+    .map((candidate) => ({
+      path: candidate.path,
+      sha256: candidate.sha256,
+      bytes: candidate.bytes,
+      class: "template" as const,
+    }));
+  const reviewable = candidates.filter(
+    (candidate) => !templatePaths.has(candidate.path),
+  );
+  let items = [...reviewable.flatMap(itemsOf), ...links];
   const envelope = (list: typeof items) =>
     list.length > MAX_INVENTORY_ITEMS ||
     list.reduce(
@@ -1825,8 +2125,10 @@ export function inspectRepository(input: {
   const excerpted = new Set<string>();
   if (envelope(items)) {
     items = [...links];
-    for (const candidate of candidates) {
-      const kind = bulkClass(candidate.path, candidate.surfaces);
+    for (const candidate of reviewable) {
+      const kind = candidate.fullTextRequired
+        ? null
+        : bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
         kind === null
           ? null
@@ -1894,6 +2196,8 @@ export function inspectRepository(input: {
       // Binary and archive bytes are not text items. Bind their digests so
       // adding or changing quarantined content invalidates clean scan reuse.
       artifacts,
+      // Images are not text items. Bind their digests like artifacts.
+      ...(media.length > 0 ? { media } : {}),
       visibilityGaps: gaps,
     }),
   );
@@ -1925,6 +2229,7 @@ export function inspectRepository(input: {
     downloads: [...downloads].sort(),
     deterministic,
     riskSignals,
+    media,
   };
 }
 
@@ -1961,11 +2266,22 @@ export function executionInventory(inspection: RepositoryInspection) {
 
 /**
  * The intake form of one model review. Its risk is read from the review
- * itself, with no score threshold: any suspected malice or high finding is
- * high risk, any other finding or incomplete coverage is ambiguous.
+ * itself, with no score threshold: any suspected malice or high or critical
+ * finding is high risk; a medium finding or unverified coverage is
+ * ambiguous; info and low findings with verified coverage are low.
  */
 function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
+  // Coverage as `review-coverage.ts` verified it; an unverified review keeps
+  // the reviewer's own call. Content outside the acquired revision is
+  // recorded but is not unreviewed content (operator decision, 19 November
+  // 2026).
+  const covered = (area: (typeof SCAN_REVIEW_AREAS)[number]) => {
+    const state = evidence.verifiedCoverage
+      ? evidence.verifiedCoverage[area]
+      : evidence.coverage?.[area];
+    return state === "complete" || state === "outside-revision";
+  };
   const risk = !completed
     ? null
     : evidence.review.verdict === "malicious-suspected" ||
@@ -1973,11 +2289,9 @@ function scanReview(evidence: ScannerEvidence): ScanReview {
           ["high", "critical"].includes(finding.severity),
         )
       ? "high"
-      : evidence.review.verdict === "findings" ||
-          evidence.coverage === null ||
-          SCAN_REVIEW_AREAS.some(
-            (area) => evidence.coverage?.[area] !== "complete",
-          )
+      : evidence.coverage === null ||
+          SCAN_REVIEW_AREAS.some((area) => !covered(area)) ||
+          evidence.findings.some((finding) => finding.severity === "medium")
         ? "ambiguous"
         : "low";
   return {
@@ -2080,6 +2394,22 @@ export function composeAcquisitionRefusal(input: {
     confirmation: null,
   };
   return { result, report, inventory };
+}
+
+/**
+ * Truncates one composed visibility gap to what the intake parser accepts:
+ * at most 300 printable characters, no control characters, no trailing
+ * whitespace. Control characters are replaced with a space first: the parser
+ * rejects them anywhere in the string, so a tab in a repository path would
+ * fail the same way a long gap did. A UTF-16 slice can split a surrogate
+ * pair, so a trailing lone high surrogate is dropped whole instead of leaving
+ * a string that corrupts on a UTF-8 round-trip.
+ */
+function truncateVisibilityGap(gap: string): string {
+  const printable = gap.replace(/\p{Cc}/gu, " ");
+  let truncated = printable.slice(0, 300);
+  if (/[\uD800-\uDBFF]$/.test(truncated)) truncated = truncated.slice(0, -1);
+  return truncated.trimEnd();
 }
 
 /**
@@ -2189,6 +2519,11 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
+  // The intake parser caps each visibility gap at 300 printable characters
+  // (parseRecordedVettingResult), but gap strings carry repository paths and
+  // download URLs that can run longer. Truncate them here instead of emitting
+  // a result no intake can record.
+  result.visibilityGaps = result.visibilityGaps.map(truncateVisibilityGap);
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {

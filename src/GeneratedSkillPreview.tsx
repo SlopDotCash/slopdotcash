@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, FileText } from "lucide-react";
 import { useEffect, useState } from "react";
 import contributorTemplate from "../skills/project-contributor-template/SKILL.md?raw";
 import reviewerTemplate from "../skills/project-reviewer-template/SKILL.md?raw";
@@ -34,6 +34,7 @@ export function GeneratedSkillPreview({
 }) {
   const [selectedRole, setSelectedRole] = useState("Contributor skill");
   const [selectedPath, setSelectedPath] = useState("SKILL.md");
+  const [compactOpen, setCompactOpen] = useState(false);
   const manifestText = JSON.stringify(manifest);
   const [digestState, setDigestState] = useState<{
     source: string;
@@ -74,7 +75,7 @@ export function GeneratedSkillPreview({
   if (!usesGeneratedSkills(manifest))
     return (
       <p className="admin-status">
-        This project uses committed skills at {manifest.skill.sourcePath}.
+        Committed skills: {manifest.skill.sourcePath}
       </p>
     );
   let previews: { role: string; files: Record<string, Uint8Array> }[];
@@ -113,33 +114,47 @@ export function GeneratedSkillPreview({
   const path = paths.includes(selectedPath) ? selectedPath : paths[0];
   if (compact)
     return (
-      <section aria-label="Generated skills" className="skill-preview-compact">
-        <div className="skill-preview-controls">
-          <fieldset className="skill-preview-options">
-            <legend className="visually-hidden">Skill</legend>
-            {previews.map(({ role }) => (
-              <label key={role}>
-                <input
-                  checked={preview.role === role}
-                  name="project-skill-role"
-                  onChange={() => setSelectedRole(role)}
-                  type="radio"
-                  value={role}
-                />
-                <span>{role.replace(" skill", "")}</span>
-              </label>
-            ))}
-          </fieldset>
-        </div>
-        <textarea
-          aria-label={`${preview.role} SKILL.md`}
-          className="admin-code skill-preview-source"
-          readOnly
-          rows={8}
-          spellCheck={false}
-          value={decoder.decode(preview.files["SKILL.md"])}
-        />
-      </section>
+      // A button, not a disclosure element: the review step keeps every
+      // choice visible and has no collapsed groups of fields.
+      <fieldset aria-label="Generated skills" className="skill-preview-compact">
+        <button
+          aria-expanded={compactOpen}
+          className="button secondary-button"
+          onClick={() => setCompactOpen(!compactOpen)}
+          type="button"
+        >
+          <FileText size={16} aria-hidden="true" /> Preview skill
+        </button>
+        {compactOpen ? (
+          <>
+            <div className="skill-preview-controls">
+              <fieldset className="skill-preview-options">
+                <legend className="visually-hidden">Skill</legend>
+                {previews.map(({ role }) => (
+                  <label key={role}>
+                    <input
+                      checked={preview.role === role}
+                      name="project-skill-role"
+                      onChange={() => setSelectedRole(role)}
+                      type="radio"
+                      value={role}
+                    />
+                    <span>{role.replace(" skill", "")}</span>
+                  </label>
+                ))}
+              </fieldset>
+            </div>
+            <textarea
+              aria-label={`${preview.role} SKILL.md`}
+              className="admin-code skill-preview-source"
+              readOnly
+              rows={8}
+              spellCheck={false}
+              value={decoder.decode(preview.files["SKILL.md"])}
+            />
+          </>
+        ) : null}
+      </fieldset>
     );
   const content = (
     <>
@@ -166,7 +181,7 @@ export function GeneratedSkillPreview({
             ))}
           </select>
         </label>
-        {draft ? <span className="admin-status">Draft preview</span> : null}
+        {draft ? <span className="admin-status">Draft</span> : null}
       </div>
       <textarea
         aria-label={`${preview.role} ${path}`}
@@ -179,7 +194,7 @@ export function GeneratedSkillPreview({
   );
   return collapsible ? (
     <details className="skill-preview">
-      <summary>Preview generated skills</summary>
+      <summary>Preview skills</summary>
       {content}
     </details>
   ) : (

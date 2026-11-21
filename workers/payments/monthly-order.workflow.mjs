@@ -135,7 +135,9 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
       });
       await db.batch([
         db
-          .prepare("INSERT INTO monthly_reward_bases VALUES(?,?,?,?,?,'1',0,?)")
+          .prepare(
+            "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(?,?,?,?,?,'1',0,?)",
+          )
           .bind(id, period, text, hash, "d".repeat(64), time),
         db
           .prepare(
@@ -188,7 +190,7 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
   // the existing dispatcher guard; do not pull in its unrelated current root.
   await db.batch([
     db.prepare(
-      "INSERT INTO monthly_reward_bases SELECT project_id,'2026-11',manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at FROM monthly_reward_bases WHERE project_id='zz-unrelated' AND period='2026-12'",
+      "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) SELECT project_id,'2026-11',manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at FROM monthly_reward_bases WHERE project_id='zz-unrelated' AND period='2026-12'",
     ),
     db
       .prepare(
@@ -209,6 +211,8 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
   assert.ok(requests.every((row) => row.projectId !== "zz-unrelated"));
   // Actual D1 execution crosses the cutoff after JavaScript has bound an
   // otherwise valid edit. The early and opted-out cases must still work.
+  // The recipient is proposed 0, so no edit here is a cut: a cut this close
+  // to the cutoff is refused by its 24-hour notice window instead.
   const template = JSON.parse(
     (
       await db
@@ -247,12 +251,12 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
     ),
     db
       .prepare(
-        "INSERT INTO monthly_reward_bases VALUES('eliza',?,?,?,?, '1',1,?)",
+        "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES('eliza',?,?,?,?, '1',1,?)",
       )
       .bind(cutoffPeriod, cutoffText, cutoffHash, "e".repeat(64), cutoffStamp),
     db
       .prepare(
-        "INSERT INTO monthly_reward_base_rows VALUES('eliza',?,'101','recipient','1',?)",
+        "INSERT INTO monthly_reward_base_rows VALUES('eliza',?,'101','recipient','0',?)",
       )
       .bind(cutoffPeriod, "f".repeat(64)),
   ]);

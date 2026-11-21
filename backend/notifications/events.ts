@@ -56,6 +56,29 @@ const GITHUB_ID = (column: string) =>
    AND ${column} GLOB '[1-9]*' AND ${column} NOT GLOB '*[^0-9]*'`;
 
 /**
+ * The audience of a payout exception: the project's GitHub steward when it is
+ * a user account. Nobody can sign in as an Organization, so an Organization
+ * steward's notice goes to the account that listed the project instead; a
+ * project with no recorded lister keeps the steward row. Activity mail
+ * rechecks it before each send (PRD section 9).
+ */
+export const PAYOUT_EXCEPTION_RECIPIENTS = (project: string) => `(
+  SELECT listed.recipient
+    FROM (${LISTED_BY(project)}) listed
+   WHERE EXISTS (
+     SELECT 1 FROM projects
+      WHERE id = ${project}
+        AND json_extract(manifest, '$.steward.github.type') = 'Organization'
+   )
+  UNION
+  SELECT json_extract(manifest, '$.steward.github.actorId')
+    FROM projects
+   WHERE id = ${project}
+     AND (json_extract(manifest, '$.steward.github.type') IS NOT 'Organization'
+          OR NOT EXISTS (${LISTED_BY(project)}))
+)`;
+
+/**
  * The people who answer for a project: the account that listed it and its
  * current GitHub steward. `project` is a SQL expression for the project id.
  * Activity mail rechecks it before each send (PRD section 9).
@@ -332,7 +355,7 @@ export function notifyWalletChanged<S>(
 
 /**
  * A held payout is a payout exception for the project's GitHub steward
- * (migration 0029). The row names only the project, never the contributor or
+ * (migration 0029), or its lister when the steward is an Organization. The row names only the project, never the contributor or
  * a wallet. A payment database without the project registry has no steward
  * row and writes nothing.
  */
@@ -345,22 +368,21 @@ export function notifyPayoutException<S>(
     .prepare(
       `${INSERT}
        SELECT 'payout-exception:' || q.obligation_id || ':' || q.updated_at,
-              json_extract(p.manifest, '$.steward.github.actorId'),
-              'payout_exception', o.project_id, NULL,
-              '/projects/' || o.project_id, q.updated_at, ?
+              recipient, 'payout_exception', o.project_id, NULL,
+              '/projects/' || o.project_id, q.updated_at, ?1
          FROM payment_outbox q
          JOIN payment_obligations o ON o.id = q.obligation_id
-         JOIN projects p ON p.id = o.project_id
-        WHERE q.obligation_id = ? AND q.state = 'held' AND q.updated_at = ?
-          AND ${GITHUB_ID("json_extract(p.manifest, '$.steward.github.actorId')")}
+         JOIN ${PAYOUT_EXCEPTION_RECIPIENTS("(SELECT project_id FROM payment_obligations WHERE id = ?2)")}
+        WHERE q.obligation_id = ?2 AND q.state = 'held' AND q.updated_at = ?1
+          AND ${GITHUB_ID("recipient")}
        ${ONCE}`,
     )
-    .bind(heldAt, obligationId, heldAt);
+    .bind(heldAt, obligationId);
 }
 
 /**
  * An underfunded frozen month is a payout exception for the project's GitHub
- * steward (PRD sections 6 and 9; owner decision D1). The key has no time, so
+ * steward, or its lister when the steward is an Organization (PRD sections 6 and 9; owner decision D1). The key has no time, so
  * each project month sends one notice however often the coordinator retries.
  * The row names only the project and month, never an amount or a contributor.
  */
@@ -374,18 +396,46 @@ export function notifyMonthlyUnderfunded<S>(
     .prepare(
       `${INSERT}
        SELECT 'monthly-underfunded:' || r.project_id || ':' || r.period,
-              json_extract(p.manifest, '$.steward.github.actorId'),
-              'payout_exception', r.project_id,
+              recipient, 'payout_exception', r.project_id,
               'The ' || r.period || ' monthly awards wait for funds. No award is created until the vault covers the whole month.',
-              '/projects/' || r.project_id || '/funding', r.frozen_at, ?
+              '/projects/' || r.project_id || '/funding', r.frozen_at, ?1
          FROM monthly_payment_runs r
-         JOIN projects p ON p.id = r.project_id
-        WHERE r.project_id = ? AND r.period = ?
+         JOIN ${PAYOUT_EXCEPTION_RECIPIENTS("?2")}
+        WHERE r.project_id = ?2 AND r.period = ?3
           AND r.obligations_created_at IS NULL
-          AND ${GITHUB_ID("json_extract(p.manifest, '$.steward.github.actorId')")}
+          AND ${GITHUB_ID("recipient")}
        ${ONCE}`,
     )
     .bind(at, projectId, period);
+}
+
+/**
+ * An owner cut a contributor's monthly amount below the proposal (PRD
+ * section 6, operator decision of 15 November 2026). The contributor gets one
+ * notice per cut change, keyed by its sequence. The statement reads the
+ * committed cut record, so a refused change writes nothing. `detail` is the
+ * caller's plain-language summary of that record.
+ */
+export function notifyMonthlyCut<S>(
+  db: Preparer<S>,
+  projectId: string,
+  period: string,
+  sequence: number,
+  detail: string,
+  at: string,
+): S {
+  return db
+    .prepare(
+      `${INSERT}
+       SELECT 'monthly-cut:' || c.project_id || ':' || c.period || ':' || c.sequence,
+              c.github_user_id, 'payout_exception', c.project_id, ?,
+              '/cycles/' || c.project_id || '/' || c.period, c.created_at, ?
+         FROM monthly_allocation_cut_reasons c
+        WHERE c.project_id = ? AND c.period = ? AND c.sequence = ?
+          AND ${GITHUB_ID("c.github_user_id")}
+       ${ONCE}`,
+    )
+    .bind(detail, at, projectId, period, sequence);
 }
 
 /**
@@ -452,6 +502,59 @@ export function notifyVettingBanAudience<S>(
     )
     .bind(recordId, JSON.stringify(operatorGithubIds));
 }
+
+/**
+ * SQL predicate over an event key: the reinstatement request a
+ * `reinstatement-review:` key names is still undecided, so its review
+ * notice still asks something. This mirrors the appeal fold in
+ * backend/projects/verified-enforcement.ts. A project request
+ * (selectProjectAppeals, kept) is closed by the first later quarantine,
+ * reinstatement or denial, or by a later ban whose appeal state moved
+ * (a signed ban that keeps the appeal for the moderator decision does
+ * not close it). An account request (findAccountBoundary) is closed
+ * only by a decision on that exact account: a ban that names it, a
+ * release of it, or a denial recorded while no project request was
+ * open. Enforcement records are append-only, so readers fold them;
+ * nothing is written back to the request row.
+ */
+export const REINSTATEMENT_REQUEST_OPEN = (eventKey: string) => `EXISTS (
+  SELECT 1 FROM project_enforcements req
+   WHERE req.id = substr(${eventKey}, length('reinstatement-review:') + 1)
+     AND NOT EXISTS (
+       SELECT 1 FROM project_enforcements d
+        WHERE d.project_id = req.project_id AND d.sequence > req.sequence
+          AND (
+            (req.actor_role <> 'banned-account' AND (
+              d.action IN ('quarantine', 'reinstate', 'deny_reinstatement')
+              OR (d.action = 'ban' AND d.appeal_after <> 'requested')
+            ))
+            OR (req.actor_role = 'banned-account' AND (
+              (d.action = 'ban' AND EXISTS (
+                SELECT 1 FROM project_maintainer_bans b
+                 WHERE b.enforcement_id = d.id
+                   AND b.github_id = req.actor_github_id))
+              OR (d.action = 'reinstate_accounts' AND EXISTS (
+                SELECT 1 FROM project_account_reinstatements rel
+                 WHERE rel.enforcement_id = d.id
+                   AND rel.github_id = req.actor_github_id))
+              OR (d.action = 'deny_reinstatement' AND NOT EXISTS (
+                SELECT 1 FROM project_enforcements r2
+                 WHERE r2.project_id = req.project_id
+                   AND r2.action = 'request_reinstatement'
+                   AND r2.actor_role <> 'banned-account'
+                   AND r2.sequence < d.sequence
+                   AND r2.sequence > COALESCE((
+                     SELECT MAX(d2.sequence) FROM project_enforcements d2
+                      WHERE d2.project_id = req.project_id
+                        AND d2.sequence < d.sequence
+                        AND (d2.action IN ('quarantine', 'reinstate', 'deny_reinstatement')
+                             OR (d2.action = 'ban' AND (d2.actor_role = 'vetting-service' OR d2.appeal_after <> 'requested')))
+                   ), 0)
+              ))
+            ))
+          )
+     )
+)`;
 
 /**
  * A reinstatement request reaches the moderators who may decide it: the

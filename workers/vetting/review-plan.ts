@@ -25,6 +25,12 @@ import {
   textParts,
 } from "./bounded-scan";
 import {
+  type CoverageScope,
+  referencedPath,
+  verifyCoverage,
+  worstCoverage,
+} from "./review-coverage";
+import {
   type ReviewPass,
   reviewScan,
   SCAN_PROMPT_REVISION,
@@ -37,6 +43,29 @@ import {
   fittedAliasCount,
   layoutReviewBatches,
 } from "./verified-review-batches";
+
+/** Repository paths a planned call supplied, including byte-identical aliases. */
+function callPaths(call: PlannedCall): Set<string> {
+  const bundle = JSON.parse(call.evidence) as {
+    items: { id: string }[];
+    sameBytesAs?: Record<string, string[]>;
+  };
+  return new Set([
+    ...bundle.items.map((item) => referencedPath(item.id)),
+    ...Object.values(bundle.sameBytesAs ?? {})
+      .flat()
+      .map(referencedPath),
+  ]);
+}
+
+/** Paths the scan covered without a model reading their bodies. */
+function coveredPaths(inspection: RepositoryInspection): Set<string> {
+  return new Set([
+    ...inspection.deterministic.map((record) => record.path),
+    ...inspection.media.map((record) => record.path),
+    ...inspection.artifacts.map((artifact) => artifact.path),
+  ]);
+}
 
 /** Default input budget of one batch call, in estimated tokens. */
 const DEFAULT_BATCH_TOKENS = 150_000;
@@ -434,6 +463,7 @@ export function synthesisCall(
         confidence: result.confidence,
         coverage: result.coverage,
         findings: result.findings,
+        gaps: result.coverageGaps ?? [],
       }),
     })),
   ].map((item) => ({ ...item, sha256: sha256(item.text) }));
@@ -590,6 +620,16 @@ function combine(
         .reduce((worst, value) => (RANK[value] > RANK[worst] ? value : worst))
     : null;
   const findings = completed ? results.flatMap((r) => r.findings) : [];
+  const verifiedCoverage = completed
+    ? Object.fromEntries(
+        SCAN_REVIEW_AREAS.map((area) => [
+          area,
+          worstCoverage(
+            results.map((r) => r.verifiedCoverage?.[area] ?? "missing"),
+          ),
+        ]),
+      )
+    : undefined;
   const usage = results.every((r) => r.usage)
     ? results.reduce(
         (sum, r) => ({
@@ -625,13 +665,26 @@ function combine(
     providerRequestId: last.providerRequestId,
     returnedModel: last.returnedModel,
     coverage,
+    coverageGaps: completed ? results.flatMap((r) => r.coverageGaps ?? []) : [],
+    ...(verifiedCoverage ? { verifiedCoverage } : {}),
     confidence: completed
       ? Math.min(...results.map((r) => r.confidence ?? 0))
       : null,
     findings,
     usage,
     cost,
-    visibilityGaps: [...new Set(results.flatMap((r) => r.visibilityGaps))],
+    // One reviewer entry per threat: the combined verified state.
+    visibilityGaps: [
+      ...new Set(results.flatMap((r) => r.visibilityGaps)),
+    ].filter((gap) => {
+      if (!verifiedCoverage) return true;
+      const [reviewer, area, state] = gap.split(":");
+      return (
+        reviewer !== last.review.reviewer ||
+        !Object.hasOwn(verifiedCoverage, area) ||
+        verifiedCoverage[area] === state
+      );
+    }),
     passes,
   };
 }
@@ -654,17 +707,41 @@ export async function reviewInventory(input: {
 }): Promise<{ evidence: ScannerEvidence | null; plan: ReviewPlan }> {
   const { inspection, profile } = input;
   const plan = planReview(inspection, input.batchTokens);
+  const covered = coveredPaths(inspection);
   if (plan.mode === "single")
     return {
       plan,
-      evidence: await reviewScan({
-        evidence: plan.call.evidence,
-        inputSha256: plan.call.inputSha256,
-        profile,
-        fetch: input.fetch,
-        timeoutMs: callTimeoutMs(plan.call.estimatedTokens),
-      }),
+      evidence: verifyCoverage(
+        await reviewScan({
+          evidence: plan.call.evidence,
+          inputSha256: plan.call.inputSha256,
+          profile,
+          fetch: input.fetch,
+          timeoutMs: callTimeoutMs(plan.call.estimatedTokens),
+        }),
+        {
+          kind: "single",
+          supplied: callPaths(plan.call),
+          elsewhere: new Set(),
+          covered,
+        },
+      ),
     };
+  const batchPaths = plan.batches.map(callPaths);
+  const outside = plan.sameBytesOutsideBatches.flatMap((entry) =>
+    entry.paths.map(referencedPath),
+  );
+  const batchScope = (index: number): CoverageScope => ({
+    kind: "batch",
+    supplied: batchPaths[index],
+    elsewhere: new Set([
+      ...batchPaths.flatMap((paths, other) =>
+        other === index ? [] : [...paths],
+      ),
+      ...outside,
+    ]),
+    covered,
+  });
   const key = (call: PlannedCall, kind: ReviewPass["kind"]) =>
     sha256(
       JSON.stringify([
@@ -800,7 +877,9 @@ export async function reviewInventory(input: {
   }
   if (exhausted || done.length !== plan.batches.length)
     return { plan, evidence: null };
-  const results = done.map((outcome) => outcome.evidence);
+  const results = done.map((outcome, index) =>
+    verifyCoverage(outcome.evidence, batchScope(index)),
+  );
   const synthesis = synthesisCall(
     inspection,
     plan.batches,
@@ -818,11 +897,23 @@ export async function reviewInventory(input: {
         pass("synthesis", plan.batches.length + 1, synthesis, final),
       ]),
     };
+  const synthesized = verifyCoverage(final.evidence, {
+    kind: "synthesis",
+    supplied: new Set([
+      "prepass",
+      ...plan.batches.map((_, index) => `batch-${index + 1}`),
+    ]),
+    elsewhere: new Set([
+      ...batchPaths.flatMap((paths) => [...paths]),
+      ...outside,
+    ]),
+    covered,
+  });
   return {
     plan,
     evidence: combine(
       inspection.inventorySha256,
-      [...results, final.evidence],
+      [...results, synthesized],
       [
         ...done.map((outcome, index) =>
           pass("batch", index + 1, plan.batches[index], outcome),

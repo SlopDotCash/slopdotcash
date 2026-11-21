@@ -7,7 +7,6 @@
 // @source src/Profiles.tsx
 // @source src/ProfilePage.tsx
 // @source src/EscrowFunding.tsx
-// @source src/HomeStandings.tsx
 // use-public-resource/use-snapshot/use-cycle-index/use-direct-transfers/use-vault-payments.
 // A publication requires complete validated pages; transient refresh may retain old data.
 module ui_resources {

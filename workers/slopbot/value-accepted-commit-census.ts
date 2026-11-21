@@ -95,6 +95,11 @@ export async function collectAcceptedCommitCensus(
 
 type MergeRange = { start: number; end: number };
 
+/** GitHub search accepts one inclusive merged-time range qualifier. */
+export function mergedTimeRangeQualifier(start: number, end: number): string {
+  return `merged:${new Date(start).toISOString().replace(".000Z", "Z")}..${new Date(end).toISOString().replace(".000Z", "Z")}`;
+}
+
 async function collectRange(
   github: ValueClient,
   evidence: ValueEvidence,
@@ -105,7 +110,7 @@ async function collectRange(
   if (!github.graphql || !Number.isFinite(startAt)) return null;
   const [owner, name] = current.split("/");
   const period = range
-    ? `merged:${new Date(range.start).toISOString().replace(".000Z", "Z")}..${new Date(range.end).toISOString().replace(".000Z", "Z")}`
+    ? mergedTimeRangeQualifier(range.start, range.end)
     : `merged:>=${new Date(startAt).toISOString().slice(0, 10)}`;
   const query = `repo:${current} is:pr is:merged ${period}`;
   const ids = new Set<string>();
@@ -119,7 +124,7 @@ async function collectRange(
     } = await github.graphql<{
       search: Page<Pull> & { issueCount: number };
     }>(
-      `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt baseRefOid headRefOid repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}}}`,
+      `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt baseRefOid headRefOid repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}} rateLimit{cost limit remaining resetAt}}`,
       { q: query, cursor },
     );
     const search = result.search;
@@ -203,7 +208,7 @@ async function collectRange(
             pullRequest: { id: string; commits: Commits };
           } | null;
         }>(
-          `query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id commits(first:100,after:$after){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}}`,
+          `query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id commits(first:100,after:$after){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}} rateLimit{cost limit remaining resetAt}}`,
           { owner, name, number: pull.number, after },
         );
         if (

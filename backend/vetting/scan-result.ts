@@ -155,6 +155,21 @@ export type VettingScanResult = {
   } | null;
 };
 
+/**
+ * A reviewer's coverage entry whose every stated reason named content outside
+ * the acquired revision, verified by the scanner (`review-coverage.ts`). It
+ * is recorded on the result and does not keep it from clean. Every other
+ * visibility gap does, including the historical `<reviewer>:<threat>:partial`
+ * form (operator decision, 19 November 2026).
+ */
+const ADVISORY_REVIEW_GAP = new RegExp(
+  `^(?:astra|opus):(?:${SCAN_THREATS.join("|")}):outside-revision$`,
+  "u",
+);
+export function advisoryReviewGap(gap: string): boolean {
+  return ADVISORY_REVIEW_GAP.test(gap);
+}
+
 /** Either recorded result schema: historical v1 or the bounded scan. */
 export type RecordedVettingResult = VettingResult | VettingScanResult;
 
@@ -427,9 +442,13 @@ export function specialistRequired(result: VettingScanResult): boolean {
 /**
  * Reasons a bounded scan cannot carry its claimed disposition. An empty list
  * means the disposition is consistent with its own evidence. "clean" needs
- * every defined surface read completely, every defined check passed (or
- * cleared by a completed specialist), every artifact released after a clean
- * analysis and no high or critical finding.
+ * every defined surface read completely, no visibility gap except a verified
+ * reviewer entry for content outside the acquired revision, every defined
+ * check passed or cleared by a completed specialist without a high or
+ * critical finding, every artifact released after a clean analysis, and no
+ * high or critical finding from the deterministic checks or either review.
+ * Info, low and medium review findings are advisory (operator decision,
+ * 19 November 2026).
  */
 export function scanProblems(result: VettingScanResult): string[] {
   const problems: string[] = [];
@@ -446,7 +465,7 @@ export function scanProblems(result: VettingScanResult): string[] {
   for (const surface of SCAN_SURFACES)
     if (result.coverage[surface].state !== "complete")
       problems.push(`The ${surface} surface was not read completely`);
-  if (result.visibilityGaps.length > 0)
+  if (result.visibilityGaps.some((gap) => !advisoryReviewGap(gap)))
     problems.push("The scan reported visibility gaps");
   const inventory = result.assessed.inputManifestSha256;
   const reviewProblems = (review: ScanReview, name: string) => {
@@ -462,13 +481,16 @@ export function scanProblems(result: VettingScanResult): string[] {
   const specialist = result.specialistReview;
   if (specialist) {
     reviewProblems(specialist, "specialist");
-    if (
-      escalated &&
-      (specialist.verdict !== "no-findings" || specialist.risk !== "low")
-    )
+    // The specialist reads the whole inventory again. Its info, low and
+    // medium findings are advisory; a high or critical finding, suspected
+    // malice or coverage it could not verify keeps the result open
+    // (operator decision, 19 November 2026).
+    if (escalated && specialist.risk === "high")
       problems.push("The specialist review did not clear the escalated result");
   } else if (escalated)
     problems.push("An ambiguous or high-risk result needs a specialist review");
+  if (result.primaryReview.risk === "high")
+    problems.push("The primary review reported a high or critical finding");
   for (const threat of SCAN_THREATS)
     if (result.checks[threat] === "not-run")
       problems.push(`The ${threat} check did not run`);

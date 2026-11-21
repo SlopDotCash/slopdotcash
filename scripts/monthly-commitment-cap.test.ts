@@ -143,7 +143,7 @@ test("an expired pin does not mask a live one, and a future pin still counts", (
 test("the recorded-asset checks still guard the target", () => {
   expect(() =>
     vaultMonthlyCap(projectWith("1000"), deployment, DECIMALS + 1),
-  ).toThrow("decimals differ");
+  ).toThrow("Token decimals mismatch. Update the reward asset.");
   expect(() =>
     vaultMonthlyCap(
       projectWith("1000"),
@@ -153,5 +153,5 @@ test("the recorded-asset checks still guard the target", () => {
       },
       DECIMALS,
     ),
-  ).toThrow("vault token differs");
+  ).toThrow("Vault token mismatch. Update the reward asset.");
 });

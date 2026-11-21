@@ -6,6 +6,8 @@ import type { ContributionField } from "./project-schema.mjs";
 
 import type { RewardAsset } from "./reward-asset.mjs";
 import type { SecurityBountyTerms } from "./security-bounty.mjs";
+import type { ReadyLabelSettings } from "./slopbot-ready.mjs";
+import type { SubmissionFeeSetting } from "./submission-fee-setting.mjs";
 
 export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
@@ -33,6 +35,18 @@ export interface ProjectReviewBudgetPolicy {
 }
 
 export interface ProjectRewardPolicy {
+  /** Owner opts to advertise the stated pool as a promise without vault funding. */
+  readonly honorSystem?: true;
+  /**
+   * Basis points of the monthly amount that go to the accounts that decide
+   * outside pull requests (1 to 3000). Absent means no maintainer share.
+   */
+  readonly maintainerShare?: number;
+  /** Server-written: the share every month through `throughCycle` had. */
+  readonly maintainerShareHistory?: readonly {
+    readonly throughCycle: string;
+    readonly basisPoints: number;
+  }[];
   /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
   readonly cycleCaps?: readonly {
     readonly cycleId: string;
@@ -212,7 +226,20 @@ export interface ProjectDefinition {
   /** Maintainer-authored fields that generate the project skills (SKL-03). */
   readonly contribution?: Readonly<Record<ContributionField, string>>;
   /** Explicit owner consent, recorded by immutable revision; absent is false. */
-  readonly slopbot?: { readonly automaticClosure: boolean };
+  readonly slopbot?: {
+    readonly automaticClosure: boolean;
+    /** The slopbot:ready label (PRD section 5); absent means off. */
+    readonly readyLabel?: ReadyLabelSettings;
+    /**
+     * Pause new contributors when this many outside pull requests are open
+     * (PRD section 5); absent means off.
+     */
+    readonly intakeCap?: number;
+    /**
+     * The refundable submission fee (PRD section 5); absent means off.
+     */
+    readonly submissionFee?: SubmissionFeeSetting;
+  };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {
@@ -222,6 +249,10 @@ export interface ProjectDefinition {
     readonly githubUrl: string;
     readonly description: string;
     readonly integrationBranch: string;
+    /** Appended repositories only (never repositories[0]). */
+    readonly githubId?: string;
+    readonly nodeId?: string;
+    readonly countsFrom?: string;
   }[];
   readonly skill: {
     readonly id: string;

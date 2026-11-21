@@ -29,9 +29,8 @@ async function mount(
   action: (path: string, route: Route) => Promise<void>,
 ) {
   await page.route("**/api/v1/**", async (route) => {
-    const path = new URL(route.request().url()).pathname.slice(
-      "/api/v1/".length,
-    );
+    const url = new URL(route.request().url());
+    const path = url.pathname.slice("/api/v1/".length);
     if (path === "project-session")
       return route.fulfill({
         json: { session: { githubId: "42", githubLogin: "fixture-reporter" } },
@@ -57,6 +56,13 @@ async function mount(
           automatic: true,
           submissions: [current()],
         },
+      });
+    if (
+      path === `security-submissions/${id}` &&
+      url.searchParams.get("view") === "receipt"
+    )
+      return route.fulfill({
+        json: { recipientGithubId: "42", submission: current() },
       });
     return action(path, route);
   });
@@ -104,10 +110,7 @@ test("intake routing and GitHub receipt remain independent in one report", async
     },
   );
   await expect(
-    card.getByText(
-      "Report cleared for review. The owner notification is pending.",
-      { exact: true },
-    ),
+    card.getByText("Cleared · notifying owner", { exact: true }),
   ).toBeVisible();
   await expect(
     card.getByText("GitHub refused the report for your account.", {
@@ -121,10 +124,7 @@ test("intake routing and GitHub receipt remain independent in one report", async
     .getByRole("button", { name: "Retry owner notification", exact: true })
     .click();
   await expect(
-    card.getByText(
-      "A maintainer cleared this report for owner review. No award has been approved by this routing decision.",
-      { exact: true },
-    ),
+    card.getByText("Cleared · no award yet", { exact: true }),
   ).toBeVisible();
   await expect(
     card.getByText("GitHub refused the report for your account.", {
@@ -167,18 +167,13 @@ for (const [canReview, canAuthorize, visible] of [
         throw new Error(`Unexpected action: ${path}`);
       },
     );
-    await expect(
-      card.getByText("Also send privately to GitHub", { exact: true }),
-    ).toHaveCount(visible ? 1 : 0);
+    await expect(card.getByText("Send to GitHub", { exact: true })).toHaveCount(
+      visible ? 1 : 0,
+    );
     await expect(
       card.getByRole("textbox", { name: "Summary", exact: true }),
     ).toHaveCount(0);
-    await expect(
-      card.getByText(
-        "Screening complete. Ready for the project owner's review.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    await expect(card.getByText("Owner review", { exact: true })).toBeVisible();
   });
 }
 
@@ -289,9 +284,7 @@ test("grant recovery saves the local draft and stays busy until navigation", asy
   });
   await authorize.click();
   await expect(
-    card.getByText(
-      /This browser could not keep your report during GitHub authorization/,
-    ),
+    card.getByText("Allow site storage, then retry.", { exact: true }),
   ).toBeVisible();
   expect(authorizations).toBe(0);
   await page.evaluate(() => {

@@ -1,0 +1,16 @@
+{
+  "status": "owner-approved-terms-only",
+  "decisionDate": "2026-11-14",
+  "contributionPeriod": "2026-10",
+  "grossAccountingDollars": 3250,
+  "fee": { "basisPoints": 200, "rounding": "ceil-per-recipient-in-base-units", "deductFromGross": true },
+  "implementationAttribution": "full-existing-pool-to-verified-original-contributor-on-replacement-PRs",
+  "projects": [
+    { "id": "eliza", "grossBase": "1000000000", "network": "solana-mainnet", "asset": "USDC", "assetAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "decimals": 6 },
+    { "id": "slopdotcash", "grossBase": "1000000000", "network": "base-mainnet", "asset": "USDC", "assetAddress": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "decimals": 6 },
+    { "id": "asi", "grossBase": "250000000", "network": "robinhood-mainnet", "asset": "USDG", "assetAddress": "0x5fc5360d0400a0fd4f2af552add042d716f1d168", "decimals": 6 },
+    { "id": "feed", "grossBase": "500000000", "network": "solana-mainnet", "asset": "USDC", "assetAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "decimals": 6 },
+    { "id": "thenetwork", "grossBase": "500000000", "network": "robinhood-mainnet", "asset": "USDG", "assetAddress": "0x5fc5360d0400a0fd4f2af552add042d716f1d168", "decimals": 6 }
+  ],
+  "subsequentFunding": { "period": "2026-11", "after": "October payouts finalized and reconciled" }
+}

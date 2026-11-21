@@ -29,6 +29,12 @@
   font-size: 0.8125rem;
 }
 
+.payment-record small .chain-icon {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+}
+
 .payment-record-amount {
   justify-items: end;
 }
@@ -44,6 +50,13 @@
   margin: 0;
 }
 
+.profile-payments-summary strong {
+  display: block;
+  color: var(--brand-color-ink);
+  font-family: var(--brand-font-data);
+  font-size: 24px;
+}
+
 .profile-payment-notices {
   display: grid;
   gap: 0.5rem;
@@ -52,11 +65,6 @@
 .profile-payment-notices p {
   margin: 0.5rem 0;
 }
-
-.profile-activity > .activity-chart {
-  margin-top: 1rem;
-}
-
 .home-security-section--empty {
   padding-top: 1.5rem;
   padding-bottom: 1.5rem;

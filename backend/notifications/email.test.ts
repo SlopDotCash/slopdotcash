@@ -793,6 +793,58 @@ test("project notices recheck the current steward before activity mail", async (
   h.sqlite.close();
 });
 
+test("an Organization steward's payout exception mails the project's lister", async () => {
+  const h = setup();
+  const current = await h.call("GET");
+  expect(
+    (
+      await h.call("POST", {
+        enabled: true,
+        destinationVersion: current.body.destinationVersion,
+      })
+    ).status,
+  ).toBe(200);
+  // A self-service project listed by account 101 (the mail account), with a
+  // GitHub Organization as its steward.
+  const at = h.now().toISOString();
+  const value = applicationManifest("org-steward", "example/org-steward");
+  value.steward = {
+    ...(value.steward as Record<string, unknown>),
+    kind: "organization",
+    github: {
+      actorId: "909",
+      nodeId: "O_909",
+      login: "example",
+      type: "Organization",
+      profileUrl: "https://github.com/example",
+    },
+  };
+  const manifest = JSON.stringify(value);
+  h.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('org-steward',1,?,?,'Fixture','101','lister',?)",
+    )
+    .run(manifest, "a".repeat(64), at);
+  h.sqlite
+    .query(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('org-steward','paused',1,?,?,?,?)",
+    )
+    .run(manifest, "a".repeat(64), at, at);
+  h.sqlite
+    .query(
+      "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES ('monthly-underfunded:org-steward:2026-11','101','payout_exception','org-steward','/projects/org-steward/funding',?,?)",
+    )
+    .run(at, at);
+  await dispatchActivityMail(h.mail);
+  expect(h.sent).toHaveLength(1);
+  expect(
+    (h.rows() as unknown as { event_key: string; state: string }[]).map(
+      (row) => [row.event_key, row.state],
+    ),
+  ).toEqual([["monthly-underfunded:org-steward:2026-11", "provider-accepted"]]);
+  h.sqlite.close();
+});
+
 test("vetting ban mail rechecks affected contributors and current staff after an ownership change", async () => {
   for (const staffRemoved of [false, true]) {
     const h = setup();
@@ -1055,6 +1107,142 @@ test("a reinstatement review mails only a current moderator", async () => {
         )
         .get(),
     ).toEqual({ kind: "reinstatement_review" });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a reinstatement review decided before the send mails nobody", async () => {
+  const h = setup();
+  try {
+    // Accounts 101 and 102 are moderators with verified, consented mail.
+    for (const id of ["101", "102"]) {
+      h.mail.config.recipients[id] = {
+        ...h.mail.config.recipients["101"],
+        email: `moderator${id}@example.com`,
+      };
+      const current = await h.call("GET", undefined, id);
+      expect(
+        (
+          await h.call(
+            "POST",
+            {
+              enabled: true,
+              destinationVersion: current.body.destinationVersion,
+            },
+            id,
+          )
+        ).status,
+      ).toBe(200);
+    }
+    const at = h.now().toISOString();
+    const manifest = JSON.stringify({
+      id: "review-project",
+      status: "paused",
+      repositories: [{ id: "example/review-project" }],
+      steward: { github: { actorId: "303" } },
+    });
+    h.sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('review-project',1,?,?,'Fixture','303','owner',?)",
+      )
+      .run(manifest, "a".repeat(64), at);
+    h.sqlite
+      .query(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('review-project','paused',1,?,?,?,?)",
+      )
+      .run(manifest, "a".repeat(64), at, at);
+    const record = (
+      sequence: number,
+      action: ProjectEnforcement["action"],
+      stateAfter: ProjectEnforcement["stateAfter"],
+      appealAfter: ProjectEnforcement["appealAfter"],
+      actor: { githubId: string; githubLogin: string },
+      actorRole: ProjectEnforcement["actorRole"],
+      decisionSource: ProjectEnforcement["decisionSource"],
+    ): ProjectEnforcement => ({
+      id: `enf_reviewrecord${sequence}`,
+      projectId: "review-project",
+      sequence,
+      action,
+      stateAfter,
+      appealAfter,
+      reason: "Private moderation reason",
+      evidenceReference: "private-evidence-1",
+      repositoryGithubId: "123",
+      repositoryKeys: ["example/review-project"],
+      actor,
+      actorRole,
+      decisionSource,
+      beforeRevision: 1,
+      beforeManifestSha256: "a".repeat(64),
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "no_revision_needed",
+      createdAt: at,
+    });
+    const persistence = new CloudflareProjectPersistence(h.db as never);
+    expect(
+      await persistence.appendEnforcement(
+        record(
+          1,
+          "quarantine",
+          "quarantined",
+          "none",
+          { githubId: "104", githubLogin: "moderator104" },
+          "project-moderator",
+          "admin-panel",
+        ),
+        null,
+        [],
+      ),
+    ).toBe("recorded");
+    expect(
+      await persistence.appendEnforcement(
+        record(
+          2,
+          "request_reinstatement",
+          "quarantined",
+          "requested",
+          { githubId: "303", githubLogin: "owner" },
+          "project-steward",
+          "owner-request",
+        ),
+        null,
+        ["101", "102"],
+      ),
+    ).toBe("recorded");
+    expect(h.rows()).toHaveLength(2);
+    // A third moderator decides the request before the mail run: the
+    // review ask is moot, so both queued deliveries are suppressed.
+    expect(
+      await persistence.appendEnforcement(
+        record(
+          3,
+          "reinstate",
+          "clear",
+          "granted",
+          { githubId: "104", githubLogin: "moderator104" },
+          "project-moderator",
+          "admin-panel",
+        ),
+        null,
+        [],
+      ),
+    ).toBe("recorded");
+    h.mail.moderatorGithubIds = new Set(["101", "102", "104"]);
+    await dispatchActivityMail(h.mail);
+    expect(h.sent).toHaveLength(0);
+    expect(
+      Object.fromEntries(
+        (
+          h.rows() as unknown as {
+            recipient_github_id: string;
+            state: string;
+          }[]
+        ).map((row) => [row.recipient_github_id, row.state]),
+      ),
+    ).toEqual({ "101": "suppressed", "102": "suppressed" });
   } finally {
     h.sqlite.close();
   }

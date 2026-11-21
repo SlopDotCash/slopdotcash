@@ -111,6 +111,111 @@ for (const scenario of [
   });
 }
 
+for (const scenario of [
+  "index-reset",
+  "shard-reset",
+  "body-reset",
+  "persistent-reset",
+  "reset-then-corrupt",
+  "other-error",
+] as const) {
+  test(`Points projection transport ${scenario} preserves verified history`, async () => {
+    const { journal, shards, index } = projection();
+    const target =
+      scenario === "index-reset"
+        ? "https://slop.cash/data/points.json"
+        : "https://slop.cash/data/points/1.json";
+    const attempts: string[] = [];
+    const waits: number[] = [];
+    let indexReads = 0;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/v1/points/journal")
+          return Response.json({
+            ...journal,
+            batch: digest(JSON.stringify(journal)),
+            total: journal.revisions.length,
+            next: null,
+          });
+        if (url.pathname === "/data/points.json") {
+          indexReads++;
+          return Response.json(index);
+        }
+        const shard = shards.find((part) => part.path === url.pathname);
+        return shard
+          ? new Response(
+              shard.text +
+                (scenario === "reset-then-corrupt" &&
+                url.pathname === "/data/points/1.json"
+                  ? " "
+                  : ""),
+            )
+          : new Response(null, { status: 404 });
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      if (url.origin !== "https://slop.cash")
+        throw new Error("Unexpected external request");
+      if (url.href === target) {
+        attempts.push(url.href);
+        if (
+          scenario === "persistent-reset" ||
+          scenario === "other-error" ||
+          attempts.length <= (scenario === "shard-reset" ? 2 : 1)
+        ) {
+          const error = Object.assign(new Error("socket connection closed"), {
+            code: scenario === "other-error" ? "OTHER_ERROR" : "ECONNRESET",
+          });
+          if (scenario !== "body-reset") throw error;
+          let partial = false;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (partial) controller.error(error);
+                else {
+                  partial = true;
+                  controller.enqueue(new TextEncoder().encode("["));
+                }
+              },
+            }),
+          );
+        }
+      }
+      return originalFetch(
+        new URL(url.pathname + url.search, server.url),
+        init,
+      );
+    }) as typeof fetch;
+    try {
+      const result = loadPublishedPoints(false, async (milliseconds) => {
+        waits.push(milliseconds);
+      });
+      if (scenario === "persistent-reset" || scenario === "other-error")
+        await expect(result).rejects.toThrow("socket connection closed");
+      else if (scenario === "reset-then-corrupt")
+        await expect(result).rejects.toThrow("Points shard checksum mismatch");
+      else expect(await result).toEqual(journal);
+      const count =
+        scenario === "other-error"
+          ? 1
+          : scenario === "shard-reset" || scenario === "persistent-reset"
+            ? 3
+            : 2;
+      expect(attempts).toEqual(Array(count).fill(target));
+      expect(waits).toEqual(Array(count - 1).fill(1000));
+      expect(indexReads).toBe(scenario === "reset-then-corrupt" ? 2 : 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      server.stop(true);
+    }
+  });
+}
+
 for (const failure of ["transient", "persistent", "different-error"] as const) {
   test(`published Points history ${failure} refusal preserves history`, async () => {
     const { journal, shards, index } = projection();

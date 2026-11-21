@@ -15,6 +15,7 @@ import type {
   PublishedPenalty,
   ScoreEvent,
 } from "./leaderboard-types";
+import { scoreThirdsToPoints } from "./score-units";
 import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
 /** Retained history is explicit evidence, never an absence-based reversal. */
@@ -112,7 +113,7 @@ export function penaltyDeductions(
     const bucket = key(event.actor.id, event.repository, event.occurredAt);
     credits.push({
       bucket: bucketIndex(bucket),
-      amount: BigInt(eventThirds(event)),
+      amount: BigInt(scoreThirdsToPoints(eventThirds(event))),
     });
   }
   const ordered = [...penalties].sort(
@@ -125,7 +126,10 @@ export function penaltyDeductions(
       key(penalty.actor.id, penalty.repository, penalty.occurredAt),
     ),
     // A nonpositive request applied nothing in the original loop.
-    amount: penalty.debitThirds > 0 ? BigInt(penalty.debitThirds) : 0n,
+    amount:
+      penalty.debitThirds > 0
+        ? BigInt(scoreThirdsToPoints(penalty.debitThirds))
+        : 0n,
   }));
   const consumed = consumeBuckets(sumBuckets(buckets.size, credits), requests);
   const byActor = new Map<string, number>();
@@ -136,8 +140,8 @@ export function penaltyDeductions(
     const penalty = ordered[index];
     const exact = consumed.applied[index];
     if (exact <= 0n) continue;
-    const applied = Number(exact);
-    if (!Number.isSafeInteger(applied))
+    const appliedPoints = Number(exact);
+    if (!Number.isSafeInteger(appliedPoints))
       throw new Error("Penalty total overflow");
     if (!actors.has(penalty.actor.id))
       actors.set(penalty.actor.id, actors.size);
@@ -145,14 +149,14 @@ export function penaltyDeductions(
       bucket: actors.get(penalty.actor.id) as number,
       amount: exact,
     });
-    byPenalty.set(penalty.id, applied);
+    byPenalty.set(penalty.id, appliedPoints / 10);
   }
   const actorTotals = sumBuckets(actors.size, actorCredits);
   for (const [actor, index] of actors) {
     const numericTotal = Number(actorTotals[index]);
     if (!Number.isSafeInteger(numericTotal))
       throw new Error("Penalty total overflow");
-    byActor.set(actor, numericTotal);
+    byActor.set(actor, numericTotal / 10);
   }
   return { byActor, byPenalty };
 }

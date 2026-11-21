@@ -23,7 +23,7 @@ alias only.
 - Slop never infers copyright ownership, legal capacity, assignment, wallet
   control, or payment authority.
 - Slop never holds keys, signs transactions, broadcasts payments, or claims
-  success before public evidence proves it, except for the three narrowly scoped
+  success before public evidence proves it, except for the four narrowly scoped
   kinds of key below. No other application-service exception exists.
   - The escrow identity attester key (PAY-05, approved by the repository owner
     on 14 October 2026). It only attests the authenticated GitHub actor for a
@@ -102,14 +102,30 @@ alias only.
     the accrual job may run only in off or dry_run until the program
     token exists, the funding line is agreed, an independent root watcher is
     operating, and the owner explicitly activates posting. Counsel review is
-    not required (owner decision, 26 October 2026). Root
-    posting stays on Robinhood Chain Testnet until that activation. This
+    not required (owner decision, 26 October 2026). No root is
+    posted until that activation; production accrual is dry_run against the
+    mainnet distributor, which holds the 2,000,000 tokens since 12 November
+    2026 (PRD section 11). This
     exception grants no authority over project vaults or contributor payments.
     The whole-root growth limit is 2,000,000 program tokens; each project still
     has a 250,000-token lifetime cap. The separate poster gas ceilings are
     0.0002 ETH per transaction and 0.002 ETH per UTC day (owner decision,
     25 October 2026). Pause above either ceiling; retain uncertain attempts.
     These limits do not authorize funding or activation.
+  - The submission-fee resolver key (PRD section 6, "Submission fee
+    deposits", operator decision of 18 November 2026). It calls only
+    `resolve` and `resolveMany` on the `SubmissionDeposits` contracts on Base
+    and Robinhood Chain. For each open deposit it can choose only between the
+    two outcomes fixed when the deposit was made: a refund to the payer, or
+    "kept" to the deposit's own destination (the fee wallet for a stablecoin,
+    the burn address for SLOP). It cannot send a deposit anywhere else, holds
+    no tokens, and is never the contract owner. A stolen key can refund or
+    keep open deposits wrongly; it cannot take them. `workers/submission-fee`
+    sends only for finalized deposits, keeps a fee only for the deposit that
+    paid a pull request whose row says kept, records each signed transaction
+    before broadcasting it, and stays inside its native-fee ceilings.
+    `SUBMISSION_FEE_MODE` ships off; `dry_run` loads no key. Going live needs
+    its own reviewed change after the contracts are deployed.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -234,7 +250,11 @@ future executable changes. Later projects require one successful admission scan 
 repository. Routine commits, dependencies, Markdown, skill and presentation
 changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
-cannot inherit a nonexempt admission. Explicit security investigations control
+cannot inherit a nonexempt admission. An owner may append public repositories on the
+manage page; each needs the owner's current authority through Slopbot, counts from
+the next UTC month, is never removed or reordered, and needs its own admission scan
+or exemption, because the migration-0075 exemption covers only original repositories.
+Explicit security investigations control
 nonexempt admission (owner decision, 27 October 2026, PRD section 8).
 Admission scans have no repository size limit (owner decision, 28 October
 2026, PRD section 8): acquisition is one shallow Git fetch of the exact commit,
@@ -244,10 +264,17 @@ with a repository-level synthesis (`workers/vetting/ACQUISITION.md`,
 run size limit: objects are stored once by SHA-256 in private R2 in 8 MiB
 parts and referenced by every run that declares them
 (`backend/vetting/EVIDENCE.md`). Never reintroduce an entry, file, total or
-evidence size refusal, and never record a partly reviewed repository as passed. Record the
-existing-project exemption explicitly, never as a passed scan; its project-ID
-scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
-reinstatement requirements still apply.
+evidence size refusal, and never record a partly reviewed repository as passed.
+Operator decision, 19 November 2026: clearance follows the scanner's own
+evidence. Info, low and medium model findings and reviewer coverage reasons the
+scanner verifies as outside the acquired revision are advisory; unreviewed
+supplied content, a missing or unexplained coverage area, a high or critical
+finding, suspected malice and scanner gaps still block. Slop's queued template
+is checked deterministically and not sent to the models; well-formed images are
+listed by digest (PRD section 8). Record the existing-project exemption
+explicitly, never as a passed scan; its project-ID scope is unchanged. Flags,
+pauses, confirmed-malicious bans and fresh-scan reinstatement requirements
+still apply.
 
 Owner decision, 27 October 2026: the registered Umia Protocol fork may receive
 an explicit, audited normal-admission exemption through the administrator
@@ -305,7 +332,25 @@ provider, exact model, and client.
 
 Slopbot is required and always free, and runs only on registered repositories.
 It scores PRs by perceived size and value, credits useful reviews, and applies
-the published penalty table. Automatic closure is limited to verified
+the published penalty table. A project owner may turn on the refundable
+submission fee (`slopbot.submissionFee`; operator decision, 18 November 2026;
+PRD section 5). The review stays free: an outside contributor's pull request
+waits for its review until a deposit is recorded, with one comment and the
+label `slopbot:fee-needed`. A merge, or 14 days without a maintainer decision,
+makes the deposit due back; a pull request closed without a merge for 7 days
+keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned). Slopbot
+moves no money, never closes a pull request for an unpaid fee, and never
+blocks a maintainer's own review or merge; scoring does not read the fee.
+The comment links the pay page
+`/fee/<owner>/<repo>/<number>` (`src/SubmissionFeePage.tsx`; operator
+decision, 19 November 2026). The page needs no sign-in, takes the repository
+id from the project registry, and offers a way to pay only when the stored
+record's contract, chain, token and kept-to address equal the tables in
+`src/lib/submission-fee.mjs`; it takes none of them from the address bar or
+from input, and offers nothing while `SUBMISSION_FEE_SWITCHED_ON` is false.
+`SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `off`, `dry_run`
+or `live`. It is `dry_run` since 19 November 2026: Slopbot records what it
+would ask and writes nothing to GitHub. `live` needs its own reviewed change. Automatic closure is limited to verified
 Slop-skill participants, excluding maintainers: a slop.cash member whose own
 authenticated Slop run records a `pull_request_opened` event for that exact PR
 (PRD section 11). A copied marker is never proof. An uncertain finding goes to
@@ -373,8 +418,8 @@ diagnostic and never changes score, rank, share, or payment.
 ## Private security reporting
 
 Owner decision, 27 October 2026: all registered projects retain confidential
-reporting. Umia Protocol has a paid security bounty (and, from 28 October
-2026, so does Slop itself; see below). The Umia bounty's
+reporting. Umia Protocol has a paid security bounty (Slop's own program is
+described below). The Umia bounty's
 $10,000 gross award per accepted critical loss-of-funds finding splits $7,500
 to the first qualifying reporter and $2,500 to slop.cash. The maintainer reviews
 and awards each finding. The offer is pledged with funding after approval,
@@ -382,24 +427,41 @@ not an upfront-funded vault; reserve and pay only after verified funding. Slop f
 bounty settlement; reimbursement by Umia is off chain. Publish project terms
 only through immutable D1 revisions. Preserve prior cases and funded awards.
 
-Owner decision, 28 October 2026: slop.cash also offers $10,000 per accepted
-critical loss-of-funds finding (theft or permanent freezing of funds) in its own
-contracts deployed to mainnet from `contracts/evm/src` and
-`contracts/solana/programs`. Third-party contracts, off-chain or frontend-only
-issues, testnet-only deployments and known issues are out of scope. Slop is the
-sponsor, so the first qualifying reporter of this Slop contract bounty receives
-the full award with no Slop share (owner decision confirmed 28 October 2026).
-Only the platform project (`slopdotcash`) may publish that full-award split. It
-binds no 75/25 bounty vault, and a full-award case never reserves or pays
-through one. No full-award payment path exists yet: an approved full-award case
-is not payable until one is approved and released. Report it through the same private Slop intake;
-never a public issue. See PRD section 8.
+Operator decision, 20 November 2026, replacing the offer of 28 October 2026:
+Slop's own security program opens only if the Slop Cash decision market of
+24 November 2026 passes the option "Fund the pool and a Slop security
+program", which moves 10,000 USDG from the treasury to the Slop Cash S.P. It
+pays $5,000 per accepted critical finding, entirely to the first qualifying
+reporter with no Slop share, at most two awards, and closes after 12 months or
+its second award; unawarded funds return to the treasury. In scope: a loss of
+funds from a Slop vault, a contributor payout, or Slop's other payout
+contracts (project escrow, submission deposits, the referral distributor),
+including the off-chain Slop services that compute, record or send those
+payouts. Out of scope: third-party contracts, frontend-only defects, testnet
+and local deployments, known or previously reported findings, reports filed
+before the program opens, and losses needing compromised privileged keys or
+intended owner actions. The S.P. confirms each finding and pays an approved
+award directly, publishing the transaction; no Slop vault or payment rail is
+involved. Until the program opens, and if the option does not pass, no paid
+award is offered. Report through the same private Slop intake; never a public
+issue. See PRD section 8.
 
 The canonical skills direct researchers to the authenticated Slop interface.
 Accept and retain the report privately before optional GitHub forwarding;
 show its receipt and status in Inbox. Screen with the approved Surplus route
 before owner notification. Missing evidence, suspected spam and unavailable
 analysis stay recoverable for human review. A model never approves an award.
+Operator decision, 17 November 2026 (PRD section 8): a bounded routine pass
+(`backend/security/routine-decisions.ts`) decides reports still in `received`.
+It closes a duplicate, a report on which two independent model calls name the
+same published "Does not qualify" line, and a report without proof once its
+14-day clock ends with no new version, each with a plain reason and one appeal
+that returns the report to the program owner. It acknowledges everything else
+and ranks it for the owner. It never closes on a plausible loss of funds, an
+unavailable or disagreeing reading, an open appeal or correction, or a report
+on GitHub. `SECURITY_ROUTINE_DECISIONS` is `off`, `dry_run` or `live`, set in
+`wrangler.toml` (production, `live` since 20 November 2026) and
+`wrangler.staging.toml` (`off`); `dry_run` records decisions only.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report
@@ -473,11 +535,16 @@ Generated points projections are build outputs; do not edit them by hand.
 
 ## Rewards, funding, and settlement
 
-Monthly allocations are private D1 records. The trusted `monthly-rewards.yml`
+Monthly allocations are D1 records. The trusted `monthly-rewards.yml`
 workflow freezes the complete ledger of the closed UTC month and writes each
 funded project's proposal to D1 once; a repeat run never adds or replaces
-rows. The owner changes amounts privately, and the owner or the automatic
-cutoff freezes the final allocation (`backend/payments/README.md`).
+rows. The owner changes amounts, and the owner or the automatic cutoff
+freezes the final allocation (`backend/payments/README.md`). A change below
+a contributor's proposed amount is a cut: it needs a 20 to 500 character
+reason, is public with its reason, and sends the contributor an Inbox notice.
+Cuts close 24 hours before the cutoff while automatic finalization is on, and
+the owner can finalize only 24 hours after the latest cut. Operator decision,
+15 November 2026.
 `cycles/` keeps only the format notes of historical cycles; do not add cycle
 files.
 
@@ -489,10 +556,22 @@ New project setup uses one monthly pool. Preserve historical committed review
 budgets and their terms; do not offer a second review budget for new projects.
 Review credit follows the canonical scoring policy.
 
+A project owner may set a maintainer share of 0 to 30% of the monthly amount
+(`reward.maintainerShare`, basis points; operator decision, 18 November 2026;
+PRD section 6). It comes out of the monthly amount before the Points split, so
+a month never distributes more than its amount. It is split among the GitHub
+users who merged or closed another person's outside pull request in that UTC
+month, in proportion to the number each decided. A month with no such decision
+has no maintainer share. Accounts on the payout exclusion list receive none.
+A change starts with the next UTC month. The monthly workflow reads the
+decisions from public GitHub data and stores the record with the proposal;
+never compute a split from a partial read.
+
 Automatic monthly payment is the PRD default for every project with funds
 committed in its vault. The owner sets the monthly amount during setup, can
-adjust allocations before execution, and can turn the default off; do not show
-adjustment history or require public reasons. Distribute the current
+adjust allocations before execution, and can turn the default off. Only cuts
+below the proposed amount are public, each with its required reason; other
+changes stay private. Distribute the current
 allocations at the monthly cutoff if the owner has not done so. The period is
 the calendar UTC month, starting with 2026-11, and the cutoff is 72 hours after
 the month ends (PRD sections 6 and 11). Keep internal reconciliation and prevent
@@ -513,7 +592,12 @@ not an active funding route, balance or payment path. Each project has one
 network (Base, Robinhood Chain, Ethereum or Solana) and one asset. Anyone may
 deposit into a vault. All deposits share one bucket; there is no donor class.
 All free funds are refundable only to the owner's refund destination, and the
-deposit flow says so before signature. `paid` requires finalized evidence that
+deposit flow says so before signature. Operator decision, 18 November 2026:
+an active project's public page offers a deposit-only control to any wallet,
+states that depositors have no refund right and that the owner can withdraw
+free funds less the 2% fee, shows how many months the free funds cover, and lists each
+finalized deposit under "Funded by" with its address, amount and date (PRD
+section 6). That list is display evidence only. `paid` requires finalized evidence that
 reconciles the exact vault, obligation, recipient, principal and fee. Reject
 replay, wrong mint or token, wrong owner, partial, duplicate, failed, or
 overpaid state. Delta Star publishes external-prize shares only and never
@@ -568,7 +652,11 @@ Public pages never read chain or GitHub state live per page view (PRD
 section 9). They serve cached D1 data and snapshots that background jobs
 refresh. Vault totals come from finalized on-chain counters cached in D1 with
 their observed time. A failed refresh shows the last value as stale, never
-zero.
+zero. A monthly amount is shown to contributors only when the project's
+vault holds it; otherwise the pool reads as points only (PRD section 6,
+operator decision of 15 November 2026). From December 2026 a month is
+promised only if the vault covered it on the 1st, and Slop's pages refuse a
+withdrawal below the promised amount.
 
 ## Project authority and IP
 
@@ -608,14 +696,34 @@ shared publication lock.
 
 Every release snapshots the current D1 registry, passes the full quality gate,
 and publishes through its branch's normal release job. Normal releases ingest
-live GitHub data. An explicit manual `main` run may set `use_published_data`
-to retain the last published production leaderboard and profiles after
-validation, with their original timestamps and history. This option cannot run
-on staging or with staging bootstrap; missing or invalid published data stops
-the release. It never uses the pull-request data adapter or skips code, browser,
-sandbox, source-identity or deployment checks. To publish new data without a
-commit, run the release workflow by hand (`workflow_dispatch`) with the option
-off. Every production release requires current main equivalence. Every
+live GitHub data. An explicit manual `main` or `development` run may set
+`use_published_data` to retain the last leaderboard and profiles published by
+that run's own environment (production or staging) after validation, with their
+original timestamps and history (operator decision, 13 November 2026). This
+option cannot run with staging bootstrap; missing or invalid published data
+stops the release. Such a `main` run may also name, in `data_from_run`, a
+completed trusted `main` release whose own fresh collection succeeded at an
+ancestor commit; it then takes that run's collected leaderboard and profiles
+from its checked bundle instead of the live site, still refusing data older
+than the live publication (operator decision, 18 November 2026). It never uses the pull-request data adapter or skips code, browser,
+sandbox, source-identity or deployment checks. An explicit manual `main` or
+`development` run may also set `skip_proofs` (operator decision, 14 November
+2026; PRD section 12, STATE-05): it repeats neither the Quint state-model
+stages nor the LemmaScript proofs. Both inventory checks and every code,
+browser, sandbox, source-identity and deployment check still run. A push
+release cannot skip them, pull requests still run the affected models and
+proofs, and scheduled nightly runs check all of them on the default branch.
+The same kind of run may set `skip_browser_tests` (operator decision,
+14 November 2026; PRD section 9): it runs the browser smoke lane instead of
+the complete browser lanes, and every other check still runs. A push release
+cannot skip them. A release that skipped either set is not evidence that
+the skipped checks passed.
+To publish new data without a commit, run the release workflow by hand
+(`workflow_dispatch`) with the `use_published_data` option off. The
+`daily-collection.yml` workflow does this every day at 07:17 UTC unless a
+collection is already running, publishes a superseded collection through a
+`data_from_run` release, and resumes a failed collection once (operator
+decision, 19 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

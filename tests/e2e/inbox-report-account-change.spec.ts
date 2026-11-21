@@ -18,7 +18,8 @@ async function privateReports(
   const id = (actor: string) => `ss_account_${actor}_private`;
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
     const actor = state.actor;
     const session = actor
       ? { githubId: actor, githubLogin: `account-${actor}` }
@@ -103,6 +104,17 @@ async function privateReports(
     }
     if (
       path.startsWith("/api/v1/security-submissions/") &&
+      url.searchParams.get("view") === "receipt"
+    )
+      return route.fulfill({
+        status: actor && path.endsWith(`/${id(actor)}`) ? 200 : 404,
+        json:
+          actor && path.endsWith(`/${id(actor)}`)
+            ? { recipientGithubId: actor, submission }
+            : { error: "not_found" },
+      });
+    if (
+      path.startsWith("/api/v1/security-submissions/") &&
       state.raceAtNextDetail
     ) {
       state.raceAtNextDetail = false;
@@ -155,7 +167,10 @@ async function privateReports(
     { exact: true },
   );
   if (!(await evidence.isVisible()))
-    await page.getByText("Read private report", { exact: true }).click();
+    await page
+      .locator("details.security-reference > summary")
+      .filter({ hasText: /^\s*Report\s*$/u })
+      .click();
   await expect(evidence).toBeVisible();
   return state;
 }
@@ -177,7 +192,7 @@ test("Reports refresh removes the previous account's retained report", async ({
   ).toHaveCount(0);
   await expect(
     page.getByRole("heading", {
-      name: "Private report · private-project-43 · Case _private",
+      name: "private-project-43 · Case _private",
       exact: true,
     }),
   ).toBeVisible();
@@ -218,7 +233,7 @@ test("a report action rechecks the account before sending a mutation", async ({
     .fill("The private evidence is ready for owner review.");
   state.actor = "43";
   await page
-    .getByRole("button", { name: "Approve for owner review", exact: true })
+    .getByRole("button", { name: "Forward to owner", exact: true })
     .click();
   await expect(
     page.getByText("Confidential retained evidence for account 42.", {
@@ -298,7 +313,9 @@ test("request-time account binding refuses an A-to-B-to-A detail response", asyn
     "/api/v1/security-submissions/ss_account_42_private",
   );
   const state = await privateReports(page);
-  const detail = page.getByText("Read private report", { exact: true });
+  const detail = page
+    .locator("details.security-reference > summary")
+    .filter({ hasText: /^\s*Report\s*$/u });
   await detail.click();
   await expect(
     page.getByText("Confidential retained evidence for account 42.", {
@@ -355,14 +372,10 @@ test("the passage of an uncertain report retry time updates its message", async 
   const deadline = "2026-11-07T18:00:00.000Z";
   await page.clock.install({ time: new Date(Date.parse(deadline) - 30_000) });
   await privateReports(page, false, deadline);
-  await expect(
-    page.getByText(/Not confirmed by GitHub yet\. Check again after/u),
-  ).toBeVisible();
+  await expect(page.getByText(/^Unconfirmed · after /u)).toBeVisible();
   await page.clock.pauseAt(new Date(Date.parse(deadline) - 1));
   await page.clock.fastForward(1);
-  await expect(
-    page.getByText("Not confirmed by GitHub. Check again.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Unconfirmed", { exact: true })).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("report-retry-ready.png"),
     fullPage: true,

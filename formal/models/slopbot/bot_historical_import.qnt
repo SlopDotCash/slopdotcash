@@ -1,9 +1,16 @@
 // @source workers/slopbot/value-import.ts
 // @source workers/slopbot/value-import-service.ts
+// @source workers/slopbot/value-import-diagnostics.ts
+// @source workers/slopbot/github.ts
+// @evidence workers/slopbot/value-import-diagnostics.test.ts
+// @evidence workers/slopbot/value-import-recovery.test.ts
 // @source workers/slopbot/value-settings.ts
 // @source workers/slopbot/value-merge-resolution.ts
 // Private import binds a deployed producer, subscription provenance and every
 // source before cutoff. Optional Git reconstruction binds the exact input set.
+// Internal stage and GitHub refusal observations add no publication state or
+// authority. Runtime evidence checks exact log projection, unchanged failure
+// propagation, and the absence of diagnostic retries.
 module bot_historical_import {
   var s: { phase: str, legacy: bool, subscription: bool, producer: bool,
     bound: bool, reconstructed: bool, needsGit: bool, published: bool }

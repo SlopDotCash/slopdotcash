@@ -193,15 +193,22 @@ export class LocalSolanaAcceptance {
     const reviewed = deployments as unknown as PaymentDeployment[];
     for (const deployment of deployments)
       await attempt(() =>
-        scanSolanaPayments(env.PAYMENTS_DB, deployment, rpcUrl, (event) =>
-          ingestPaymentEvent(env, event, new Date(), reviewed),
+        scanSolanaPayments(
+          env.PAYMENTS_DB,
+          { ...deployment, genesisHash },
+          rpcUrl,
+          (event) => ingestPaymentEvent(env, event, new Date(), reviewed),
         ),
       );
     await attempt(() => recoverUncertainAttempts(env));
     await attempt(() =>
-      reconcileFailedAttempts(env.PAYMENTS_DB, deployments, rpcUrls, {
-        [network]: genesisHash,
-      }),
+      reconcileFailedAttempts(
+        env.PAYMENTS_DB,
+        [network],
+        deployments,
+        rpcUrls,
+        { [network]: genesisHash },
+      ),
     );
     // Iterate this run's declared obligations; dispatchPayment owns all queue,
     // lease, wallet, uncertain-attempt and replay eligibility decisions.

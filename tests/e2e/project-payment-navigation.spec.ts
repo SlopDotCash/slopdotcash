@@ -4,15 +4,22 @@ import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import type { DirectTransfer } from "../../src/lib/payments/contracts";
 import { cycleIndexFixture, snapshotFixture } from "../fixtures";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  type Diagnostics,
+  expect,
+  expectAccessible,
+  failPoolFundingRead,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 ).site;
 const firstProject = "eliza";
 const nextProject = "slopdotcash";
-const firstAmount = "$111.11 paid directly";
-const nextAmount = "$222.22 paid directly";
+const firstAmount = "$111.11";
+const nextAmount = "$222.22";
 
 function payments(projectId: string) {
   const transfer: DirectTransfer = {
@@ -38,7 +45,7 @@ function gate() {
   return { ready, release };
 }
 
-async function fixtures(page: Page) {
+async function fixtures(page: Page, diagnostics: Diagnostics) {
   await page.route(`${site}/**`, (route) =>
     // Money received falls back to the shared empty aggregate (fixtures.ts).
     new URL(route.request().url()).pathname === "/api/v1/payments/received"
@@ -53,6 +60,10 @@ async function fixtures(page: Page) {
           ),
         }),
   );
+  await servePublicProjectReads(page);
+  // The test follows Eliza's and Slop's home cards; their fixture pools have
+  // no vault, so keep them listed as a failed funding read does.
+  await failPoolFundingRead(page, diagnostics);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshotFixture() }),
   );
@@ -77,9 +88,10 @@ async function fixtures(page: Page) {
 }
 
 test("project history previews recent payments and retains every older record", async ({
+  diagnostics,
   page,
 }, info) => {
-  await fixtures(page);
+  await fixtures(page, diagnostics);
   const transfers = ["02", "03", "04", "05", "06"].map((month, index) => ({
     ...payments(firstProject).transfers[0],
     contributionMonth: `2026-${month}`,
@@ -94,14 +106,15 @@ test("project history previews recent payments and retains every older record", 
   const history = page.locator(".payment-history");
   const rows = history.locator(".money-summary");
   await expect(rows).toHaveCount(3);
-  await expect(rows.first()).toContainText("$5 paid directly");
+  await expect(rows.first().locator("strong")).toHaveText("$5");
   const expand = history.getByRole("button", {
-    name: "Show complete payment history",
+    name: "Show all",
+    exact: true,
   });
   await expand.focus();
   await page.keyboard.press("Enter");
   await expect(rows).toHaveCount(5);
-  await expect(rows.last()).toContainText("$1 paid directly");
+  await expect(rows.last().locator("strong")).toHaveText("$1");
   await expect(
     rows.last().getByRole("link", { name: "Disclosure" }),
   ).toHaveAttribute(
@@ -113,7 +126,7 @@ test("project history previews recent payments and retains every older record", 
     path: info.outputPath("project-history-expanded.png"),
     fullPage: true,
   });
-  await history.getByRole("button", { name: "Show recent history" }).click();
+  await history.getByRole("button", { name: "Show less", exact: true }).click();
   await expect(rows).toHaveCount(3);
 });
 
@@ -132,7 +145,7 @@ async function watchPaymentIdentity(page: Page) {
           projectName,
           text,
           disclosures: [...(history?.querySelectorAll("a") ?? [])]
-            .filter((a) => a.textContent === "Disclosure")
+            .filter((a) => a.getAttribute("aria-label") === "Disclosure")
             .map((a) => a.href),
         };
         observations.push(sample);
@@ -145,7 +158,7 @@ async function watchPaymentIdentity(page: Page) {
           const link = record.target;
           const row = link.closest(".money-summary");
           if (
-            link.textContent === "Disclosure" &&
+            link.getAttribute("aria-label") === "Disclosure" &&
             link.href.endsWith(
               `/api/v1/payments/projects/${nextProject}/direct-transfers`,
             ) &&
@@ -172,9 +185,10 @@ async function watchPaymentIdentity(page: Page) {
 for (const navigation of ["project links", "browser history"] as const) {
   test(`direct payments keep project identity through ${navigation}`, async ({
     context,
+    diagnostics,
     page,
   }, info) => {
-    await fixtures(page);
+    await fixtures(page, diagnostics);
     const nextResponse = gate();
     let nextRequests = 0;
     let holdNext = false;
@@ -265,7 +279,7 @@ for (const navigation of ["project links", "browser history"] as const) {
       const summary = page.locator(".payment-history .money-summary");
       await expect(summary.locator("strong")).toHaveText(nextAmount);
       await expect(summary.locator("span")).toContainText(
-        /Sep 1, 2026.*August 2026/u,
+        /August 2026 · 1 transfers/u,
       );
       await page.screenshot({
         path: info.outputPath("direct-payment-disclosure.png"),
@@ -302,7 +316,7 @@ test("a late previous payment request cannot overwrite a retried project", async
   const outageReport =
     /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at https:\/\/[^ ]+\/api\/v1\/payments\/projects\/[^/ ]+\/direct-transfers$/u;
   diagnostics.allow(outageReport);
-  await fixtures(page);
+  await fixtures(page, diagnostics);
   const previousResponse = gate();
   const previousFulfilled = gate();
   let previousRequests = 0;
@@ -349,7 +363,9 @@ test("a late previous payment request cannot overwrite a retried project", async
     await page.evaluate(() => window.history.go(-2));
     await canceled;
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
-    const retry = page.getByRole("button", { name: "Retry direct payments" });
+    const retry = page
+      .locator(".payment-history")
+      .getByRole("button", { name: "Retry", exact: true });
     await expect(retry).toBeVisible();
     await expect(page.getByText(nextAmount, { exact: true })).toHaveCount(0);
     await expect(page.getByText(firstAmount, { exact: true })).toHaveCount(0);
@@ -369,7 +385,9 @@ test("a late previous payment request cannot overwrite a retried project", async
     await expect(page.getByText(firstAmount, { exact: true })).toHaveCount(0);
     await expect(page.getByText(nextAmount, { exact: true })).toBeVisible();
     await expect(
-      page.locator(".payment-history a").filter({ hasText: "Disclosure" }),
+      page
+        .locator(".payment-history")
+        .getByRole("link", { name: "Disclosure", exact: true }),
     ).toHaveAttribute(
       "href",
       `${site}/api/v1/payments/projects/${nextProject}/direct-transfers`,
@@ -401,9 +419,10 @@ test("a late previous payment request cannot overwrite a retried project", async
 });
 
 test("payment history shows loading, not an empty history, while direct payments load", async ({
+  diagnostics,
   page,
 }) => {
-  await fixtures(page);
+  await fixtures(page, diagnostics);
   const response = gate();
   await page.route(
     "**/api/v1/payments/projects/*/direct-transfers",
@@ -420,9 +439,6 @@ test("payment history shows loading, not an empty history, while direct payments
     await expect(history.getByRole("status")).toHaveText(
       "Loading direct payments…",
     );
-    await expect(history.getByText("No cycles have closed yet.")).toHaveCount(
-      0,
-    );
     response.release();
     await expect(history.getByText(nextAmount, { exact: true })).toBeVisible();
     await expect(history.getByRole("status")).toHaveCount(0);
@@ -432,9 +448,10 @@ test("payment history shows loading, not an empty history, while direct payments
 });
 
 test("public project navigation does not load an agent-only flag form", async ({
+  diagnostics,
   page,
 }) => {
-  await fixtures(page);
+  await fixtures(page, diagnostics);
   await page.route("**/api/v1/payments/projects/*/direct-transfers", (route) =>
     route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
   );

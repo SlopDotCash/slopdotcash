@@ -1,19 +1,32 @@
 import { expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readDeploymentPinBinding } from "../workers/payment-executor/deployment-pin-bindings";
 import {
   assembleMainnetBindings,
   mainnetWranglerProvider,
   prepareMainnetRelease,
   publishMainnetRelease,
 } from "../workers/payment-executor/release-mainnets.mjs";
+import { mainnetReleasePlan } from "../workers/payment-executor/release-plan.mjs";
+import {
+  readMonthlySchedule,
+  readRegistryDatabase,
+} from "../workers/payments/registry-database.mjs";
 import { bashCommand } from "./bash-command";
+import { payoutReadiness } from "./check-payout-readiness";
 
 const sha = "a".repeat(40);
 const account = "b".repeat(32);
 const name = "slop-payments-base-mainnet-attester";
+const robinhoodName = "slop-payments-robinhood-mainnet-attester";
+const solanaName = "slop-payments-solana-mainnet-attester";
+// Mainnets on in mainnet-execution.mjs (Ethereum stays off).
+const enabledNetworks = ["base-mainnet", "robinhood-mainnet", "solana-mainnet"];
+const deployedVersion = "12345678-1234-1234-1234-123456789abc";
 
 test("supersession is a clean no-op only before service publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "slop-release-supersession-"));
@@ -218,6 +231,15 @@ const ok = (value) => ({
   stderr: "",
 });
 
+async function recordDeployment(args, env, version = deployedVersion) {
+  const config = JSON.parse(await readFile(args[2], "utf8"));
+  await appendFile(
+    env.WRANGLER_OUTPUT_FILE_PATH,
+    `${JSON.stringify({ type: "deploy", version: 1, worker_name: config.name, version_id: version })}\n`,
+  );
+  return ok({});
+}
+
 async function fixture(run) {
   const directory = await mkdtemp(join(tmpdir(), "slop-release-plan-"));
   const path = join(directory, "wrangler.jsonc");
@@ -238,9 +260,13 @@ async function fixture(run) {
   }
 }
 
-async function pinnedProject(network = "base-mainnet") {
+async function pinnedProject(
+  network = "base-mainnet",
+  id = "eliza",
+  vaultDigit = "1",
+) {
   const { fixtureProject } = await import("../tests/fixture-overlay.mjs");
-  const project = fixtureProject("eliza");
+  const project = fixtureProject(id);
   const chain = network === "ethereum" ? "ethereum" : "base";
   project.status = "paused";
   project.reward.chain = chain;
@@ -255,7 +281,7 @@ async function pinnedProject(network = "base-mainnet") {
     deployments: [
       {
         network,
-        vault: `0x${"1".repeat(40)}`,
+        vault: `0x${vaultDigit.repeat(40)}`,
         asset: `0x${"2".repeat(40)}`,
         owner: `0x${"3".repeat(40)}`,
         identityAuthority: `0x${"4".repeat(40)}`,
@@ -278,20 +304,96 @@ async function pinnedProject(network = "base-mainnet") {
   return project;
 }
 
+test("production config hashes all canonical pins through the per-binding size limit", async () => {
+  const registry = await Promise.all(
+    [
+      "eliza",
+      "feed",
+      "heir-elements-sdk",
+      "slopdotcash",
+      "asi",
+      "thenetwork",
+    ].map((id, index) => pinnedProject("base-mainnet", id, "189abc"[index])),
+  );
+  const plan = mainnetReleasePlan({
+    registry,
+    registryDatabase: await readRegistryDatabase(),
+    monthlySchedule: await readMonthlySchedule(),
+  });
+  const canonical = plan.find((entry) => entry.network === "base-mainnet");
+  expect(
+    Buffer.byteLength(canonical.config.vars.PAYMENT_DEPLOYMENTS),
+  ).toBeGreaterThan(5000);
+
+  await fixture(async ({ directory }) => {
+    const prepared = await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry,
+      provider: async (args) =>
+        args[0] === "secret"
+          ? ok([{ name: "PAYMENT_RPC_URLS" }, { name: "SIGNER_PRIVATE_KEY" }])
+          : ok([]),
+    });
+    const written = await readFile(join(directory, `${name}.json`), "utf8");
+    const config = JSON.parse(written);
+    expect(
+      Object.values(config.vars).every(
+        (value) => Buffer.byteLength(value) <= 5000,
+      ),
+    ).toBe(true);
+    expect(readDeploymentPinBinding(config.vars, "PAYMENT_DEPLOYMENTS")).toBe(
+      canonical.config.vars.PAYMENT_DEPLOYMENTS,
+    );
+    const readiness = payoutReadiness({
+      registry,
+      registryDatabaseId: (await readRegistryDatabase()).database_id,
+      configs: [config],
+    });
+    expect(
+      readiness.find((entry) => entry.network === "base-mainnet"),
+    ).toMatchObject({
+      deployments: registry.length,
+      attester: "configured",
+    });
+    expect(
+      prepared.services.find((entry) => entry.network === "base-mainnet")
+        .configSha256,
+    ).toBe(createHash("sha256").update(written).digest("hex"));
+  });
+});
+
 test("absent Base bootstrap gets exact version proof before Pages receives capabilities", async () => {
   await fixture(async ({ directory, path }) => {
-    const provider = async (args) => {
+    const calls = [];
+    const baseConfig = join(directory, `${name}.json`);
+    let sawOldBase = false;
+    const provider = async (args, env) => {
+      calls.push(args);
       if (args[0] === "deployments" && args[1] === "list")
         return {
           status: 1,
           stdout: "",
-          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${name}/deployments) failed. [code: 10007]`,
+          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${args[3]}/deployments) failed. [code: 10007]`,
         };
-      if (args[0] === "deploy") return ok({});
-      if (args[0] === "versions")
-        return ok([{ id: "v1", annotations: { "workers/tag": sha } }]);
-      if (args[1] === "status")
-        return ok({ versions: [{ version_id: "v1", percentage: 100 }] });
+      if (args[0] === "deploy") return recordDeployment(args, env);
+      if (args[0] === "versions") {
+        expect(args.slice(1, 4)).toEqual(["view", deployedVersion, "--config"]);
+        return ok({ id: deployedVersion, annotations: { "workers/tag": sha } });
+      }
+      if (args[1] === "status") {
+        expect(args[2]).toBe("--config");
+        if (args[3] === baseConfig && !sawOldBase) {
+          sawOldBase = true;
+          return ok({
+            versions: [{ version_id: "previous-version", percentage: 100 }],
+          });
+        }
+        return ok({
+          versions: [{ version_id: deployedVersion, percentage: 100 }],
+        });
+      }
       throw new Error("Unexpected provider operation");
     };
     await prepareMainnetRelease({
@@ -305,9 +407,16 @@ test("absent Base bootstrap gets exact version proof before Pages receives capab
       assembleMainnetBindings({ directory, sha, path }),
     ).rejects.toThrow("not verified");
     await publishMainnetRelease({ directory, sha, provider });
+    expect(sawOldBase).toBe(true);
+    expect(
+      calls.filter((args) => args[0] === "deploy" && args[2] === baseConfig),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((args) => args[1] === "status" && args[3] === baseConfig),
+    ).toHaveLength(2);
     await assembleMainnetBindings({ directory, sha, path });
     const pages = JSON.parse(await readFile(path, "utf8"));
-    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(["base-mainnet"]);
+    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(enabledNetworks);
     expect(pages.services).toEqual([
       { binding: "SLOP_IDENTITY", service: "slop-identity" },
       {
@@ -318,6 +427,31 @@ test("absent Base bootstrap gets exact version proof before Pages receives capab
       {
         binding: "MONTHLY_RELEASE_BASE",
         service: name,
+        entrypoint: "MonthlyReserveRelease",
+      },
+      {
+        binding: "BINDING_RECOVERY_ROBINHOOD",
+        service: robinhoodName,
+        entrypoint: "BindingRecovery",
+      },
+      {
+        binding: "MONTHLY_RELEASE_ROBINHOOD",
+        service: robinhoodName,
+        entrypoint: "MonthlyReserveRelease",
+      },
+      {
+        binding: "SOLANA_IDENTITY_ATTESTER",
+        service: solanaName,
+        entrypoint: "SolanaBinding",
+      },
+      {
+        binding: "SECURITY_SOLANA_IDENTITY_ATTESTER",
+        service: solanaName,
+        entrypoint: "SolanaBinding",
+      },
+      {
+        binding: "MONTHLY_RELEASE_SOLANA",
+        service: solanaName,
         entrypoint: "MonthlyReserveRelease",
       },
     ]);
@@ -349,6 +483,74 @@ test("an existing empty-pin service is untouched and grants no unverified Pages 
     expect(JSON.parse(await readFile(path, "utf8")).services).toEqual([
       { binding: "SLOP_IDENTITY", service: "slop-identity" },
     ]);
+  });
+});
+
+test("a failed attester deployment reports safe provider details and blocks Pages bindings", async () => {
+  await fixture(async ({ directory, path }) => {
+    await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [],
+      provider: async (args) => ({
+        status: 1,
+        stdout: "",
+        stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${args[3]}/deployments) failed. [code: 10007]`,
+      }),
+    });
+    const commands = [];
+    await expect(
+      publishMainnetRelease({
+        directory,
+        sha,
+        provider: async (args) => {
+          commands.push(args[0]);
+          return {
+            status: 1,
+            stdout: "private command output",
+            stderr: "private provider details [code: 10021]",
+          };
+        },
+      }),
+    ).rejects.toThrow(
+      /^base-mainnet attester deploy failed \(exit 1, Cloudflare code 10021\)$/u,
+    );
+    expect(commands).toEqual(["deploy"]);
+    await expect(
+      assembleMainnetBindings({ directory, sha, path }),
+    ).rejects.toThrow("not verified");
+  });
+});
+
+test("a zero-exit deployment without a version leaves Pages bindings unavailable", async () => {
+  await fixture(async ({ directory, path }) => {
+    const project = await pinnedProject();
+    await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [project],
+      provider: async (args) =>
+        args[0] === "secret"
+          ? ok([{ name: "PAYMENT_RPC_URLS" }, { name: "SIGNER_PRIVATE_KEY" }])
+          : ok([]),
+    });
+    const calls = [];
+    await expect(
+      publishMainnetRelease({
+        directory,
+        sha,
+        provider: async (args, env) => {
+          calls.push(args[0]);
+          return recordDeployment(args, env, null);
+        },
+      }),
+    ).rejects.toThrow("deploy did not report an exact Worker version");
+    expect(calls).toEqual(["deploy"]);
+    await expect(
+      assembleMainnetBindings({ directory, sha, path }),
+    ).rejects.toThrow("not verified");
   });
 });
 
@@ -407,6 +609,8 @@ test("unreadable secret-list JSON is retried before a pinned attester can be pre
       sha,
       registry: [project],
       provider: async (args) => {
+        // The other enabled networks have existing empty-pin services.
+        if (args[0] === "deployments" && args[3] !== name) return ok([]);
         expect(args.slice(0, 2)).toEqual(["secret", "list"]);
         reads++;
         if (reads <= 2)
@@ -454,17 +658,15 @@ test("reviewed stop republishes an existing disabled-network attester without ex
   const project = await pinnedProject("ethereum");
   await fixture(async ({ directory, path }) => {
     const requests = [];
-    const provider = async (args) => {
+    const provider = async (args, env) => {
       requests.push(args);
       if (args[0] === "deployments" && args[1] === "list") return ok([]);
-      if (args[0] === "deploy") return ok({});
+      if (args[0] === "deploy") return recordDeployment(args, env);
       if (args[0] === "versions")
-        return ok([
-          { id: "stopped-version", annotations: { "workers/tag": sha } },
-        ]);
+        return ok({ id: deployedVersion, annotations: { "workers/tag": sha } });
       if (args[1] === "status")
         return ok({
-          versions: [{ version_id: "stopped-version", percentage: 100 }],
+          versions: [{ version_id: deployedVersion, percentage: 100 }],
         });
       throw new Error("Unexpected operation while stopping a service");
     };
@@ -480,6 +682,8 @@ test("reviewed stop republishes an existing disabled-network attester without ex
     ).toEqual([
       ["base-mainnet", true],
       ["ethereum", false],
+      ["robinhood-mainnet", true],
+      ["solana-mainnet", true],
     ]);
     await publishMainnetRelease({ directory, sha, provider });
     const deploys = requests.filter((args) => args[0] === "deploy");
@@ -504,7 +708,7 @@ test("reviewed stop republishes an existing disabled-network attester without ex
     );
     await assembleMainnetBindings({ directory, sha, path });
     const pages = JSON.parse(await readFile(path, "utf8"));
-    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(["base-mainnet"]);
+    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(enabledNetworks);
     expect(pages.services).toEqual([
       { binding: "SLOP_IDENTITY", service: "slop-identity" },
     ]);
@@ -512,12 +716,13 @@ test("reviewed stop republishes an existing disabled-network attester without ex
 });
 
 test("a disabled-network vault does not bootstrap a missing attester or hide lookup errors", async () => {
+  const stoppedName = "slop-payments-ethereum-attester";
   const project = await pinnedProject("ethereum");
   await fixture(async ({ directory, path }) => {
     const provider = async (args) => {
       if (args[0] !== "deployments" || args[1] !== "list")
         throw new Error("Disabled network must not deploy");
-      if (args[3] === name) return ok([]);
+      if (args[3] !== stoppedName) return ok([]);
       return {
         status: 1,
         stdout: "",
@@ -544,7 +749,7 @@ test("a disabled-network vault does not bootstrap a missing attester or hide loo
         sha,
         registry: [project],
         provider: async (args) =>
-          args[3] === name
+          args[3] !== stoppedName
             ? ok([])
             : { status: 1, stdout: "", stderr: "Unauthorized" },
       }),

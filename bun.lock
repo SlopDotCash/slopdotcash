@@ -42,6 +42,10 @@
       },
     },
   },
+  "patchedDependencies": {
+    "picomatch@2.3.2": "patches/picomatch@2.3.2.patch",
+    "picomatch@4.0.5": "patches/picomatch@4.0.5.patch",
+  },
   "overrides": {
     "hono": "4.13.16",
     "minimatch": "11.0.5",

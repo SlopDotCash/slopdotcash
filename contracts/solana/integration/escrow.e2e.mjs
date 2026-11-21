@@ -1591,6 +1591,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
         month: pda(seed("month"), key(project), periodSeed(n)),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions(pre)
       .signers([stranger])
@@ -2389,6 +2390,77 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
   );
 });
 
+// The payment keeper resumes an admitted month once per scheduled run. Without its
+// per-run bound the executor settles one leaf per call, so every remaining leaf costs one
+// keeper run and the owner's direct commits stay blocked for that long.
+test("an admitted month settles all remaining leaves in one keeper run bounded by perRun", async () => {
+  const { stranger, period } = await monthlyPeriod();
+  await freshProject("monthly-keeper-bound", 200_000_000n);
+  // The executor reads only finalized accounts, including this newly created project.
+  await provider.connection.confirmTransaction(
+    await program.methods
+      .setMonthlyCommitment(bn(200_000_000), true)
+      .accountsStrict({ owner: payer.publicKey, project })
+      .rpc(),
+    "finalized",
+  );
+  const entries = entriesOf(
+    ["bound-a", "bound-b", "bound-c", "bound-d", "bound-e"],
+    701,
+  );
+  const frozenAt = String(await chainTime());
+  const { total, environment, authorization } = await monthlyExecutor(
+    stranger,
+    period,
+    entries,
+    frozenAt,
+    "monthly-keeper-bound",
+  );
+  const finalized = (signatures) =>
+    Promise.all(
+      signatures.map((signature) =>
+        provider.connection.confirmTransaction(signature, "finalized"),
+      ),
+    );
+  const admitted = await submitSolanaMonthly(environment, authorization);
+  await finalized([admitted.transactionId]);
+  const read = () => program.account.project.fetch(project);
+  assert.equal((await read()).monthlyOutstanding.toString(), total);
+  // The keeper's call without a bound: one leaf for this run.
+  const unbounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+  );
+  assert.equal(unbounded.transactionIds.length, 1);
+  await finalized(unbounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "100000000");
+  await assert.rejects(
+    commit("while-outstanding", 999, 1),
+    /MonthlyOutstanding/,
+  );
+  // The keeper's perRun bound: every remaining leaf in the next run.
+  const bounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+    10,
+  );
+  assert.equal(bounded.transactionIds.length, entries.length - 1);
+  await finalized(bounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "0");
+  assert.deepEqual(
+    await submitSolanaMonthly(environment, authorization, false, 10),
+    { transactionId: null, alreadyCommitted: true },
+  );
+  for (const entry of entries) {
+    const obligation = await program.account.obligation.fetch(awardAt(entry));
+    assert.equal(obligation.actorId.toString(), entry.githubUserId);
+    assert.equal(obligation.gross.toString(), entry.grossMicro);
+  }
+  await commit("after-keeper-month", 999, 1);
+});
+
 // The monthly gate tests share a funded payer that is neither owner nor attester, the one
 // recordable period, and entries whose source digests equal the ones `commit` derives.
 async function monthlyPeriod() {
@@ -2485,6 +2557,7 @@ const monthlyAdmission = (stranger, period, n) =>
         month: monthAt(n),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions([
         Ed25519Program.createInstructionWithPrivateKey({
@@ -3452,29 +3525,33 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
       .signers(owner === payer ? [] : [owner])
       .rpc();
   const before = await read();
+  const total = Number(tree.total);
+  const released = Number(c.grossMicro);
+  assert.equal(total, 60_000_000);
+  assert.equal(released, 10_000_000);
   // Preserve the owner, authority and exact-state controls.
   await assert.rejects(
-    release(35_000_000, 35_000_000, authority, stranger),
+    release(total, total, authority, stranger),
     /ConstraintHasOne|has one/,
   );
   await assert.rejects(
-    release(35_000_000, 35_000_000, nextAuthority),
+    release(total, total, nextAuthority),
     /InvalidAttestation/,
   );
   await assert.rejects(
-    release(30_000_000, 30_000_000),
+    release(total - released, total - released),
     /MonthlyReserveChanged/,
   );
   // The advisory's first step can no longer release only the uncommittable leaf.
-  await assert.rejects(release(35_000_000, 5_000_000), /InvalidAmount/);
-  await assert.rejects(release(35_000_000, 0), /InvalidAmount/);
-  await leaf(2, "release");
+  await assert.rejects(release(total, released), /InvalidAmount/);
+  await assert.rejects(release(total, 0), /InvalidAmount/);
+  await leaf(2, "release", null);
   const afterLeaf = await read();
-  assert.equal(afterLeaf.reserved.toString(), "30000000");
-  assert.equal(afterLeaf.monthlyOutstanding.toString(), "30000000");
+  assert.equal(afterLeaf.reserved.toNumber(), total - released);
+  assert.equal(afterLeaf.monthlyOutstanding.toNumber(), total - released);
   // The reverse order is excluded too; neither reserve counter moves again.
   await assert.rejects(
-    release(30_000_000, 30_000_000),
+    release(total - released, total - released),
     /MonthlyReserveChanged/,
   );
   assert.deepEqual(await read(), afterLeaf);
@@ -3482,10 +3559,10 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
   await leaf(1, "commit");
   const settled = await read();
   assert.equal(settled.monthlyOutstanding.toString(), "0");
-  assert.equal(settled.reserved.toString(), "30000000");
+  assert.equal(settled.reserved.toNumber(), total - released);
   assert.equal(
     settled.reserved.toNumber(),
-    before.reserved.toNumber() - 5_000_000,
+    before.reserved.toNumber() - released,
   );
   const award = await program.account.obligation.fetch(awardAt(a));
   assert.equal(award.gross.toString(), a.grossMicro);

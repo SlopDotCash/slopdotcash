@@ -463,6 +463,13 @@ export async function recordCalls(
       )
       .first<{ id: number }>();
     if (!recorded) throw new Error("Provider cost was not recorded");
+    if (call.outcome === "failed" && call.failureDetail)
+      await db
+        .prepare(
+          "INSERT INTO slopbot_call_failure_details (call_id, detail, recorded_at) VALUES (?, ?, ?)",
+        )
+        .bind(recorded.id, call.failureDetail.slice(0, 200), now())
+        .run();
   }
 }
 

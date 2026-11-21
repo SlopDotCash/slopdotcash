@@ -27,7 +27,9 @@ export async function createMonthlyAllocationFixture({
       .filter((name) => name.endsWith(".sql"))
       .filter(
         (name) =>
-          applyAmountRange || name !== "0081_monthly_asset_amount_range.sql",
+          applyAmountRange ||
+          (name !== "0081_monthly_asset_amount_range.sql" &&
+            name !== "0143_asi_november_closeout.sql"),
       )
       .sort(),
   );

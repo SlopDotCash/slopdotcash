@@ -15,8 +15,16 @@ const fixture = spawn(
   { stdio: ["ignore", fixtureLog, fixtureLog] },
 );
 const preview = spawn(
-  "bunx",
-  ["vite", "preview", "--host", "127.0.0.1", "--port", "18549", "--strictPort"],
+  process.execPath,
+  [
+    "node_modules/vite/bin/vite.js",
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18549",
+    "--strictPort",
+  ],
   { stdio: ["ignore", previewLog, previewLog] },
 );
 async function ready(url) {
@@ -200,7 +208,7 @@ try {
     !(await paidRow.innerText()).includes("Local EVM test") ||
     (await amount.locator("strong").innerText()).trim() !== "98" ||
     !amountText.includes("Gross 100 token ") ||
-    !amountText.includes("fee 2 token ") ||
+    !amountText.includes("−2 token ") ||
     !amountText.includes(paid.payments[0].assetAddress)
   )
     throw new Error(

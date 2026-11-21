@@ -160,9 +160,7 @@ export async function sendEvmCommitment(
     review.transaction,
   ]);
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
-    throw new Error(
-      "The wallet result is unclear. Check wallet activity before another attempt.",
-    );
+    throw new Error("The wallet result is unclear. Check wallet activity.");
   return hash;
 }
 export async function checkEvmCommitment(
@@ -178,6 +176,8 @@ export async function checkEvmCommitment(
     plan.deployment.vault,
     intent.data,
   );
+  // Not final yet: this flow reports only pending until finality.
+  if (checked.status === "included") return "pending" as const;
   if (checked.status !== "finalized") return checked.status;
   const events = checked.receipt.logs.filter(
     (log) =>

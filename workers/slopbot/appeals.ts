@@ -132,6 +132,28 @@ export async function latestAppealFor(
     .first<Appeal>();
 }
 
+/** Whether another finding appeal for this item was already denied. A
+ * penalty is recorded once per item, so a denied appeal of it is the last
+ * self-decided word on that debit: a repeat appeal (a new head or an edited
+ * body opens a new revision key) goes to a moderator instead of letting the
+ * appellant accept a fresh draft and overturn the denial alone.
+ */
+export async function hasDeniedAppeal(
+  db: D1Database,
+  itemNodeId: string,
+  appealKey: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS n FROM slopbot_appeals WHERE item_node_id = ?
+         AND appeal_key <> ? AND appeal_key NOT LIKE 'value-appeal:%'
+         AND resolution = 'denied' LIMIT 1`,
+    )
+    .bind(itemNodeId, appealKey)
+    .first<{ n: number }>();
+  return row !== null;
+}
+
 /** Stores the first draft only; a retry keeps it. */
 export async function recordDraft(
   db: D1Database,

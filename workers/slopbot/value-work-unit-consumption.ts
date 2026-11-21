@@ -11,6 +11,7 @@ import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
 import { validValueContextSelections } from "./value-context";
 import { validMergeRecipe } from "./value-merge-profile";
 import { isValueProducer } from "./value-producer";
+import { valueSourceDigest } from "./value-review";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
   type WorkUnitRecord,
@@ -277,10 +278,50 @@ export async function consumeWorkUnitHistory(
     latestDigest: history.current?.row.record_digest ?? null,
   };
   if (!history.current) return { ...common, status: "missing" as const };
-  const evidence = await prepareWorkUnitEvidence(sources, repositories);
+  let evidence = await prepareWorkUnitEvidence(sources, repositories);
   if (evidence.limitations.length)
     return { ...common, status: "incomplete" as const };
   const record = history.current.record;
+  // Reconstruct only a source shape whose digest is retained by this record.
+  // Other sources, including metadata-bound repairs, keep their current bytes.
+  if (
+    record.sourceDigest !== evidence.sourceDigest &&
+    sources.some((source) => source.evidence.repairBodyEdit !== undefined)
+  ) {
+    const historicalSources = await Promise.all(
+      sources.map(async (source) => {
+        const binding = record.sources.find(
+          (item) =>
+            item.repositoryNodeId === source.evidence.repositoryNodeId &&
+            item.pullRequestNodeId === source.evidence.pull.node_id,
+        );
+        if (
+          !binding ||
+          source.evidence.repairBodyEdit === undefined ||
+          (await valueSourceDigest(source.evidence, source.policy)) ===
+            binding.sourceDigest
+        )
+          return source;
+        const { repairBodyEdit: _repairBodyEdit, ...retained } =
+          source.evidence;
+        return (await valueSourceDigest(retained, source.policy)) ===
+          binding.sourceDigest
+          ? { ...source, evidence: retained }
+          : source;
+      }),
+    );
+    const historical = await prepareWorkUnitEvidence(
+      historicalSources,
+      repositories,
+    );
+    if (
+      historical.sourceDigest === record.sourceDigest &&
+      JSON.stringify(record.sources) ===
+        JSON.stringify(workUnitSourceBindings(historical, repositories)) &&
+      JSON.stringify(record.claims) === JSON.stringify(historical.claims)
+    )
+      evidence = historical;
+  }
   if (
     record.sourceDigest !== evidence.sourceDigest ||
     record.rubricVersion !== VALUE_RUBRIC_VERSION

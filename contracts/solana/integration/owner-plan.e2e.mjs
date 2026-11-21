@@ -629,7 +629,7 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
   );
   const row = listed.projects.find((p) => p.address === project.toBase58());
   assert.equal(row.pinned, true);
-  assert.equal(row.size, 332);
+  assert.equal(row.size, 340);
   assert.equal(row.migrationRequired, false);
 });
 
@@ -699,17 +699,18 @@ test("migrate_project grows a 316-byte Project to the current layout once", asyn
   );
   await connection.confirmTransaction(signature, "finalized");
   const info = await connection.getAccountInfo(legacyProject, "finalized");
-  assert.equal(info.data.length, 332);
+  assert.equal(info.data.length, 340);
   assert.ok(
-    info.lamports >= (await connection.getMinimumBalanceForRentExemption(332)),
+    info.lamports >= (await connection.getMinimumBalanceForRentExemption(340)),
   );
   let state = await program.account.project.fetch(legacyProject, "finalized");
   assert.equal(state.accruedFees.toString(), "0");
   assert.equal(state.monthlyOutstanding.toString(), "0");
+  assert.equal(state.pledgedOpen.toString(), "0");
   assert.equal(state.owner.toBase58(), legacyOwner.publicKey.toBase58());
   assert.equal(state.mint.toBase58(), legacyMint.publicKey.toBase58());
   row = await legacyRow();
-  assert.equal(row.size, 332);
+  assert.equal(row.size, 340);
   assert.equal(row.migrationRequired, false);
   assert.equal(row.pinned, true);
   // It migrates once, and only a legacy Project migrates.

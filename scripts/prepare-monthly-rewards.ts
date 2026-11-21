@@ -6,7 +6,8 @@
  *
  * A month's proposal is written once: a later run with a different ledger
  * leaves the stored proposal and its rows unchanged. The owner then changes
- * amounts privately, and the payments coordinator freezes the current
+ * amounts (a cut below the proposal needs a public reason), and the payments
+ * coordinator freezes the current
  * allocations at the configured cutoff (backend/payments/monthly.ts). This
  * script reads no chain and authorizes, reserves or pays nothing.
  */
@@ -15,6 +16,8 @@ import { writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { maintainerShareBasisPoints } from "../src/lib/maintainer-share.mjs";
+import type { ASI_NOVEMBER_CLOSEOUT } from "../src/lib/payments/asi-november-closeout";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
 import {
   type MonthlyBase,
@@ -27,7 +30,14 @@ import {
   type ProjectDefinition,
 } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { installGitHubAppTokenRefresh } from "./github-app-token-refresh";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
+import {
+  collectMaintainerDecisions,
+  type GraphqlRequest,
+  githubGraphql,
+  maintainerDecisionBytes,
+} from "./maintainer-decisions";
 import { currentProjectPolicies } from "./project-revision-policy.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,10 +46,32 @@ const DEFAULT_SNAPSHOT_PATH = resolve(
   "public/data/leaderboard.json",
 );
 
+/** The stored record of a month's maintainer share. */
+export interface MonthlyMaintainerShare {
+  basisPoints: number;
+  poolBase: string;
+  /** The exact decision record the split was computed from. */
+  decisions: string;
+  decisionsSha256: string;
+  rows: {
+    githubUserId: string;
+    login: string;
+    decisions: number;
+    grossBase: string;
+  }[];
+}
+
+export type MonthlyBaseWithShare = MonthlyBase & {
+  maintainerShare?: MonthlyMaintainerShare;
+  earlyCloseAt?: typeof ASI_NOVEMBER_CLOSEOUT.cutoff;
+};
+
 export interface MonthlyBasesResult {
   period: string;
-  bases: (MonthlyBase & { manifest: string })[];
+  bases: (MonthlyBaseWithShare & { manifest: string })[];
   skipped: string[];
+  /** Projects whose month could not be proposed, with the reason. */
+  failed?: { projectId: string; reason: string }[];
 }
 
 function exactDate(value: Date, field: string): Date {
@@ -92,7 +124,9 @@ export function buildMonthlyBase(
   input: { projectId: string; period: string; generatedAt: string },
   snapshotBytes: Uint8Array,
   policyBytes: Uint8Array,
-): MonthlyBase {
+  /** Required exactly when the revision sets a maintainer share for the month. */
+  decisionBytes: Uint8Array | null = null,
+): MonthlyBaseWithShare {
   const proposal = buildEscrowCycle(
     {
       projectId: input.projectId,
@@ -102,8 +136,27 @@ export function buildMonthlyBase(
     snapshotBytes,
     null,
     policyBytes,
+    decisionBytes,
   );
   return {
+    ...(proposal.maintainerShare && decisionBytes
+      ? {
+          maintainerShare: {
+            basisPoints: proposal.maintainerShare.basisPoints,
+            poolBase: proposal.maintainerShare.poolMicro,
+            decisions: new TextDecoder("utf-8", { fatal: true }).decode(
+              decisionBytes,
+            ),
+            decisionsSha256: proposal.maintainerShare.decisionsSha256,
+            rows: proposal.maintainerShare.rows.map((row) => ({
+              githubUserId: row.githubUserId,
+              login: row.login,
+              decisions: row.decisions,
+              grossBase: row.grossMicro,
+            })),
+          },
+        }
+      : {}),
     projectId: proposal.projectId,
     period: proposal.cycleId,
     manifestSha256: sha256Hex(policyBytes),
@@ -123,6 +176,11 @@ export async function prepareMonthlyBases(options: {
   generatedAt?: string;
   snapshotPath?: string;
   root?: string;
+  /**
+   * Reads GitHub for a project with a maintainer share. Without it such a
+   * project's month is not proposed and is reported as failed.
+   */
+  graphql?: GraphqlRequest;
 }): Promise<MonthlyBasesResult> {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   if (
@@ -163,10 +221,38 @@ export async function prepareMonthlyBases(options: {
       result.skipped.push(policy.project.id);
       continue;
     }
+    let decisionBytes: Uint8Array | null = null;
+    if (maintainerShareBasisPoints(policy.project, period) > 0) {
+      // The split needs who decided each outside pull request. A failed read
+      // leaves this one project's month unproposed; a later run of the same
+      // month proposes it. Other projects are not held back.
+      try {
+        if (!options.graphql)
+          throw new Error("no GitHub reader was configured");
+        decisionBytes = maintainerDecisionBytes(
+          await collectMaintainerDecisions(
+            policy.project,
+            period,
+            options.graphql,
+          ),
+        );
+      } catch (error) {
+        // error-policy:J2 one project's month is refused and reported; the run exits non-zero.
+        // Present only when a month was refused, so an ordinary result
+        // keeps its shape.
+        result.failed ??= [];
+        result.failed.push({
+          projectId: policy.project.id,
+          reason: error instanceof Error ? error.message : "unknown error",
+        });
+        continue;
+      }
+    }
     const base = buildMonthlyBase(
       { projectId: policy.project.id, period, generatedAt },
       snapshotBytes,
       policy.bytes,
+      decisionBytes,
     );
     if (BigInt(base.capBase) === 0n) {
       result.skipped.push(policy.project.id);
@@ -190,19 +276,24 @@ export function monthlyBasesSql(
 ): string {
   const statements: string[] = [];
   for (const base of result.bases) {
+    const key = `project_id=${quote(base.projectId)} AND period=${quote(base.period)}`;
+    const header = `${key} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)} AND cap_base=${quote(base.capBase)}`;
+    const closeAt = base.earlyCloseAt ? quote(base.earlyCloseAt) : null;
+    const closeoutColumn = closeAt === null ? "" : ",early_close_at";
+    const closeoutValue = closeAt === null ? "" : `,${closeAt}`;
+    const closeoutBinding =
+      closeAt === null ? "" : ` AND early_close_at=${closeAt}`;
+    const stored = `EXISTS(SELECT 1 FROM monthly_reward_bases WHERE ${header}${closeoutBinding})`;
+    const columns = [
+      base.projectId,
+      base.period,
+      base.manifest,
+      base.manifestSha256,
+      base.sourceSnapshotSha256,
+      base.capBase,
+    ].map(quote);
     statements.push(
-      `INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(${[
-        base.projectId,
-        base.period,
-        base.manifest,
-        base.manifestSha256,
-        base.sourceSnapshotSha256,
-        base.capBase,
-      ]
-        .map(quote)
-        .join(
-          ",",
-        )},${base.rows.length},${quote(createdAt)}) ON CONFLICT(project_id,period) DO NOTHING;`,
+      `INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at${closeoutColumn}) VALUES(${columns.join(",")},${base.rows.length},${quote(createdAt)}${closeoutValue}) ON CONFLICT(project_id,period) DO NOTHING;`,
     );
     for (const row of base.rows)
       statements.push(
@@ -217,8 +308,18 @@ export function monthlyBasesSql(
           .map(quote)
           .join(
             ",",
-          )} WHERE EXISTS(SELECT 1 FROM monthly_reward_bases WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)}) ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
+          )} WHERE ${stored} ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
       );
+    const share = base.maintainerShare;
+    if (share) {
+      statements.push(
+        `INSERT INTO monthly_maintainer_shares(project_id,period,basis_points,pool_base,decisions,decisions_sha256,created_at) SELECT ${[base.projectId, base.period].map(quote).join(",")},${share.basisPoints},${[share.poolBase, share.decisions, share.decisionsSha256, createdAt].map(quote).join(",")} WHERE ${stored} ON CONFLICT(project_id,period) DO NOTHING;`,
+      );
+      for (const row of share.rows)
+        statements.push(
+          `INSERT INTO monthly_maintainer_share_rows(project_id,period,github_user_id,github_login,decisions,gross_base) SELECT ${[base.projectId, base.period, row.githubUserId, row.login].map(quote).join(",")},${row.decisions},${quote(row.grossBase)} WHERE EXISTS(SELECT 1 FROM monthly_maintainer_shares WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND decisions_sha256=${quote(share.decisionsSha256)}) ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
+        );
+    }
   }
   return statements.length ? `${statements.join("\n")}\n` : "";
 }
@@ -252,14 +353,26 @@ if (import.meta.main) {
   try {
     const { sqlPath, ...options } = parseArguments(process.argv.slice(2));
     const createdAt = new Date().toISOString();
+    const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "";
+    // The collector App token is minted before a three-hour ledger step.
+    installGitHubAppTokenRefresh(process.env);
     const result = await prepareMonthlyBases({
       ...options,
       generatedAt: createdAt,
+      ...(token ? { graphql: githubGraphql(token) } : {}),
     });
     await writeFile(sqlPath, monthlyBasesSql(result, createdAt));
     process.stdout.write(
       `[Slop] proposed ${result.period} allocations: ${result.bases.map((base) => base.projectId).join(", ") || "none"}\n`,
     );
+    // The other projects' proposals are written above and can be stored; the
+    // non-zero exit makes the run report the months that still need a retry.
+    const failed = result.failed ?? [];
+    for (const failure of failed)
+      process.stderr.write(
+        `::error::[Slop] ${result.period} allocation of ${failure.projectId} was not proposed: its maintainer decisions could not be read (${failure.reason})\n`,
+      );
+    if (failed.length > 0) process.exitCode = 1;
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(

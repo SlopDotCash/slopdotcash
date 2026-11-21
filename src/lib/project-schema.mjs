@@ -25,13 +25,20 @@ import {
   assertFundingAddresses,
   fundingAssetForNetwork,
 } from "./funding-address.mjs";
+import { assertIntakeCap } from "./intake-cap.mjs";
 import LEGACY_PROJECTS from "./legacy-projects.json" with { type: "json" };
+import {
+  assertMaintainerShare,
+  assertMaintainerShareHistory,
+} from "./maintainer-share.mjs";
 import { validatePayoutExclusions } from "./payout-exclusions.mjs";
 import {
   assertRewardAsset,
   REWARD_ASSET_NETWORK_IDS,
 } from "./reward-asset.mjs";
 import { assertSecurityBountyTerms } from "./security-bounty.mjs";
+import { assertReadyLabelSettings } from "./slopbot-ready.mjs";
+import { assertSubmissionFeeSetting } from "./submission-fee-setting.mjs";
 
 /**
  * The canonical generic templates every generated project skill renders from
@@ -791,12 +798,46 @@ function validateRepository(value, index) {
     "id",
     "integrationBranch",
   ];
-  const actualKeys = Object.keys(repository).sort().join("\0");
+  const identityKeys = ["countsFrom", "githubId", "nodeId"];
+  const presentIdentityKeys = identityKeys.filter((key) =>
+    Object.hasOwn(repository, key),
+  );
+  if (index === 0 && presentIdentityKeys.length > 0) {
+    throw new TypeError(
+      `${field} is the primary repository; its identity comes from project.authority`,
+    );
+  }
+  if (presentIdentityKeys.length !== 0 && presentIdentityKeys.length !== 3) {
+    throw new TypeError(
+      `${field} must carry githubId, nodeId and countsFrom together`,
+    );
+  }
+  const baseKeys = Object.keys(repository)
+    .filter((key) => !identityKeys.includes(key))
+    .sort()
+    .join("\0");
   if (
-    actualKeys !== [...requiredKeys].sort().join("\0") &&
-    actualKeys !== [...requiredKeys, "aliases"].sort().join("\0")
+    baseKeys !== [...requiredKeys].sort().join("\0") &&
+    baseKeys !== [...requiredKeys, "aliases"].sort().join("\0")
   ) {
     throw new TypeError(`${field} has unexpected or missing fields`);
+  }
+  if (presentIdentityKeys.length === 3) {
+    text(repository.githubId, `${field}.githubId`, {
+      max: 20,
+      pattern: /^[1-9][0-9]*$/u,
+    });
+    text(repository.nodeId, `${field}.nodeId`, { max: 100 });
+    const countsFrom = text(repository.countsFrom, `${field}.countsFrom`, {
+      max: 24,
+      pattern: /^[0-9]{4}-[0-9]{2}-01T00:00:00\.000Z$/u,
+    });
+    const parsed = new Date(countsFrom);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== countsFrom) {
+      throw new TypeError(
+        `${field}.countsFrom must be an exact UTC month start`,
+      );
+    }
   }
   const id = text(repository.id, `${field}.id`, {
     max: 201,
@@ -980,6 +1021,12 @@ function validateReward(
   const hasCycleCaps = Object.hasOwn(reward, "cycleCaps");
   const hasExternalEvaluations = Object.hasOwn(reward, "externalEvaluations");
   const hasPayoutExclusions = Object.hasOwn(reward, "payoutExclusions");
+  const hasHonorSystem = Object.hasOwn(reward, "honorSystem");
+  const hasMaintainerShare = Object.hasOwn(reward, "maintainerShare");
+  const hasMaintainerShareHistory = Object.hasOwn(
+    reward,
+    "maintainerShareHistory",
+  );
   exactKeys(
     reward,
     [
@@ -992,7 +1039,10 @@ function validateReward(
       ...(hasCycleCaps ? ["cycleCaps"] : []),
       "feeBasisPoints",
       "fundingState",
+      ...(hasHonorSystem ? ["honorSystem"] : []),
       "kind",
+      ...(hasMaintainerShare ? ["maintainerShare"] : []),
+      ...(hasMaintainerShareHistory ? ["maintainerShareHistory"] : []),
       "monthlyCapDisplay",
       "monthlyCapMinor",
       ...(hasPayoutExclusions ? ["payoutExclusions"] : []),
@@ -1022,6 +1072,29 @@ function validateReward(
     reward.committedMinor,
     `${field}.committedMinor`,
   );
+  if (
+    hasHonorSystem &&
+    (reward.honorSystem !== true ||
+      reward.kind !== "monthly-pool" ||
+      BigInt(monthlyCapMinor) === 0n)
+  )
+    throw new TypeError(
+      `${field}.honorSystem must be true on a positive monthly pool, or omitted`,
+    );
+  if (
+    (hasMaintainerShare || hasMaintainerShareHistory) &&
+    reward.kind !== "monthly-pool"
+  )
+    throw new TypeError(
+      `${field}.maintainerShare applies to a monthly pool only`,
+    );
+  if (hasMaintainerShare)
+    assertMaintainerShare(reward.maintainerShare, `${field}.maintainerShare`);
+  if (hasMaintainerShareHistory)
+    assertMaintainerShareHistory(
+      reward.maintainerShareHistory,
+      `${field}.maintainerShareHistory`,
+    );
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") {
     throw new TypeError(`${field}.paymentMode is invalid`);
   }
@@ -1231,9 +1304,30 @@ function validateProjectDefinition(
     validateContribution(project.contribution);
   if (project.slopbot !== undefined) {
     const slopbot = record(project.slopbot, "project.slopbot");
-    exactKeys(slopbot, ["automaticClosure"], "project.slopbot");
+    exactKeys(
+      slopbot,
+      [
+        "automaticClosure",
+        ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
+        ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
+        ...(slopbot.submissionFee === undefined ? [] : ["submissionFee"]),
+      ],
+      "project.slopbot",
+    );
     if (typeof slopbot.automaticClosure !== "boolean")
       throw new TypeError("project.slopbot.automaticClosure must be a boolean");
+    if (slopbot.readyLabel !== undefined)
+      assertReadyLabelSettings(
+        slopbot.readyLabel,
+        "project.slopbot.readyLabel",
+      );
+    if (slopbot.intakeCap !== undefined)
+      assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
+    if (slopbot.submissionFee !== undefined)
+      assertSubmissionFeeSetting(
+        slopbot.submissionFee,
+        "project.slopbot.submissionFee",
+      );
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&
@@ -1361,6 +1455,23 @@ function validateProjectDefinition(
   }
   validateSteward(project.steward);
   validateAuthority(project.authority, repositories[0]);
+  const seenGithubIds = new Set([String(project.authority.repositoryId)]);
+  const seenNodeIds = new Set([String(project.authority.repositoryNodeId)]);
+  for (const [index, repository] of repositories.entries()) {
+    if (index === 0 || repository.githubId === undefined) continue;
+    if (seenGithubIds.has(repository.githubId)) {
+      throw new TypeError(
+        `project.repositories[${index}].githubId duplicates another repository`,
+      );
+    }
+    if (seenNodeIds.has(repository.nodeId)) {
+      throw new TypeError(
+        `project.repositories[${index}].nodeId duplicates another repository`,
+      );
+    }
+    seenGithubIds.add(repository.githubId);
+    seenNodeIds.add(repository.nodeId);
+  }
   validateTerms(
     project.terms,
     repositories[0],

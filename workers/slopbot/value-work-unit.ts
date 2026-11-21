@@ -4,7 +4,7 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import { implementationCreditActors } from "../../src/lib/commit-credit";
+import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
 import { binarySourceLimitations } from "./value-binary";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
@@ -15,9 +15,14 @@ import {
 import type { ValueEvidence } from "./value-evidence-types";
 import { mergeResolutionMatches } from "./value-merge-resolution";
 import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "./value-native-merge";
+import {
   NO_CHANGE_PROMOTION_CONTEXT,
   noChangePromotionMatches,
 } from "./value-no-change-promotion";
+import { retainedRepair } from "./value-original-repair";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
 import type {
@@ -68,7 +73,9 @@ export async function prepareWorkUnitEvidence(
   );
   const ids = new Set<string>();
   const projects = new Set<string>();
-  const retained = await retainedCopyBindings(sources);
+  const retained = await retainedCopyBindings(sources, {
+    acceptedSubset: true,
+  });
   const limitations = new Set<string>(retained.limitations);
   const sourceDigests: WorkUnitEvidence["sourceDigests"] = [];
   const commits = new Map<string, string>();
@@ -106,11 +113,17 @@ export async function prepareWorkUnitEvidence(
       );
     ids.add(pull.node_id);
     projects.add(repository.projectId);
+    const nativeMerge = await nativeMergeCarrierMatches(evidence, sources);
+    if (evidence.nativeMergeAcceptance && !nativeMerge)
+      limitations.add(`${pull.node_id}: invalid native ancestor acceptance`);
     const noChangePromotion = noChangePromotionMatches(evidence);
     if (evidence.noChangePromotion && !noChangePromotion)
       limitations.add(`${pull.node_id}: invalid unchanged promotion proof`);
     for (const limitation of evidence.limitations)
-      if (!(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT))
+      if (
+        !(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT) &&
+        !(nativeMerge && limitation === NATIVE_MERGE_CONTEXT)
+      )
         limitations.add(`${pull.node_id}: ${limitation}`);
     for (const limitation of await binarySourceLimitations(evidence))
       limitations.add(`${pull.node_id}: ${limitation}`);
@@ -154,7 +167,11 @@ export async function prepareWorkUnitEvidence(
     const covered = new Set<string>();
     const relocated = new Map<string, Set<string>>();
     for (const resolution of evidence.mergeResolutions ?? []) {
-      if (!resolution.automaticRelocations?.length) continue;
+      if (
+        resolution.kind === "combined-parent-delta" ||
+        !resolution.automaticRelocations?.length
+      )
+        continue;
       const merge = evidence.commits.find(
         (entry) => entry.sha === resolution.commitSha,
       );
@@ -262,9 +279,27 @@ export async function prepareWorkUnitEvidence(
         );
         continue;
       }
+      // A fast-forward accepted range can end at this PR's own earlier
+      // commit. A complete linear submitted chain from its base proves that
+      // this parent belongs to the same work. Earlier accepted PR origins
+      // still take precedence and retain their existing duplicate handling.
+      const ownSubmittedParent =
+        evidence.acceptedRange?.parentSha === commit.sha &&
+        evidence.pull.merge_commit_sha === evidence.pull.head.sha &&
+        evidence.commits.length === evidence.pull.commits &&
+        evidence.commits.at(-1)?.sha === evidence.pull.head.sha &&
+        evidence.commits.every(
+          (entry, index) =>
+            entry.parents.length === 1 &&
+            entry.parents[0].sha ===
+              (index === 0
+                ? evidence.pull.base.sha
+                : evidence.commits[index - 1].sha),
+        );
       if (
         origins.length > 0 ||
-        evidence.acceptedRange?.parentSha === commit.sha
+        (evidence.acceptedRange?.parentSha === commit.sha &&
+          !ownSubmittedParent)
       ) {
         for (const path of paths.filter(
           (path) => retainedPaths(commit.sha, path).length,
@@ -288,22 +323,21 @@ export async function prepareWorkUnitEvidence(
         }
         continue;
       }
-      const sharesCommitCredit =
-        pull.base.ref === repository.integrationBranch ||
-        matchesHistoricalIntegrationBranch(
-          evidence.historicalBranchPolicy,
-          pull.base,
-        );
-      const actors = implementationCreditActors(
-        { id: pull.user.node_id, kind: pull.user.type },
-        sharesCommitCredit
-          ? [
-              commit.author
-                ? { id: commit.author.node_id, kind: commit.author.type }
-                : null,
-            ]
-          : [],
-      ).map((actor) => actor.id);
+      const actors = new Set<string>();
+      if (pull.user.type !== "Bot") actors.add(pull.user.node_id);
+      if (
+        (pull.base.ref === repository.integrationBranch ||
+          matchesHistoricalIntegrationBranch(
+            evidence.historicalBranchPolicy,
+            pull.base,
+          )) &&
+        commit.author &&
+        isCreditEligibleCommitAuthor({
+          id: commit.author.node_id,
+          kind: commit.author.type,
+        })
+      )
+        actors.add(commit.author.node_id);
       for (const path of paths) {
         const retained = retainedPaths(commit.sha, path);
         if (!retained.length) continue;
@@ -372,31 +406,48 @@ export async function prepareWorkUnitEvidence(
       );
       if (!originCommit || !repository)
         throw new Error("Retained original identity is missing");
+      const actors = new Set<string>();
+      if (origin.pull.user.type !== "Bot") actors.add(origin.pull.user.node_id);
       // A retained copy is accepted by the integration carrier, even when
       // the original historical branch has since been renamed. Preserve a
       // linked primary author only when both immutable commits agree. An
       // unlinked or ineligible original author cannot hide a different one.
+      // A verified resolution copy has a shared implementation antecedent and
+      // resolved blob. Its accepting merger need not be the original resolver.
+      // An acknowledged copied repair keeps both primary identities. Ordinary
+      // allocation uses its accepted author; October's verified override is separate.
       const acceptedAuthor = copied.integration.evidence.commits.find(
         (commit) => commit.sha === copied.acceptedCommitSha,
       )?.author;
-      if (
+      const repair =
+        !copied.mergeResolution &&
         (acceptedAuthor?.node_id ?? null) !==
-        (originCommit.author?.node_id ?? null)
+          (originCommit.author?.node_id ?? null)
+          ? retainedRepair(
+              copied.original,
+              copied.integration,
+              copied.acceptedCommitSha,
+              copied.originalCommitSha,
+              claim.path,
+            )
+          : null;
+      if (
+        !copied.mergeResolution &&
+        !repair &&
+        (acceptedAuthor?.node_id ?? null) !==
+          (originCommit.author?.node_id ?? null)
       )
         limitations.add(
           `${origin.pull.node_id}: retained primary author identity differs between commits`,
         );
-      const actors = implementationCreditActors(
-        { id: origin.pull.user.node_id, kind: origin.pull.user.type },
-        [
-          originCommit.author
-            ? {
-                id: originCommit.author.node_id,
-                kind: originCommit.author.type,
-              }
-            : null,
-        ],
-      ).map((actor) => actor.id);
+      else if (
+        originCommit.author &&
+        isCreditEligibleCommitAuthor({
+          id: originCommit.author.node_id,
+          kind: originCommit.author.type,
+        })
+      )
+        actors.add(originCommit.author.node_id);
       prepared.push({
         id: await sha256Hex(
           JSON.stringify([
@@ -418,6 +469,7 @@ export async function prepareWorkUnitEvidence(
           acceptancePullRequestId: copied.integration.evidence.pull.node_id,
           acceptedCommitSha: copied.acceptedCommitSha,
           preexistingCommitShas: copied.preexistingCommitShas,
+          ...(repair ? { repair } : {}),
         },
       });
       continue;

@@ -306,6 +306,76 @@ The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep
 unclaimed awards. Missing destinations cause a revert and leave reserves intact.
 
+## Month pledges
+
+Before a month is reserved its money sits in `freeBalance`, which the owner
+could withdraw at any time. A month pledge (operator decision, 15 November
+2026) holds it in the vault on chain until the month is reserved:
+
+- The owner calls `pledgeMonths(fromPeriod, count, amount)` on an ordinary
+  vault. It pledges `amount` to each of `count` (1 to 12) consecutive periods
+  from `fromPeriod`, which must be from `currentPeriod()` (the UTC `YYYYMM` of
+  the current block) to eleven months ahead and not yet reserved. A pledge only
+  rises: a lower amount reverts `PledgeTooLow`, an equal one changes nothing.
+  The new total must fit: `freeBalance >= openPledgedGross` afterwards, or
+  `InsufficientFreeBalance`. Each new or raised period emits
+  `MonthPledged(period, amount)`.
+- `withdrawUnused` and every commit from free funds (owner `commitAward`, the
+  legacy `commitMonthly`, `reserveMonthly`) must leave
+  `freeBalance >= openPledgedGross`, else `PledgedFunds`. The owner pays by hand
+  only from unpledged funds. Deposits, leaves, payments, releases and fee claims
+  are unchanged.
+- While the period whose commit window is open has an open pledge, owner
+  `commitAward` reverts `PledgedMonthOpen`. Each new award moves
+  `ordinarySourceSequence`, so without this the owner could make every signed
+  reservation of the pledged month stale until the pledge lapsed. Awards by hand
+  work again once that month is reserved and its leaves are proven, or once its
+  window has closed.
+- An open pledge is consent to reserve its period: `reserveMonthly` and
+  `commitMonthly` accept the period even while monthly commitments are off.
+  With monthly commitments on, the cap is `max(monthlyCap, pledge)`; with them
+  off, the cap is the pledge alone, so a small pledge cannot reopen a stale
+  `monthlyCap`. Turning monthly off or cutting the cap affects only unpledged
+  months. A reserve may use its own period's pledge but never another
+  period's.
+- A pledge closes when its period is reserved (`PledgeClosed(period, amount,
+  true)`); any pledge above the reserved gross returns to unpledged free funds.
+  If the period is never reserved, anyone may call `expirePledge(period)` once
+  `monthlyWindow(period)` has closed (`PledgeClosed(period, amount, false)`);
+  before that it reverts `PledgeNotLapsed`. `monthPledges(period)` keeps the
+  amount after it closes, with `open` false.
+- Bounty vaults refuse both calls with `WrongPurpose`.
+
+The storage is appended after `monthlyReleased` (`monthPledges` slot 22,
+`openPledgedGross` slot 23); every earlier slot is unchanged, so an upgraded
+vault reads zero pledged and behaves as before until its owner pledges.
+
+The limit that stays: vaults remain upgradeable by the factory's upgrade
+authority without a delay, so whoever holds that key can replace this rule.
+The lock stops withdrawal, not the owner's cuts to individual allocations
+before the cutoff, and a pledge lapses if the executor misses the period's
+whole commit window.
+
+`test/MonthPledge.t.sol` covers each rule, including the three routes the
+pledge closes (a direct withdrawal during the month, monthly turned off or
+the cap cut before the reserve, and a reserve that would use another month's
+pledge), the owner-award starvation route and the pledge-only cap with monthly
+off, and `test/MonthPledgeInvariant.t.sol` checks
+`freeBalance >= openPledgedGross` and the open-pledge sum over random
+sequences. The adapter builds `buildPledgeMonthsCalldata` and
+`buildExpirePledgeCalldata`, reads `readEvmMonthPledges` (`null` when the
+vault's implementation has no pledge support) and exports
+`EVM_PLEDGE_EVENT_TOPICS`. The reader also returns `null` for an address with no
+code, and treats a revert reported with no `data` field (how `mainnet.base.org`
+answers) as an empty revert; `pledge.test.ts` covers those answers.
+`pledge.integration.ts` runs them on Anvil; with
+`SLOP_PLEDGE_LEGACY_ROOT` set to a pre-pledge `contracts/evm` tree it first
+deploys that code, then upgrades the funded vault and checks every existing
+storage slot and counter is unchanged.
+
+The implementation is 24,519 bytes of the 24,576-byte limit, so a later change
+to `ProjectEscrow` has about 57 bytes before it must shrink something.
+
 ## Accounting
 
 All values are integer token base units, stored as checked `uint128`. The vault
@@ -403,11 +473,15 @@ ProjectEscrow
   FeesClaimed(address indexed feeRecipient, uint128 amount)
   MonthlyCommitmentSet(uint128 cap, bool enabled)
   MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards)
+  MonthPledged(uint32 indexed period, uint128 amount)
+  PledgeClosed(uint32 indexed period, uint128 amount, bool reserved)
   deposit(uint128) commitAward(bytes32,uint64,uint128,bytes32) commitBountyAward(bytes32,uint64,uint128,bytes32)
   withdrawUnused(uint128) pay(bytes32,uint64) claimFees() totals() decimals() purpose()
   setMonthlyCommitment(uint128,bool) commitMonthly(uint32,(uint64,uint128,bytes32)[],bytes)
   monthlyCap() monthlyEnabled() monthlyRoots(uint32) monthlyWindow(uint32)
   monthlyDigest(uint32,bytes32) allocationRoot((uint64,uint128,bytes32)[])
+  pledgeMonths(uint32,uint8,uint128) expirePledge(uint32) currentPeriod()
+  monthPledges(uint32) -> (uint128 amount, bool open) openPledgedGross()
   payoutFee(uint128) = gross / 50   withdrawalFee(uint128) = payoutFee(gross)
 EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)
@@ -418,8 +492,8 @@ EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   VaultCreated(bytes32 indexed projectId, address indexed token, address indexed vault, address owner, uint8 purpose, uint8 decimals)
 ```
 
-The adapter exports the topics as `EVM_ESCROW_EVENT_TOPICS`, computed from
-these signatures. For the full ABI, use `forge inspect ProjectEscrow abi`.
+The adapter exports the topics as `EVM_ESCROW_EVENT_TOPICS`, and the two pledge
+topics as `EVM_PLEDGE_EVENT_TOPICS`, computed from these signatures. For the full ABI, use `forge inspect ProjectEscrow abi`.
 
 ## Local validation
 
@@ -431,6 +505,7 @@ forge fmt --root contracts/evm --check
 forge build --root contracts/evm --sizes
 forge test --root contracts/evm
 bun contracts/evm/adapter.integration.ts
+bun contracts/evm/pledge.integration.ts
 ```
 
 `forge test` runs the Foundry suites under `test/`. `test/AnyToken.t.sol`
@@ -562,7 +637,90 @@ It was run once, on 10 November 2026: the distributor is at
 owner is the Slop Cash S.P. operating wallet
 `0xbCA4736F59d03F07cFac9415A5936fECb06b2eA7`. Its poster is the unusable
 address `0x000000000000000000000000000000000000dEaD`, so no root can be posted
-until the owner sets a poster at activation. It holds no tokens and the
-program is inactive; `workers/referral-accrual/wrangler.toml` is unchanged. The AI-assisted internal review is
+until the owner sets a poster at activation. It held no tokens at deployment.
+Since 12 November 2026 `workers/referral-accrual/wrangler.toml` records this
+address, block and code hash for the independent root watcher, with the accrual
+job in `dry_run` and posting not activated. The AI-assisted internal review is
 [`docs/security/referral-distributor-ai-review-2026-10-25.md`](../../docs/security/referral-distributor-ai-review-2026-10-25.md);
+it is not an audit.
+
+## Submission deposits
+
+`src/SubmissionDeposits.sol` is a separate, non-upgradeable contract that holds
+refundable submission deposits, built for the platform submission fee (operator
+decision, 18 November 2026). **It was deployed on Base and Robinhood Chain on
+19 November 2026 at `0xDe40B32A4156ABC2A05987367966d994BcFbf8D8` (the same
+address on both). The owner named the submission-fee Worker's resolver,
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, the same day. The
+submission-fee Worker reads it in record-only mode and nothing calls it yet:**
+the fee switch is `dry_run`. The transactions, blocks and
+read-back values are in
+[the deployment record](../DEPLOY-MAINNET.md#submission-fee-deposit-contracts-19-november-2026).
+The product rule is in PRD sections 5 and 6; the Worker that settles deposits
+is `workers/submission-fee`. It is separate from the escrow: it has no factory, no proxy, no
+project id and no vault role, and the escrow never calls it.
+
+- Anyone calls `deposit(item, token, amount, keptTo)`. `item` names what the
+  deposit is for; for a pull request it is
+  `keccak256(abi.encodePacked("slop-fee-v1", uint64(githubRepositoryId), uint64(pullRequestNumber)))`.
+  The contract pulls exactly `amount`, and records the payer, the token, the
+  amount and `keptTo`. None of those can change afterwards. Ids count up from 1.
+  The contract keeps no list of accepted tokens, amounts or kept addresses; that
+  check is off chain, and a deposit that fails it is refunded or reclaimed.
+- The resolver calls `resolve(id, refund)` once per open deposit: `true` sends
+  the amount back to the payer, `false` sends it to that deposit's `keptTo`.
+  `resolveMany(ids, refunds)` does the same for a list, all or nothing. A payout
+  that fails reverts with `PayoutFailed(id)`, which names the deposit.
+- If a deposit is still open `reclaimDelay` after it was made (30 days in the
+  deployment scripts, fixed for the life of a deployment), its payer calls
+  `reclaim(id)` and takes it back. A resolver that stops working strands nobody.
+- The owner calls `setResolver`, `pauseDeposits` and the two-step
+  `transferOwnership` / `acceptOwnership`. Pausing refuses new deposits only; it
+  never blocks `resolve`, `resolveMany` or `reclaim`. The resolver is never the
+  owner or the pending owner. No owner action moves, redirects or resolves a
+  deposit.
+
+What a stolen resolver key can do: settle any open deposit either way. It can
+refund deposits that should have been kept, and it can send deposits that should
+have been refunded to their `keptTo`, which for a burn address cannot be
+recovered. What it cannot do: send a deposit anywhere other than its payer or its
+`keptTo`, take anything for itself, change a record, touch a deposit that is
+already settled or reclaimed, or stay in place once the owner replaces it. What a
+stolen owner key can do: name a resolver it controls, which then has exactly the
+resolver's two outcomes, and pause new deposits. The most either key can affect
+is the deposits open at that moment (`openTotal(token)`).
+
+Other limits: transfers must be exact in both directions, so fee-on-transfer and
+rebasing tokens are refused. A token that freezes the payer blocks that payer's
+refund and reclaim (the deposit can still be kept), and a paused token blocks
+every movement of that token until it is unpaused. Tokens sent to the contract
+without `deposit` belong to no deposit and cannot be moved by anyone. Every entry
+point that moves tokens holds a reentrancy lock.
+
+`test/SubmissionDeposits.t.sol` covers every recorded field and event, the
+refusals of `deposit`, short and excess delivery in both directions, tokens that
+return nothing or false, both outcomes and their destinations, single settlement, the roles,
+`resolveMany`, reclaim timing, pausing, stray tokens, reentry through a hostile
+token in each entry point, and a fuzz over three deposits.
+`test/SubmissionDepositsInvariant.t.sol` runs random payer, resolver, owner and
+passer-by sequences over two tokens and checks after every call that the balance
+held equals the open deposits, that every token outside the contract is with a
+payer or a kept address in the amount the outcomes imply, and that no forbidden
+call succeeded. These suites are regression evidence, not a security review.
+
+`script/DeploySubmissionDepositsRobinhood.s.sol` (chain id 4663) and
+`script/DeploySubmissionDepositsBase.s.sol` (chain id 8453) share
+`script/DeploySubmissionDeposits.sol`: each refuses any other chain, takes only
+`SUBMISSION_DEPOSITS_OWNER` and `SUBMISSION_DEPOSITS_RESOLVER` from the
+environment, fixes the 30-day reclaim delay, and reads the deployed values back
+before it reports. They move no tokens; `test/SubmissionDepositsDeploy.t.sol`
+covers their refusals. The owner ran both on 19 November 2026. The steps are in
+[`docs/submission-deposits-deploy-runbook.md`](../../docs/submission-deposits-deploy-runbook.md).
+On 18 November 2026 both scripts and the full deposit, refund, kept, batch and
+reclaim sequence were rehearsed on local forks of Base (USDC) and Robinhood
+Chain (USDG and SLOP). Built with the settings in `foundry.toml` and a 30-day
+delay, the runtime code hash is
+`0xe4c13bf58d547617ad10f4ee7bf4a43fb47ab68a4f6e841f5c22acd3874c55ef` on either
+chain. The AI-assisted review note is
+[`docs/submission-deposits-ai-review-2026-11-18.md`](../../docs/submission-deposits-ai-review-2026-11-18.md);
 it is not an audit.

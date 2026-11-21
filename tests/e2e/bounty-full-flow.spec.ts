@@ -163,7 +163,7 @@ async function action(page: Page, name: string) {
 }
 
 async function openPrivateReport(report: Locator) {
-  const summary = report.getByText("Read private report", { exact: true });
+  const summary = report.getByText("Report", { exact: true });
   const details = summary.locator("..");
   if ((await details.getAttribute("open")) === null) await summary.click();
   await expect(details).toHaveAttribute("open", "");
@@ -179,7 +179,7 @@ async function enrollSecurityEmail(
   await page.goto("/account#notifications", { waitUntil: "commit" });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   const preferences = page.getByRole("region", {
-    name: "Email preferences",
+    name: "Email",
     exact: true,
   });
   const input = preferences.getByRole("textbox", {
@@ -192,7 +192,7 @@ async function enrollSecurityEmail(
       async () =>
         (await input.isVisible()) ||
         (await preferences
-          .getByRole("button", { name: "Add or change email", exact: true })
+          .getByRole("button", { name: /^(?:Add|Change) email$/u })
           .isVisible()),
     )
     .toBe(true);
@@ -211,12 +211,10 @@ async function enrollSecurityEmail(
     await page.bringToFront();
     // Firefox can activate this window on its first pointer action. Finish
     // the resulting preference refresh before clicking a consent control.
-    await page
-      .getByRole("heading", { name: "Email preferences", exact: true })
-      .click();
+    await page.getByRole("heading", { name: "Email", exact: true }).click();
     for (const [name, checked] of [
-      ["Activity email", false],
-      ["Security email", true],
+      ["Activity", false],
+      ["Security", true],
     ] as const) {
       const toggle = preferences.getByRole("switch", { name, exact: true });
       await expect(toggle).toBeEnabled();
@@ -247,7 +245,7 @@ async function enrollSecurityEmail(
     });
     return;
   }
-  for (const name of ["Activity email", "Security email"]) {
+  for (const name of ["Activity", "Security"]) {
     const toggle = preferences.getByRole("switch", { name, exact: true });
     if ((await toggle.isVisible()) && (await toggle.isChecked())) {
       await toggle.click();
@@ -257,14 +255,14 @@ async function enrollSecurityEmail(
   }
   if (!(await input.isVisible()))
     await preferences
-      .getByRole("button", { name: "Add or change email", exact: true })
+      .getByRole("button", { name: /^(?:Add|Change) email$/u })
       .click();
   await input.fill(address);
   await preferences
-    .getByRole("checkbox", { name: "Security email", exact: true })
+    .getByRole("checkbox", { name: "Security", exact: true })
     .check();
   await preferences
-    .getByRole("checkbox", { name: "Activity email", exact: true })
+    .getByRole("checkbox", { name: "Activity", exact: true })
     .uncheck();
   let releaseFocusRead = () => {};
   const focusReadGate = new Promise<void>((resolve) => {
@@ -291,7 +289,7 @@ async function enrollSecurityEmail(
     await expect(input).toHaveValue(address);
     await expect(
       preferences.getByRole("button", {
-        name: "Send verification",
+        name: "Verify",
         exact: true,
       }),
     ).toBeDisabled();
@@ -302,10 +300,10 @@ async function enrollSecurityEmail(
   await page.unroute("**/api/v1/notifications/email");
   await expect(input).toHaveValue(address);
   await expect(
-    preferences.getByRole("checkbox", { name: "Security email", exact: true }),
+    preferences.getByRole("checkbox", { name: "Security", exact: true }),
   ).toBeChecked();
   await expect(
-    preferences.getByRole("checkbox", { name: "Activity email", exact: true }),
+    preferences.getByRole("checkbox", { name: "Activity", exact: true }),
   ).not.toBeChecked();
   const sent = page.waitForResponse(
     (response) =>
@@ -314,7 +312,7 @@ async function enrollSecurityEmail(
         "/api/v1/notifications/email/verification",
   );
   await preferences
-    .getByRole("button", { name: "Send verification", exact: true })
+    .getByRole("button", { name: "Verify", exact: true })
     .click();
   expect((await sent).status()).toBe(202);
   const origin = process.env.SLOP_E2E_NOTIFY_ORIGIN as string;
@@ -358,7 +356,7 @@ async function enrollSecurityEmail(
   const verifiedResponse = await verified;
   expect(verifiedResponse.status()).toBe(200);
   expect(await verifiedResponse.finished()).toBeNull();
-  await expect(action.getByRole("status")).toHaveText("Email verified.");
+  await expect(action.getByRole("status")).toHaveText("Verified");
   const after = await api<{
     enabled: boolean;
     securityEnabled: boolean;
@@ -730,7 +728,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       description,
     );
     const assessment = maintainer.getByRole("region", {
-      name: "Advisory assessment",
+      name: "AI summary",
       exact: true,
     });
     await expect(assessment).toContainText(
@@ -750,16 +748,14 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       `[aria-labelledby="submission-${submissionId}"]`,
     );
     await openPrivateReport(researcherReport);
-    await researcherReport
-      .getByText("Add evidence or correct report", { exact: true })
-      .click();
+    await researcherReport.getByText("Edit report", { exact: true }).click();
     await researcherReport
       .getByRole("textbox", { name: /^Description/u })
       .fill(
         `${description} Account A is a maintainer of a local test project; account B has no project role. B receives A's private title instead of a denied response.`,
       );
     await researcherReport
-      .getByRole("button", { name: "Save and screen again", exact: true })
+      .getByRole("button", { name: "Save", exact: true })
       .click();
     await expect
       .poll(async () => (await report()).intake.state)
@@ -791,12 +787,10 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await form.getByLabel(/^Outcome/u).selectOption("confirmed");
     await form.getByLabel(/^Severity/u).selectOption("high");
     await form.getByLabel(/^Loss of funds/u).selectOption("not-verified");
-    await form
-      .getByLabel("The affected asset is in scope", { exact: true })
-      .check();
+    await form.getByLabel("In scope", { exact: true }).check();
     await form.getByLabel(/^Root cause key/u).fill(`authorization-${suffix}`);
     await form
-      .getByLabel(/^Private reason/u)
+      .getByLabel(/^Reason/u)
       .fill(
         "Confirmed with two synthetic local accounts. The unauthorized disclosure meets the published criteria.",
       );
@@ -808,9 +802,9 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await form
       .getByLabel("Payment deadline (UTC)", { exact: true })
       .fill(new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 16));
-    await form.getByLabel(/^I approve this award/u).check();
+    await form.getByLabel(/^Approve award for @/u).check();
     await form
-      .getByLabel(/^Private reason/u)
+      .getByLabel(/^Reason/u)
       .fill(
         "Approve the fixed bounty for the first qualifying private authorization finding.",
       );
@@ -818,7 +812,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect((await readCase("security")).awardState).toBe("approved");
     console.info(`[bounty-full-flow] ${suffix}: award approved`);
     form = await action(maintainer, "prepare-payment");
-    await form.getByLabel(/^I approve .* on this network/u).check();
+    await form.getByLabel(/^Approve /u).check();
     expect((await submitAction(maintainer, "prepare-payment", 409)).error).toBe(
       "payment_consent_required",
     );
@@ -827,14 +821,12 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       waitUntil: "networkidle",
     });
     form = await action(researcher, "consent-payment");
-    await form
-      .getByLabel(/^I understand that chain transactions reveal my wallet/u)
-      .check();
+    await form.getByLabel(/^On-chain: /u).check();
     await submitAction(researcher, "consent-payment");
     await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     form = await action(maintainer, "prepare-payment");
-    await form.getByLabel(/^I approve .* on this network/u).check();
+    await form.getByLabel(/^Approve /u).check();
     await submitAction(maintainer, "prepare-payment");
     const payment = maintainer.getByRole("region", {
       name: "Unsigned owner request",
@@ -863,18 +855,14 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     if (!downloadedPath) throw new Error("Payment request download is missing");
     expect(JSON.parse(await readFile(downloadedPath, "utf8"))).toEqual(copied);
     await expect(
-      payment
-        .getByRole("status")
-        .filter({ hasText: /^Request download started\.$/u }),
+      payment.getByRole("status").filter({ hasText: /^Download started\.$/u }),
     ).toBeVisible();
     const beforeReporter = await balance(chain.reporter);
     const beforeRecovery = await balance(chain.recoveryAddress);
     const beforeFee = await balance(chain.fee);
     form = await action(maintainer, "verify-payment");
     await form.getByLabel(/^Transaction IDs/u).fill(`0x${"f".repeat(64)}`);
-    await form
-      .getByLabel("These transactions pay the approved award.", { exact: true })
-      .check();
+    await form.getByLabel("Pays this award", { exact: true }).check();
     expect((await submitAction(maintainer, "verify-payment", 409)).error).toBe(
       "payment_unverified",
     );
@@ -888,9 +876,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       "consent-required",
     );
     form = await action(researcher, "consent-payment");
-    await form
-      .getByLabel(/^I understand that chain transactions reveal my wallet/u)
-      .check();
+    await form.getByLabel(/^On-chain: /u).check();
     await submitAction(researcher, "consent-payment");
     await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
@@ -916,14 +902,16 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .getByRole("button", { name: "Pay remaining transfers", exact: true })
       .click();
     await expect(payerControls.getByRole("alert")).toContainText(
-      "This nonce is pending or used.",
+      "Nonce already used.",
     );
     expect(walletSends).toHaveLength(0);
     occupiedPaymentNonce = false;
     await payerControls
       .getByRole("button", { name: "Pay remaining transfers", exact: true })
       .click();
-    await expect(payerControls.getByRole("alert")).toContainText("uncertain");
+    await expect(payerControls.getByRole("alert")).toContainText(
+      "Result unknown.",
+    );
     expect(walletSends).toHaveLength(1);
     const feeIndex = copied.transfers.findIndex(
       (entry) => entry.role === "fee",
@@ -1086,7 +1074,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     await expect(
-      maintainer.getByText("Partly paid", { exact: true }).first(),
+      maintainer.getByText("1/2 paid", { exact: true }).first(),
     ).toBeVisible();
     const partial = await readCase("security");
     expect(partial.settlement?.confirmedTransactionIds).toEqual([
@@ -1102,7 +1090,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       exact: true,
     });
     await expect(reporterRecovery).toContainText(chain.recoveryAddress);
-    await expect(reporterRecovery).toContainText("Waiting for the payer");
+    await expect(reporterRecovery).toContainText("Waiting on Payer");
     expect((await readCase("security")).settlement?.recovery?.mode).toBe(
       "cancellation-required",
     );
@@ -1154,7 +1142,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
         .getByRole("button", { name: "Cancel old transfer", exact: true })
         .click();
       await expect(cancellation.getByRole("alert")).toContainText(
-        "This nonce is pending or used.",
+        "Nonce already used.",
       );
       expect(cancellationEstimated).toBe(consumed === "after-estimate");
       expect(walletSends).toHaveLength(1);
@@ -1397,21 +1385,19 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await form.getByLabel(/^Outcome/u).selectOption("confirmed");
     await form.getByLabel(/^Severity/u).selectOption("high");
     await form.getByLabel(/^Loss of funds/u).selectOption("not-verified");
-    await form
-      .getByLabel("The affected asset is in scope", { exact: true })
-      .check();
+    await form.getByLabel("In scope", { exact: true }).check();
     await form.getByLabel(/^Root cause key/u).fill(`attachment-${suffix}`);
     await form
-      .getByLabel(/^Private reason/u)
+      .getByLabel(/^Reason/u)
       .fill("Confirmed a separate attachment authorization defect locally.");
     await submitAction(maintainer, "decide");
     form = await action(maintainer, "award");
     await form
       .getByLabel("Payment deadline (UTC)", { exact: true })
       .fill(new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 16));
-    await form.getByLabel(/^I approve this award/u).check();
+    await form.getByLabel(/^Approve award for @/u).check();
     await form
-      .getByLabel(/^Private reason/u)
+      .getByLabel(/^Reason/u)
       .fill("Approve the published award for the separate qualifying finding.");
     await submitAction(maintainer, "award");
     await researcher.bringToFront();
@@ -1419,14 +1405,12 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       waitUntil: "networkidle",
     });
     form = await action(researcher, "consent-payment");
-    await form
-      .getByLabel(/^I understand that chain transactions reveal my wallet/u)
-      .check();
+    await form.getByLabel(/^On-chain: /u).check();
     await submitAction(researcher, "consent-payment");
     await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     form = await action(maintainer, "prepare-payment");
-    await form.getByLabel(/^I approve .* on this network/u).check();
+    await form.getByLabel(/^Approve /u).check();
     await submitAction(maintainer, "prepare-payment");
     await payerControls
       .getByRole("button", { name: "Connect MetaMask", exact: true })

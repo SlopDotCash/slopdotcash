@@ -39,6 +39,16 @@ wallets and off-curve Solana destinations need a separately reviewed recovery
 path; they cannot skip signature verification. Legacy claim semantics remain
 unchanged.
 
+An authenticated Solana recipient uses `POST /wallets/solana-bind/prepare`
+with a reserved `obligationId` to obtain the attester's half-signed binding.
+When no attempt exists, this request creates one for the current authorized
+claim only while its outbox is ready. Concurrent preparation reuses that
+attempt. An active attempt for an earlier claim stays with that claim until
+reconciled. The destination wallet co-signs the exact returned transaction and
+submits it to `POST /wallets/solana-bind/complete`. The completion route cannot
+create an attempt. This flow also serves authorized private bounty recipients
+through their separate payment ledger and case-access audit.
+
 The repository owner approved this replacement and recovery policy directly
 in the 27 October 2026 review. Registration alone never displaces an authorized
 wallet. The derived
@@ -80,7 +90,9 @@ deployment before reading or advancing its cursor, including empty log pages.
 This check prevents new omissions; it does not repair a cursor advanced before
 the check was released. Audit such history from its trusted deployment boundary
 and reconcile retained events before treating that coverage as verified.
-Solana stores one finalized signature page per run in a durable discovery
+Solana checks the RPC genesis hash against the configured network trust root
+before reading vault snapshots or touching discovery and processing
+checkpoints. Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
@@ -187,6 +199,39 @@ and appears in `payments` under the same source digest. A proposal that is
 still under the owner's private review is never returned to the contributor,
 and `monthlyAwards` never adds to `balances`.
 
+### Reserved-awards feed for an operator service
+
+`GET /api/v1/operator/reserved-awards` (`reserved-awards-feed.ts`; PRD
+section 9, operator decision of 17 November 2026) lets one operator service
+see which accounts have a funded award still reserved, so it can remind them.
+It answers only a request with `Authorization: Bearer <OPERATOR_FEED_TOKEN>`,
+compared in constant time. `OPERATOR_FEED_TOKEN` is an optional Pages secret
+of at least 32 characters; while it is unset, shorter, or the token is missing
+or wrong, the handler declines the request and the API returns its ordinary
+not-found answer, so the route cannot be discovered. The release workflow
+lists the secret as optional.
+
+The answer is `{"schema":"slop-reserved-awards-v1","generatedAt":...,"awards":[...]}`
+with `cache-control: no-store`. Each row is one contributor and project:
+`githubId`, `login`, `projectId`, `projectName`, `network` and `needs`. It
+never carries an amount, a wallet address, an award id or a month.
+
+- `needs: "wallet"`: the contributor has no confirmed wallet on the award's
+  network (none registered, or one registered but not confirmed).
+- `needs: "authorize"`: a confirmed wallet exists but no payout binding is on
+  record for it and the vault: no signed EVM binding authorization
+  (`payment_binding_authorizations`) and no Solana binding attempt that did
+  not fail (`payment_attempts`).
+
+An award whose wallet is confirmed and bound is being paid and is left out,
+as is a paid award. Administrators and moderators (`ADMIN_GITHUB_IDS`,
+`PROJECT_MODERATOR_GITHUB_IDS`) and closed accounts are left out, and
+production leaves test networks out. `login` is the member's current login,
+else the login a closed month recorded, else the login of a wallet claim, else
+null. A Solana binding that a contributor prepared but never co-signed leaves
+the same record as a completed one, so that contributor is not listed. The
+feed reads D1 only and changes no payment state.
+
 Migration `0021` changes `payment_obligations` to `asset_address`,
 `asset_decimals`, `gross_base` and `fee_base`. It copies each earlier row as
 the reviewed asset of its network (all 6 decimals). A row on a network with
@@ -212,6 +257,23 @@ without another revision. This also works when payout execution is inactive.
 The protected main release repairs missing ordinary Solana observations through
 the same adapters and monotonic writer. It retains existing rows and never signs,
 submits a transaction, enables execution, or changes a scheduler.
+
+`GET /api/v1/payments/projects/<id>/deposits` serves the "Funded by" list
+(operator decision, 18 November 2026): the newest 50 finalized deposits of the
+project's ordinary vaults with the full count, from `vault_deposits`
+(migration 0138), under the same 60-second cache and deployment-tier rule as
+the vault totals. `workers/payments/deposits.ts` writes those rows after the
+payout steps of each scheduled run. It reads each vault's `Deposited` event
+with its own cursor (`vault_deposit_cursors`) from the vault's creation: ten
+reviewed log pages a run on EVM networks, 25 transactions a run on Solana,
+newest first. Each page's rows and its cursor are one atomic write. It never
+throws: a failed read is logged by error name and retried on the next run,
+and it cannot fail or delay a payout step. Private bounty vaults are skipped.
+A depositor is named by GitHub login only when exactly one public, open Slop
+account currently has that address registered and the wallet signed that
+registration (`payment_wallet_authorizations`); an unsigned registration
+neither names a depositor nor hides one. The list is display evidence; no
+balance, funded month or payment reads it.
 
 `GET /api/v1/payments/projects/<id>/vault` serves these rows with
 `staleAfterMs` (30 minutes). A page view reads D1 or the edge cache
@@ -283,13 +345,22 @@ real GitHub OAuth or public testnet deployment result.
 Automatic monthly payment is the PRD default for a funded project (PRD
 sections 6 and 7). Migration `0062` adds its private records.
 
+Implementation Points retain the accepted PR's value and are divided by verified
+commit additions plus deletions. An allocation-only correction conserves the
+previous PR total when a current value assessment is unavailable; it does not
+replace that total with a provisional minimum. Missing multi-author line
+evidence holds the previous allocation. Corrections append to the journal with
+the original contribution date.
+
 Points imports check these private records in the same atomic statement that
 accepts the new journal batch. A correction cannot change or add accepted-work
 Points in a frozen month, a month with an owner allocation decision, or a month
 with a retained direct payment. A legacy obligation without an exact monthly
 binding protects the whole project; its period is never inferred from indexing
-time. A refusal stops the release before Pages publication and retains the
-previous Points history. Replaying an identical batch remains valid.
+time. The reviewed Base qualification is outside earned rewards under PRD
+section 11. The guard exempts its exact finalized payment and reservation source.
+A refusal stops the release before Pages publication and retains the previous
+Points history. Replaying an identical batch remains valid.
 
 1. **Proposal.** The trusted `monthly-rewards.yml` workflow runs on the first
    three days of each month, on `main` for `slop-private` and on
@@ -308,18 +379,48 @@ previous Points history. Replaying an identical batch remains valid.
    gets no proposal; the other projects still get theirs. If the project is
    active again before the last run, the next run proposes the month. No cycle
    file, public decision or review PR is created.
-2. **Private changes.** The owner, the project steward or a current admin of
-   the immutable repository, changes amounts through
+   A project whose revision sets a maintainer share for the month (PRD
+   section 6, operator decision of 18 November 2026) needs one more input:
+   the script reads from public GitHub data who merged or closed each
+   outside pull request of the project's counted repositories in the month
+   (`scripts/maintainer-decisions.ts`). The share leaves the monthly amount
+   before the points split and is divided by those decisions
+   (`src/lib/payments/maintainer-share.ts`), so the rows still total at most
+   the monthly amount. An account with a points share and a part of the
+   maintainer share has one row. `monthly_maintainer_shares` keeps the exact
+   decision record and its digest and `monthly_maintainer_share_rows` each
+   account's part; both are written once, beside the proposal. If the read
+   fails for a project, that project's month is not proposed, the run still
+   stores the other projects and then fails, and a later run of the same
+   month proposes it.
+2. **Owner changes and public cuts.** The owner, the project steward or a
+   current admin of the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
    `POST .../monthly/:YYYY-MM/allocations` (`githubUserId`, `grossBase`,
-   `expectedSequence`). The month's total never exceeds its monthly amount, so
-   unallocated funds never raise a later month. Nobody changes their own
-   allocation. Each change is an append-only `monthly_allocation_changes` row
-   kept only for dispute handling and reconciliation; no route returns it and
-   no public reason exists. `POST .../monthly-settings` (`automatic`) turns
+   `expectedSequence`, and `reason` for a cut). The month's total never
+   exceeds its monthly amount, so unallocated funds never raise a later month.
+   Nobody changes their own allocation. Each change is an append-only
+   `monthly_allocation_changes` row. A change below the contributor's proposed
+   amount is a cut (operator decision, 15 November 2026): it needs a reason of
+   20 to 500 characters after trim, which is stored with the proposed and new
+   amounts in `monthly_allocation_cut_reasons` (migration 0126) in the same
+   batch as the change, and the contributor gets one Inbox notice per cut.
+   `GET .../monthly/:YYYY-MM/cuts` is public and lists each contributor whose
+   latest change is a cut, with login, proposed amount, new amount, reason and
+   time; the cycle page shows it. Other changes stay private and are kept for
+   dispute handling and reconciliation. When the month freezes at the cutoff
+   (automatic finalization on, or the month pledged on chain in the vault
+   that pays it), a cut is refused in the last 24 hours before the cutoff
+   (`cut_notice_window`),
+   and the owner's finalize is refused until 24 hours after the latest cut
+   (`cut_notice_pending`). The coordinator's freeze at the cutoff is
+   unchanged. `POST .../monthly-settings` (`automatic`) turns
    the automatic default off or on again. Write or maintain permission can
    read the month and prepare its commitment, but cannot change allocations,
-   the automatic default, finalization or reserve release.
+   the automatic default, finalization or reserve release. The same Slopbot
+   installation reader used by project setup verifies current permission and
+   the immutable public repository and steward identity for every monthly read
+   or action.
 3. **Execution snapshot.** `POST .../monthly/:YYYY-MM/finalize`
    (`expectedSequence`) freezes the current allocations now. Otherwise the
    payments Worker's scheduled coordinator freezes them at the cutoff,
@@ -338,6 +439,19 @@ previous Points history. Replaying an identical batch remains valid.
    allocations cannot change after the cutoff. Either path writes the single
    `monthly_payment_runs` row of that month; a frozen month accepts no
    further change.
+   A month the owner pledged on chain in the vault that pays it
+   (`vault_month_pledges`, migration 0128; operator decision, 15 November
+   2026) freezes at the cutoff whatever the automatic default says, and
+   while the project is paused or restricted, but not once it is retired.
+   A pledge in another vault of the project gives no consent. The attester,
+   publication and dispatcher accept it the same way
+   (`backend/payments/month-pledges.ts`). The contract checks the pledge
+   again. The Solana executor passes the month's `month_pledge` account to
+   `commit_monthly` when it exists. Every stored open pledge is read again
+   on each refresh, so a lapsed one stays listed until a release
+   (`expirePledge` / `expire_pledge`) closes it; the manage page offers that
+   release, and `POST /projects/:id/solana-month-lock` plans Solana locks and
+   releases for the browser to check and the wallet to sign.
    A banned account cannot change allocations or automatic-payment settings,
    or finalize a month. Each write checks the account ban again to refuse a
    concurrent ban. Reading awards and preparing an existing funded obligation
@@ -345,9 +459,11 @@ previous Points history. Replaying an identical batch remains valid.
 4. **Obligations.** The coordinator creates one `monthly_payment_obligations`
    row per positive award once, only when the vault's finalized free balance
    (a `vault_snapshots` row newer than 30 minutes) covers the month together
-   with every earlier obligation of the same vault that is still unreserved.
+   with every earlier obligation of the same vault that is still unreserved,
+   less every other month's open pledge, which the contract keeps apart.
    An underfunded month waits for a deposit and creates nothing. The steward
-   gets one Inbox payout exception for that month (key
+   (or, for an Organization steward, the project's lister) gets one Inbox
+   payout exception for that month (key
    `monthly-underfunded:PROJECT:YYYY-MM`), however often the coordinator
    retries. Before it creates new obligations, the coordinator excludes accounts
    with an active moderator ban. It records the exact ban in
@@ -467,3 +583,68 @@ Pages return at most 100 records. Continue with the returned `next` as `after`
 and the same `through` boundary; `total` applies to that boundary. The public
 client checks page continuity, duplicates and completeness before display, and
 keeps currencies separate. This read path creates no award or payment.
+
+### Reviewed October 2026 exception
+
+The manual `october-rewards.yml` workflow prepares only the five pools in the
+owner-approved October terms. It runs on current `main` in `slop-production`
+and shares the normal production publication lock. Its default is preview.
+The owner-reviewed packet is the private `OCTOBER_REWARDS_REVIEWED_PACKET`
+repository secret. The dispatch supplies its SHA-256 and an explicit `apply`
+boolean. Do not put the packet, recipient amounts or generated SQL in a public
+artifact or workflow input.
+
+The runner compares every reviewed identity and accepted-work weight with the
+complete published Points journal, clipped to October and the project's
+reward start. Payout-recognition awards are excluded. Existing deduplication
+and signed penalties are preserved. This cross-check validates the reviewed
+packet and creates no new valuation. Fresh private reads bind the packet to
+exact current registry bytes, enforcement generation, the Points batch,
+account eligibility and protected financial state. The runner verifies the
+packet reviewer's current owner or repository-admin authority through the same
+Slopbot App installation reader as the monthly owner API. Historical October
+payments may retain unknown license and inbound terms when that live authority
+is verified. This exception changes neither those stored terms nor the ordinary
+automatic proposal admission rule.
+
+Applying uses `prepare-october-rewards.ts` and the existing single-transaction
+D1 file importer. It records proposals only. Exact header and recipient-row
+readback is required after the import, including after a lost import response.
+A fully matching existing proposal is an idempotent replay even when Points
+have subsequently advanced. A different stored proposal refuses. Owner
+finalization and ordinary vault settlement remain separate operations.
+
+Only aggregate counts and the reviewed packet digest leave the trusted runner.
+The private packet, registry capture and SQL remain in its temporary directory.
+Set the private secret and run preview only after the final packet is reviewed.
+Import only that verified packet by dispatching the same digest with `apply`.
+
+## Reviewed finalized-event reconciliation
+
+`payment-event-reconciliation.yml` can reconcile reviewed mainnet EVM receipts
+while the ordinary scanner catches up. It neither sends transactions nor moves
+the scanner cursor. A manual main-branch run pins the SHA-256 of the private
+`SLOP_PAYMENT_RECONCILIATION_PACKET` secret; `apply` defaults to false. The
+production credentials stay in the protected workflow. Configure the dedicated
+`SLOP_PAYMENT_RECONCILIATION_RPC_URLS` environment secret as a JSON map from
+registered EVM network IDs to HTTPS endpoints used only for read-only chain
+verification. Keep the shared release `PAYMENT_RPC_URLS` secret unchanged; its
+Solana-only observation-recovery scope is separate. Public artifacts contain
+only the packet digest, source commit and aggregate verification counts.
+
+The runner reads the current immutable project revision and frozen funded monthly
+allocation, verifies the deployed factory and finalized canonical receipt, and
+checks the retained signed transaction against its exact award call. Reservation
+calls must be signed by the vault owner. A paid-event packet instead binds its
+permissionless payer, active binding version, destination and authorized wallet
+claim, and requires the matching reservation to have already been indexed.
+Historical authorized claims remain valid for payments finalized before a wallet
+replacement. A missing event kind retains the original reservation-packet format.
+
+Apply invokes the ordinary `ingestPaymentEvent` verifier and ledger. Each event's
+canonical statements and notices use one documented D1 REST batch transaction;
+only the ledger's reservation inserts and exact paid-state updates are permitted.
+The runner checks stored evidence and paid state after ingestion and exact replay.
+An uncertain request is reconciled by rerunning the same packet, never by editing
+payment rows or advancing a cursor. This implements the finalized evidence and
+replay requirements in PRD section 6 without a second settlement path.

@@ -11,7 +11,13 @@ import {
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import { cycleIndexFixture } from "../fixtures";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  failPoolFundingRead,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -51,6 +57,7 @@ async function fixtures(page: Page, paymentRead = () => {}) {
       ),
     }),
   );
+  await servePublicProjectReads(page);
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
@@ -153,44 +160,14 @@ async function fixtures(page: Page, paymentRead = () => {}) {
   );
 }
 
-test("point rankings and ties do not depend on payment availability", async ({
-  page,
-}, info) => {
-  let paymentReads = 0;
-  await fixtures(page, () => paymentReads++);
-  await page.goto(`${site}/points?sort=money&period=lifetime`);
-  const standings = page.getByRole("region", {
-    name: "Contributor standings",
-    exact: true,
-  });
-  await expect(
-    standings.getByText(/Money received|Payment records unavailable/u),
-  ).toHaveCount(0);
-  await expect(standings.locator("tbody tr")).toHaveCount(3);
-  await expect(standings.locator("tbody tr").first()).toContainText(
-    "synthetic-slop",
-  );
-  await expect(standings.locator("tbody tr td:first-child")).toHaveText([
-    "1",
-    "1",
-    "3",
-  ]);
-  await expect(
-    standings.getByRole("link", { name: "synthetic-slop", exact: true }),
-  ).toHaveAttribute("href", "/contributors/synthetic-slop");
-  await expect(page).not.toHaveURL(/sort=money/u);
-  expect(paymentReads).toBe(0);
-  await page.screenshot({
-    path: info.outputPath("points-only-rankings.png"),
-    fullPage: true,
-  });
-  await expectAccessible(page);
-});
-
 test("history navigation keeps contributor standings scoped to the current project", async ({
+  diagnostics,
   page,
 }, info) => {
   await fixtures(page);
+  // The test follows Eliza's home card; its fixture pool has no vault, so
+  // keep it listed as a failed funding read does.
+  await failPoolFundingRead(page, diagnostics);
   await page.goto(`${site}/projects/slopdotcash?project=eliza&period=lifetime`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
@@ -234,69 +211,20 @@ test("history navigation keeps contributor standings scoped to the current proje
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(document);
 });
 
-test("legacy project and contributor URLs keep points-only ranking", async ({
-  page,
-}) => {
+test("legacy ranking URLs open the contributor directory", async ({ page }) => {
   await fixtures(page);
   await page.goto(`${site}/projects/eliza?sort=money&period=lifetime`);
   await expect(
     page.getByRole("link", { name: /Full standings|View leaderboard/u }),
   ).toHaveCount(0);
-  await page.goto(`${site}/?period=lifetime&sort=money`);
-  const fullView = page.getByRole("link", {
-    name: "View leaderboard",
-    exact: true,
-  });
-  // The home table is all time, so its full view opens recorded history.
-  await expect(fullView).toHaveAttribute("href", "/points?period=lifetime");
-  await expectAccessible(page);
-  await fullView.focus();
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/points\?period=lifetime/);
-  const standings = page.getByRole("region", {
-    name: "Contributor standings",
-    exact: true,
-  });
-  await expect(standings.getByLabel("Project", { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Find a contributor")).toHaveCount(0);
-  await expect(page.locator(".points-coverage-details")).toHaveCount(0);
-  await page.goto(`${site}/points?period=lifetime&project=eliza`);
+  // /points is a directory, never a ranking (operator decision, 18 November 2026).
+  await page.goto(
+    `${site}/points?sort=money&period=lifetime&project=eliza&q=synthetic`,
+  );
   await expect(
-    standings
-      .getByRole("row")
-      .filter({ hasText: "synthetic-eliza" })
-      .locator("td")
-      .last(),
-  ).toHaveText("111");
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
-  ).toHaveCount(0);
-  await page.goto(`${site}/points?period=lifetime&project=slopdotcash`);
-  await expect(
-    standings
-      .getByRole("row")
-      .filter({ hasText: "synthetic-slop" })
-      .locator("td")
-      .last(),
-  ).toHaveText("222");
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
-  ).toHaveCount(0);
-  await page.goto(`${site}/points?period=lifetime`);
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
+    page.getByRole("heading", { level: 1, name: "Contributors" }),
   ).toBeVisible();
-  await page.goto(`${site}/points?period=lifetime&q=synthetic-slop`);
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
-  ).toHaveCount(0);
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/q=synthetic-slop/);
-  await expect(
-    standings.getByRole("columnheader", { name: "Points", exact: true }),
-  ).toHaveAttribute("aria-sort", "descending");
-  await expect(page).not.toHaveURL(/sort=money/u);
+  await expect(page.getByRole("table")).toHaveCount(0);
+  await expect(page.locator("main")).not.toContainText(/\bpts\b/u);
   await expectAccessible(page);
 });

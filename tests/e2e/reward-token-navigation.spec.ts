@@ -1,27 +1,30 @@
 /** A reward token's link must open the explorer for its recorded network. */
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { expect, test } from "./fixtures";
+import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
+import { expect, servePublicProjectReads, test } from "./fixtures";
 
 test("a Robinhood reward token opens its own chain explorer", async ({
   page,
   context,
 }) => {
-  const original = PROJECTS.find((project) => project.id === "eliza");
-  if (original?.reward.kind !== "monthly-pool")
-    throw new Error("The monthly project fixture is missing");
+  const original = stagingPaymentProject("robinhood-mainnet");
+  const registered = original.escrow?.deployments[0];
+  if (!original.escrow || !registered)
+    throw new Error("The Robinhood vault fixture is missing");
   const address = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
+  const deployment = { ...registered, asset: address };
+  const cap = "1000000000000000000";
+  const observedAt = "2026-11-15T12:00:00.000Z";
   const project = {
     ...original,
     reward: {
       ...original.reward,
       chain: "robinhood",
       currency: "WETH",
-      monthlyCapMinor: "1000000000000000000",
+      monthlyCapMinor: cap,
       monthlyCapDisplay: "1 WETH",
     },
-    ...(original.escrow
-      ? { escrow: { ...original.escrow, chain: "robinhood", deployments: [] } }
-      : {}),
+    escrow: { ...original.escrow, deployments: [deployment] },
     rewardAsset: {
       network: "robinhood",
       kind: "token",
@@ -33,6 +36,29 @@ test("a Robinhood reward token opens its own chain explorer", async ({
       verifiedAt: "2026-10-25T00:00:00.000Z",
     },
   };
+  await page.clock.setFixedTime(new Date(observedAt));
+  await servePublicProjectReads(page);
+  await page.route("**/api/v1/pool-funding", (route) =>
+    route.fulfill({
+      json: {
+        schema: "slop-pool-funding-v1",
+        projects: [
+          {
+            projectId: project.id,
+            vaults: [
+              {
+                network: deployment.network,
+                vault: deployment.vault,
+                freeBalance: cap,
+                blockTime: observedAt,
+                observedAt,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
@@ -66,7 +92,7 @@ test("a Robinhood reward token opens its own chain explorer", async ({
   );
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const token = page.getByRole("link", { name: "$WETH", exact: true });
-  await token.scrollIntoViewIfNeeded();
+  await expect(token).toBeVisible();
   const popupPromise = page.waitForEvent("popup");
   await token.click();
   const popup = await popupPromise;
