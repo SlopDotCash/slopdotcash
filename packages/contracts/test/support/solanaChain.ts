@@ -1,7 +1,7 @@
 // spec/contracts/solanaEscrow.md, "Simulation samples cover admitted and refused assets, windows, allocations and signers"; spec/contracts/solanaEscrow.md, "Block time is positive"
 // A solana-test-validator 2.1.21 that runs the compiled slop-escrow program from a genesis this fixture writes, so that
-// the cluster clock is exactly the spec's `now`: with a zero target tick duration the PoH estimate never moves, the
-// validator's own wall-clock votes are older than the genesis time, and the clock stays at the genesis creation time.
+// the cluster clock is exactly the spec's `now`: the validator's own wall-clock votes are older than the genesis time,
+// the clock never goes back, and so it stays at the genesis creation time.
 // Moving the clock, or writing an account no instruction can create (an earlier build's project, a mint with given
 // extensions), restarts the validator from a new genesis that holds every account the old one had.
 import { type ChildProcess, execFile, spawn } from "node:child_process";
@@ -490,8 +490,8 @@ export async function launch(): Promise<Chain> {
       "--faucet-pubkey", bootstrap.faucet.address, "--faucet-lamports", "500000000000000000",
       "--bootstrap-validator-lamports", "500000000000", "--bootstrap-validator-stake-lamports", "1000000000000000",
       "--creation-time", new Date(time * 1000).toISOString(), "--cluster-type", "development",
-      // A zero tick duration stops the PoH clock estimate; ticks follow hashing instead.
-      "--target-tick-duration", "0", "--hashes-per-tick", "1000", "--ticks-per-slot", "8",
+      // The banking stage takes transactions only within a slot's nominal length, so a tick lasts 1 ms rather than 0.
+      "--target-tick-duration", "1", "--hashes-per-tick", "1000", "--ticks-per-slot", "8",
       "--max-genesis-archive-unpacked-size", "1073741824", "--primordial-accounts-file", file,
     ], { timeout: 600_000, maxBuffer: 64 * 1024 * 1024 });
     await rm(file, { force: true });
