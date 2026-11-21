@@ -91,6 +91,11 @@ computes it from the stored pledges with [month pledges](./monthPledges.md)
 as a typed input, to the obligations and to the underfunded notice alike
 (development `backend/payments/monthly.ts`, `heldBack`).
 
+Whatever the coordinator passes for earlier unreserved obligations and other
+months' pledges, both are never negative, so the vault's finalized free
+balance at a head at most 30 minutes old covers at least every obligation it
+creates; an underfunded notice is recorded only on such a fresh head.
+
 ```quint
 pure def canObserveHead(s: MonthlySettlement, time: int): bool = time > s.headTime and time >= s.escrow.clock
 pure def observeHead(s: MonthlySettlement, time: int): MonthlySettlement = { ...s, headTime: time }
@@ -105,6 +110,11 @@ pure def canNoteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, 
   s.escrow.deployed and MO::canNoteUnderfunded(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans)
 pure def noteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
   { ...s, month: MO::noteUnderfunded(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans) }
+pure def headFresh(s: MonthlySettlement): bool = s.headTime <= s.month.now and s.month.now - s.headTime <= MO::freshnessSeconds
+pure def stepObligationsOnFreshCoveringHead(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =
+  via == "createObligations" implies headFresh(before) and M::compareAmounts(before.escrow.free, MO::obligationTotal(after.month)) >= 0
+pure def stepUnderfundedOnFreshHead(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =
+  via == "noteUnderfunded" implies headFresh(before) and after.month.underfundedNotice
 ```
 
 ### The owner may prepare one funded obligation by hand, and only while no pool gross is pending
@@ -380,6 +390,12 @@ obligations. The executor's cursor stays within its tree, is keyed to the
 admitted root, moves by at most one leaf, and every leaf it passed on an award
 keeps that award; it passes a leaf without an award only once the admitted
 remainder is zero. A wholly released month never holds a monthly leaf award.
+While any of the admitted root is unreserved, its remainder is exactly the
+gross of the month's unreserved obligations, whose sources are all still
+free: the root's leaves are this month's source keys of those obligations,
+one per actor, so no leaf source was consumed before the root and no leaf
+can be stranded. Every monthly leaf award of this month reserved its own
+obligation with the obligation's gross, which is reserved or paid.
 
 Discovered by the proof: the deposit transition's parameter had the name of
 the transition itself, so the generated proof could not refer to the
@@ -425,6 +441,14 @@ pure def stepCursorMonotoneByOne(before: MonthlySettlement, after: MonthlySettle
 pure def stepRootAdmitsOnlyFreeSources(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =
   via == "admitRoot" implies MO::obligationActors(before.month).every(actor =>
     obligationOf(before, actor).progress != MO::Created or not(chainHolds(before, actor)))
+pure def leafAwardReserves(s: MonthlySettlement, actor: int): bool =
+  E::awardFor(s.escrow, sourceOf(s, actor)).origin == E::MonthlyLeaf implies
+    (obligationOf(s, actor).progress == MO::Reserved or obligationOf(s, actor).progress == MO::Paid)
+      and M::equalAmounts(chainGross(s, actor), obligationOf(s, actor).amount)
+pure def alwaysLeafAwardsReserveTheirObligation(s: MonthlySettlement): bool =
+  E::awardActorsFor(s.escrow, s.month.project, s.month.period).every(actor => leafAwardReserves(s, actor))
+pure def alwaysPendingPoolIsExactlyUnreserved(s: MonthlySettlement): bool =
+  M::positiveAmount(admittedMonth(s).remaining) implies M::equalAmounts(admittedMonth(s).remaining, MO::createdTotal(s.month))
 pure def sometimesCursorPassedLeaf(s: MonthlySettlement): bool = s.cursor.passed.length() > 0
 pure def sometimesReleasedMonthPassed(s: MonthlySettlement): bool =
   s.cursor.position > 0 and s.cursor.passed.length() == 0 and M::positiveAmount(admittedMonth(s).released)
