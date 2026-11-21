@@ -329,9 +329,9 @@ snapshot that revokes the financial approver also names the reporter a
 related party, and moderator 4 is among the actors. A separate fourth
 related-party snapshot diluted the revoke and ban observations until the
 search for a direct award paid after its payer lost the role found no
-witness; a case decided after the revoke snapshot cannot be admitted as a
-direct award anyway, so correlating the two observations costs that search
-nothing.
+witness; an award decided after the revoke snapshot can never be admitted
+as a direct award, since no later snapshot restores a financial approver, so
+correlating the two observations costs that search nothing.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
