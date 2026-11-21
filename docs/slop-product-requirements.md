@@ -763,7 +763,7 @@ Trace upload remains optional, authenticated, bounded, checksum-verified, write-
 
 Administrators manage Featured placement, authorized exceptions, restrictions, and incomplete ordinary assessments. Use quarantine to hold a project. They do not approve routine project admission or automatically gain private-case access.
 
-Moderators are `lalalune` (GitHub actor 18633264) and `drew-dot-com` (202660855). Escalate when an appellant or maintainer rejects Slopbot's proposed resolution. Escalate appeals or disputes that involve bans, confirmed malice, private security cases, or debits of at least 240 Points. Escalate when Slopbot's confidence is below 0.9. Escalate an appeal still unresolved after seven days.
+Moderators are `lalalune` (GitHub actor 18633264) and `drew-dot-com` (202660855). Escalate when an appellant or maintainer rejects Slopbot's proposed resolution. Escalate appeals or disputes that involve bans, confirmed malice, private security cases, or debits of at least 240 Points. Escalate a repeat appeal of a finding on an item whose earlier appeal was denied, so a new revision cannot reopen that denial without a moderator (operator decision, 21 November 2026). Escalate when Slopbot's confidence is below 0.9. Escalate an appeal still unresolved after seven days.
 
 Incomplete ordinary PR assessments appear once in the current maintainers' and administrators' private Inbox. Show the public PR and retry state. Retain the entry through retries and remove it on completion. Recheck authority on each read; unavailable checks produce a retryable failure. Never expose this queue to unrelated or former maintainers.
 
