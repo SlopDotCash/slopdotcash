@@ -31,8 +31,13 @@
 // Slopbot may itself close the pull request for a finding, and its author may
 // appeal that close. While the appeal is undecided no fee is kept; a denied
 // appeal leaves the close standing, and an upheld one reopens the pull request
-// and starts the KEPT_AFTER wait again. An appeal opened after the outcome is
-// set is not modelled.
+// and starts the KEPT_AFTER wait again. An appeal opened or upheld after
+// kept_due is written puts the outcome back to none, but only while the
+// resolver Worker has recorded no send for the deposit. The Worker reads the
+// outcome (`workerPlans`), signs and records its send (`workerSends`) without
+// reading it again, and the finalized Resolved event sets `kept`; so a clear
+// that lands between its read and its record loses the race and the chain's
+// record wins.
 module bot_submission_fee {
   pure val REFUND_AFTER = 2
   pure val KEPT_AFTER = 2
@@ -53,7 +58,8 @@ module bot_submission_fee {
     paidDays: int, closedDays: int,
     everMerged: bool, openAtRefundAge: bool, closedAtKeptAge: bool,
     slopClosed: bool,
-    appeal: str         // none, open, upheld, denied
+    appeal: str,        // none, open, upheld, denied
+    planned: bool, sent: bool, clearedWhileSent: bool
   }
   action init = s' = {
     mode: "off", leftLive: false, everLive: false,
@@ -63,7 +69,8 @@ module bot_submission_fee {
     outcome: "none",
     label: "none", comments: 0, paidDays: 0, closedDays: 0,
     everMerged: false, openAtRefundAge: false, closedAtKeptAge: false,
-    slopClosed: false, appeal: "none"
+    slopClosed: false, appeal: "none",
+    planned: false, sent: false, clearedWhileSent: false
   }
   val applies = all { s.settingOn, s.outsider, s.openedAfter }
   val unpaidAsk = (s.gate == "asking" or s.gate == "asked") and not(s.paid)
@@ -104,13 +111,26 @@ module bot_submission_fee {
   action slopbotCloses = all { s.opened, s.pr == "open",
     s' = s.with("pr", "closed").with("closedDays", 0).with("slopClosed", true)
       .with("appeal", "none") }
+  def reopenKept(state) = if (state.outcome == "kept_due" and not(state.sent))
+      state.with("outcome", "none").with("clearedWhileSent", state.clearedWhileSent or state.sent)
+    else state
   action authorAppeals = all { s.pr == "closed", s.slopClosed,
-    s.appeal == "none", s.outcome == "none", s' = s.with("appeal", "open") }
+    s.appeal == "none", s' = reopenKept(s.with("appeal", "open")) }
   action moderatorDenies = all { s.appeal == "open",
     s' = s.with("appeal", "denied") }
-  action moderatorUpholds = all { s.appeal == "open",
-    s' = s.with("appeal", "upheld").with("closedDays", 0)
-      .with("closedAtKeptAge", false) }
+  // The restarted wait matters only to an undecided outcome; a fee already
+  // sent stays kept at the age it was kept.
+  def upheld(state) = {
+    val result = reopenKept(state.with("appeal", "upheld").with("closedDays", 0))
+    result.with("closedAtKeptAge",
+      if (result.outcome == "none") false else state.closedAtKeptAge)
+  }
+  action moderatorUpholds = all { s.appeal == "open", s' = upheld(s) }
+  action workerPlans = all { s.outcome == "kept_due", not(s.sent),
+    s' = s.with("planned", true) }
+  action workerSends = all { s.planned, not(s.sent), s' = s.with("sent", true) }
+  action workerFinalizes = all { s.sent, s.outcome != "kept",
+    s' = s.with("outcome", "kept") }
   // A pull request reopened past the refund age is open at that age at once.
   action reopens = all { s.pr == "closed",
     s' = s.with("pr", "open").with("closedDays", 0)
@@ -122,7 +142,9 @@ module bot_submission_fee {
   action workerMarksPaid = all { s.row, not(s.paid), s.outcome == "none",
     s' = s.with("paid", true).with("everPaid", true).with("paidDays", 0)
       .with("closedDays", 0) }
-  action workerWithdrawsPayment = all { s.paid, s.outcome == "none",
+  // The resolver plans only a finalized deposit, which no reorganisation can
+  // withdraw.
+  action workerWithdrawsPayment = all { s.paid, s.outcome == "none", not(s.planned),
     s' = s.with("paid", false) }
   val nextPaidDays = if (s.paidDays < REFUND_AFTER) s.paidDays + 1 else s.paidDays
   val nextClosedDays = if (s.pr == "closed" and s.closedDays < KEPT_AFTER)
@@ -197,7 +219,8 @@ module bot_submission_fee {
 
   action step = any { operatorSetsMode, ownerTurnsOn, ownerTurnsOff,
     contributorOpens, authorGainsAccess, push, maintainerMerges, closes,
-    slopbotCloses, authorAppeals, moderatorDenies, moderatorUpholds, reopens, workerMarksPaid, workerWithdrawsPayment, dayPasses, reviewDelivery, askPosts, askRecords,
+    slopbotCloses, authorAppeals, moderatorDenies, moderatorUpholds, reopens,
+    workerPlans, workerSends, workerFinalizes, workerMarksPaid, workerWithdrawsPayment, dayPasses, reviewDelivery, askPosts, askRecords,
     holderDies, feeCheck, readyCheck, s' = s }
 
   val invariant = all {
@@ -210,8 +233,11 @@ module bot_submission_fee {
     // Slopbot only sets an outcome on a paid row, and only when it is due.
     s.outcome != "none" implies (s.paid and s.gate == "paid"),
     s.outcome == "kept_due" implies s.closedAtKeptAge,
-    // No fee is kept for Slopbot's own close while its appeal is undecided.
-    s.outcome == "kept_due" implies s.appeal != "open",
+    // No fee is kept for Slopbot's own close while its appeal is undecided,
+    // unless the Worker had already recorded its send.
+    (s.outcome == "kept_due" and s.appeal == "open") implies s.sent,
+    // A recorded send is never cleared.
+    not(s.clearedWhileSent),
     s.outcome == "refund_due" implies (s.everMerged or s.openAtRefundAge),
     // Off and record-only write nothing to GitHub and decide nothing.
     not(s.everLive) implies all { s.label == "none", s.comments == 0,
@@ -279,6 +305,24 @@ module bot_submission_fee {
     .then(authorAppeals).then(dayPasses).then(dayPasses).then(moderatorDenies)
     .then(feeCheck)
     .expect(s.outcome == "kept_due" and s.pr == "closed")
+  run lateAppealBeforeSendReopensTest = init.then(ownerTurnsOn)
+    .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
+    .then(askRecords).then(workerMarksPaid).then(feeCheck).then(slopbotCloses)
+    .then(dayPasses).then(dayPasses).then(feeCheck).then(authorAppeals)
+    .then(moderatorUpholds).then(reopens).then(maintainerMerges).then(feeCheck)
+    .expect(s.outcome == "refund_due" and not(s.sent))
+  run lateAppealAfterSendKeepsTest = init.then(ownerTurnsOn)
+    .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
+    .then(askRecords).then(workerMarksPaid).then(feeCheck).then(slopbotCloses)
+    .then(dayPasses).then(dayPasses).then(feeCheck).then(workerPlans)
+    .then(workerSends).then(authorAppeals)
+    .expect(s.outcome == "kept_due" and s.appeal == "open")
+  run clearInsideTheWorkerRaceEndsKeptTest = init.then(ownerTurnsOn)
+    .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
+    .then(askRecords).then(workerMarksPaid).then(feeCheck).then(slopbotCloses)
+    .then(dayPasses).then(dayPasses).then(feeCheck).then(workerPlans)
+    .then(authorAppeals).then(workerSends).then(workerFinalizes)
+    .expect(s.outcome == "kept" and s.sent)
   run unpaidMergeHasNothingDueTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(maintainerMerges).then(feeCheck)

@@ -14,6 +14,7 @@ import {
   SUBMISSION_FEE_TOKENS,
   submissionDepositCounts,
   submissionFeeItem,
+  submissionResolveAction,
 } from "../../src/lib/submission-fee.mjs";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import {
@@ -53,6 +54,7 @@ import {
   feeUnpaid,
   feeWays,
   refreshSubmissionFee,
+  reopenKeptFee,
 } from "./submission-fee";
 
 const { privateKey } = generateKeyPairSync("rsa", {
@@ -918,6 +920,211 @@ test("an appeal does not hold the fee of a pull request a maintainer closed", as
     expect((await w.check(new Date(closed.getTime() + 7 * DAY))).outcome).toBe(
       "submission fee: kept_due: closed",
     );
+  } finally {
+    w.close();
+  }
+});
+
+const BASE = "base-mainnet";
+const GAS = { perTransactionWei: "1000", perDayWei: "2500" };
+
+async function keptBeforeAnyAppeal(w: ReturnType<typeof world>) {
+  await w.review();
+  const paid = new Date("2026-11-12T00:00:00.000Z");
+  const closed = new Date(paid.getTime() + DAY);
+  w.pay(paid.toISOString());
+  await w.check(paid);
+  w.github.state = "closed";
+  w.github.closedAt = closed.toISOString();
+  expect((await w.check(new Date(closed.getTime() + 7 * DAY))).outcome).toBe(
+    "submission fee: kept_due: closed",
+  );
+  w.sqlite.run(
+    `INSERT INTO submission_fee_deposits (network, deposit_id, item, repository_id, pull_number,
+       payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state)
+     VALUES (?, 12, ?, ?, 5, ?, ?, ?, ?, ?, 1, ?, ?, 1, 'kept_due')`,
+    [
+      BASE,
+      submissionFeeItem(w.repositoryId, 5),
+      w.repositoryId,
+      `0x${"4".repeat(40)}`,
+      SUBMISSION_FEE_TOKENS[BASE].usdc as string,
+      SUBMISSION_FEE_DEFAULT_MINOR,
+      SUBMISSION_FEE_KEPT_TO[BASE],
+      `0x${"5".repeat(64)}`,
+      paid.toISOString(),
+      paid.toISOString(),
+    ],
+  );
+  const store = new D1FeeStore(
+    w.env.SLOPBOT_DB as unknown as SubmissionFeeD1Database,
+  );
+  const action = async () => {
+    const [entry] = await store.resolvable(BASE);
+    return entry
+      ? submissionResolveAction(BASE, entry.deposit, entry.item)
+      : null;
+  };
+  const send = (id: string, mode: "live" | "dry_run") =>
+    store.insertSend(
+      {
+        id: `sfs_${id.padEnd(8, "0")}`,
+        network: BASE,
+        mode,
+        contract: BASE_CONTRACT,
+        deposits: [{ id: 12, refund: false }],
+        resolver: mode === "live" ? `0x${"6".repeat(40)}` : null,
+        txId: mode === "live" ? `0x${id.padEnd(64, "7")}` : null,
+        rawTx: mode === "live" ? "0x02signedbytes" : null,
+        evmNonce: mode === "live" ? 1 : null,
+        maximumNativeWei: mode === "live" ? "100" : null,
+        state: mode === "live" ? "submitted" : "recorded",
+        reason: null,
+        blockNumber: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        finalizedAt: null,
+      },
+      GAS,
+    );
+  return {
+    closed,
+    store,
+    action,
+    send,
+    key: `appeal:PR_local:${w.github.head}`,
+  };
+}
+
+test("an appeal opened after the fee is due but before the Worker sends puts the outcome back", async () => {
+  const w = world();
+  try {
+    const { closed, action, key } = await keptBeforeAnyAppeal(w);
+    expect(await action()).toBe("keep");
+    const day9 = new Date(closed.getTime() + 9 * DAY);
+    const decide = await w.slopbotClosesAndAuthorAppeals(closed, day9);
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key, day9)).toBe(true);
+    expect(w.item()).toMatchObject({ outcome: null });
+    expect(w.gate()?.next_check_at).toBe(day9.toISOString());
+    expect(await action()).toBeNull();
+    expect(await w.dispatch(day9)).toBe(1);
+    await w.check(day9);
+    expect(w.item()).toMatchObject({ outcome: null });
+    expect(w.feeComments()[0].body).not.toContain("**Fee kept.**");
+    expect(await decide("upheld", new Date(closed.getTime() + 10 * DAY))).toBe(
+      true,
+    );
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key)).toBe(false);
+    w.github.state = "open";
+    w.github.closedAt = null;
+    await w.check(new Date(closed.getTime() + 10 * DAY));
+    w.github.state = "closed";
+    w.github.merged = true;
+    w.github.closedAt = new Date(closed.getTime() + 11 * DAY).toISOString();
+    expect((await w.check(new Date(closed.getTime() + 11 * DAY))).outcome).toBe(
+      "submission fee: refund_due: merged",
+    );
+    expect(await action()).toBe("refund");
+  } finally {
+    w.close();
+  }
+});
+
+test("an appeal opened after the Worker recorded its send leaves the kept fee alone", async () => {
+  const w = world();
+  try {
+    const { closed, action, send, key } = await keptBeforeAnyAppeal(w);
+    await send("drydry", "dry_run");
+    await send("live01", "live");
+    const day9 = new Date(closed.getTime() + 9 * DAY);
+    await w.slopbotClosesAndAuthorAppeals(closed, day9);
+    const before = { item: w.item(), gate: w.gate() };
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key, day9)).toBe(false);
+    expect({ item: w.item(), gate: w.gate() }).toEqual(before);
+    expect(w.item()).toMatchObject({ outcome: "kept_due" });
+    expect(await action()).toBe("keep");
+  } finally {
+    w.close();
+  }
+});
+
+test("a dry-run record or a failed send does not stop the outcome going back", async () => {
+  const w = world();
+  try {
+    const { closed, store, send, key } = await keptBeforeAnyAppeal(w);
+    await send("drydry", "dry_run");
+    await send("live01", "live");
+    await store.updateSend("sfs_live0100", {
+      state: "failed",
+      reason: "reverted",
+      updatedAt: new Date().toISOString(),
+    });
+    const day9 = new Date(closed.getTime() + 9 * DAY);
+    await w.slopbotClosesAndAuthorAppeals(closed, day9);
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key, day9)).toBe(true);
+    expect(w.item()).toMatchObject({ outcome: null });
+  } finally {
+    w.close();
+  }
+});
+
+test("only an appeal of Slopbot's own close puts a kept fee back", async () => {
+  const w = world({ slopbotCloses: false });
+  try {
+    const { closed, key } = await keptBeforeAnyAppeal(w);
+    await w.slopbotClosesAndAuthorAppeals(
+      closed,
+      new Date(closed.getTime() + 9 * DAY),
+    );
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key)).toBe(false);
+    expect(w.item()).toMatchObject({ outcome: "kept_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("a replayed appeal that was already denied does not put a kept fee back", async () => {
+  const w = world();
+  try {
+    const { closed, key } = await keptBeforeAnyAppeal(w);
+    const decide = await w.slopbotClosesAndAuthorAppeals(
+      closed,
+      new Date(closed.getTime() + 9 * DAY),
+    );
+    await decide("denied", new Date(closed.getTime() + 10 * DAY));
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key)).toBe(false);
+    expect(w.item()).toMatchObject({ outcome: "kept_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("a Worker that read the kept fee before the clear still sends it, and the chain's record wins", async () => {
+  const w = world();
+  try {
+    const { closed, store, action, send, key } = await keptBeforeAnyAppeal(w);
+    expect(await action()).toBe("keep");
+    const day9 = new Date(closed.getTime() + 9 * DAY);
+    await w.slopbotClosesAndAuthorAppeals(closed, day9);
+    expect(await reopenKeptFee(w.env.SLOPBOT_DB, key, day9)).toBe(true);
+    await send("live01", "live");
+    expect(w.item()).toMatchObject({ outcome: null });
+    await store.writeFinalizedPage({
+      network: BASE,
+      from: 2,
+      to: 3,
+      deposits: [],
+      resolutions: [
+        {
+          depositId: 12,
+          state: "kept",
+          txHash: `0x${"8".repeat(64)}`,
+          at: day9.toISOString(),
+        },
+      ],
+      finalizedAt: day9.toISOString(),
+    });
+    expect(w.item()).toMatchObject({ outcome: "kept" });
   } finally {
     w.close();
   }

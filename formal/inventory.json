@@ -9419,7 +9419,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "cece4377bf18a76bfa693babbd912d44ec7089c7a6c7e3a476ac63dfefdd82c6",
+      "sha256": "b56522317a72bd7cca2c09173b19e49e1fd0b60df6fad98b373f5a2825801f50",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9435,13 +9435,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 170, 285, 300, 309, 319, 322, 514, 668, 847, 876, 886, 1021, 1026,
-        1031, 1033, 1036, 1038, 1039, 1050, 1053, 1055, 1112, 1113, 1115, 1116,
-        1132, 1138, 1189, 1217, 1218, 1226, 1231, 1332, 1334, 1354, 1373, 1456,
-        1461, 1619, 1741, 1754, 1755, 1792, 1809, 1812, 1813, 1976, 1981, 2043,
-        2056, 2061, 2068, 2069, 2073, 2074, 2082, 2098, 2155, 2308, 2368, 2374,
-        2385, 2411, 2441, 2466, 2474, 2497, 2502, 2578, 2579, 2629, 2664, 2715,
-        2860, 3128, 3203, 3369, 3380, 3388, 3486, 3487, 3527, 3577, 3591, 3607
+        3, 171, 286, 301, 310, 320, 323, 515, 669, 848, 877, 887, 1022, 1027,
+        1032, 1034, 1037, 1039, 1040, 1051, 1054, 1056, 1113, 1114, 1116, 1117,
+        1133, 1139, 1190, 1218, 1219, 1227, 1232, 1333, 1335, 1355, 1374, 1457,
+        1462, 1620, 1742, 1755, 1756, 1793, 1810, 1813, 1814, 1977, 1982, 2044,
+        2057, 2062, 2069, 2070, 2074, 2075, 2083, 2099, 2156, 2309, 2369, 2375,
+        2386, 2412, 2442, 2467, 2475, 2498, 2503, 2579, 2580, 2630, 2666, 2719,
+        2864, 3132, 3207, 3375, 3386, 3394, 3492, 3493, 3533, 3583, 3597, 3613
       ],
       "review": "mapped-abstraction"
     },
@@ -9481,7 +9481,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "7215075b7fdb8c00d017b176006750bb130ba81d89d8892e63ac3a56a0d2e857",
+      "sha256": "10fbade66ed9054c1f4e1bc5c537ab016fe84d9813485ba049be344959cb6c44",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
@@ -9490,8 +9490,8 @@
         304, 343, 354, 363, 365, 367, 376, 432, 453, 458, 465, 468, 470, 504,
         505, 507, 508, 519, 525, 550, 559, 560, 591, 595, 695, 728, 736, 744,
         746, 748, 749, 750, 771, 773, 805, 806, 808, 811, 812, 826, 827, 894,
-        920, 960, 964, 970, 994, 1007, 1023, 1044, 1063, 1083, 1106, 1110, 1154,
-        1155, 1157, 1182
+        920, 960, 964, 970, 994, 1007, 1023, 1044, 1063, 1091, 1114, 1118, 1132,
+        1144, 1150, 1201, 1202, 1204, 1229
       ],
       "review": "mapped-abstraction"
     },
@@ -17341,7 +17341,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "cbba27dc06634f5075c0c7d1bdba768ae5d28e7c6381cef050b81a7ee3a6bf15",
+      "sha256": "9f47ede14c0ed3ced6ef04aaa5c1920140ec1212b8bf78895f25c1480ed4fe5a",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
@@ -17357,6 +17357,7 @@
       "scenarios": [
         "appealOfSlopbotCloseHoldsTheFeeTest",
         "authorGainingAccessReleasesTest",
+        "clearInsideTheWorkerRaceEndsKeptTest",
         "closedIsKeptAfterTheWaitTest",
         "crashDoesNotDuplicateTheCommentTest",
         "deniedAppealKeepsTheFeeTest",
@@ -17365,6 +17366,8 @@
         "firstSightAsksOnceTest",
         "fullMonthIsNotAskedTest",
         "fullMonthIsNotRecordedInDryRunTest",
+        "lateAppealAfterSendKeepsTest",
+        "lateAppealBeforeSendReopensTest",
         "mergedIsDueBackTest",
         "offDoesNothingTest",
         "openedBeforeTheSettingIsReviewedTest",

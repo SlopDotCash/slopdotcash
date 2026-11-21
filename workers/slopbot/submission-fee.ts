@@ -1076,6 +1076,14 @@ export async function refreshSubmissionFee(
       now,
     );
     nextCheckAt = decided.nextCheckAt;
+    if (decided.outcome === null && gate.reason.startsWith("kept_due"))
+      commentId = await writeFeeComment(
+        env,
+        github,
+        job,
+        commentId,
+        feePaidComment({ ...paidFacts, outcome: null }),
+      );
     if (decided.outcome !== null) {
       // Slopbot only ever sets a due outcome on a paid, undecided row.
       const written = await db
@@ -1110,6 +1118,45 @@ export async function refreshSubmissionFee(
     gate.state === "paid" ? `submission fee: ${reason}` : "submission fee paid",
     review,
   );
+}
+
+export async function reopenKeptFee(
+  db: store.D1TransactionalDatabase,
+  appealKey: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const at = now.toISOString();
+  const [cleared] = await db.batch([
+    db
+      .prepare(
+        `UPDATE submission_fee_items SET outcome = NULL, outcome_at = NULL
+         WHERE outcome = 'kept_due' AND paid_at IS NOT NULL
+           AND (repository_id, pull_number) IN (
+             SELECT a.repository_id, json_extract(a.job_json, '$.number') FROM slopbot_appeals a
+             WHERE a.appeal_key = ?1
+               AND json_extract(a.job_json, '$.itemKind') = 'pull_request'
+               AND (a.resolved_at IS NULL OR a.resolution = 'upheld')
+               AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = a.repository_id
+                 AND c.item_node_id = a.item_node_id AND c.action = 'close'))
+           AND NOT EXISTS (
+             SELECT 1 FROM submission_fee_sends s, json_each(s.deposits) e
+             WHERE s.network = submission_fee_items.paid_network
+               AND s.state IN ('submitted', 'unknown', 'finalized')
+               AND json_extract(e.value, '$.id') = submission_fee_items.paid_deposit_id)`,
+      )
+      .bind(appealKey),
+    db
+      .prepare(
+        `UPDATE slopbot_fee_gates SET next_check_at = ?2
+         WHERE (repository_id, pull_number) IN (
+           SELECT i.repository_id, i.pull_number FROM submission_fee_items i
+           JOIN slopbot_appeals a ON a.repository_id = i.repository_id
+             AND json_extract(a.job_json, '$.number') = i.pull_number
+           WHERE a.appeal_key = ?1 AND i.outcome IS NULL AND i.paid_at IS NOT NULL)`,
+      )
+      .bind(appealKey, at),
+  ]);
+  return (cleared.meta?.changes ?? 0) === 1;
 }
 
 /** The review job that runs once a pull request's fee is paid or released. */
