@@ -1,4 +1,4 @@
-// spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+// spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
 import { Stepper } from "@repo/ui";
 
 export interface Milestone {
