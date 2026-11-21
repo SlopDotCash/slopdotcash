@@ -1,6 +1,7 @@
 const FOOTER = "Made via @slopdotcash";
 const SECTION = "## Evidence";
 const COMMON_FIELDS = ["Test results", "Proof of change"];
+const UI_SCREENSHOTS = "UI screenshots";
 const CHANGE_FIELDS = new Map([
   ["docs", null],
   ["non-ui", "Runtime logs"],
@@ -29,6 +30,16 @@ function visibleLines(markdown: string): string[] {
       }
       return line;
     });
+}
+
+function evidenceSection(lines: string[]): string[] {
+  const start = lines.indexOf(SECTION);
+  if (start === -1) return [];
+  const end = lines.findIndex(
+    (line, index) =>
+      index > start && (/^#{1,2}\s/u.test(line) || line === FOOTER),
+  );
+  return lines.slice(start + 1, end === -1 ? undefined : end);
 }
 
 function evidenceValue(section: string[], field: string): string | undefined {
@@ -61,7 +72,7 @@ function hasEvidence(field: string, value: string | undefined): boolean {
       );
     },
   );
-  if (field === "UI video") return linked;
+  if (field === "UI video" || field === UI_SCREENSHOTS) return linked;
   return (
     linked || (value.match(/[\p{L}\p{N}][\p{L}\p{N}_./-]*/gu)?.length ?? 0) >= 5
   );
@@ -91,13 +102,7 @@ export function missingSubmissionEvidence(
   if (!guide) return null;
   const lines = visibleLines(body);
   if (!lines.includes(FOOTER)) return null;
-  const start = lines.indexOf(SECTION);
-  const end = lines.findIndex(
-    (line, index) =>
-      index > start && (/^#{1,2}\s/u.test(line) || line.trimEnd() === FOOTER),
-  );
-  const section =
-    start === -1 ? [] : lines.slice(start + 1, end === -1 ? undefined : end);
+  const section = evidenceSection(lines);
   const types =
     evidenceValue(section, "Change types")
       ?.replace(/\.$/u, "")
@@ -111,6 +116,15 @@ export function missingSubmissionEvidence(
     ...COMMON_FIELDS,
     ...new Set(types.flatMap((type) => CHANGE_FIELDS.get(type) ?? [])),
   ];
+  if (
+    types.includes("ui") &&
+    evidenceSection(visibleLines(guide.text)).some((line) =>
+      /^ {0,3}(?:[-*+] )?(?:`UI screenshots:`|UI screenshots:)(?:\s|$)/u.test(
+        line,
+      ),
+    )
+  )
+    fields.push(UI_SCREENSHOTS);
   const missing = fields.filter(
     (field) => !hasEvidence(field, evidenceValue(section, field)),
   );
