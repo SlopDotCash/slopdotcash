@@ -221,6 +221,16 @@ to GitHub, uses no monthly review and is recorded as skipped with the reason
 own pull request is not refused, and a count that was never read or is older
 than three days refuses nothing. Value assessment and scoring are unchanged.
 
+A project owner may turn on wanted issues (operator decision, 21 November
+2026; PRD section 5, `src/lib/wanted-label.mjs`). Every project uses the one
+label `slop-wanted`. The scheduled merge activity job
+(`refreshRegisteredMergeActivity` in `reporting-readiness.ts`) stores the open
+issues that carry it and, once per repository, creates the label if it is
+missing with a token narrowed to `issues: write` (`ensureWantedLabel`). That
+is its only GitHub write: it never edits, renames or applies a label. A failed
+creation keeps the list and is tried again at the next read. Reviews, value
+assessment and scoring never read the label.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
 provider window opens. A Surplus spending denial skips the other Surplus model
 and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
