@@ -29,6 +29,7 @@ import {
 const execute = promisify(execFile);
 const encoder = new TextEncoder();
 const sha256 = /^[a-f0-9]{64}$/u;
+const D1_MAX_COMPOUND_SELECT_TERMS = 5;
 type Plan = ReturnType<typeof prepareAsiNovemberCloseout>;
 type Query = (sql: string) => Promise<Record<string, unknown>[]>;
 
@@ -41,7 +42,7 @@ export async function checkAsiCloseout(
   while (remaining.length) {
     const selects: string[] = [];
     let size = 0;
-    while (remaining.length && selects.length < 200) {
+    while (remaining.length && selects.length < D1_MAX_COMPOUND_SELECT_TERMS) {
       const select = `SELECT COALESCE((${remaining[0]}), 0) AS ok`;
       const bytes = Buffer.byteLength(select) + 12;
       if (selects.length && size + bytes > 95_000) break;
