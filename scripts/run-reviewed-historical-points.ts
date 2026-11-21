@@ -985,6 +985,7 @@ type PublicationPhase =
   | "assessment source reconciliation"
   | "historical assessment replay"
   | "assessment qualification recheck"
+  | "private replay review staging"
   | "assessment receipt"
   | "public Points read"
   | "recipient and account restriction verification"
@@ -996,6 +997,7 @@ type PublicationPhase =
 
 export function historicalAssessmentAuditInputs(
   env: Readonly<Record<string, string | undefined>>,
+  replay = false,
 ) {
   if (
     (env.HISTORICAL_POINTS_APPLY ?? "false") !== "false" ||
@@ -1007,6 +1009,7 @@ export function historicalAssessmentAuditInputs(
   const projectId = env.HISTORICAL_ASSESSMENT_PROJECT ?? "";
   const sourceDigest = env.HISTORICAL_SOURCE_AUDIT_SHA256 ?? "";
   const expectedPointsDigest = env.HISTORICAL_POINTS_BASELINE_SHA256 ?? "";
+  const review = env.HISTORICAL_ASSESSMENT_STAGE_REVIEW ?? "false";
   if (
     !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(projectId) ||
     ![sourceDigest, expectedPointsDigest].every((digest) =>
@@ -1014,7 +1017,23 @@ export function historicalAssessmentAuditInputs(
     )
   )
     throw Error("Assessment audit requires exact scope and baseline digests");
-  return { projectId, sourceDigest, expectedPointsDigest };
+  if (
+    review !== "false" &&
+    (review !== "true" ||
+      !replay ||
+      !env.GITHUB_REPOSITORY ||
+      env.GITHUB_WORKFLOW_REF !==
+        `${env.GITHUB_REPOSITORY}/.github/workflows/reviewed-historical-points.yml@refs/heads/main` ||
+      env.GITHUB_WORKFLOW_SHA !== env.GITHUB_SHA ||
+      !/^[a-f0-9]{40}$/u.test(env.GITHUB_SHA ?? ""))
+  )
+    throw Error("Historical review staging requires the exact replay workflow");
+  return {
+    projectId,
+    sourceDigest,
+    expectedPointsDigest,
+    stageReview: review === "true",
+  };
 }
 
 async function auditHistoricalAssessments(
@@ -1022,8 +1041,8 @@ async function auditHistoricalAssessments(
   verifyMain: () => Promise<void>,
   replay: boolean,
 ): Promise<void> {
-  const { projectId, sourceDigest, expectedPointsDigest } =
-    historicalAssessmentAuditInputs(process.env);
+  const { projectId, sourceDigest, expectedPointsDigest, stageReview } =
+    historicalAssessmentAuditInputs(process.env, replay);
 
   setPhase("project and repository verification");
   const registry = await fetchProjectRegistry();
@@ -1128,15 +1147,9 @@ async function auditHistoricalAssessments(
     console.log(JSON.stringify(report));
     throw Error("Assessment catalog could not be reconciled");
   }
-  let replayResult:
-    | {
-        snapshotSha256: string | null;
-        valueCoverageCount: number;
-        closedUnmergedCoverageCount: number;
-        valueEventCount: number;
-        qualificationSha256: string | null;
-      }
-    | undefined;
+  let replayResult: HistoricalReplayReceipt["replay"] | undefined;
+  let valueSnapshot: HistoricalPointsPacket["valueSnapshot"] = null;
+  let valueKeys: HistoricalPointsPacket["valueKeys"] = [];
   if (replay && receipt.status === "requires-value-replay") {
     setPhase("historical assessment replay");
     const { generateHistoricalLeaderboardFromGitHub, GitHubGraphqlClient } =
@@ -1179,11 +1192,13 @@ async function auditHistoricalAssessments(
         baseline,
         snapshot,
       );
+      valueSnapshot = snapshot;
+      valueKeys = allocation.rows.map((row) => row.award.key);
       qualificationSha256 = verifyHistoricalValueReplay(
         {
           ...binding,
-          valueSnapshot: snapshot,
-          valueKeys: allocation.rows.map((row) => row.award.key),
+          valueSnapshot,
+          valueKeys,
         },
         baseline,
         receipt,
@@ -1225,11 +1240,38 @@ async function auditHistoricalAssessments(
   setPhase("assessment qualification recheck");
   await verifyMain();
   await assertHistoricalAssessmentFreshness(scope, catalog.heads, query);
-  setPhase("assessment receipt");
   const summary = {
     ...report,
     ...(replayResult ? { replay: replayResult } : {}),
   };
+  let output = summary;
+  if (stageReview) {
+    setPhase("private replay review staging");
+    if (!replayResult?.qualificationSha256)
+      throw Error("Only a qualified replay can stage a private review");
+    const [{ stageHistoricalReplayReview }, { privatePacketPreviewStorage }] =
+      await Promise.all([
+        import("./historical-replay-review"),
+        import("./private-packet-preview"),
+      ]);
+    const privateReviewManifest = await stageHistoricalReplayReview(
+      {
+        sourceAudit,
+        valueSnapshot,
+        valueKeys,
+        qualificationSha256: replayResult.qualificationSha256,
+      },
+      privatePacketPreviewStorage(
+        process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+        process.env.CLOUDFLARE_API_TOKEN ?? "",
+      ),
+    );
+    setPhase("assessment qualification recheck");
+    await verifyMain();
+    await assertHistoricalAssessmentFreshness(scope, catalog.heads, query);
+    output = { ...summary, replay: { ...replayResult, privateReviewManifest } };
+  }
+  setPhase("assessment receipt");
   const directory = join(
     process.env.RUNNER_TEMP ?? "",
     "historical-assessment-audit",
@@ -1237,7 +1279,7 @@ async function auditHistoricalAssessments(
   await mkdir(directory, { mode: 0o700, recursive: true });
   await writeFile(
     join(directory, "receipt.json"),
-    `${JSON.stringify(summary)}\n`,
+    `${JSON.stringify(output)}\n`,
     {
       mode: 0o600,
       flag: "wx",

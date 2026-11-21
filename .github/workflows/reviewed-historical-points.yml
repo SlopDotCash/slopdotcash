@@ -19,6 +19,10 @@ on:
       audit_baseline_sha256:
         description: "SHA-256 of the current canonical Points checkpoint"
         type: string
+      stage_review_handoff:
+        description: "Retain the qualified replay inputs in encrypted private storage for owner review"
+        type: boolean
+        default: false
       reviewed_packet_sha256:
         description: "Owner-reviewed SHA-256 of the private canonical project packet"
         type: string
@@ -49,12 +53,16 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           APPLY: ${{ inputs.apply }}
+          STAGE_REVIEW: ${{ inputs.stage_review_handoff }}
           PACKET_SHA: ${{ inputs.reviewed_packet_sha256 }}
           AUDIT_PROJECT: ${{ inputs.audit_project }}
           AUDIT_SOURCE_SHA: ${{ inputs.audit_source_sha256 }}
           AUDIT_BASELINE_SHA: ${{ inputs.audit_baseline_sha256 }}
         run: |
           set -euo pipefail
+          if [ "$STAGE_REVIEW" = true ]; then
+            test "$OPERATION" = replay-assessments
+          fi
           case "$OPERATION" in
             audit-assessments|replay-assessments)
               test "$APPLY" = false
@@ -115,6 +123,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           HISTORICAL_POINTS_APPLY: ${{ inputs.apply }}
+          HISTORICAL_ASSESSMENT_STAGE_REVIEW: ${{ inputs.stage_review_handoff }}
+          PRIVATE_PACKET_ENCRYPTION_KEY: ${{ inputs.operation == 'replay-assessments' && inputs.stage_review_handoff && secrets.PRIVATE_PACKET_ENCRYPTION_KEY || '' }}
           REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
           HISTORICAL_ASSESSMENT_PROJECT: ${{ inputs.audit_project }}
           HISTORICAL_SOURCE_AUDIT_SHA256: ${{ inputs.audit_source_sha256 }}

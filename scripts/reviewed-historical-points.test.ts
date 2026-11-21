@@ -828,6 +828,7 @@ test("protected assessment audit accepts exact read-only scope inputs", () => {
     projectId: "eliza",
     sourceDigest: "a".repeat(64),
     expectedPointsDigest: "b".repeat(64),
+    stageReview: false,
   });
   for (const change of [
     { HISTORICAL_POINTS_APPLY: "true" },
@@ -835,9 +836,42 @@ test("protected assessment audit accepts exact read-only scope inputs", () => {
     { HISTORICAL_ASSESSMENT_PROJECT: "eliza;SELECT" },
     { HISTORICAL_SOURCE_AUDIT_SHA256: "" },
     { HISTORICAL_POINTS_BASELINE_SHA256: "x".repeat(64) },
+    { HISTORICAL_ASSESSMENT_STAGE_REVIEW: "true" },
   ])
     expect(() =>
       historicalAssessmentAuditInputs({ ...inputs, ...change }),
+    ).toThrow();
+});
+
+test("private replay handoff requires opt-in and the exact trusted main workflow", () => {
+  const env = {
+    HISTORICAL_POINTS_APPLY: "false",
+    HISTORICAL_ASSESSMENT_PROJECT: "eliza",
+    HISTORICAL_SOURCE_AUDIT_SHA256: "a".repeat(64),
+    HISTORICAL_POINTS_BASELINE_SHA256: "b".repeat(64),
+    HISTORICAL_ASSESSMENT_STAGE_REVIEW: "true",
+    GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
+    GITHUB_SHA: "c".repeat(40),
+    GITHUB_WORKFLOW_SHA: "c".repeat(40),
+    GITHUB_WORKFLOW_REF:
+      "SlopDotCash/slopdotcash/.github/workflows/reviewed-historical-points.yml@refs/heads/main",
+  };
+  expect(historicalAssessmentAuditInputs(env, true).stageReview).toBe(true);
+  expect(() => historicalAssessmentAuditInputs(env, false)).toThrow();
+  for (const changed of [
+    { GITHUB_WORKFLOW_SHA: "d".repeat(40) },
+    {
+      GITHUB_WORKFLOW_REF: env.GITHUB_WORKFLOW_REF.replace(
+        "main",
+        "development",
+      ),
+    },
+    { REVIEWED_PACKET_SHA256: "d".repeat(64) },
+    { HISTORICAL_POINTS_APPLY: "true" },
+    { HISTORICAL_ASSESSMENT_STAGE_REVIEW: "maybe" },
+  ])
+    expect(() =>
+      historicalAssessmentAuditInputs({ ...env, ...changed }, true),
     ).toThrow();
 });
 
@@ -3281,8 +3315,20 @@ test("historical publication installs the canonical merge runtime before verific
     workflow.indexOf("name: Preserve the assessment audit receipt"),
   );
   expect(reading).toContain('"--$OPERATION"');
+  expect(reading).toContain(
+    `PRIVATE_PACKET_ENCRYPTION_KEY: \${{ inputs.operation == 'replay-assessments' && inputs.stage_review_handoff && secrets.PRIVATE_PACKET_ENCRYPTION_KEY || '' }}`,
+  );
   expect(reading).not.toMatch(
-    /PRIVATE_PACKET|HISTORICAL_POINTS_OBJECT_MANIFEST|HISTORICAL_POINTS_PACKET_[1-4]|SLOPBOT_APP|HISTORICAL_REPLAY_ACTIONS_TOKEN/u,
+    /PRIVATE_PACKET_TRANSPORT|HISTORICAL_POINTS_OBJECT_MANIFEST|HISTORICAL_POINTS_PACKET_[1-4]|SLOPBOT_APP|HISTORICAL_REPLAY_ACTIONS_TOKEN/u,
+  );
+  const upload = workflow.slice(
+    workflow.indexOf("name: Preserve the assessment audit receipt"),
+    workflow.indexOf(
+      "name: Rebuild and verify owner-reviewed historical Points",
+    ),
+  );
+  expect(upload.match(/^ *path: (.*)$/mu)?.[1]).toBe(
+    `\${{ runner.temp }}/historical-assessment-audit/receipt.json`,
   );
   const source = await Bun.file(
     new URL("./value-merge-ingestion.ts", import.meta.url),

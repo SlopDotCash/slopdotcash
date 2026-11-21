@@ -26,6 +26,22 @@ matches the exact merged scope and satisfies the assessment checks. The digest
 binds the value changes and their provenance independently of collector timing.
 Extra closed-unmerged outcomes require their own reviewed source coverage.
 
+Use `operation=replay-assessments`, `apply=false`, and
+`stage_review_handoff=true` to prepare the exact replay inputs for owner review.
+The workflow saves the complete source audit, value snapshot, and selected award
+keys as an unsigned bundle through the existing encrypted private packet
+transport. It verifies a complete readback and rechecks the live checkpoints
+before it writes `receipt.json`. The Actions artifact contains the sanitized
+receipt with transport sizes and digests. The bundle stays in encrypted storage.
+
+An authorized operator downloads `receipt.json` from the exact successful
+canonical main replay run and attempt. With the existing private packet account
+credentials and encryption key provisioned in the environment, use
+`bun --no-env-file scripts/historical-replay-review.ts RECEIPT.json OUTPUT.json`
+to retrieve the exact unsigned bundle into a new private file. The reviewing
+owner uses those inputs with the current correction and eligibility evidence to
+review the separate canonical project packet and its SHA-256.
+
 An applying packet records `replayQualification` with the exact GitHub
 Actions run ID, attempt, artifact ID and qualification SHA-256. The reviewer
 approves these fields as part of the packet digest. The publisher reads the

@@ -35,6 +35,8 @@ export interface HistoricalReplayReceipt {
     closedUnmergedCoverageCount: number;
     valueEventCount: number;
     qualificationSha256: string | null;
+    /** Exact compact transport metadata, present only after private readback. */
+    privateReviewManifest?: string;
   };
 }
 

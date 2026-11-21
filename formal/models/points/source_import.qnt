@@ -33,6 +33,7 @@ module source_import {
     "assessment journal checkpoint read",
     "trusted replay receipt read",
     "assessment qualification match",
+    "private replay review staging",
     "value record verification",
     "public Points read",
     "recipient and account restriction verification",

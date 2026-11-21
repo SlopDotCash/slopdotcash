@@ -157,12 +157,12 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "35aa889f11eb9104bd754a076385e73c7ead0811cafd31d6f878efedee295722",
+      "sha256": "6b30f8c8c03db2613f40b5507321c1f78923259dbf810c013427e1d643afb131",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
-      "candidateLines": [85],
+      "candidateLines": [93],
       "review": "mapped-abstraction"
     },
     {
@@ -4516,9 +4516,16 @@
     },
     {
       "path": "scripts/historical-replay-qualification.ts",
-      "sha256": "23eca5a69ef27827dd1e041e49ed0b2798685320a7dc39cd641d04da3dba21d5",
+      "sha256": "ea23241c267301b3c13df32ee4ca01d9d87c79a3612d5dfd4350f87ea5946c10",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [15, 110],
+      "candidateLines": [15, 112],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/historical-replay-review.ts",
+      "sha256": "3fe613c7adbdaf9a8ceec797ad680cc634a803a27c1a0135e848d7ac24061416",
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "candidateLines": [2, 136],
       "review": "mapped-abstraction"
     },
     {
@@ -5250,9 +5257,9 @@
     },
     {
       "path": "scripts/restore-historical-assessment-replay.py",
-      "sha256": "e7196d8a0ff7cb32468281bf7f7f1df5825d8cfa2d30c80556b1808283620cc0",
+      "sha256": "98744a07783043ab44c49bb161b10c2c98e7cf743a609296a364acc66fb0be60",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [34, 150, 169, 177, 223, 263],
+      "candidateLines": [34, 181, 200, 208, 254, 294],
       "review": "mapped-abstraction"
     },
     {
@@ -5355,12 +5362,12 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "fc2c038053d0693b7c9f5959f71ffcae27de1d446d54dca7ba3ae0c916118134",
+      "sha256": "eb27a0a9126f864da0ebfe371c600d1ed9e6c21a5439e8fe9c31910c010e8f0e",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
-      "candidateLines": [3, 254, 900, 920, 1109, 1127, 1140, 1238, 1333, 1465],
+      "candidateLines": [3, 254, 900, 920, 1128, 1146, 1153, 1280, 1375, 1507],
       "review": "mapped-abstraction"
     },
     {
@@ -15571,13 +15578,14 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "e6853501866f65c4ef64ce274c9c036ca9a046ea87ce94a0624423ac47208e0c",
+      "sha256": "b04b50bf7b967bc109312ad294e1d949d62a3f1e76e1c1b5e8c8727c78922fc7",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
         "scripts/historical-assessment-reconciliation.ts",
         "scripts/historical-assessment-transport.ts",
         "scripts/historical-merged-replay.ts",
+        "scripts/historical-replay-review.ts",
         "scripts/historical-value-replay.ts",
         "scripts/run-reviewed-historical-points.ts"
       ],
@@ -15588,6 +15596,10 @@
         "changedScopeCannotEnterAuditTest",
         "invalidRecordRemainsIncompleteTest",
         "matchedActiveRecordRequiresReplayTest",
+        "privateReviewNeedsExactReadbackTest",
+        "privateReviewNeedsOptInTest",
+        "qualifiedPrivateReviewCanBeRetrievedTest",
+        "scopeChangeAfterPrivateStagingRefusesReceiptTest",
         "unrelatedAppendAllowsReceiptTest",
         "verifiedEmptyCutTest"
       ]
@@ -15936,7 +15948,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "ac3e752cbbe6ba139de1643c9faca051f104b455c1d4473bd139afa055a5767e",
+      "sha256": "ce78737627aa0af9ce21757f1c1e53cb286f68204d1db152117371f9f1b2431b",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",

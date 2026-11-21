@@ -97,6 +97,37 @@ def json_object(data):
     return value
 
 
+def verify_review_manifest(text):
+    require(isinstance(text, str) and 0 < len(text) <= 8192)
+    value = json_object(text.encode("ascii"))
+    require(
+        value.keys()
+        == {
+            "schemaVersion", "compression", "rawSha256", "rawBytes",
+            "compressedSha256", "compressedBytes", "chunks",
+        }
+        and value["schemaVersion"] == "1"
+        and value["compression"] == "br"
+        and matches(DIGEST, value["rawSha256"])
+        and matches(DIGEST, value["compressedSha256"])
+        and count(value["rawBytes"])
+        and 0 < value["rawBytes"] <= 128 * 1024 * 1024
+        and count(value["compressedBytes"])
+        and isinstance(value["chunks"], list)
+        and 0 < len(value["chunks"]) <= 64
+        and all(
+            isinstance(chunk, dict)
+            and chunk.keys() == {"sha256", "bytes"}
+            and matches(DIGEST, chunk["sha256"])
+            and count(chunk["bytes"])
+            and 0 < chunk["bytes"] <= 393216
+            for chunk in value["chunks"]
+        )
+        and sum(chunk["bytes"] for chunk in value["chunks"]) == value["compressedBytes"]
+        and json.dumps(value, separators=(",", ":")) == text
+    )
+
+
 def gh_read(path, limit):
     # gh authenticates from the protected step environment. Discard diagnostics
     # that can include request headers or private provider responses.
@@ -230,7 +261,7 @@ def extract_receipt(archive, source_commit):
         and matches(UTC_TIME, receipt.get("sourceFrom"))
         and matches(UTC_TIME, receipt.get("sourceThrough"))
         and isinstance(replay, dict)
-        and replay.keys() == REPLAY_FIELDS
+        and replay.keys() in (REPLAY_FIELDS, REPLAY_FIELDS | {"privateReviewManifest"})
         and matches(DIGEST, replay.get("qualificationSha256"))
     )
     for key in (
@@ -264,6 +295,8 @@ def extract_receipt(archive, source_commit):
             else replay["snapshotSha256"] is None
         )
     )
+    if "privateReviewManifest" in replay:
+        verify_review_manifest(replay["privateReviewManifest"])
     return data
 
 

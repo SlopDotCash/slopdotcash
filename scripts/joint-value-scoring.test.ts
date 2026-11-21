@@ -15,8 +15,8 @@ import {
   applyPointsSnapshot,
   awardForScore,
   latestPoints,
-  pointKey,
   type PointsJournal,
+  pointKey,
 } from "../src/lib/points";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { sha256Hex } from "../src/lib/sha256";

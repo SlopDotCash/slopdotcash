@@ -2,10 +2,12 @@
 // @source scripts/historical-assessment-reconciliation.ts
 // @source scripts/historical-assessment-transport.ts
 // @source scripts/historical-merged-replay.ts
+// @source scripts/historical-replay-review.ts
 // @source scripts/historical-value-replay.ts
 // @evidence scripts/historical-assessment-transport.test.ts
 // @evidence scripts/historical-leaderboard-scope.test.ts
 // @evidence scripts/historical-merged-replay.test.ts
+// @evidence scripts/historical-replay-review.test.ts
 // @evidence scripts/historical-value-replay.test.ts
 // @source scripts/run-reviewed-historical-points.ts
 // @source .github/workflows/reviewed-historical-points.yml
@@ -23,6 +25,7 @@ module historical_assessment_audit {
     relevant: bool,
     current: bool,
     status: str,
+    reviewAvailable: bool,
   }
   var s: State
 
@@ -36,6 +39,7 @@ module historical_assessment_audit {
     relevant: false,
     current: true,
     status: "unsealed",
+    reviewAvailable: false,
   }
 
   action capture(trusted: bool, scoped: bool, apply: bool, joint: int, legacy: int): bool = all {
@@ -55,13 +59,22 @@ module historical_assessment_audit {
 
   val complete = not(s.invalid) and s.jointRead == s.jointExpected and s.legacyRead == s.legacyExpected
   action changeCheckpoint(affectsScope: bool): bool = all {
-    s.phase == "reading",
+    s.phase == "reading" or s.phase == "staged",
     s' = s.with("current", s.current and not(affectsScope)),
   }
-  action seal = all {
+  action stageReview(explicit: bool, qualified: bool, verifiedReadback: bool): bool = all {
     s.phase == "reading",
     s.current,
-    s' = s.with("phase", "sealed").with(
+    complete,
+    explicit,
+    qualified,
+    verifiedReadback,
+    s' = s.with("phase", "staged"),
+  }
+  action seal = all {
+    s.phase == "reading" or s.phase == "staged",
+    s.current,
+    s' = s.with("phase", "sealed").with("reviewAvailable", s.phase == "staged").with(
       "status",
       if (complete) (if (s.relevant) "requires-value-replay" else "no-scoped-active-assessments")
       else "incomplete"
@@ -79,6 +92,7 @@ module historical_assessment_audit {
     observe(false, false, false),
     changeCheckpoint(true),
     changeCheckpoint(false),
+    stageReview(true, true, true),
     seal,
     s' = s,
   }
@@ -87,6 +101,7 @@ module historical_assessment_audit {
     s.status == "no-scoped-active-assessments" implies (complete and not(s.relevant)),
     s.status == "requires-value-replay" implies (complete and s.relevant),
     s.phase == "sealed" implies (s.status != "unsealed" and s.current),
+    s.reviewAvailable implies (s.phase == "sealed" and complete and s.current),
   }
 
   run verifiedEmptyCutTest = init.then(capture(true, true, false, 0, 0))
@@ -106,4 +121,14 @@ module historical_assessment_audit {
   run unrelatedAppendAllowsReceiptTest = init
     .then(capture(true, true, false, 0, 0)).then(changeCheckpoint(false))
     .then(seal).expect(s.status == "no-scoped-active-assessments" and invariant)
+  run privateReviewNeedsOptInTest = init
+    .then(capture(true, true, false, 0, 0)).then(stageReview(false, true, true).fail())
+  run privateReviewNeedsExactReadbackTest = init
+    .then(capture(true, true, false, 0, 0)).then(stageReview(true, true, false).fail())
+  run scopeChangeAfterPrivateStagingRefusesReceiptTest = init
+    .then(capture(true, true, false, 0, 0)).then(stageReview(true, true, true))
+    .then(changeCheckpoint(true)).then(seal.fail())
+  run qualifiedPrivateReviewCanBeRetrievedTest = init
+    .then(capture(true, true, false, 0, 0)).then(stageReview(true, true, true))
+    .then(seal).expect(s.reviewAvailable and invariant)
 }

@@ -158,6 +158,30 @@ class ReplayReceipt(unittest.TestCase):
         self.provider = metadata(self.archive)
         self.assertEqual(self.restore(), encode(receipt))
 
+    def test_private_manifest_is_only_bounded_digest_and_size_metadata(self):
+        receipt = copy.deepcopy(REPORT)
+        manifest = {
+            "schemaVersion": "1", "compression": "br",
+            "rawSha256": DIGEST, "rawBytes": 32,
+            "compressedSha256": DIGEST, "compressedBytes": 17,
+            "chunks": [{"sha256": DIGEST, "bytes": 17}],
+        }
+        for metadata_fields, accepted in (
+            (manifest, True),
+            ({**manifest, "privateSnapshot": {}}, False),
+            ({**manifest, "rawBytes": 129 * 1024 * 1024}, False),
+            ({**manifest, "compressedBytes": 16}, False),
+            ({**manifest, "chunks": [{"sha256": DIGEST, "bytes": True}]}, False),
+        ):
+            receipt["replay"]["privateReviewManifest"] = encode(metadata_fields).decode().strip()
+            self.archive = single_receipt(receipt)
+            self.provider = metadata(self.archive)
+            if accepted:
+                self.assertEqual(self.restore(), encode(receipt))
+            else:
+                with self.assertRaises(ValueError):
+                    self.restore()
+
     def test_different_attempt_workflow_repository_head_or_status(self):
         for field, value in (
             ("run_attempt", ATTEMPT + 1),
