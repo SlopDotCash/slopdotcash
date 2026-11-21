@@ -46,6 +46,7 @@ import {
   submissionFeeAmountText,
   submissionFeeSetting,
 } from "./lib/submission-fee-setting.mjs";
+import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -206,6 +207,8 @@ const EMPTY_PROPOSAL = {
   automaticClosure: "true",
   // On for every new project that takes contributions (PRD section 5).
   submissionFee: "true",
+  // On for every new project that takes contributions (PRD section 5).
+  wantedIssues: "true",
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
@@ -770,6 +773,39 @@ function SubmissionFeeFields({
           value={amount.value}
         />
       ) : null}
+    </div>
+  );
+}
+
+function wantedIssuesSummary(on: boolean | undefined): string {
+  return on === true ? `On: ${WANTED_LABEL}` : "Off";
+}
+
+/** Wanted issues (PRD section 5): one standard label, created by Slopbot. */
+function WantedIssuesField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="wanted-issues-hint"
+          checked={value === "true"}
+          name="wantedIssues"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        List the issues you most want done
+      </label>
+      <p className="field-hint" id="wanted-issues-hint">
+        Slopbot creates the <code>{WANTED_LABEL}</code> label. Put it on 3 to 5
+        issues; they are listed first on your project page and contributor
+        agents start with them.
+      </p>
     </div>
   );
 }
@@ -1582,13 +1618,16 @@ function ProjectProposalForm({
       // A listing that is only a security program takes no contributions,
       // so it carries neither closure consent nor a submission fee.
       ...(p.fundingMode !== "bounty" &&
-      (p.automaticClosure === "true" || p.submissionFee === "true")
+      (p.automaticClosure === "true" ||
+        p.submissionFee === "true" ||
+        p.wantedIssues === "true")
         ? {
             slopbot: {
               automaticClosure: p.automaticClosure === "true",
               ...(p.submissionFee === "true"
                 ? { submissionFee: { enabled: true } }
                 : {}),
+              ...(p.wantedIssues === "true" ? { wantedIssues: true } : {}),
             },
           }
         : {}),
@@ -1998,6 +2037,10 @@ function ProjectProposalForm({
                   onChange={set("submissionFee")}
                   value={p.submissionFee}
                 />
+                <WantedIssuesField
+                  onChange={set("wantedIssues")}
+                  value={p.wantedIssues}
+                />
               </>
             )}
             {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
@@ -2210,6 +2253,12 @@ function ProjectProposalForm({
                         <AutoCloseMark on={p.submissionFee === "true"} />
                       </dd>
                     </div>
+                    <div>
+                      <dt>Wanted issues</dt>
+                      <dd>
+                        <AutoCloseMark on={p.wantedIssues === "true"} />
+                      </dd>
+                    </div>
                   </>
                 )}
                 {bounty || p.fundingMode === "monthly" ? (
@@ -2411,6 +2460,7 @@ type UpdateDraft = ReadyDraft & {
   submissionFee: string;
   /** The stablecoin amount as typed, for example "2" or "2.50". */
   submissionFeeAmount: string;
+  wantedIssues: string;
   intakeCap: string;
   headline: string;
   goal: string;
@@ -2441,6 +2491,7 @@ const DRAFT_FIELDS = [
   "readyProtectedPaths",
   "submissionFee",
   "submissionFeeAmount",
+  "wantedIssues",
   "intakeCap",
   "headline",
   "goal",
@@ -2737,6 +2788,7 @@ function ProjectUpdateForm({
     submissionFeeAmount: submissionFeeAmountText(
       currentFee?.amountMinor ?? SUBMISSION_FEE_SETTING_LIMITS.defaultMinor,
     ),
+    wantedIssues: String(current.slopbot?.wantedIssues === true),
     intakeCap: String(current.slopbot?.intakeCap ?? ""),
     headline: current.headline,
     image: current.image ?? "",
@@ -3031,7 +3083,8 @@ function ProjectUpdateForm({
       value.automaticClosure === "true" ||
       nextReady !== undefined ||
       nextIntakeCap !== undefined ||
-      nextFee !== undefined
+      nextFee !== undefined ||
+      value.wantedIssues === "true"
         ? {
             slopbot: {
               automaticClosure: value.automaticClosure === "true",
@@ -3040,6 +3093,7 @@ function ProjectUpdateForm({
                 ? { intakeCap: nextIntakeCap }
                 : {}),
               ...(nextFee ? { submissionFee: nextFee } : {}),
+              ...(value.wantedIssues === "true" ? { wantedIssues: true } : {}),
             },
           }
         : {}),
@@ -3111,6 +3165,12 @@ function ProjectUpdateForm({
       label: "Submission fee",
       before: submissionFeeSummary(current.slopbot?.submissionFee),
       after: submissionFeeSummary(next.slopbot?.submissionFee),
+    },
+    {
+      field: "wantedIssues",
+      label: "Wanted issues",
+      before: wantedIssuesSummary(current.slopbot?.wantedIssues),
+      after: wantedIssuesSummary(next.slopbot?.wantedIssues),
     },
     ...(current.image !== next.image
       ? [
@@ -3609,6 +3669,12 @@ function ProjectUpdateForm({
             }}
             onChange={set("submissionFee")}
             value={value.submissionFee}
+          />
+        )}
+        {bountyOnly ? null : (
+          <WantedIssuesField
+            onChange={set("wantedIssues")}
+            value={value.wantedIssues}
           />
         )}
         <details className="proposal-advanced">

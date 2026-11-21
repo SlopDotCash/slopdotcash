@@ -2228,6 +2228,27 @@ test("how it works answers the maintainer pay question", async ({ page }) => {
   );
 });
 
+test("how it works answers the submission fee question", async ({ page }) => {
+  await page.goto("/how-it-works#faq");
+  const answer = page.locator("#faq").locator("article", {
+    has: page.getByRole("heading", {
+      name: "Is there a fee to open a pull request?",
+    }),
+  });
+  await expect(answer).toContainText(
+    "Only on a project whose owner turned on the refundable submission fee",
+  );
+  await expect(answer).toContainText(
+    "2 USDC on Base or 2 USDG on Robinhood Chain",
+  );
+  await expect(answer).toContainText("in SLOP on Robinhood Chain at half");
+  await expect(answer).toContainText(
+    "a merge sends it back, and so do 14 days without a maintainer decision",
+  );
+  await expect(answer).toContainText("closed without a merge for 7 days");
+  await expect(answer).toContainText("never closed for that reason");
+});
+
 test("how it works answers the referral and buyback questions", async ({
   page,
 }) => {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2ff7bcb696bd057f8a6d0edfcc89d324fce7f196617652a0eddb56d8e1d036ae",
+  "inventorySha256": "00416e7a8d41c5291530a6bd7d7de9e1a8e817eaa0b6bcd8c60b17ef7090fb0a",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -426,6 +426,7 @@
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/api/submission_receipt_verification.qnt"
       ],
       "lexicallyUnmentionedValues": ["no", "unknown"],
@@ -3025,7 +3026,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1138,
+      "line": 1174,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -3033,6 +3034,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3051,7 +3053,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1630,
+      "line": 1669,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -3059,6 +3061,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3077,7 +3080,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2624,
+      "line": 2675,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -3085,6 +3088,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3103,7 +3107,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2629,
+      "line": 2680,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3111,6 +3115,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3129,7 +3134,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2636,
+      "line": 2687,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3137,6 +3142,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3155,7 +3161,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2639,
+      "line": 2690,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3163,6 +3169,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
