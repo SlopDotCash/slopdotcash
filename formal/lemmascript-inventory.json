@@ -11661,7 +11661,7 @@
 {"name":"initialSecuritySplit","kind":"FunctionDeclaration","line":8,"sha256":"df022125aed5018ac14f4e2728404e9953d531f1e9c9c523ea044f51bc358bc3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"carriedSecurityTerms","kind":"FunctionDeclaration","line":15,"sha256":"b69d5a63060f9e58a7e839d0cba225790cbf83bfebcbbc490d85008fe7bf4e08","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/security-report-deposit.mjs","sha256":"5f6dd74446e1936321f37905b92343d5884a0116b3d67c2ce983219ca89e5ec7","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/security-report-deposit.mjs","sha256":"648329c1a0146deed2870feb546596fb8a7ce3c0ce82c8e0fc7990eedb3d3484","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"reportDepositItem","kind":"FunctionDeclaration","line":47,"sha256":"f361b845aca7523cbe55455f5b0c13c711eb166bbac8f1d5b8e8344922d9d628","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@52>","kind":"ArrowFunction","line":52,"sha256":"d8cde819659e4d1a74d3964436a1a38d10cbfd1ad1af8f528cdc99bd28614619","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"reportDepositAmount","kind":"FunctionDeclaration","line":57,"sha256":"23b37118c3a00f67e301664d8d4b1d92a3b0a36b5ef49380a5085e4344a1f305","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
