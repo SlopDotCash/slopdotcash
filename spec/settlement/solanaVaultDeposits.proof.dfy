@@ -44,8 +44,28 @@ lemma startRun_ensures(d: SolanaDeposits, slot: int, by_: string)
   ensures (inv(d) ==> canStartRun(d, slot, by_) ==> stepRecordPermanent(d, startRun(d, slot, by_)))
 {
   if inv(d) && canStartRun(d, slot, by_) {
+    var c := captured(d);
+    var after := startRun(d, slot, by_);
     Facts(d);
-    Facts(startRun(d, slot, by_));
+    Facts(after);
+    assert after.seen == d.seen && after.position == d.position && after.newest == d.newest;
+    assert runOf(after, slot) == c;
+    assert alwaysIntervalRead(d) && alwaysPositionCovered(d);
+    assert d.resume > 0 ==> d.pending > 0;
+    assert d.pending > 0 ==> d.resume > d.position && d.resume <= d.pending && d.pending <= d.newest;
+    assert pageFrom(d) >= d.position && pageFrom(d) <= d.newest;
+    assert c.cursorAt == pageFrom(d) && c.startPosition == d.position;
+    assert c.top == (if d.pending > 0 then d.pending else if pageFrom(d) > d.position then pageFrom(d) else 0);
+    assert c.startPosition == d.position && c.cursorAt >= d.position && c.remaining >= 0;
+    assert c.remaining <= c.cursorAt - d.position;
+    assert c.shortPage ==> c.remaining == c.cursorAt - d.position;
+    assert c.top <= d.newest && (c.top == 0 || c.top > d.position);
+    assert c.remaining > 0 ==> c.cursorAt <= c.top;
+    forall x | x in chainTransactions && x > c.cursorAt && x <= c.top
+      ensures x in d.seen
+    {
+      assert d.pending > 0 && c.top == d.pending && c.cursorAt == d.resume - 1;
+    }
   }
 }
 
@@ -100,7 +120,7 @@ lemma Facts(d: SolanaDeposits)
   ensures alwaysPositionCovered(d) <==> (d.position >= 0 && d.position <= d.newest
     && forall x :: x in chainTransactions && x <= d.position ==> x in d.seen)
   ensures alwaysIntervalRead(d) <==> ((d.pending > 0 ==> (d.resume > d.position && d.resume <= d.pending && d.pending <= d.newest
-    && forall x :: x in chainTransactions && x >= d.resume && x <= d.pending ==> x in d.seen)) && (d.pending == 0 ==> d.resume == 0))
+    && forall x :: x in chainTransactions && x >= d.resume && x <= d.pending ==> x in d.seen)) && (d.pending == 0 ==> d.resume == 0) && d.pending >= 0)
   ensures alwaysRecordedExactlyRead(d) <==> (forall x :: x in d.recorded <==> x in depositTransactions && x in d.seen)
   ensures runKeepsItsPlace(d, d.first) <==> (d.first.active ==> (d.first.startPosition <= d.position && (d.first.startPosition == d.position ==> (d.first.cursorAt >= d.position && d.first.remaining >= 0 && d.first.remaining <= d.first.cursorAt - d.position && (d.first.shortPage ==> d.first.remaining == d.first.cursorAt - d.position) && d.first.top <= d.newest && (d.first.top == 0 || d.first.top > d.position) && (d.first.remaining > 0 ==> d.first.cursorAt <= d.first.top) && forall x :: x in chainTransactions && x > d.first.cursorAt && x <= d.first.top ==> x in d.seen))))
   ensures runKeepsItsPlace(d, d.second) <==> (d.second.active ==> (d.second.startPosition <= d.position && (d.second.startPosition == d.position ==> (d.second.cursorAt >= d.position && d.second.remaining >= 0 && d.second.remaining <= d.second.cursorAt - d.position && (d.second.shortPage ==> d.second.remaining == d.second.cursorAt - d.position) && d.second.top <= d.newest && (d.second.top == 0 || d.second.top > d.position) && (d.second.remaining > 0 ==> d.second.cursorAt <= d.second.top) && forall x :: x in chainTransactions && x > d.second.cursorAt && x <= d.second.top ==> x in d.seen))))
@@ -114,7 +134,7 @@ lemma Facts(d: SolanaDeposits)
 // The rules' filters, through the library's filter view.
 lemma FiltersOfRules(d: SolanaDeposits, r: SolanaRun)
   ensures alwaysPositionCovered(d) == (((d.position >= 0) && (d.position <= d.newest)) && !((exists set_x :: set_x in ProofLib.Filter((t: int) => (t <= d.position), chainTransactions) && !((set_x in d.seen)))))
-  ensures alwaysIntervalRead(d) == ((!((d.pending > 0)) || ((((d.resume > d.position) && (d.resume <= d.pending)) && (d.pending <= d.newest)) && !((exists set_x :: set_x in ProofLib.Filter((t: int) => ((t >= d.resume) && (t <= d.pending)), chainTransactions) && !((set_x in d.seen)))))) && (!((d.pending == 0)) || (d.resume == 0)))
+  ensures alwaysIntervalRead(d) == (((!((d.pending > 0)) || ((((d.resume > d.position) && (d.resume <= d.pending)) && (d.pending <= d.newest)) && !((exists set_x :: set_x in ProofLib.Filter((t: int) => ((t >= d.resume) && (t <= d.pending)), chainTransactions) && !((set_x in d.seen)))))) && (!((d.pending == 0)) || (d.resume == 0))) && (d.pending >= 0))
   ensures alwaysRecordedExactlyRead(d) == (!((exists set_x :: set_x in d.recorded && !((set_x in ProofLib.Filter((set_x: int) => (set_x in d.seen), depositTransactions))))) && !((exists set_x' :: set_x' in ProofLib.Filter((set_x: int) => (set_x in d.seen), depositTransactions) && !((set_x' in d.recorded)))))
   ensures runKeepsItsPlace(d, r) == (!(r.active) || ((r.startPosition <= d.position) && (!((r.startPosition == d.position)) || ((((((((r.cursorAt >= d.position) && (r.remaining >= 0)) && (r.remaining <= (r.cursorAt - d.position))) && (!(r.shortPage) || (r.remaining == (r.cursorAt - d.position)))) && (r.top <= d.newest)) && ((r.top == 0) || (r.top > d.position))) && (!((r.remaining > 0)) || (r.cursorAt <= r.top))) && !((exists set_x :: set_x in ProofLib.Filter((t: int) => ((t > r.cursorAt) && (t <= r.top)), chainTransactions) && !((set_x in d.seen))))))))
 {
