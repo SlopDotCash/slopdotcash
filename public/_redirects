@@ -42,6 +42,8 @@
 /projects/:project/awards/ / 200
 /projects/:project / 200
 /projects/:project/ / 200
+/fee/report/:case / 200
+/fee/report/:case/ / 200
 /fee/:owner/:repo/:number / 200
 /fee/:owner/:repo/:number/ / 200
 /contributors/:login / 200

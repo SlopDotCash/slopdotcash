@@ -31,6 +31,8 @@ import {
   useProjectDraftSave,
   useProjectDraftStore,
 } from "./lib/project-draft-store";
+import { REPORT_DEPOSIT_SETTING_HINT } from "./lib/report-deposit-page";
+import { reportDepositOn } from "./lib/security-report-deposit.mjs";
 import {
   protectedPathProblem,
   READY_LABEL_DEFAULTS,
@@ -46,6 +48,7 @@ import {
   submissionFeeAmountText,
   submissionFeeSetting,
 } from "./lib/submission-fee-setting.mjs";
+import { reportDepositSetup } from "./lib/submission-fee-setup";
 import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
@@ -209,6 +212,8 @@ const EMPTY_PROPOSAL = {
   submissionFee: "true",
   // On for every new project that takes contributions (PRD section 5).
   wantedIssues: "true",
+  // On for every project unless its owner turns it off (PRD section 8).
+  reportDeposit: "true",
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
@@ -773,6 +778,40 @@ function SubmissionFeeFields({
           value={amount.value}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The refundable SLOP deposit on a private report (PRD section 8). Checked
+ * unless the project turned it off.
+ */
+function ReportDepositField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [{ switchedOn }] = useState(reportDepositSetup);
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="report-deposit-hint"
+          checked={value === "true"}
+          name="reportDeposit"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        Ask reporters for a refundable SLOP deposit
+      </label>
+      <p className="field-hint" id="report-deposit-hint">
+        {REPORT_DEPOSIT_SETTING_HINT}
+        {switchedOn
+          ? ""
+          : " Slop has not switched the deposit on yet; this choice applies once it does."}
+      </p>
     </div>
   );
 }
@@ -1631,6 +1670,10 @@ function ProjectProposalForm({
             },
           }
         : {}),
+      // Absent means on; only an owner who turned it off records the setting.
+      ...(p.reportDeposit === "true"
+        ? {}
+        : { security: { reportDeposit: false } }),
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
       ...rewardFields(
@@ -2043,6 +2086,10 @@ function ProjectProposalForm({
                 />
               </>
             )}
+            <ReportDepositField
+              onChange={set("reportDeposit")}
+              value={p.reportDeposit}
+            />
             {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
               <section className="setup-legal" aria-label="Saved legal terms">
                 <ChoiceField
@@ -2261,6 +2308,12 @@ function ProjectProposalForm({
                     </div>
                   </>
                 )}
+                <div>
+                  <dt>Report deposit</dt>
+                  <dd>
+                    <AutoCloseMark on={p.reportDeposit === "true"} />
+                  </dd>
+                </div>
                 {bounty || p.fundingMode === "monthly" ? (
                   <div>
                     <dt>{bounty ? "Private bounty" : "Monthly funding"}</dt>
@@ -2461,6 +2514,7 @@ type UpdateDraft = ReadyDraft & {
   /** The stablecoin amount as typed, for example "2" or "2.50". */
   submissionFeeAmount: string;
   wantedIssues: string;
+  reportDeposit: string;
   intakeCap: string;
   headline: string;
   goal: string;
@@ -2492,6 +2546,7 @@ const DRAFT_FIELDS = [
   "submissionFee",
   "submissionFeeAmount",
   "wantedIssues",
+  "reportDeposit",
   "intakeCap",
   "headline",
   "goal",
@@ -2789,6 +2844,8 @@ function ProjectUpdateForm({
       currentFee?.amountMinor ?? SUBMISSION_FEE_SETTING_LIMITS.defaultMinor,
     ),
     wantedIssues: String(current.slopbot?.wantedIssues === true),
+    // On unless the project turned it off; absent is on.
+    reportDeposit: String(reportDepositOn(current)),
     intakeCap: String(current.slopbot?.intakeCap ?? ""),
     headline: current.headline,
     image: current.image ?? "",
@@ -3097,6 +3154,15 @@ function ProjectUpdateForm({
             },
           }
         : {}),
+      // A project that never set it keeps no setting while it stays on.
+      ...((value.reportDeposit === "true") === reportDepositOn(source)
+        ? {}
+        : {
+            security: {
+              ...source.security,
+              reportDeposit: value.reportDeposit === "true",
+            },
+          }),
       image: value.image || undefined,
       headline: value.headline.trim(),
       description: value.goal.trim(),
@@ -3171,6 +3237,12 @@ function ProjectUpdateForm({
       label: "Wanted issues",
       before: wantedIssuesSummary(current.slopbot?.wantedIssues),
       after: wantedIssuesSummary(next.slopbot?.wantedIssues),
+    },
+    {
+      field: "reportDeposit",
+      label: "Report deposit",
+      before: reportDepositOn(current) ? "On" : "Off",
+      after: reportDepositOn(next) ? "On" : "Off",
     },
     ...(current.image !== next.image
       ? [
@@ -3532,6 +3604,7 @@ function ProjectUpdateForm({
       ? "next-month"
       : [
             "slopbot",
+            "reportDeposit",
             "image",
             "headline",
             "description",
@@ -3677,6 +3750,10 @@ function ProjectUpdateForm({
             value={value.wantedIssues}
           />
         )}
+        <ReportDepositField
+          onChange={set("reportDeposit")}
+          value={value.reportDeposit}
+        />
         <details className="proposal-advanced">
           <summary>Contribution rules</summary>
           <TextField
