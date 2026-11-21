@@ -544,7 +544,10 @@ function askStands(gate: GateRow | null, at: string): gate is GateRow {
 /**
  * The fee stopped applying before it was paid: take the ask back. The label
  * comes off and the comment says so, open or closed, so a pull request that
- * is reopened later does not still read as waiting for a fee.
+ * is reopened later does not still read as waiting for a fee. The unpaid item
+ * row goes last, once the gate reads `released`: Slop no longer asks, so a
+ * deposit sent afterwards names an unknown item and is refunded (FEE-01), as
+ * the comment says. A later first ask writes the row again.
  */
 async function releaseFee(
   env: FeeEnv,
@@ -568,6 +571,12 @@ async function releaseFee(
     { state: "released", reason: why, commentId, nextCheckAt: null },
     at,
   );
+  await env.SLOPBOT_DB.prepare(
+    `DELETE FROM submission_fee_items
+     WHERE repository_id = ? AND pull_number = ? AND paid_at IS NULL AND paid_deposit_id IS NULL`,
+  )
+    .bind(job.repositoryId, job.number)
+    .run();
 }
 
 /**

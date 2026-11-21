@@ -282,7 +282,8 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   within a day. The Worker sends what is due and writes `refunded` or `kept`.
 - **Taken back.** When the owner turns the setting off, or the author gains
   write access, an unpaid ask is released: the label comes off, the comment
-  says so and the review runs.
+  says so and the review runs. The unpaid row in `submission_fee_items` is
+  removed, so a deposit sent afterwards pays for nothing and is refunded.
 - **`dry_run`.** Inserts the item row and a `recorded` gate row with the
   reason it would have skipped, writes nothing to GitHub and runs the review
   as today.
