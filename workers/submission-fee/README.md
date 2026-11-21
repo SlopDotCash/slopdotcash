@@ -11,6 +11,12 @@ The Worker reads the contract, records each deposit, judges whether it pays
 for its pull request, marks that pull request paid, and sends what Slopbot's
 row says is due. It decides nothing about merges or closes.
 
+The same contract on Robinhood Chain also holds the refundable SLOP deposit
+on a private security report (PRD section 8; operator decision, 21 November
+2026). The Worker treats it the same way: it marks the report's row paid and
+sends what that row says. It decides nothing about a report. See "Report
+deposits" below.
+
 **It runs record-only (`dry_run`) since 19 November 2026.** It was first
 switched on at 18:06 UTC that day and off again within the hour: each
 scheduled run on Cloudflare failed its log reads on both networks (see
@@ -117,6 +123,74 @@ as refused with `token_not_accepted` and left alone: the resolver makes no
 call into a token nobody reviewed, spends no gas on it and never puts it in a
 batch. Its row stays `open`. Its payer takes it back from the contract with
 `reclaim` after 30 days, and the Worker records that as `reclaimed`.
+
+## Report deposits
+
+A private security report can need a refundable deposit of SLOP. The backend
+(`backend/security/`) writes one row per report in `security_report_deposits`
+(migration 0145), decides when the deposit is due back or kept, and holds the
+report until the deposit is recorded. This Worker does the chain side only.
+
+**The row.** `item` is `reportDepositItem(caseId)`
+(`src/lib/security-report-deposit.mjs`), a different hash from any pull
+request's. `mode` is `asked` or `recorded`. Only an `asked` row is a request
+for a deposit. A `recorded` row was written by the backend's record-only mode
+and asks for nothing: the Worker never reads it, never marks it paid, and a
+deposit that names it is an unknown item like any other.
+
+**When a deposit pays a report** (`reportDepositCounts` in `report.ts`). All
+of these:
+
+- its `item` is the `item` of an `asked` row;
+- the network is Robinhood Chain;
+- the token is SLOP from the table in `src/lib/submission-fee.mjs`;
+- `keptTo` is the burn address `0x000000000000000000000000000000000000dEaD`;
+- the amount is at least the row's `slop_amount`, which the backend fixed
+  when it asked;
+- the report is not already paid by another deposit, and not already decided.
+
+Anything else is refused and follows the rules above. Reasons specific to a
+report: `report_wrong_network` (a deposit on Base), `report_token_not_slop`
+(a stablecoin), `report_amount_invalid` (the row holds no usable amount). The
+shared reasons keep their meaning: `wrong_kept_to`, `amount_below_due`,
+`item_already_paid`, `item_already_decided`, `token_not_accepted`. A refused
+deposit of an accepted token is refunded once it is finalized, never kept. A
+deposit of a token outside the table is never resolved. A deposit that names
+a `recorded` row, or a report with no row, waits 24 hours after it is
+finalized and is then refunded as `unknown_item`.
+
+**What the Worker writes on the row.** `paid_at`, `paid_network` and
+`paid_deposit_id` when a deposit that counts has the network's confirmation
+count on top of it, before finality, as for a pull request. It clears them
+again when that unfinalized deposit is reorganised away or replaced and the
+row has no outcome; the report then waits for a deposit again. After the
+contract's finalized `Resolved` or `Reclaimed` event it writes `outcome`
+`refunded` or `kept` and `outcome_at`, the block time of that event. A
+reclaim by the payer is written as `refunded`. `outcome_reason` is the
+backend's and is never changed here.
+
+**What is sent** (`reportResolveAction` in `report.ts`). For a finalized,
+accepted deposit: a refund when the row it paid says `refund_due`; "kept"
+only when that row says `kept_due`, names this very deposit as the one that
+paid, and the deposit itself is SLOP on Robinhood Chain whose `keptTo` is the
+burn address. Nothing else produces "kept": not a `recorded` row, not a row
+that names another deposit, not a refused deposit, whatever a row says.
+Kept SLOP goes to the burn address in the same `resolveMany` call. Finality,
+the confirmation count, the one send in flight, parking, batches of twenty
+and the native-fee ceilings are the ones described on this page; a report's
+deposit and a pull request's fee can share one transaction.
+
+**In `submission_fee_deposits`.** A report's deposit is an ordinary row. Its
+`repository_id` and `pull_number` stay null: an accepted row with both null
+is a report's deposit, and the report's row names it by `paid_network` and
+`paid_deposit_id`. No column was added.
+
+**Without the table.** Where `security_report_deposits` does not exist yet,
+every statement is the one it was before report deposits, and a deposit that
+names a report is an unknown item.
+
+**The log** names a paid report only by its deposit
+(`submission_fee_report_paid`, network and deposit id), never by its case.
 
 ## Sending
 
@@ -233,7 +307,9 @@ contract. `workers/fee-converter/buyback-store.ts` counts it in `feeIncome`
 from this Worker's record: a deposit in state `kept`, accepted, finalized,
 with its resolve transaction, whose `kept_to` is that fee wallet and whose
 token is the asset asked about. Kept SLOP goes to the burn address and is not
-income. Refunds and reclaims are not income.
+income. Refunds and reclaims are not income. A report's deposit is accepted
+only when its `keptTo` is the burn address, so a kept one can never match a
+fee wallet and is never income.
 
 ## Going live (steps 1 to 4 done 19 November 2026, step 5 on 21 November 2026; each step is the operator's)
 
@@ -264,6 +340,9 @@ bun run test:submission-fee:anvil
 ```
 
 The second command deploys the compiled contract and a test token to a local
-Anvil chain and runs the Worker against it. With `SLOP_FEE_FORK_BASE` and
+Anvil chain and runs the Worker against it. On Robinhood Chain (the local
+chain's label) it also pays two reports' SLOP deposits beside a pull
+request's fee and checks on the chain that one is back with its payer and
+the other is at the burn address. With `SLOP_FEE_FORK_BASE` and
 `SLOP_FEE_FORK_ROBINHOOD` set to RPC URLs it runs on private forks of both
 chains with the real tokens, fee wallet, burn address and price pool.

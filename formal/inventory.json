@@ -3789,6 +3789,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0145_security_report_deposits.sql",
+      "sha256": "ffb8d2a9fb05997ec1385ce1499511d1d4449ac20ce79910117bae85f4ab92fe",
+      "models": ["formal/models/fees/submission_fee_report_deposit.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -7690,6 +7697,13 @@
       "statelessReason": "Pure preservation of existing security terms/default split while rebuilding form fields; state is owned by the editor."
     },
     {
+      "path": "src/lib/security-report-deposit.mjs",
+      "sha256": "f6985804e540e03ece42a939c5e4f9dbaa355270f90db5060164dc73cd43e2ff",
+      "models": ["formal/models/fees/submission_fee_report_deposit.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/sha256.ts",
       "sha256": "a0e381ec470aee75d36c55e41e1a7eb062dbcf1ebc21eec976aec52589a4f0f0",
       "models": [],
@@ -10096,28 +10110,29 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "sha256": "e511934fdb0ab3bb335782fafd16d56e3a860d9a67270871baa293ac59667e19",
+      "sha256": "4eed98b37b7b18e5c3bf555b0b97859158c5a58547dcf9805e0b8202681c4d36",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
-        5, 30, 92, 109, 128, 144, 165, 166, 172, 178, 203, 215, 226, 250, 257,
-        294, 368, 379, 390, 391, 394, 413, 458, 459, 467, 468, 475, 478, 495,
-        523, 540, 543, 573, 633, 647, 653, 654, 681, 708, 711, 712, 714, 716,
-        718, 726, 727, 733, 742, 748, 801, 802, 818, 879, 891, 926, 952, 970,
-        982
+        5, 42, 104, 121, 140, 156, 177, 178, 184, 190, 215, 227, 238, 275, 287,
+        324, 398, 409, 420, 421, 424, 443, 488, 489, 497, 498, 505, 508, 525,
+        553, 570, 573, 603, 709, 724, 730, 731, 758, 785, 788, 789, 791, 793,
+        795, 803, 804, 810, 819, 825, 878, 879, 895, 956, 968, 1003, 1029, 1047,
+        1059
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "sha256": "d1c150599aebebf40341d2aa1e65b51f81e66cc8522d7eb42a2846c7589e5a8a",
+      "sha256": "6de13ca32b29644b7125c3e720ede4a269f3fd48aa4b753b2a9b8aa6cc26d0b9",
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
-      "candidateLines": [54, 55, 57, 81, 83, 92, 137, 196],
+      "candidateLines": [56, 57, 59, 83, 85, 94, 139, 198],
       "review": "mapped-abstraction"
     },
     {
@@ -10128,18 +10143,26 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/submission-fee/report.ts",
+      "sha256": "34ae478f9d2b410f70ae456c7827d64974c84e284ba1ee302d622648aae59bb1",
+      "models": ["formal/models/fees/submission_fee_report_deposit.qnt"],
+      "candidateLines": [102, 117, 124],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/submission-fee/store.ts",
-      "sha256": "ff1e7040ffbd402cc255148eb583c35d57e98e396e0f8be38c4d78884b4c86b6",
+      "sha256": "1d8bee48e5d3a28329c6287f6484cb12e4edcc51e004d918e8d2563342070d55",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt"
       ],
       "candidateLines": [
-        39, 59, 87, 116, 150, 167, 169, 171, 186, 276, 278, 281, 290, 295, 306,
-        315, 321, 322, 345, 352, 400, 427, 452, 453, 484, 487, 519, 531, 535,
-        537, 539, 546, 595, 602, 604, 612, 619, 623, 648, 657, 658, 662, 696,
-        729
+        47, 70, 98, 149, 183, 200, 202, 204, 219, 348, 350, 353, 362, 367, 379,
+        384, 398, 409, 415, 416, 445, 454, 519, 541, 567, 608, 609, 641, 644,
+        676, 688, 692, 694, 696, 703, 752, 759, 761, 769, 776, 780, 805, 814,
+        815, 819, 853, 886
       ],
       "review": "mapped-abstraction"
     },
@@ -14137,7 +14160,7 @@
     },
     {
       "path": "formal/models/fees/submission_fee_deposit.qnt",
-      "sha256": "34439242440a19a80355c15dd2c32ca40a139f592230ba5263791d8040791be9",
+      "sha256": "6736ca28890e9a2e0f4efc645e351afc0592195933c606bbd5601cc18558b2ef",
       "sources": [
         "backend/submission-fee/handler.ts",
         "migrations/0139_submission_fee_deposits.sql",
@@ -14189,6 +14212,36 @@
         "weeklyNeedsAgeAndReadingsTest",
         "weeklyNotBeforeSixHoursTest",
         "weeklyResetAtSixHoursTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/submission_fee_report_deposit.qnt",
+      "sha256": "c48b75b8dbfe63e60f5f42c1f98f3df63699176b74561a2457544d4e52bb4693",
+      "sources": [
+        "migrations/0145_security_report_deposits.sql",
+        "src/lib/security-report-deposit.mjs",
+        "workers/submission-fee/core.ts",
+        "workers/submission-fee/report.ts",
+        "workers/submission-fee/store.ts"
+      ],
+      "scenarios": [
+        "keptOnlyOnKeptDueTest",
+        "lateRowStillCountsTest",
+        "noRowRefundedAfterWaitTest",
+        "paidBeforeFinalNothingSentTest",
+        "reclaimIsSentBackTest",
+        "reclaimedDepositIsNotSentForTest",
+        "recordedRowIsNotAnAskTest",
+        "recordedRowRefundedAfterWaitTest",
+        "recordedRowWaitsTest",
+        "refusedDepositRefundedNeverKeptTest",
+        "reorgAfterDecisionKeepsPaidMarkTest",
+        "reorgUnpaysTest",
+        "responseSendsItBackTest",
+        "secondDepositRefundedTest",
+        "shortOrWrongTermsRefundedTest",
+        "undecidedSendsNothingTest",
+        "unknownTokenNeverResolvedTest"
       ]
     },
     {
