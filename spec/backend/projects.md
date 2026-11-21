@@ -57,7 +57,11 @@ The current revision is the latest appended one. Discovered by proof: read
 by its number (`p.revision - 1`), a project whose history is not numbered
 made the law that a consent-only save records `ConsentChanged` false for
 some values of its parameters; every reachable project keeps
-`alwaysHistoryNumbered`, where the two readings agree.
+`alwaysHistoryNumbered`, where the two readings agree. The app reads the
+same entry: the store takes the last appended revision and refuses unless its
+number is the next one (`apps/backend/src/projects/store/store.vibe`), and the
+registry triggers keep the project row at that appended revision
+(`migrations/0019_project_registry.sql`).
 
 ```quint
 import closureConsent as C from "./closureConsent"
@@ -450,18 +454,18 @@ already-removed retry, so a restriction's retired revision is never taken for
 a removal and reinstatement lists the project again from the revision the
 restriction opened on (Slop development `da358d8a9`). History, earned
 Points, private cases and funded obligations are kept.
-A project the owner removed or an administrator delisted carries the
-Retired tier. Discovered by proof: without the tier, the law that a removal
-is never restored was false for a project whose retirement and tier
-disagree; every reachable project keeps `alwaysRetirementConsistent`, where
-both readings agree.
+A removal or delisting is never restored: the restriction's reinstatement
+leaves such a project exactly as it was, at its revision and its tier.
+Discovered by proof: stated with the Retired tier as its conclusion, the law
+was false for a project whose retirement and tier disagree; every reachable
+project keeps `alwaysRetirementConsistent`, so its unchanged tier is Retired.
 
 ```quint
 type Removal = { authority: AuthorityRead, expectedRevision: int }
 pure def canRemove(p: Project, by: int, removal: Removal): bool =
   p.revision > 0 and currentAuthority(p, by, removal.authority) and
   (p.retirement != NotRetired or removal.expectedRevision == p.revision)
-pure def ownerRetired(p: Project): bool = (p.retirement == OwnerRemoved or p.retirement == AdminDelisted) and p.tier == Retired
+pure def ownerRetired(p: Project): bool = p.retirement == OwnerRemoved or p.retirement == AdminDelisted
 pure def remove(p: Project, by: int, removal: Removal): Project =
   if (ownerRetired(p)) p else { ...revised(Removed, by, Paused, Retired, p), retirement: OwnerRemoved }
 pure val removalValues = Set({ authority: owner1, expectedRevision: 2 }, { authority: owner1, expectedRevision: 3 },
@@ -653,7 +657,7 @@ pure def withCommunityRestored(restore: bool, p: Project): Project =
 pure def lawRestorationIsPausedCommunity(p: Project): bool =
   restorable(p) implies (withCommunityRestored(true, p).status == Paused and withCommunityRestored(true, p).tier == Community)
 pure def lawRemovedNeverRestored(p: Project): bool =
-  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
+  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == p.tier)
 pure def stepNoRegistryEventUnretires(before: Project, via: str, after: Project): bool =
   (before.retirement != NotRetired and after.retirement == NotRetired) implies
     (via == "adminRevise" and before.retirement != RestrictionRetired)

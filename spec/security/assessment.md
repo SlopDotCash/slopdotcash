@@ -97,8 +97,12 @@ row and reads the report from the GitHub advisory (the claim `INSERT … WHERE
 The shell passes the case's own stored receipt source, never a request's
 claim; a case with a Slop intake still needs screening. Such a case has no
 screening record, so no later report version reaches its assessment
-(`received`). Discovered by conformance: the model let a case qualified at
-receipt observe a second version, which no screening record can supply.
+(`received`): the only intake row is written with a Slop-received case in its
+receipt batch (`apps/security/src/receipt/statements.vibe`), and a report
+revision updates only an intake row joined to its case
+(`apps/security/src/intake/revision.vibe`). Discovered by conformance: the
+model let a case qualified at receipt observe a second version, which no
+screening record can supply.
 
 ```quint
 pure def canObserveReceiptQualified(a: Assessment, source: C::ReceiptSource): bool =

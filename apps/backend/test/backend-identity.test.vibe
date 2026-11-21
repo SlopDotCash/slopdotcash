@@ -1,5 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
+import { deploymentOrigins } from "@repo/platform/config"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { type ScheduledOutcome, bundle, database, migrate, scheduled, workerOptions } from "@repo/platform/testing"
 import { type GitHubFake, type ScriptedFailure, githubFake } from "@repo/platform/testing/github"
@@ -8,9 +9,13 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { Miniflare, Request as WebRequest } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
 
-const identity = "https://identity-staging.slop.cash"
+// identity/config.vibe accepts only a tier's canonical identity origin or an enabled loopback origin; the local tier
+// has no canonical origin. The web flows run against the staging tier's own origins, and the loopback handoff
+// test below covers the local return path.
+const staging = deploymentOrigins("staging")
+const identity = staging.identity
 const internal = "https://identity.internal"
-const site = "https://staging.slop.cash"
+const site = staging.site
 const stateKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/u
 const pastCreated = "2026-01-01T00:00:00.000Z"
@@ -266,7 +271,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       ["user 403", failing(userCall, { status: 403 })],
       ["user 429", failing(userCall, { status: 429 })],
       ["user 503", failing(userCall, { status: 503 })],
-      ["user transport", failing(userCall, { disconnect: true })],
+      // The Workers runtime re-sends an idempotent GET once after a dropped connection (the request log shows a
+      // disconnected /user followed by a second /user), so a lasting transport failure drops both sends.
+      ["user transport", (github: GitHubFake) => { github.failNext(userCall, { disconnect: true }); github.failNext(userCall, { disconnect: true }) }],
       ["user malformed", (github: GitHubFake) => github.alterNext(userCall, () => HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe({ id: "7", login: "octo", node_id: "U_octo", created_at: pastCreated })))],
     ]
     const failedSignIns: Array<readonly [string, unknown]> = []
@@ -304,7 +311,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       try call(`${identity}/v1/oauth/start`, { json: { audience: "nobody" }, headers: { "cf-connecting-ip": "198.51.100.4" } }),
       try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://slop.cash" } }),
       try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://evil.test" } }),
-      try call("http://identity-staging.slop.cash/v1/oauth/authorize?flow_id=x&state=y"),
+      try call(`${identity.replace(/^https:/u, "http:")}/v1/oauth/authorize?flow_id=x&state=y`),
       try call(`${identity}/v1/no-such-route`),
     ].map((answer) => [answer.status, answer.body])
     const preflight = try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } })
@@ -353,7 +360,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       unavailable: [503, { error: "service_unavailable", message: "Identity service is temporarily unavailable." }, "60"],
       refusals: [
         [400, { error: "invalid_request", message: "Invalid identity audience" }],
-        [403, { error: "origin_forbidden" }],
+        // Another tier's site and a foreign site are both refused by the per-tier CORS gate (client/identity.vibe
+        // browserOrigins) before the flow handler's own origin check.
+        [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
         [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
         [400, { error: "https_required" }],
         [404, { error: "not_found" }],
