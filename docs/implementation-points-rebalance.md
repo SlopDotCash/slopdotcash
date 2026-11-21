@@ -117,6 +117,14 @@ source and its own follow-up commits remain in the evidence.
 
 The reconcile job uses the production environment and publication lock. It
 binds the complete collection receipt and manifest to the current registry.
+A preview pins the current main commit when reconciliation starts. It can use
+a descendant of the dispatch commit only when both trees resolve the same
+collector and reconciliation modules with identical bytes, dependency and
+runtime configuration and workflow. The job downloads the artifact ID from
+this run's successful collector upload. The receipt records the dispatch,
+collection producer and reconciliation commits. A later main advance
+refuses the preview at the private-read boundary or before reporting.
+Apply keeps its exact dispatch checkout and rebuilds the complete collection.
 Positive awards for work accepted on or after the recipient's existing account
 ban stay held; work accepted before that ban keeps its eligibility. It
 reads the same private project/month protection predicate used by `pointsSql`:

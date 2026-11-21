@@ -118,12 +118,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "476c4585b3180483fa7be92c68bbeb874d4c90cf5e3a03cd580cc36cb05ec06f",
+      "sha256": "2f16cb82a3d5b3e5e30a0af0f4dbd6aac57fc985560f7383548e9c2af5a008d3",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [100, 119, 218, 293],
+      "candidateLines": [103, 122, 221, 330],
       "review": "mapped-abstraction"
     },
     {
@@ -4467,6 +4467,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/implementation-preview-source.ts",
+      "sha256": "3baaad5b068c5bc7f5a93fc1bfd6b792cbf283e41ab93bfd5ed2ae6f7ae79073",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [104],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/inspect-fee-worker-bindings.ts",
       "sha256": "31f2de50f42886755d7aeadb05dcdfa9c6eae7e1c9d691d0d600e38486ee544c",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -4751,13 +4760,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "dbd164a901e509ebc44f04b2132da176d0f5a115f090cf2fccd4ab49d617fc81",
+      "sha256": "c36201655cc241f94e8aa196a495e9666c49528560d5ae400ff536e5da4cbfbf",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 30, 42, 251, 328, 363, 375, 376, 377, 387, 392, 396, 398, 411, 412,
-        428, 434
+        4, 31, 43, 252, 357, 393, 408, 409, 410, 420, 425, 429, 431, 444, 445,
+        461, 467
       ],
       "review": "mapped-abstraction"
     },
@@ -15506,11 +15515,12 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "3f56bba679c5b19053cf9c058ec65460aac364003883414c55a4f965a733ca95",
+      "sha256": "b33cf701a86d41da87a00652de1365e354fe1fd0378eb15753a25ee2b2fbb6a8",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
         "scripts/generate-points.ts",
+        "scripts/implementation-preview-source.ts",
         "scripts/points-correction-registry.ts",
         "scripts/points-protection-sql.ts",
         "scripts/prepare-implementation-corrections.ts",

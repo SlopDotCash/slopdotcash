@@ -3,6 +3,7 @@
 // @source scripts/collect-implementation-corrections.ts
 // @source scripts/points-correction-registry.ts
 // @source scripts/prepare-implementation-corrections.ts
+// @source scripts/implementation-preview-source.ts
 // @source scripts/restore-implementation-preview.py
 // @source scripts/verify-reused-implementation-preview.ts
 // @source scripts/points-protection-sql.ts
@@ -14,6 +15,7 @@
 // @evidence workers/slopbot/value-original-repair.test.ts
 // @evidence scripts/points-correction-registry.test.ts
 // @evidence scripts/prepare-implementation-corrections.test.ts
+// @evidence scripts/implementation-preview-source.test.ts
 // @evidence scripts/points-protection-sql.test.ts
 // One existing three-Point pool, one manifest, three immutable actor identities,
 // one unrelated award, one correction and at most one later revocation. The

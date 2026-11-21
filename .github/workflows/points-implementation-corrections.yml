@@ -55,6 +55,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    outputs:
+      artifact_id: ${{ steps.retain-campaign.outputs.artifact-id }}
+      producer_sha: ${{ steps.complete-preview.outputs.reused == 'true' && steps.resume-source.outputs.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -249,6 +252,7 @@ jobs:
             scripts/collect-implementation-corrections.ts "${args[@]}" \
             --resume-for-seconds 18000 --request-budget 50000
       - name: Retain public source evidence and collection dispositions
+        id: retain-campaign
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -259,7 +263,7 @@ jobs:
 
   reconcile:
     needs: collect
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.collect.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Share normal production publication's lock, including private eligibility
@@ -274,17 +278,50 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          fetch-depth: 0
+      - name: Pin live main at the start of a preview
+        id: preview-source
+        if: ${{ !inputs.apply }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          preview_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          [[ "$preview_sha" =~ ^[a-f0-9]{40}$ ]]
+          if ! git cat-file -e "$preview_sha^{commit}"; then
+            git fetch --no-tags origin "$preview_sha"
+          fi
+          git merge-base --is-ancestor "$GITHUB_SHA" "$preview_sha"
+          echo "sha=$preview_sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ env.NODE_VERSION }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Verify the preview checkout has the dispatched correction runtime
+        if: ${{ !inputs.apply }}
+        env:
+          APPLY: ${{ inputs.apply }}
+          PREVIEW_SHA: ${{ steps.preview-source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          bun --no-install --no-env-file scripts/implementation-preview-source.ts "$PREVIEW_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$PREVIEW_SHA"
+          git checkout --detach "$PREVIEW_SHA"
       - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Bind this run's successful collector upload
+        env:
+          ARTIFACT_ID: ${{ needs.collect.outputs.artifact_id }}
+          PRODUCER_SHA: ${{ needs.collect.outputs.producer_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$PRODUCER_SHA" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$PRODUCER_SHA" "$GITHUB_SHA"
       - name: Load this run's verified public attribution evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: implementation-campaign-${{ github.sha }}
+          artifact-ids: ${{ needs.collect.outputs.artifact_id }}
+          digest-mismatch: error
           path: ${{ runner.temp }}/implementation-campaign
       - name: Snapshot authoritative project registry
         env:
@@ -296,6 +333,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ github.token }}
           APPLY: ${{ inputs.apply }}
+          PREVIEW_SHA: ${{ steps.preview-source.outputs.sha }}
+          ARTIFACT_ID: ${{ needs.collect.outputs.artifact_id }}
+          PRODUCER_SHA: ${{ needs.collect.outputs.producer_sha }}
         run: |
           set -euo pipefail
           mode=preview

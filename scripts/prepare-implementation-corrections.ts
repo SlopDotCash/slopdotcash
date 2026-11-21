@@ -17,6 +17,7 @@ import {
 import { GitHubClient } from "../workers/slopbot/github";
 import { resolveGitHubToken } from "./generate-leaderboard";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
+import { assertImplementationCorrectionSource } from "./implementation-preview-source";
 import { assertCorrectionRegistry } from "./points-correction-registry";
 import {
   type PointProtectionScope,
@@ -293,15 +294,42 @@ async function main(setPhase: (phase: CorrectionPhase) => void) {
     throw new Error(
       "Historical corrections require the reviewed manual main workflow",
     );
-  const checkout = (await execute("git", ["rev-parse", "HEAD"])).stdout.trim();
+  const dispatch = process.env.GITHUB_SHA ?? "";
+  const preview = process.env.PREVIEW_SHA ?? "";
+  const producer = process.env.PRODUCER_SHA ?? "";
+  const artifact = process.env.ARTIFACT_ID ?? "";
+  const applyInput = process.env.APPLY;
+  if (
+    !/^[a-f0-9]{40}$/u.test(producer) ||
+    !/^[1-9][0-9]*$/u.test(artifact) ||
+    (mode === "preview" && (!preview || applyInput !== "false")) ||
+    (mode === "apply" && (applyInput !== "true" || producer !== dispatch))
+  )
+    throw new Error(
+      "Historical correction run lacks its trusted collection binding",
+    );
+  const head = async () =>
+    (await execute("git", ["rev-parse", "HEAD"])).stdout.trim();
+  const checkout = await head();
+  await execute("git", ["merge-base", "--is-ancestor", producer, dispatch]);
+  if (preview)
+    await execute("git", ["merge-base", "--is-ancestor", dispatch, checkout]);
   const verifyMain = async () => {
     const mainHead = (
       await execute("git", ["ls-remote", "origin", "refs/heads/main"])
     ).stdout.split(/\s/u)[0];
-    if (checkout !== process.env.GITHUB_SHA || mainHead !== checkout)
+    if (checkout !== (await head()))
       throw new Error(
-        "Historical correction source is no longer the exact main head",
+        "Historical correction checkout changed during reconciliation",
       );
+    assertImplementationCorrectionSource({
+      mode,
+      applyInput,
+      dispatch,
+      checkout,
+      current: mainHead,
+      preview,
+    });
   };
   await verifyMain();
   setPhase("collection and registry verification");
@@ -320,6 +348,7 @@ async function main(setPhase: (phase: CorrectionPhase) => void) {
   const journal = await loadPublishedPoints();
   if (!journal)
     throw new Error("Historical correction requires an existing journal");
+  if (mode === "preview") await verifyMain();
   setPhase("private financial protection read");
   const eligibility = await readCorrectionEligibility(manifest, queryPrivateD1);
   setPhase("participation restrictions read");
@@ -335,6 +364,7 @@ async function main(setPhase: (phase: CorrectionPhase) => void) {
   }
   const github = GitHubClient.forToken(await resolveGitHubToken(), fetch);
   const bans = await loadParticipationBans(github, fetch, retainedActors);
+  if (mode === "preview") await verifyMain();
   const banDigest = (value: ReadonlyMap<string, string>) =>
     digest([...value].sort(([left], [right]) => left.localeCompare(right)));
   const verifyCurrentAuthority = async () => {
@@ -363,7 +393,10 @@ async function main(setPhase: (phase: CorrectionPhase) => void) {
   // expose which source is retained because of private settlement state.
   const report = {
     schemaVersion: "1",
-    workflowSha: checkout,
+    workflowSha: dispatch,
+    producerSha: producer,
+    reconcileSha: checkout,
+    collectorArtifactId: artifact,
     manifestDigest: result.manifestDigest,
     beforeDigest: digest(journal),
     afterDigest: digest(result.journal),
