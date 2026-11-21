@@ -1,0 +1,14 @@
+{
+  "origin": "journey \"Story: Assess the current qualified report version once at a time\" / \"A new report version and screening qualification come from the screening record\"",
+  "seed": 1,
+  "trace": [
+    [
+      "first",
+      {
+        "type": "observeQualified",
+        "version": 1,
+        "by": 1
+      }
+    ]
+  ]
+}

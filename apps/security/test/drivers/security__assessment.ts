@@ -149,7 +149,7 @@ function versionObserved(entry: Entry, version: number) {
 
 function qualifiedObserved(entry: Entry, version: number) {
   return changed([
-    db.prepare("UPDATE security_submission_intake SET screening_state='legitimate',screening_finished_at=?3,revision=revision+1 WHERE case_id=?1 AND report_version=?2 AND NOT (review_decision='forward' OR (review_decision IS NULL AND screening_state='legitimate'))").bind(entry.caseId, version, new Date(clock.now()).toISOString()),
+    db.prepare("UPDATE security_submission_intake SET screening_state='legitimate',screening_finished_at=?3,revision=revision+1 WHERE case_id=?1 AND report_version=?2 AND NOT (review_decision IS 'forward' OR (review_decision IS NULL AND screening_state='legitimate'))").bind(entry.caseId, version, new Date(clock.now()).toISOString()),
   ]);
 }
 

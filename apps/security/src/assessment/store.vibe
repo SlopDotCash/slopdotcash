@@ -105,6 +105,7 @@ function assessmentOf(intake: StoredIntake, found: ReadonlyArray<AttemptRow>, au
     attempts: Object.fromEntries(found.map((row) => [String(row.attempt), attemptOf(row, found, exclusions)])),
     count: found.reduce((count, row) => Math.max(count, row.attempt), 0),
     shown: shownOf(found, intake.report_version),
+    received: false,
   }
 }
 
@@ -125,6 +126,7 @@ effect function receiptAssessment(row: CaseRow, found: ReadonlyArray<AttemptRow>
     attempts: Object.fromEntries(found.map((attempt) => [String(attempt.attempt), attemptOf(attempt, found, exclusions)])),
     count: found.reduce((count, attempt) => Math.max(count, attempt.attempt), 0),
     shown: shownOf(found, 1),
+    received: false,
   })
   const source = receiptSourceOf(row)
   if (!canObserveReceiptQualified(received, source)) return received

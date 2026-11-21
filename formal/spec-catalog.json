@@ -18666,7 +18666,7 @@
     },
     {
       "path": "spec/security/assessment.md",
-      "sha256": "8eb2c6c689e0607a6dc3531ee30259fe5a7be81bff43bbf32c1f491faae322b0",
+      "sha256": "713c138e1506540b79fe5b3445d0424ba750a4b07dae7843041463d18a7e02d6",
       "module": "security__assessment",
       "stories": [
         {
@@ -18701,7 +18701,7 @@
         },
         {
           "heading": "Story: Assess the current qualified report version once at a time / A new report version and screening qualification come from the screening record",
-          "line": 62,
+          "line": 64,
           "definitions": [
             "canObserveVersion",
             "observeVersion",
@@ -18720,7 +18720,7 @@
         },
         {
           "heading": "Story: Assess the current qualified report version once at a time / A case received without Slop intake is qualified at its receipt version",
-          "line": 87,
+          "line": 89,
           "definitions": [
             "canObserveReceiptQualified",
             "observeReceiptQualified"
@@ -18728,7 +18728,7 @@
         },
         {
           "heading": "Story: Assess the current qualified report version once at a time / Simulation samples",
-          "line": 104,
+          "line": 109,
           "definitions": [
             "nowMsValues",
             "sourceValues",
@@ -18761,7 +18761,7 @@
         },
         {
           "target": "./screening.md",
-          "line": 64
+          "line": 66
         }
       ]
     },
