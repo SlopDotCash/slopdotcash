@@ -106,6 +106,7 @@ lemma markAttempt_ensures(e: Execution, key: int, prerequisite: bool, by_: strin
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
     assert after.rows[t] == r0.(lastAttempt := e.now, attempts := (r0.attempts + 1));
+    AttemptsAfterMark(e, after, key, t);
     KeysFrame(e, after);
     OthersFrame(e, after);
     JournalsFrame(e, after);
@@ -115,6 +116,7 @@ lemma markAttempt_ensures(e: Execution, key: int, prerequisite: bool, by_: strin
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
   }
 }
 
@@ -159,6 +161,8 @@ lemma submit_ensures(e: Execution, key: int, sendResult: SendResult, admit: bool
         var i :| 0 <= i < |after.rows| && after.rows[i] == r;
         if i != t { assert e.rows[i] in e.rows; }
       }
+      RowsLocal(e, after, after.rows[t]);
+      AttemptsFrame(e, after);
     } else {
       assert after.rows == e.rows;
       KeysFrame(e, after);
@@ -211,6 +215,8 @@ lemma observeFinality_ensures(e: Execution, key: int, landing: Landing, height: 
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -259,6 +265,8 @@ lemma observeJournal_ensures(e: Execution, key: int, journal: settlement__execut
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -304,6 +312,8 @@ lemma complete_ensures(e: Execution, key: int, by_: string)
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -352,6 +362,8 @@ lemma reauthorize_ensures(e: Execution, key: int, sequence: int, tree: Tree, by_
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -396,6 +408,8 @@ lemma observeWrongTotal_ensures(e: Execution, key: int, by_: string)
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -440,6 +454,8 @@ lemma observeReleased_ensures(e: Execution, key: int, receipt: settlement__reser
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -484,6 +500,8 @@ lemma refuseUnadmitted_ensures(e: Execution, key: int, by_: string)
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
     }
+    RowsLocal(e, after, after.rows[t]);
+    AttemptsFrame(e, after);
   }
 }
 
@@ -776,5 +794,66 @@ lemma SubmitShape(e: Execution, key: int, sendResult: SendResult, admit: bool, c
   forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] {
     assert e.rows[i] in e.rows;
     assert !(exists r :: r in e.rows && ((r.key == key) && reorderedBy(e, r, e.rows[i])));
+  }
+}
+
+// Row rules hold after a step that changes at most one row, x, when they hold of x.
+lemma RowsLocal(e: Execution, after: Execution, x: Row)
+  requires alwaysCompleteFinalized(e) && alwaysNoReorderingRevert(e) && alwaysSentNoncesIssued(e) && alwaysLegacyCompleteSettled(e)
+  requires alwaysV2CompleteMeansCursorDone(e) && alwaysHeldTotalWrong(e) && alwaysReleasedUntouched(e) && alwaysClosedUnadmitted(e)
+  requires forall r :: r in after.rows ==> (r in e.rows || r == x)
+  requires after.reverts == e.reverts && after.sends >= e.sends
+  requires (!(x.phase.Complete?) || (x.height > 0)) && !(x.invalidated)
+  requires (x.sentNonce < after.sends) && ((x.sentNonce >= 0) || (x.sentNonce == -1))
+  requires (!(((x.phase.Complete? && !(x.v2)) && !(x.solana))) || (settlement__executorJournal_admittedLegacy(x.journal, x.period, x.root) && settlement__executorJournal_rootSettled(x.journal, x.period)))
+  requires (!((x.v2 && x.phase.Complete?)) || (settlement__executorJournal_rootSettled(x.journal, x.period) && (cursorDone(x) || legacyWon(x))))
+  requires (!((x.phase.WrongTotal? || x.phase.Released?)) || (((x.v2 && settlement__executorJournal_admittedV2(x.journal, x.period, x.root)) && !(settlement__money_equalAmounts(x.heldTotal, x.total))) && (x.heldTotal == v2Total(x.journal, x.period, x.root))))
+  requires (!(x.phase.Released?) || ((x.height > 0) && (|x.journal.leaves| == 0)))
+  requires (!(x.phase.ClosedUnadmitted?) || (((!(x.solana) && !(settlement__executorJournal_admitted(x.journal, x.period))) && !(settlement__executorJournal_hasLiveRoot(x.journal, x.period))) && (x.journal.time >= settlement__monthlyCommitment_windowClosesAt(x.period))))
+  ensures alwaysCompleteFinalized(after) && alwaysNoReorderingRevert(after) && alwaysSentNoncesIssued(after) && alwaysLegacyCompleteSettled(after)
+  ensures alwaysV2CompleteMeansCursorDone(after) && alwaysHeldTotalWrong(after) && alwaysReleasedUntouched(after) && alwaysClosedUnadmitted(after)
+{
+}
+
+// Marking one row's attempt records it in this run at the scheduler clock.
+lemma AttemptsAfterMark(e: Execution, after: Execution, key: int, t: int)
+  requires alwaysAttemptRecorded(e)
+  requires after.now == e.now && after.processed == e.processed
+  requires (after.ordinaryRun == e.ordinaryRun + [key] && after.prerequisiteRun == e.prerequisiteRun)
+    || (after.ordinaryRun == e.ordinaryRun && after.prerequisiteRun == e.prerequisiteRun + [key])
+  requires |after.rows| == |e.rows| && 0 <= t < |e.rows| && e.rows[t].key == key && after.rows[t].key == key && after.rows[t].lastAttempt == e.now
+  requires forall i :: 0 <= i < |e.rows| && i != t ==> (after.rows[i] == e.rows[i] && e.rows[i].key != key)
+  ensures alwaysAttemptRecorded(after)
+{
+  forall r | r in after.rows ensures (!(attemptedThisRun(after, r.key)) || (r.lastAttempt == after.now)) && (r.lastAttempt <= after.now) {
+    var i :| 0 <= i < |after.rows| && after.rows[i] == r;
+    if i != t { assert e.rows[i] in e.rows; }
+  }
+  assert after.rows[t] in after.rows;
+  forall k | k in e.ordinaryRun || k in e.prerequisiteRun ensures hasRow(after, k) {
+    var r :| r in e.rows && r.key == k;
+    var i :| 0 <= i < |e.rows| && e.rows[i] == r;
+    assert after.rows[i] in after.rows;
+  }
+}
+
+// A step that keeps every row's key and attempt time, and the run, keeps attempts recorded; it may mark one attempted
+// row processed.
+lemma AttemptsFrame(e: Execution, after: Execution)
+  requires alwaysAttemptRecorded(e)
+  requires after.now == e.now && after.ordinaryRun == e.ordinaryRun && after.prerequisiteRun == e.prerequisiteRun
+  requires forall k :: k in after.processed ==> (k in e.processed || attemptedThisRun(e, k))
+  requires |after.rows| == |e.rows|
+  requires forall i :: 0 <= i < |e.rows| ==> (after.rows[i].key == e.rows[i].key && after.rows[i].lastAttempt == e.rows[i].lastAttempt)
+  ensures alwaysAttemptRecorded(after)
+{
+  forall r | r in after.rows ensures (!(attemptedThisRun(after, r.key)) || (r.lastAttempt == after.now)) && (r.lastAttempt <= after.now) {
+    var i :| 0 <= i < |after.rows| && after.rows[i] == r;
+    assert e.rows[i] in e.rows;
+  }
+  forall k | k in e.ordinaryRun || k in e.prerequisiteRun ensures hasRow(after, k) {
+    var r :| r in e.rows && r.key == k;
+    var i :| 0 <= i < |e.rows| && e.rows[i] == r;
+    assert after.rows[i] in after.rows;
   }
 }
