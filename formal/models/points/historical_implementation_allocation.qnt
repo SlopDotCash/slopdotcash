@@ -3,6 +3,8 @@
 // @source scripts/collect-implementation-corrections.ts
 // @source scripts/points-correction-registry.ts
 // @source scripts/prepare-implementation-corrections.ts
+// @source scripts/restore-implementation-preview.py
+// @source scripts/verify-reused-implementation-preview.ts
 // @source scripts/points-protection-sql.ts
 // @source scripts/generate-points.ts
 // @source .github/workflows/points-implementation-corrections.yml
@@ -27,6 +29,8 @@
 // safety abstraction, with no provider, scheduler or eventual-success assumption.
 // The workflow sequences these states; its GitHub branch/SHA/environment and
 // artifact trust checks are source-review boundaries outside this state model.
+// The completed-archive preview models their combined authorization outcome
+// and its separation from preparation and atomic import.
 // The census argument represents a single previously recorded, omitted source.
 // A verified earlier acceptance removes its exact SHA from the later pool.
 // An unresolved earlier claim holds only an affected allocation. Concrete
@@ -71,6 +75,11 @@ module historical_implementation_allocation {
       .with("captured", s.history.length()).with("complete", connectedProof)
       .with("eligible", eligible)
   }
+  action previewCompleted(archiveBound: bool, compatible: bool, scopeMatches: bool): bool = all {
+    s.phase == "new", not(Set("pending", "failed").contains(s.census)),
+    archiveBound, compatible, scopeMatches,
+    s' = s.with("phase", "previewed")
+  }
   // A fresh protected row can race the previously successful private read.
   action protect = all { not(s.protected), s' = s.with("protected", true) }
   action atomicImport = all {
@@ -94,6 +103,10 @@ module historical_implementation_allocation {
     { nondet complete = Set(false, true).oneOf()
       nondet eligible = Set(false, true).oneOf()
       prepare(complete, eligible) },
+    { nondet archiveBound = Set(false, true).oneOf()
+      nondet compatible = Set(false, true).oneOf()
+      nondet scopeMatches = Set(false, true).oneOf()
+      previewCompleted(archiveBound, compatible, scopeMatches) },
     requireSupplement(false), requireSupplement(true),
     verifySupplement("verified"), verifySupplement("unavailable"), verifySupplement("failed"),
     protect, atomicImport, revoke, replay, s' = s
@@ -104,6 +117,7 @@ module historical_implementation_allocation {
     s.history.head() == original,
     s.history.indices().forall(i => validAllocation(s.history.nth(i))),
     s.unrelatedAward == 9,
+    (s.phase == "previewed") implies not(s.applied) and s.history == List(original),
     not(laterOwns) implies s.affected and s.census == "verified",
     Set("pending", "failed").contains(s.census) implies s.phase == "new",
     (s.affected and s.census == "unavailable") implies not(s.applied),
@@ -125,6 +139,19 @@ module historical_implementation_allocation {
   run incompleteConnectedProofHeldTest = init.then(prepare(false, true))
     .expect(s.phase == "held" and s.history == List(original) and invariant)
     .then(atomicImport.fail())
+  run completedArchiveReuseIsPreviewOnlyTest = init
+    .then(previewCompleted(true, true, true))
+    .expect(s.phase == "previewed" and invariant)
+    .then(atomicImport.fail())
+  run previewCannotPrepareApplyTest = init
+    .then(previewCompleted(true, true, true))
+    .then(prepare(true, true).fail())
+  run unboundArchiveCannotReuseTest = init
+    .then(previewCompleted(false, true, true).fail())
+  run differentProducerCannotReuseTest = init
+    .then(previewCompleted(true, false, true).fail())
+  run differentScopeCannotReuseTest = init
+    .then(previewCompleted(true, true, false).fail())
   run earlierAcceptanceRemovesLaterOwnershipTest = init
     .then(requireSupplement(true)).then(verifySupplement("verified"))
     .then(prepare(true, true)).then(atomicImport)

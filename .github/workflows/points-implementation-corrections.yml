@@ -72,14 +72,8 @@ jobs:
         env:
           SLOP_API_ORIGIN: https://slop.cash
         run: bun run projects:sync
-      - name: Install the pinned merge evidence collector
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
-          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
-          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
-      - name: Restore only trusted main-history evidence
+      - name: Verify the resume source is trusted main-history evidence
+        id: resume-source
         env:
           GH_TOKEN: ${{ github.token }}
           RESUME_RUN: ${{ inputs.resume_run }}
@@ -108,10 +102,111 @@ jobs:
           process.stdout.write(run.head_sha);
           NODE
             )"
-            gh run download "$RESUME_RUN" --repo "$GITHUB_REPOSITORY" \
-              --name "implementation-campaign-$resume_sha" --dir "$RUNNER_TEMP/implementation-campaign"
+            echo "sha=$resume_sha" >> "$GITHUB_OUTPUT"
           fi
+      - name: Reuse a compatible completed collection for preview
+        id: complete-preview
+        if: inputs.resume_run != '' && !inputs.apply && inputs.month == '' && inputs.candidate_month == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN: ${{ inputs.resume_run }}
+          RESUME_SHA: ${{ steps.resume-source.outputs.sha }}
+          PROJECT: ${{ inputs.project }}
+          BEFORE: ${{ inputs.before }}
+          OCTOBER_ORIGINAL_CREDIT: ${{ inputs.october_original_credit }}
+        run: |
+          set -euo pipefail
+          resume_status="$(jq -r '.status' "$RUNNER_TEMP/resume-run.json")"
+          resume_attempt="$(jq -r '.run_attempt' "$RUNNER_TEMP/resume-run.json")"
+          if [[ "$resume_status" != completed || ! "$resume_attempt" =~ ^[1-9][0-9]*$ ]]; then
+            exit 0
+          fi
+          # The donor's reconciliation may have refused after its independently
+          # successful collection. Bind the archive to that attempt's upload.
+          if ! upload_window="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN/attempts/$resume_attempt/jobs?per_page=100" \
+            | jq -er '
+              [.jobs[] | select(.name == "collect" and .conclusion == "success"
+                and any(.steps[]; .name == "Collect and verify complete historical attribution" and .conclusion == "success"))
+                | .steps[] | select(.name == "Retain public source evidence and collection dispositions" and .conclusion == "success")]
+              | if length != 1 then error("Expected one completed collector upload")
+                else .[0] | [.started_at, .completed_at] | @tsv end')"; then
+            exit 0
+          fi
+          IFS=$'\t' read -r upload_start upload_end <<< "$upload_window"
+          temp="$(mktemp -d "$RUNNER_TEMP/completed-campaign.XXXXXX")"
+          trap 'rm -rf "$temp"' EXIT
+          if ! bun --no-env-file build --target=bun --packages=external --outdir="$temp/bundle" --metafile="$temp/modules.json" \
+            scripts/collect-implementation-corrections.ts scripts/prepare-implementation-corrections.ts \
+            scripts/install-value-merge-git.ts scripts/sync-project-registry.mjs >/dev/null; then
+            exit 0
+          fi
+          jq -er '.inputs | keys[]' "$temp/modules.json" > "$temp/modules.txt"
+          mapfile -t modules < "$temp/modules.txt"
+          if [[ ${#modules[@]} -eq 0 ]] \
+            || ! git ls-files --error-unmatch -- "${modules[@]}" >/dev/null \
+            || ! git diff --quiet "$RESUME_SHA" "$GITHUB_SHA" -- "${modules[@]}" bun.lock bunfig.toml package.json tsconfig.json; then
+            exit 0
+          fi
+          producer_recipe() {
+            git show "$1:.github/workflows/points-implementation-corrections.yml" \
+              | sed -n \
+                -e '/^  \(CI\|BUN_VERSION\|NODE_VERSION\|VITE_SLOP_ENVIRONMENT\):/p' \
+                -e '/^  collect:$/,/^      - name: Snapshot authoritative project registry$/p' \
+                -e '/^      - name: Snapshot authoritative project registry$/,/^      - name:/p' \
+                -e '/^      - name: Install the pinned merge evidence collector$/,/^      - name:/p' \
+                -e '/^      - name: Collect and verify complete historical attribution$/,/^      - name:/p' \
+              | sed '/^      - name: /d; /^        if: steps.complete-preview.outputs.reused/d'
+          }
+          donor_recipe="$(producer_recipe "$RESUME_SHA")"
+          current_recipe="$(producer_recipe "$GITHUB_SHA")"
+          if [[ -z "$donor_recipe" || "$donor_recipe" != "$current_recipe" ]]; then
+            exit 0
+          fi
+          if ! archive_identity="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN/artifacts?per_page=100" \
+            | jq -er --arg name "implementation-campaign-$RESUME_SHA" --arg run "$RESUME_RUN" --arg sha "$RESUME_SHA" --arg from "$upload_start" --arg to "$upload_end" '
+              [.artifacts[] | select(.name == $name and .expired == false
+                and (.workflow_run.id | tostring) == $run and .workflow_run.head_sha == $sha
+                and .created_at >= $from and .created_at <= $to
+                and (.digest | type == "string") and (.digest | test("^sha256:[a-f0-9]{64}$")))]
+              | if length != 1 then error("Expected one retained campaign")
+                else .[0] | [.id, .size_in_bytes, .digest] | @tsv end')"; then
+            exit 0
+          fi
+          IFS=$'\t' read -r artifact_id archive_size archive_digest <<< "$archive_identity"
+          [[ "$artifact_id" =~ ^[1-9][0-9]*$ && "$archive_size" =~ ^[1-9][0-9]*$ ]]
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$temp/campaign.zip" \
+            || ! python3 scripts/restore-implementation-preview.py "$temp/campaign.zip" "$archive_size" "${archive_digest#sha256:}" "$temp/evidence"; then
+            exit 0
+          fi
+          if manifest_digest="$(bun --no-env-file scripts/verify-reused-implementation-preview.ts \
+            "$temp/evidence" "$PROJECT" "$BEFORE" "$OCTOBER_ORIGINAL_CREDIT")" \
+            && [[ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN" --jq '.run_attempt')" == "$resume_attempt" ]]; then
+            [[ "$manifest_digest" =~ ^[a-f0-9]{64}$ ]]
+            rmdir "$RUNNER_TEMP/implementation-campaign"
+            mv "$temp/evidence" "$RUNNER_TEMP/implementation-campaign"
+            echo "Verified completed preview inputs from collector $RESUME_RUN artifact $artifact_id at $manifest_digest"
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore the checkpoint for normal reconstruction
+        if: inputs.resume_run != '' && steps.complete-preview.outputs.reused != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN: ${{ inputs.resume_run }}
+          RESUME_SHA: ${{ steps.resume-source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh run download "$RESUME_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "implementation-campaign-$RESUME_SHA" --dir "$RUNNER_TEMP/implementation-campaign"
+      - name: Install the pinned merge evidence collector
+        if: steps.complete-preview.outputs.reused != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
       - name: Collect and verify complete historical attribution
+        if: steps.complete-preview.outputs.reused != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PROJECT: ${{ inputs.project }}

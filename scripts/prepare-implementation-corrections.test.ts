@@ -5,7 +5,11 @@ import {
   emptyPointsJournal,
   pointKey,
 } from "../src/lib/points";
-import type { PointsImplementationCorrectionManifest } from "../src/lib/points-implementation-corrections";
+import {
+  createPointsCorrectionBaseline,
+  type PointsImplementationCorrectionManifest,
+} from "../src/lib/points-implementation-corrections";
+import { inventoryCorrectionPools } from "./collect-implementation-corrections";
 import {
   assertCorrectionPublication,
   correctionBatchRecorded,
@@ -15,6 +19,7 @@ import {
   recordCorrection,
   verifyCorrectionCollection,
 } from "./prepare-implementation-corrections";
+import { verifyReusedImplementationPreview } from "./verify-reused-implementation-preview";
 
 function manifest(
   periods = ["2026-09", "2026-10", "2026-10"],
@@ -105,6 +110,101 @@ test("only the current registry and exact complete collection authorize apply", 
       false,
     ),
   ).toThrow();
+});
+
+test("a completed reused preview must bind the frozen census and current scope", () => {
+  const through = "2026-11-13T00:00:00.000Z";
+  const before = "2026-11-01T00:00:00.000Z";
+  const actor = { id: "actor_1234", login: "author" };
+  const award = {
+    key: pointKey("eliza", actor.id, "merged-pull-request", "source_1"),
+    actor,
+    category: "merged-pull-request" as const,
+    projectId: "eliza",
+    sourceId: "source_1",
+    sourceUrl: "https://github.com/elizaOS/eliza/pull/1",
+    occurredAt: "2026-10-01T00:00:00.000Z",
+    workUnitId: "history_source_1",
+    amount: 30,
+    provisional: true,
+  };
+  const empty = emptyPointsJournal(through);
+  const frozen = appendPointAwards(
+    empty,
+    [award],
+    "b".repeat(64),
+    "slop-score-v2",
+    through,
+  );
+  const baseline = createPointsCorrectionBaseline(frozen);
+  const registry = { projects: [{ id: "eliza", status: "active" }] };
+  const hash = (value: unknown) =>
+    createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const registryDigest = hash(registry);
+  const complete = {
+    ...manifest(),
+    baseline,
+    candidates: inventoryCorrectionPools(frozen, ["eliza"]).map(
+      ({ candidate }) => candidate,
+    ),
+  };
+  const receipt = {
+    schemaVersion: "slop-implementation-correction-collection-v1",
+    projects: ["eliza"],
+    before,
+    through,
+    registryDigest,
+    manifestDigest: hash(complete),
+    ownershipComplete: true,
+    missingMonths: [],
+    selectedPools: 1,
+    totalPositivePools: 1,
+    completeProofs: 0,
+    heldProofs: 1,
+  };
+  const input = {
+    campaign: {
+      schemaVersion: "1",
+      projects: ["eliza"],
+      before,
+      through,
+      baseline,
+      registryDigest,
+      octoberOriginalCredit: true,
+    },
+    frozen,
+    current: frozen,
+    manifest: complete,
+    receipt,
+    registry,
+    project: "eliza",
+    before,
+    octoberOriginalCredit: true,
+  };
+  expect(verifyReusedImplementationPreview(input)).toBe(receipt.manifestDigest);
+  for (const partial of [
+    { project: "asi" },
+    { before: "2026-10-01T00:00:00.000Z" },
+    { octoberOriginalCredit: false },
+    { current: empty },
+    { receipt: { ...receipt, missingMonths: ["2026-10"] } },
+    { receipt: { ...receipt, ownershipComplete: false } },
+    { receipt: { ...receipt, selectedPools: 0 } },
+    { receipt: { ...receipt, manifestDigest: "f".repeat(64) } },
+  ])
+    expect(() =>
+      verifyReusedImplementationPreview({ ...input, ...partial }),
+    ).toThrow();
+
+  const changed = structuredClone(complete);
+  changed.candidates[0].sourceId = "source_2";
+  expect(() =>
+    verifyReusedImplementationPreview({
+      ...input,
+      manifest: changed,
+      receipt: { ...receipt, manifestDigest: hash(changed) },
+    }),
+  ).toThrow("pool inventory");
 });
 
 test("private preflight maps each pool from an exact project-period row", () => {

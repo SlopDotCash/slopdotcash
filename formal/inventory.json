@@ -118,12 +118,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
+      "sha256": "866940f0053d10db26a33df7fdc2f09ce955f8bd150eb80ba5784f3898d6eb7f",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [78, 106, 184],
+      "candidateLines": [100, 119, 204, 279],
       "review": "mapped-abstraction"
     },
     {
@@ -5187,6 +5187,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/restore-implementation-preview.py",
+      "sha256": "2659b0032e5a9b27fcd1dd3b010ac137a404cb962a728a1cd51685d70ea8c89a",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/restore-leaderboard-discussions.py",
       "sha256": "1d1b7a6e3815a85212f775653c1cf8cc6283d3a0dc15448108319c00e2d83926",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
@@ -5520,6 +5529,15 @@
       "sha256": "9cd34dae0e4474c7e09c82a88bbad542eb7f0275add0cbcfabb0b44fcfc09a9f",
       "models": ["formal/models/api/identity_schedule_readback.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/verify-reused-implementation-preview.ts",
+      "sha256": "9da639b18762564580597a8db79096a1a33c9ca5dc73232fd4b422cd8d22efc7",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [117],
       "review": "mapped-abstraction"
     },
     {
@@ -15488,7 +15506,7 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "f21ab7c9bd61f66e2a749a445747bd28184683f2c3da5c329caf03a0455d4214",
+      "sha256": "3f56bba679c5b19053cf9c058ec65460aac364003883414c55a4f965a733ca95",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
@@ -15496,14 +15514,20 @@
         "scripts/points-correction-registry.ts",
         "scripts/points-protection-sql.ts",
         "scripts/prepare-implementation-corrections.ts",
+        "scripts/restore-implementation-preview.py",
+        "scripts/verify-reused-implementation-preview.ts",
         "src/lib/original-contributor-repair.ts",
         "src/lib/points-implementation-corrections.ts"
       ],
       "scenarios": [
         "changedPredecessorRefusesImportTest",
+        "completedArchiveReuseIsPreviewOnlyTest",
+        "differentProducerCannotReuseTest",
+        "differentScopeCannotReuseTest",
         "earlierAcceptanceRemovesLaterOwnershipTest",
         "incompleteConnectedProofHeldTest",
         "invalidSupplementCannotPrepareTest",
+        "previewCannotPrepareApplyTest",
         "privateProtectedPoolHeldTest",
         "protectionBypassNegativeControlTest",
         "protectionRaceBeforeAtomicImportTest",
@@ -15511,6 +15535,7 @@
         "replayResurrectionNegativeControlTest",
         "revaluationNegativeControlTest",
         "unavailableSupplementAllowsUnrelatedProofTest",
+        "unboundArchiveCannotReuseTest",
         "unchangedPoolAndAppendOnlyTest",
         "unresolvedEarlierAcceptanceHoldsAffectedPoolTest"
       ]

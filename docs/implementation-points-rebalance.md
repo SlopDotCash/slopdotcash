@@ -83,6 +83,11 @@ with `resume_run` from this repository's same manual workflow on main. The
 source commit must be the current main commit or one of its ancestors. The
 current collector reconstructs cached bytes and proofs again, so a reviewed
 collector repair can retain compatible source evidence from an earlier run.
+A full read-only preview can reuse a manifest from an official successful
+collector attempt after checking its project, cutoff, original-credit rule,
+complete census receipt, frozen journal, inventory and current registry.
+Incomplete or incompatible archives fall back to the normal reconstruction.
+An apply always rebuilds the evidence.
 The frozen journal prefix and campaign scope must still match. If another
 project changes the registry, the collector reconstructs the frozen registry
 from immutable revisions and verifies its full digest. It also checks that
