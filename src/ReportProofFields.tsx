@@ -61,6 +61,7 @@ function FilePickerButton({
       <input
         accept={accept}
         aria-hidden="true"
+        disabled={disabled}
         hidden
         onChange={(event: ChangeEvent<HTMLInputElement>) => {
           const file = event.target.files?.[0];

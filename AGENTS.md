@@ -418,8 +418,8 @@ diagnostic and never changes score, rank, share, or payment.
 ## Private security reporting
 
 Owner decision, 27 October 2026: all registered projects retain confidential
-reporting. Umia Protocol has a paid security bounty (and, from 28 October
-2026, so does Slop itself; see below). The Umia bounty's
+reporting. Umia Protocol has a paid security bounty (Slop's own program is
+described below). The Umia bounty's
 $10,000 gross award per accepted critical loss-of-funds finding splits $7,500
 to the first qualifying reporter and $2,500 to slop.cash. The maintainer reviews
 and awards each finding. The offer is pledged with funding after approval,
@@ -427,18 +427,24 @@ not an upfront-funded vault; reserve and pay only after verified funding. Slop f
 bounty settlement; reimbursement by Umia is off chain. Publish project terms
 only through immutable D1 revisions. Preserve prior cases and funded awards.
 
-Owner decision, 28 October 2026: slop.cash also offers $10,000 per accepted
-critical loss-of-funds finding (theft or permanent freezing of funds) in its own
-contracts deployed to mainnet from `contracts/evm/src` and
-`contracts/solana/programs`. Third-party contracts, off-chain or frontend-only
-issues, testnet-only deployments and known issues are out of scope. Slop is the
-sponsor, so the first qualifying reporter of this Slop contract bounty receives
-the full award with no Slop share (owner decision confirmed 28 October 2026).
-Only the platform project (`slopdotcash`) may publish that full-award split. It
-binds no 75/25 bounty vault, and a full-award case never reserves or pays
-through one. No full-award payment path exists yet: an approved full-award case
-is not payable until one is approved and released. Report it through the same private Slop intake;
-never a public issue. See PRD section 8.
+Operator decision, 20 November 2026, replacing the offer of 28 October 2026:
+Slop's own security program opens only if the Slop Cash decision market of
+24 November 2026 passes the option "Fund the pool and a Slop security
+program", which moves 10,000 USDG from the treasury to the Slop Cash S.P. It
+pays $5,000 per accepted critical finding, entirely to the first qualifying
+reporter with no Slop share, at most two awards, and closes after 12 months or
+its second award; unawarded funds return to the treasury. In scope: a loss of
+funds from a Slop vault, a contributor payout, or Slop's other payout
+contracts (project escrow, submission deposits, the referral distributor),
+including the off-chain Slop services that compute, record or send those
+payouts. Out of scope: third-party contracts, frontend-only defects, testnet
+and local deployments, known or previously reported findings, reports filed
+before the program opens, and losses needing compromised privileged keys or
+intended owner actions. The S.P. confirms each finding and pays an approved
+award directly, publishing the transaction; no Slop vault or payment rail is
+involved. Until the program opens, and if the option does not pass, no paid
+award is offered. Report through the same private Slop intake; never a public
+issue. See PRD section 8.
 
 The canonical skills direct researchers to the authenticated Slop interface.
 Accept and retain the report privately before optional GitHub forwarding;
