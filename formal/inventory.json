@@ -21,7 +21,7 @@
     },
     {
       "path": ".github/workflows/daily-collection.yml",
-      "sha256": "aba6f909a80280844881291fc37ac9a783e9bc2e52f040cc118a09710327f22b",
+      "sha256": "5626d9829bedba484c00dc0cbe0f7852e71a205303a673f4eb867837870d80d3",
       "models": ["formal/models/release/daily_collection.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -15964,7 +15964,7 @@
     },
     {
       "path": "formal/models/release/daily_collection.qnt",
-      "sha256": "5f91b952854fb62b5b8af6f655bbaeaec5f224ce5cc07f98e402575115f13dcd",
+      "sha256": "3653f3afbd09ba45c18818ac1abc77836f9568f49884a1dfa919660fd92649fc",
       "sources": [
         ".github/workflows/daily-collection.yml",
         ".github/workflows/deploy.yml",
