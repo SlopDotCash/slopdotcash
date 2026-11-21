@@ -1212,6 +1212,111 @@ test("an owner's maintainer share starts with the next UTC month and its history
   );
 });
 
+test("a new project cannot submit a maintainer share history", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  const reward = initial.reward as ProjectDefinition["reward"];
+  // The history would give every month through 2099 a 30% share while the
+  // public line says the share ends next month, and no owner revision could
+  // remove it.
+  const forged = await call("POST", "projects", OWNER, {
+    manifest: {
+      ...initial,
+      reward: {
+        ...reward,
+        maintainerShareHistory: [
+          { throughCycle: "2099-12", basisPoints: 3000 },
+        ],
+      },
+    },
+  });
+  expect(forged.status).toBe(422);
+  expect(forged.body.error).toBe("invalid_manifest");
+  expect(await persistence.getProject("open-registry")).toBeNull();
+  // A share set at creation is still accepted and has no history.
+  const shared = await call("POST", "projects", OWNER, {
+    manifest: {
+      ...initial,
+      reward: { ...reward, maintainerShare: 2000 },
+    },
+  });
+  expect(shared.status).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  expect(created.manifest.reward.maintainerShare).toBe(2000);
+  expect(created.manifest.reward.maintainerShareHistory).toBeUndefined();
+  expect(maintainerShareBasisPoints(created.manifest, "2026-10")).toBe(2000);
+});
+
+test("a stored application cannot publish a maintainer share history", async () => {
+  const { persistence, sqlite, call } = registry();
+  // Submission stored the verified reward asset with the manifest.
+  const initial = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+    {
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+        chainId: "1",
+        cluster: null,
+        verifiedAt: "2026-10-10T00:00:00.000Z",
+      },
+    },
+  );
+  const reward = {
+    ...(initial.reward as ProjectDefinition["reward"]),
+    maintainerShare: 2000,
+  };
+  const store = sqlite.query(
+    `INSERT INTO project_applications
+     (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,
+      applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+     VALUES('app_storedsharehistory','open-registry','example/open-registry',?,?,
+      'Merged pull requests',?,'owner',?,'pending','pending')`,
+  );
+  store.run(
+    JSON.stringify({
+      ...initial,
+      reward: {
+        ...reward,
+        maintainerShareHistory: [
+          { throughCycle: "2099-12", basisPoints: 3000 },
+        ],
+      },
+    }),
+    "a".repeat(64),
+    OWNER,
+    NOW,
+  );
+  const publish = () =>
+    call(
+      "POST",
+      "project-applications/app_storedsharehistory/publish",
+      OWNER,
+      {},
+    );
+  const forged = await publish();
+  expect(forged.status).toBe(422);
+  expect(forged.body.error).toBe("invalid_manifest");
+  expect(await persistence.getProject("open-registry")).toBeNull();
+  expect(
+    await persistence.getApplication("app_storedsharehistory"),
+  ).toMatchObject({ status: "pending" });
+  // The same stored application publishes once it carries only the share.
+  sqlite
+    .query("UPDATE project_applications SET manifest=? WHERE id=?")
+    .run(JSON.stringify({ ...initial, reward }), "app_storedsharehistory");
+  expect((await publish()).status).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  expect(created.manifest.reward.maintainerShare).toBe(2000);
+  expect(created.manifest.reward.maintainerShareHistory).toBeUndefined();
+});
+
 test("honor-system changes require current authority and cannot rewrite reward history", async () => {
   const { persistence, call, create, state } = registry();
   await create("open-registry", "example/open-registry");
