@@ -30,7 +30,7 @@ export function StatusIcon({ icon, className, ...props }: StatusIconProps) {
 }
 
 export type StatusProps = Omit<ComponentProps<"span">, "children"> & {
-  /** The state as its owning spec presents it: `paymentPresentation(…)`, `readPresentation(…)` and the others of `gen/ui__status.ts`. */
+  /** The state as its owning spec presents it: `readPresentation(…)` and the others of `gen/ui__status.ts`, or `paymentPresentation(…)` of the projections. */
   presentation: Presentation;
 };
 

@@ -55,3 +55,69 @@ pure def lawPlainColumnIsSilent(column: Column): bool =
 pure val columnValues = Set({ sortable: true, order: Unsorted }, { sortable: true, order: Descending },
   { sortable: false, order: Unsorted }, { sortable: false, order: Ascending })
 ```
+
+## Story: Move through links, details and dialogs by keyboard
+
+### The keyboard reaches a row of links in the order shown, and one navigation tab at most is current
+
+`NavTabs` and the logins of a `Leaderboard` are links. Tab moves to the next
+in the order shown and Shift+Tab to the one before; past either end, focus
+leaves the row. They are links, not an ARIA tab list, so arrow keys do
+nothing. A navigation tab is current when it leads to the page shown, so two
+tabs to different pages are never both current. PRD section 7 keeps keyboard
+navigation; development's `SectionNav` in `src/Presentation.tsx` marks the
+page shown with `aria-current="page"` (commit 7acb6d13c).
+
+```quint
+pure def nextInRow(at: int, links: int, forward: bool): int =
+  if (forward) (if (at <= links) at + 1 else at) else (if (at > 0) at - 1 else at)
+pure def tabCurrent(tab: str, shown: str): bool = tab == shown
+pure def lawForwardThenBackReturns(at: int, links: int): bool =
+  at >= 0 and at <= links implies nextInRow(nextInRow(at, links, true), links, false) == at
+pure def lawRowStaysInOrder(at: int, links: int, forward: bool): bool =
+  at >= 0 and at <= links + 1 implies nextInRow(at, links, forward) >= 0 and nextInRow(at, links, forward) <= links + 1
+pure def lawOneTabIsCurrent(tab: str, other: str, shown: str): bool =
+  tab != other implies not(tabCurrent(tab, shown) and tabCurrent(other, shown))
+pure val atValues = Set(0, 1, 2, 3, 4)
+pure val linksValues = Set(0, 1, 3)
+pure val tabValues = Set("overview", "rewards")
+pure val otherValues = Set("overview", "history")
+pure val shownValues = Set("overview", "history")
+```
+
+### A disclosure opens and closes from its trigger and never hides what a decision rests on
+
+Enter or Space on the trigger opens a closed `Disclosure` and closes an open
+one, and the trigger says which it is through `aria-expanded`. It holds only
+optional detail, such as earlier cycles: a required action, consent, an
+amount, a restriction or evidence stays visible, as "Preserve the user
+interface" in development's `CONTRIBUTING.md` requires (commit 7acb6d13c).
+
+```quint
+type Detail = RequiredAction | Consent | Amount | Restriction | Evidence | OptionalDetail
+pure def mayHide(detail: Detail): bool = detail == OptionalDetail
+pure def toggled(opened: bool): bool = not(opened)
+pure def lawToggleTwiceRestores(opened: bool): bool = toggled(toggled(opened)) == opened
+pure def lawDecisionsStayVisible(detail: Detail): bool = detail != OptionalDetail implies not(mayHide(detail))
+```
+
+### A dialog takes focus when it opens, keeps it inside, and gives it back to its trigger when dismissed
+
+PRD section 7 requires keyboard and screen-reader use. A `Dialog` opened
+from its trigger moves focus inside it, and Tab keeps focus
+inside while it is open. Escape and its close button dismiss it, and focus
+returns to the trigger that opened it. `ConfirmDialog` adds
+[confirmation](./confirmation.md) to the same focus behavior.
+
+```quint
+type DialogFocus = OnTrigger | InDialog
+type DialogKey = OpenKey | TabKey | EscapeKey | CloseButton
+pure def focusAfter(focus: DialogFocus, press: DialogKey): DialogFocus =
+  if (press == OpenKey) InDialog
+  else if (press == EscapeKey or press == CloseButton) OnTrigger
+  else focus
+pure def lawOpenTakesFocus(focus: DialogFocus): bool = focusAfter(focus, OpenKey) == InDialog
+pure def lawTabStaysInside(focus: DialogFocus): bool = focus == InDialog implies focusAfter(focus, TabKey) == InDialog
+pure def lawDismissReturnsFocus(focus: DialogFocus, press: DialogKey): bool =
+  (press == EscapeKey or press == CloseButton) implies focusAfter(focus, press) == OnTrigger
+```
