@@ -1978,6 +1978,81 @@ for (const scenario of [
   });
 }
 
+const screenshotsPolicy = evidencePolicy.replace(
+  "UI video:",
+  "- `UI screenshots:` Show the same screen and state before and after.\nUI video:",
+);
+
+for (const { name, guidance, body, missing } of [
+  {
+    name: "UI video without required screenshots",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission,
+    missing: true,
+  },
+  {
+    name: "UI screenshots described without an artifact",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission.replace(
+      "- UI video:",
+      "- UI screenshots: Both screenshots were taken under the same conditions.\n- UI video:",
+    ),
+    missing: true,
+  },
+  {
+    name: "before and after screenshots linked",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission.replace(
+      "- UI video:",
+      "- UI screenshots: ![Before](https://github.com/user-attachments/assets/6c6bc67c-921a-4c12-87da-0ae4be2442f7) ![After](https://github.com/user-attachments/assets/07dae3da-f41e-4a82-a983-c2d2ae3b6f57)\n- UI video:",
+    ),
+    missing: false,
+  },
+  {
+    name: "non-UI change under a screenshots policy",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission
+      .replace("Change types: ui, non-ui", "Change types: non-ui")
+      .replace(/^- UI video:.*$/mu, ""),
+    missing: false,
+  },
+  {
+    name: "screenshots mentioned only in a guide example",
+    guidance: `${evidencePolicy}\n## Example\n\`\`\`markdown\n- UI screenshots: Before and after images.\n\`\`\``,
+    body: evidencedSubmission,
+    missing: false,
+  },
+]) {
+  test(`Slop screenshot evidence handles ${name}`, async () => {
+    await closedItem(async (run) => {
+      run.guidance(guidance);
+      run.closureEnabled(false);
+      run.evidenceClosureEnabled(true);
+      run.model("none", 0.98);
+      run.submissionBody(body);
+
+      const outcome = await run.review();
+      if (missing) {
+        expect(outcome).toBe("closed (missing_evidence)");
+        expect(run.comments.join("\n")).toContain("results: UI screenshots.");
+        await run.review();
+        expect(run.sql(PENALTY)).toEqual([
+          {
+            category: "missing_evidence",
+            debit_thirds: 1,
+            moderator_review: 0,
+            reversal: null,
+          },
+        ]);
+      } else {
+        expect(outcome).not.toStartWith("closed");
+        expect(run.currentState()).toBe("open");
+        expect(run.sql(PENALTY)).toEqual([]);
+      }
+    });
+  });
+}
+
 for (const category of ["busywork", "gaming"] as const) {
   for (const guard of [
     "none",
