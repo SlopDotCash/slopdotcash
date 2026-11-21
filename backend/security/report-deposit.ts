@@ -495,6 +495,22 @@ async function startReleasedWork(
     )
     .bind(RELEASE_LIMIT)
     .all<{ id: string; project_id: string; reporter_github_id: string }>();
+  // An older-style link that GitHub has not confirmed yet has no analysis to
+  // start, but its owner's notice of the claim waited too.
+  const claimed = await deps.db
+    .prepare(
+      `SELECT c.id, c.project_id FROM security_report_deposits d
+         JOIN security_cases c ON c.id = d.case_id
+        WHERE ${ready} AND NOT ${depositHeldSql("d.case_id")}
+          AND c.submission_state = 'claimed'
+          AND NOT EXISTS (SELECT 1 FROM security_case_events e
+                JOIN notifications n
+                  ON n.event_key = 'security-case:' || e.case_id || ':' || e.case_revision
+               WHERE e.case_id = c.id AND e.kind = 'claim')
+        ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?1`,
+    )
+    .bind(RELEASE_LIMIT)
+    .all<{ id: string; project_id: string }>();
   let started = 0;
   for (const row of saved.results) {
     await work.screen(row.submission_id);
@@ -503,6 +519,10 @@ async function startReleasedWork(
   for (const row of linked.results) {
     await ownerNotice(deps, row.id, row.project_id).catch(() => undefined);
     await work.analyze(row.id);
+    started++;
+  }
+  for (const row of claimed.results) {
+    await ownerNotice(deps, row.id, row.project_id).catch(() => undefined);
     started++;
   }
   return started;
@@ -520,7 +540,7 @@ async function ownerNotice(
 ): Promise<void> {
   const event = await deps.db
     .prepare(
-      "SELECT case_revision, idempotency_key FROM security_case_events WHERE case_id = ? AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link') ORDER BY case_revision DESC LIMIT 1",
+      "SELECT case_revision, idempotency_key FROM security_case_events WHERE case_id = ? AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link', 'claim') ORDER BY case_revision DESC LIMIT 1",
     )
     .bind(caseId)
     .first<{ case_revision: number; idempotency_key: string }>();

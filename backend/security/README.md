@@ -446,7 +446,8 @@ project turned the deposit off; a released row keeps `outcome_reason =
 'turned-off'` and the time in `outcome_at`, with no outcome. It then starts
 the work that waited, three reports per sweep: the screening of a saved
 report still `queued`, or the owner's notice and the analysis of a linked
-GitHub report that has neither. Only a paid ask and a released ask are looked
+GitHub report that has neither, or the owner's notice of an older-style link
+GitHub has not confirmed yet. Only a paid ask and a released ask are looked
 at; a row that record-only mode wrote is never touched. Each start is safe to
 repeat.
 

@@ -1249,10 +1249,10 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "sha256": "ee55d453a4dc51b4ef349c1e921781b1bcdb566262144457f645d1e722450fdd",
+      "sha256": "82299743b34334bd6fe318c737ee1a738112a6220be86e2c3b63446c9cee2999",
       "models": ["formal/models/api/api_security_report_deposit.qnt"],
       "candidateLines": [
-        15, 28, 148, 195, 359, 403, 440, 549, 593, 607, 617, 623
+        15, 28, 148, 195, 359, 403, 440, 569, 613, 627, 637, 643
       ],
       "review": "mapped-abstraction"
     },

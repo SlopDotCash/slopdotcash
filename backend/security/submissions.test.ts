@@ -3691,6 +3691,31 @@ describe("the report deposit on a report that lives on GitHub", () => {
     expect(t.analyzed).toHaveLength(1);
   });
 
+  test("an older-style link whose deposit is recorded tells the owners once, before GitHub confirms it", async () => {
+    const t = setup({ reportDeposit: "live" });
+    const advisory = seed(t);
+    const claimed = await t.call(REPORTER, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: advisory.ghsa_id,
+      idempotencyKey: t.key(),
+    });
+    expect(claimed.status).toBe(201);
+    const caseId = (claimed.body.case as { id: string }).id;
+    expect(ownerNotices(t)).toBe(0);
+    expect(await sweep(t)).toEqual({ released: 0, decided: 0, started: 0 });
+    expect(ownerNotices(t)).toBe(0);
+    // Paid while the link is still unconfirmed: the owners hear of the
+    // claim, as they would have without a deposit, and can verify it.
+    expect(pay(t, caseId)).toBe(1);
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(t.cases()[0]).toMatchObject({ submission_state: "claimed" });
+    expect(ownerNotices(t)).toBe(2);
+    // A second sweep repeats nothing.
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(2);
+  });
+
   test("a maintainer's import of GitHub reports asks nobody", async () => {
     const t = setup({ reportDeposit: "live" });
     seed(t);
