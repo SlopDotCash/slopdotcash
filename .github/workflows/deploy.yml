@@ -544,6 +544,13 @@ jobs:
           SLOP_PROFILES_INPUT: ${{ github.event_name == 'pull_request' && 'data/profiles/seed.json' || 'public/data/profiles.json' }}
           SLOP_POINTS_ONLINE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
           SLOP_POINTS_BOOTSTRAP: "1"
+          # The points generator also reads the protected project months from
+          # production's private route (PRD section 7). Only a trusted run on
+          # main receives the address and the token; a pull request and
+          # staging get neither. An unset secret leaves the token empty, and
+          # the generator then uses data/points/protected-months.json alone.
+          POINTS_PROTECTION_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && 'https://slop.cash/api/v1/operator/protected-point-months' || '' }}
+          POINTS_PROTECTION_TOKEN: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.POINTS_PROTECTION_TOKEN || '' }}
         run: bun run build
 
       - name: Bind the checked registry snapshot
@@ -1489,12 +1496,14 @@ jobs:
           if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
           // Optional owner-provisioned payment RPC, private-report intake,
           // private analysis and public GitHub read secrets (PRD sections 4, 6,
-          // 8 and 11), and the operator's reserved-awards feed token (PRD
-          // section 9). They stay inert until their feature is enabled or
-          // set; any other name still fails closed.
+          // 8 and 11), the operator's reserved-awards feed token (PRD
+          // section 9) and the points generator's protected-months token
+          // (PRD section 7). They stay inert until their feature is enabled
+          // or set; any other name still fails closed.
           const optional = [
             "OPERATOR_FEED_TOKEN",
             "PAYMENT_RPC_URLS",
+            "POINTS_PROTECTION_TOKEN",
             "REWARD_RPC_SOLANA",
             "SLOP_GITHUB_READ_TOKEN",
             "GITHUB_INTAKE_APP_CLIENT_ID",
