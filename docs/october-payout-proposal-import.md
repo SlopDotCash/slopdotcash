@@ -28,3 +28,61 @@ Record the reviewed plan digest, completed D1 import bookmark and a separate aut
 ## Verification
 
 Use the monthly release workflow’s pinned Node and Bun versions. Run `bun test --timeout 60000 scripts/prepare-october-rewards.test.ts`. This exercises the emitted SQL against the repository migrations in SQLite and verifies a late guard rollback through the local native D1 binding. `formal/models/rewards/october_proposal_import.qnt` covers parent and child conflicts, protected input, replay and atomic refusal in a bounded state model. Neither check provides a hosted D1 import receipt or qualifies a mainnet financial action.
+
+## ASI November closeout
+
+PRD section 6 authorizes ASI's November earning window through 18 November UTC.
+The independently reviewed packet binds ASI, November 2026, the exclusive
+19 November cutoff at 00:00 UTC, and a gross 150 USDG cap to the original
+collector snapshot bytes. The snapshot must verify the entire approved window.
+When the verified source extends beyond the cutoff, calculate only from
+accepted-work events and debits before the cutoff. Preserve the original
+bytes, timestamps and digest. Dispatch the protected ASI closeout workflow on
+current `main` with `mode: inspect` before preparing the packet.
+It validates the published source against the cutoff and the exact matching
+coverage in the current canonical Points batch. Its output gives the source
+and batch digests, verified registry manifest digest, revision and enforcement
+generation. It does not require the packet or write to D1. Verify the corrected accepted work and
+protected settlement history before recording the producer and independent
+reviewer's numeric GitHub IDs and reviewed packet digest. Preserve the packet
+and exact ASI manifest privately.
+
+The packet uses `schemaVersion: "1"` and
+`kind: "reviewed-asi-november-closeout"`. Record `projectId: "asi"`,
+`period: "2026-11"`, `cutoff: "2026-11-19T00:00:00.000Z"` and
+`grossBase: "150000000"`. Bind `snapshotSha256`, `pointsBatch`,
+`manifestSha256`, the numeric registry `revision` and
+`enforcementGeneration`, and the exact UTC `reviewedAt`. Record
+`producerGithubId` and `reviewerGithubId` as decimal GitHub IDs.
+
+Use the same exact registry capture shape as the October operation with only
+the ASI project. Its manifest must identify the recorded ordinary Robinhood
+Chain vault and the approved USDG asset. The ASI compiler accepts the reviewed
+packet, its independently confirmed SHA-256, the current registry capture,
+the exact collector snapshot, and a new private output file. Run:
+
+```sh
+bun --no-env-file scripts/prepare-asi-november-closeout.ts preview \
+  REVIEW_PACKET REVIEW_SHA256 CURRENT_REGISTRY SNAPSHOT NEW_PRIVATE_REVIEW
+```
+
+The `guarded-sql` mode emits a single candidate import file and does not apply
+it. Review the exact output before any separately approved protected main
+operation. The import atomically checks the current registry, restrictions,
+Points coverage with the exact source digest, and duplicate or protected
+history. It stores the approved earning cutoff in the immutable proposal.
+The trusted `asi-november-closeout.yml` dispatch uses the shared
+`slop-production` lock and environment. Set the private reviewed packet as
+`ASI_CLOSEOUT_REVIEWED_PACKET` in that environment and dispatch the current
+`main` with the packet SHA-256 and `mode: preview`. The runner downloads the
+exact published collector snapshot, checks the current reviewer’s GitHub
+owner authority and evaluates the SQL import guards with read-only queries.
+It reports only the reviewed digest, deterministic preview digest and recipient
+count. Review that preview and dispatch `mode: apply` with both digests. The
+same current registry and source checks, atomic database guards and full
+header/recipient readback confirm an import or exact replay.
+
+After confirmation, the owner can open **Monthly awards** on ASI’s funding page,
+review the fixed November proposal, finalize it and reserve eligible awards
+with the existing owner wallet flow. The on-chain automatic commitment window
+keeps its ordinary calendar.

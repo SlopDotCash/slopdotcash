@@ -802,6 +802,159 @@ test("an owner records and revokes explicit closure consent with current authori
   ).toBe(true);
 });
 
+test("same-repository branch changes require a live GitHub admin and preserve history and obligations", async () => {
+  const { call, create, deps, persistence, state } = registry();
+  const path = "example/open-registry";
+  const route = "projects/open-registry";
+  await create("open-registry", path);
+  state.clearance = CLEARED;
+  await call("POST", "project-setup/open-registry/check", OWNER, {});
+  const current = await persistence.getProject("open-registry");
+  if (!current) throw new Error("project was not listed");
+  const { manifest, revision } = current;
+  if (!manifest.contribution)
+    throw new Error("project contribution rules missing");
+  expect(current.status).toBe("active");
+  const historyPath = `project-revisions/${current.id}/${revision}`;
+  const oldRevision = await call("GET", historyPath, OWNER);
+  const repo = {
+    full_name: path,
+    id: Number(manifest.authority.repositoryId),
+    node_id: manifest.authority.repositoryNodeId,
+    private: false,
+    owner: {
+      id: Number(manifest.steward.github.actorId),
+      node_id: manifest.steward.github.nodeId,
+      login: manifest.steward.github.login,
+      type: manifest.steward.github.type,
+    },
+  };
+  const commitSha = "a".repeat(40);
+  const contribution = {
+    ...manifest.contribution,
+    contributionGuide: "Read the contribution rules on vibestack.",
+  };
+  const write = () =>
+    call("PUT", route, OWNER, {
+      expectedRevision: revision,
+      integrationBranch: { name: "vibestack", commitSha },
+      contribution,
+    });
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+    repository: repo,
+  };
+  expect(await write()).toMatchObject({
+    status: 403,
+    body: { error: "authority_required" },
+  });
+  state.access = { ...state.access, permission: "admin", roleName: "admin" };
+  deps.github.token = "public-read-fixture";
+  let head = commitSha;
+  let repositoryId: string | null = null;
+  deps.github.fetch = async (url, init) => {
+    expect(new URL(url).pathname).toBe("/graphql");
+    expect(JSON.parse(String(init.body)).variables).toEqual({
+      id: repo.node_id,
+      qualifiedName: "refs/heads/vibestack",
+      expression: `${commitSha}:.github/slop-project.json`,
+    });
+    const proof = JSON.stringify({
+      kind: "slop-project-authority",
+      schemaVersion: "1",
+      projectId: current.id,
+      policyRevision: manifest.terms.revision,
+      repository: {
+        fullName: path,
+        id: repositoryId,
+        integrationBranch: "vibestack",
+      },
+      steward: manifest.steward.github,
+    });
+    return Response.json({
+      data: {
+        node: {
+          __typename: "Repository",
+          id: repo.node_id,
+          fullDatabaseId: repo.id,
+          isPrivate: false,
+          ref: {
+            name: "vibestack",
+            prefix: "refs/heads/",
+            target: { __typename: "Commit", oid: head },
+          },
+          object:
+            repositoryId === null
+              ? null
+              : { __typename: "Blob", byteSize: proof.length, text: proof },
+        },
+      },
+    });
+  };
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "branch_proof_required" },
+  });
+  repositoryId = "555555555";
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "branch_proof_required" },
+  });
+  repositoryId = manifest.authority.repositoryId;
+  head = "b".repeat(40);
+  expect(await write()).toMatchObject({
+    status: 409,
+    body: { error: "branch_head_changed" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(current);
+  head = commitSha;
+
+  state.clearance = { state: "unscanned" };
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "vetting_required" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(current);
+  state.clearance = CLEARED;
+
+  const cache = new Map<string, Response>();
+  deps.cache = {
+    match: async (request) => cache.get(request.url)?.clone(),
+    put: async (request, response) => {
+      cache.set(request.url, response.clone());
+    },
+    delete: async (request) => cache.delete(request.url),
+  };
+  expect(JSON.stringify((await call("GET", "projects", OWNER)).body)).toContain(
+    '"integrationBranch":"main"',
+  );
+  expect(cache.size).toBe(1);
+  expect(await write()).toMatchObject({ status: 200 });
+  const updated = await persistence.getProject(current.id);
+  expect(updated?.revision).toBe(revision + 1);
+  expect(updated?.status).toBe(current.status);
+  expect(updated?.manifest).toEqual({
+    ...manifest,
+    contribution,
+    repositories: [
+      { ...manifest.repositories[0], integrationBranch: "vibestack" },
+    ],
+  });
+  expect(cache.size).toBe(0);
+  expect(JSON.stringify((await call("GET", "projects", OWNER)).body)).toContain(
+    '"integrationBranch":"vibestack"',
+  );
+  expect(await call("GET", historyPath, OWNER)).toEqual(oldRevision);
+  expect(await write()).toMatchObject({
+    status: 409,
+    body: { error: "stale_revision" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(updated);
+});
+
 test("owner revisions publish presentation, require admission and apply money prospectively", async () => {
   const { persistence, call, create, state } = registry();
   await create("open-registry", "example/open-registry");

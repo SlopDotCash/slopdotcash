@@ -207,6 +207,8 @@ Project contains the repository, integration branch, and contribution rules. Pro
 
 Verify permanent repository and actor IDs, current write or maintain authority, license facts, integration branch, and reward terms. Record the license URL, commit, and digest. Read Slopbot installation status before creation.
 
+A current GitHub administrator of the same registered repository can change its primary integration branch. Require the current registry revision and an exact GitHub head with a committed Slop authority declaration matching the project, repository, steward, branch, and policy revision. Append one immutable revision and preserve identity, restrictions, admission requirements, reward terms, prior revisions, and frozen allocations. Both generated skills use the new branch. The same revision can update its contribution instructions.
+
 Collect scope, contribution guidance, supported tasks, required tests, review expectations, security contact, closure policy, and maintainer notes. Preview both generated skills. Missing required skill fields prevent skill publication.
 
 Rewards offers a monthly pool or Private bounty. New monthly projects use one contribution pool, not a second review budget. Preserve historical review-budget commitments. Bounty-only projects have no monthly pool.
@@ -361,6 +363,8 @@ Automatic monthly payment is the default when funds are committed. The owner set
 The period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations in D1, not new cycle files.
 
 The owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. A change that sets a contributor below their proposed amount is a cut. A cut needs a written reason of 20 to 500 characters. Each current cut, with its proposed amount, new amount, reason and time, is public on the cycle page, and the contributor gets an Inbox notice. Increases and changes at or above the proposal need no reason and stay private. The contributor gets 24 hours of notice: with automatic finalization on, cuts close 24 hours before the cutoff, and the owner can finalize only 24 hours after the latest cut. Operator decision, 15 November 2026. Retain every change and cut record for disputes and reconciliation.
+
+Operator decision, 19 November 2026: close ASI's November pool for accepted work from 1 November UTC through 18 November UTC. Use a gross cap of 150 USDG on the recorded ASI vault and the ordinary per-award fee. A guarded import binds the complete cutoff-specific source, current Points checkpoint and registry revision to the one November proposal. The recorded close time is 19 November at 00:00 UTC. The owner can finalize those exact allocations after that time. Record the actual finalization timestamp. Existing restriction, eligibility, funding, duplicate, wallet signature and finalized chain checks still apply. The ordinary month-end calendar and the automatic on-chain commitment window apply to every other action.
 
 Apart from a published maintainer share (below), only accepted-work Points for that project and period set shares. Rollover never increases a later monthly cap. An underfunded month creates no obligations until the entire allocation is covered. Prevent manual and automatic duplicate payments.
 
