@@ -6,7 +6,10 @@ import { promisify } from "node:util";
 import { PARTICIPATION_BAN_QUERY } from "../backend/projects/account-bans";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { latestPoints, type PointsJournal } from "../src/lib/points";
-import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
+import {
+  findListedRepository,
+  repositoryIdentity,
+} from "../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import { GitHubClient } from "../workers/slopbot/github";
@@ -324,6 +327,10 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
   packet: Pick<HistoricalPointsPacket, "sourceAudit" | "duplicateRetirements">,
   github: Pick<GitHubClient, "get">,
   withObjects = withPublicGitObjects,
+  options?: {
+    integrationBranch: string;
+    beforeImportChecks: (() => Promise<void>)[];
+  },
 ): Promise<ReadonlySet<string>> {
   const candidates = (packet.duplicateRetirements ?? []).filter(
     (retirement) => retirement.identicalAcceptedChange !== undefined,
@@ -338,6 +345,33 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
   )
     throw Error("Reviewed identical change repository changed");
   const objects = new Set<string>();
+  const branchTips = new Map<string, string>();
+  const sha = /^[a-f0-9]{40}$/u;
+  function sameRepository(other: PublicMergeRepository | null | undefined) {
+    return (
+      other?.node_id === repository?.node_id &&
+      other?.id === repository?.id &&
+      other?.private === false &&
+      repository?.private === false &&
+      other.full_name?.toLowerCase() === repository.full_name?.toLowerCase()
+    );
+  }
+  async function readBranchTip(ref: string) {
+    const result = await github.get<{
+      ref: string;
+      object: { sha: string; type: string };
+    }>(
+      `${root}/git/ref/heads/${ref.split("/").map(encodeURIComponent).join("/")}`,
+    );
+    if (
+      result?.ref !== `refs/heads/${ref}` ||
+      result.object?.type !== "commit" ||
+      !sha.test(result.object.sha) ||
+      !sameRepository(await github.get<PublicMergeRepository>(root))
+    )
+      throw Error("Surviving carrier branch is unavailable");
+    return result.object.sha;
+  }
   const checks: {
     verifyNative: (directory: string) => Promise<void>;
     recheck: () => Promise<void>;
@@ -349,9 +383,11 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       (source) => source.sourceId === proof?.earlierSourceId,
     );
     if (!proof || !earlier) throw Error("Reviewed earlier source is missing");
-    const sha = /^[a-f0-9]{40}$/u;
+    const originalCommit = retirement.source.commits[0];
+    const originalAuthor = retirement.source.author;
     const emptySquash = proof.emptySquash === true;
     const sharedMerge = proof.earlierMergeSha === proof.mergeSha;
+    const survivingCarrier = proof.survivingCarrier === true;
     if (
       !sha.test(proof.earlierMergeSha) ||
       !sha.test(proof.mergeSha) ||
@@ -360,6 +396,8 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           earlier.sourceId === retirement.source.sourceId ||
           earlier.headSha !== retirement.source.headSha)) ||
       !/^[a-f0-9]{64}$/u.test(proof.diffSha256) ||
+      (proof.survivingCarrier !== undefined &&
+        (!survivingCarrier || emptySquash || sharedMerge)) ||
       (proof.emptySquash !== undefined && proof.emptySquash !== true)
     )
       throw Error("Reviewed identical change identity is invalid");
@@ -373,9 +411,12 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       );
       if (!audit)
         throw Error("Identical change is outside the reviewed census");
-      const pull = await github.get<Pull>(`${root}/pulls/${audit.number}`);
+      const pull = await github.get<
+        Pull & { base: { repo?: PublicMergeRepository | null } }
+      >(`${root}/pulls/${audit.number}`);
       if (
         !pull ||
+        (survivingCarrier && !sameRepository(pull.base.repo)) ||
         pull.node_id !== source.sourceId ||
         pull.number !== audit.number ||
         pull.head.sha !== source.headSha ||
@@ -385,7 +426,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
         !pull.merged_at ||
         new Date(pull.merged_at).toISOString() !== source.occurredAt ||
         pull.commits !== source.commitCount ||
-        ((emptySquash || sharedMerge) &&
+        ((emptySquash || sharedMerge || survivingCarrier) &&
           (pull.state !== "closed" ||
             pull.html_url !== source.sourceUrl ||
             pull.user?.node_id !== source.author?.id ||
@@ -402,6 +443,50 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
     );
     if (sharedMerge && checked[0].pull.base.sha !== checked[1].pull.base.sha)
       throw Error("Shared acceptance has differing submitted bases");
+    async function verifyOriginalAuthor() {
+      const recorded = await github.get<{
+        sha: string;
+        author: { node_id: string; type: string } | null;
+      }>(`${root}/commits/${originalCommit.sha}`);
+      if (
+        recorded?.sha !== originalCommit.sha ||
+        recorded.author?.node_id !== originalAuthor?.id ||
+        recorded.author?.type !== "User"
+      )
+        throw Error("Surviving carrier original commit author changed");
+    }
+    let branchTip: string | undefined;
+    if (survivingCarrier) {
+      const base = checked[0].pull.base;
+      const other = checked[1].pull.base;
+      if (
+        !base.ref ||
+        base.ref !== other.ref ||
+        base.sha !== other.sha ||
+        (options && base.ref !== options.integrationBranch)
+      )
+        throw Error("Surviving carrier needs one reported integration base");
+      if (
+        originalAuthor?.kind !== "User" ||
+        retirement.source.commits.length !== 1 ||
+        originalCommit.sha !== retirement.source.headSha ||
+        originalCommit.parentCount !== 1 ||
+        originalCommit.parentShas?.length !== 1 ||
+        originalCommit.parentShas[0] !== base.sha ||
+        originalCommit.author?.id !== originalAuthor.id ||
+        originalCommit.author?.kind !== "User" ||
+        !earlier.commits.some((commit) => commit.sha === proof.mergeSha) ||
+        !earlier.commits.some((commit) => commit.sha === originalCommit.sha)
+      )
+        throw Error("Surviving carrier needs the original author's commit");
+      await verifyOriginalAuthor();
+      branchTip = branchTips.get(base.ref);
+      if (!branchTip) {
+        branchTip = await readBranchTip(base.ref);
+        branchTips.set(base.ref, branchTip);
+      }
+      objects.add(branchTip);
+    }
     for (const { mergeSha, pull } of checked) {
       objects.add(mergeSha);
       objects.add(pull.head.sha);
@@ -424,6 +509,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
               );
           }),
         );
+        if (survivingCarrier) await verifyOriginalAuthor();
       },
       async verifyNative(directory) {
         const nativeGit = async (...args: string[]) => {
@@ -431,7 +517,35 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           return (await execute(command.file, command.args, command.options))
             .stdout;
         };
-        if (!sharedMerge) {
+        if (branchTip) {
+          const base = checked[0].pull.base.sha;
+          const [submitted, integrated, trees] = await Promise.all([
+            nativeGit(
+              "rev-list",
+              "--first-parent",
+              checked[0].pull.head.sha,
+              `^${base}`,
+            ),
+            nativeGit("rev-list", "--first-parent", branchTip, `^${base}`),
+            nativeGit(
+              "rev-parse",
+              `${proof.earlierMergeSha}^{tree}`,
+              `${proof.mergeSha}^{tree}`,
+            ),
+          ]);
+          const [carrierTree, originalTree] = trees.trim().split("\n");
+          const firstParent = new Set(integrated.trim().split("\n"));
+          if (
+            !submitted.trim().split("\n").includes(proof.mergeSha) ||
+            !firstParent.has(proof.earlierMergeSha) ||
+            firstParent.has(proof.mergeSha) ||
+            !sha.test(carrierTree) ||
+            carrierTree !== originalTree
+          )
+            throw Error(
+              "Surviving carrier does not match the published first-parent edge",
+            );
+        } else if (!sharedMerge) {
           const earlierRevisions = new Set([
             checked[0].pull.head.sha,
             proof.earlierMergeSha,
@@ -592,7 +706,8 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
             commit !== mergeSha ||
             !first ||
             !sha.test(first) ||
-            (sharedMerge && first !== pull.base.sha) ||
+            ((sharedMerge || survivingCarrier) && first !== pull.base.sha) ||
+            (survivingCarrier && second === undefined) ||
             (second !== undefined && second !== pull.head.sha) ||
             extra.length
           )
@@ -677,6 +792,14 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
     for (const check of checks) await check.verifyNative(directory);
   });
   for (const check of checks) await check.recheck();
+  for (const [ref, tip] of branchTips) {
+    const verifyTip = async () => {
+      if ((await readBranchTip(ref)) !== tip)
+        throw Error("Surviving carrier integration branch changed");
+    };
+    await verifyTip();
+    options?.beforeImportChecks.push(verifyTip);
+  }
   return new Set(checks.map(({ digest }) => digest));
 }
 
@@ -1599,8 +1722,21 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   await verifyHistoricalDuplicateAcceptanceOrder(packet, github);
   setPhase("accepted squash verification");
   await verifyHistoricalAcceptedSquashes(packet, github);
+  const carrierBranchChecks: (() => Promise<void>)[] = [];
+  const integration = findListedRepository(
+    policy.repositories,
+    packet.sourceAudit.repository,
+  );
   const verifiedIdenticalAcceptedChanges =
-    await verifyHistoricalIdenticalAcceptedChanges(packet, github);
+    await verifyHistoricalIdenticalAcceptedChanges(
+      packet,
+      github,
+      withPublicGitObjects,
+      {
+        integrationBranch: integration?.repository.integrationBranch ?? "",
+        beforeImportChecks: carrierBranchChecks,
+      },
+    );
   setPhase("financial protection verification");
   await verifyHistoricalProtection(packet, query);
   setPhase("public Points read");
@@ -1713,6 +1849,7 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
         await verifyMain();
         await currentOwnerVerifier()(policy, packet.reviewerGithubId);
         await verifyHistoricalProtection(packet, query);
+        for (const check of carrierBranchChecks) await check();
         setPhase("protected import and readback");
       },
       importBatch: async () => {

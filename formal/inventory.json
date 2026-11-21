@@ -5309,9 +5309,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "1809f5dae083d2de5316b248020252d3696637872776b683417e2ccac87177d3",
+      "sha256": "c8d63694f774062b630f756ff0e5e4c9ae1004819c0d42874ef020ba990e001b",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [52, 53, 490, 732, 967, 968, 969, 972, 1295],
+      "candidateLines": [52, 53, 492, 737, 972, 973, 974, 977, 1300],
       "review": "mapped-abstraction"
     },
     {
@@ -5389,14 +5389,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "2bc881718a4eadebbd35a83ff720e0c184f88d7cb83820c3b084e3549881050c",
+      "sha256": "66aa84c90e985690168f28e21be30f3c2b16ab4e04251dbaf674a05fe7ee5bbc",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 235, 236, 237, 238, 240, 245, 288, 303, 304, 310, 311, 389, 1090,
-        1110, 1319, 1337, 1344, 1471, 1566, 1700
+        3, 238, 239, 240, 241, 243, 248, 291, 306, 307, 313, 314, 430, 1213,
+        1233, 1442, 1460, 1467, 1594, 1689, 1836
       ],
       "review": "mapped-abstraction"
     },
@@ -16096,7 +16096,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "a9f568b1e034bb9cad1e41c89079e49c6fcf2c34292de968eb5cc88bce2e8f05",
+      "sha256": "c10f044b5317580fa36358fbcf726413af9971d51be6616476de5f19e3544599",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -16114,6 +16114,9 @@
       ],
       "scenarios": [
         "applicableAssessmentAppendRefusesPublicationTest",
+        "carrierDifferentAwardRefusesTest",
+        "carrierDifferentResultRefusesTest",
+        "carrierSideParentRefusesTest",
         "changedPointsCheckpointRefusesPublicationTest",
         "conflictingImportTest",
         "disclosedNotVerifiedTest",
@@ -16133,6 +16136,7 @@
         "relevantAppendRefusesQualifiedHistoricalPublicationTest",
         "sharedAcceptanceRequiresEarlierAwardTest",
         "sharedAcceptanceRequiresMatchedScopeTest",
+        "survivingCarrierPreservesOriginalAwardTest",
         "unmatchedHistoricalReplayRefusesQualificationTest",
         "unrelatedAppendPreservesHistoricalQualificationTest",
         "unrelatedAssessmentAppendAllowsPublicationTest",

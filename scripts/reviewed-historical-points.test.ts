@@ -151,11 +151,12 @@ function fixture() {
   return { packet, baseline, candidate };
 }
 
-function duplicateRetirementFixture() {
+function duplicateRetirementFixture(earlierAmount?: number) {
   const f = fixture();
   const original = f.baseline.revisions[0].award;
   const earlierAward = {
     ...original,
+    amount: earlierAmount ?? original.amount,
     key: pointKey("feed", actor.id, "merged-pull-request", "PR_earlier"),
     sourceId: "PR_earlier",
     sourceUrl: "https://github.com/feedforagents/feed/pull/2",
@@ -3417,8 +3418,11 @@ test("historical publication installs the canonical merge runtime before verific
   expect(source).toContain(": command.options.timeout");
 });
 
-test("an independently verified identical accepted change retires only its later ordinary award", () => {
-  const f = duplicateRetirementFixture();
+function identicalRetirementFixture(
+  survivingCarrier = false,
+  earlierAmount?: number,
+) {
+  const f = duplicateRetirementFixture(earlierAmount);
   const { retirement } = f;
   const earlier = retirement.earlierSources[0];
   earlier.headSha = "e".repeat(40);
@@ -3430,6 +3434,7 @@ test("an independently verified identical accepted change retires only its later
     earlierMergeSha: "1".repeat(40),
     mergeSha: "2".repeat(40),
     diffSha256: "3".repeat(64),
+    ...(survivingCarrier ? { survivingCarrier: true as const } : {}),
   };
   retirement.evidence = JSON.stringify({
     sourceId: retirement.sourceId,
@@ -3461,6 +3466,12 @@ test("an independently verified identical accepted change retires only its later
   );
   f.packet.candidateDigest = hash(expected);
   const verified = new Set([hash(retirement)]);
+  return { ...f, target, expected, verified };
+}
+
+test("an independently verified identical accepted change retires only its later ordinary award", () => {
+  const f = identicalRetirementFixture();
+  const { retirement, target, expected, verified } = f;
   expect(() =>
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
@@ -3478,6 +3489,7 @@ test("an independently verified identical accepted change retires only its later
     f.baseline.revisions[1],
   );
 
+  if (!retirement.identicalAcceptedChange) throw Error("Missing fixture proof");
   retirement.identicalAcceptedChange.diffSha256 = "4".repeat(64);
   expect(() =>
     reconstructHistoricalPoints(
@@ -3488,6 +3500,29 @@ test("an independently verified identical accepted change retires only its later
       verified,
     ),
   ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+});
+
+test("a verified surviving carrier retains the same original author's existing award", () => {
+  const eligible = identicalRetirementFixture(true);
+  expect(
+    reconstructHistoricalPoints(
+      eligible.packet,
+      eligible.baseline,
+      time,
+      new Map(),
+      eligible.verified,
+    ),
+  ).toEqual(eligible.expected);
+  const unequal = identicalRetirementFixture(true, 29);
+  expect(() =>
+    reconstructHistoricalPoints(
+      unequal.packet,
+      unequal.baseline,
+      time,
+      new Map(),
+      unequal.verified,
+    ),
+  ).toThrow("Surviving carrier must preserve the equal original-author award");
 });
 
 test("an empty accepted squash retires a duplicate only when the earlier rewarded change is already in its parent", async () => {
