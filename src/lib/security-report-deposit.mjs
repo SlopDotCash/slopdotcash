@@ -37,7 +37,7 @@ export const REPORT_DEPOSIT_KEEPING_CLOSES = [
  * the report form offer nothing while this is false. A test holds the two
  * together; change them in the same reviewed change.
  */
-export const REPORT_DEPOSIT_SWITCHED_ON = false;
+export const REPORT_DEPOSIT_SWITCHED_ON = true;
 
 /** The Slop case id of a private report (`CASE_ID` in the case store). */
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
