@@ -310,6 +310,177 @@ test("provider diagnostics distinguish response parsing from authentication with
   }
 });
 
+for (const network of ["base", "ethereum", "robinhood", "solana"] as const) {
+  test(`vault claim value floor precedes gas pricing on ${network}`, async () => {
+    const h = harness({
+      mode: "dry_run",
+      env: {
+        FEE_CONVERTER_MODE: "dry_run",
+        FEE_CONVERTER_NETWORKS: network,
+        FEE_WALLET_ETHEREUM: WALLET,
+        FEE_WALLET_ROBINHOOD: WALLET,
+        FEE_WALLET_SOLANA: solanaBase58(new Uint8Array(32).fill(9)),
+        FEE_CONVERTER_ALLOWLIST: "",
+      },
+    });
+    try {
+      const reference =
+        h.network.definition.usdc ?? h.network.definition.stable;
+      if (!reference) throw new Error("Claim fixture needs a reference asset");
+      if (network === "robinhood")
+        h.deps.buyback = {
+          mode: "dry_run",
+          active: () => true,
+          async run() {
+            return {
+              records: {},
+              arrived: 0,
+              refunded: 0,
+              inTransit: 0,
+              errors: 0,
+            };
+          },
+        };
+      const cases = new Map([
+        [
+          "one below floor",
+          {
+            value: 4_999_999n,
+            gas: null,
+            reason: "below the minimum conversion value",
+          },
+        ],
+        [
+          "unrecognized asset valuation",
+          { value: 5_000_000n, gas: null, reason: "no verified asset route" },
+        ],
+        [
+          "invalid asset valuation",
+          {
+            value: 5_000_000n,
+            gas: null,
+            reason: "claim value exceeds safe integer accounting",
+          },
+        ],
+        [
+          "unrepresentable valuation",
+          {
+            value: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+            gas: null,
+            reason: "claim value exceeds safe integer accounting",
+          },
+        ],
+        [
+          "exact limit and gas multiple",
+          { value: 5_000_000n, gas: 500_000n, reason: null },
+        ],
+        [
+          "one above gas limit",
+          {
+            value: 5_000_000n,
+            gas: 500_001n,
+            reason: "below the gas-cost multiple",
+          },
+        ],
+        [
+          "unpriced eligible fee",
+          {
+            value: 5_000_001n,
+            gas: null,
+            reason: "claim network fee could not be priced",
+          },
+        ],
+        [
+          "vault verification failure",
+          { value: 4_999_999n, gas: null, reason: "vault verification failed" },
+        ],
+        [
+          "eligible fee estimate failure",
+          { value: 5_000_001n, gas: null, reason: "fee estimate failed" },
+        ],
+      ]);
+      h.deps.projectVaults = async () =>
+        [...cases.keys()].map((name) => ({
+          vault: name,
+          projectId: name,
+          payoutPolicy: "ordinary",
+          deployment: {},
+        }));
+      const gasCalls: string[] = [];
+      const verifierCalls: string[] = [];
+      h.chain.quoteFor = (token, amount) =>
+        token === TOKEN
+          ? { noRoute: "no verified asset route" }
+          : linearQuote(amount, { amountOut: -1n });
+      h.chain.vaultFees = {
+        async accrued({ vault }) {
+          verifierCalls.push(vault);
+          if (vault === "vault verification failure")
+            throw new Error("vault verification failed");
+          const details = cases.get(vault);
+          if (!details) throw new Error("Unknown fixture vault");
+          const asset =
+            vault === "unrecognized asset valuation"
+              ? TOKEN
+              : vault === "invalid asset valuation"
+                ? OTHER
+                : reference;
+          return { asset, amount: details.value };
+        },
+        async claimCostMicro({ vault }) {
+          gasCalls.push(vault);
+          if (
+            vault === "one below floor" ||
+            vault === "eligible fee estimate failure"
+          )
+            throw new Error("fee estimate failed");
+          return cases.get(vault)?.gas ?? null;
+        },
+        async claim() {
+          throw new Error("The dry-run fixture must never sign");
+        },
+      };
+      const result = await runNetwork(h.network, h.deps);
+      expect(result.claimed).toBe(0);
+      expect(verifierCalls).toEqual([...cases.keys()]);
+      expect(gasCalls).toEqual([
+        "exact limit and gas multiple",
+        "one above gas limit",
+        "unpriced eligible fee",
+        "eligible fee estimate failure",
+      ]);
+      const claimEvents = h.events.filter((event) =>
+        String(event.event).startsWith("fee_claim_"),
+      );
+      expect(
+        claimEvents.map((event) => [
+          event.vault,
+          event.reason ?? event.error ?? null,
+        ]),
+      ).toEqual(
+        [...cases.entries()].map(([name, details]) => [name, details.reason]),
+      );
+      expect(
+        claimEvents.filter((event) => event.event === "fee_claim_quoted"),
+      ).toMatchObject([
+        { vault: "exact limit and gas multiple", valueMicro: "5000000" },
+      ]);
+      expect(
+        claimEvents
+          .filter((event) => event.event === "fee_claim_error")
+          .map((event) => event.vault),
+      ).toEqual([
+        "vault verification failure",
+        "eligible fee estimate failure",
+      ]);
+      expect(h.rows()).toEqual([]);
+      expect(h.chain.sent).toEqual([]);
+    } finally {
+      h.sqlite.close();
+    }
+  });
+}
+
 describe("release gates", () => {
   test("a scheduled startup failure preserves completed network work, and off leaves its records unchanged", async () => {
     const { privateKeyToAccount } = await import("viem/accounts");

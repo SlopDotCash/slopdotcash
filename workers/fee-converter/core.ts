@@ -1021,17 +1021,23 @@ async function claimVaultFees(
         value = quote.amountOut;
       }
       const quoteValueMicro = exactQuoteMicro(value);
+      if (quoteValueMicro === null || value < limits.minValueMicro) {
+        report("fee_claim_skipped", {
+          amount,
+          reason:
+            quoteValueMicro === null
+              ? "claim value exceeds safe integer accounting"
+              : "below the minimum conversion value",
+        });
+        continue;
+      }
       const cost = await fees.claimCostMicro(vault);
       const reason =
-        quoteValueMicro === null
-          ? "claim value exceeds safe integer accounting"
-          : cost === null
-            ? "claim network fee could not be priced"
-            : value < limits.minValueMicro
-              ? "below the minimum conversion value"
-              : value < cost * limits.gasMultiple
-                ? "below the gas-cost multiple"
-                : null;
+        cost === null
+          ? "claim network fee could not be priced"
+          : value < cost * limits.gasMultiple
+            ? "below the gas-cost multiple"
+            : null;
       if (reason) {
         report("fee_claim_skipped", { amount, reason });
         continue;
