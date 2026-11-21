@@ -34,6 +34,7 @@ import {
   historicalPointsSql,
   verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
+  verifyHistoricalDuplicateAcceptanceOrder,
   verifyHistoricalIdenticalAcceptedChanges,
   verifyHistoricalProtection,
   verifyHistoricalValueRecords,
@@ -459,6 +460,67 @@ test("reviewed duplicate retirement removes only a fully covered later pool", ()
   expect(
     [...latestPoints(result).values()].map((row) => row.award.amount).sort(),
   ).toEqual([0, 30]);
+});
+
+test("duplicate retirement verifies native order even for ordinary coverage", async () => {
+  const { packet, retirement } = duplicateRetirementFixture();
+  const audit = packet.sourceAudit;
+  const root = `/repos/${audit.repository}`;
+  const retiredMerge = "d".repeat(40);
+  const earlierMerge = "e".repeat(40);
+  const commonParent = "f".repeat(40);
+  const later = retirement.source;
+  const earlier = retirement.earlierSources[0];
+  const comparePath = `${root}/compare/${retiredMerge}...${earlier.headSha}?per_page=1&page=1`;
+  const replies = new Map<string, unknown>([
+    [root, { node_id: audit.repositoryNodeId, full_name: audit.repository }],
+  ]);
+  for (const [source, merge] of [
+    [later, retiredMerge],
+    [earlier, earlierMerge],
+  ] as const) {
+    const number = audit.sources.find(
+      ({ id }) => id === source.sourceId,
+    )?.number;
+    replies.set(`${root}/pulls/${number}`, {
+      node_id: source.sourceId,
+      number,
+      state: "closed",
+      html_url: source.sourceUrl,
+      head: { sha: source.headSha },
+      merged_at: source.occurredAt,
+      merge_commit_sha: merge,
+    });
+  }
+  const github = {
+    async get<T>(path: string): Promise<T | null> {
+      return (replies.get(path) ?? null) as T | null;
+    },
+  };
+  const completeComparison = {
+    status: "diverged",
+    behind_by: 1,
+    base_commit: { sha: retiredMerge },
+    merge_base_commit: { sha: commonParent },
+  };
+  replies.set(comparePath, completeComparison);
+  await verifyHistoricalDuplicateAcceptanceOrder(packet, github);
+  replies.set(comparePath, {
+    ...completeComparison,
+    status: "ahead",
+    behind_by: 0,
+    merge_base_commit: { sha: retiredMerge },
+  });
+  await expect(
+    verifyHistoricalDuplicateAcceptanceOrder(packet, github),
+  ).rejects.toThrow("Earlier source already carries the retiring PR's merge");
+  replies.set(comparePath, {
+    ...completeComparison,
+    base_commit: { sha: earlierMerge },
+  });
+  await expect(
+    verifyHistoricalDuplicateAcceptanceOrder(packet, github),
+  ).rejects.toThrow("Duplicate acceptance ancestry is unavailable");
 });
 
 test("duplicate coverage can bind a previously rewarded joint claim", async () => {

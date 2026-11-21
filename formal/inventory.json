@@ -5362,12 +5362,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "e950a47a871b2e7bd0a73fe0c676d1f75d799ef3c0db0e662f1efc7862d1c820",
+      "sha256": "10f4191eeff3b79f34bc94e9d3075f24c5e07196c64e02349bc08d4cd64d357c",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
-      "candidateLines": [3, 263, 936, 956, 1164, 1182, 1189, 1316, 1411, 1543],
+      "candidateLines": [
+        3, 231, 232, 233, 234, 236, 241, 273, 288, 294, 371, 1069, 1089, 1298,
+        1316, 1323, 1450, 1545, 1679
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -15948,7 +15951,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "3e11fd4d8be81a2f753742c23addfc45f2a067acb7c6255cf9b740e2087c6daf",
+      "sha256": "e3e612c2bd90e60ce5c7ebba72658905cba14da07dbbd070ba41db273f923572",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -15969,7 +15972,9 @@
         "changedPointsCheckpointRefusesPublicationTest",
         "conflictingImportTest",
         "disclosedNotVerifiedTest",
+        "earlierCarrierContainsRetiringMergeRefusesTest",
         "exactReplayRequiredForHistoricalPublicationTest",
+        "missingDistinctDuplicateAncestryRefusesTest",
         "mixedAcceptedOutputMustAgreeTest",
         "mixedEarlierContextRequiredTest",
         "mixedImportPreservesAcceptedRoleTest",
@@ -15987,6 +15992,7 @@
         "unrelatedAppendPreservesHistoricalQualificationTest",
         "unrelatedAssessmentAppendAllowsPublicationTest",
         "validatedMixedEvidenceCannotChangeTest",
+        "verifiedDistinctDuplicateRetiresLaterPoolTest",
         "verifiedSharedAcceptanceRetiresLaterPoolTest"
       ]
     },

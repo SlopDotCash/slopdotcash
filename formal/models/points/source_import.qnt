@@ -29,6 +29,7 @@ module source_import {
     "project and repository verification",
     "owner authority verification",
     "historical census verification",
+    "duplicate acceptance order verification",
     "accepted squash verification",
     "financial protection verification",
     "assessment journal checkpoint read",
@@ -143,6 +144,14 @@ module source_import {
     s' = s.with("published", true).with("historicalPublished", true)
       .with("sharedDuplicateRetired", true),
   }
+  // The covering PR's submitted head must have an independently established
+  // relationship to the merge that would lose credit.
+  action retireDistinctDuplicate(verifiedOrder: bool, earlierCarriesMerge: bool): bool = all {
+    canPublishHistorical,
+    verifiedOrder,
+    not(earlierCarriesMerge),
+    s' = s.with("published", true).with("historicalPublished", true),
+  }
   action disclose=all{s.published,s'=s.with("disclosed",true)}
   action appendSameIdentity(id:int):bool=all{id==s.identity,s'=s}
   action step=any {
@@ -150,6 +159,9 @@ module source_import {
     appendAssessment(true),appendAssessment(false),advanceBaseline,
     qualifyReplay(true),qualifyReplay(false),publishHistorical,
     bindSharedAcceptance(true,true,true),retireSharedDuplicate,
+    retireDistinctDuplicate(true,false),
+    retireDistinctDuplicate(true,true),
+    retireDistinctDuplicate(false,false),
     bindMixed(mixed),
     bindMixed(mixed.with("pathCommit",10)),
     bindMixed(mixed.with("squashIdentity",2)),
@@ -209,4 +221,11 @@ module source_import {
   run verifiedSharedAcceptanceRetiresLaterPoolTest = init.then(part(1)).then(part(2)).then(validate)
     .then(bindSharedAcceptance(true,true,true)).then(qualifyReplay(true)).then(retireSharedDuplicate)
     .expect(s.sharedDuplicateRetired and invariant)
+  run verifiedDistinctDuplicateRetiresLaterPoolTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireDistinctDuplicate(true,false))
+    .expect(s.historicalPublished and invariant)
+  run earlierCarrierContainsRetiringMergeRefusesTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireDistinctDuplicate(true,true).fail())
+  run missingDistinctDuplicateAncestryRefusesTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireDistinctDuplicate(false,false).fail())
 }

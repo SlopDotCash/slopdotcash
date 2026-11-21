@@ -193,6 +193,114 @@ export async function verifyHistoricalCensus(
     throw Error("Reviewed historical census changed");
 }
 
+/** A PR reporting an earlier merge may already carry the other PR's merge. */
+export async function verifyHistoricalDuplicateAcceptanceOrder(
+  packet: Pick<HistoricalPointsPacket, "sourceAudit" | "duplicateRetirements">,
+  github: Pick<GitHubClient, "get">,
+): Promise<void> {
+  const retirements = (packet.duplicateRetirements ?? []).filter(
+    (item) => !item.identicalAcceptedChange,
+  );
+  if (!retirements.length) return;
+  const audit = packet.sourceAudit;
+  const root = `/repos/${audit.repository}`;
+  const repository = await github.get<PublicMergeRepository>(root);
+  if (
+    repository?.node_id !== audit.repositoryNodeId ||
+    repository.full_name?.toLowerCase() !== audit.repository.toLowerCase()
+  )
+    throw Error("Duplicate acceptance repository changed");
+  const sha = /^[a-f0-9]{40}$/u;
+  const auditedSources = new Map(audit.sources.map((row) => [row.id, row]));
+  const pulls = new Map<number, Promise<Pull | null>>();
+  const checked = new Set<string>();
+  type Source = Pick<
+    (typeof retirements)[number]["source"],
+    "sourceId" | "sourceUrl" | "headSha" | "occurredAt" | "repositoryNodeId"
+  >;
+  async function readSource(source: Source, number: number | undefined) {
+    if (
+      number === undefined ||
+      !Number.isSafeInteger(number) ||
+      number <= 0 ||
+      source.repositoryNodeId !== audit.repositoryNodeId ||
+      source.sourceUrl !==
+        `https://github.com/${audit.repository}/pull/${number}`
+    )
+      throw Error("Duplicate acceptance source is outside the reviewed scope");
+    let pending = pulls.get(number);
+    if (!pending) {
+      pending = github.get<Pull>(`${root}/pulls/${number}`);
+      pulls.set(number, pending);
+    }
+    const pull = await pending;
+    if (
+      !pull ||
+      pull.number !== number ||
+      pull.node_id !== source.sourceId ||
+      pull.state !== "closed" ||
+      pull.html_url !== source.sourceUrl ||
+      pull.head.sha !== source.headSha ||
+      !sha.test(pull.head.sha) ||
+      !pull.merged_at ||
+      new Date(pull.merged_at).toISOString() !== source.occurredAt ||
+      !pull.merge_commit_sha ||
+      !sha.test(pull.merge_commit_sha)
+    )
+      throw Error("Duplicate acceptance source changed");
+    return { head: pull.head.sha, merge: pull.merge_commit_sha };
+  }
+  for (const retirement of retirements) {
+    const retired = await readSource(
+      retirement.source,
+      auditedSources.get(retirement.sourceId)?.number,
+    );
+    for (const source of [
+      ...retirement.earlierSources,
+      ...(retirement.acceptedSquashes ?? []),
+    ]) {
+      const earlier = await readSource(
+        source,
+        auditedSources.get(source.sourceId)?.number ??
+          retirement.earlierAcceptanceProof?.contextSources.find(
+            (row) => row.id === source.sourceId,
+          )?.number,
+      );
+      if (retired.merge === earlier.merge) continue;
+      const pair = `${retired.merge}...${earlier.head}`;
+      if (checked.has(pair)) continue;
+      const comparison = await github.get<{
+        status: string;
+        behind_by: number;
+        base_commit: { sha: string };
+        merge_base_commit: { sha: string };
+      }>(`${root}/compare/${pair}?per_page=1&page=1`);
+      const common = comparison?.merge_base_commit?.sha;
+      if (
+        comparison?.base_commit?.sha !== retired.merge ||
+        !common ||
+        !sha.test(common) ||
+        !Number.isSafeInteger(comparison.behind_by) ||
+        comparison.behind_by < 0
+      )
+        throw Error("Duplicate acceptance ancestry is unavailable");
+      if (
+        (comparison.status === "ahead" || comparison.status === "identical") &&
+        comparison.behind_by === 0 &&
+        common === retired.merge
+      )
+        throw Error("Earlier source already carries the retiring PR's merge");
+      if (
+        (comparison.status !== "behind" && comparison.status !== "diverged") ||
+        comparison.behind_by === 0 ||
+        common === retired.merge
+      )
+        throw Error("Duplicate acceptance ancestry is inconsistent");
+      checked.add(pair);
+    }
+  }
+}
+
 /** Verify the complete duplicate changes, including paths and both object IDs. */
 export async function verifyHistoricalIdenticalAcceptedChanges(
   packet: Pick<HistoricalPointsPacket, "sourceAudit" | "duplicateRetirements">,
@@ -305,6 +413,31 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           return (await execute(command.file, command.args, command.options))
             .stdout;
         };
+        if (!sharedMerge) {
+          const earlierHead = checked[0].pull.head.sha;
+          let carriesRetiredMerge = false;
+          try {
+            await nativeGit(
+              "merge-base",
+              "--is-ancestor",
+              proof.mergeSha,
+              earlierHead,
+            );
+            carriesRetiredMerge = true;
+          } catch (error) {
+            if (
+              !error ||
+              typeof error !== "object" ||
+              !("code" in error) ||
+              error.code !== 1
+            )
+              throw error;
+          }
+          if (carriesRetiredMerge)
+            throw Error(
+              "Earlier source already carries the retiring PR's merge",
+            );
+        }
         if (emptySquash) {
           const parents: string[] = [];
           for (const { pull, mergeSha, source } of checked) {
@@ -1011,6 +1144,7 @@ type PublicationPhase =
   | "project and repository verification"
   | "owner authority verification"
   | "historical census verification"
+  | "duplicate acceptance order verification"
   | "accepted squash verification"
   | "financial protection verification"
   | "assessment journal checkpoint read"
@@ -1440,6 +1574,8 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   setPhase("historical census verification");
   const github = GitHubClient.forToken(await resolveGitHubToken());
   await verifyHistoricalCensus(packet, github);
+  setPhase("duplicate acceptance order verification");
+  await verifyHistoricalDuplicateAcceptanceOrder(packet, github);
   setPhase("accepted squash verification");
   await verifyHistoricalAcceptedSquashes(packet, github);
   const verifiedIdenticalAcceptedChanges =
