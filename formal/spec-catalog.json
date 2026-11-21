@@ -24838,7 +24838,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "a7a14bca4cf68f8a1b767a36f5e9079d5658432726b762950e8a9ee836438475",
+      "sha256": "c3c7fce4df39bc1cee11513762b67cfeb506e714d804eb1e8433ae85787c446c",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -25029,7 +25029,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 468,
+          "line": 469,
           "definitions": [
             "assetValues",
             "mintValues",

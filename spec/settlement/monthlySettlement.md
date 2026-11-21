@@ -413,7 +413,8 @@ pure def alwaysPoolWithinUnreserved(s: MonthlySettlement): bool =
   M::compareAmounts(E::monthFor(s.escrow, s.month.period).remaining, MO::createdTotal(s.month)) <= 0
 pure def alwaysChildRules(s: MonthlySettlement): bool =
   MO::alwaysAllocationConserved(s.month) and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysCompletedPaid(s.month)
-    and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow)
+    and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow) and E::alwaysUndeployedEmpty(s.escrow)
+    and MO::alwaysNoObligationsBeforeFunding(s.month)
 pure def alwaysAdmittedOnlyWhenFunded(s: MonthlySettlement): bool =
   s.escrow.months.length() > 0 implies (s.month.phase == MO::Funded or s.month.phase == MO::Completed)
     and s.escrow.months.every(m => m.period == s.month.period)
