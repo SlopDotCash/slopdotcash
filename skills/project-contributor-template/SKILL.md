@@ -57,8 +57,12 @@ contributor can flag the project with that evidence at
 
 ## Select and scope
 
-Use the operator's issue or PR when supplied. Otherwise inspect live issues,
-open PRs, maintainer comments and recent merges.
+Use the operator's issue or PR when supplied. Otherwise start with open
+issues labelled `slop-wanted`: the maintainers marked them as the work they
+most want done, and the live report lists them first. Take one only when it is
+unclaimed and no open PR closes it; never open a second PR for an issue that
+already has one. Then inspect other live issues, open PRs, maintainer comments
+and recent merges.
 `node <skill-directory>/scripts/live-report.mjs` gives a read-only heuristic
 inventory; it holds back assigned or claimed work, issues with an open closing
 PR, draft PRs, and PRs with a review request, approval or requested changes on
