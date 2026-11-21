@@ -3486,7 +3486,7 @@
     },
     {
       "path": "spec/contracts/solanaEscrow.md",
-      "sha256": "3dec08b7bfd735946c908d3de491fc0bef3f778d2aa88d47adbd9162918df390",
+      "sha256": "b5cf22fe6e4b368295bb1a78b13f0f436554495bf92e206b337198ae3c3ef49d",
       "module": "contracts__solanaEscrow",
       "stories": [
         {

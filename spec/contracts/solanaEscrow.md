@@ -148,17 +148,17 @@ pure def opened(project: str, p: Program, network: str, identity: str, feeRecipi
     identityAuthority: identity, feeRecipient: feeRecipient, bindingDelay: delay, rotationDelay: rotationDelay }
 pure def openingValid(p: Program, opening: Opening, by: str): bool =
   projectKeysValid(p, opening.identity, opening.feeRecipient, opening.delay, opening.rotationDelay, by)
-pure def openedWith(p: Program, opening: Opening, by: str): Program =
+pure def openedWith(opening: Opening, p: Program, by: str): Program =
   opened(opening.project, p, opening.network, opening.identity, opening.feeRecipient, opening.delay,
     opening.rotationDelay, opening.purpose, by)
 pure def canInitialize(p: Program, opening: Opening, mint: MintFacts, by: str): bool =
   openingValid(p, opening, by) and admittedMint(mint)
 pure def initialize(p: Program, opening: Opening, mint: MintFacts, by: str): Program =
-  { ...openedWith(p, opening, by), native: false, mint: mint }
+  { ...openedWith(opening, p, by), native: false, mint: mint }
 pure def canInitializeNative(p: Program, opening: Opening, rent: int, by: str): bool =
   openingValid(p, opening, by) and rent > 0
 pure def initializeNative(p: Program, opening: Opening, rent: int, by: str): Program =
-  { ...openedWith(p, opening, by), native: true, rent: rent }
+  { ...openedWith(opening, p, by), native: true, rent: rent }
 ```
 
 ### The earlier build's project grows to the current layout with new counters at zero
@@ -804,9 +804,9 @@ the one-time project instructions in every later state, so seven separate
 opening parameters (7,680 combinations for `initialize`) made most of the
 invariant simulation the refusal of an already opened project. The opening
 records instead pair each Config key pair, including the refused one with
-equal keys, with each purpose, once with no delays and once with a nonzero
-binding or rotation delay; the all-zero project ID and the other network
-appear among them. Discovered by simulation: the attested monthly
+equal keys, with each purpose, once with no delays and once with a binding
+delay, half of these also with a rotation delay; the all-zero project ID and
+the other network appear among them. Discovered by simulation: the attested monthly
 commitment, the token payment and the wallet binding, each refused in most
 states and each tried over about a thousand or more value combinations, at
 weights 25, 30 and 25 took most of the remaining simulation; they now weigh
@@ -826,13 +826,13 @@ pure val openingValues = Set(
   { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
   { project: "", network: "solana", identity: "attester", feeRecipient: "fees", delay: 1, rotationDelay: 1, purpose: L::Ordinary },
   { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Bounty },
-  { project: "", network: "solana", identity: "attester", feeRecipient: "fees", delay: 1, rotationDelay: 1, purpose: L::Bounty },
+  { project: "", network: "solana", identity: "attester", feeRecipient: "fees", delay: 1, rotationDelay: 0, purpose: L::Bounty },
   { project: "slop", network: "other", identity: "attester", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
   { project: "", network: "other", identity: "attester", feeRecipient: "owner", delay: 1, rotationDelay: 0, purpose: L::Ordinary },
   { project: "", network: "other", identity: "attester", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Bounty },
-  { project: "slop", network: "other", identity: "attester", feeRecipient: "owner", delay: 0, rotationDelay: 1, purpose: L::Bounty },
+  { project: "slop", network: "other", identity: "attester", feeRecipient: "owner", delay: 1, rotationDelay: 1, purpose: L::Bounty },
   { project: "slop", network: "solana", identity: "fees", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
-  { project: "", network: "solana", identity: "fees", feeRecipient: "owner", delay: 0, rotationDelay: 1, purpose: L::Ordinary },
+  { project: "", network: "solana", identity: "fees", feeRecipient: "owner", delay: 1, rotationDelay: 1, purpose: L::Ordinary },
   { project: "slop", network: "solana", identity: "fees", feeRecipient: "owner", delay: 0, rotationDelay: 0, purpose: L::Bounty },
   { project: "", network: "solana", identity: "fees", feeRecipient: "owner", delay: 1, rotationDelay: 0, purpose: L::Bounty },
   { project: "slop", network: "solana", identity: "fees", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary },
