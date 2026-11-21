@@ -1515,6 +1515,9 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
+  // A removed project stays off: no vault review or registration revision.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   const body = saved?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,

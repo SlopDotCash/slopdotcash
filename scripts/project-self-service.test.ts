@@ -2006,6 +2006,77 @@ test("an owner revision cannot change a removed project or queue its scan", asyn
   ]);
 });
 
+test("a vault registration cannot append a revision to a removed project", async () => {
+  const t = registry();
+  await t.create("remove-vault", "example/remove-vault");
+  const created = await t.persistence.getProject("remove-vault");
+  if (!created) throw new Error("Project missing");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/remove-vault/manifest", ADMIN, {
+        expectedRevision: created.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...created.manifest,
+          reward: { ...created.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const funded = await t.persistence.getProject("remove-vault");
+  if (!funded) throw new Error("Project missing");
+  expect(
+    (
+      await t.call("POST", "projects/remove-vault/remove", OWNER, {
+        expectedRevision: funded.revision,
+      })
+    ).status,
+  ).toBe(200);
+  const removed = await t.persistence.getProject("remove-vault");
+  if (!removed) throw new Error("Project missing");
+  let registered = 0;
+  t.deps.vaultSetup = {
+    observe: async () => {},
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async () => {
+      registered += 1;
+      return { deployment: TEST_VAULT, evidence: "finalized" };
+    },
+  };
+  const registration = await t.call(
+    "POST",
+    "project-vaults/remove-vault",
+    OWNER,
+    {
+      step: "register",
+      expectedRevision: funded.revision,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    },
+  );
+  expect(registration.status).toBe(409);
+  expect(registration.body).toMatchObject({ error: "project_restricted" });
+  expect(registered).toBe(0);
+  expect(await t.persistence.getProject("remove-vault")).toMatchObject({
+    revision: removed.revision,
+    manifestSha256: removed.manifestSha256,
+  });
+});
+
 test("an intervening revision refuses removal without overwriting the newer project", async () => {
   const t = registry();
   await t.create("remove-race", "example/remove-race");
