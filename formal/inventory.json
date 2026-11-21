@@ -8604,13 +8604,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "ef072a1f6ccf9a19f745f90a0207b6c4dcc45ed89aeeabf04fad2be56deceee1",
+      "sha256": "52eae79ebd50387a2ee4f01b12ea6a29b9e8f4d61621f2cdcfee5619a617973d",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [311, 313, 332, 338, 352],
+      "candidateLines": [320, 322, 341, 347, 361],
       "review": "mapped-abstraction"
     },
     {
@@ -9110,13 +9110,13 @@
     },
     {
       "path": "workers/slopbot/appeals.ts",
-      "sha256": "bfc2dbfd8158dd9012f26f5f2b55d13aa6556431682f1c35484c58d233d64caf",
+      "sha256": "b8bef0793164e55c213bbefef8d383b65e652ae7003aab8ebda14f5bd8c8541c",
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/points_dispute_lease.qnt",
         "formal/models/slopbot/bot_appeal.qnt"
       ],
-      "candidateLines": [1, 84, 118, 135, 149, 181, 215],
+      "candidateLines": [1, 84, 118, 157, 171, 203, 237],
       "review": "mapped-abstraction"
     },
     {
@@ -9375,7 +9375,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "7a54c26ac0a7b580cc58cd6301c4e8d4ae7eb7d8d4a8f47951be76b18b4b4ea5",
+      "sha256": "cece4377bf18a76bfa693babbd912d44ec7089c7a6c7e3a476ac63dfefdd82c6",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9391,13 +9391,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 169, 284, 299, 308, 318, 321, 513, 667, 846, 875, 885, 1020, 1025,
-        1030, 1032, 1035, 1037, 1038, 1049, 1052, 1054, 1111, 1112, 1114, 1115,
-        1131, 1137, 1188, 1216, 1217, 1225, 1230, 1331, 1333, 1353, 1372, 1455,
-        1460, 1618, 1740, 1753, 1754, 1791, 1808, 1811, 1812, 1975, 1980, 2042,
-        2055, 2060, 2067, 2068, 2072, 2073, 2081, 2097, 2154, 2307, 2367, 2373,
-        2384, 2410, 2440, 2465, 2473, 2496, 2501, 2577, 2578, 2628, 2663, 2714,
-        2859, 3125, 3200, 3366, 3377, 3385, 3483, 3484, 3524, 3574, 3588, 3604
+        3, 170, 285, 300, 309, 319, 322, 514, 668, 847, 876, 886, 1021, 1026,
+        1031, 1033, 1036, 1038, 1039, 1050, 1053, 1055, 1112, 1113, 1115, 1116,
+        1132, 1138, 1189, 1217, 1218, 1226, 1231, 1332, 1334, 1354, 1373, 1456,
+        1461, 1619, 1741, 1754, 1755, 1792, 1809, 1812, 1813, 1976, 1981, 2043,
+        2056, 2061, 2068, 2069, 2073, 2074, 2082, 2098, 2155, 2308, 2368, 2374,
+        2385, 2411, 2441, 2466, 2474, 2497, 2502, 2578, 2579, 2629, 2664, 2715,
+        2860, 3128, 3203, 3369, 3380, 3388, 3486, 3487, 3527, 3577, 3591, 3607
       ],
       "review": "mapped-abstraction"
     },
