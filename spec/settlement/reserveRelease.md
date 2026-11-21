@@ -214,9 +214,15 @@ requires `remaining == total` and `releasedGross == expectedRemaining`, and
 attestation of `monthly_release_message`. The service approval path is
 implemented only for EVM vaults: `apps/settlement/src/reserveRelease/release.vibe`
 takes a registered EVM deployment, qualifies its EVM upgrade implementation and
-signs `monthlyReleaseDigest`. It has no Solana evidence adapter and produces no
-Ed25519 attestation. A record pinned to a Solana deployment binding is
-therefore never admitted, checked or approved. The attester records the named
+signs `monthlyReleaseDigest`. `apps/settlement/src/chain/solana/messages.ts`
+already encodes the Solana release message and instruction, but the service has
+no Solana evidence adapter and never signs an Ed25519 attestation of that
+message. A record pinned to a Solana deployment binding is therefore never
+admitted, checked or approved. Before anything is written, a Solana request
+passes the same owner checks as an EVM request: the route's owner authorization
+and manifest check, then the current steward, GitHub repository authority and
+unchanged manifest (`refuseUnsupportedNetwork` runs `ownedProject`, as
+`prepareRelease` does). The attester then records the named
 refusal `NetworkUnsupported` on it, and the request stays held; time never
 releases it (PRD section 6). The named refusal is retained in the release
 record. The owner receives the route's existing `release_held` answer, as for
@@ -283,7 +289,10 @@ pure def stepSettlementHistoryRetained(before: ReserveRelease, after: ReserveRel
 These input sets bound simulation only. The generated guards accept every
 value allowed by their declared types and product rules. Discovered by simulation: without a Solana pin and an unpinned pin among the
 samples, the network refusal is never allowed and the pin guard's network
-condition never refuses, so both are sampled beside the EVM pins.
+condition never refuses, so both are sampled beside the EVM pins. The network
+refusal also gets the same weight as the other attester events
+(`weight_refuseNetwork`), so a Solana-pinned record reaches it in the sampled
+traces instead of leaving the event rarely chosen.
 
 ```quint
 pure val heightValues = Set(0, 1, 2, 3)

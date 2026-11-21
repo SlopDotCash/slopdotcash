@@ -27005,7 +27005,7 @@
     },
     {
       "path": "spec/settlement/reserveRelease.md",
-      "sha256": "441ea4eeb8029379947f011fd894adb25b87aac763c29dbdbaff25b34ee43af8",
+      "sha256": "f568f248055527413bde0edf70cce4d5737d70b222708bf0d1cc5c5f9b07fa17",
       "module": "settlement__reserveRelease",
       "stories": [
         {
@@ -27108,7 +27108,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / The original balances and allocation survive every recovery step",
-          "line": 246,
+          "line": 252,
           "definitions": [
             "alwaysUntouchedBalances",
             "alwaysSettlementHistory",
@@ -27123,7 +27123,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 281,
+          "line": 287,
           "definitions": [
             "heightValues",
             "attemptValues",

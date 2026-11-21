@@ -189,10 +189,11 @@ effect function simulated(deployment: RegisteredEvmDeployment, transaction: { re
   if (answer !== "0x") throw refused("Monthly release simulation returned unexpected data")
 }
 
-export effect function refuseUnsupportedNetwork(request: OwnerReleaseRequest, deployment: RegisteredSolanaDeployment) {
+export effect function refuseUnsupportedNetwork(request: OwnerReleaseRequest, deployment: RegisteredSolanaDeployment, owner: ReleaseOwner) {
   try periodOf(request.period)
   if (deployment.network !== request.network || deployment.projectId !== request.projectId || deployment.vault === "" || deployment.programId === "")
     throw refused("Monthly deployment unavailable")
+  try ownedProject(request, owner)
   const scope: ReleaseScope = { network: request.network, vault: deployment.vault, period: request.period }
   const pin: DeploymentPin = { revision: deployment.revision, implementation: deployment.programId, network: "Solana" }
   let state = try release(scope)

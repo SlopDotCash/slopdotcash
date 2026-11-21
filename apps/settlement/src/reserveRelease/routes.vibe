@@ -34,7 +34,7 @@ effect function registeredDeployment(request: OwnerReleaseRequest, network: Netw
 effect function released(call: ReleaseCall, network: NetworkKey) {
   const { request, owner } = call
   const deployment = try registeredDeployment(request, network)
-  if (deployment.family === "solana") return try refuseUnsupportedNetwork(request, deployment)
+  if (deployment.family === "solana") return try refuseUnsupportedNetwork(request, deployment, owner)
   if ("planId" in request) return try checkRelease(request, deployment)
   return try prepareRelease(request, deployment, owner)
 }
