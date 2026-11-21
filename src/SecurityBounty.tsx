@@ -103,6 +103,7 @@ import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import {
   REPORT_DEPOSIT_NOTICE,
+  REPORT_DEPOSIT_SPAM_INFO,
   type ReportDepositStatus,
   readReportDeposit,
   reportDepositPath,
@@ -2754,6 +2755,20 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
               ["rejected", "Rejected"],
             ],
           },
+          // A person's spam mark is the only record that closes a report as
+          // spam, which keeps the reporter's deposit (PRD section 8). Offered
+          // only while Slop asks reporters for the deposit.
+          ...(reportDepositSetup().switchedOn
+            ? [
+                {
+                  name: "spam",
+                  label: "Spam",
+                  info: REPORT_DEPOSIT_SPAM_INFO,
+                  kind: "checkbox",
+                  when: { field: "outcome", values: ["rejected"] },
+                } satisfies FieldSpec,
+              ]
+            : []),
           {
             name: "severity",
             label: "Severity",

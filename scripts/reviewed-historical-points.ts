@@ -158,6 +158,8 @@ export interface HistoricalPointsPacket {
       diffSha256: string;
       /** The later squash is empty and its parent already contains the change. */
       emptySquash?: true;
+      /** The recorded branch kept the carrier's identical native merge edge. */
+      survivingCarrier?: true;
     };
     /** Complete native commit membership already accepted before this promotion. */
     earlierAcceptanceProof?: {
@@ -672,12 +674,15 @@ export function reconstructHistoricalPoints(
         Object.keys(identical).sort().join() ===
           (identical.emptySquash === true
             ? "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha"
-            : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
+            : identical.survivingCarrier === true
+              ? "diffSha256,earlierMergeSha,earlierSourceId,mergeSha,survivingCarrier"
+              : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
           /^[a-f0-9]{64}$/u.test(identical.diffSha256) &&
           /^[a-f0-9]{40}$/u.test(identical.earlierMergeSha) &&
           /^[a-f0-9]{40}$/u.test(identical.mergeSha) &&
           earlier.size === 1 &&
           owner &&
+          (identical.survivingCarrier !== true || !sharedMerge) &&
           (sharedMerge
             ? identical.emptySquash !== true && owner.headSha === source.headSha
             : source.commits.length === 1 &&
@@ -1403,6 +1408,51 @@ export function reconstructHistoricalPoints(
         ),
       "Duplicate pool changed after owner review",
     );
+    if (identical?.survivingCarrier === true) {
+      const carrier = earlier.get(identical.earlierSourceId);
+      const original = source.author;
+      const inPair = ({ award }: (typeof rows)[number]) =>
+        award.projectId === packet.projectId &&
+        award.category === "merged-pull-request" &&
+        (award.sourceId === source.sourceId ||
+          award.sourceId === carrier?.sourceId);
+      const currentPair = [...latestPoints(result).values()].filter(inPair);
+      const baselinePair = [...latestBaseline.values()].filter(inPair);
+      const positive = currentPair.filter(({ award }) => award.amount > 0);
+      const retiring = positive.filter(
+        ({ award }) => award.sourceId === source.sourceId,
+      );
+      const retained = positive.filter(
+        ({ award }) => award.sourceId === carrier?.sourceId,
+      );
+      check(
+        carrier &&
+          original?.kind === "User" &&
+          source.commits[0]?.author?.id === original.id &&
+          source.commits[0]?.author?.kind === "User" &&
+          retiring.length === 1 &&
+          retained.length === 1 &&
+          rows.some((row) => row.id === retiring[0].id) &&
+          retiring[0].award.actor.id === original.id &&
+          retained[0].award.actor.id === original.id &&
+          retained[0].award.amount === retiring[0].award.amount &&
+          retained[0].award.sourceUrl === carrier.sourceUrl &&
+          retained[0].award.occurredAt === carrier.occurredAt &&
+          retained[0].award.occurredAt.startsWith("2026-10-") &&
+          retained[0].award.key ===
+            pointKey(
+              packet.projectId,
+              original.id,
+              "merged-pull-request",
+              carrier.sourceId,
+            ) &&
+          currentPair.length === baselinePair.length &&
+          currentPair.every(
+            (row) => latestBaseline.get(row.award.key)?.id === row.id,
+          ),
+        "Surviving carrier must preserve the equal original-author award",
+      );
+    }
     validatedRetirements.set(source.sourceId, hash(source));
     result = appendPointAwards(
       result,

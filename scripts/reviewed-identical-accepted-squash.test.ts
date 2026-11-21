@@ -15,6 +15,7 @@ for (const scenario of [
   "identical two-parent merges",
   "identical accepted squashes",
   "one shared multicommit acceptance",
+  "surviving carrier of an identical original merge",
   "different squash with the same line counts",
 ] as const) {
   test(`reviewed identical accepted changes check ${scenario}`, async () => {
@@ -59,18 +60,29 @@ for (const scenario of [
       const changed = `${old}accepted\n`;
       const base = commit("base", old, []);
       const shared = scenario === "one shared multicommit acceptance";
-      const laterBase = shared ? base : commit("later base", old, [base]);
-      const laterParent = shared
-        ? base
-        : commit("advanced base", old, [laterBase], true);
+      const surviving =
+        scenario === "surviving carrier of an identical original merge";
+      const laterBase =
+        shared || surviving ? base : commit("later base", old, [base]);
+      const laterParent =
+        shared || surviving
+          ? base
+          : commit("advanced base", old, [laterBase], true);
       const earlierWork = commit("earlier submission", changed, [base]);
-      const earlierHead = shared
+      const firstSubmission = shared
         ? commit("submitter synchronization", changed, [earlierWork, base])
         : earlierWork;
       const laterHead = shared
-        ? earlierHead
+        ? firstSubmission
         : commit("later submission", changed, [laterBase]);
-      const twoParent = shared || scenario === "identical two-parent merges";
+      const originalMerge = surviving
+        ? commit("original accepted object", changed, [base, laterHead])
+        : undefined;
+      const earlierHead = originalMerge
+        ? commit("carrier submission", changed, [originalMerge])
+        : firstSubmission;
+      const twoParent =
+        shared || surviving || scenario === "identical two-parent merges";
       const earlierParents = twoParent ? [base, earlierHead] : [base];
       const laterParents = twoParent ? [laterParent, laterHead] : [laterParent];
       const earlierMerge = commit(
@@ -80,14 +92,24 @@ for (const scenario of [
       );
       const laterMerge = shared
         ? earlierMerge
-        : commit(
+        : (originalMerge ??
+          commit(
             "later acceptance",
             scenario === "different squash with the same line counts"
               ? `${old}different\n`
               : changed,
             laterParents,
             true,
-          );
+          ));
+      let branchTip = surviving
+        ? commit(
+            "later work on published branch",
+            changed,
+            [earlierMerge],
+            true,
+          )
+        : earlierMerge;
+      let commitAuthor = "actor_2";
       const repository = {
         id: 1,
         node_id: "R_feed",
@@ -99,17 +121,17 @@ for (const scenario of [
           number: 1,
           node_id: "PR_earlier",
           merged_at: "2026-10-04T00:00:00.000Z",
-          base: { sha: base },
+          base: { sha: base, ref: "develop", repo: repository },
           head: { sha: earlierHead },
           merge_commit_sha: earlierMerge,
-          commits: shared ? 2 : 1,
+          commits: surviving ? 3 : shared ? 2 : 1,
           changed_files: 1,
         },
         {
           number: 2,
           node_id: "PR_later",
           merged_at: "2026-10-04T01:00:00.000Z",
-          base: { sha: laterBase },
+          base: { sha: laterBase, ref: "develop", repo: repository },
           head: { sha: laterHead },
           merge_commit_sha: laterMerge,
           commits: shared ? 2 : 1,
@@ -122,6 +144,11 @@ for (const scenario of [
         user: { node_id: `actor_${pull.number}`, type: "User" as const },
       }));
       function correctionSource(pull: (typeof pulls)[number]) {
+        const author = {
+          id: pull.user.node_id,
+          login: `fixture-${pull.number}`,
+          kind: pull.user.type,
+        };
         return {
           repository: repository.full_name,
           repositoryNodeId: repository.node_id,
@@ -129,42 +156,58 @@ for (const scenario of [
           sourceUrl: `https://github.com/${repository.full_name}/pull/${pull.number}`,
           occurredAt: pull.merged_at,
           headSha: pull.head.sha,
-          author: {
-            id: pull.user.node_id,
-            login: `fixture-${pull.number}`,
-            kind: pull.user.type,
-          },
+          author,
           complete: true,
           commitCount: pull.commits,
-          commits: [
-            {
-              sha: shared ? earlierWork : pull.head.sha,
-              parentCount: 1,
-              parentShas: [pull.base.sha],
-              author: null,
-              additions: 1,
-              deletions: 0,
-              files: [{ path: "feature.txt", additions: 1, deletions: 0 }],
-              firstAcceptedSourceId: pull.node_id,
-            },
-            ...(shared
-              ? [
+          commits:
+            surviving && pull.number === 1
+              ? git(["rev-list", "--parents", pull.head.sha, `^${base}`])
+                  .split("\n")
+                  .map((row) => {
+                    const [sha, ...parentShas] = row.split(" ");
+                    return {
+                      sha,
+                      parentShas,
+                      parentCount: parentShas.length,
+                      author: null,
+                      additions: 0,
+                      deletions: 0,
+                      firstAcceptedSourceId: pull.node_id,
+                    };
+                  })
+              : [
                   {
-                    sha: earlierHead,
-                    parentCount: 2,
-                    parentShas: [earlierWork, base],
-                    author: null,
-                    additions: 0,
+                    sha: shared ? earlierWork : pull.head.sha,
+                    parentCount: 1,
+                    parentShas: [pull.base.sha],
+                    author: surviving ? author : null,
+                    additions: 1,
                     deletions: 0,
-                    files: [],
-                    firstAcceptedSourceId: pulls[0].node_id,
+                    files: [
+                      { path: "feature.txt", additions: 1, deletions: 0 },
+                    ],
+                    firstAcceptedSourceId: pull.node_id,
                   },
-                ]
-              : []),
-          ],
+                  ...(shared
+                    ? [
+                        {
+                          sha: earlierHead,
+                          parentCount: 2,
+                          parentShas: [earlierWork, base],
+                          author: null,
+                          additions: 0,
+                          deletions: 0,
+                          files: [],
+                          firstAcceptedSourceId: pulls[0].node_id,
+                        },
+                      ]
+                    : []),
+                ],
         };
       }
-      const retirement = {
+      const retirement: NonNullable<
+        import("./reviewed-historical-points").HistoricalPointsPacket["duplicateRetirements"]
+      >[number] = {
         sourceId: pulls[1].node_id,
         workUnitId: "ordinary",
         source: correctionSource(pulls[1]),
@@ -174,6 +217,7 @@ for (const scenario of [
           earlierMergeSha: earlierMerge,
           mergeSha: laterMerge,
           diffSha256: await changeDigest(directory, base, earlierMerge),
+          ...(surviving ? { survivingCarrier: true as const } : {}),
         },
         coverage: [],
         evidence: "",
@@ -199,6 +243,16 @@ for (const scenario of [
       const github = {
         async get<T>(path: string): Promise<T> {
           if (path === root) return repository as T;
+          if (surviving && path === `${root}/git/ref/heads/develop`)
+            return {
+              ref: "refs/heads/develop",
+              object: { sha: branchTip, type: "commit" },
+            } as T;
+          if (surviving && path === `${root}/commits/${laterHead}`)
+            return {
+              sha: laterHead,
+              author: { node_id: commitAuthor, type: "User" },
+            } as T;
           const pull = pulls.find(
             (candidate) => path === `${root}/pulls/${candidate.number}`,
           );
@@ -219,6 +273,48 @@ for (const scenario of [
         expect(await proof).toEqual(
           new Set([sha256Hex(JSON.stringify(retirement))]),
         );
+      }
+      if (surviving) {
+        const beforeImportChecks: (() => Promise<void>)[] = [];
+        const verify = (duringNative?: () => void) =>
+          verifyHistoricalIdenticalAcceptedChanges(
+            packet,
+            github,
+            async (_repository, objects, read) => {
+              if (retirement.identicalAcceptedChange?.survivingCarrier)
+                expect(objects).toContain(branchTip);
+              const result = await read(directory);
+              duringNative?.();
+              return result;
+            },
+            { integrationBranch: "develop", beforeImportChecks },
+          );
+        const published = branchTip;
+        const moved = commit("carrier as side parent", changed, [
+          laterMerge,
+          earlierMerge,
+        ]);
+        await expect(verify()).resolves.toHaveProperty("size", 1);
+        expect(beforeImportChecks).toHaveLength(1);
+        await expect(
+          verify(() => {
+            branchTip = moved;
+          }),
+        ).rejects.toThrow("integration branch changed");
+        await expect(beforeImportChecks[0]()).rejects.toThrow(
+          "integration branch changed",
+        );
+        await expect(verify()).rejects.toThrow("published first-parent edge");
+        branchTip = published;
+        commitAuthor = "other_actor";
+        await expect(verify()).rejects.toThrow(
+          "original commit author changed",
+        );
+        commitAuthor = "actor_2";
+        if (!retirement.identicalAcceptedChange)
+          throw Error("Missing fixture proof");
+        delete retirement.identicalAcceptedChange.survivingCarrier;
+        await expect(verify()).rejects.toThrow("already carries");
       }
       if (shared) {
         const thirdPull = {

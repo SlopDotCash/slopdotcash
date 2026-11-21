@@ -152,6 +152,13 @@ module source_import {
     not(earlierCarriesMerge),
     s' = s.with("published", true).with("historicalPublished", true),
   }
+  action retireSurvivingCarrier(publishedFirstParent: bool, exactSameChange: bool, sameOriginalAward: bool): bool = all {
+    canPublishHistorical,
+    publishedFirstParent,
+    exactSameChange,
+    sameOriginalAward,
+    s' = s.with("published", true).with("historicalPublished", true),
+  }
   action disclose=all{s.published,s'=s.with("disclosed",true)}
   action appendSameIdentity(id:int):bool=all{id==s.identity,s'=s}
   action step=any {
@@ -162,6 +169,10 @@ module source_import {
     retireDistinctDuplicate(true,false),
     retireDistinctDuplicate(true,true),
     retireDistinctDuplicate(false,false),
+    retireSurvivingCarrier(true,true,true),
+    retireSurvivingCarrier(false,true,true),
+    retireSurvivingCarrier(true,false,true),
+    retireSurvivingCarrier(true,true,false),
     bindMixed(mixed),
     bindMixed(mixed.with("pathCommit",10)),
     bindMixed(mixed.with("squashIdentity",2)),
@@ -228,4 +239,13 @@ module source_import {
     .then(qualifyReplay(true)).then(retireDistinctDuplicate(true,true).fail())
   run missingDistinctDuplicateAncestryRefusesTest = init.then(part(1)).then(part(2)).then(validate)
     .then(qualifyReplay(true)).then(retireDistinctDuplicate(false,false).fail())
+  run survivingCarrierPreservesOriginalAwardTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireSurvivingCarrier(true,true,true))
+    .expect(s.historicalPublished and invariant)
+  run carrierSideParentRefusesTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireSurvivingCarrier(false,true,true).fail())
+  run carrierDifferentResultRefusesTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireSurvivingCarrier(true,false,true).fail())
+  run carrierDifferentAwardRefusesTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(retireSurvivingCarrier(true,true,false).fail())
 }

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "5ff46add1973153c16682d346e5a81093828b997fe689558b06321d8e93b42d7",
+  "inventorySha256": "e7ff21d27c6c8b32c54f859682b994f6d726414cc975ad6d4ed0e493fb0ae6e8",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2789,7 +2789,7 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "line": 1165,
+      "line": 1288,
       "name": "PublicationPhase",
       "kind": "string-union",
       "values": [
@@ -3361,7 +3361,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 387,
+      "line": 388,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -3390,7 +3390,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1190,
+      "line": 1191,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3419,7 +3419,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1205,
+      "line": 1206,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3448,7 +3448,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1207,
+      "line": 1208,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -3477,7 +3477,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1223,
+      "line": 1224,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -3506,7 +3506,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1262,
+      "line": 1263,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3563,7 +3563,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1626,
+      "line": 1627,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3592,7 +3592,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1874,
+      "line": 1875,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -4223,7 +4223,7 @@
     },
     {
       "path": "src/lib/report-deposit-page.ts",
-      "line": 146,
+      "line": 152,
       "name": "ReportDepositState",
       "kind": "string-union",
       "values": [

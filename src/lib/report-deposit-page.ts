@@ -15,6 +15,7 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import { networkLabel } from "./network-names";
 import {
+  REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS,
   REPORT_DEPOSIT_NETWORK,
   REPORT_DEPOSIT_USD_MINOR,
   reportDepositItem,
@@ -141,6 +142,11 @@ export const REPORT_DEPOSIT_NOTICE = `A refundable deposit of ${ABOUT} is needed
 
 /** One sentence under the owner's checkbox. */
 export const REPORT_DEPOSIT_SETTING_HINT = `A private report is screened once its reporter deposits ${ABOUT}, sent back ${KEEPING_CLOSES}.`;
+/**
+ * What the owner's "Spam" mark on a rejected report does (PRD section 8). It
+ * is the only record that closes a report as spam.
+ */
+export const REPORT_DEPOSIT_SPAM_INFO = `a paid deposit is kept after ${REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS} days with no open appeal`;
 
 export type ReportDepositState =
   | "needed"
