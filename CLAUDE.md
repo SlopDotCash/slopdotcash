@@ -484,10 +484,10 @@ sent back. The setting `project.security.reportDeposit` is on unless the owner
 turns it off. The project's owner, its maintainers, Slop moderators and admins
 are not asked, nobody is asked while no SLOP rate is in force, and a report
 that existed before the switch-on is never asked. `SECURITY_REPORT_DEPOSIT` is
-`off`, `dry_run` or `live`, set in `wrangler.toml` (production, `dry_run` from
-21 November 2026) and `wrangler.staging.toml` (`off`); `dry_run` records which
-reports would have been asked and holds nothing. Going `live` is its own
-reviewed change together with `REPORT_DEPOSIT_SWITCHED_ON` in
+`off`, `dry_run` or `live`, set in `wrangler.toml` (production, `live` since
+21 November 2026, operator decision) and `wrangler.staging.toml` (`off`);
+`dry_run` records which reports would have been asked and holds nothing.
+Change the mode only together with `REPORT_DEPOSIT_SWITCHED_ON` in
 `src/lib/security-report-deposit.mjs`. Say "sent back" and "kept"; never say a
 deposit buys a faster or better review.
 Use generic private email notices with secure Inbox links. GitHub forwarding
