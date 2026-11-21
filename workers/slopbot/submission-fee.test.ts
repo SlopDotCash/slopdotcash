@@ -10,9 +10,16 @@ import { findProject } from "../../src/lib/projects.mjs";
 import {
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEPT_TO,
+  SUBMISSION_FEE_TOKENS,
+  submissionDepositCounts,
   submissionFeeItem,
 } from "../../src/lib/submission-fee.mjs";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
+import {
+  D1FeeStore,
+  type SubmissionFeeD1Database,
+} from "../submission-fee/store";
 import type { Job } from "./contracts";
 import worker from "./index";
 import type { D1Database } from "./persistence";
@@ -180,6 +187,8 @@ function world(options: WorldOptions = {}) {
     draft: options.draft ?? false,
     head: "b".repeat(40),
     labels: [] as string[],
+    /** Runs when Slopbot removes a label, before GitHub answers. */
+    onLabelRemoved: null as (() => void) | null,
     comments: [] as Comment[],
     permission: options.permission ?? ("read" as "read" | "write"),
   };
@@ -335,6 +344,7 @@ function world(options: WorldOptions = {}) {
       }
       const labelPath = /\/issues\/5\/labels\/(.+)$/u.exec(path);
       if (labelPath && method === "DELETE") {
+        github.onLabelRemoved?.();
         if (!github.labels.includes(labelPath[1]))
           return new Response(null, { status: 404 });
         github.labels = github.labels.filter((name) => name !== labelPath[1]);
@@ -898,6 +908,74 @@ test("an author who gains write access is released by the next review", async ()
       reason: "author-exempt",
     });
     expect(w.feeComments()[0].body).toContain("now has write access");
+  } finally {
+    w.close();
+  }
+});
+
+test.each([
+  ["setting-off", "the owner turns the setting off"],
+  ["author-exempt", "the author gains write access"],
+] as const)("an ask taken back (%s) pays for no later deposit", async (why) => {
+  const w = world();
+  try {
+    await w.review();
+    const item = w.item()?.item ?? "";
+    if (why === "setting-off") {
+      w.publish({ enabled: false }, "2026-11-15T00:00:00.000Z");
+      await w.dispatch();
+      await w.check();
+    } else {
+      w.github.permission = "write";
+      await w.review();
+    }
+    expect(w.gate()).toMatchObject({ state: "released", reason: why });
+    expect(w.feeComments()[0].body).toContain(
+      "one sent now does not count and goes back",
+    );
+    // The deposit as the submission-fee Worker's `judge` reads and decides it.
+    const store = new D1FeeStore(
+      w.env.SLOPBOT_DB as unknown as SubmissionFeeD1Database,
+    );
+    const verdict = submissionDepositCounts(
+      "base-mainnet",
+      {
+        depositId: 12,
+        token: SUBMISSION_FEE_TOKENS["base-mainnet"].usdc as string,
+        amount: SUBMISSION_FEE_DEFAULT_MINOR,
+        keptTo: SUBMISSION_FEE_KEPT_TO["base-mainnet"],
+        blockTime: "2026-11-16T00:00:00.000Z",
+      },
+      await store.itemByHash(item),
+      [],
+    );
+    expect(verdict).toEqual({ accepted: false, reason: "unknown_item" });
+    expect(w.item()).toBeNull();
+    if (why === "author-exempt") {
+      // Asked again later: the row is written again for the same item.
+      w.github.permission = "read";
+      expect(await w.review()).toBe(FEE_NEEDED_REASON);
+      expect(w.item()).toMatchObject({ item, paid_at: null });
+    }
+  } finally {
+    w.close();
+  }
+});
+
+test("a deposit accepted while the ask is taken back keeps its paid row", async () => {
+  const w = world();
+  try {
+    await w.review();
+    // The submission-fee Worker marks the row paid after Slopbot read it as
+    // unpaid and while it takes the ask back.
+    w.github.onLabelRemoved = () => w.pay("2026-11-15T00:00:00.000Z");
+    w.github.permission = "write";
+    await w.review();
+    expect(w.gate()).toMatchObject({
+      state: "released",
+      reason: "author-exempt",
+    });
+    expect(w.item()).toMatchObject({ paid_at: "2026-11-15T00:00:00.000Z" });
   } finally {
     w.close();
   }
