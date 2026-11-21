@@ -40,6 +40,7 @@ lemma observeClock_ensures(s: MonthlySettlement, now: int)
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysOneAwardPerObligation(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysPoolWithinUnreserved(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysChildRules(observeClock(s, now)))
+  ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysChildLifecycle(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysAdmittedOnlyWhenFunded(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysPoolOnlyWhenAdmitted(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysCursorInRange(observeClock(s, now)))
@@ -65,6 +66,7 @@ lemma openMonth_ensures(s: MonthlySettlement, period: int)
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysOneAwardPerObligation(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysPoolWithinUnreserved(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysChildRules(openMonth(s, period)))
+  ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysChildLifecycle(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysAdmittedOnlyWhenFunded(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysPoolOnlyWhenAdmitted(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysCursorInRange(openMonth(s, period)))
@@ -82,7 +84,7 @@ lemma openMonth_ensures(s: MonthlySettlement, period: int)
 {
   if inv(s) && canOpenMonth(s, period) {
     var after := openMonth(s, period);
-    assert alwaysChildRules(s);
+    assert alwaysChildLifecycle(s);
     assert settlement__monthly_alwaysNoObligationsBeforeFunding(s.month);
     assert s.month.obligations == [];
     assert after.month.obligations == [];
@@ -94,6 +96,7 @@ lemma openMonth_ensures(s: MonthlySettlement, period: int)
     assert alwaysLeafAwardsAreObligations(after);
     assert alwaysObligationsMatchVault(after);
     assert settlement__monthly_alwaysObligationsMatchShares(after.month);
+    assert alwaysChildRules(after);
     assert settlement__monthly_alwaysNoObligationsBeforeFunding(after.month);
   }
 }
@@ -102,6 +105,7 @@ lemma deploy_ensures(s: MonthlySettlement, asset: settlement__escrow_AssetIdenti
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysOneAwardPerObligation(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysPoolWithinUnreserved(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysChildRules(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
+  ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysChildLifecycle(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysAdmittedOnlyWhenFunded(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysPoolOnlyWhenAdmitted(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysCursorInRange(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
@@ -119,10 +123,100 @@ lemma deploy_ensures(s: MonthlySettlement, asset: settlement__escrow_AssetIdenti
 {
   if inv(s) && canDeploy(s, asset, mint, purpose, delay, cap, turnOn) {
     var after := deploy(s, asset, mint, purpose, delay, cap, turnOn);
-    assert alwaysChildRules(s);
+    assert alwaysChildLifecycle(s);
     assert s.escrow.awards == [];
     assert after.month == s.month && after.cursor == s.cursor && after.headTime == s.headTime;
     assert after.escrow.awards == [] && after.escrow.months == s.escrow.months && after.escrow.pending == s.escrow.pending;
     assert after.escrow.deployed;
+  }
+}
+
+lemma observeEligibility_ensures(s: MonthlySettlement, eligibility: settlement__monthly_Eligibility)
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysOneAwardPerObligation(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysPoolWithinUnreserved(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysChildRules(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysChildLifecycle(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysAdmittedOnlyWhenFunded(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysPoolOnlyWhenAdmitted(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysCursorInRange(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysReleasedMonthHasNoLeafAward(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysPendingPoolIsExactlyUnreserved(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysUnreservedSourcesFreeWhilePooled(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysLeafAwardsAreObligations(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysCursorSourceBacked(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysLeafAwardsReserveTheirObligation(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysObligationsMatchVault(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> stepObligationsOnFreshCoveringHead(s, "observeEligibility", observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> stepUnderfundedOnFreshHead(s, "observeEligibility", observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> stepCursorMonotoneByOne(s, observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> stepRootAdmitsOnlyFreeSources(s, "observeEligibility", observeEligibility(s, eligibility)))
+{
+  if inv(s) && canObserveEligibility(s, eligibility) {
+    var after := observeEligibility(s, eligibility);
+    MsMonthFrame(s, after);
+    assert alwaysChildRules(s);
+    assert settlement__monthly_alwaysAllocationConserved(after.month);
+    assert settlement__monthly_alwaysObligationsMatchShares(after.month);
+    assert alwaysChildLifecycle(s);
+  }
+}
+
+lemma observeRevision_ensures(s: MonthlySettlement, revision: settlement__monthly_RevisionFact)
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysOneAwardPerObligation(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysPoolWithinUnreserved(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysChildRules(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysChildLifecycle(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysAdmittedOnlyWhenFunded(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysPoolOnlyWhenAdmitted(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysCursorInRange(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysReleasedMonthHasNoLeafAward(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysPendingPoolIsExactlyUnreserved(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysUnreservedSourcesFreeWhilePooled(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysLeafAwardsAreObligations(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysCursorSourceBacked(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysLeafAwardsReserveTheirObligation(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysObligationsMatchVault(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> stepObligationsOnFreshCoveringHead(s, "observeRevision", observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> stepUnderfundedOnFreshHead(s, "observeRevision", observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> stepCursorMonotoneByOne(s, observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> stepRootAdmitsOnlyFreeSources(s, "observeRevision", observeRevision(s, revision)))
+{
+  if inv(s) && canObserveRevision(s, revision) {
+    var after := observeRevision(s, revision);
+    MsMonthFrame(s, after);
+    assert alwaysChildRules(s);
+    assert settlement__monthly_alwaysAllocationConserved(after.month);
+    assert settlement__monthly_alwaysObligationsMatchShares(after.month);
+    assert alwaysChildLifecycle(s);
+  }
+}
+
+lemma observeSettings_ensures(s: MonthlySettlement, automatic: bool, settingsSequence: int)
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysOneAwardPerObligation(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysPoolWithinUnreserved(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysChildRules(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysChildLifecycle(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysAdmittedOnlyWhenFunded(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysPoolOnlyWhenAdmitted(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysCursorInRange(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysReleasedMonthHasNoLeafAward(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysPendingPoolIsExactlyUnreserved(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysUnreservedSourcesFreeWhilePooled(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysLeafAwardsAreObligations(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysCursorSourceBacked(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysLeafAwardsReserveTheirObligation(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysObligationsMatchVault(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> stepObligationsOnFreshCoveringHead(s, "observeSettings", observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> stepUnderfundedOnFreshHead(s, "observeSettings", observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> stepCursorMonotoneByOne(s, observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> stepRootAdmitsOnlyFreeSources(s, "observeSettings", observeSettings(s, automatic, settingsSequence)))
+{
+  if inv(s) && canObserveSettings(s, automatic, settingsSequence) {
+    var after := observeSettings(s, automatic, settingsSequence);
+    MsMonthFrame(s, after);
+    assert alwaysChildRules(s);
+    assert settlement__monthly_alwaysAllocationConserved(after.month);
+    assert settlement__monthly_alwaysObligationsMatchShares(after.month);
+    assert alwaysChildLifecycle(s);
   }
 }

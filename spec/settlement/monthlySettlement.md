@@ -395,7 +395,9 @@ gross of the month's unreserved obligations, whose sources are all still
 free: the root's leaves are this month's source keys of those obligations,
 one per actor, so no leaf source was consumed before the root and no leaf
 can be stranded. Every monthly leaf award of this month reserved its own
-obligation with the obligation's gross, which is reserved or paid.
+obligation with the obligation's gross, which is reserved or paid. Before
+the vault is deployed it holds no award, month, withdrawal or deposit, and
+before the month is funded it holds no obligation or ban.
 
 Discovered by the proof: the deposit transition's parameter had the name of
 the transition itself, so the generated proof could not refer to the
@@ -413,8 +415,9 @@ pure def alwaysPoolWithinUnreserved(s: MonthlySettlement): bool =
   M::compareAmounts(E::monthFor(s.escrow, s.month.period).remaining, MO::createdTotal(s.month)) <= 0
 pure def alwaysChildRules(s: MonthlySettlement): bool =
   MO::alwaysAllocationConserved(s.month) and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysCompletedPaid(s.month)
-    and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow) and E::alwaysUndeployedEmpty(s.escrow)
-    and MO::alwaysNoObligationsBeforeFunding(s.month)
+    and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow)
+pure def alwaysChildLifecycle(s: MonthlySettlement): bool =
+  E::alwaysUndeployedEmpty(s.escrow) and MO::alwaysNoObligationsBeforeFunding(s.month)
 pure def alwaysAdmittedOnlyWhenFunded(s: MonthlySettlement): bool =
   s.escrow.months.length() > 0 implies (s.month.phase == MO::Funded or s.month.phase == MO::Completed)
     and s.escrow.months.every(m => m.period == s.month.period)
@@ -503,6 +506,13 @@ upgrade to the release-capable implementation through, so the release was
 never reachable; the upgrade is now an event of this machine as every other
 escrow event is.
 
+Discovered by simulation: the simulator evaluates every weighted copy of an
+event at every step, so the weights, which summed to 205, made each trace six
+times dearer than the same events drawn once, and a run of 2500 traces
+outlasted its hour. The weights are now about a third as large in the same
+order, summing to 81, which keeps every event's share within a factor of
+three and each trace about two and a half times cheaper.
+
 ```quint
 pure val assetValues = Set(E::baseAsset)
 pure val mintValues = Set(E::cleanMint)
@@ -568,29 +578,29 @@ pure val approvalValues: Set[RR::ReserveRelease] = Set(approvalSample, { ...appr
   { ...approvalSample, root: "q", reserved: List(8), originalReserve: List(8) })
 pure val receiptValues: Set[RR::ReleaseReceipt] = Set({ attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: true, succeeded: true },
   { attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: false, succeeded: true })
-pure val weight_materialize = 24
-pure val weight_deposit = 2
-pure val weight_propose = 12
-pure val weight_autoFreeze = 12
-pure val weight_createObligations = 12
-pure val weight_commitObligation = 6
-pure val weight_admitRoot = 24
-pure val weight_observeClock = 4
+pure val weight_materialize = 8
+pure val weight_deposit = 1
+pure val weight_propose = 4
+pure val weight_autoFreeze = 4
+pure val weight_createObligations = 4
+pure val weight_commitObligation = 2
+pure val weight_admitRoot = 8
+pure val weight_observeClock = 2
 pure val weight_withdraw = 1
-pure val weight_releaseReserve = 16
-pure val weight_upgradeToRelease = 8
-pure val weight_advanceCursor = 12
-pure val weight_advanceZeroRemaining = 12
-pure val weight_deploy = 6
-pure val weight_openMonth = 6
-pure val weight_observeEligibility = 2
-pure val weight_observeHead = 6
-pure val weight_observeRevision = 6
-pure val weight_commitManualAward = 6
-pure val weight_observeConflict = 4
-pure val weight_observeExistingAward = 4
-pure val weight_payAward = 4
-pure val weight_observePaid = 4
+pure val weight_releaseReserve = 5
+pure val weight_upgradeToRelease = 3
+pure val weight_advanceCursor = 4
+pure val weight_advanceZeroRemaining = 4
+pure val weight_deploy = 2
+pure val weight_openMonth = 2
+pure val weight_observeEligibility = 1
+pure val weight_observeHead = 2
+pure val weight_observeRevision = 2
+pure val weight_commitManualAward = 2
+pure val weight_observeConflict = 2
+pure val weight_observeExistingAward = 2
+pure val weight_payAward = 2
+pure val weight_observePaid = 2
 pure val weight_adjust = 1
 pure val weight_finalize = 1
 pure val weight_observeSettings = 1

@@ -24838,7 +24838,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "c3c7fce4df39bc1cee11513762b67cfeb506e714d804eb1e8433ae85787c446c",
+      "sha256": "10a8f8722ece5a7a4b449a70a5c2adedb6875b1f476dbba25f25298a91609001",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -25003,6 +25003,7 @@
             "alwaysOneAwardPerObligation",
             "alwaysPoolWithinUnreserved",
             "alwaysChildRules",
+            "alwaysChildLifecycle",
             "alwaysAdmittedOnlyWhenFunded",
             "alwaysPoolOnlyWhenAdmitted",
             "alwaysUnreservedSourcesFreeWhilePooled",
@@ -25029,7 +25030,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 469,
+          "line": 472,
           "definitions": [
             "assetValues",
             "mintValues",
