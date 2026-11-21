@@ -18,16 +18,18 @@ not force.
   hashes and commands, with tabular numbers, in 400 to 700. Sizes are a named scale, each with its line
   height: `text-ui` (13px) is the dense interface size, `text-copy` (15px) running copy, and `xs` to `2xl`
   keep Tailwind's steps. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
-  the large headings, `label` for small capitals. `font-strong` (650) and `font-heavy` (750) sit between
-  Tailwind's weights where development's headings did.
+  the large headings, `label` for small capitals. Development's headings are 800 (12 rules), `font-extrabold`;
+  `font-strong` (650) and `font-heavy` (750, its text button) sit between Tailwind's weights.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from
   it, and `rounded-full` is the pill and the avatar. `rounded-chip` (0.6rem) is a chip or tag and
   `rounded-card` (16px) a large card. One `panel` shadow, for what floats; `shadow-underline` marks the
-  selected tab.
+  selected tab, `shadow-edge` (an inset 1px `primary` ring) the selected step, and `shadow-glow` (3px of `primary`
+  at 25%) a focused field around its `ring`.
 - **Controls.** A button is 48px high, 40px small; a text field or select is 52px. Every control can be hit
   in a 44px square, however small it is drawn.
 - **Motion.** `fast` for hover and press, `base` for most changes, `slow` for entering and leaving.
-  `animate-caret` blinks the typing caret. Reduced motion removes all of it.
+  `animate-caret` blinks the typing caret; a spinner is Tailwind's `animate-spin`. Reduced motion removes all of
+  it.
 - **Focus.** The ring is 3px wide and 3px off the element, as in development, in `ring`.
 - **Layers.** `z-raised` lifts a cell over its neighbours, `z-header` is the sticky header, and `z-modal`
   holds menus, dialogs and the backdrop behind them, above the header.
@@ -51,19 +53,25 @@ in oklch: `bg` #0f0e0c is `background` oklch(0.164 0.004 84.6), `surface` #1a181
 #ff5a19 is `primary` and `ring` oklch(0.682 0.212 38.4), `onAccent` #0f0e0c is `primary-foreground`,
 `success` #3ddc84 is `ok` oklch(0.793 0.18 154), `warning` #ffb020 is `warn` oklch(0.813 0.165 75) and
 `danger` #ff6b6b is `destructive` oklch(0.712 0.181 22.8). Its `radius.small` 6px, `medium` 8px, `large`
-12px and `pill` are `rounded-md`, `-lg`, `-xl` and `rounded-full`; `size` is the control heights above, and
-`motion.fast` and `ease` are `fast` and `standard`. `accentHover` #ff7a42 is `primary-hover` oklch(0.726 0.177
-42). `accentPressed` #d9480f is `primary-pressed` at oklch(0.605 0.19 37.9), a step lighter than its oklch(0.6
-0.19 37.9), because #0f0e0c on #d9480f is 4.49:1, under AA. The translucent `line`, `lineStrong` and
+12px and `pill` are `rounded-md`, `-lg`, `-xl` and `rounded-full`; `size.buttonMedium` 48px, `buttonSmall`
+40px and `input` 52px are the control heights above, and `motion.fast` and `ease` are `fast` and `standard`.
+`accentHover` #ff7a42 is `primary-hover` oklch(0.726 0.177 42). `accentPressed` #d9480f is `primary-pressed` at
+oklch(0.605 0.19 37.9), a step lighter than its oklch(0.6 0.19 37.9), because #0f0e0c on #d9480f is 4.49:1,
+under AA. The operations pages' `--operations-green` #72dda6, `-blue` #9cc9ff and `-amber` #ffcb79 are `ok`,
+`info` and `warn`. A focused field's glow, `0 0 0 3px` of the accent at 25%, is `shadow-glow`; the `inset 0 0 0
+1px` accent ring of the selected proposal step is `shadow-edge` (the Solana mark's ring stays in
+`NetworkMark`); the `wallet-spin` keyframes, a full turn in 1s, linear, are Tailwind's `spin`, which `Spinner`
+runs. The translucent `line`, `lineStrong` and
 `inputBorder` are `border-foreground/10`, `/22` and `/18`, not tokens. `faint` #77716a is not ported: it is
 3.9:1 on the page, so it cannot carry text, and inactive controls fade to half opacity instead of
-development's raised, faint look. The type, weight, leading, tracking, layer and focus values above came from development's
-stylesheets, with near-duplicates merged: line heights 0.86 to 0.98 are `display`, 1.1 and 1.15 `tight`,
+development's raised, faint look. The type, weight, leading, tracking, layer and focus values above came from
+development's stylesheets, with near-duplicates merged: line heights 0.86 to 0.98 are `display`, 1.1 and 1.15 `tight`,
 1.3 and 1.35 `snug`, 1.55 to 1.65 `body`, 1.4 and 1.45 `text-ui`'s; letter spacing -0.03em is `tight`'s
 -0.02em, -0.06em `display`'s -0.055em, and 0.12em and 0.13em `label`'s 0.08em. Its 45 fluid `clamp()`
 sizes, its off-grid spacing and control sizes, and its `font-synthesis` and `text-rendering` rules have no
-token: the schema takes fixed lengths only and has no spacing or size group. A hex or TypeScript export for the identity Worker and the social image renderer waits until those
-are ported.
+token yet: the schema takes fixed lengths only and has no spacing or size group, so they wait on an owner or
+upstream decision. A hex or TypeScript export for the identity Worker and the social image renderer waits
+until those are ported.
 
 ## Changing it
 
@@ -114,6 +122,8 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `font.mono` | "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace |
 | `shadow.panel` | 0 24px 60px oklch(0 0 0 / 0.55) |
 | `shadow.underline` | inset 0 -2px var(--primary) |
+| `shadow.glow` | 0 0 0 3px color-mix(in oklch, var(--primary) 25%, transparent) |
+| `shadow.edge` | inset 0 0 0 1px var(--primary) |
 | `breakpoint.sm` | 30rem |
 | `breakpoint.md` | 42.5rem |
 | `breakpoint.lg` | 56.25rem |
@@ -140,6 +150,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `weight.strong` | 650 |
 | `weight.bold` | 700 |
 | `weight.heavy` | 750 |
+| `weight.extrabold` | 800 |
 | `leading.display` | 0.9 |
 | `leading.none` | 1 |
 | `leading.tight` | 1.15 |

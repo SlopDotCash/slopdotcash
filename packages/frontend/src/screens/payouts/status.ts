@@ -1,7 +1,7 @@
-// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
 import type { AccountMonthlyAward, AccountPayment, AllocationState, UnreservedAwardState } from "@repo/settlement/client";
-import { paymentPresentation, type StatusProps } from "@repo/ui";
-import { type AwardFacts, settlementDisplay } from "../../../gen/frontend__projections.ts";
+import type { StatusProps } from "@repo/ui";
+import { type AwardFacts, paymentPresentation, settlementDisplay } from "../../../gen/frontend__projections.ts";
 
 export type Presentation = StatusProps["presentation"];
 

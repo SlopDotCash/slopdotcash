@@ -6,7 +6,7 @@ the TypeScript adapters, Workers and scripts that drive them.
 
 | Path | Holds |
 |---|---|
-| [`evm/`](evm/README.md) | `ProjectEscrow` and `EscrowFactory` (UUPS), the fee library `EscrowMath`, `ReferralDistributor`, vendored OpenZeppelin v5.5.0, Foundry tests and deploy scripts |
+| [`evm/`](evm/README.md) | `ProjectEscrow` and `EscrowFactory` (UUPS), the libraries `EscrowMath` (fees) and `MonthlyCalendar` (monthly windows), `ReferralDistributor` and its `ReferralClaims`, vendored OpenZeppelin v5.5.0, Foundry tests and deploy scripts |
 | [`solana/`](solana/README.md) | The Anchor program `slop-escrow`, its IDL and `scripts/build-local.sh` |
 | [`DEPLOY-MAINNET.md`](DEPLOY-MAINNET.md) | The mainnet deployment runbook of the source repository |
 
@@ -29,9 +29,9 @@ a directory whose `.cache/solana` holds only `v1.52`.
 
 ## Money invariants
 
-No property is a run-time `assert` in `ProjectEscrow`: development's escrow with
-month pledges is 57 bytes under the EIP-170 limit, and run-time checks would
-put it over. Each property is proved by the solc SMTChecker for every input,
+No property is a run-time `assert` in `ProjectEscrow`: the escrow with month
+pledges is 22 bytes under the EIP-170 limit, and run-time checks would put it
+over. Each property is proved by the solc SMTChecker for every input,
 or checked after every call of Foundry's invariant campaigns.
 
 | Property | Where | Checked by |
@@ -48,15 +48,36 @@ or checked after every call of Foundry's invariant campaigns.
 | A payment never exceeds what is reserved for it, and each award pays once | `OpusInvariant.invariant_paymentsExactOnceAndRouted` | invariant campaign |
 | One allocation root per period, within the period's cap: the larger of the monthly cap and its open pledge | `MonthlyCommitment`, `MonthPledge` tests | unit and fuzz tests |
 | A release returns the whole admitted reserve, once | `MonthlyReserveV2` tests | unit tests |
+| No division by zero, overflow or underflow in the checked steps of the monthly window and the current period | `MonthlyCalendar` | proved (BMC) |
+| `monthlyWindow` refuses exactly the periods outside 200001 to 999912, so a valid window never opens at zero | `EscrowLemmas.onlyAnInvalidPeriodHasNoWindow` | CHC |
+| A window opens before it closes, and the next period's window opens when it closes: window starts strictly increase per period | `EscrowLemmas.windowStartIncreasesPerPeriod` | CHC |
+| `currentPeriod` is a calendar month | `EscrowLemmas.periodIsACalendarMonth` | CHC |
+| Every window and current period is development's: years 2000 to 2899 and 9100 to 9999, the second before, at and a day after every month start from 1970 to 2800, and fuzzed periods and times | `MonthlyCommitment` `...Development...` tests | unit and fuzz tests |
+| No overflow or underflow in a referral claim | `ReferralClaims` | proved (BMC) |
+| A payable claim pays the cumulative less what the account claimed, and the claimed total never exceeds the root's total | `ReferralLemmas.claimNeverExceedsTotal` | CHC |
+| The root's remainder after a payable claim, `total - (totalClaimed + amount)`, is never negative | `ReferralLemmas.remainingIsNeverNegative` | CHC |
+| A claim is refused only when nothing is new, it exceeds the total, or the claimed total would overflow | `ReferralLemmas.refusesOnlyWhatDoesNotFit` | CHC |
+| `claim` and `claimable` answer, pay and revert exactly as development's inline arithmetic | `ReferralDistributor` `...Development...` tests | fuzz tests |
 
 `test` runs two checks in `evm/`, each with `--force`, so a cached build never
 skips the check, and `--deny warnings`, so a violated or unproved target fails
-the run. The `smt` profile checks `src/EscrowMath.sol` with BMC: the library
-has no loops or calls, so BMC explores every path for every input. The
-`smt_chc` profile proves with CHC the lemmas of `test/smt/EscrowLemmas.sol`,
-a contract that is never deployed and calls the same internal `EscrowMath`
-functions that `ProjectEscrow` inlines. Both run under the solver's
-deterministic resource limit.
+the run. The `smt` profile checks `src/EscrowMath.sol`, `src/MonthlyCalendar.sol`
+and `src/ReferralClaims.sol` with BMC: the libraries have no loops or calls, so
+BMC explores every path for every input. The `smt_chc` profile proves with CHC
+the lemmas of `test/smt/EscrowLemmas.sol` and `test/smt/ReferralLemmas.sol`,
+contracts that are never deployed and call the same internal library
+functions that `ProjectEscrow` and `ReferralDistributor` inline. Both run under
+the solver's deterministic resource limit.
+
+The SMTChecker does not check `unchecked` arithmetic. `MonthlyCalendar` leaves
+unchecked only divisions, and sums and products of values that its `uint64`
+and `uint32` inputs keep below 2^100: checking them put `ProjectEscrow` over
+the size limit. `currentPeriod` takes the block time as `uint64`, the width of
+every EVM block header's timestamp. Its civil-from-days arithmetic is all of
+that kind, so BMC proves nothing about it and the equivalence tests with
+development's loop carry it. `ReferralClaims` reports a claimed total that
+would overflow, and `ReferralDistributor` then reaches the same checked
+addition, so a claim reverts with the same panic as before.
 
 The whole-contract rows are not proved. The solc 0.8.30 SMTChecker does not
 model `revert` with a custom error, which every guard of `ProjectEscrow` uses,
@@ -65,8 +86,8 @@ digests, token calls and the inline assembly of its OpenZeppelin base. The
 conservation identity is a property of all calls together, and the payment
 bound needs the sum of every unpaid award, which the SMTChecker cannot state
 over a mapping. Neither engine proved within 900 seconds that a monthly window
-lasts 28 to 31 days; `MonthlyCommitment` and `MonthlyReserveV2` check sampled
-windows, including a year boundary.
+lasts 28 to 31 days; the equivalence tests compare every window of the years
+above with development's.
 
 ## Monthly reserve release
 

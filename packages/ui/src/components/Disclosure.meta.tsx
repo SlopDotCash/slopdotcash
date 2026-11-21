@@ -6,7 +6,7 @@ export const meta: ComponentMeta<DisclosureProps> = {
   args: { summary: "Earlier cycles", children: "October 2026: 3 accepted pull requests." },
   examples: { Open: { defaultOpen: true } },
   play: {
-    // The trigger opens and closes it from the keyboard, and says which it is.
+    // spec/ui/controls.md, "A disclosure opens and closes from its trigger and never hides what a decision rests on"
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const trigger = within(canvasElement).getByRole("button", { name: "Earlier cycles" });
       trigger.focus();
