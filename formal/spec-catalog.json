@@ -1267,7 +1267,7 @@
     },
     {
       "path": "spec/backend/index.md",
-      "sha256": "b001a68ad0cf8f22c0bf9c59416ebcd6cf0c487d3b3d8d230c34196c2ef16723",
+      "sha256": "4bb09fa297436562a268278c1fca9d5d924921ad87f7399e5455be0798d74acd",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -1350,7 +1350,125 @@
           "line": 25
         },
         {
+          "target": "./intakeCap.md",
+          "line": 26
+        },
+        {
           "target": "./readyLabelSettings.md",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "path": "spec/backend/intakeCap.md",
+      "sha256": "2673e118d3b2de0c837565f139b8c619868f6079cc4ed5625b99f1e3af231473",
+      "module": "backend__intakeCap",
+      "stories": [
+        {
+          "heading": "Story: Pause new contributors while the review queue is full",
+          "line": 29
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Pause new contributors while the review queue is full / The count takes every open outside pull request that is not a draft, answered or not",
+          "line": 35,
+          "definitions": [
+            "openOutsideCount",
+            "lawDraftsMaintainersAndBotsNeverCount",
+            "lawAnsweredPullStillCounts",
+            "pValues"
+          ]
+        },
+        {
+          "heading": "Story: Pause new contributors while the review queue is full / A recent count at or above the cap of an active project pauses it",
+          "line": 50,
+          "definitions": [
+            "StoredCount",
+            "ListRead",
+            "ReviewOutcome",
+            "Intake",
+            "owner",
+            "registry",
+            "schedule",
+            "browserReader",
+            "discoveryServer",
+            "slopbot",
+            "minCap",
+            "maxCap",
+            "countMaxAgeHours",
+            "pausedNotice",
+            "unread",
+            "countAtCap",
+            "paused",
+            "lawOffPausesNothing",
+            "lawUnreadOrOldCountPausesNothing",
+            "initial",
+            "canSetCap",
+            "setCap",
+            "canObserveStatus",
+            "observeStatus",
+            "canObserveClock",
+            "observeClock",
+            "canStoreCount",
+            "storeCount",
+            "canFailRead",
+            "failRead"
+          ]
+        },
+        {
+          "heading": "Story: Pause new contributors while the review queue is full / The lists leave a paused project out, its page says why, and a failed read lists it as before",
+          "line": 102,
+          "definitions": [
+            "canBrowserRead",
+            "browserRead",
+            "canServerRead",
+            "serverRead",
+            "onHome",
+            "onSponsors",
+            "discovered",
+            "noticeShown",
+            "alwaysUnpausedIsListed",
+            "alwaysFailedReadListsAsBefore",
+            "alwaysNoticeExplainsAbsence"
+          ]
+        },
+        {
+          "heading": "Story: Pause new contributors while the review queue is full / Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap",
+          "line": 128,
+          "definitions": [
+            "intakeCapReason",
+            "canReview",
+            "review",
+            "alwaysSkipOnlyNewPullWhilePaused",
+            "stepReviewedPullKeepsItsReviews",
+            "alwaysCapWithinLimits",
+            "sometimesPausedAndExplained",
+            "sometimesBackByItself",
+            "sometimesOldCountPausesNothing",
+            "sometimesNewPullSkipped",
+            "sometimesReviewedPullReviewedWhilePaused",
+            "capValues",
+            "countValues",
+            "repositoryValues",
+            "nowValues",
+            "cValues",
+            "byValues",
+            "weight_storeCount",
+            "weight_setCap"
+          ]
+        }
+      ],
+      "imports": [
+        "backend__mergeActivity"
+      ],
+      "references": [
+        {
+          "target": "./mergeActivity.md",
+          "line": 17
+        },
+        {
+          "target": "../frontend/poolListing.md",
           "line": 26
         }
       ]
@@ -2941,7 +3059,7 @@
     },
     {
       "path": "spec/contracts/evmEscrow.md",
-      "sha256": "7284cca148a2941c5b1cc695469f65de11c0b9c87f76090f4d7b50c7cf93d482",
+      "sha256": "a9513df9b4da6bdf5641eac74b80a62aaa1e88a021458849b75698ffd492f215",
       "module": "contracts__evmEscrow",
       "stories": [
         {
@@ -2950,31 +3068,31 @@
         },
         {
           "heading": "Story: Create one vault per owner, project, token and purpose",
-          "line": 182
+          "line": 184
         },
         {
           "heading": "Story: Hold deposits in one free balance",
-          "line": 223
+          "line": 225
         },
         {
           "heading": "Story: Commit awards from free funds",
-          "line": 267
+          "line": 269
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap",
-          "line": 327
+          "line": 342
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably",
-          "line": 490
+          "line": 582
         },
         {
           "heading": "Story: Bind each actor's destination with the attester and the wallet",
-          "line": 554
+          "line": 646
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly",
-          "line": 617
+          "line": 709
         }
       ],
       "rules": [
@@ -2986,6 +3104,7 @@
             "Binding",
             "Month",
             "Pledge",
+            "LeafOrigin",
             "Reservation",
             "Vault",
             "Escrow",
@@ -3002,14 +3121,14 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Block time is positive",
-          "line": 73,
+          "line": 75,
           "definitions": [
             "alwaysClockStarted"
           ]
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Upgrade control moves only to an accepting recipient that holds no service key",
-          "line": 83,
+          "line": 85,
           "definitions": [
             "canProposeUpgradeAuthority",
             "proposeUpgradeAuthority",
@@ -3025,7 +3144,7 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / The registrar rotates the identity authority with no delay the current authority can block",
-          "line": 110,
+          "line": 112,
           "definitions": [
             "canProposeIdentityAuthority",
             "proposeIdentityAuthority",
@@ -3039,7 +3158,7 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Factory roles stay distinct through every transfer and rotation",
-          "line": 138,
+          "line": 140,
           "definitions": [
             "alwaysFactoryRolesSeparate",
             "alwaysUninitializedEmpty",
@@ -3048,7 +3167,7 @@
         },
         {
           "heading": "Story: Deploy the factory with separate keys / Only the upgrade authority changes logic and only a rotation changes the identity authority",
-          "line": 161,
+          "line": 163,
           "definitions": [
             "stepAuthorityChanges",
             "stepConfigurationFixed",
@@ -3060,7 +3179,7 @@
         },
         {
           "heading": "Story: Create one vault per owner, project, token and purpose / The caller becomes the owner of the only vault for its key",
-          "line": 184,
+          "line": 186,
           "definitions": [
             "keyOf",
             "canCreate",
@@ -3076,7 +3195,7 @@
         },
         {
           "heading": "Story: Hold deposits in one free balance / Anyone deposits the exact amount, and only credited deposits enter the free balance",
-          "line": 225,
+          "line": 227,
           "definitions": [
             "canDeposit",
             "deposit",
@@ -3087,7 +3206,7 @@
         },
         {
           "heading": "Story: Hold deposits in one free balance / Every credited unit stays in exactly one bucket and the asset balance covers them all",
-          "line": 243,
+          "line": 245,
           "definitions": [
             "alwaysConserved",
             "alwaysBalanceCovers",
@@ -3097,7 +3216,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split",
-          "line": 269,
+          "line": 271,
           "definitions": [
             "recordable",
             "recorded",
@@ -3105,12 +3224,15 @@
             "canCommitAward",
             "commitAward",
             "canCommitBountyAward",
-            "commitBountyAward"
+            "commitBountyAward",
+            "stepSourceSequenceCountsOrdinaryAwards",
+            "lawRecordedAwardStalesReservation",
+            "lawCommittedLeafStalesReservation"
           ]
         },
         {
           "heading": "Story: Commit awards from free funds / Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards",
-          "line": 302,
+          "line": 317,
           "definitions": [
             "alwaysReservedMatchesAwards",
             "alwaysPaidMatchesAwards",
@@ -3121,7 +3243,7 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / The owner sets the cap and turns monthly commitments on or off",
-          "line": 329,
+          "line": 344,
           "definitions": [
             "canSetMonthlyCommitment",
             "setMonthlyCommitment",
@@ -3130,13 +3252,14 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / A legacy allocation commits all its new awards at once and counts an existing identical award once",
-          "line": 345,
+          "line": 360,
           "definitions": [
             "noMonth",
             "hasMonth",
             "monthFor",
             "withMonth",
             "sumRemaining",
+            "signedByAuthority",
             "admissionOpen",
             "capFor",
             "closePledge",
@@ -3149,26 +3272,28 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / A version-2 reservation reserves the unfunded remainder against the current source sequence",
-          "line": 392,
+          "line": 409,
           "definitions": [
             "canReserveMonthly",
-            "reserveMonthly"
+            "reserveMonthly",
+            "lawRotatedAuthorityRefuses"
           ]
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / Anyone commits a proved leaf from its period's reserve without charging the free balance again",
-          "line": 420,
+          "line": 445,
           "definitions": [
             "leafProves",
             "canCommitMonthlyLeaf",
             "commitMonthlyLeaf",
             "sometimesLeafCommitted",
+            "sometimesLeafPendingInNextWindow",
             "sometimesOrdinaryPaid"
           ]
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / The owner releases the whole untouched reserve of a wrong-total period once, with the attester's signature",
-          "line": 445,
+          "line": 473,
           "definitions": [
             "canReleaseMonthlyReserve",
             "releaseMonthlyReserve",
@@ -3177,17 +3302,38 @@
         },
         {
           "heading": "Story: Admit one monthly allocation per period within the owner's cap / Each period has one root, its gross stays within the cap at admission, and the pending reserve is the sum of remainders",
-          "line": 469,
+          "line": 497,
           "definitions": [
             "alwaysMonthsWellFormed",
             "alwaysPendingMatchesMonths",
             "alwaysBountyHasNoMonthly",
+            "alwaysAdmittedInWindow",
             "stepMonthsRetained"
           ]
         },
         {
+          "heading": "Story: Admit one monthly allocation per period within the owner's cap / Each committed leaf's award traces to a leaf of its own period, and a period's committed gross is exactly the gross of those awards",
+          "line": 521,
+          "definitions": [
+            "originGross",
+            "alwaysCommittedLeavesTraced",
+            "stepOriginsRetained"
+          ]
+        },
+        {
+          "heading": "Story: Admit one monthly allocation per period within the owner's cap / A proved leaf whose source another award consumed never settles, and a touched period never releases",
+          "line": 551,
+          "definitions": [
+            "evmStrandedLeaf",
+            "lawStrandedLeafNeverCommits",
+            "lawTouchedMonthNeverReleases",
+            "sometimesEvmStrandedLeaf",
+            "sometimesEvmStrandedLeafLocked"
+          ]
+        },
+        {
           "heading": "Story: Pledge free funds to future months irrevocably / The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge",
-          "line": 492,
+          "line": 584,
           "definitions": [
             "noPledge",
             "pledgeOf",
@@ -3203,7 +3349,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / Anyone expires a pledge whose period's window closed without admission",
-          "line": 529,
+          "line": 621,
           "definitions": [
             "canExpirePledge",
             "expirePledge",
@@ -3213,7 +3359,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / Free funds always cover the open pledges, a pledged month is never admitted, and a pledge only rises until it closes",
-          "line": 541,
+          "line": 633,
           "definitions": [
             "alwaysPledgesCovered",
             "alwaysPledgedMonthUnadmitted",
@@ -3222,7 +3368,7 @@
         },
         {
           "heading": "Story: Bind each actor's destination with the attester and the wallet / The identity authority binds a wallet that co-signed the exact binding, activating it at once",
-          "line": 556,
+          "line": 648,
           "definitions": [
             "noBinding",
             "hasBinding",
@@ -3235,7 +3381,7 @@
         },
         {
           "heading": "Story: Bind each actor's destination with the attester and the wallet / The owner cancels the latest unpaid binding only inside a review window and within the cap",
-          "line": 586,
+          "line": 678,
           "definitions": [
             "lastCommittedAt",
             "canCancelBinding",
@@ -3246,7 +3392,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone pays a matured award to its actor's latest uncancelled binding",
-          "line": 619,
+          "line": 711,
           "definitions": [
             "canPay",
             "pay",
@@ -3256,17 +3402,18 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / The owner withdraws free funds to itself less the 2% fee",
-          "line": 650,
+          "line": 742,
           "definitions": [
             "canWithdrawUnused",
             "withdrawUnused",
             "stepFreeSpentByOwnerOrAttestation",
+            "stepFreeRisesOnlyByDepositOrRelease",
             "sometimesWithdrawn"
           ]
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone moves all accrued fees to the fee recipient",
-          "line": 672,
+          "line": 767,
           "definitions": [
             "canClaimFees",
             "claimFees",
@@ -3275,7 +3422,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Simulation samples cover distinct and colliding keys, windows, allocations and signatures",
-          "line": 685,
+          "line": 780,
           "definitions": [
             "byValues",
             "registrarValues",
@@ -3299,6 +3446,8 @@
             "reservationValues",
             "sequenceValues",
             "leafValues",
+            "signerValues",
+            "leafPeriodValues",
             "expectedRemainingValues",
             "releasedGrossValues",
             "destinationValues",
@@ -4384,7 +4533,7 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "ee2c1a886d38c63f6e289224d8759f0a41398cd617b0613d53f6c6b07f918567",
+      "sha256": "5df232bd954d1335281c855da1b40d9862b79ac09ea4d841fde8091d275e067d",
       "module": "contributor",
       "stories": [],
       "rules": [],
@@ -4455,36 +4604,40 @@
           "line": 32
         },
         {
-          "target": "./artifactTransport.md",
+          "target": "./maintainerWorkflow.md",
           "line": 33
         },
         {
-          "target": "./evidence.md",
+          "target": "./artifactTransport.md",
           "line": 34
         },
         {
-          "target": "./localReceipt.md",
+          "target": "./evidence.md",
           "line": 35
         },
         {
-          "target": "./runEvidence.md",
+          "target": "./localReceipt.md",
           "line": 36
         },
         {
-          "target": "./sessionExchange.md",
+          "target": "./runEvidence.md",
           "line": 37
         },
         {
-          "target": "./traceServer.md",
+          "target": "./sessionExchange.md",
           "line": 38
         },
         {
-          "target": "./openedRun.md",
+          "target": "./traceServer.md",
           "line": 39
         },
         {
-          "target": "./prOpened.md",
+          "target": "./openedRun.md",
           "line": 40
+        },
+        {
+          "target": "./prOpened.md",
+          "line": 41
         }
       ]
     },
@@ -4891,6 +5044,153 @@
         {
           "target": "./discoveryLock.md",
           "line": 4
+        }
+      ]
+    },
+    {
+      "path": "spec/contributor/maintainerWorkflow.md",
+      "sha256": "9c90c778831ecda5728e115f6f9b921d0c4e0ba41149add7d94ba971ed5feac5",
+      "module": "contributor__maintainerWorkflow",
+      "stories": [
+        {
+          "heading": "Story: The entry skill routes by the requested task",
+          "line": 16
+        },
+        {
+          "heading": "Story: Carry out the maintainer's task under current authority",
+          "line": 57
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: The entry skill routes by the requested task / An explicit task selects its skill, a researcher's finding stays with the contributor, and only a missing intent asks",
+          "line": 21,
+          "definitions": [
+            "MaintainerTask",
+            "ContributorTask",
+            "Chosen",
+            "EntryRoute",
+            "route",
+            "lawFindingStaysWithContributor",
+            "lawOnlyMissingIntentAsks",
+            "lawMaintenanceTaskLoadsTheMaintainerSkill"
+          ]
+        },
+        {
+          "heading": "Story: Carry out the maintainer's task under current authority / The session works on one requested task and one repository matched by its permanent ID",
+          "line": 63,
+          "definitions": [
+            "Permission",
+            "SiteAction",
+            "RepoAction",
+            "Decision",
+            "SessionSource",
+            "Outcome",
+            "MaintainerPhase",
+            "MaintainerSession",
+            "user",
+            "agent",
+            "authorityService",
+            "initial",
+            "canRequestTask",
+            "requestTask",
+            "canResolveRepository",
+            "resolveRepository",
+            "siteServes",
+            "repoServes",
+            "policyAction",
+            "lawEntryFlowServesNoPolicyChange",
+            "alwaysWorkHasOneMatchedRepository",
+            "sometimesAmbiguousTargetAsked"
+          ]
+        },
+        {
+          "heading": "Story: Carry out the maintainer's task under current authority / Each sensitive action needs its own permission, freshly checked for the current account",
+          "line": 125,
+          "definitions": [
+            "required",
+            "holds",
+            "countsAsSlopSession",
+            "canCheckPermission",
+            "checkPermission",
+            "canConfirmSession",
+            "confirmSession",
+            "canChangeAccount",
+            "changeAccount",
+            "canObserveRestriction",
+            "observeRestriction",
+            "lawOnlyTheWebsiteIsASlopSession",
+            "alwaysPrivateViewIsCurrent",
+            "alwaysSessionNeedsBrowser",
+            "stepRestrictionClearedOnlyByAuthority",
+            "sometimesAccountChangeDiscardedCase"
+          ]
+        },
+        {
+          "heading": "Story: Carry out the maintainer's task under current authority / Website actions run through existing controls; without a browser they are only prepared",
+          "line": 171,
+          "definitions": [
+            "canGiveDecision",
+            "giveDecision",
+            "mayAct",
+            "canSiteAct",
+            "siteAct",
+            "canReadBack",
+            "readBack",
+            "canPrepare",
+            "prepare",
+            "alwaysNoPolicyActionApplied",
+            "alwaysAppliedServesTheTask",
+            "alwaysWithoutBrowserNothingApplied",
+            "stepDecisionRecordedOnlyWhenGiven",
+            "unchangedActions",
+            "stepNoActionWhileUncertain",
+            "sometimesSetupCheckApplied",
+            "sometimesUncertainReadBackApplied",
+            "sometimesDecisionRecorded",
+            "sometimesPreparedWithoutBrowser",
+            "sometimesRefusedWithoutHumanDecision"
+          ]
+        },
+        {
+          "heading": "Story: Carry out the maintainer's task under current authority / Repository work needs current write access, and a review or CI request never authorizes a merge or release",
+          "line": 230,
+          "definitions": [
+            "canAuthorizeWrite",
+            "authorizeWrite",
+            "repoPermitted",
+            "canRepoWrite",
+            "repoWrite",
+            "alwaysNoSelfApproval",
+            "alwaysMergeAndReleaseAuthorized",
+            "sometimesReviewedWithoutMerge",
+            "sometimesAuthorizedMerge"
+          ]
+        },
+        {
+          "heading": "Story: Carry out the maintainer's task under current authority / The session finishes with its actual results and nothing uncertain left unread",
+          "line": 258,
+          "definitions": [
+            "canFinish",
+            "finish",
+            "alwaysFinishedHasNoUnreadAttempt",
+            "stepFinishedIsFinal",
+            "sometimesFinishedAfterPreparing",
+            "byValues",
+            "weight_siteAct",
+            "weight_checkPermission",
+            "weight_confirmSession",
+            "weight_readBack",
+            "weight_giveDecision",
+            "repositoryIdValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../frontend/presentation.md",
+          "line": 10
         }
       ]
     },
@@ -10223,7 +10523,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "3b824c4b537df56e09549daece6ab18871ce3b45f40b5b244a254a90a8bf20b8",
+      "sha256": "73e1acedb9ddd11250e4379a820a8f99e07523cbadee0420475067cbe106e894",
       "module": "frontend__projections",
       "stories": [
         {
@@ -10236,15 +10536,19 @@
         },
         {
           "heading": "Story: Read Points standings with equal ranks for equal totals",
-          "line": 163
+          "line": 202
         },
         {
           "heading": "Story: Show a monthly amount only while the vault holds it",
-          "line": 191
+          "line": 230
         },
         {
           "heading": "Story: Show public cuts, merge activity and their freshness",
-          "line": 339
+          "line": 378
+        },
+        {
+          "heading": "Story: Let anyone fund a project from its public page and see who funded",
+          "line": 441
         }
       ],
       "rules": [
@@ -10322,8 +10626,21 @@
           ]
         },
         {
+          "heading": "Story: Distinguish an award decision from its funding and payment / Payment states keep award, funding and settlement apart",
+          "line": 163,
+          "definitions": [
+            "paymentPresentation",
+            "awardPresentation",
+            "fundingPresentation",
+            "lawOnlyPaidLooksSettled",
+            "lawPaymentStatesAreDistinguishable",
+            "lawAwardStatesAreDistinguishable",
+            "lawFundingStatesAreDistinguishable"
+          ]
+        },
+        {
           "heading": "Story: Read Points standings with equal ranks for equal totals / Monthly and lifetime standings sum the same accepted-work history",
-          "line": 165,
+          "line": 204,
           "definitions": [
             "StandingEntry",
             "lifetimePoints",
@@ -10338,7 +10655,7 @@
         },
         {
           "heading": "Story: Show a monthly amount only while the vault holds it / Pool funding is Funded, Withdrawn or points only",
-          "line": 193,
+          "line": 232,
           "definitions": [
             "PoolRead",
             "PoolDisplay",
@@ -10359,7 +10676,7 @@
         },
         {
           "heading": "Story: Show a monthly amount only while the vault holds it / An owner's honor-system promise shows this month's amount as promised, never as vault-backed",
-          "line": 260,
+          "line": 299,
           "definitions": [
             "PromiseWarning",
             "PromiseFacts",
@@ -10375,7 +10692,7 @@
         },
         {
           "heading": "Story: Show a monthly amount only while the vault holds it / Slop's pages refuse a withdrawal below the promised amount",
-          "line": 306,
+          "line": 345,
           "definitions": [
             "withdrawalAllowedOnSlopPages",
             "lawWithdrawalKeepsPromise",
@@ -10388,7 +10705,7 @@
         },
         {
           "heading": "Story: Show public cuts, merge activity and their freshness / The cycle page lists public cuts with distinct loading, error, empty and list states",
-          "line": 341,
+          "line": 380,
           "definitions": [
             "CutListView",
             "noCutsText",
@@ -10400,7 +10717,7 @@
         },
         {
           "heading": "Story: Show public cuts, merge activity and their freshness / The merge line stays hidden until a repository is read, and a failed read shows its date",
-          "line": 367,
+          "line": 406,
           "definitions": [
             "MergeRow",
             "MergeLine",
@@ -10414,10 +10731,64 @@
             "lawInvalidRowRefused",
             "rowValues"
           ]
+        },
+        {
+          "heading": "Story: Let anyone fund a project from its public page and see who funded / The public page offers only a deposit, after the no-refund disclosure",
+          "line": 447,
+          "definitions": [
+            "SavedFunding",
+            "PublicFunding",
+            "noRefundDisclosure",
+            "publicFunding",
+            "publicSendAllowed",
+            "lawPublicPageNeverSendsAWithdrawal",
+            "lawSavedRequestIsCheckedNotRepeated",
+            "lawInactiveProjectOffersNothing",
+            "savedValues",
+            "countersOnRecordValues",
+            "activeValues"
+          ]
+        },
+        {
+          "heading": "Story: Let anyone fund a project from its public page and see who funded / Free funds show how many whole months of the current amount they cover",
+          "line": 480,
+          "definitions": [
+            "FreeRead",
+            "Coverage",
+            "maxCoveredMonths",
+            "monthsCovered",
+            "lessThanOneMonthText",
+            "hasCoverage",
+            "lawNoAmountNoCoverage",
+            "lawUnreadVaultsNoCoverage",
+            "vaultsValues",
+            "monthlyPoolValues",
+            "amountValues"
+          ]
+        },
+        {
+          "heading": "Story: Let anyone fund a project from its public page and see who funded / \"Funded by\" lists finalized deposits, naming a depositor only by a single public account",
+          "line": 517,
+          "definitions": [
+            "Registration",
+            "FundersView",
+            "noFundersText",
+            "fundersPage",
+            "depositorLogin",
+            "fundersView",
+            "lawTwoAccountsNameNobody",
+            "lawPrivateOrClosedAccountNamesNobody",
+            "lawFundersNeedCounters",
+            "lawFailedFundersReadOffersRetry",
+            "registrationValues",
+            "otherRegistrationValues"
+          ]
         }
       ],
       "imports": [
         "settlement__money",
+        "designSystem",
+        "ui__status",
         "frontend__requests"
       ],
       "references": [
@@ -10430,36 +10801,44 @@
           "line": 81
         },
         {
+          "target": "../ui/status.md",
+          "line": 167
+        },
+        {
           "target": "../settlement/vaultSnapshots.md",
-          "line": 209
+          "line": 248
         },
         {
           "target": "./vaultLocks.md",
-          "line": 215
+          "line": 254
         },
         {
           "target": "./presentation.md",
-          "line": 266
+          "line": 305
         },
         {
           "target": "./poolListing.md",
-          "line": 276
-        },
-        {
-          "target": "./vaultLocks.md",
           "line": 315
         },
         {
+          "target": "./vaultLocks.md",
+          "line": 354
+        },
+        {
           "target": "../settlement/monthly.md",
-          "line": 343
+          "line": 382
         },
         {
           "target": "./requests.md",
-          "line": 346
+          "line": 385
         },
         {
           "target": "../backend/mergeActivity.md",
-          "line": 370
+          "line": 409
+        },
+        {
+          "target": "../settlement/vaultDeposits.md",
+          "line": 519
         }
       ]
     },
@@ -12659,7 +13038,7 @@
     },
     {
       "path": "spec/operations/index.md",
-      "sha256": "4f24349fc9762e140375aac840407362a3070e3379212f3fc8072b13ef884e4b",
+      "sha256": "324c3183d20a6906568bab5237ef29d6fd93d9db25b36cead2c060f089d6daf3",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -12714,40 +13093,44 @@
           "line": 17
         },
         {
-          "target": "./publicationLock.md",
+          "target": "./slopbotQuotaWitness.md",
           "line": 18
         },
         {
-          "target": "./intakeHealth.md",
+          "target": "./publicationLock.md",
           "line": 19
         },
         {
-          "target": "./escrowQualification.md",
+          "target": "./intakeHealth.md",
           "line": 20
         },
         {
-          "target": "./releaseCoverage.md",
+          "target": "./escrowQualification.md",
           "line": 21
         },
         {
-          "target": "./paymentJobs.md",
+          "target": "./releaseCoverage.md",
           "line": 22
         },
         {
-          "target": "./paymentRun.md",
+          "target": "./paymentJobs.md",
           "line": 23
         },
         {
-          "target": "./extendedQualification.md",
+          "target": "./paymentRun.md",
           "line": 24
         },
         {
-          "target": "./upgradeVerification.md",
+          "target": "./extendedQualification.md",
           "line": 25
         },
         {
+          "target": "./upgradeVerification.md",
+          "line": 26
+        },
+        {
           "target": "../slopbot/assessmentInbox.md",
-          "line": 32
+          "line": 33
         }
       ]
     },
@@ -14343,6 +14726,96 @@
       ]
     },
     {
+      "path": "spec/operations/slopbotQuotaWitness.md",
+      "sha256": "226a889b47600d7b4a660d8481ceedad412af7ac3b46125c6e3643ec616e3003",
+      "module": "operations__slopbotQuotaWitness",
+      "stories": [
+        {
+          "heading": "Story: Witness the installation quota with a temporary metadata-only grant",
+          "line": 16
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Witness the installation quota with a temporary metadata-only grant / Only a manual main run in the protected environment, bound to the exact registry revision, may mint",
+          "line": 18,
+          "definitions": [
+            "WitnessPhase",
+            "Grant",
+            "Scope",
+            "MintOutcome",
+            "WitnessRequest",
+            "QuotaWitness",
+            "initial",
+            "admissible",
+            "requiredScope",
+            "canBegin",
+            "begin",
+            "alwaysNoGrantWithoutAdmission",
+            "sometimesNonMainRefused",
+            "sometimesForeignCommitRefused",
+            "admitted",
+            "rValues"
+          ]
+        },
+        {
+          "heading": "Story: Witness the installation quota with a temporary metadata-only grant / The token is minted for the one repository with exactly the mode's read grant, and any other grant is revoked unused",
+          "line": 60,
+          "definitions": [
+            "canIssue",
+            "mintedScope",
+            "issue",
+            "alwaysReadOnlyWithTheModeGrant",
+            "sometimesWrongGrantRevoked"
+          ]
+        },
+        {
+          "heading": "Story: Witness the installation quota with a temporary metadata-only grant / A quota reading is valid only when its windows agree on one public repository and the named commit",
+          "line": 86,
+          "definitions": [
+            "QuotaReading",
+            "coherent",
+            "canObserve",
+            "observe",
+            "lawUnequalDeltasRefused",
+            "lawSecondInstallationRepositoryRefused",
+            "lawCommitReadCountsOneMoreRequest",
+            "alwaysCommitVerifiedOnlyWhenRequested",
+            "goodReading",
+            "goodCommitReading",
+            "qValues"
+          ]
+        },
+        {
+          "heading": "Story: Witness the installation quota with a temporary metadata-only grant / Every minted grant is revoked, and only a verified reading with a 204 revocation writes the receipt",
+          "line": 128,
+          "definitions": [
+            "canCleanup",
+            "cleanup",
+            "canWriteReceipt",
+            "writeReceipt",
+            "canCancel",
+            "cancel",
+            "canExpire",
+            "expire",
+            "alwaysReceiptNeedsVerifiedRevokedGrant",
+            "alwaysNoGrantLeftHeld",
+            "alwaysPhaseFixesWhatTheRunHolds",
+            "stepReceiptOnlyWritten",
+            "sometimesReceiptWritten",
+            "sometimesCommitReceiptWritten",
+            "sometimesMissingCommitRevokedWithoutReceipt",
+            "sometimesInvalidQuotaRevokedWithoutReceipt",
+            "sometimesRefusedRevocationExpires",
+            "sometimesLostMintExpires",
+            "sometimesCancelledLeavesGrantUntilExpiry"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/operations/slopbotRuntime.md",
       "sha256": "b59d14d520291b82fc9e2672cd6aa71dfe19fa0b2c02d1706b370217cb0764c3",
       "module": "operations__slopbotRuntime",
@@ -14978,6 +15451,79 @@
       ]
     },
     {
+      "path": "spec/points/collectorToken.md",
+      "sha256": "c0523a59167632ed107c541febe5ac09e4192577b213fc2d660d07c6d2b7d8e8",
+      "module": "points__collectorToken",
+      "stories": [
+        {
+          "heading": "Story: Collect with a read-only App token that outlives its one-hour grant",
+          "line": 16
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Collect with a read-only App token that outlives its one-hour grant / Only a main collection of live data mints the App token, and any failure falls back to the workflow token",
+          "line": 18,
+          "definitions": [
+            "Access",
+            "CollectorGrant",
+            "Credential",
+            "CollectionPhase",
+            "CollectorRun",
+            "tokenLifetime",
+            "renewBefore",
+            "retryAfter",
+            "collectorGrant",
+            "initial",
+            "mintsAppToken",
+            "canChooseCredential",
+            "chooseCredential",
+            "sameGrant",
+            "lawGrantIsReadOnly",
+            "alwaysAppTokenOnlyOnMainLiveCollection",
+            "sometimesFallbackCollected"
+          ]
+        },
+        {
+          "heading": "Story: Collect with a read-only App token that outlives its one-hour grant / A request carrying the original App token gets a fresh one from ten minutes before expiry",
+          "line": 66,
+          "definitions": [
+            "renewalDue",
+            "canTick",
+            "tick",
+            "canRequest",
+            "request",
+            "canFinishCollection",
+            "finishCollection",
+            "alwaysRenewalsOnlyForTheAppToken",
+            "alwaysCollectedNeverUnauthorized",
+            "stepRenewOnlyWhenDue",
+            "stepFailedMintKeepsCurrentToken",
+            "sometimesCollectedPastTheFirstHour",
+            "sometimesRetriedAfterFailedMint",
+            "sometimesExpiredTokenFails",
+            "minutesValues",
+            "gValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./ingestion.md",
+          "line": 5
+        },
+        {
+          "target": "./ingestion.md",
+          "line": 13
+        },
+        {
+          "target": "./census.md",
+          "line": 14
+        }
+      ]
+    },
+    {
       "path": "spec/points/corrections.md",
       "sha256": "0e50ab0b7edbc39a7e3547ff909dffc0ffecbf0f222b665e6105c436d6cf2ceb",
       "module": "points__corrections",
@@ -15477,7 +16023,7 @@
     },
     {
       "path": "spec/points/index.md",
-      "sha256": "4f98b4fd321c155d3c5dc6b0c1884b28d9072fb1bf4831748c27ee5c0de37b34",
+      "sha256": "48b812cf9569c046d8684275f90966d200e6c8f2937ab9b2277a54c1cd548690",
       "module": "points",
       "stories": [],
       "rules": [],
@@ -15568,24 +16114,28 @@
           "line": 28
         },
         {
-          "target": "./recovery.md",
+          "target": "./collectorToken.md",
           "line": 29
         },
         {
-          "target": "./publication.md",
+          "target": "./recovery.md",
           "line": 30
         },
         {
-          "target": "./modelAttribution.md",
+          "target": "./publication.md",
           "line": 31
         },
         {
-          "target": "./profiles.md",
+          "target": "./modelAttribution.md",
           "line": 32
         },
         {
-          "target": "./retainedFreshness.md",
+          "target": "./profiles.md",
           "line": 33
+        },
+        {
+          "target": "./retainedFreshness.md",
+          "line": 34
         }
       ]
     },
@@ -18366,7 +18916,7 @@
     },
     {
       "path": "spec/security/cases.md",
-      "sha256": "ced4212ccc82f56f54fd6cd8d05422d212148c0495306f80cc21470447fcf652",
+      "sha256": "b0d516e5d85a5e72037800300af666825bf9b491b4815a3b47ae93dd68f7781d",
       "module": "security__cases",
       "stories": [
         {
@@ -18374,12 +18924,12 @@
           "line": 23
         },
         {
-          "heading": "Story: Obtain a human decision without automatic rejection",
-          "line": 209
+          "heading": "Story: Obtain a human decision on every report the routine pass leaves open",
+          "line": 212
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator",
-          "line": 338
+          "line": 403
         }
       ],
       "rules": [
@@ -18402,6 +18952,8 @@
             "AppealRecord",
             "Triage",
             "PrivateCase",
+            "RoutineMark",
+            "noRoutine",
             "noAuthority",
             "noAppealRecord",
             "noTriage",
@@ -18430,7 +18982,7 @@
         },
         {
           "heading": "Story: Receive a permanent private case under frozen terms / A claimed link settles against GitHub when its reporter or a maintainer checks the receipt",
-          "line": 132,
+          "line": 135,
           "definitions": [
             "githubReceiptService",
             "mayRequestReceiptCheck",
@@ -18440,7 +18992,7 @@
         },
         {
           "heading": "Story: Receive a permanent private case under frozen terms / Authority snapshots advance and triager membership is audited at the next revision",
-          "line": 165,
+          "line": 168,
           "definitions": [
             "canObserveAuthority",
             "observeAuthority",
@@ -18461,8 +19013,8 @@
           ]
         },
         {
-          "heading": "Story: Obtain a human decision without automatic rejection / Current technical approvers and triagers request information on the current report version",
-          "line": 211,
+          "heading": "Story: Obtain a human decision on every report the routine pass leaves open / Current technical approvers and triagers request information on the current report version",
+          "line": 214,
           "definitions": [
             "receiptOpen",
             "committed",
@@ -18474,8 +19026,8 @@
           ]
         },
         {
-          "heading": "Story: Obtain a human decision without automatic rejection / A technical decision records the finding, duplicate identity and relatedness",
-          "line": 235,
+          "heading": "Story: Obtain a human decision on every report the routine pass leaves open / A technical decision records the finding, duplicate identity and relatedness",
+          "line": 243,
           "definitions": [
             "Decision",
             "reporterRelated",
@@ -18489,8 +19041,26 @@
           ]
         },
         {
-          "heading": "Story: Obtain a human decision without automatic rejection / An award commits only under paid terms, eligibility and project clearance",
-          "line": 261,
+          "heading": "Story: Obtain a human decision on every report the routine pass leaves open / A routine decision changes only an unappealed undecided report and its close is appealed to the owner once",
+          "line": 269,
+          "definitions": [
+            "RoutineOutcome",
+            "routineService",
+            "routineProofWindowMs",
+            "routineClockPending",
+            "routineReadable",
+            "routineOutcomeAllowed",
+            "routineDecided",
+            "routineAppealable",
+            "routineReturned",
+            "alwaysRoutineCloseIsUnappealedRefusal",
+            "alwaysRoutineClockOnItsRequest",
+            "alwaysRoutineReturnRecorded"
+          ]
+        },
+        {
+          "heading": "Story: Obtain a human decision on every report the routine pass leaves open / An award commits only under paid terms, eligibility and project clearance",
+          "line": 326,
           "definitions": [
             "Rail",
             "ProjectClearance",
@@ -18524,7 +19094,7 @@
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator / Slopbot drafts advice for each appeal and always escalates a private case",
-          "line": 340,
+          "line": 405,
           "definitions": [
             "TriageOutcome",
             "appealable",
@@ -18546,7 +19116,7 @@
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator / An independent moderator upholds or returns the appeal",
-          "line": 398,
+          "line": 465,
           "definitions": [
             "canDecideAppeal",
             "decideAppeal",
@@ -18559,7 +19129,7 @@
         },
         {
           "heading": "Story: Appeal privately with Slopbot triage and an independent moderator / Simulation samples cover roles, revocation, bans and every decision shape",
-          "line": 422,
+          "line": 489,
           "definitions": [
             "staff",
             "snapshotValues",
@@ -18601,16 +19171,24 @@
           "line": 28
         },
         {
+          "target": "./routineDecisions.md",
+          "line": 217
+        },
+        {
+          "target": "./routineDecisions.md",
+          "line": 285
+        },
+        {
           "target": "./bounty.md",
-          "line": 266
+          "line": 331
         },
         {
           "target": "../settlement/directBounty.md",
-          "line": 273
+          "line": 338
         },
         {
           "target": "./terms.md",
-          "line": 350
+          "line": 416
         }
       ]
     },
@@ -19447,7 +20025,7 @@
     },
     {
       "path": "spec/security/index.md",
-      "sha256": "0ff4b2ccb6a004dba09b984a1e0a356c0af07d0955079db3b6145e0af645fa25",
+      "sha256": "9a409b5cdfd826d7f54ca480bef4e3ed73f234b212f0631df32064777727fb77",
       "module": "security",
       "stories": [],
       "rules": [],
@@ -19494,44 +20072,48 @@
           "line": 16
         },
         {
-          "target": "./remediation.md",
+          "target": "./routineDecisions.md",
           "line": 17
         },
         {
-          "target": "./bounty.md",
+          "target": "./remediation.md",
           "line": 18
         },
         {
-          "target": "./program.md",
+          "target": "./bounty.md",
           "line": 19
         },
         {
-          "target": "./terms.md",
+          "target": "./program.md",
           "line": 20
         },
         {
-          "target": "./assessment.md",
+          "target": "./terms.md",
           "line": 21
         },
         {
-          "target": "./journey.md",
+          "target": "./assessment.md",
           "line": 22
         },
         {
-          "target": "./reportNotices.md",
+          "target": "./journey.md",
           "line": 23
         },
         {
-          "target": "./continuity.md",
+          "target": "./reportNotices.md",
           "line": 24
         },
         {
-          "target": "./evidence.md",
+          "target": "./continuity.md",
           "line": 25
         },
         {
-          "target": "./privacy.md",
+          "target": "./evidence.md",
           "line": 26
+        },
+        {
+          "target": "./privacy.md",
+          "line": 27
         }
       ]
     },
@@ -20478,6 +21060,189 @@
       ]
     },
     {
+      "path": "spec/security/routineDecisions.md",
+      "sha256": "2349e9a31480ab331c37811b7c2f711396b1f836e1955011cd895813e116d6b4",
+      "module": "security__routineDecisions",
+      "stories": [
+        {
+          "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner",
+          "line": 16
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / The pass reads only an unappealed undecided report once per case revision and mode",
+          "line": 22,
+          "definitions": [
+            "Mode",
+            "Hold",
+            "Basis",
+            "Decision",
+            "RoutineRecord",
+            "FailedAttempt",
+            "Routine",
+            "screeningWaitMs",
+            "unavailableRetryMs",
+            "maxUnavailableAttempts",
+            "receivedCase",
+            "initial",
+            "screeningSettled",
+            "ownsRevision",
+            "failuresNow",
+            "readable",
+            "canSetMode",
+            "setMode",
+            "canAdvance",
+            "advance",
+            "stepOneFinalDecisionPerRevisionAndMode",
+            "stepAttemptsBounded",
+            "stepAuditRecordsRetained"
+          ]
+        },
+        {
+          "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Two independent calls must agree before a close, and a plausible loss of funds closes nothing",
+          "line": 75,
+          "definitions": [
+            "Reading",
+            "routineSeparateRuleCount",
+            "earlierCases",
+            "closingLines",
+            "validReading",
+            "held",
+            "combine",
+            "lawLossNeverCloses",
+            "lawCloseNeedsBothCalls",
+            "lawRankNeverUnderstates",
+            "lawUnscopedReceiptHasNoClosingLine"
+          ]
+        },
+        {
+          "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner",
+          "line": 129,
+          "definitions": [
+            "Observation",
+            "withoutCalls",
+            "accepts",
+            "verdict",
+            "canDecideReport",
+            "decideReport",
+            "canFailCalls",
+            "failCalls",
+            "closedNow",
+            "alwaysCaseRoutineMarks",
+            "alwaysOnlyLiveApplies",
+            "stepOnlyLiveChangesTheCase",
+            "stepRoutineCloseConditions",
+            "stepNoProofOnlyAfterTheClock",
+            "stepRoutineNeverConfirmsOrCommits",
+            "sometimesDryRunRecorded",
+            "sometimesDigestDuplicateClosed",
+            "sometimesTwoCallDuplicateClosed",
+            "sometimesPublishedLineClosed",
+            "sometimesProofRequested",
+            "sometimesNoProofClosed",
+            "sometimesProofStillMissing",
+            "sometimesLossAcknowledged",
+            "sometimesDisagreementAcknowledged",
+            "sometimesGithubAcknowledged",
+            "sometimesUnavailableAcknowledged"
+          ]
+        },
+        {
+          "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / The reporter appeals a routine close once, to the owner, and the pass never reads the report again",
+          "line": 207,
+          "definitions": [
+            "epoch",
+            "canRequestInformation",
+            "requestInformation",
+            "canDecide",
+            "decide",
+            "canAppeal",
+            "appeal",
+            "canDecideAppeal",
+            "decideAppeal",
+            "revisionEvidence",
+            "canSaveVersion",
+            "saveVersion",
+            "canClaimScreening",
+            "claimScreening",
+            "screeningInput",
+            "screeningClaim",
+            "canFinishScreening",
+            "finishScreening",
+            "canReachGithub",
+            "reachGithub",
+            "alwaysVersionsAligned",
+            "stepRoutineAppealReturnsToOwner",
+            "sometimesRoutineAppealReturned",
+            "sometimesOwnerDecidedAfterReturn",
+            "sometimesModeratorAfterReturn"
+          ]
+        },
+        {
+          "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Simulation samples",
+          "line": 262,
+          "definitions": [
+            "clean",
+            "readingValues",
+            "missing",
+            "foundValues",
+            "screenedValues",
+            "firstValues",
+            "secondValues",
+            "askedBeforeValues",
+            "modeValues",
+            "msValues",
+            "byValues",
+            "digestValues",
+            "upholdValues",
+            "decisionValues",
+            "weight_decideReport",
+            "weight_failCalls",
+            "weight_saveVersion",
+            "weight_setMode",
+            "weight_advance",
+            "weight_appeal",
+            "weight_decide",
+            "weight_finishScreening",
+            "weight_claimScreening"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money",
+        "security__terms",
+        "security__screening",
+        "security__cases"
+      ],
+      "references": [
+        {
+          "target": "./cases.md",
+          "line": 10
+        },
+        {
+          "target": "./screening.md",
+          "line": 10
+        },
+        {
+          "target": "./cases.md",
+          "line": 27
+        },
+        {
+          "target": "./cases.md",
+          "line": 213
+        },
+        {
+          "target": "./screening.md",
+          "line": 214
+        },
+        {
+          "target": "./forwarding.md",
+          "line": 215
+        }
+      ]
+    },
+    {
       "path": "spec/security/sandbox.md",
       "sha256": "d53c622c912252e7eb5f6a2475443721e2fee49805ca320b3f20c69725afef98",
       "module": "security__sandbox",
@@ -20599,18 +21364,18 @@
     },
     {
       "path": "spec/security/screening.md",
-      "sha256": "a008bc7e554d63ee93128d96086f81fd080cf4d667ca0aea13f7412b2cf9ab81",
+      "sha256": "453c792852bfd87a78a5a839439e89f32b345a58cc7e24d284ca78d5707dba45",
       "module": "security__screening",
       "stories": [
         {
           "heading": "Story: Screen the exact saved version privately before owner routing",
-          "line": 9
+          "line": 11
         }
       ],
       "rules": [
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Claim queued, unavailable or expired work for the current revision",
-          "line": 11,
+          "line": 13,
           "definitions": [
             "Phase",
             "Review",
@@ -20629,7 +21394,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / The fixed private route treats missing and partial provider evidence as unavailable",
-          "line": 48,
+          "line": 50,
           "definitions": [
             "ProviderRoute",
             "Observation",
@@ -20651,7 +21416,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / A late result cannot replace human review or a newly saved version",
-          "line": 114,
+          "line": 116,
           "definitions": [
             "RevisionEvidence",
             "canReviewReport",
@@ -20666,7 +21431,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Routing writes only private references for the current qualified version",
-          "line": 150,
+          "line": 152,
           "definitions": [
             "Routing",
             "canRoute",
@@ -20679,7 +21444,7 @@
         },
         {
           "heading": "Story: Screen the exact saved version privately before owner routing / Samples exercise missing, stale, duplicate and current screening evidence",
-          "line": 176,
+          "line": 178,
           "definitions": [
             "seenRevisionValues",
             "nowMsValues",
@@ -20704,12 +21469,16 @@
       ],
       "references": [
         {
+          "target": "./routineDecisions.md",
+          "line": 8
+        },
+        {
           "target": "./terms.md",
-          "line": 66
+          "line": 68
         },
         {
           "target": "./journey.md",
-          "line": 117
+          "line": 119
         }
       ]
     },
@@ -22263,7 +23032,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "54623f1179fc8fe598480756d4837658f947bfa67c5aa00e1731ebba156e7ae4",
+      "sha256": "fdaebe53ebcd50e9c893c9baf322155002a2ca40b1cd83733dae28e298ac8850",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -22298,160 +23067,172 @@
           "line": 11
         },
         {
-          "target": "./monthPledges.md",
+          "target": "./vaultDeposits.md",
           "line": 12
         },
         {
-          "target": "./allocation.md",
+          "target": "./solanaVaultDeposits.md",
           "line": 13
         },
         {
-          "target": "./payoutExclusions.md",
+          "target": "./monthPledges.md",
           "line": 14
         },
         {
-          "target": "./monthly.md",
+          "target": "./allocation.md",
           "line": 15
         },
         {
-          "target": "./monthlySettings.md",
+          "target": "./payoutExclusions.md",
           "line": 16
         },
         {
-          "target": "./monthlyCommitment.md",
+          "target": "./maintainerShare.md",
           "line": 17
         },
         {
-          "target": "./monthlySettlement.md",
+          "target": "./monthly.md",
           "line": 18
         },
         {
-          "target": "./monthlyExecution.md",
+          "target": "./monthlySettings.md",
           "line": 19
         },
         {
-          "target": "./octoberImport.md",
+          "target": "./monthlyCommitment.md",
           "line": 20
         },
         {
-          "target": "./ownerTransactions.md",
+          "target": "./monthlySettlement.md",
           "line": 21
         },
         {
-          "target": "./payment.md",
+          "target": "./monthlyExecution.md",
           "line": 22
         },
         {
-          "target": "./paymentDispatch.md",
+          "target": "./octoberImport.md",
           "line": 23
         },
         {
-          "target": "./paymentInvestigation.md",
+          "target": "./ownerTransactions.md",
           "line": 24
         },
         {
-          "target": "./evmScan.md",
+          "target": "./payment.md",
           "line": 25
         },
         {
-          "target": "./solanaScan.md",
+          "target": "./paymentDispatch.md",
           "line": 26
         },
         {
-          "target": "./directTransfers.md",
+          "target": "./paymentInvestigation.md",
           "line": 27
         },
         {
-          "target": "./publicRecords.md",
+          "target": "./evmScan.md",
           "line": 28
         },
         {
-          "target": "./composition.md",
+          "target": "./solanaScan.md",
           "line": 29
         },
         {
-          "target": "./directBounty.md",
+          "target": "./directTransfers.md",
           "line": 30
         },
         {
-          "target": "./privateAward.md",
+          "target": "./publicRecords.md",
           "line": 31
         },
         {
-          "target": "./recovery.md",
+          "target": "./composition.md",
           "line": 32
         },
         {
-          "target": "./privateAward.md",
+          "target": "./directBounty.md",
           "line": 33
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./privateAward.md",
           "line": 34
         },
         {
-          "target": "./signer.md",
+          "target": "./recovery.md",
           "line": 35
         },
         {
-          "target": "./attesterActivation.md",
+          "target": "./privateAward.md",
           "line": 36
         },
         {
-          "target": "./feeReplacement.md",
+          "target": "./reserveRelease.md",
           "line": 37
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./signer.md",
           "line": 38
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./attesterActivation.md",
           "line": 39
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./feeReplacement.md",
           "line": 40
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperRpc.md",
           "line": 41
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperScan.md",
           "line": 42
         },
         {
-          "target": "./referrals.md",
+          "target": "./keeperLifecycle.md",
           "line": 43
         },
         {
-          "target": "./referralAccrual.md",
+          "target": "./keeperDiagnostics.md",
           "line": 44
         },
         {
-          "target": "./referralHolds.md",
+          "target": "./contributorAllocation.md",
           "line": 45
         },
         {
-          "target": "./referralFiles.md",
+          "target": "./referrals.md",
           "line": 46
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralAccrual.md",
           "line": 47
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralHolds.md",
           "line": 48
         },
         {
-          "target": "./referralWatch.md",
+          "target": "./referralFiles.md",
           "line": 49
         },
         {
-          "target": "../fees/",
+          "target": "./referralPublication.md",
           "line": 50
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 51
+        },
+        {
+          "target": "./referralWatch.md",
+          "line": 52
+        },
+        {
+          "target": "../fees/",
+          "line": 53
         }
       ]
     },
@@ -22859,6 +23640,134 @@
         {
           "target": "./keeperDiagnostics.md",
           "line": 60
+        }
+      ]
+    },
+    {
+      "path": "spec/settlement/maintainerShare.md",
+      "sha256": "0b371f8762fce4e9786134c72191f22e7aecf0a1ff1d569f88ee67b4c738b337",
+      "module": "settlement__maintainerShare",
+      "stories": [
+        {
+          "heading": "Story: Take the maintainer share out of the monthly amount",
+          "line": 25
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Take the maintainer share out of the monthly amount / Only another person's outside pull request, merged or closed by a person, is a decision",
+          "line": 31,
+          "definitions": [
+            "DecisionKind",
+            "Decision",
+            "DecisionRecord",
+            "countedDecision",
+            "validRecord",
+            "lawOwnCloseAndBotsCountForNobody"
+          ]
+        },
+        {
+          "heading": "Story: Take the maintainer share out of the monthly amount / The share is a floor of the monthly amount and is split by decisions with ties to the lower account",
+          "line": 64,
+          "definitions": [
+            "maxShareBasisPoints",
+            "basisPointsDivisor",
+            "decisionsBy",
+            "shareWeights",
+            "sharePool",
+            "maintainerShares",
+            "lawExcludedAccountHasNoWeight",
+            "lawNoCountedDecisionNoShare",
+            "lawZeroShareNoPool"
+          ]
+        },
+        {
+          "heading": "Story: Take the maintainer share out of the monthly amount / A change starts with the next UTC month, and a month is proposed only from a complete read",
+          "line": 96,
+          "definitions": [
+            "SharePhase",
+            "DecisionRead",
+            "ShareMonth",
+            "owner",
+            "workflow",
+            "clock",
+            "noRecord",
+            "initial",
+            "canSetShare",
+            "setShare",
+            "canCloseMonth",
+            "closeMonth",
+            "readPending",
+            "canReadFails",
+            "readFails",
+            "canReadCompletes",
+            "readCompletes",
+            "proposedPool",
+            "canPropose",
+            "propose",
+            "canNextMonth",
+            "nextMonth"
+          ]
+        },
+        {
+          "heading": "Story: Take the maintainer share out of the monthly amount / Rules",
+          "line": 148,
+          "definitions": [
+            "alwaysShareWithinLimits",
+            "stepShareStartsNextMonth",
+            "alwaysAmountValid",
+            "alwaysProposalIsTheAmount",
+            "alwaysMaintainersSplitTheShare",
+            "alwaysShareOnlyFromCompleteRead",
+            "alwaysExcludedReceivesNothing",
+            "alwaysReadOnlyForAShare",
+            "sometimesSplitBetweenMaintainers",
+            "sometimesNoDecisionNoShare",
+            "sometimesHeldByFailedRead",
+            "sometimesExcludedLeftOut",
+            "sometimesChangeWaitsForNextMonth"
+          ]
+        },
+        {
+          "heading": "Story: Take the maintainer share out of the monthly amount / Simulation samples",
+          "line": 179,
+          "definitions": [
+            "decided",
+            "recordValues",
+            "basisPointsValues",
+            "amountValues",
+            "repositoriesValues",
+            "exclusionsValues",
+            "actorValues",
+            "dValues",
+            "byValues",
+            "weight_readCompletes",
+            "weight_propose",
+            "weight_closeMonth"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money",
+        "settlement__allocation",
+        "settlement__payoutExclusions"
+      ],
+      "references": [
+        {
+          "target": "./allocation.md",
+          "line": 19
+        },
+        {
+          "target": "./monthly.md",
+          "line": 20
+        },
+        {
+          "target": "../backend/projects.md",
+          "line": 23
+        },
+        {
+          "target": "./allocation.md",
+          "line": 72
         }
       ]
     },
@@ -26571,6 +27480,74 @@
       "references": []
     },
     {
+      "path": "spec/settlement/solanaVaultDeposits.md",
+      "sha256": "628aa7c06fdea51a9d100750b5c81fd7bc3e5f487641da8dcf0d31a9b2c1f1bf",
+      "module": "settlement__solanaVaultDeposits",
+      "stories": [
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary Solana vault once",
+          "line": 15
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary Solana vault once / A run reads newest first below the interval it resumes and above the covered position",
+          "line": 20,
+          "definitions": [
+            "SolanaRun",
+            "SolanaDeposits",
+            "worker",
+            "chain",
+            "pageTransactions",
+            "chainTransactions",
+            "depositTransactions",
+            "idleRun",
+            "initial",
+            "runOf",
+            "withRun",
+            "pageFrom",
+            "captured",
+            "canArrive",
+            "arrive",
+            "canStartRun",
+            "startRun",
+            "canReadTransaction",
+            "readTransaction",
+            "canFailRun",
+            "failRun",
+            "canFinishRun",
+            "finishRun"
+          ]
+        },
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary Solana vault once / Rules",
+          "line": 77,
+          "definitions": [
+            "alwaysPositionCovered",
+            "alwaysIntervalRead",
+            "alwaysRecordedExactlyRead",
+            "stepPositionNeverGoesBack",
+            "stepRecordPermanent",
+            "sometimesAllCovered",
+            "sometimesIntervalOpen",
+            "sometimesOvertakenRunStopped",
+            "slotValues",
+            "rValues",
+            "byValues",
+            "weight_readTransaction",
+            "weight_finishRun"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./vaultDeposits.md",
+          "line": 3
+        }
+      ]
+    },
+    {
       "path": "spec/settlement/vault.md",
       "sha256": "a572f588e1f8400526a29d2267af435b3960f2561558e68c036a18f400280061",
       "module": "settlement__vault",
@@ -26668,6 +27645,93 @@
         {
           "target": "./escrow.md",
           "line": 78
+        }
+      ]
+    },
+    {
+      "path": "spec/settlement/vaultDeposits.md",
+      "sha256": "7cb99786188cbe30afa9599a15fa0212829da32ca8b3f8a394a98a989a2719f8",
+      "module": "settlement__vaultDeposits",
+      "stories": [
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary EVM vault once",
+          "line": 25
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary EVM vault once / A record row is a positive amount of one finalized deposit event",
+          "line": 30,
+          "definitions": [
+            "DepositRow",
+            "validDepositRow",
+            "sameEvent",
+            "lawZeroAmountRefused"
+          ]
+        },
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary EVM vault once / A run reads pages up to the finalized block and stores each page with its cursor",
+          "line": 47,
+          "definitions": [
+            "VaultPurpose",
+            "Run",
+            "EvmDeposits",
+            "worker",
+            "chain",
+            "pageBlocks",
+            "chainDepositBlocks",
+            "idleRun",
+            "initial",
+            "runOf",
+            "withRun",
+            "canFinalize",
+            "finalize",
+            "canObserveChain",
+            "observeChain",
+            "canStartPage",
+            "startPage",
+            "canCompletePage",
+            "completePage",
+            "canFailPage",
+            "failPage"
+          ]
+        },
+        {
+          "heading": "Story: Record every finalized deposit of an ordinary EVM vault once / Rules",
+          "line": 91,
+          "definitions": [
+            "runWithinCursor",
+            "alwaysRunsContiguous",
+            "alwaysCursorFinalized",
+            "alwaysRecordedExactlyBelowCursor",
+            "alwaysBountyVaultNeverRead",
+            "stepCursorNeverGoesBack",
+            "stepRecordPermanent",
+            "stepFailedPageChangesNothing",
+            "sometimesWholeHistory",
+            "sometimesOlderRunBehindCursor",
+            "sometimesWrongChainWaits",
+            "slotValues",
+            "rValues",
+            "matchesValues",
+            "byValues",
+            "rowValues",
+            "weight_startPage",
+            "weight_completePage"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": [
+        {
+          "target": "./solanaVaultDeposits.md",
+          "line": 14
+        },
+        {
+          "target": "../frontend/projections.md",
+          "line": 16
         }
       ]
     },
@@ -31420,7 +32484,7 @@
     },
     {
       "path": "spec/ui/controls.md",
-      "sha256": "e896dc73122ee8771199ddd9dc1b93535b61b96a69011c236fb3fc1bf5279784",
+      "sha256": "b9f60434ddea13248cdea71cefb863496f8d81239988b2835947eeefff3cf06b",
       "module": "ui__controls",
       "stories": [
         {
@@ -31434,6 +32498,10 @@
         {
           "heading": "Story: Sort a table by a column",
           "line": 39
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard",
+          "line": 59
         }
       ],
       "rules": [
@@ -31474,10 +32542,54 @@
             "lawPlainColumnIsSilent",
             "columnValues"
           ]
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard / The keyboard reaches a row of links in the order shown, and one navigation tab at most is current",
+          "line": 61,
+          "definitions": [
+            "nextInRow",
+            "tabCurrent",
+            "lawForwardThenBackReturns",
+            "lawRowStaysInOrder",
+            "lawOneTabIsCurrent",
+            "atValues",
+            "linksValues",
+            "tabValues",
+            "otherValues",
+            "shownValues"
+          ]
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard / A disclosure opens and closes from its trigger and never hides what a decision rests on",
+          "line": 88,
+          "definitions": [
+            "Detail",
+            "mayHide",
+            "toggled",
+            "lawToggleTwiceRestores",
+            "lawDecisionsStayVisible"
+          ]
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard / A dialog takes focus when it opens, keeps it inside, and gives it back to its trigger when dismissed",
+          "line": 104,
+          "definitions": [
+            "DialogFocus",
+            "DialogKey",
+            "focusAfter",
+            "lawOpenTakesFocus",
+            "lawTabStaysInside",
+            "lawDismissReturnsFocus"
+          ]
         }
       ],
       "imports": [],
-      "references": []
+      "references": [
+        {
+          "target": "./confirmation.md",
+          "line": 110
+        }
+      ]
     },
     {
       "path": "spec/ui/copy.md",
@@ -31642,18 +32754,18 @@
     },
     {
       "path": "spec/ui/status.md",
-      "sha256": "323327bd491a4b15498d8c641398cefdb1ae1b0c6a14c5a516c95878349941b7",
+      "sha256": "4a94c5743c77e66110b37c17e11fe8a967dc86d6b215cebfbcd0ae05b2920f13",
       "module": "ui__status",
       "stories": [
         {
           "heading": "Story: Read a state without relying on color",
-          "line": 9
+          "line": 11
         }
       ],
       "rules": [
         {
           "heading": "Story: Read a state without relying on color / A presentation is a tone, an icon and a word",
-          "line": 11,
+          "line": 13,
           "definitions": [
             "Icon",
             "Presentation",
@@ -31662,22 +32774,8 @@
           ]
         },
         {
-          "heading": "Story: Read a state without relying on color / Payment states keep award, funding and settlement apart",
-          "line": 26,
-          "definitions": [
-            "paymentPresentation",
-            "awardPresentation",
-            "fundingPresentation",
-            "paymentStates",
-            "lawOnlyPaidLooksSettled",
-            "lawPaymentStatesAreDistinguishable",
-            "lawAwardStatesAreDistinguishable",
-            "lawFundingStatesAreDistinguishable"
-          ]
-        },
-        {
           "heading": "Story: Read a state without relying on color / Read states show loading, emptiness, staleness and failure differently",
-          "line": 63,
+          "line": 28,
           "definitions": [
             "Announcement",
             "readPresentation",
@@ -31692,7 +32790,7 @@
         },
         {
           "heading": "Story: Read a state without relying on color / Setup checks never look ready unless they are",
-          "line": 100,
+          "line": 65,
           "definitions": [
             "setupPresentation",
             "lawOnlyReadyLooksReady",
@@ -31702,14 +32800,17 @@
       ],
       "imports": [
         "designSystem",
-        "frontend__projections",
         "frontend__requests",
         "frontend__presentation"
       ],
       "references": [
         {
+          "target": "../frontend/projections.md#payment-states-keep-award-funding-and-settlement-apart",
+          "line": 8
+        },
+        {
           "target": "../designSystem/",
-          "line": 13
+          "line": 15
         }
       ]
     }
