@@ -4,8 +4,10 @@
  * SubmissionDeposits contract on Base and Robinhood Chain, records each
  * deposit, judges whether it pays for its pull request, marks that pull
  * request paid, and sends what Slopbot's row says is due: a refund, or a
- * kept fee. Once an hour it reads the SLOP price and keeps the SLOP rate.
- * It has no HTTP route.
+ * kept fee. A deposit on Robinhood Chain can instead pay the SLOP deposit of
+ * a private security report (PRD section 8); the Worker marks that report's
+ * row paid and sends what the row says. Once an hour it reads the SLOP price
+ * and keeps the SLOP rate. It has no HTTP route.
  *
  * `off` does nothing. `dry_run` reads and records, including the list it
  * would send, loads no key and signs nothing. `live` adds the resolver key.

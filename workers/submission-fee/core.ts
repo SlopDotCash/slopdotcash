@@ -9,12 +9,17 @@
  *   4. copy what each pull request's row says is due onto its deposit;
  *   5. reconcile the one send in flight, then record and send the next.
  *
+ * A deposit can name a private security report instead of a pull request
+ * (PRD section 8, operator decision of 21 November 2026). Its row is in
+ * `security_report_deposits`, its rule is in `report.ts`, and steps 3 to 5
+ * treat it the same way: mark the report paid, then send what its row says.
+ *
  * It decides nothing about merges or closes: `submission_fee_items.outcome`
- * is Slopbot's. It never keeps a deposit that does not count, and it never
- * signs a second transaction while one is unsettled. A deposit of a token
- * outside the table is never resolved: its payer reclaims it from the
- * contract. A deposit whose payout the token refuses is parked, so the
- * deposits behind it are still resolved.
+ * is Slopbot's, and a report row's `outcome` is the backend's. It never keeps
+ * a deposit that does not count, and it never signs a second transaction
+ * while one is unsettled. A deposit of a token outside the table is never
+ * resolved: its payer reclaims it from the contract. A deposit whose payout
+ * the token refuses is parked, so the deposits behind it are still resolved.
  */
 
 import {
@@ -26,6 +31,13 @@ import {
   submissionResolveAction,
 } from "../../src/lib/submission-fee.mjs";
 import type { GasLimits, Mode, NetworkConfig } from "./config";
+import {
+  type ReportRow,
+  reportDepositCounts,
+  reportResolveAction,
+} from "./report";
+
+export type { ReportRow } from "./report";
 
 /** Finalized log pages read for one network in one run. */
 export const FINALIZED_PAGES_PER_RUN = 10;
@@ -236,9 +248,21 @@ export interface FeeStore {
   ): Promise<void>;
   unjudged(network: string, limit: number): Promise<DepositRow[]>;
   itemByHash(item: string): Promise<ItemRow | null>;
+  /**
+   * The report a deposit was asked for under this item, or null. A row that
+   * record-only mode wrote (`mode = 'recorded'`) asks for nothing and is
+   * never returned.
+   */
+  reportByHash(item: string): Promise<ReportRow | null>;
   rates(): Promise<SubmissionFeeRate[]>;
   /** Marks the pull request paid by this deposit; false when another paid. */
   markPaid(deposit: DepositRow, item: ItemRow, at: string): Promise<boolean>;
+  /** Marks the report paid by this deposit; false when another paid. */
+  markReportPaid(
+    deposit: DepositRow,
+    report: ReportRow,
+    at: string,
+  ): Promise<boolean>;
   setJudgement(
     deposit: DepositRow,
     judgement: {
@@ -247,10 +271,16 @@ export interface FeeStore {
       item: ItemRow | null;
     },
   ): Promise<void>;
-  /** Finalized deposits still in an open state, with their item rows. */
+  /**
+   * Finalized deposits still in an open state, each with the pull request's
+   * row it was matched to, or the report's row that names it as the deposit
+   * that paid.
+   */
   resolvable(
     network: string,
-  ): Promise<{ deposit: DepositRow; item: ItemRow | null }[]>;
+  ): Promise<
+    { deposit: DepositRow; item: ItemRow | null; report: ReportRow | null }[]
+  >;
   setDue(
     network: string,
     depositId: number,
@@ -572,6 +602,11 @@ export async function scan(
  * so two deposits can never both pay one pull request. A deposit whose pull
  * request Slop has not asked a fee for waits 24 hours after it is finalized,
  * in case the request is still on its way, and is then refused.
+ *
+ * An item no pull request has may be a report's. A report's deposit is
+ * judged by `reportDepositCounts` and marks the report's row paid the same
+ * way. A row that record-only mode wrote is not read here, so a deposit
+ * that names one is an unknown item like any other.
  */
 export async function judge(
   deps: NetworkDependencies,
@@ -582,6 +617,47 @@ export async function judge(
   let paid = 0;
   for (const deposit of await store.unjudged(network.network, JUDGED_PER_RUN)) {
     const item = await store.itemByHash(deposit.item);
+    const report = item ? null : await store.reportByHash(deposit.item);
+    if (report) {
+      const verdict = reportDepositCounts(
+        network.network,
+        deposit,
+        report,
+        terms,
+      );
+      if (verdict.accepted) {
+        const at = deps.now().toISOString();
+        if (!(await store.markReportPaid(deposit, report, at))) continue;
+        // No pull request: the row's repository and pull number stay null.
+        await store.setJudgement(deposit, {
+          accepted: 1,
+          reason: null,
+          item: null,
+        });
+        judged += 1;
+        paid += 1;
+        // The log names the deposit only, never the report.
+        deps.log({
+          event: "submission_fee_report_paid",
+          network: network.network,
+          depositId: deposit.depositId,
+        });
+        continue;
+      }
+      await store.setJudgement(deposit, {
+        accepted: 0,
+        reason: verdict.reason,
+        item: null,
+      });
+      judged += 1;
+      deps.log({
+        event: "submission_fee_refused",
+        network: network.network,
+        depositId: deposit.depositId,
+        reason: verdict.reason,
+      });
+      continue;
+    }
     const verdict = submissionDepositCounts(
       network.network,
       deposit,
@@ -630,20 +706,21 @@ export async function judge(
 }
 
 /**
- * Step 4: what is due for each finalized open deposit, from the pure rule.
- * Returns the entries to send, oldest deposit first.
+ * Step 4: what is due for each finalized open deposit, from the pure rule
+ * of the pull request or of the report it paid. Returns the entries to send,
+ * oldest deposit first.
  */
 export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
   const { store, network } = deps;
   const entries: SendEntry[] = [];
   const parked = await store.parked(network.network);
-  for (const { deposit, item } of await store.resolvable(network.network)) {
-    const action = submissionResolveAction(
-      network.network,
-      deposit,
-      item,
-      deps.terms,
-    );
+  for (const { deposit, item, report } of await store.resolvable(
+    network.network,
+  )) {
+    // A report's row is returned only for the deposit it names as paid.
+    const action = report
+      ? reportResolveAction(network.network, deposit, report, deps.terms)
+      : submissionResolveAction(network.network, deposit, item, deps.terms);
     const state =
       action === "refund"
         ? "refund_due"
