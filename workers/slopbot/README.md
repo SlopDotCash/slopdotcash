@@ -133,8 +133,10 @@ only after their line counts match the accepted file metadata.
 9. **Appeals.** `/slopbot appeal` from the author, or any reopen, blocks
    re-closing that revision (`appeals.ts`). Escalation to a moderator (label
    `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A repeat
-   appeal of a finding on an item whose earlier appeal was denied is always
-   escalated (value disputes excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
+   appeal of a finding on an item whose earlier appeal was denied, awaits a
+   moderator, or has an unanswered deny draft is always escalated, at triage
+   and again before the appellant accepts an uphold draft (value disputes
+   excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
    binding and late-close races.
 
 For an ordinary PR value assessment, an affected author, implementation actor,
