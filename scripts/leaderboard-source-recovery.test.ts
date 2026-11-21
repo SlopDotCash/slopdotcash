@@ -330,6 +330,10 @@ test("ordinary commit pagination and PR search pages share one flat statistics c
     async execute(document: string, variables: Record<string, unknown> = {}) {
       if (document.includes("query LeaderboardSearchReferences")) {
         expect(variables.withMergeCommits).toBe(true);
+        // The saved historical query is part of the raw evidence cache key.
+        expect(sha256(document)).toBe(
+          "a680f6ddd1260f268b3135f7d1ffd448590ae4412f66728320f45941ffb35701",
+        );
         expect(document).not.toContain("oid additions deletions");
         return {
           search: {
@@ -457,6 +461,21 @@ test("only a complete changed single-commit submission can have an empty accepta
   expect(marker(node)).toBe(true);
   for (const other of [
     { ...node, mergeCommit: null },
+    { ...node, mergeCommit: { oid: mergeCommit.oid } },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { totalCount: 1 },
+      },
+    },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { totalCount: 1, nodes: [{ oid: parent.oid }] },
+      },
+    },
     { ...node, additions: 0, deletions: 0 },
     { ...node, mergeCommit: { ...mergeCommit, oid: node.headRefOid } },
     { ...node, mergeCommit: { ...mergeCommit, tree: { oid: "4".repeat(40) } } },
@@ -821,6 +840,7 @@ async function fixture(
             owner: string;
             name: string;
             searchQuery: string;
+            withMergeCommits?: boolean;
             ids: string[];
             id: string;
             after: string | null;
@@ -915,6 +935,9 @@ async function fixture(
             },
           };
         } else if (query.includes("query LeaderboardSearchReferences")) {
+          expect(query.includes("mergeCommit @include")).toBe(
+            v.withMergeCommits === true,
+          );
           const isOurs = v.searchQuery.startsWith(
             `repo:${repository.owner}/${repository.name} `,
           );

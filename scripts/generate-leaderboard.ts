@@ -802,11 +802,6 @@ const SEARCH_REFERENCES_QUERY = `
           baseRefName
           baseRefOid
           headRefOid
-          mergeCommit @include(if: $withMergeCommits) {
-            oid
-            tree { oid }
-            parents(first: 1) { totalCount nodes { oid tree { oid } } }
-          }
           commits(first: 100) @include(if: $withMergeCommits) {
             totalCount
             pageInfo { hasNextPage endCursor }
@@ -819,6 +814,17 @@ const SEARCH_REFERENCES_QUERY = `
   }
   ${ACTOR_FRAGMENT}
 `;
+
+// Frozen historical campaigns key raw responses by the exact query bytes.
+const ROLLING_MERGE_REFERENCES_QUERY = SEARCH_REFERENCES_QUERY.replace(
+  "          commits(first: 100)",
+  `          mergeCommit @include(if: $withMergeCommits) {
+            oid
+            tree { oid }
+            parents(first: 1) { totalCount nodes { oid tree { oid } } }
+          }
+          commits(first: 100)`,
+);
 
 const MORE_OUTCOME_COMMITS_QUERY = `
   query LeaderboardOutcomeCommits($id: ID!, $after: String!) {
@@ -2683,12 +2689,20 @@ function hasEmptyAcceptanceMarker(
   const mergePath = `${path}.mergeCommit`;
   const merge = asRecord(value, mergePath);
   const accepted = asFullCommitSha(merge.oid, `${mergePath}.oid`);
+  // Historical metadata and saved search responses can carry only the SHA.
+  if (accepted === submittedHead || merge.parents == null || merge.tree == null)
+    return false;
   const parents = child(merge, "parents", mergePath);
-  if (accepted === submittedHead || parents.totalCount !== 1) return false;
-  const nodes = asArray(parents.nodes, `${mergePath}.parents.nodes`);
-  if (nodes.length !== 1) return false;
+  if (
+    parents.totalCount !== 1 ||
+    !Array.isArray(parents.nodes) ||
+    parents.nodes.length !== 1 ||
+    parents.nodes[0] == null
+  )
+    return false;
   const parentPath = `${mergePath}.parents.nodes[0]`;
-  const parent = asRecord(nodes[0], parentPath);
+  const parent = asRecord(parents.nodes[0], parentPath);
+  if (parent.tree == null) return false;
   const parentSha = asFullCommitSha(parent.oid, `${parentPath}.oid`);
   return (
     parentSha !== accepted &&
@@ -2862,7 +2876,11 @@ export async function collectSearchReferences(
   commitLines = new OutcomeCommitLineLoader(client),
   repositoryNodeId = repository.expectedNodeId,
   initialSearchPageSize = GRAPHQL_PAGE_SIZE,
+  includeAcceptanceMarker = false,
 ): Promise<NodeReference[]> {
+  const document = includeAcceptanceMarker
+    ? ROLLING_MERGE_REFERENCES_QUERY
+    : SEARCH_REFERENCES_QUERY;
   const collectRange = () =>
     collectSearchReferenceRange(
       client,
@@ -2876,6 +2894,7 @@ export async function collectSearchReferences(
       commitLines,
       repositoryNodeId,
       initialSearchPageSize,
+      document,
     );
   try {
     return await collectRange();
@@ -2903,6 +2922,7 @@ async function collectSearchReferenceRange(
   commitLines: OutcomeCommitLineLoader,
   repositoryNodeId: string | null,
   initialSearchPageSize: number,
+  document: string,
 ): Promise<NodeReference[]> {
   if (
     !Number.isInteger(initialSearchPageSize) ||
@@ -2914,7 +2934,7 @@ async function collectSearchReferenceRange(
     );
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
-  const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
+  const firstData = await client.execute(document, {
     searchQuery,
     after: null,
     pageSize: initialSearchPageSize,
@@ -2942,6 +2962,7 @@ async function collectSearchReferenceRange(
       commitLines,
       repositoryNodeId,
       initialSearchPageSize,
+      document,
     );
     const right = await collectSearchReferenceRange(
       client,
@@ -2955,6 +2976,7 @@ async function collectSearchReferenceRange(
       commitLines,
       repositoryNodeId,
       initialSearchPageSize,
+      document,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2980,7 +3002,7 @@ async function collectSearchReferenceRange(
       throw new Error("GitHub Search cursor did not advance");
     }
     visitedCursors.add(pageInfo.endCursor);
-    const data = await client.execute(SEARCH_REFERENCES_QUERY, {
+    const data = await client.execute(document, {
       searchQuery,
       after: pageInfo.endCursor,
       pageSize: initialSearchPageSize,
@@ -4857,6 +4879,8 @@ export async function generateLeaderboardFromGitHub(
       stats,
       commitLines,
       preflight.id,
+      GRAPHQL_PAGE_SIZE,
+      true,
     );
     if (closedCensusFrom.getTime() < now.getTime()) {
       const closedReferences = await collectSearchReferences(
