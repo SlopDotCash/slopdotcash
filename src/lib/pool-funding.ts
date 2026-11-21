@@ -379,7 +379,7 @@ type PoolRewardDisplay = {
   warning: "Vault funding unverified" | "Not vaulted" | null;
 };
 
-export function homePoolReward(
+export function listingPoolReward(
   project: ProjectDefinition,
   index: PoolFundingIndex | null,
   now: Date,
@@ -418,28 +418,14 @@ function displayedPoolReward(
   };
 }
 
-/** The project page line for a pool that is not funded this month. */
-export const NOT_LISTED_NOTICE =
-  "This project's pool is not funded this month, so it is not listed.";
-
-/**
- * Whether a project is listed this month (operator decisions, 16 and 18
- * November 2026). An active project whose monthly pool is not funded this
- * month, by `poolFunded`, is left out of the homepage, /sponsors and agent
- * discovery. An honor-system promise does not count as funding.
- * A project with an open security program and every other reward kind stay
- * listed, and paused projects keep their existing listing. Its page still
- * opens by direct link and its skills keep serving. A null index means the
- * funding could not be read, and every project is listed as before.
- */
+/** The registry determines discovery eligibility. Vault reads only label the amount. */
 export function listedThisMonth(
   project: ProjectDefinition,
-  index: PoolFundingIndex | null,
   now: Date,
 ): boolean {
-  if (index === null) return true;
-  if (project.status !== "active") return true;
-  if (project.reward.kind !== "monthly-pool") return true;
-  if (project.securityBounty?.status === "open") return true;
-  return poolFunded(project, index, now);
+  return (
+    project.reward.kind !== "monthly-pool" ||
+    project.securityBounty?.status === "open" ||
+    resolveRewardCapMinor(project, utcMonth(now)) !== "0"
+  );
 }

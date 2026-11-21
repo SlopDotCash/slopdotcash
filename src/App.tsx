@@ -21,6 +21,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
 import { Link, useHashScroll } from "./Link";
@@ -54,11 +55,10 @@ import {
 } from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
-  homePoolReward,
   listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
   monthName,
-  NOT_LISTED_NOTICE,
   poolFundingStatus,
   publicPoolReward,
 } from "./lib/pool-funding";
@@ -500,16 +500,30 @@ function Footer({ marketing }: { marketing: boolean }) {
   );
 }
 
-function HeroHeading({ audience }: { audience: HomeAudience }) {
-  const campaign = HOME_AUDIENCES[audience];
+const HERO_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeToHeroMotion(onChange: () => void) {
+  const media = window.matchMedia(HERO_MOTION_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getHeroReducedMotion() {
+  return window.matchMedia(HERO_MOTION_QUERY).matches;
+}
+
+function HeroTypewriter({
+  actions,
+}: {
+  actions: readonly [string, ...string[]];
+}) {
   const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(campaign.actions[0].length);
+  const [characters, setCharacters] = useState(actions[0].length);
   const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
     "holding",
   );
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = campaign.actions[index];
+    const target = actions[index];
     let delay = 1;
     let advance: () => void;
     if (phase === "holding") {
@@ -521,7 +535,7 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
     } else if (phase === "deleting") {
       delay = HERO_GAP_MS;
       advance = () => {
-        setIndex((value) => (value + 1) % campaign.actions.length);
+        setIndex((value) => (value + 1) % actions.length);
         setPhase("typing");
       };
     } else if (characters < target.length) {
@@ -532,8 +546,17 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
     }
     const timer = window.setTimeout(advance, delay);
     return () => window.clearTimeout(timer);
-  }, [campaign.actions, characters, index, phase]);
-  const action = campaign.actions[index];
+  }, [actions, characters, index, phase]);
+  return actions[index].slice(0, characters);
+}
+
+function HeroHeading({ audience }: { audience: HomeAudience }) {
+  const campaign = HOME_AUDIENCES[audience];
+  // Unmounting the typewriter cancels its timer and discards any partial phrase.
+  const reducedMotion = useSyncExternalStore(
+    subscribeToHeroMotion,
+    getHeroReducedMotion,
+  );
   return (
     <h1 aria-label={campaign.accessibleHeading}>
       <span aria-hidden="true" className="hero-message">
@@ -546,7 +569,11 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
             </span>
           ))}
           <span className="hero-typewriter">
-            {action.slice(0, characters)}
+            {reducedMotion ? (
+              campaign.actions[0]
+            ) : (
+              <HeroTypewriter actions={campaign.actions} />
+            )}
             <span className="hero-typewriter-caret" />
           </span>
         </span>
@@ -668,7 +695,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
 }
 
 type HomeProject = ProjectDefinition &
-  Pick<ReturnType<typeof homePoolReward>, "fundingTag" | "warning">;
+  Pick<ReturnType<typeof listingPoolReward>, "fundingTag" | "warning">;
 
 const fundingTagTone = {
   Vaulted: "success",
@@ -920,10 +947,6 @@ function HomePage() {
     window.history.pushState(window.history.state, "", destination);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
-  // An active monthly pool not funded this month is left off the homepage,
-  // as on /sponsors (operator decision, 18 November 2026). The list waits
-  // for the funding read so unfunded cards never flash in; a failed read
-  // lists every project as before.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -934,7 +957,7 @@ function HomePage() {
   // A project over its owner's intake cap has paused new contributors and
   // is left out. The counts are read only when a project has a cap; while
   // they load, and when they cannot be read, every project is listed.
-  const open = homeProjects();
+  const open = homeProjects(now);
   const [merge] = usePublicResource(
     open.some((project) => intakeCap(project) !== null),
     loadMergeActivity,
@@ -947,7 +970,6 @@ function HomePage() {
       .filter(
         (project) =>
           !fundingPending &&
-          listedThisMonth(project, fundingIndex, now) &&
           !intakePaused(project, mergeIndex?.get(project.id), now),
       )
       .map((project) => {
@@ -955,7 +977,7 @@ function HomePage() {
           project: shown,
           fundingTag,
           warning,
-        } = homePoolReward(project, fundingIndex, now);
+        } = listingPoolReward(project, fundingIndex, now);
         return { ...shown, fundingTag, warning };
       }),
   );
@@ -1236,17 +1258,7 @@ function InstallPanel({ audience }: { audience: HomeAudience }) {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
-  // Discovery leaves out an unfunded monthly pool this month; that is not a
-  // clearance problem, so the owner setup link does not apply.
-  const [funding] = usePublicResource(
-    project.reward.kind === "monthly-pool",
-    loadPoolFunding,
-    "Pool funding unavailable",
-  );
-  const unlisted =
-    funding.status === "ready" &&
-    !listedThisMonth(project, funding.index, new Date());
-  // Neither is a pause at the owner's intake cap.
+  const unlisted = !listedThisMonth(project, new Date());
   const [merge] = usePublicResource(
     project.status === "active" && intakeCap(project) !== null,
     loadMergeActivity,
@@ -1541,11 +1553,6 @@ function ProjectRewardSummary({
           <p className="project-reward-status">
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
-        ) : null}
-        {!promise &&
-        index !== null &&
-        !listedThisMonth(registered, index, now) ? (
-          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
         ) : null}
         {projectRewardSummaries(project, promise !== null).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>

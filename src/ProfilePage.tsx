@@ -32,6 +32,7 @@ const PENALTY_CATEGORY_LABELS: Record<string, string> = {
   scam: "Scam",
   busywork: "Rule violation",
   gaming: "Rule violation",
+  missing_evidence: "Missing PR evidence",
 };
 
 export function ProfilePage({

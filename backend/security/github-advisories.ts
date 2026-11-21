@@ -12,6 +12,14 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { canonicalJson } from "../../src/lib/canonical-json";
+import {
+  FORWARDED_TOO_LONG,
+  forwardedDescription,
+  MAX_FORWARDED_DESCRIPTION,
+  proofFileNameProblem,
+  proofPatchProblem,
+  type ReportProof,
+} from "../../src/lib/report-proof";
 import { GHSA, githubAppJwt, githubHeaders, nextLink } from "../github";
 import { fail } from "../http";
 import type { ReportingReader } from "./reporting-readiness";
@@ -44,6 +52,11 @@ export function reporterGrant(token: string, githubId: string): ReporterGrant {
 export type ReportInput = {
   readonly summary: string;
   readonly description: string;
+  /**
+   * The reporter's optional proof-of-concept file (operator decision,
+   * 20 November 2026). Reports saved before it have none.
+   */
+  readonly proofOfConcept?: ReportProof;
   readonly severity?: "critical" | "high" | "medium" | "low";
   readonly cvssVectorString?: string;
   readonly cweIds?: readonly string[];
@@ -161,6 +174,23 @@ function bounded(value: unknown, key: string, min: number, max: number) {
   return trimmed;
 }
 
+/** The proof file: a safe name and a text body. Never echoes either. */
+function parseReportProof(value: unknown): ReportProof {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    fail(400, "invalid_report", "Invalid proofOfConcept");
+  const proof = value as Record<string, unknown>;
+  if (
+    Object.keys(proof).length !== 2 ||
+    typeof proof.fileName !== "string" ||
+    typeof proof.patch !== "string"
+  )
+    fail(400, "invalid_report", "Invalid proofOfConcept");
+  const problem =
+    proofFileNameProblem(proof.fileName) ?? proofPatchProblem(proof.patch);
+  if (problem !== null) fail(400, "invalid_report", problem);
+  return { fileName: proof.fileName, patch: proof.patch };
+}
+
 /**
  * Validates report fields on the server. Error messages name the field and
  * never echo its content.
@@ -172,6 +202,7 @@ export function parseReportInput(value: unknown): ReportInput {
   const allowed = new Set([
     "summary",
     "description",
+    "proofOfConcept",
     "severity",
     "cvssVectorString",
     "cweIds",
@@ -184,6 +215,14 @@ export function parseReportInput(value: unknown): ReportInput {
   const report: {
     -readonly [K in keyof ReportInput]: ReportInput[K];
   } = { summary, description };
+  if (body.proofOfConcept !== undefined) {
+    report.proofOfConcept = parseReportProof(body.proofOfConcept);
+    if (
+      forwardedDescription(description, report.proofOfConcept).length >
+      MAX_FORWARDED_DESCRIPTION
+    )
+      fail(400, "invalid_report", FORWARDED_TOO_LONG);
+  }
   if (body.severity !== undefined && body.cvssVectorString !== undefined)
     fail(400, "invalid_report", "Give a severity or a CVSS vector, not both");
   if (body.severity !== undefined) {
@@ -439,7 +478,9 @@ export function githubAdvisoryClient(options: {
     async createReport(grant, repository, report, marker) {
       const body = {
         summary: report.summary,
-        description: `${report.description}\n\n${marker}`,
+        // GitHub's report has only a text description, so the proof file is
+        // its own fenced section at the end, before the reference line.
+        description: `${forwardedDescription(report.description, report.proofOfConcept)}\n\n${marker}`,
         ...(report.severity ? { severity: report.severity } : {}),
         ...(report.cvssVectorString
           ? { cvss_vector_string: report.cvssVectorString }

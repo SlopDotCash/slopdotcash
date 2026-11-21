@@ -80,8 +80,9 @@ only after their line counts match the accepted file metadata.
      from their own authenticated Slop session for this project and repository
      with a `pull_request_opened` event naming this exact pull request node ID;
    - category set to close, and `penaltyFor(category).action === "close"` (the
-     published table keeps `out_of_scope` label-only; `missing_evidence` and
-     `none` cannot close);
+     published table keeps `out_of_scope` label-only; `missing_evidence` can
+     close only for a deterministic missing-field finding on a Slop submission
+     under a published Evidence policy);
    - verified evidence; for guidance categories, a rule quoted verbatim from
      the named file;
    - confidence ≥ `CLOSE_CONFIDENCE` (0.9);
@@ -93,8 +94,11 @@ only after their line counts match the accepted file metadata.
    - no reopen-rate breaker (`REOPEN_BREAKER_RATIO = 0.1` over 7 days of
      maintainer reopen or upheld appeal reversals) and no repository
      `dailyCloseCap` hit;
-   - a confirming second model verdict; no unresolved limitations; unchanged
-     item just before acting.
+   - a confirming second model verdict, or a repeated deterministic evidence
+     finding from the unchanged GitHub body and published guide for
+     `missing_evidence`; no unresolved limitations; unchanged item just before
+     acting. Missing-evidence closure uses
+     `SLOPBOT_EVIDENCE_CLOSURE_ENABLED` independently of the general switch.
 
    The daily close slot is reserved in D1 before the GitHub request. Confirmed
    closes in the rolling day and every unresolved close attempt consume
@@ -128,8 +132,9 @@ only after their line counts match the accepted file metadata.
    page). `scripts/generate-leaderboard.ts` binds them into the score census.
 9. **Appeals.** `/slopbot appeal` from the author, or any reopen, blocks
    re-closing that revision (`appeals.ts`). Escalation to a moderator (label
-   `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A maintainer
-   reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
+   `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A repeat
+   appeal of a finding on an item whose earlier appeal was denied is always
+   escalated (value disputes excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
    binding and late-close races.
 
 For an ordinary PR value assessment, an affected author, implementation actor,
@@ -275,7 +280,9 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   `slopbot:fee-needed`, and the review is recorded as skipped with the reason
   `fee-needed`. No model call. Slopbot's own state is in `slopbot_fee_gates`
   (`recorded`, `asking`, `asked`, `paid`, `released`); the first ask holds a
-  ten-minute lease so two jobs never post two comments.
+  ten-minute lease so two jobs never post two comments. A job whose comment
+  or label write fails gives the lease back, so the queue's retry a minute
+  later asks again instead of recording `fee-needed` with nothing posted.
 - **Paid.** The submission-fee Worker sets `paid_at`. The five-minute schedule
   (`dispatchFeeChecks`), or the review job that notices it first, queues a
   `submission_fee` job. `refreshSubmissionFee` swaps the label for
@@ -288,10 +295,13 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   within a day. The Worker sends what is due and writes `refunded` or `kept`.
 - **Taken back.** When the owner turns the setting off, or the author gains
   write access, an unpaid ask is released: the label comes off, the comment
-  says so and the review runs.
-- **`dry_run`.** Inserts the item row and a `recorded` gate row with the
-  reason it would have skipped, writes nothing to GitHub and runs the review
-  as today.
+  says so and the review runs. The unpaid row in `submission_fee_items` is
+  removed, so a deposit sent afterwards pays for nothing and is refunded.
+- **`dry_run`.** Inserts a `recorded` gate row with the reason it would have
+  skipped, writes nothing to GitHub and runs the review as today. It inserts
+  no row in `submission_fee_items`: nobody was asked, so a deposit naming that
+  pull request pays for nothing and is refunded, and the pay page shows no
+  fee. The first real ask writes the item row.
 
 - **Payment withdrawn.** The Worker may clear `paid_at` again while no outcome
   is set, when the deposit's block is reorganised away before it is final.

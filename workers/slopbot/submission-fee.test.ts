@@ -10,9 +10,16 @@ import { findProject } from "../../src/lib/projects.mjs";
 import {
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEPT_TO,
+  SUBMISSION_FEE_TOKENS,
+  submissionDepositCounts,
   submissionFeeItem,
 } from "../../src/lib/submission-fee.mjs";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
+import {
+  D1FeeStore,
+  type SubmissionFeeD1Database,
+} from "../submission-fee/store";
 import type { Job } from "./contracts";
 import worker from "./index";
 import type { D1Database } from "./persistence";
@@ -180,8 +187,12 @@ function world(options: WorldOptions = {}) {
     draft: options.draft ?? false,
     head: "b".repeat(40),
     labels: [] as string[],
+    /** Runs when Slopbot removes a label, before GitHub answers. */
+    onLabelRemoved: null as (() => void) | null,
     comments: [] as Comment[],
     permission: options.permission ?? ("read" as "read" | "write"),
+    /** How many of the next comment or label additions answer 502. */
+    failures: { comment: 0, label: 0 },
   };
   const writes: string[] = [];
   const prompts: string[] = [];
@@ -309,6 +320,10 @@ function world(options: WorldOptions = {}) {
       if (path.endsWith("/issues/5/comments") && method === "GET")
         return Response.json(github.comments);
       if (path.endsWith("/issues/5/comments") && method === "POST") {
+        if (github.failures.comment > 0) {
+          github.failures.comment -= 1;
+          return new Response(null, { status: 502 });
+        }
         const comment = {
           id: nextCommentId++,
           body: ((await request.json()) as { body: string }).body,
@@ -328,6 +343,10 @@ function world(options: WorldOptions = {}) {
         return Response.json(comment);
       }
       if (path.endsWith("/issues/5/labels") && method === "POST") {
+        if (github.failures.label > 0) {
+          github.failures.label -= 1;
+          return new Response(null, { status: 502 });
+        }
         const { labels } = (await request.json()) as { labels: string[] };
         for (const label of labels)
           if (!github.labels.includes(label)) github.labels.push(label);
@@ -335,6 +354,7 @@ function world(options: WorldOptions = {}) {
       }
       const labelPath = /\/issues\/5\/labels\/(.+)$/u.exec(path);
       if (labelPath && method === "DELETE") {
+        github.onLabelRemoved?.();
         if (!github.labels.includes(labelPath[1]))
           return new Response(null, { status: 404 });
         github.labels = github.labels.filter((name) => name !== labelPath[1]);
@@ -457,10 +477,15 @@ function world(options: WorldOptions = {}) {
         [at, repositoryId],
       );
     },
-    /** Run queued jobs through the Worker's own consumer, oldest first. */
-    async drain() {
+    /**
+     * Run queued jobs through the Worker's own consumer, oldest first. With
+     * `redeliver`, a job the consumer retries is delivered again, as the
+     * queue does a minute later.
+     */
+    async drain(redeliver = false) {
       const kinds: string[] = [];
       while (queued.length > 0) {
+        if (kinds.length > 20) throw new Error("the queue never settles");
         const body = queued.shift() as Job;
         kinds.push(body.kind);
         let retried = false;
@@ -478,7 +503,12 @@ function world(options: WorldOptions = {}) {
           },
           env as never,
         );
-        if (retried) throw new Error(`job ${body.kind} was retried`);
+        if (retried && !redeliver)
+          throw new Error(`job ${body.kind} was retried`);
+        if (retried) {
+          kinds.push("retry");
+          queued.push(body);
+        }
       }
       return kinds;
     },
@@ -903,6 +933,74 @@ test("an author who gains write access is released by the next review", async ()
   }
 });
 
+test.each([
+  ["setting-off", "the owner turns the setting off"],
+  ["author-exempt", "the author gains write access"],
+] as const)("an ask taken back (%s) pays for no later deposit", async (why) => {
+  const w = world();
+  try {
+    await w.review();
+    const item = w.item()?.item ?? "";
+    if (why === "setting-off") {
+      w.publish({ enabled: false }, "2026-11-15T00:00:00.000Z");
+      await w.dispatch();
+      await w.check();
+    } else {
+      w.github.permission = "write";
+      await w.review();
+    }
+    expect(w.gate()).toMatchObject({ state: "released", reason: why });
+    expect(w.feeComments()[0].body).toContain(
+      "one sent now does not count and goes back",
+    );
+    // The deposit as the submission-fee Worker's `judge` reads and decides it.
+    const store = new D1FeeStore(
+      w.env.SLOPBOT_DB as unknown as SubmissionFeeD1Database,
+    );
+    const verdict = submissionDepositCounts(
+      "base-mainnet",
+      {
+        depositId: 12,
+        token: SUBMISSION_FEE_TOKENS["base-mainnet"].usdc as string,
+        amount: SUBMISSION_FEE_DEFAULT_MINOR,
+        keptTo: SUBMISSION_FEE_KEPT_TO["base-mainnet"],
+        blockTime: "2026-11-16T00:00:00.000Z",
+      },
+      await store.itemByHash(item),
+      [],
+    );
+    expect(verdict).toEqual({ accepted: false, reason: "unknown_item" });
+    expect(w.item()).toBeNull();
+    if (why === "author-exempt") {
+      // Asked again later: the row is written again for the same item.
+      w.github.permission = "read";
+      expect(await w.review()).toBe(FEE_NEEDED_REASON);
+      expect(w.item()).toMatchObject({ item, paid_at: null });
+    }
+  } finally {
+    w.close();
+  }
+});
+
+test("a deposit accepted while the ask is taken back keeps its paid row", async () => {
+  const w = world();
+  try {
+    await w.review();
+    // The submission-fee Worker marks the row paid after Slopbot read it as
+    // unpaid and while it takes the ask back.
+    w.github.onLabelRemoved = () => w.pay("2026-11-15T00:00:00.000Z");
+    w.github.permission = "write";
+    await w.review();
+    expect(w.gate()).toMatchObject({
+      state: "released",
+      reason: "author-exempt",
+    });
+    expect(w.item()).toMatchObject({ paid_at: "2026-11-15T00:00:00.000Z" });
+  } finally {
+    w.close();
+  }
+});
+
 test("mode off, absent or unknown: nothing at all", async () => {
   expect(feeMode(undefined)).toBe("off");
   expect(feeMode("on")).toBe("off");
@@ -932,11 +1030,8 @@ test("dry run: records what it would ask, writes nothing to GitHub and reviews a
     expect(await w.review()).not.toBe(FEE_NEEDED_REASON);
     expect(w.prompts.length).toBeGreaterThan(0);
     expect(w.reviewRow()).toMatchObject({ status: "completed" });
-    expect(w.item()).toMatchObject({
-      item: submissionFeeItem(w.repositoryId, 5),
-      stable_minor: SUBMISSION_FEE_DEFAULT_MINOR,
-      paid_at: null,
-    });
+    // Nobody was asked, so there is no fee row: only Slopbot's own record.
+    expect(w.item()).toBeNull();
     expect(w.gate()).toMatchObject({
       state: "recorded",
       reason: `${FEE_NEEDED_REASON}: record only, review ran`,
@@ -945,6 +1040,50 @@ test("dry run: records what it would ask, writes nothing to GitHub and reviews a
     expect(w.github.labels).toEqual([]);
     expect(w.feeComments()).toEqual([]);
     expect(await w.dispatch()).toBe(0);
+    // A second review of the same pull request records nothing more.
+    w.github.head = "d".repeat(40);
+    await w.review();
+    expect(w.item()).toBeNull();
+    expect(w.gate()).toMatchObject({ state: "recorded" });
+  } finally {
+    w.close();
+  }
+});
+
+test("a deposit naming a pull request that was only recorded pays for nothing", async () => {
+  const w = world({ mode: "dry_run" });
+  try {
+    await w.review();
+    expect(w.gate()).toMatchObject({ state: "recorded" });
+    // The deposit as the submission-fee Worker's `judge` reads and decides it:
+    // sent straight to the contract for a pull request nobody was asked about.
+    const store = new D1FeeStore(
+      w.env.SLOPBOT_DB as unknown as SubmissionFeeD1Database,
+    );
+    const item = submissionFeeItem(w.repositoryId, 5);
+    const verdict = submissionDepositCounts(
+      "base-mainnet",
+      {
+        depositId: 12,
+        token: SUBMISSION_FEE_TOKENS["base-mainnet"].usdc as string,
+        amount: SUBMISSION_FEE_DEFAULT_MINOR,
+        keptTo: SUBMISSION_FEE_KEPT_TO["base-mainnet"],
+        blockTime: "2026-11-16T00:00:00.000Z",
+      },
+      await store.itemByHash(item),
+      [],
+    );
+    expect(verdict).toEqual({ accepted: false, reason: "unknown_item" });
+    // Once the switch is live the same pull request is asked for real, and
+    // only then does a row exist for a deposit to pay.
+    (w.env as { SUBMISSION_FEE_MODE: string }).SUBMISSION_FEE_MODE = "live";
+    w.github.head = "d".repeat(40);
+    expect(await w.review()).toBe(FEE_NEEDED_REASON);
+    expect(w.item()).toMatchObject({
+      item,
+      stable_minor: SUBMISSION_FEE_DEFAULT_MINOR,
+      paid_at: null,
+    });
   } finally {
     w.close();
   }
@@ -1136,6 +1275,26 @@ test("a comment Slopbot posted before a crash is reused, not duplicated", async 
   }
 });
 
+test.each(["comment", "label"] as const)(
+  "a first ask whose %s GitHub refuses once is made by the queue's retry",
+  async (write) => {
+    const w = world();
+    try {
+      w.github.failures[write] = 1;
+      expect(await w.webhook("opened", 42)).toBe(202);
+      // The retry comes a minute later in production, well inside the
+      // ten-minute lease the failed job took.
+      expect(await w.drain(true)).toEqual(["review", "retry", "review"]);
+      expect(w.feeComments()).toHaveLength(1);
+      expect(w.github.labels).toEqual([FEE_NEEDED_LABEL]);
+      expect(w.gate()).toMatchObject({ state: "asked", comment_id: 900 });
+      expect(w.reviewRow()).toEqual(SKIPPED);
+    } finally {
+      w.close();
+    }
+  },
+);
+
 test("nobody is asked for a review the monthly cap would refuse", async () => {
   const w = world();
   try {
@@ -1157,6 +1316,28 @@ test("nobody is asked for a review the monthly cap would refuse", async () => {
     ).toBe(false);
     expect(await w.review()).toBe("monthly-review-cap");
     expect(w.item()).toBeNull();
+    expect(w.github.labels).toEqual([]);
+    expect(w.feeComments()).toEqual([]);
+  } finally {
+    w.close();
+  }
+});
+
+test("a dry run records no ask for a review the monthly cap would refuse", async () => {
+  const w = world({ mode: "dry_run" });
+  try {
+    const month = reviewMonth(new Date());
+    const insert = w.sqlite.prepare(
+      "INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) VALUES (?, ?, 'issue', ?, ?)",
+    );
+    w.sqlite.transaction(() => {
+      for (let n = 1; n <= FREE_REVIEWS_PER_REPO_PER_MONTH; n++)
+        insert.run(w.repositoryId, month, 10_000 + n, SETTING_ON_AT);
+    })();
+    // Live asks nothing here, so the record of what it would ask is empty.
+    expect(await w.review()).toBe("monthly-review-cap");
+    expect(w.item()).toBeNull();
+    expect(w.gate()).toBeNull();
     expect(w.github.labels).toEqual([]);
     expect(w.feeComments()).toEqual([]);
   } finally {

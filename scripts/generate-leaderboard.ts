@@ -86,6 +86,10 @@ import {
   valueScoringPolicy,
 } from "../src/lib/scoring-policy";
 import {
+  type LocalGitObjects,
+  localGitObjectsFromDirectory,
+} from "./local-git-objects";
+import {
   isTransientArtifactFailure,
   planReferencedArtifacts,
   verifyReferencedArtifacts,
@@ -263,6 +267,14 @@ export class SourceNodeUnavailableError extends Error {
     );
   }
 }
+
+/**
+ * A joint value-record member outside the live census that GitHub cannot
+ * resolve is probed this many more times, this far apart, before the first
+ * attempt holds its work unit (operator decision, 20 November 2026).
+ */
+export const JOINT_SOURCE_CONFIRMATION_PROBES = 2;
+export const JOINT_SOURCE_CONFIRMATION_DELAY_MS = 5_000;
 
 /** Retries only a concurrent mutation of evidence-bound open work. */
 export async function retrySlopSnapshot<T>(
@@ -523,11 +535,18 @@ export interface GenerateOptions {
   deploymentTier?: DeploymentTier;
   /** Trusted production collection can retain public GitHub discussion reads. */
   discussionCheckpoint?: { directory: string; deadlineMs: number };
+  /** Local bare clones that answer exact Git tree and commit reads. */
+  localGitObjects?: LocalGitObjects;
   /**
    * Incremental collection (PRD section 9): immutable commit statistics and
    * fenced commit attributions from the previous trusted collection.
    */
   collectionMemo?: CollectionMemoSession;
+  /**
+   * Waits between the confirming probes of an unavailable joint member outside
+   * the census. Tests inject a wait that does not sleep.
+   */
+  jointSourceConfirmationDelay?: (milliseconds: number) => Promise<void>;
   /** Shared only across the one complete-census retry in runGenerator. */
   sourceRecovery?: {
     unavailableSources: UnavailableSource[];
@@ -4664,32 +4683,73 @@ export async function generateLeaderboardFromGitHub(
     undefined,
     options.collectionMemo?.commitLines,
   );
-  const probeUnavailableSources = async (ids: readonly string[]) => {
+  const probeSourceBatch = async (batch: readonly string[]) => {
+    const data = await executeNodeBatch(
+      client,
+      "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
+      batch,
+    );
+    const nodes = asArray(data.nodes, "source availability.nodes");
+    if (
+      nodes.length !== batch.length ||
+      nodes.some((node, index) => {
+        const value = asRecord(node, `source availability.nodes[${index}]`);
+        return value.__typename !== "PullRequest" || value.id !== batch[index];
+      })
+    )
+      throw new Error(
+        "Joint source availability did not match the requested identities",
+      );
+  };
+  const unavailableKey = (error: SourceNodeUnavailableError) =>
+    error.sources
+      .map((source) => `${source.nodeId}\u0000${source.reason}`)
+      .sort()
+      .join("\n");
+  // Operator decision, 20 November 2026: a joint member outside the census
+  // that every probe reports unavailable is held on the first attempt. One
+  // differing answer keeps the complete recollection.
+  const confirmedUnavailable = async (
+    batch: readonly string[],
+    first: SourceNodeUnavailableError,
+  ) => {
+    const expected = unavailableKey(first);
+    for (let probe = 0; probe < JOINT_SOURCE_CONFIRMATION_PROBES; probe++) {
+      await (options.jointSourceConfirmationDelay ?? retryDelay)(
+        JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+      );
+      try {
+        await probeSourceBatch(batch);
+        return false;
+      } catch (error) {
+        // error-policy:J2 an unconfirmed probe is never a hold: the caller
+        // rethrows the first classified error and the run recollects once.
+        if (
+          !(error instanceof SourceNodeUnavailableError) ||
+          unavailableKey(error) !== expected
+        )
+          return false;
+      }
+    }
+    return true;
+  };
+  const probeUnavailableSources = async (
+    ids: readonly string[],
+    outsideCensus = false,
+  ) => {
     const unavailable: string[] = [];
     for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
       try {
-        const data = await executeNodeBatch(
-          client,
-          "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
-          batch,
-        );
-        const nodes = asArray(data.nodes, "source availability.nodes");
-        if (
-          nodes.length !== batch.length ||
-          nodes.some((node, index) => {
-            const value = asRecord(node, `source availability.nodes[${index}]`);
-            return (
-              value.__typename !== "PullRequest" || value.id !== batch[index]
-            );
-          })
-        )
-          throw new Error(
-            "Joint source availability did not match the requested identities",
-          );
+        await probeSourceBatch(batch);
       } catch (error) {
         if (
           !(error instanceof SourceNodeUnavailableError) ||
-          !options.sourceRecovery?.allowJointHolds
+          !options.sourceRecovery
+        )
+          throw error;
+        if (
+          !options.sourceRecovery.allowJointHolds &&
+          !(outsideCensus && (await confirmedUnavailable(batch, error)))
         )
           throw error;
         options.sourceRecovery.unavailableSources.push(...error.sources);
@@ -5092,6 +5152,7 @@ export async function generateLeaderboardFromGitHub(
         })),
       },
       quotaDeadlineMs: discussionCheckpoint?.deadlineMs,
+      localGitObjects: options.localGitObjects,
     },
   );
   const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
@@ -5128,7 +5189,8 @@ export async function generateLeaderboardFromGitHub(
       ),
     ),
     undefined,
-    probeUnavailableSources,
+    // Only this caller's identities are outside the complete live census.
+    (ids) => probeUnavailableSources(ids, true),
     dedupedOutcomes,
     onProgress,
     options.collectionMemo && {
@@ -5362,6 +5424,8 @@ export async function runGenerator(
     // error-policy:J2 recover only classified census churn or unavailable
     // enumerated nodes, once, with no budget reset. NOT_FOUND does not prove
     // deletion: fresh enumeration and all ordinary checks must still succeed.
+    // A joint member outside the census that every confirming probe reports
+    // unavailable never reaches here; its work unit is held in the attempt.
     if (
       !(error instanceof ReviewCensusChangedError) &&
       !(error instanceof SourceNodeUnavailableError)
@@ -5385,6 +5449,13 @@ export async function runGenerator(
 function progressLine(progress: GenerationProgress): string {
   const label = progress.phase.replaceAll("-", " ");
   return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
+}
+
+/** Off unless the workflow made local bare clones (operator decision,
+ * 20 November 2026). Any read they cannot answer exactly goes to GitHub. */
+function localGitObjectsFromEnv() {
+  const directory = process.env.SLOP_LOCAL_GIT_DIR;
+  return directory ? localGitObjectsFromDirectory(directory) : undefined;
 }
 
 function discussionCheckpointFromEnv() {
@@ -5461,6 +5532,7 @@ if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const collectionMemo = await collectionMemoFromEnv();
   const acceptedReviewHistory = loadAcceptedReviewHistory();
+  const localGitObjects = localGitObjectsFromEnv();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   let latestProgress: GenerationProgress | null = null;
   const heartbeat = setInterval(() => {
@@ -5475,6 +5547,7 @@ if (import.meta.main) {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
     discussionCheckpoint: discussionCheckpointFromEnv(),
+    localGitObjects,
     collectionMemo: collectionMemo?.session,
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
@@ -5492,7 +5565,10 @@ if (import.meta.main) {
       }
     },
   })
-    .finally(() => clearInterval(heartbeat))
+    .finally(() => {
+      clearInterval(heartbeat);
+      localGitObjects?.close();
+    })
     .catch((error: unknown) => {
       // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
       if (!(error instanceof ValueFeedUnavailableError)) throw error;
@@ -5501,12 +5577,29 @@ if (import.meta.main) {
       );
       process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
     });
+  if (localGitObjects) {
+    localGitObjects.close();
+    const { served, declined } = localGitObjects.stats;
+    process.stderr.write(
+      `[slop.cash] local git objects: ${served} served from local clones, ${declined} read from GitHub instead\n`,
+    );
+  }
   if (collectionMemo) {
     const { session, output } = collectionMemo;
     const lines = session.commitLines;
     process.stderr.write(
       `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.stats.audited} audited, ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`,
     );
+    if (session.notReusable.size)
+      process.stderr.write(
+        `[slop.cash] attributions not recorded for reuse: ${[
+          ...session.notReusable,
+        ]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([reason, count]) => `${count} x ${reason}`)
+          .join("; ")}\n`,
+      );
     if (output) {
       // Written only after the snapshot itself was written successfully. The
       // memo only saves reads, so failing to keep it never fails the release.

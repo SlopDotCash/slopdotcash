@@ -76,6 +76,35 @@ answers HTTP 410 for a restricted project.
 
 Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
 
+In Settings, open **Repositories**, choose **Change integration branch**, and select a live GitHub branch. Review and publish the change. The same revision can include edits to the contribution rules.
+
+For the underlying request, commit an updated
+`.github/slop-project.json` to that branch. The declaration must name the
+registered project, repository, steward, terms revision, and new branch.
+Send a same-origin JSON `PUT /api/v1/projects/:id` from the signed-in GitHub
+repository administrator's Slop.cash session. Use the current registry
+revision and the exact GitHub branch head.
+
+```json
+{
+  "expectedRevision": 8,
+  "integrationBranch": {
+    "name": "vibestack",
+    "commitSha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "reason": "The maintainers moved integration to vibestack."
+}
+```
+
+An optional `contribution` object updates the full contribution instructions
+in the same revision. Slop verifies the administrator and repository through
+the current Slopbot installation, reads the declaration at the exact commit,
+and checks that commit still heads the requested branch. Reload after a
+conflict. An active project must still clear the existing admission check
+at publication. The revision preserves project status, repository identity,
+terms, funding, and previous revisions. Verify the public project and both
+generated skill manifests after publication.
+
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
 changes only status and listing tier, and never invokes setup activation.
@@ -97,7 +126,7 @@ serves these public artifacts from the current D1 revision:
 
 | Path | Content |
 |---|---|
-| `/.well-known/slop/projects.json` | Repository-to-project routing for every active, cleared project that publishes skills, except an active monthly pool that is not funded this month (see below) |
+| `/.well-known/slop/projects.json` | Repository-to-project routing for active, cleared projects that publish skills and have an eligible reward |
 | `/projects/:id/terms.json` | Steward, authority and terms of the current revision |
 | `/projects/:id/skill.md` (alias `SKILL.md`) | Generated contributor skill |
 | `/projects/:id/review-skill.md` (alias `review/SKILL.md`) | Generated reviewer skill |
@@ -105,14 +134,11 @@ serves these public artifacts from the current D1 revision:
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
 
-Discovery reads the cached vault rows behind `GET /api/v1/pool-funding`
-(`readPoolFundingIndex` in `pool-funding.ts`) and applies `listedThisMonth`
-from `src/lib/pool-funding.ts`, the same rule the home page and /sponsors use
-(PRD section 7, operator decision of 16 November 2026). An open security
-program or a non-monthly reward stays listed. When the funding read fails,
-discovery lists every cleared project as before; the response is `no-store`,
-so the next request reads again. The per-project artifacts above keep serving
-by direct link.
+Discovery applies `listedThisMonth` from `src/lib/pool-funding.ts`, the same
+registry reward rule the home page and /sponsors use (PRD section 9). The
+current UTC month must have a positive configured amount, an open security
+program, or an external prize share. The response is `no-store` and direct
+links to per-project artifacts follow their existing access rules.
 
 Discovery also reads the stored open pull request counts
 (`readIntakeCounts` in `merge-activity.ts`) and leaves out an active project
@@ -195,7 +221,8 @@ the monthly amount, 1 to 3000, or omitted for none (PRD section 6, operator
 decision of 18 November 2026). It changes through the same owner revision as
 the monthly amount and starts with the next UTC month: the server appends the
 previous share to `reward.maintainerShareHistory` as the share of every month
-through the open one. An owner revision that edits the history is refused.
+through the open one. An owner revision that edits the history is refused,
+and so is a new project that submits one.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub

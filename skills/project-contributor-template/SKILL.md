@@ -140,6 +140,27 @@ expected results and limits, as `reviewExpectations` describes. Maintainers
 decide acceptance under `closurePolicy`; Slopbot sizes and scores the accepted
 outcome.
 
+Before opening the PR, verify the change solves a real, reachable problem or
+fulfills an accepted requirement. Drop speculative guards, extra layers and
+tests for paths you cannot show matter. Use the target branch's
+`CONTRIBUTING.md` and `AGENTS.md` to select the exact checks and artifacts.
+Include this evidence in the body, outside a code fence:
+
+- Start with the heading `## Evidence`.
+- On its own line, write `Change types:` followed by every applicable type:
+  `non-ui`, `ui`, `performance`, `hardware`, comma-separated. Use `docs`
+  alone for documentation-only work.
+- Write `Test results:` with commands, final results and material checks that
+  could not run. Write `Proof of change:` with a reproducible before/after
+  result or the accepted requirement and the working user outcome.
+- Include `Runtime logs:` for non-UI changes, `UI video:` with a before/after
+  video link for UI changes, `Benchmarks:` for performance work with matched
+  base/head runs and workload details, and `On-device testing:` for hardware
+  work with the physical device, software build and observed result.
+- Use one line per field, with inspectable HTTPS artifacts or concrete inline
+  results. Remove credentials, private data and customer information. Resolve
+  missing required evidence before opening the PR.
+
 Generate the footer locally and paste it unchanged. It carries the visible
 `Made via @slopdotcash` line once, outside code fences, with the exact
 provider, model and client:
@@ -171,7 +192,9 @@ closure, the author is a slop.cash member who is not a maintainer, and this
 `opened` record exists. Registration or App installation alone grants no
 closure, and a project may restrict closure per category. Closable categories
 are spam, scam or malicious work, clear violations of a quoted project rule,
-low-quality, empty and duplicate work; out of scope and missing evidence get
-only a label. Uncertain findings never close a PR, maintainer
+low-quality, empty and duplicate work. A signed Slop submission that omits
+the required evidence fields from the published contribution guide can also
+be closed and debited 10 Points. Out of scope and uncertain evidence findings
+are advisory. Uncertain findings never close a PR, maintainer
 reopens stand, and appeals are triaged by Slopbot and escalated to a
 moderator. A pledged pool or disabled payments is not a payment promise.

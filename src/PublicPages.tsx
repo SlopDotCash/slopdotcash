@@ -27,8 +27,8 @@ import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
 import {
-  asShown,
   listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
   monthsCovered,
   monthsCoveredLabel,
@@ -346,10 +346,10 @@ export function HowItWorksPage() {
   );
 }
 
-/** Only money in a vault is shown (operator decision, 15 November 2026). */
 function sponsorPoolLabel(
   registered: ProjectDefinition,
   index: PoolFundingIndex | null,
+  now: Date,
 ): ReactNode {
   const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
@@ -359,9 +359,17 @@ function sponsorPoolLabel(
       </StatusBadge>
     );
   }
-  const project = asShown(registered, index, new Date());
-  if (project.reward.monthlyCapMinor === "0") return "points only";
-  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
+  const { project, fundingTag, warning } = listingPoolReward(
+    registered,
+    index,
+    now,
+  );
+  if (fundingTag === null) return "Security bounty";
+  const amount = formatRewardCapDisplay(
+    project.reward.monthlyCapDisplay,
+    project.rewardAsset,
+  );
+  return `${amount} monthly · ${warning ? `${fundingTag} · ${warning}` : "in the vault"}`;
 }
 
 function WhoBuildsOnSlop({
@@ -590,14 +598,14 @@ export function SponsorsPage({
           </Link>
         </div>
         <p>
-          Anyone can fund any project listed here: open it and deposit from your
-          own wallet. Deposits are public. Depositors have no refund right, and
-          the project owner can withdraw free funds, less a 2% fee.
+          Anyone can deposit from their own wallet into a project's registered
+          vault. Deposits are public. Depositors have no refund right, and the
+          project owner can withdraw free funds, less a 2% fee.
         </p>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.filter(
             (project) =>
-              listedThisMonth(project, fundingIndex, now) &&
+              listedThisMonth(project, now) &&
               // A project over its owner's intake cap has paused new
               // contributors; a failed or pending read pauses nothing.
               !intakePaused(
@@ -622,7 +630,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
+                <p>{sponsorPoolLabel(project, fundingIndex, now)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}

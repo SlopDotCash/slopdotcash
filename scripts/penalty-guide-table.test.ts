@@ -21,13 +21,14 @@ const PUBLISHED_POINTS: Record<string, number> = {
   Spam: 30,
   "Scam or malicious": 240,
   "Clear violation of a quoted project rule": 10,
+  "Required evidence missing from a signed Slop PR": 10,
   "Low quality": 0,
   Duplicate: 0,
   "Out of scope": 0,
 };
 
 describe("guide penalty table", () => {
-  test("publishes the six PRD section 7 rows with their point debits", () => {
+  test("publishes the PRD penalty rows with their point debits", () => {
     expect(
       Object.fromEntries(
         PENALTY_ROWS.map((row) => [
@@ -51,16 +52,14 @@ describe("guide penalty table", () => {
         "duplicate",
         "gaming",
         "low_quality",
+        "missing_evidence",
         "out_of_scope",
         "scam",
         "spam",
       ].sort(),
     );
-    // Categories the bot defines but the guide does not publish stay out.
-    for (const unpublished of ["empty", "missing_evidence"] as const) {
-      expect(PENALTY_TABLE[unpublished].debitThirds).toBe(0);
-      expect(covered).not.toContain(unpublished);
-    }
+    expect(PENALTY_TABLE.empty.debitThirds).toBe(0);
+    expect(covered).not.toContain("empty");
   });
 
   test("the quoted-rule row covers busywork and gaming, one shared rule", () => {

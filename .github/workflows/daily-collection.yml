@@ -7,6 +7,12 @@ name: Daily contribution collection
 # a failed collection once from its checkpoint. Every publication still goes
 # through the release workflow and its checks, which refuse data older than
 # the live site. Logic and tests: scripts/daily-collection.ts.
+#
+# GitHub fires `schedule` and `workflow_run` only from the default branch.
+# While the default branch is not main, an outside scheduler starts both jobs
+# by hand (operator decision, 21 November 2026): a manual run with no input
+# starts the daily collection, and a manual run naming a release run ID does
+# that release's follow-up. The script accepts only a main release run.
 
 on:
   schedule:
@@ -14,6 +20,12 @@ on:
     # six hours) and before most merges to main.
     - cron: "17 7 * * *"
   workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: "Blank starts the daily collection. A main release run ID does that release's follow-up."
+        required: false
+        type: string
+        default: ""
   workflow_run:
     workflows: [slop.cash]
     types: [completed]
@@ -25,7 +37,10 @@ permissions:
 jobs:
   start:
     name: Start the daily collection
-    if: github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.release_run_id == ''))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -67,10 +82,13 @@ jobs:
   follow-up:
     name: Publish or resume a main collection
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.id == github.event.repository.id &&
-      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.id == github.event.repository.id &&
+       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main' &&
+       inputs.release_run_id != '')
     runs-on: ubuntu-24.04
     # A resume waits up to five hours for another running collection to end.
     timeout-minutes: 340
@@ -78,7 +96,7 @@ jobs:
       actions: write
       contents: read
     concurrency:
-      group: slop-collection-follow-up-${{ github.event.workflow_run.id }}
+      group: slop-collection-follow-up-${{ github.event.workflow_run.id || inputs.release_run_id }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -104,5 +122,5 @@ jobs:
           DISPATCH_APP_CLIENT_ID: ${{ steps.dispatch-token.outputs.installation-id && vars.SCAN_DISPATCH_APP_CLIENT_ID || '' }}
           DISPATCH_APP_PRIVATE_KEY: ${{ steps.dispatch-token.outputs.installation-id && secrets.SCAN_DISPATCH_APP_PRIVATE_KEY || '' }}
           DISPATCH_APP_INSTALLATION_ID: ${{ steps.dispatch-token.outputs.installation-id }}
-          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id || inputs.release_run_id }}
         run: bun --no-env-file scripts/daily-collection.ts follow-up "$RELEASE_RUN_ID"

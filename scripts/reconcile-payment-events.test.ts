@@ -103,7 +103,7 @@ async function fixture() {
   }).text;
   f.sqlite
     .query(
-      "INSERT INTO monthly_reward_bases VALUES('fixture','2026-10',?,?,?,'10000',1,?)",
+      "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES('fixture','2026-10',?,?,?,'10000',1,?)",
     )
     .run(manifestText, manifestSha256, "d".repeat(64), at);
   f.sqlite

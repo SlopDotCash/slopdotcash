@@ -1,3 +1,4 @@
+import { deriveAllocationFundingBasis } from "../allocation-funding-basis.mjs";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   MAX_BASE_UNITS,
@@ -20,6 +21,11 @@ import {
 } from "../reward-cycle";
 import { sha256Hex as digest } from "../sha256";
 import { combineAwards } from "../verified-money";
+import {
+  ASI_NOVEMBER_CLOSEOUT,
+  type AsiHeldWorkUnitRecord,
+  asiHeldSourcesAreDisjoint,
+} from "./asi-november-closeout";
 import {
   assertMaintainerDecisionRecord,
   maintainerShare,
@@ -51,6 +57,8 @@ export function buildEscrowCycle(
     projectId: string;
     cycleId: string;
     generatedAt: string;
+    earlyCloseAt?: typeof ASI_NOVEMBER_CLOSEOUT.cutoff;
+    asiHeldWorkUnitRecords?: readonly AsiHeldWorkUnitRecord[];
   },
   bytes: Uint8Array,
   identityBytes: Uint8Array | null,
@@ -74,23 +82,63 @@ export function buildEscrowCycle(
   assertLeaderboardSnapshot(snapshot);
   const generatedAt = input.generatedAt;
   const sourceSnapshotSha256 = digest(bytes);
+  const closeout =
+    input.earlyCloseAt === ASI_NOVEMBER_CLOSEOUT.cutoff
+      ? ASI_NOVEMBER_CLOSEOUT
+      : undefined;
+  if (
+    closeout &&
+    (project.id !== closeout.projectId ||
+      input.cycleId !== closeout.period ||
+      project.rewardAsset?.network !== closeout.chain ||
+      project.rewardAsset.symbol !== closeout.assetSymbol ||
+      project.rewardAsset.decimals !== closeout.assetDecimals ||
+      snapshot.window.to < closeout.cutoff ||
+      snapshot.source.cutoffAt !== snapshot.window.to ||
+      snapshot.source.verificationWindow.from !== snapshot.window.from ||
+      snapshot.source.verificationWindow.to !== snapshot.window.to ||
+      snapshot.source.evidenceVerification.status !== "complete" ||
+      !asiHeldSourcesAreDisjoint(
+        snapshot,
+        project,
+        input.asiHeldWorkUnitRecords ?? [],
+      ) ||
+      snapshot.generatedAt < closeout.cutoff ||
+      snapshot.generatedAt > generatedAt ||
+      new Date(generatedAt).toISOString() !== generatedAt)
+  )
+    throw new Error(
+      "ASI's November closeout requires complete verified coverage through the approved cutoff.",
+    );
   const view = createPaymentProjectView(
-    snapshot,
+    closeout
+      ? { ...snapshot, window: { ...snapshot.window, to: closeout.cutoff } }
+      : snapshot,
     project.id,
     input.cycleId,
-    undefined,
+    closeout && {
+      ...deriveAllocationFundingBasis(project, input.cycleId),
+      monthlyCapMinor: closeout.grossBase,
+    },
     project,
   );
-  ensureCompleteCycle(
-    {
-      projectId: project.id,
-      cycleId: input.cycleId,
-      generatedAt,
-      sourceSnapshotSha256,
-      snapshot,
-    },
-    view,
-  );
+  if (closeout) {
+    if (view.cycle.from !== `${closeout.period}-01T00:00:00.000Z`)
+      throw new Error(
+        "ASI's November closeout requires the entire approved earning period.",
+      );
+  } else {
+    ensureCompleteCycle(
+      {
+        projectId: project.id,
+        cycleId: input.cycleId,
+        generatedAt,
+        sourceSnapshotSha256,
+        snapshot,
+      },
+      view,
+    );
+  }
   if (view.reward.kind !== "monthly-pool")
     throw new Error("Expected monthly pool");
   const cap = BigInt(view.reward.capMinor);
@@ -115,6 +163,10 @@ export function buildEscrowCycle(
   // The maintainer share comes out of the monthly amount before the points
   // split, so the month never distributes more than `cap`.
   const shareBasisPoints = maintainerShareBasisPoints(project, input.cycleId);
+  if (closeout && (shareBasisPoints !== 0 || reviewCap !== 0n))
+    throw new Error(
+      "ASI's November closeout only covers the approved ordinary pool.",
+    );
   if (shareBasisPoints > 0 !== (decisionBytes !== null))
     throw new Error(
       shareBasisPoints > 0

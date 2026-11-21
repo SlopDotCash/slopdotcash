@@ -171,6 +171,23 @@ no-store and noindex. Financial roles alone receive no body. Contributor
 trace APIs cannot read this prefix. Bodies are never included in notification
 text, activity mail, public pages, exports, analytics or logs.
 
+The `report` may carry one optional `proofOfConcept: { fileName, patch }`
+(operator decision, 20 November 2026; PRD section 8). `fileName` is 1 to 200
+letters, digits, dots, hyphens and underscores, ending in `.patch`, `.diff`,
+`.sol` (so `.t.sol`), `.ts`, `.js`, `.rs`, `.py` or `.go`; `patch` is 1 to
+60,000 bytes of UTF-8 text with no NUL byte or lone surrogate. Both rules live
+in `src/lib/report-proof.ts`, shared with the form. The file is part of the
+stored report JSON, so it is versioned, digested and bounded by the same
+256 KB limit; a report without it stores exactly what it stored before. The
+analysis input labels it `reporterProofOfConceptFile` (untrusted, never run)
+for screening, case analysis (`slop-security-case-analysis-3`) and the
+routine pass. GitHub forwarding appends it after the description as
+`### Proof of concept: <fileName>` and a fenced block one backtick longer than
+the longest backtick run in the file (at least three), before the report
+reference line. Description plus that section must fit in 65,000 characters;
+`parseReportInput` refuses a longer combination with `invalid_report` and a
+message to shorten the description, so nothing is truncated.
+
 Public report creation, evidence revisions and rescreen work share ten
 admissions per account in a rolling hour. An atomic D1 admission precedes each
 R2 write or paid call, including retained legacy drafts. Expired admission
@@ -255,7 +272,9 @@ report). A case with any appeal, a reserved or approved award, a pending
 related-party review, or a report revision still being screened is not read.
 
 The two calls are separate requests with the prompt label
-`slop-security-routine-decision-1`. The second lists the published lines and
+`slop-security-routine-decision-2`. A report version that carries a
+proof-of-concept file has proof present whatever the calls answer, so it is
+never asked for proof. The second lists the published lines and
 the earlier reports in the opposite order. Each call returns only fixed
 fields; an earlier case or a line that was not supplied makes the answer
 invalid. The closing lines are the published list without the two proof
@@ -288,7 +307,7 @@ severity, then proof present, then age.
 
 `SECURITY_ROUTINE_DECISIONS` in the Pages environment is `off`, `dry_run`
 or `live`; any other value is off. `wrangler.toml` sets production
-(`dry_run`) and `wrangler.staging.toml` sets staging (`off`); the release
+(`live` since 20 November 2026) and `wrangler.staging.toml` sets staging (`off`); the release
 publishes that file with the Pages project, so a change takes effect with
 the next release. `dry_run` runs every rule, model calls included, and
 writes only `security_routine_decisions` rows with `applied = 0`: no case
