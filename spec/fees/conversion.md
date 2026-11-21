@@ -840,6 +840,17 @@ publication after the dry-run one, a second-revision rescan by the second
 operator after an incomplete or mismatched scan, and heavier weights for
 choosing the instance, recording scans and expiring a Solana send.
 
+Discovered by simulation: even so, the whole check's search for that proof
+did not finish within its hour. Of 900 traces of 20 events none reached it:
+publication, readiness, the lease and a spendable balance came only after
+about 10 to 12 events, because the setup events were outweighed by adding
+tokens and flipping the instance, and the one Solana send that fits the
+reservation is a single sample of eleven. The setup events (release
+variable, publication, readiness, lease, evaluation, reservation, signing)
+and the fee and balance observations are therefore weighted above adding
+tokens and choosing the instance, and about one trace in a hundred now
+reaches the proof.
+
 ```quint
 pure val elapsedValues = Set(180000, 3600001, 86400000)
 pure val runIdValues = Set(1, 2)
@@ -924,25 +935,26 @@ pure val vaultClaimValues = Set(
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: -1 },
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 100000000 })
-pure val weight_evaluate = 8
-pure val weight_reserveGas = 8
-pure val weight_sign = 10
+pure val weight_evaluate = 30
+pure val weight_reserveGas = 40
+pure val weight_sign = 80
 pure val weight_finalizeSend = 8
-pure val weight_acquireLease = 8
-pure val weight_publishWorker = 6
-pure val weight_setReleaseVariable = 6
-pure val weight_verifyReadiness = 6
-pure val weight_receiveFee = 6
-pure val weight_addToken = 4
+pure val weight_acquireLease = 30
+pure val weight_publishWorker = 30
+pure val weight_setReleaseVariable = 20
+pure val weight_verifyReadiness = 30
+pure val weight_receiveFee = 30
+pure val weight_addToken = 2
 pure val weight_setReplacement = 3
 pure val weight_replace = 6
 pure val weight_broadcastFail = 4
 pure val weight_expireEvm = 4
 pure val weight_settleExpired = 4
-pure val weight_recordScan = 24
-pure val weight_expireSolana = 24
-pure val weight_chooseInstance = 20
+pure val weight_recordScan = 40
+pure val weight_expireSolana = 40
+pure val weight_chooseInstance = 10
 pure val weight_claim = 4
 pure val weight_accrue = 3
 pure val weight_registerVault = 3
+pure val weight_observeBalance = 10
 ```
