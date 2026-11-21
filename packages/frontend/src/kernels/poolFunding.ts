@@ -27,6 +27,12 @@ export interface PoolFunding {
   readonly period: Period;
   readonly facts: PoolFacts;
   readonly display: PoolDisplay;
+  /**
+   * Some recorded paying vault has neither a read free balance nor pledge support; every one while the funding read
+   * is not current (spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as
+   * promised, never as vault-backed").
+   */
+  readonly vaultUnread: boolean;
 }
 
 export interface PoolCap {
@@ -51,7 +57,12 @@ export function poolFunding({ pool, read, vaults, networkPays, nowMs }: {
 }): PoolFunding {
   const nowSeconds = Math.floor(nowMs / 1000);
   const facts: PoolFacts = poolFacts({ pool, read, vaults, pays: networkPays, nowSeconds });
-  return { period: periodContaining(nowSeconds), facts, display: poolDisplay(facts) };
+  const vaultKey = (network: string, vault: string) => `${network}\n${vault.startsWith("0x") ? vault.toLowerCase() : vault}`;
+  const unread = new Set(pool.deployments.filter((deployment) => networkPays(deployment.network)).map((deployment) => vaultKey(deployment.network, deployment.vault)));
+  if (read === "PoolCurrent")
+    for (const vault of vaults)
+      if (vault.freeBalance !== null || (vault.openPledgedGross !== undefined && vault.openPledgedGross !== null)) unread.delete(vaultKey(vault.network, vault.vault));
+  return { period: periodContaining(nowSeconds), facts, display: poolDisplay(facts), vaultUnread: unread.size > 0 };
 }
 
 /** @throws {never} */

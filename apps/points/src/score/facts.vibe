@@ -159,6 +159,12 @@ export interface JointUnit {
   readonly commits: ReadonlyArray<string>
   readonly retainedOriginal: string | null
   readonly reviewValues: ReadonlyArray<ReviewValue>
+  // The merge resolutions the decision's evidence records for the unit's merge commits, each named by its commit.
+  readonly mergeResolutions?: ReadonlyArray<UnitResolution>
+}
+
+export interface UnitResolution extends ResolutionLines {
+  readonly commit: string
 }
 
 export interface JointDecision {

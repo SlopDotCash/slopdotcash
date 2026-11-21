@@ -7,7 +7,7 @@ import { valuePolicyAt } from "../kernels/scoring/legacyV2.ts"
 import { commitActorKind } from "../kernels/scoring/lines.ts"
 import { valueTierBand } from "../kernels/scoring/tiers.ts"
 import { Commits } from "./book.vibe"
-import { type Actor, type ActorIndex, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointDecision, type JointMember, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
+import { type Actor, type ActorIndex, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointDecision, type JointMember, type MergedPull, type ScoreEvent, type UnitResolution, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
 import { scoredSource, valueAssessed } from "./policy.vibe"
 
 export interface JointReview {
@@ -86,14 +86,14 @@ effect function attributed(key: string, pull: Source, commit: Commit, owner: Mer
   if (commit.author !== null) try book.send(key, { type: "observePrimary", actor: actors.of(commit.author), kind: commitActorKind(commit.author), linked: true })
   if (pull.author !== null) try book.send(key, { type: "observeSource", actor: actors.of(pull.author), kind: commitActorKind(pull.author) })
   if (commit.retained !== null) try book.send(key, { type: "observeCopy", copy: { tag: "VerifiedCopy", actor: actors.of(commit.retained.actor), kind: commitActorKind(commit.retained.actor) }, discussion: commit.retained.discussion })
-  // A merge commit's acceptance records the number of reviewed merge resolutions collected for it, and its line
-  // evidence is its one resolution's own work. Without collected resolutions its acceptance stays unobserved, which
-  // claimOf turns into an unknown actor set that holds the unit, never an assumed count.
+  // A merge commit's acceptance records the number of merge resolutions recorded for it, and its line evidence is its
+  // one resolution's own work. A merge with no recorded resolution is a synchronization merge: it contributes nothing
+  // and holds nothing, as development's ordinary credit excludes merge commits (leaderboard.ts mergeCreditLineWeights).
   const merge = commit.parentCount > 1
-  const resolutions = commit.mergeResolutions
+  const resolutions = merge ? commit.mergeResolutions ?? [] : []
   const elsewhereUnits = owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial
-  if (commit.parentCount >= 0 && (!merge || resolutions !== undefined)) try book.send(key, { type: "observeAcceptance", merge, resolutions: merge ? resolutions?.length ?? 0 : 0, units: elsewhereUnits })
-  const resolved = merge && resolutions?.length === 1 ? resolutions[0] : undefined
+  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge, resolutions: resolutions.length, units: elsewhereUnits })
+  const resolved = merge && resolutions.length === 1 ? resolutions[0] : undefined
   const lines = merge ? resolved : { additions: commit.additions, deletions: commit.deletions }
   if (lines !== undefined && lines.additions >= 0 && lines.deletions >= 0) try book.send(key, { type: "recordLines", additions: lines.additions, deletions: lines.deletions })
   if (canAttribute(try book.get(key))) try book.send(key, { type: "attribute" })
@@ -107,29 +107,30 @@ interface Observation {
   readonly state: CommitAttribution
 }
 
-effect function observed(scope: string, pulls: ReadonlyArray<Source>, only: ReadonlySet<string> | null, owners: ReadonlyMap<string, MergedPull>, actors: ActorIndex) {
+effect function observed(scope: string, pulls: ReadonlyArray<Source>, only: ReadonlySet<string> | null, owners: ReadonlyMap<string, MergedPull>, actors: ActorIndex, unitResolutions?: ReadonlyArray<UnitResolution>) {
   const observations: Observation[] = []
   const seen = new Set<string>()
-  for (const pull of pulls) for (const commit of pull.commits ?? []) {
-    const key = commitKey(pull, commit.oid)
-    if (seen.has(key) || (only !== null && !only.has(commit.oid))) continue
+  for (const pull of pulls) for (const found of pull.commits ?? []) {
+    const key = commitKey(pull, found.oid)
+    if (seen.has(key) || (only !== null && !only.has(found.oid))) continue
     seen.add(key)
+    // A joint decision's evidence records the resolutions of its merge commits; they replace the collected (absent) ones.
+    const recorded = unitResolutions?.filter((resolution) => resolution.commit === found.oid).map(({ additions, deletions }) => ({ additions, deletions }))
+    const commit = recorded !== undefined && recorded.length > 0 && found.parentCount > 1 ? { ...found, mergeResolutions: recorded } : found
     observations.push({ key, commit, state: try attributed(`${scope}\u0000${pull.id}\u0000${commit.oid}`, pull, commit, owners.get(key), actors) })
   }
   return observations
 }
 
-// One claim per observed commit. The collected facts carry whole-commit line counts, not per-file claims, so each
-// commit is one claimed file counted once; a renamed file inside it cannot be counted twice, which is what the rename
-// rule prevents. A commit already credited in an earlier accepted source has no credited actor and adds nothing
-// (claimUsable: "A claim with no credited actor adds nothing"). Every other non-merge commit claims its lines for its
-// attributed actor; missing acceptance, attribution or line evidence makes the unit's weights incomplete. A merge
-// commit with exactly one recorded merge resolution claims that resolution's lines for its attributed actor; one with
-// none recorded is a synchronization merge with no credited actor. A merge commit whose resolutions were not collected,
-// or that has several, has an unknown actor set, which holds the unit (spec/points/authorship.md: "a merge commit
-// without exactly one resolution ... make[s] the unit's weights incomplete"; development's workUnitLineWeights
-// returns null for such a claim). The collected GitHub totals are the commit's complete GraphQL additions and
-// deletions, so the one claim per commit is never limited and a renamed file inside it is counted once.
+// One claim per observed commit, over the commit's whole diff: the ordinary collected facts are GitHub's commit totals,
+// which count each file of the commit once (a renamed file included), as development's ordinary credit does
+// (commit-credit.ts implementationLineWeights). A commit already credited in an earlier accepted source has no
+// credited actor and adds nothing (claimUsable: "A claim with no credited actor adds nothing"). Every other non-merge
+// commit claims its lines for its attributed actor; missing acceptance, attribution or line evidence makes the unit's
+// weights incomplete. A merge commit with exactly one recorded merge resolution claims that resolution's lines for its
+// attributed actor; one with none is a synchronization merge with no credited actor. One with several has an unknown
+// credited actor set, which holds the unit (spec/points/authorship.md: "a merge commit without exactly one
+// resolution ... make[s] the unit's weights incomplete"; development's workUnitCreditActorIds returns null for it).
 function claimOf(observation: Observation, position: number): PathClaim {
   const { state, commit } = observation
   const lines = state.lines.tag === "CompleteLines" ? state.lines : undefined
@@ -142,7 +143,7 @@ function claimOf(observation: Observation, position: number): PathClaim {
     claim: position + 1,
     actor: state.recipient,
     creditedActors: credited ? 1 : 0,
-    actorsKnown: !merge || (commit.mergeResolutions !== undefined && resolutions <= 1),
+    actorsKnown: resolutions <= 1,
     file: position + 1,
     merge,
     resolutions,
@@ -160,7 +161,7 @@ function eligibleAuthor(author: Actor | null, actors: ActorIndex) {
 
 function recipientsOf(observations: ReadonlyArray<Observation>, fallback: number): Found {
   if (observations.length === 0) return { recipients: fallback > 0 ? [{ actor: fallback, lines: 0 }] : [], complete: true }
-  if (observations.every(({ commit }) => commit.parentCount > 1)) return "synchronization-only"
+  if (observations.every(({ commit }) => commit.parentCount > 1 && commit.mergeResolutions?.length !== 1)) return "synchronization-only"
   if (observations.some(({ state }) => state.phase === "ConflictHeld")) return "attribution-conflict"
   const claims = observations.map((observation, position) => claimOf(observation, position))
   return { recipients: recipientLines(claims), complete: completeLines(claims) }
@@ -276,7 +277,7 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
     assessed.push(unit.workUnitId)
     const original = unit.retainedOriginal === null ? undefined : plan.accepted.get(unit.retainedOriginal)?.pull
     const primary = (original ?? first.pull).author
-    const observations = try observed(unit.workUnitId, sources.map((source) => source.pull), new Set(unit.commits), new Map(), actors)
+    const observations = try observed(unit.workUnitId, sources.map((source) => source.pull), new Set(unit.commits), new Map(), actors, unit.mergeResolutions)
     const allocation = allocated(outcome.scored.points, recipientsOf(observations, eligibleAuthor(primary, actors)))
     if (allocation.kind === "held") return allocation
     if (allocation.kind === "none") continue
@@ -317,7 +318,7 @@ effect function unitActorsOf(decision: JointDecision, accepted: ReadonlyMap<stri
     })
     const original = unit.retainedOriginal === null ? undefined : byId.get(unit.retainedOriginal)
     const primary = (original ?? pulls[0])?.author ?? null
-    const found = recipientsOf(try observed(`${unit.workUnitId}\u0000review`, pulls, new Set(unit.commits), new Map(), actors), eligibleAuthor(primary, actors))
+    const found = recipientsOf(try observed(`${unit.workUnitId}\u0000review`, pulls, new Set(unit.commits), new Map(), actors, unit.mergeResolutions), eligibleAuthor(primary, actors))
     result.set(unit.workUnitId, unresolved(found) === null ? actorIds(found, actors) : null)
   }
   return result

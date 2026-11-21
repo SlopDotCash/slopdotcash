@@ -1,7 +1,9 @@
 // spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Schema } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { D1, type Statement, d1, sql } from "@repo/platform/d1";
+import { GitHub } from "@repo/platform/github";
+import { GitHubApp } from "@repo/platform/github/app";
 import { Refused, outbound } from "@repo/platform/http";
 import { Roles } from "@repo/platform/roles";
 import { database, migrate, startWorker, storage } from "@repo/platform/testing";
@@ -85,6 +87,19 @@ const ports = Layer.mergeAll(
   }),
 );
 
+// GitHub's private-report list of the program repository, as the receipt check reads it through the Slop App.
+let advisories: ReadonlyArray<unknown> = [];
+const unused = () => Effect.die(new Error("the receipt check only lists the repository's advisories"));
+const githubApp = Layer.succeed(GitHubApp, {
+  appJwt: () => Effect.succeed("app-jwt"),
+  installationToken: unused,
+  installationFor: () => Effect.succeed("1"),
+  asInstallation: () => Layer.succeed(GitHub, {
+    json: unused, graphql: unused, bytes: unused, send: unused, status: unused,
+    pages: (path, schema) => path.startsWith(`/repos/${repository}/security-advisories`) ? Effect.orDie(Effect.forEach(advisories, (item) => Schema.decodeUnknownEffect(schema)(item))) : unused(),
+  }),
+});
+
 const pointerRevision = 1000;
 const projectOf = () => `${project}-g${generation}`;
 
@@ -119,7 +134,7 @@ async function seeded(receipt?: Receive["terms"]): Promise<string> {
   return projectId;
 }
 
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))));
+const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, githubApp, outbound, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 async function outcome(program: Effect.Effect<unknown, unknown, Services>): Promise<Outcome> {
@@ -262,11 +277,31 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   if (event.type === "receive") return cases.has(caseKey) ? "refused" : receive(caseKey, event);
   if (event.type === "claim") return cases.has(caseKey) ? "refused" : claim(caseKey, by);
   if (event.type === "recordAttested") return cases.has(caseKey) ? "refused" : record(caseKey, event, by);
-  // The application has no route yet that settles a claim from the program's complete GitHub private-report list
-  // (check-receipt).
-  if (event.type === "settleClaim") return "refused";
   const caseId = cases.get(caseKey);
   if (caseId === undefined) return "refused";
+  // Only the GitHub receipt service settles a claim: the claim's reporter asks for the check (check-receipt), and
+  // GitHub's complete private-report list answers, holding the claimant's report of the advisory or not.
+  if (event.type === "settleClaim") {
+    if (Number(by) !== -1) return "refused";
+    const record = await runtime.runPromise(caseRecord(caseId));
+    const row = record?.row;
+    if (row === undefined) return "refused";
+    if (event.listed) {
+      terms = storedTerms(event.terms);
+      await seeded(terms);
+      clock.set(Math.max(clock.now(), base() + event.terms.receivedAt + 1));
+    }
+    advisories = event.listed && row.advisory_ghsa !== null ? [{
+      ghsa_id: row.advisory_ghsa,
+      html_url: `https://github.com/${repository}/security/advisories/${row.advisory_ghsa}`,
+      created_at: new Date(base() + event.terms.receivedAt).toISOString(),
+      state: "triage",
+      submission: { accepted: false },
+      author: { id: Number(row.reporter_github_id), login: row.reporter_github_login, type: "User" },
+      description: "A reported finding.",
+    }] : [];
+    return act(caseKey, caseId, 1, "check-receipt");
+  }
   switch (event.type) {
     case "verifyLink": {
       terms = storedTerms(event.terms);

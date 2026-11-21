@@ -1,0 +1,77 @@
+// spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { ghsaPattern, markerLine } from "../forwarding/advisories.vibe"
+
+// One GitHub private vulnerability report of a program repository: GitHub states who submitted it and when it
+// received it (development backend/security/advisories.ts parsePrivateReport).
+export interface PrivateReport {
+  readonly ghsa: string
+  readonly createdAt: string
+  readonly author: { readonly githubId: string; readonly login: string }
+  // The description's Slop reference lines, trimmed: GitHub's copy of a report saved on Slop carries its line.
+  readonly referenceLines: ReadonlyArray<string>
+}
+
+const repositoryPath = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/u
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const referencePrefix = markerLine("")
+// A transport bound, not a policy: a longer list is refused whole, never read in part.
+const maxPages = 20
+const limitBytes = 8 * 1024 * 1024
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+// Only a private vulnerability report with a known human author counts: a maintainer's draft has no submission, and
+// a deleted or non-user author cannot be bound to a Slop account.
+export function privateReportOf(value: unknown): PrivateReport | undefined {
+  const advisory = record(value)
+  if (advisory === undefined || record(advisory.submission) === undefined) return undefined
+  const author = record(advisory.author)
+  const ghsa = advisory.ghsa_id
+  const created = typeof advisory.created_at === "string" ? Date.parse(advisory.created_at) : Number.NaN
+  const id = author?.id
+  const login = author?.login
+  if (typeof ghsa !== "string" || !ghsaPattern.test(ghsa) || !Number.isFinite(created) || author?.type !== "User"
+    || typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 || typeof login !== "string" || !loginPattern.test(login)) return undefined
+  const description = typeof advisory.description === "string" ? advisory.description : ""
+  return {
+    ghsa,
+    createdAt: new Date(created).toISOString(),
+    author: { githubId: String(id), login },
+    referenceLines: description.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.startsWith(referencePrefix)),
+  }
+}
+
+effect function listed(owner: string, name: string) {
+  const installation = try (try GitHubApp).installationFor(owner, name)
+  const scoped = (try GitHubApp).asInstallation(installation, { repositories: [name], permissions: { repository_advisories: "read" } })
+  provide scoped {
+    const github = try GitHub
+    const items = try github.pages(`/repos/${owner}/${name}/security-advisories?sort=created&direction=asc`, Schema.Unknown, { maxPages, perPage: 100, limitBytes })
+    const reports: PrivateReport[] = []
+    for (const item of items) {
+      const report = privateReportOf(item)
+      if (report !== undefined) reports.push(report)
+    }
+    return reports.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.ghsa.localeCompare(right.ghsa))
+  }
+}
+
+// Every private vulnerability report of the repository, oldest first, read through the Slop App installation; any
+// failure, including a missing installation or permission or a list longer than its bound, is undefined, which never
+// means that no report exists.
+// The App and its HTTP client are taken where the shell provides them; without them the list is unreadable.
+export effect function privateReports(repository: string) {
+  const parts = repositoryPath.exec(repository)
+  if (parts === null) return undefined
+  const app = try Effect.serviceOption(GitHubApp)
+  const client = try Effect.serviceOption(HttpClient.HttpClient)
+  if (Option.isNone(app) || Option.isNone(client)) return undefined
+  provide GitHubApp = app.value, HttpClient.HttpClient = client.value {
+    const read = try exit(listed(parts[1] ?? "", parts[2] ?? ""))
+    return Exit.isSuccess(read) ? read.value : undefined
+  }
+}

@@ -1,0 +1,156 @@
+// spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"
+import { millisOf } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, first, rows as allRows, sql } from "@repo/platform/d1"
+import { type Actor } from "@repo/platform/http"
+import { Registry } from "@repo/ports/backend"
+import type { Event } from "../../gen/security__cases.ts"
+import { Rejected, apply, canReceive, githubReceiptService, initial, mayRequestReceiptCheck, receive, technicalNow } from "../../gen/security__cases.effect.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { markerLine } from "../forwarding/advisories.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { type PrivateReport, privateReports } from "../receipt/github.vibe"
+import { type ReportingProgram, ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
+import { type CaseRole, caseEvent, caseInsert } from "../receipt/statements.vibe"
+import { type Change, type Observed, accessLog, caseNotices, modelColumns, notAllowed, refused } from "./store.vibe"
+
+// The verifier development records for a receipt GitHub states itself (backend/security/handler.ts GITHUB_VERIFIER).
+const githubVerifier = "github"
+
+schema Held { id: string }
+schema Marker { marker: string }
+
+// An advisory already held by a verified case, directly or through a saved report's adopted forward.
+effect function heldElsewhere(projectId: string, ghsa: string) {
+  return (try first(Held, sql`SELECT id FROM security_cases WHERE project_id = ${projectId} AND submission_state = 'verified' AND (advisory_ghsa = ${ghsa} OR id IN (SELECT case_id FROM security_submissions WHERE project_id = ${projectId} AND advisory_ghsa = ${ghsa} AND state IN ('submitted', 'receipt-verified')))`)) !== undefined
+}
+
+// GitHub's copy of a report saved on Slop: its author saved a report in this project whose reference line the
+// description carries. Its case came from the Slop receipt; the forward's own reconcile links it, never an import.
+effect function forwardOfSavedReport(projectId: string, report: PrivateReport) {
+  const saved = try allRows(Marker, sql`SELECT s.marker FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = ${projectId} AND s.reporter_github_id = ${report.author.githubId} AND s.origin = 'slop'`)
+  const lines = new Set(report.referenceLines)
+  return saved.some((row) => lines.has(markerLine(row.marker)))
+}
+
+effect function termsAt(projectId: string, receivedAt: string) {
+  const atReceipt = try (try ReportingPrograms).atReceipt({ projectId, receivedAt })
+  if (atReceipt === undefined) return undefined
+  return { atReceipt, terms: receiptTermsOf(atReceipt, millisOf(atReceipt.publishedAt), millisOf(receivedAt)) }
+}
+
+// A report in scope with no case yet becomes a verified case through the GitHub receipt: GitHub's author and
+// creation time, and the terms in force then. A report another case holds, a saved report's forward and a report
+// of a pending claim (settled only by its own check) are left as they are.
+effect function imported(projectId: string, program: ReportingProgram, report: PrivateReport, actor: Actor, at: string) {
+  if (try heldElsewhere(projectId, report.ghsa)) return
+  if (try forwardOfSavedReport(projectId, report)) return
+  const claimed = try first(Held, sql`SELECT id FROM security_cases WHERE project_id = ${projectId} AND advisory_ghsa = ${report.ghsa} AND submission_state = 'claimed'`)
+  if (claimed !== undefined) return
+  const frozen = try termsAt(projectId, report.createdAt)
+  if (frozen === undefined) return
+  const { atReceipt, terms } = frozen
+  if (!canReceive(initial, "GithubVerified", terms, "NewReceipt", terms.offeredGross, 1)) return
+  const received = receive(initial, "GithubVerified", terms, "NewReceipt", terms.offeredGross, 1)
+  const caseId = `sc_${(try randomId()).replaceAll("-", "")}`
+  const idempotencyKey = `receipt-${(try randomId()).replaceAll("-", "")}`
+  const role: CaseRole = actor.githubId === report.author.githubId ? "reporter" : "security-maintainer"
+  const notices = try caseNotices({ caseId, revision: 1, kind: "receive", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: report.author.githubId, detail: {}, program, relatedReview: false, at })
+  const statements = [
+    caseInsert({
+      id: caseId,
+      projectId,
+      repository: program.repository,
+      advisory: report.ghsa,
+      reporter: { githubId: report.author.githubId, login: report.author.login },
+      verified: { receivedAt: report.createdAt, verifiedBy: githubVerifier, policyRevision: atReceipt.revision, terms: atReceipt.terms, award: received.award, source: "github-verified" },
+      ownerGithubId: null,
+      at,
+    }),
+    caseEvent({ caseId, revision: 1, kind: "receive", actorGithubId: actor.githubId, role, idempotencyKey, reason: null, evidenceReference: null, detail: { advisory: report.ghsa, receivedAt: report.createdAt, receivedAtSource: "github-verified", policyRevision: atReceipt.revision }, at, guard: true }),
+    accessLog(caseId, actor.githubId, new Set([role]), "write", at),
+    ...notices,
+  ]
+  const db = try D1
+  db.batch(statements) catch effect (error) => {
+    // A concurrent check recorded this report first.
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return []
+    throw error
+  }
+}
+
+export interface Settled {
+  readonly change: Change | undefined
+}
+
+const unchanged: Settled = { change: undefined }
+
+// The check itself (check-receipt): the caller is the claim's reporter or a current security maintainer; the answer
+// is GitHub's complete list of the program repository's private reports, never the caller's. The reporter's check
+// imports their own reports that have no case, a maintainer's every one. A report of this advisory by the claimant
+// verifies the claim as GitHub's receipt; none rejects it (receipt-mismatch). An advisory another case holds, or a
+// saved report's forward, leaves the claim as it is. An unreadable list writes nothing.
+export effect function checkReceipt(observed: Observed, actor: Actor, at: string) {
+  const { row } = observed.record
+  const by = githubNumber(actor.githubId)
+  if (!mayRequestReceiptCheck(observed.model, by, observed.epoch)) throw notAllowed("check-receipt")
+  // A receipt check imports every new report in the repository, so it stays closed with new intake when the project
+  // is retired.
+  const project = try (try Registry).project(row.project_id)
+  const program = try (try ReportingPrograms).current(row.project_id)
+  if (project === undefined || project.listingTier === "Retired" || program === undefined) throw notAllowed("check-receipt")
+  const listed: ReadonlyArray<PrivateReport> | undefined = try privateReports(program.repository)
+  if (listed === undefined) throw refused(actionRows.receiptCheckUnavailable)
+  const reports: ReadonlyArray<PrivateReport> = listed
+  const maintainer = technicalNow(observed.model, by, observed.epoch)
+  for (const report of reports) if (maintainer || report.author.githubId === actor.githubId) try imported(row.project_id, program, report, actor, at)
+  const ghsa = row.advisory_ghsa
+  if (ghsa === null || (try heldElsewhere(row.project_id, ghsa))) return unchanged
+  const found = reports.find((report) => report.ghsa === ghsa && report.author.githubId === row.reporter_github_id)
+  if (found !== undefined && (try forwardOfSavedReport(row.project_id, found))) return unchanged
+  const role: CaseRole = actor.githubId === row.reporter_github_id ? "reporter" : "security-maintainer"
+  if (found === undefined) {
+    const event: Event = { type: "settleClaim", listed: false, terms: observed.model.terms }
+    const next = try settled(observed, event)
+    const mismatch: Change = { kind: "receipt-mismatch", role, reason: null, evidenceReference: null, detail: { advisory: ghsa }, event, set: { ...modelColumns(observed.model, next), submission_state: "link-rejected" } }
+    const answer: Settled = { change: mismatch }
+    return answer
+  }
+  const frozen = try termsAt(row.project_id, found.createdAt)
+  if (frozen === undefined) throw notAllowed("check-receipt")
+  const { atReceipt, terms } = frozen
+  const event: Event = { type: "settleClaim", listed: true, terms }
+  const next = try settled(observed, event)
+  const verified: Change = {
+      kind: "receive",
+      role,
+      reason: null,
+      evidenceReference: null,
+      detail: { advisory: ghsa, receivedAt: found.createdAt, receivedAtSource: "github-verified", policyRevision: atReceipt.revision },
+      event,
+      set: {
+        ...modelColumns(observed.model, next),
+        submission_state: "verified",
+        received_at: found.createdAt,
+        received_at_source: "github-verified",
+        verified_at: at,
+        verified_by_github_id: githubVerifier,
+        policy_revision: atReceipt.revision,
+        terms: atReceipt.terms === undefined ? null : JSON.stringify(atReceipt.terms),
+        award_state: next.award === "Pending" ? "pending" : "not-applicable",
+        reporter_github_login: found.author.login,
+      },
+      require: sql`NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))`,
+      unmet: actionRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas,
+  }
+  const answer: Settled = { change: verified }
+  return answer
+}
+
+// The event is GitHub's answer, sent by the receipt service, never by the caller.
+effect function settled(observed: Observed, event: Event) {
+  return apply(observed.model, event, githubReceiptService) catch effect (error) => {
+    if (error instanceof Rejected) throw notAllowed("check-receipt")
+    throw error
+  }
+}

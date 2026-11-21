@@ -892,8 +892,9 @@
           ]
         }
       ],
-      "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation"
+      "status": "uncovered-no-spec",
+      "implementationEvidence": "pending-implementation",
+      "gap": "No spec models the submission fee yet (Slopbot's ask, labels, outcomes and the pay page). Governance holds this subsection only as an open requirement of the MVP inventory; it is not covered by any rule, and the mapping is not evidence of implementation."
     },
     {
       "section": 5,
@@ -1606,8 +1607,9 @@
           ]
         }
       ],
-      "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation"
+      "status": "uncovered-no-spec",
+      "implementationEvidence": "pending-implementation",
+      "gap": "No spec models the SubmissionDeposits contracts, the resolver Worker (FEE-01 to FEE-06) or the public fee reads yet. Governance holds this subsection only as an open requirement of the MVP inventory; it is not covered by any rule, and the mapping is not evidence of implementation."
     },
     {
       "section": 6,

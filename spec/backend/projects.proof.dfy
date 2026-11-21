@@ -266,17 +266,17 @@ lemma lawAppendedRepositoryPausesAndStartsNextMonth_ensures(p: Project, by_: int
 lemma lawConsentOnlySaveRecordsConsentChange_ensures(p: Project, by_: int, change: OwnerChange)
   ensures (lawConsentOnlySaveRecordsConsentChange(p, by_, change) == true)
 {
-  if alwaysHistoryNumbered(p) && canPublishOwnerRevision(p, by_, change) && consentOnly(change) {
+  if canPublishOwnerRevision(p, by_, change) && consentOnly(change) {
     var after := publishOwnerRevision(p, by_, change);
     assert after.history == p.history + [Revision(p.revision + 1, RevisionKind.ConsentChanged, p.status, p.tier, by_)];
-    assert currentRevision(after) == after.history[p.revision];
+    assert currentRevision(after) == after.history[|p.history|];
   }
 }
 
 lemma lawRemovedNeverRestored_ensures(p: Project)
   ensures (lawRemovedNeverRestored(p) == true)
 {
-  if alwaysRetirementConsistent(p) && ownerRetired(p) {
+  if ownerRetired(p) {
     assert !restorable(p);
     assert withCommunityRestored(true, p) == p;
   }

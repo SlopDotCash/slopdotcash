@@ -18,6 +18,7 @@ import { caseEvent, caseInsert } from "../receipt/statements.vibe"
 import { type Body, exactKeys, githubIdPattern, githubLogin, planned, timeField } from "./actions.vibe"
 import { CaseRow, caseColumns, caseRecord } from "./rows.vibe"
 import { type Observed, accessLog, audited, caseNotices, committed, observedAs, observedCase, refused } from "./store.vibe"
+import { checkReceipt } from "./receiptCheck.vibe"
 import { type Starter, scheduledTriage, triageMayStart, triaged } from "./triage.vibe"
 import { type ExtraActions, caseView, noExtraActions } from "./view.vibe"
 
@@ -331,6 +332,13 @@ export effect function performed(actor: Actor, id: string, body: Body) {
     const by = githubNumber(actor.githubId)
     if (!triageMayStart(observed.model, by, observed.epoch, try Clock.currentTimeMillis)) throw refused(actionRows.analysisRunning)
     return { kind: "triage", caseId: row.id, starter: { kind: "moderator", by, epoch: observed.epoch, model: observed.model } } satisfies Performed
+  }
+  if (action === "check-receipt") {
+    try exactKeys(body, common)
+    const at = try isoNow()
+    const settled = try checkReceipt(observed, actor, at)
+    if (settled.change !== undefined) try committed({ observed, actor, change: settled.change, idempotencyKey, at })
+    return { kind: "changed", caseId: row.id } satisfies Performed
   }
   if (row.submission_state !== "verified" && action !== "verify-link" && action !== "reject-link") throw refused(actionRows.notVerified)
   const nowMs = try Clock.currentTimeMillis

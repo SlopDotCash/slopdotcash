@@ -53,6 +53,11 @@ only so that one machine reaches both publication paths, since no route
 stores a new application. The one-pending guarantee is not stated as a rule
 until stored update applications are modelled on a published project of
 their own.
+The current revision is the latest appended one. Discovered by proof: read
+by its number (`p.revision - 1`), a project whose history is not numbered
+made the law that a consent-only save records `ConsentChanged` false for
+some values of its parameters; every reachable project keeps
+`alwaysHistoryNumbered`, where the two readings agree.
 
 ```quint
 import closureConsent as C from "./closureConsent"
@@ -86,7 +91,7 @@ pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrator
   honorSystem: false, vaults: noVaults }
 pure val platform = -1
 pure val noRevision: Revision = { number: 0, kind: Created, status: Paused, tier: Retired, by: 0 }
-pure def currentRevision(p: Project): Revision = p.history.nthOr(p.revision - 1, noRevision)
+pure def currentRevision(p: Project): Revision = p.history.nthOr(p.history.length() - 1, noRevision)
 pure def primary(p: Project): int = p.repositories.nthOr(0, 0)
 pure def revised(kind: RevisionKind, by: int, status: Status, tier: Tier, p: Project): Project =
   { ...p, revision: p.revision + 1, status: status, tier: tier,
@@ -421,13 +426,10 @@ absent. A write that would change nothing is refused. The consent is part of
 `slopbot`, a presentation field, so a save may carry it together with other
 changes in one owner revision (above); a save whose only change is the
 consent records a `ConsentChanged` revision and keeps status and tier.
-Discovered by proof: the law reads the current revision, which is the new
-one only in a project whose history is numbered, so it assumes the
-`alwaysHistoryNumbered` rule every reachable project keeps.
 
 ```quint
 pure def lawConsentOnlySaveRecordsConsentChange(p: Project, by: int, change: OwnerChange): bool =
-  (alwaysHistoryNumbered(p) and canPublishOwnerRevision(p, by, change) and consentOnly(change)) implies
+  (canPublishOwnerRevision(p, by, change) and consentOnly(change)) implies
     (currentRevision(publishOwnerRevision(p, by, change)).kind == ConsentChanged and
      publishOwnerRevision(p, by, change).status == p.status and publishOwnerRevision(p, by, change).tier == p.tier and
      publishOwnerRevision(p, by, change).consent == consentAfter(p.consent, change.consent))
@@ -448,13 +450,18 @@ already-removed retry, so a restriction's retired revision is never taken for
 a removal and reinstatement lists the project again from the revision the
 restriction opened on (Slop development `da358d8a9`). History, earned
 Points, private cases and funded obligations are kept.
+A project the owner removed or an administrator delisted carries the
+Retired tier. Discovered by proof: without the tier, the law that a removal
+is never restored was false for a project whose retirement and tier
+disagree; every reachable project keeps `alwaysRetirementConsistent`, where
+both readings agree.
 
 ```quint
 type Removal = { authority: AuthorityRead, expectedRevision: int }
 pure def canRemove(p: Project, by: int, removal: Removal): bool =
   p.revision > 0 and currentAuthority(p, by, removal.authority) and
   (p.retirement != NotRetired or removal.expectedRevision == p.revision)
-pure def ownerRetired(p: Project): bool = p.retirement == OwnerRemoved or p.retirement == AdminDelisted
+pure def ownerRetired(p: Project): bool = (p.retirement == OwnerRemoved or p.retirement == AdminDelisted) and p.tier == Retired
 pure def remove(p: Project, by: int, removal: Removal): Project =
   if (ownerRetired(p)) p else { ...revised(Removed, by, Paused, Retired, p), retirement: OwnerRemoved }
 pure val removalValues = Set({ authority: owner1, expectedRevision: 2 }, { authority: owner1, expectedRevision: 3 },
@@ -634,9 +641,6 @@ their own, and only the composition performs them, with the enforcement
 decision, in the same batch. No other registry event lists a retired project
 again, except an administrator exception on a project the owner removed or an
 administrator delisted (above).
-Discovered by proof: a removed project's listing tier is Retired only under
-the `alwaysRetirementConsistent` rule every reachable project keeps, so the
-law that a removal is never restored assumes it.
 
 ```quint
 pure def retirableForRestriction(p: Project): bool = p.revision > 0 and p.retirement == NotRetired
@@ -649,7 +653,7 @@ pure def withCommunityRestored(restore: bool, p: Project): Project =
 pure def lawRestorationIsPausedCommunity(p: Project): bool =
   restorable(p) implies (withCommunityRestored(true, p).status == Paused and withCommunityRestored(true, p).tier == Community)
 pure def lawRemovedNeverRestored(p: Project): bool =
-  (alwaysRetirementConsistent(p) and ownerRetired(p)) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
+  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
 pure def stepNoRegistryEventUnretires(before: Project, via: str, after: Project): bool =
   (before.retirement != NotRetired and after.retirement == NotRetired) implies
     (via == "adminRevise" and before.retirement != RestrictionRetired)
