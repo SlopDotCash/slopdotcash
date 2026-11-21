@@ -838,11 +838,19 @@ its weight among the enabled ones, and every goal is still reached.
 Discovered by simulation: even at those weights the three events' 960 to
 1,080 combinations each (with the signer) kept the invariant simulation
 near its hour on the loaded machine. The commitment, binding and payment
-records pair their values instead: every total, leaf list and pledge account
-choice for the one period and freeze time the window admits, and each
-refusal (no signature, a freeze time before the window opens, a later or
-invalid period) once or twice; each actor, network and expected version
-with a wallet or the attester as destination, and each refusal (expired,
+records pair their values instead. The commitments hold every total, leaf
+list and pledge account choice for November 2026 at the freeze time its
+window admits (the window's opening, since the window closes before the
+freeze time 1799020800 can be at or before the clock); for December 2026,
+at the freeze time its window admits, each leaf list with both totals and
+both pledge account choices, and every pairing of total and pledge account
+choice;
+and each refusal once or twice (no signature at an admitted freeze time, a
+freeze time before the window opens, a freeze time after the clock, a later
+or invalid period). Each actor, network and expected version is bound
+with a wallet or the attester as destination, every actor and network to a
+wallet at version 0 so that either Config identity can bind both actors,
+and each refusal (expired,
 zero claim, the vault as destination, no wallet signature) on both actors
 and networks; each obligation source to a wallet through a classic and a
 Token-2022 account, some to the attester, and each refusal (stale version,
@@ -901,41 +909,49 @@ pure val periodValues = Set(202611, 202612, 202613)
 pure val leafValues = Set({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 },
   { actor: 1, gross: 50, source: 1 }, { actor: 0, gross: 54, source: 12 })
 pure val monthlyCommitValues = Set(
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: false },
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: true },
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: false },
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: true },
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
-    attested: true, pledgeAccount: false },
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
-    attested: true, pledgeAccount: true },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: false },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: true },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: false },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
-    attested: true, pledgeAccount: true },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
-    attested: true, pledgeAccount: false },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
-    attested: true, pledgeAccount: true },
-  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
-    attested: false, pledgeAccount: false },
-  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
-    attested: false, pledgeAccount: true },
   { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
     attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: false, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: false, pledgeAccount: true },
   { period: 202611, root: "r", total: 60, frozenAt: 1796342399, leaves: List({ actor: 0, gross: 54, source: 12 }),
     attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
   { period: 202612, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
     attested: true, pledgeAccount: false },
+  { period: 202612, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202612, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
   { period: 202612, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202612, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: false },
+  { period: 202612, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
     attested: true, pledgeAccount: true },
   { period: 202613, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
     attested: true, pledgeAccount: false })
@@ -944,6 +960,7 @@ pure val bindingRequestValues = Set(
   { actor: 1, network: "solana", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
   { actor: 1, network: "solana", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
   { actor: 2, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
+  { actor: 2, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
   { actor: 2, network: "solana", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
   { actor: 1, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
   { actor: 1, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
