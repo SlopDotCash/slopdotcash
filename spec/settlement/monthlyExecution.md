@@ -21,8 +21,11 @@ every published [monthly allocation](./monthly.md); each row is one
 ### Each published month has one execution row, and only finalized evidence completes it
 
 A row is published once a month's authorization is signed. It carries the
-signed tree (root, gross total and leaf count), its source sequence, and for
-a version 2 EVM reserve the retained original V1 root, if any. A row is
+signed tree (root, remaining gross total, leaf count, the month's whole gross
+and the frozen allocation digest), its source sequence, and for a version 2
+EVM reserve the retained original V1 root, if any. It also records the
+latest attempt the authorization journal has signed for the month, which
+starts as the published one. A row is
 pending, submitted to the executor, complete, or held: held as a wrong-total
 reservation, a released wrong-total reservation, or a month whose admission
 window closed unadmitted. A completed row never changes, and every step
@@ -32,6 +35,14 @@ automatic default is on, as [month pledges](./monthPledges.md) "Publication,
 a newer attempt and on-chain admission need a pledge in the run's own vault
 or the automatic default on" requires (`runConsent`).
 
+Discovered by simulation: the actor sample names each role that moves a row
+(the scheduler, the attester that signs a later attempt and the publisher
+that retains it) and one stranger, because every guard names its actor. The
+tree sample is one whole month of two leaves, the same month signed again
+with one leaf left at the same whole gross and digest, the same month with
+no retained V1 root, an empty root, and a later tree whose whole gross
+differs, so that a later attempt is both accepted and refused.
+
 ```quint
 import monthly as Mo from "./monthly"
 import monthPledges as P from "./monthPledges"
@@ -40,18 +51,20 @@ import monthlyCommitment as Mc from "./monthlyCommitment"
 import executorJournal as J from "./executorJournal"
 import reserveRelease as R from "./reserveRelease"
 type RowPhase = Pending | Submitted | Complete | WrongTotal | Released | ClosedUnadmitted
-type Tree = { root: str, total: M::Amount, count: int, legacyRoot: str }
+type Tree = { root: str, total: M::Amount, count: int, legacyRoot: str, whole: M::Amount, digest: str }
 type Row = { key: int, project: int, period: int, network: int, vault: int, v2: bool, solana: bool,
   lastAttempt: int, phase: RowPhase, invalidated: bool, height: int, attempts: int,
   root: str, total: M::Amount, leafCount: int, legacyRoot: str, sequence: int, journal: J::Journal,
-  heldTotal: M::Amount, sentNonce: int, lastAdmit: bool, sentWithoutAdmit: bool }
+  heldTotal: M::Amount, sentNonce: int, lastAdmit: bool, sentWithoutAdmit: bool,
+  wholeGross: M::Amount, digest: str, latest: Tree, latestSequence: int }
 type Execution = { rows: List[Row], now: int, ordinaryRun: List[int], prerequisiteRun: List[int], reverts: int, touched: int,
-  processed: List[int], sends: int }
+  processed: List[int], sends: int, batch: List[int], prerequisiteBatch: List[int] }
 pure val batchLimit = 50
 pure val initial: Execution = { rows: List(), now: 0, ordinaryRun: List(), prerequisiteRun: List(), reverts: 0, touched: 0,
-  processed: List(), sends: 0 }
+  processed: List(), sends: 0, batch: List(), prerequisiteBatch: List() }
 pure def hasRow(e: Execution, key: int): bool = e.rows.some(r => r.key == key)
 pure def validTree(tree: Tree): bool = tree.root != "" and tree.count > 0 and M::validAmount(tree.total) and M::positiveAmount(tree.total)
+  and M::validAmount(tree.whole) and M::compareAmounts(tree.total, tree.whole) <= 0 and tree.digest != ""
 pure def canPublish(e: Execution, key: int, project: int, period: int, network: int, vault: int,
     runVaultPledged: bool, automatic: bool, v2: bool, solana: bool, tree: Tree, by: str): bool =
   by == "scheduler" and key > 0 and project > 0 and Mo::validPeriod(period) and network > 0 and vault > 0 and not(hasRow(e, key))
@@ -63,7 +76,8 @@ pure def publish(e: Execution, key: int, project: int, period: int, network: int
   { ...e, touched: key, rows: e.rows.append({ key: key, project: project, period: period, network: network, vault: vault, v2: v2,
     solana: solana, lastAttempt: 0, phase: Pending, invalidated: false, height: 0, attempts: 0,
     root: tree.root, total: tree.total, leafCount: tree.count, legacyRoot: tree.legacyRoot, sequence: 1, journal: J::emptyJournal,
-    heldTotal: M::zero, sentNonce: -1, lastAdmit: false, sentWithoutAdmit: false }) }
+    heldTotal: M::zero, sentNonce: -1, lastAdmit: false, sentWithoutAdmit: false,
+    wholeGross: tree.whole, digest: tree.digest, latest: tree, latestSequence: 1 }) }
 pure def alwaysOneRowPerMonth(e: Execution): bool = e.rows.every(r => r.key > 0
   and e.rows.select(o => o.key == r.key).length() == 1
   and e.rows.select(o => o.project == r.project and o.period == r.period and o.network == r.network).length() == 1)
@@ -77,24 +91,30 @@ pure val projectValues = Set(1)
 pure val periodValues = Set(202611, 202612)
 pure val networkValues = Set(1, 2)
 pure val vaultValues = Set(1)
-pure val byValues = Set("scheduler", "publisher", "other")
-pure val treeR1: Tree = { root: "r1", total: List(5), count: 2, legacyRoot: "v1" }
-pure val treeR2: Tree = { root: "r2", total: List(3), count: 1, legacyRoot: "v1" }
-pure val treeValues = Set(treeR1, { ...treeR1, legacyRoot: "" }, treeR2, { ...treeR1, root: "" })
+pure val byValues = Set("scheduler", "attester", "publisher", "other")
+pure val treeR1: Tree = { root: "r1", total: List(5), count: 2, legacyRoot: "v1", whole: List(5), digest: "d1" }
+pure val treeR2: Tree = { root: "r2", total: List(3), count: 1, legacyRoot: "v1", whole: List(5), digest: "d1" }
+pure val treeValues = Set(treeR1, { ...treeR1, legacyRoot: "" }, treeR2, { ...treeR1, root: "" }, { ...treeR2, whole: List(6) })
 ```
 
 ### Each run attempts the least recently attempted rows first
 
-A run starts at a later scheduler time and takes at most 50 pending rows,
-least recently attempted first. A legacy EVM row is selectable only in its
-own admission window (the source's `activePeriod`); a version 2 EVM or
-Solana row is selectable in any later run, because an admitted month stays
-resumable. A run adds any omitted version 2 EVM root of the active period
-whose same project, network and vault has a selected older version 2 row,
-at most 50 more (the prerequisite query of `runMonthlyCommitments`). The
-attempt time is recorded before the attempt, so a crash during the attempt
-still moves the row to the back of the queue. Held and complete rows are not
-selected.
+A run starts at a later scheduler time and first selects its whole batch,
+before it attempts any row: at most 50 pending rows, least recently
+attempted first. A legacy EVM row is selectable only in its own admission
+window (the source's `activePeriod`); a version 2 EVM or Solana row is
+selectable in any later run, because an admitted month stays resumable. The
+batch adds any omitted version 2 EVM root of the active period whose same
+project, network and vault has a selected older version 2 row, at most 50
+more (the prerequisite query of `runMonthlyCommitments`, one SQL statement
+that reads every row before any attempt is recorded). The run then attempts
+its batch one row at a time, newest period first (the source sorts the
+selected items by period, newest first, and awaits each item before the
+next): a row is attempted only after every row already attempted in the run
+has been processed and while no newer pending row of the batch is still
+unprocessed. The attempt time is recorded before the attempt, so a crash
+during the attempt still moves the row to the back of the queue. Held and
+complete rows are not selected.
 
 Discovered by simulation: the scheduler clock is sampled at real window
 boundaries (`Mc::windowOpensAt` and `Mc::windowClosesAt` of the sampled
@@ -105,25 +125,39 @@ admission depend on the window of the row's period.
 pure def windowOpen(period: int, now: int): bool = Mc::windowOpensAt(period) <= now and now < Mc::windowClosesAt(period)
 pure def selectable(e: Execution, row: Row): bool = row.v2 or row.solana or windowOpen(row.period, e.now)
 pure def attemptedThisRun(e: Execution, key: int): bool = e.ordinaryRun.includes(key) or e.prerequisiteRun.includes(key)
+pure def inBatch(e: Execution, key: int): bool = e.batch.includes(key) or e.prerequisiteBatch.includes(key)
 pure def canStartRun(e: Execution, now: int, by: str): bool = by == "scheduler" and now > e.now
 pure def startRun(e: Execution, now: int, by: str): Execution =
-  { ...e, now: now, ordinaryRun: List(), prerequisiteRun: List(), touched: 0, processed: List() }
+  { ...e, now: now, ordinaryRun: List(), prerequisiteRun: List(), touched: 0, processed: List(), batch: List(), prerequisiteBatch: List() }
 pure def leastRecent(e: Execution, row: Row): bool =
-  e.rows.every(o => (o.phase == Pending and selectable(e, o) and not(attemptedThisRun(e, o.key))) implies o.lastAttempt >= row.lastAttempt)
-pure def waitedOn(e: Execution, row: Row): bool = row.v2 and windowOpen(row.period, e.now) and e.ordinaryRun.some(k =>
+  e.rows.every(o => (o.phase == Pending and selectable(e, o) and not(inBatch(e, o.key))) implies o.lastAttempt >= row.lastAttempt)
+pure def waitedOn(e: Execution, row: Row): bool = row.v2 and windowOpen(row.period, e.now) and e.batch.some(k =>
   e.rows.some(o => o.key == k and o.v2 and o.project == row.project and o.network == row.network
     and o.vault == row.vault and o.period < row.period))
-pure def canMarkAttempt(e: Execution, key: int, prerequisite: bool, by: str): bool =
-  by == "scheduler" and not(attemptedThisRun(e, key)) and e.now > 0
+pure def canSelectRow(e: Execution, key: int, prerequisite: bool, by: str): bool =
+  by == "scheduler" and e.now > 0 and e.ordinaryRun.length() == 0 and e.prerequisiteRun.length() == 0 and not(inBatch(e, key))
     and e.rows.some(r => r.key == key and r.phase == Pending)
     and e.rows.every(r => r.key != key or (r.phase == Pending and selectable(e, r)
       and (if (prerequisite) waitedOn(e, r) else leastRecent(e, r))))
-    and (if (prerequisite) e.prerequisiteRun.length() < batchLimit else e.ordinaryRun.length() < batchLimit)
-pure def markAttempt(e: Execution, key: int, prerequisite: bool, by: str): Execution =
+    and (if (prerequisite) e.prerequisiteBatch.length() < batchLimit else e.batch.length() < batchLimit)
+pure def selectRow(e: Execution, key: int, prerequisite: bool, by: str): Execution =
+  { ...e, touched: key,
+    batch: if (prerequisite) e.batch else e.batch.append(key),
+    prerequisiteBatch: if (prerequisite) e.prerequisiteBatch.append(key) else e.prerequisiteBatch }
+pure def newerRootPending(e: Execution, row: Row): bool =
+  e.rows.some(o => o.key != row.key and inBatch(e, o.key) and not(e.processed.includes(o.key))
+    and o.phase == Pending and o.period > row.period)
+pure def canMarkAttempt(e: Execution, key: int, by: str): bool =
+  by == "scheduler" and inBatch(e, key) and not(attemptedThisRun(e, key)) and e.now > 0
+    and e.ordinaryRun.every(k => e.processed.includes(k)) and e.prerequisiteRun.every(k => e.processed.includes(k))
+    and e.rows.some(r => r.key == key and r.phase == Pending)
+    and e.rows.every(r => r.key != key or (r.phase == Pending and not(newerRootPending(e, r))))
+    and (if (e.batch.includes(key)) e.ordinaryRun.length() < batchLimit else e.prerequisiteRun.length() < batchLimit)
+pure def markAttempt(e: Execution, key: int, by: str): Execution =
   { ...e, touched: key,
     rows: e.rows.listMap(r => if (r.key == key) { ...r, lastAttempt: e.now, attempts: r.attempts + 1 } else r),
-    ordinaryRun: if (prerequisite) e.ordinaryRun else e.ordinaryRun.append(key),
-    prerequisiteRun: if (prerequisite) e.prerequisiteRun.append(key) else e.prerequisiteRun }
+    ordinaryRun: if (e.batch.includes(key)) e.ordinaryRun.append(key) else e.ordinaryRun,
+    prerequisiteRun: if (e.batch.includes(key)) e.prerequisiteRun else e.prerequisiteRun.append(key) }
 pure def alwaysRunBounded(e: Execution): bool = e.ordinaryRun.length() <= batchLimit and e.prerequisiteRun.length() <= batchLimit
 pure def alwaysAttemptRecorded(e: Execution): bool = e.now >= 0
   and e.rows.every(r => (attemptedThisRun(e, r.key) implies r.lastAttempt == e.now) and r.lastAttempt <= e.now)
@@ -137,50 +171,69 @@ pure val prerequisiteValues = Set(false, true)
 
 An older period's commitment advances the vault's ordinary source sequence,
 which reverts a newer EVM v2 root that lands after it
-(`MonthlySourceChanged`). Each run therefore processes its attempted rows
-newest period first: a row is submitted only after every newer pending row
-attempted in the same run has been processed (the source sorts the run's
-items by period, newest first). Across runs the executor does not wait: it
-relies on the stated adapter assumption `sameSignerNonceOrder`, that one
-executor signer sends every monthly step of a vault and that a later nonce
-of that signer never mines before an earlier one. A newer root sent in an
-earlier run holds an earlier nonce than any later send, so it lands first;
-the model records each send's nonce, and a send would invalidate a newer
-submitted root only if that root's nonce were later, which the recorded
-nonces exclude. A leaf already in flight when an attester signed a newer
-root is a stale signature, not a reordering: the root reverts and
-[the authorization journal](./monthlyCommitment.md) signs a new attempt.
+(`MonthlySourceChanged`). The model relies on the stated adapter assumption
+`sameSignerNonceOrder`: one executor signer sends every monthly step of a
+vault, each send takes that signer's next nonce (the model records it as
+`sentNonce`), and a later nonce of that signer never mines before an
+earlier one. So a newer version 2 root that is not yet admitted reverts
+exactly when it is sent while an older step of the same project, network
+and vault is still in flight: that step holds an earlier nonce and mines
+first. Such a send marks the root invalidated, and its landing counts a
+revert.
+
+Two rules keep that send from happening. Within a run the batch is
+attempted newest period first (above), so an older row of the batch is sent
+only after every newer pending row of the batch was processed. Across runs,
+an older row sent in an earlier run may still be in flight, for example
+because the newer root failed first and the older candidate still ran
+(`runMonthlyCommitments`: "The original candidates retain their fairness and
+still run after a prerequisite failure"). The executor then sends no
+unadmitted version 2 root of a newer month of that vault until finality of
+the older send is observed; the attempt is answered `Failed` and the row
+stays pending for a later run. Source gap: development `submitEvmMonthlyReserve`
+does not check the signer's other in-flight months before it signs the root.
+Its gas estimate fails only once the older step has mined, so a root sent
+while the older step is unmined lands after it and reverts.
 
 Submitting needs an attempt recorded in this run, and each row is processed
 at most once per run. A failed send leaves that row pending and touches no
-other row. Admission uses `admit`: the run's consent (a pledge counts) and
-the period's admission window open at the scheduler clock. Without
+other row. Admission uses `admit`: the run's consent (a pledge counts), the
+period's admission window open at the scheduler clock, and the row holding
+the latest attempt the authorization journal signed (vibestack
+`serveMonths` admits only an authorization it has just read from the
+publication, never a stored older one). Without
 admission, a legacy row is skipped, and a version 2 row whose journal shows
 no admitted root is answered `notAdmitted` and stays pending; a version 2
 row whose root is already admitted, or a Solana row, is still sent, because
 an admitted month stays resumable.
 
+Discovered by simulation: the send sample adds `NotAdmitted` beside `Sent`
+and `Failed`, because a version 2 row with no admitted root answers it
+whenever admission is off, and without it such a row could never be
+processed.
+
 ```quint
 type SendResult = Sent | Failed | NotAdmitted
-pure def newerRootPending(e: Execution, row: Row): bool =
-  e.rows.some(o => o.key != row.key and attemptedThisRun(e, o.key) and not(e.processed.includes(o.key))
-    and o.phase == Pending and o.period > row.period)
 pure def resultFits(row: Row, sendResult: SendResult, admit: bool): bool =
   if (admit) sendResult != NotAdmitted
   else if (row.solana) true
   else if (row.v2 and J::admitted(row.journal, row.period)) sendResult != NotAdmitted
   else sendResult == NotAdmitted
+pure def fresh(row: Row): bool = row.sequence == row.latestSequence
+pure def reorderedBy(e: Execution, row: Row, o: Row): bool =
+  row.v2 and not(J::admitted(row.journal, row.period)) and o.key != row.key and not(o.solana) and o.phase == Submitted
+    and o.project == row.project and o.network == row.network and o.vault == row.vault and o.period < row.period
+    and o.sentNonce < e.sends
 pure def canSubmit(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by: str): bool =
   by == "scheduler" and attemptedThisRun(e, key) and not(e.processed.includes(key)) and e.rows.some(r => r.key == key and r.phase == Pending)
     and e.rows.every(r => r.key != key or (r.phase == Pending and r.lastAttempt == e.now and not(newerRootPending(e, r))
-      and admit == (consent and windowOpen(r.period, e.now)) and resultFits(r, sendResult, admit)))
-pure def reorderedBy(e: Execution, row: Row, o: Row): bool =
-  o.phase == Submitted and o.v2 and o.vault == row.vault and o.period > row.period and o.sentNonce > e.sends
+      and admit == (consent and windowOpen(r.period, e.now) and fresh(r)) and resultFits(r, sendResult, admit)
+      and (sendResult == Sent implies not(e.rows.some(o => reorderedBy(e, r, o))))))
 pure def submit(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by: str): Execution =
   if (sendResult != Sent) { ...e, touched: key, processed: e.processed.append(key) }
   else { ...e, touched: key, processed: e.processed.append(key), sends: e.sends + 1, rows: e.rows.listMap(o =>
-    if (o.key == key) { ...o, phase: Submitted, sentNonce: e.sends, lastAdmit: admit, sentWithoutAdmit: o.sentWithoutAdmit or not(admit) }
-    else if (e.rows.some(r => r.key == key and reorderedBy(e, r, o))) { ...o, invalidated: true }
+    if (o.key == key) { ...o, phase: Submitted, sentNonce: e.sends, lastAdmit: admit, sentWithoutAdmit: o.sentWithoutAdmit or not(admit),
+      invalidated: e.rows.some(x => reorderedBy(e, o, x)) }
     else o) }
 pure def alwaysNoReorderingRevert(e: Execution): bool = e.reverts == 0 and e.rows.every(r => not(r.invalidated))
 pure def alwaysSentNoncesIssued(e: Execution): bool = e.sends >= 0
@@ -188,6 +241,9 @@ pure def alwaysSentNoncesIssued(e: Execution): bool = e.sends >= 0
 pure def stepNoAdmissionWithoutAdmit(before: Execution, after: Execution): bool =
   after.rows.every(r => (r.phase == Submitted and not(r.lastAdmit) and before.rows.some(o => o.key == r.key and o.phase == Pending))
     implies (r.solana or J::admitted(r.journal, r.period)))
+pure def stepAdmissionUsesLatestAttempt(before: Execution, after: Execution): bool =
+  after.rows.every(r => (r.phase == Submitted and r.lastAdmit and before.rows.some(o => o.key == r.key and o.phase == Pending))
+    implies (fresh(r) and r.root == r.latest.root))
 pure val sendResultValues = Set(Sent, Failed, NotAdmitted)
 ```
 
@@ -236,7 +292,8 @@ The executor's journal for the row's month is read from finalized evidence.
 A row accepts a newer snapshot only when it keeps every rule of the
 [journal](./executorJournal.md) and extends the snapshot the row holds. An
 EVM row's month admits at most its own signed root: a version 2 root is the
-row's current root with its signed leaf count, and a V1 root is the row's own
+row's current root with its signed leaf count, while the row holds the
+latest signed attempt, and a V1 root is the row's own
 root for a legacy row or the retained original V1 root for a version 2 row.
 This is the composition assumption with
 [the authorization journal](./monthlyCommitment.md): every attempt is signed
@@ -254,7 +311,7 @@ pure def monthOnly(j: J::Journal, period: int): bool = j.entries.every(x => x.ke
   and j.admissions.every(a => a.period == period) and j.leaves.every(k => k.period == period)
   and j.cursors.every(c => c.period == period)
 pure def admissionFits(row: Row, j: J::Journal): bool = j.admissions.every(a =>
-  if (a.kind == J::V2Root) row.v2 and a.root == row.root and a.count == row.leafCount
+  if (a.kind == J::V2Root) row.v2 and fresh(row) and a.root == row.root and a.count == row.leafCount
   else if (row.v2) row.legacyRoot != "" and a.root == row.legacyRoot
   else a.root == row.root and a.count == row.leafCount and M::equalAmounts(a.total, row.total))
 pure def canObserveJournal(e: Execution, key: int, journal: J::Journal, by: str): bool =
@@ -307,22 +364,48 @@ pure def sometimesResumedAfterWindowClosed(e: Execution): bool = e.rows.some(r =
 
 ### The executor uses the latest authorization, and its cursor belongs to that root
 
-The scheduler reads the month's current authorization
-(`monthly_payment_current_authorizations`); a newer attempt replaces it only
-with a strictly higher source sequence, the same whole gross and the same
-retained V1 authorization (`retainAuthorization`), and only while the
-month's journal shows no admitted root. Once a root is admitted the row's
-root never changes. The cursor is read under the row's current root, so a
-replaced tree never inherits another root's progress.
+[The authorization journal](./monthlyCommitment.md) signs a later attempt
+for a version 2 month only inside its admission window and only at a view
+with no admitted root and a newer source sequence; a later attempt keeps the
+frozen request, so the same allocation digest and whole gross, and the same
+retained V1 authorization, while its remaining tree may hold fewer leaves.
+The row records it as the latest attempt. The scheduler reads the month's
+current authorization (`monthly_payment_current_authorizations`); the
+publisher replaces the retained one only with that latest attempt, which
+must have a strictly higher source sequence, the same whole gross, the same
+frozen request and allocation digest, and the same retained V1
+authorization (`retainAuthorization` refuses anything else as "Published
+authorization is not a later execution attempt" or "Published authorization
+changed the frozen allocation"), and only while the month's journal shows
+no admitted root. A root is admitted only from the latest attempt, and the
+executor admits only while the row holds it (above). Once a root is
+admitted the row's root never changes. The cursor is read under the row's
+current root, so a replaced tree never inherits another root's progress.
+
+Discovered by simulation: one later source sequence is enough to sign,
+retain and admit a later attempt and to refuse a second one at the same
+sequence.
 
 ```quint
+pure def laterAttempt(row: Row, tree: Tree): bool = validTree(tree) and tree.legacyRoot == row.legacyRoot
+  and M::equalAmounts(tree.whole, row.wholeGross) and tree.digest == row.digest
+pure def canSignAttempt(e: Execution, key: int, sequence: int, tree: Tree, by: str): bool =
+  by == "attester" and e.rows.some(r => r.key == key and r.v2 and (r.phase == Pending or r.phase == Submitted))
+    and e.rows.every(r => r.key != key or (sequence > r.latestSequence and laterAttempt(r, tree)
+      and windowOpen(r.period, e.now) and not(J::admitted(r.journal, r.period))))
+pure def signAttempt(e: Execution, key: int, sequence: int, tree: Tree, by: str): Execution =
+  { ...e, touched: key, rows: e.rows.listMap(r => if (r.key == key) { ...r, latest: tree, latestSequence: sequence } else r) }
 pure def canReauthorize(e: Execution, key: int, sequence: int, tree: Tree, by: str): bool =
-  by == "publisher" and validTree(tree) and e.rows.some(r => r.key == key and r.v2 and (r.phase == Pending or r.phase == Submitted))
-    and e.rows.every(r => r.key != key or (sequence > r.sequence and tree.legacyRoot == r.legacyRoot
-      and not(J::admitted(r.journal, r.period))))
+  by == "publisher" and e.rows.some(r => r.key == key and r.v2 and (r.phase == Pending or r.phase == Submitted))
+    and e.rows.every(r => r.key != key or (sequence > r.sequence and sequence == r.latestSequence and tree == r.latest
+      and laterAttempt(r, tree) and not(J::admitted(r.journal, r.period))))
 pure def reauthorize(e: Execution, key: int, sequence: int, tree: Tree, by: str): Execution =
   { ...e, touched: key, rows: e.rows.listMap(r => if (r.key == key)
     { ...r, sequence: sequence, root: tree.root, total: tree.total, leafCount: tree.count } else r) }
+pure def alwaysLatestAttemptKnown(e: Execution): bool = e.rows.every(r => r.sequence >= 1 and r.sequence <= r.latestSequence
+  and validTree(r.latest) and r.latest.legacyRoot == r.legacyRoot and M::equalAmounts(r.latest.whole, r.wholeGross)
+  and r.latest.digest == r.digest
+  and (fresh(r) implies r.root == r.latest.root and r.total == r.latest.total and r.leafCount == r.latest.count))
 pure def stepSequenceMonotone(before: Execution, after: Execution): bool =
   after.rows.every(r => before.rows.every(o => o.key != r.key or r.sequence >= o.sequence))
 pure def stepAdmittedRootFixed(before: Execution, after: Execution): bool =
@@ -347,6 +430,11 @@ admitted-state mismatches (another root, digest or count) also throw in the
 source; the composition assumption above excludes them. Source gap: the
 development scheduler keeps a held row in its batch and lets the executor
 throw on every run; the spec holds it out of the batch.
+
+Discovered by simulation: the release receipt sample is one finalized
+release of the held total of the wrong-total root, beside a receipt for
+another root, one for another amount and one not yet finalized, so that a
+release is both reached and refused.
 
 ```quint
 pure def canObserveWrongTotal(e: Execution, key: int, by: str): bool =
@@ -415,6 +503,11 @@ and by another sender with the cursor following, a wrong admitted total, a
 V1 root won by another sender with this signer's root attempt live and then
 settled, this signer's own V1 root, and a closed window with nothing
 admitted.
+
+Discovered by simulation: journals are sampled as whole snapshots for each
+sampled period and tree, because a free journal almost never satisfies the
+journal's own rules and the row's admitted root, so no version 2 row would
+ever complete or be held.
 
 ```quint
 pure def entryOf(xKey: J::JournalKey, xBytes: int, xNonce: int, xPhase: J::EntryPhase, xVerdict: J::Outcome,

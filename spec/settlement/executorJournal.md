@@ -15,7 +15,8 @@ vibestack `apps/settlement/src/keeper/monthly.vibe` (`sendJournaledUntilFinalize
 `retireReverted`), and development `workers/payment-executor/core.ts`
 (`sendJournaledUntilFinalized`, `retireRevertedAttempt`,
 `submitEvmMonthlyReserve`). [Monthly commitment execution](./monthlyExecution.md)
-reads this journal for root settlement, the admitted root and the cursor.
+reads this journal for root settlement, the admitted root and the cursor,
+and the attester's [binding journal](./signer.md) uses its retirement rule.
 
 ## Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it
 
@@ -31,6 +32,10 @@ version 2 root is signed only after the same month's legacy key has no live
 attempt: `submitReserve` first rebroadcasts a live legacy attempt and returns.
 A leaf is signed only under the month's admitted version 2 root, below its
 leaf count.
+
+Discovered by simulation: amounts and leaf counts are sampled as zero (a
+leaf's shape), a two-leaf month of 5 and another total of 6, and delivery as
+both answered and lost, because a lost answer is what a rebroadcast resumes.
 
 ```quint
 import money as M from "./money"
@@ -94,6 +99,10 @@ another sender only when every finalized attempt of the key reverted. A
 month has one root, of either kind, and a leaf is committed only under the
 month's admitted version 2 root.
 
+Discovered by simulation: nonces, heights and times are sampled just above
+the few nonces a short run issues, and receipts as both outcomes, so that
+finality passes some attempts and not others.
+
 ```quint
 pure def canObserveFinalized(j: Journal, nonce: int, height: int, time: int): bool =
   nonce > j.finalizedNonce and nonce <= j.nextNonce and height > j.height and time >= j.time
@@ -138,16 +147,22 @@ first. `retireReverted` runs only while the step is uncommitted; it retains
 the attempt with its finalized revert under `<key>:reverted:<transaction>`
 and clears the key. Every signed variant of an attempt shares one nonce, so
 one finalized revert of any variant proves no variant of that attempt can
-land. A retired or settled attempt is never changed or removed.
+land. A retired or settled attempt is never changed or removed. The same
+rule retires the attester's binding transaction in the [binding
+journal](./signer.md): only a reverted receipt that is finalized retires an
+attempt (`finalizedRevert`), and a retired attempt's identity is kept and
+never reused (`retainedIds`).
 
 ```quint
+pure def finalizedRevert(reverted: bool, finalized: bool): bool = reverted and finalized
+pure def retainedIds(before: List[int], after: List[int]): bool = before.every(a => after.includes(a))
 pure def canSettleStep(j: Journal, journalKey: JournalKey): bool =
   committed(j, journalKey) and j.entries.some(e => e.key == journalKey and e.phase == Live and e.nonce < j.finalizedNonce)
 pure def settleStep(j: Journal, journalKey: JournalKey): Journal =
   { ...j, entries: j.entries.listMap(e => if (e.key == journalKey and e.phase == Live) { ...e, phase: Settled } else e) }
 pure def canRetire(j: Journal, journalKey: JournalKey): bool =
   not(committed(j, journalKey))
-    and j.entries.some(e => e.key == journalKey and e.phase == Live and e.verdict == Reverted and e.nonce < j.finalizedNonce)
+    and j.entries.some(e => e.key == journalKey and e.phase == Live and finalizedRevert(e.verdict == Reverted, e.nonce < j.finalizedNonce))
 pure def retire(j: Journal, journalKey: JournalKey): Journal =
   { ...j, entries: j.entries.listMap(e => if (e.key == journalKey and e.phase == Live) { ...e, phase: Retired } else e) }
 ```
@@ -158,6 +173,10 @@ The cursor is stored per admitted tree root. It passes the next leaf only
 when that leaf is committed and this signer holds no live attempt for it, and
 never passes the root's leaf count. A month's root is settled when it is
 admitted and neither root key of the month holds a live attempt.
+
+Discovered by simulation: one period, the two roots a month can name (a
+version 2 root and a V1 root) and the month's two root keys and first two
+leaves are sampled, which is every key a two-leaf month uses.
 
 ```quint
 pure def cursorOf(j: Journal, period: int, root: str): int =
