@@ -375,13 +375,13 @@
     },
     {
       "path": "backend/pages.ts",
-      "sha256": "efdbf530a5e17e2f8c09489f90cb9c76370263aee204d580ae7949e154072ada",
+      "sha256": "4df8dda103435ba5616ef988d0bc7cb9bf05b7a3df603c17ecc67fd8f828abc0",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/project_skill_publication.qnt"
       ],
-      "candidateLines": [119],
+      "candidateLines": [126],
       "review": "mapped-abstraction"
     },
     {
@@ -1002,7 +1002,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "sha256": "829e217ec09b83b0ab9200fe645f1e02a05707bc9a8c70832baa6d3e0845e33c",
+      "sha256": "e8afd9b8c57ceda6acfa3d6a7a4e3c2486c5d81947fd0bf387294c8b40590eae",
       "models": [
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
@@ -1011,8 +1011,8 @@
         "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "candidateLines": [
-        144, 180, 184, 208, 220, 221, 269, 387, 414, 484, 527, 546, 551, 582,
-        665, 683, 729, 732
+        154, 190, 194, 218, 230, 231, 279, 397, 424, 494, 537, 556, 561, 592,
+        675, 693, 739, 742
       ],
       "review": "mapped-abstraction"
     },
@@ -1100,7 +1100,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "6915eef2eacdc11ce0c93bee3169cb6c00984dbbc7f81343b87ac2a45caf4177",
+      "sha256": "ee74ea6f1eec6acf032d6e9ec2db93b8fb5d545a22f58b13d2ec6bda4005686c",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -1118,13 +1118,13 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
-        305, 306, 357, 359, 366, 428, 436, 438, 511, 576, 643, 649, 671, 673,
-        681, 699, 765, 917, 943, 1086, 1106, 1139, 1145, 1161, 1291, 1333, 1334,
-        1336, 1338, 1358, 1460, 1483, 1502, 1599, 1600, 1615, 1630, 1655, 1726,
-        1730, 1775, 1800, 1983, 2026, 2151, 2511, 2537, 2562, 2615, 2782, 2785,
-        2786, 2825, 2834, 2854, 2900, 2951, 2952, 2954, 2997, 3059, 3088, 3094,
-        3100, 3130, 3167, 3178, 3196, 3202, 3283, 3291, 3293, 3308, 3404, 3413,
-        3419, 3431, 3434, 3435, 3463, 3467, 3470, 3507
+        315, 316, 367, 369, 376, 438, 446, 448, 521, 592, 660, 672, 694, 696,
+        704, 708, 724, 790, 943, 969, 1117, 1137, 1170, 1193, 1209, 1342, 1384,
+        1385, 1387, 1389, 1409, 1511, 1541, 1560, 1659, 1660, 1675, 1690, 1715,
+        1786, 1790, 1835, 1860, 2043, 2086, 2211, 2579, 2605, 2630, 2684, 2851,
+        2854, 2855, 2894, 2903, 2923, 2969, 3020, 3021, 3023, 3066, 3128, 3157,
+        3163, 3169, 3199, 3236, 3247, 3265, 3271, 3355, 3363, 3365, 3380, 3476,
+        3485, 3491, 3503, 3506, 3507, 3535, 3539, 3542, 3579
       ],
       "review": "mapped-abstraction"
     },
@@ -1193,8 +1193,24 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/security/report-deposit-hold.ts",
+      "sha256": "f50c81e880281e4c7f88db15a26392a745d976d537ba150ba43936a08658d61d",
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/report-deposit.ts",
+      "sha256": "ee55d453a4dc51b4ef349c1e921781b1bcdb566262144457f645d1e722450fdd",
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "candidateLines": [
+        15, 28, 148, 195, 359, 403, 440, 549, 593, 607, 617, 623
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/security/report-intake.ts",
-      "sha256": "75fdc257dcac03320a045a1c568aab46b481f1b99e7386a343e529b642d4f63a",
+      "sha256": "fa64f6f494c3ceba982d9a7c1b3bcf4c986b2301136a1ea0e1971c931806c9b8",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -1207,10 +1223,10 @@
         "formal/models/ui/ui_private_intake.qnt"
       ],
       "candidateLines": [
-        70, 107, 134, 153, 158, 179, 186, 203, 210, 251, 360, 367, 456, 469,
-        511, 521, 536, 543, 567, 578, 594, 596, 622, 656, 662, 674, 676, 679,
-        680, 855, 873, 884, 889, 894, 963, 1226, 1304, 1319, 1359, 1395, 1401,
-        1415, 1420, 1432, 1437, 1442
+        82, 120, 147, 167, 172, 193, 200, 219, 226, 268, 273, 378, 407, 414,
+        503, 516, 560, 570, 585, 592, 620, 631, 647, 649, 675, 709, 715, 727,
+        729, 732, 733, 908, 926, 937, 942, 947, 1023, 1294, 1373, 1388, 1428,
+        1468, 1474, 1488, 1493, 1505, 1510, 1515
       ],
       "review": "mapped-abstraction"
     },
@@ -1226,11 +1242,11 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "sha256": "a61440ece70b5a0f244c06e640232ae20cbdb993e9fe3a23319aa73f62ff35a1",
+      "sha256": "e382df9bdad0c3be659e745d2cfc5b6c2e4abfaad465a402f82f4ab617259197",
       "models": ["formal/models/api/api_security_routine_decisions.qnt"],
       "candidateLines": [
-        162, 330, 380, 413, 430, 577, 581, 626, 642, 644, 677, 690, 777, 831,
-        923, 925, 934, 982, 1085
+        163, 331, 382, 416, 433, 580, 584, 629, 645, 647, 680, 693, 780, 834,
+        926, 928, 937, 985, 1088
       ],
       "review": "mapped-abstraction"
     },
@@ -1249,7 +1265,7 @@
     },
     {
       "path": "backend/security/submissions.ts",
-      "sha256": "371a98e9159dc145e9e638788b6faa94c402f068f9dde40e0d61944ff5a13e01",
+      "sha256": "8250296269d6c0119f321aba60a9436dd3c8680638521dfdc6836675c929026a",
       "models": [
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
@@ -1257,11 +1273,11 @@
         "formal/models/api/submission_receipt_verification.qnt"
       ],
       "candidateLines": [
-        13, 118, 178, 180, 181, 182, 185, 208, 213, 215, 305, 319, 320, 335,
-        342, 346, 349, 365, 383, 426, 431, 483, 495, 498, 504, 507, 537, 569,
-        575, 590, 631, 632, 682, 700, 728, 742, 745, 758, 776, 782, 784, 787,
-        788, 793, 822, 860, 872, 883, 899, 923, 925, 937, 997, 1008, 1010, 1013,
-        1022, 1041, 1049, 1057, 1078, 1090, 1094
+        13, 119, 179, 181, 182, 183, 186, 209, 214, 216, 306, 320, 321, 336,
+        343, 347, 350, 366, 384, 427, 432, 484, 496, 499, 505, 508, 538, 570,
+        576, 591, 643, 644, 694, 713, 741, 756, 759, 772, 790, 796, 798, 801,
+        802, 807, 836, 874, 886, 897, 913, 937, 939, 951, 1011, 1022, 1024,
+        1027, 1036, 1055, 1063, 1071, 1092, 1104, 1108
       ],
       "review": "mapped-abstraction"
     },
@@ -1316,12 +1332,13 @@
     },
     {
       "path": "backend/submission-fee/handler.ts",
-      "sha256": "a0f15e0cfb72b377320860871d9289b3a6f19ad83d4fba7520784b7fbc520760",
+      "sha256": "faa9a9b3916506b6f79ac554d2b8c591b22680ce2150ce55df9b76862cebda6b",
       "models": [
+        "formal/models/api/api_security_report_deposit.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt"
       ],
-      "candidateLines": [59, 60, 145],
+      "candidateLines": [132, 152, 153, 238],
       "review": "mapped-abstraction"
     },
     {
@@ -2343,7 +2360,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "46dcfd55c51cbcf8d7fd91dbd90090df1e1baffdfafa0b3a712cd08d235b9ddb",
+      "sha256": "015a289e1f2798b8ba152745161c2020c258ed515a6bb969816a858c29e69437",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2354,7 +2371,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [561, 562, 598, 611],
+      "candidateLines": [566, 567, 603, 616],
       "review": "mapped-abstraction"
     },
     {
@@ -3786,6 +3803,13 @@
       "sha256": "f87d0152617989c69c469d74dc84c30eff1378d608f75071be801640197dda85",
       "models": ["formal/models/api/api_wanted_issues.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0145_security_report_deposits.sql",
+      "sha256": "f1dbc9e9b6bb5ba2dfdd3d0b896107534b8f90605c2398ee4a1d665954df29d9",
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "candidateLines": [9],
       "review": "mapped-abstraction"
     },
     {
@@ -7441,9 +7465,9 @@
     },
     {
       "path": "src/lib/project-revision-changes.ts",
-      "sha256": "ed66ceddc3c71c6f462c2ea02a7561e27426f0af1a965f3af3772a5b0ccab659",
+      "sha256": "7931ebed9452a6265b4910053ce8e2d3b867e5206b28174487f0646a924667e5",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
-      "candidateLines": [12, 112],
+      "candidateLines": [13, 114],
       "review": "mapped-abstraction"
     },
     {
@@ -7456,17 +7480,17 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "996b6335ed214812c33f03e083f9f11e22cc36137bc94f7f1478a0216f34c3ec",
+      "sha256": "22b03db6c1e22ad2d3b29eaf41058527521212c6795c4edeb0c0bace331848b2",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
       "candidateLines": [
-        134, 339, 350, 355, 359, 360, 419, 425, 431, 434, 438, 442, 543, 546,
-        553, 556, 574, 600, 701, 702, 704, 709, 719, 1344, 1345, 1348, 1356,
-        1359, 1369, 1370, 1372, 1374, 1487, 1488, 1489, 1493, 1496, 1498, 1508,
-        1509, 1511, 1621
+        134, 340, 351, 356, 360, 361, 420, 426, 432, 435, 439, 443, 544, 547,
+        554, 557, 575, 601, 702, 703, 705, 710, 720, 1359, 1360, 1363, 1371,
+        1374, 1384, 1385, 1387, 1389, 1502, 1503, 1504, 1508, 1511, 1513, 1523,
+        1524, 1526, 1636
       ],
       "review": "mapped-abstraction"
     },
@@ -7688,6 +7712,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure preservation of existing security terms/default split while rebuilding form fields; state is owned by the editor."
+    },
+    {
+      "path": "src/lib/security-report-deposit.mjs",
+      "sha256": "5f6dd74446e1936321f37905b92343d5884a0116b3d67c2ce983219ca89e5ec7",
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/sha256.ts",
@@ -10550,7 +10581,7 @@
     },
     {
       "path": "wrangler.toml",
-      "sha256": "c0c3af6eaebe6ab6db89076cde6686cb34e4f6e63c15f9b3d719f503ef18991e",
+      "sha256": "781ced72900ca591b1165847ce4a5350a82a5c6fd4f0ec2c17fdbca0b45eedc7",
       "models": ["formal/models/api/api_points_session_lifetime.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -11446,6 +11477,50 @@
         "lostAccessWaitsTest",
         "ownerClosesSavedRequestTest",
         "serverFinishesTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_report_deposit.qnt",
+      "sha256": "14cb4ce717a39f15f64d1be4fcf63c885c5585bf4e6a497442349cfe8a1582ca",
+      "sources": [
+        "backend/security/report-deposit-hold.ts",
+        "backend/security/report-deposit.ts",
+        "backend/submission-fee/handler.ts",
+        "migrations/0145_security_report_deposits.sql",
+        "src/lib/security-report-deposit.mjs"
+      ],
+      "scenarios": [
+        "acknowledgedIsSentBackTest",
+        "appealStopsTheClockTest",
+        "decidedDepositKeepsItsPaymentTest",
+        "dryRunRecordsAndHoldsNothingTest",
+        "duplicateIsKeptAfterItStoodTest",
+        "duplicateWaitsSevenDaysTest",
+        "exemptIsNotAskedTest",
+        "existingReportIsNeverAskedTest",
+        "finalDecisionAfterAppealDecidesTest",
+        "heldIsNotDecidedByAPersonTest",
+        "heldIsNotDecidedTest",
+        "heldIsNotForwardedTest",
+        "heldTakesAVersionTest",
+        "liveAndOnIsNotReleasedTest",
+        "liveAskHoldsTest",
+        "modeOffReleasesTest",
+        "noProofCloseIsSentBackTest",
+        "noProofClosedIsSentBackTest",
+        "noRateAsksNobodyTest",
+        "openAppealWaitsTest",
+        "ownerOffReleasesTest",
+        "paidIsScreenedTest",
+        "paidThenOffIsSentBackTest",
+        "plainRejectionIsSentBackTest",
+        "projectOffAsksNobodyTest",
+        "recordedIsNeverAnAskTest",
+        "reorganisedPaymentWaitsAgainTest",
+        "silentIsSentBackAfterTheClockTest",
+        "silentIsSentBackTest",
+        "spamByAPersonIsKeptTest",
+        "upheldAppealRestartsTheClockTest"
       ]
     },
     {

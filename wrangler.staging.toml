@@ -25,6 +25,9 @@ SLOP_PRIVATE_INTAKE_MODE = "on"
 # Routine decisions on undecided private reports (PRD section 8; operator
 # decision of 17 November 2026): off on staging.
 SECURITY_ROUTINE_DECISIONS = "off"
+# The refundable SLOP deposit on a private report (PRD section 8): off on
+# staging, which has no SLOP and no deposit contract.
+SECURITY_REPORT_DEPOSIT = "off"
 
 [[d1_databases]]
 binding = "SLOP_DB"
