@@ -41,14 +41,18 @@ test("only an interpreter line on the first bytes adds a surface", () => {
     `\n#!/bin/sh\n${PAYLOAD}\n`,
   ]) {
     const inspection = inspected("configure", text);
-    expect(inspection.findings).toEqual([]);
+    expect(inspection.findings).toContainEqual(
+      expect.objectContaining({
+        path: "configure",
+        category: "unsafe-execution",
+      }),
+    );
     expect(inspection.coverage.installScripts).toEqual({
       state: "complete",
       items: 0,
     });
   }
-  // A document with no interpreter line keeps no surface, so the inventory
-  // does not become a blanket text scan.
+  // A document gets source review, but no interpreter/install classification.
   expect(surfacesOf("LICENSE")).toEqual([]);
   expect(inspected("LICENSE", "# License\n").findings).toEqual([]);
 });

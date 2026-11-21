@@ -51,8 +51,9 @@ Approved provider retention and private-data handling are operational gates.
 Each response must finish normally, return the pinned model and contain one
 JSON review. The review must cover all seven required areas and link every
 finding to supplied evidence ids. Missing or partial coverage stays in
-`visibilityGaps`. Findings remain advisory, including a model's suspicion of
-malice. The publisher must retain these gaps and reconcile both reviews with
+`visibilityGaps`; each partial area must name its reason, which
+`review-coverage.ts` verifies against the supplied evidence (README). Findings
+remain advisory, including a model's suspicion of malice. The publisher must retain these gaps and reconcile both reviews with
 source and runtime evidence; it cannot use a completed model response alone as
 permission to clear a project.
 

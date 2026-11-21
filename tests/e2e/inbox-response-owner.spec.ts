@@ -106,7 +106,7 @@ for (const action of ["acknowledge", "read"] as const) {
     });
     const trigger = () =>
       action === "read"
-        ? page.getByRole("button", { name: "Mark shown as read", exact: true })
+        ? page.getByRole("button", { name: "Mark page read", exact: true })
         : page.getByRole("button", { name: /^Acknowledge:/u });
     const report = (id: string) =>
       page.getByText(`Private report for ${id}`, { exact: true });
@@ -126,9 +126,7 @@ for (const action of ["acknowledge", "read"] as const) {
       // A denied action may retain metadata only after verifying the same account.
       await trigger().click();
       await expect(
-        page
-          .getByRole("alert")
-          .filter({ hasText: /Could not (?:mark|acknowledge)/u }),
+        page.getByRole("alert").filter({ hasText: "Not saved" }),
       ).toBeVisible();
       await expect(report("42")).toBeVisible();
       await expect(notice("42")).toBeVisible();
@@ -214,9 +212,17 @@ test("a delayed Inbox response cannot expose the prior recipient after an accoun
         get: () => leaked,
       });
       new MutationObserver(() => {
-        const text = document.body?.textContent ?? "";
+        // Private text may also sit in a tooltip, so titles count too.
+        const text = [
+          document.body?.textContent ?? "",
+          ...Array.from(document.querySelectorAll("[title]"), (element) =>
+            element.getAttribute("title"),
+          ),
+        ].join("\n");
         leaked ||= markers.some((marker) => text.includes(marker));
       }).observe(document, {
+        attributes: true,
+        attributeFilter: ["title"],
         childList: true,
         characterData: true,
         subtree: true,
@@ -338,10 +344,16 @@ test("a delayed Inbox response cannot expose the prior recipient after an accoun
 
 test("private receipt response cannot be assigned to a later matching session", async ({
   page,
+  diagnostics,
 }, info) => {
   const foreignId = "ss_foreign_receipt";
   const foreignProject = "foreign-private-project";
   let privateReads = 0;
+  diagnostics.allowResponse(
+    404,
+    "GET",
+    `/api/v1/security-submissions/${foreignId}?view=receipt`,
+  );
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/v1/projects")
@@ -367,6 +379,8 @@ test("private receipt response cannot be assigned to a later matching session", 
           cases: [],
         },
       });
+    if (path === `/api/v1/security-submissions/${foreignId}`)
+      return route.fulfill({ status: 404, json: { error: "not_found" } });
     if (path === "/api/v1/security-submissions") {
       privateReads++;
       // The private request used B's cookie after another tab changed sessions.
@@ -413,9 +427,7 @@ test("private receipt response cannot be assigned to a later matching session", 
   });
   expect(privateReads).toBe(1);
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(
-    page.getByText(`Private report · ${foreignProject}`),
-  ).toHaveCount(0);
+  await expect(page.getByText(foreignProject, { exact: false })).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("private-list-refusal.png"),
     fullPage: true,
@@ -514,7 +526,7 @@ for (const mismatch of ["submissions", "cases"] as const) {
     await page.goto("/security", { waitUntil: "networkidle" });
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Retry private session", exact: true }),
+      page.getByRole("button", { name: "Reload", exact: true }),
     ).toBeVisible();
     await expect(page.getByText(foreignProject, { exact: false })).toHaveCount(
       0,
@@ -602,7 +614,7 @@ test("Inbox focus during a write retains the completed mutation readback", async
     await page.goto("/inbox", { waitUntil: "networkidle" });
     await expect(page.getByText("1 unread", { exact: true })).toBeVisible();
     await page
-      .getByRole("button", { name: "Mark shown as read", exact: true })
+      .getByRole("button", { name: "Mark page read", exact: true })
       .click();
     await started;
     await page.evaluate(async () => {
@@ -614,12 +626,12 @@ test("Inbox focus during a write retains the completed mutation readback", async
     // The write is still pending, so focus must not read the pre-write state.
     expect(reads).toBe(1);
     finish();
-    await expect(page.getByText("All read.", { exact: true })).toBeVisible();
+    await expect(page.getByText("1 unread", { exact: true })).toHaveCount(0);
     await expect(
-      page.getByRole("status").filter({ hasText: "Marked as read." }),
-    ).toBeVisible();
+      page.getByRole("img", { name: "Unread", exact: true }),
+    ).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Mark shown as read", exact: true }),
+      page.getByRole("button", { name: "Mark page read", exact: true }),
     ).toHaveCount(0);
     expect(reads).toBe(2);
   } finally {

@@ -105,6 +105,15 @@ export interface BurnQuote {
   gasCostMicro: bigint;
 }
 
+export type FinalizedRpcObservation =
+  | {
+      status: "verified";
+      chainId: number;
+      blockNumber: string;
+      blockHash: string;
+    }
+  | { status: "unavailable" };
+
 export interface BuybackChainClient {
   /** Source networks only. */
   bridge?: {
@@ -120,11 +129,15 @@ export interface BuybackChainClient {
   };
   /** Robinhood Chain only. */
   market?: {
+    /** Diagnostic only. A failed probe leaves buyback accounting untouched. */
+    observeFinalizedRpc?(): Promise<FinalizedRpcObservation>;
     fill(terms: BridgeTerms): Promise<FillState>;
     quoteBuy(
       token: string,
       amount: bigint,
-    ): Promise<BuyQuote | { noRoute: string }>;
+    ): Promise<
+      BuyQuote | { noRoute: string } | { belowMinimumValueMicro: bigint }
+    >;
     prepareBuy(
       token: string,
       quote: BuyQuote,
@@ -204,6 +217,7 @@ export interface BuybackSummary {
   /** Deposits still without a proven outcome after this run. */
   inTransit: number;
   errors: number;
+  finalizedRpc?: FinalizedRpcObservation;
 }
 
 export interface BuybackHook {
@@ -682,9 +696,28 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
           ? "per-run value cap reached"
           : "daily value cap reached",
       );
+    const referenceAsset = token.toLowerCase() === ROBINHOOD_USDG;
+    if (referenceAsset && amount > remaining) amount = remaining;
+    row.amountIn = amount.toString();
+    if (referenceAsset) row.quoteValueMicro = exactQuoteMicro(amount);
+    if (
+      remaining < limits.minBuyMicro ||
+      (referenceAsset && amount < limits.minBuyMicro)
+    )
+      return note(context, row, "pending", "below the minimum purchase value");
     let quoted = await market.quoteBuy(token, amount);
     if ("noRoute" in quoted)
       return note(context, row, "no_route", quoted.noRoute);
+    if ("belowMinimumValueMicro" in quoted)
+      return note(
+        context,
+        {
+          ...row,
+          quoteValueMicro: exactQuoteMicro(quoted.belowMinimumValueMicro),
+        },
+        "pending",
+        "below the minimum purchase value",
+      );
     // Fit the purchase inside the remaining caps by scaling the input and
     // quoting again, a bounded number of times; never exceed either cap.
     for (
@@ -702,6 +735,17 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
           { ...row, amountIn: amount.toString() },
           "no_route",
           requoted.noRoute,
+        );
+      if ("belowMinimumValueMicro" in requoted)
+        return note(
+          context,
+          {
+            ...row,
+            amountIn: amount.toString(),
+            quoteValueMicro: exactQuoteMicro(requoted.belowMinimumValueMicro),
+          },
+          "pending",
+          "below the minimum purchase value",
         );
       quoted = requoted;
     }
@@ -912,6 +956,9 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
       }
       await attempt("burn", async () => count("burn", await burn(context)));
       summary.inTransit = (await store.inTransit()).length;
+      const market = context.client.buyback?.market;
+      if (options.mode === "live" && market?.observeFinalizedRpc)
+        summary.finalizedRpc = await market.observeFinalizedRpc();
       return summary;
     },
   };

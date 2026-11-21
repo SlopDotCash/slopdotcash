@@ -1,14 +1,18 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { EVM_ESCROW_EVENT_TOPICS, evmRpc } from "../../contracts/evm/adapter";
-import { escrowInvocations, solanaRpc } from "../../contracts/solana/adapter";
+import {
+  assertSolanaGenesis,
+  escrowInvocations,
+  solanaRpc,
+} from "../../contracts/solana/adapter";
 import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type { DeploymentView } from "./deployment-types";
 
 type ScanDeployment = DeploymentView<
   "projectId" | "vault",
   "deploymentTransaction" | "scanPageBlocks" | "projectPda" | "programId"
->;
+> & { chainId?: string | bigint };
 export interface ScanEvent {
   projectId: string;
   network: string;
@@ -30,6 +34,14 @@ export async function scanEvmPayments(
   const page = deployment.scanPageBlocks;
   if (page === undefined || !/^[1-9][0-9]{0,6}$/.test(page))
     throw new Error("Reviewed scan page size required for EVM scanning");
+  // Empty pages never reach the event verifier. Authenticate the chain before
+  // advancing coverage, including when the independent vault refresh failed.
+  if (
+    !deployment.chainId ||
+    BigInt((await evmRpc({ rpcUrl }, "eth_chainId", [])) as string) !==
+      BigInt(deployment.chainId)
+  )
+    throw new Error("Payment scanner chain mismatch");
   const span = BigInt(page) - 1n;
   const cursor = await db
     .prepare(
@@ -111,13 +123,14 @@ const SOLANA_TRANSACTIONS_PER_RUN = 100;
  */
 export async function scanSolanaPayments(
   db: D1Database,
-  deployment: ScanDeployment,
+  deployment: ScanDeployment & { genesisHash: string | undefined },
   rpcUrl: string,
   index: (event: ScanEvent) => Promise<void>,
 ): Promise<void> {
   const { projectPda, programId } = deployment;
   if (!projectPda || !programId)
     throw new Error("Solana project deployment missing");
+  await assertSolanaGenesis({ rpcUrl, genesisHash: deployment.genesisHash });
   // Freeze a discovery interval. A later run resumes its oldest fetched page;
   // newly arriving transactions belong to the next interval.
   await db

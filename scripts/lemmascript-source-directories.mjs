@@ -12,6 +12,7 @@ const excludedSourceDirectories = new Set([
 export function isExcludedSourceDirectory(path) {
   return (
     excludedSourceDirectories.has(path.split("/").at(-1)) ||
+    path === "workers/vetting-sandbox/.build" ||
     path === "contracts/solana/.local" ||
     path === "contracts/evm/cache"
   );

@@ -121,6 +121,8 @@ type Run = {
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
   guidance: (value: string | null) => void;
+  submissionBody: (value: string) => void;
+  evidenceClosureEnabled: (value: boolean) => void;
   policyResponse: (status: number, body?: unknown) => void;
   closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
@@ -343,6 +345,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let hasValue = false;
   let config: string | null = null;
   let guidance: string | null = null;
+  let submissionBody = BODY;
   let configTruncated = false;
   let policyResponse: { status: number; body?: unknown } | null = null;
   let revokeOnConfirmation = false;
@@ -548,7 +551,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           body:
             path.endsWith("/issues/4") && duplicateChange === "body"
               ? "Changed original content"
-              : BODY,
+              : submissionBody,
           user: {
             login: "author",
             id:
@@ -843,6 +846,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     SLOPBOT_APP_PRIVATE_KEY: privateKey,
     SLOPBOT_APP_USER_ID: "999",
     SLOPBOT_CLOSURE_ENABLED: "true",
+    SLOPBOT_EVIDENCE_CLOSURE_ENABLED: "false",
     PROJECT_MODERATOR_GITHUB_IDS: String(MODERATOR),
     SURPLUS_API_KEY: "local-synthetic-key",
     SURPLUS_BASE_URL: server.url.origin,
@@ -1321,6 +1325,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       guidance: (value) => {
         guidance = value;
+      },
+      submissionBody: (value) => {
+        submissionBody = value;
+      },
+      evidenceClosureEnabled: (value) => {
+        env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED = String(value);
       },
       policyResponse: (status, body) => {
         policyResponse = { status, body };
@@ -1870,6 +1880,103 @@ test("fresh project consent and confirmation permit closure without a repository
     expect(run.sql(PENALTY)).toHaveLength(1);
   });
 });
+
+const evidencePolicy = [
+  "## Evidence",
+  "Change types: Declare every applicable type.",
+  "Test results: Show the executed checks and their results.",
+  "Proof of change: Reproduce the failure and the working result.",
+  "Runtime logs: Show the previous failure and the working result.",
+  "UI video: Link the before and after video.",
+  "Benchmarks: Show the matched workload and measured outcome.",
+  "On-device testing: List the physical device, build, and result.",
+].join("\n");
+
+const evidencedSubmission = [
+  "This fixes the empty product list on desktop and mobile.",
+  "## Evidence",
+  "- Change types: ui, non-ui",
+  "- Test results: bun run test completed with three passing integration journeys.",
+  "- Proof of change: The empty list at base now shows eligible projects at head.",
+  "- Runtime logs: Before GET returned an empty list; after it returned three eligible records.",
+  "- UI video: https://github.com/user-attachments/assets/18a47654-7a03-48a7-8000-f30bafafa283",
+  "Made via @slopdotcash",
+].join("\n");
+
+for (const scenario of [
+  "missing",
+  "invalid-video-link",
+  "complete",
+  "unsigned",
+  "no-consent",
+  "activation-off",
+  "late-edit",
+  "change-types-period",
+] as const) {
+  test(`Slop evidence takes the correct action with ${scenario}`, async () => {
+    await closedItem(async (run) => {
+      run.guidance(evidencePolicy);
+      run.closureEnabled(false);
+      run.evidenceClosureEnabled(scenario !== "activation-off");
+      run.model("none", 0.98);
+      const submission =
+        scenario === "complete"
+          ? evidencedSubmission
+          : scenario === "change-types-period"
+            ? evidencedSubmission.replace(
+                "- Change types: ui, non-ui",
+                "- Change types: ui, non-ui.",
+              )
+            : scenario === "invalid-video-link"
+              ? evidencedSubmission.replace(
+                  /^- UI video:.*$/mu,
+                  "- UI video: https://github.com",
+                )
+              : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
+      run.submissionBody(
+        scenario === "unsigned"
+          ? submission.replace(
+              "Made via @slopdotcash",
+              "> Made via @slopdotcash",
+            )
+          : submission,
+      );
+      if (scenario === "no-consent") run.consent(false);
+      if (scenario === "late-edit")
+        run.onReviewComment(() => run.submissionBody(evidencedSubmission));
+      const outcome = await run.review();
+      if (scenario === "missing" || scenario === "invalid-video-link") {
+        expect(outcome, run.comments.join("\n")).toBe(
+          "closed (missing_evidence)",
+        );
+        expect(run.comments.join("\n")).toContain("UI video");
+        expect(run.modelInputs).toEqual([]);
+        await run.review();
+        expect(run.sql(PENALTY)).toEqual([
+          {
+            category: "missing_evidence",
+            debit_thirds: 1,
+            moderator_review: 0,
+            reversal: null,
+          },
+        ]);
+        await run.deliver(await run.reopen());
+        expect(run.sql(PENALTY)).toEqual([
+          {
+            category: "missing_evidence",
+            debit_thirds: 1,
+            moderator_review: 0,
+            reversal: "maintainer_reopen",
+          },
+        ]);
+      } else {
+        expect(outcome).not.toStartWith("closed");
+        expect(run.currentState()).toBe("open");
+        expect(run.sql(PENALTY)).toEqual([]);
+      }
+    });
+  });
+}
 
 for (const category of ["busywork", "gaming"] as const) {
   for (const guard of [
@@ -2492,6 +2599,105 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         debit_thirds: 24,
         moderator_review: 1,
         reversal: "maintainer_reopen",
+      },
+    ]);
+  });
+});
+
+test("a moderator-denied appeal cannot be overturned by pushing a new head and re-appealing", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // The first appeal escalates on low draft confidence; a moderator denies.
+    run.model("spam", 0.5);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: Slopbot confidence is below 0.9",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The same revision cannot be appealed again.
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal already resolved",
+    );
+    // A new head opens a new revision key, but the penalty is the same one
+    // the moderator left in place: the repeat appeal goes to a moderator
+    // instead of letting the appellant accept a fresh uphold draft alone.
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item was denied",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The moderator can still uphold the repeat appeal, reversing once.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "uphold", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal upheld by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
+  });
+});
+
+test("a repeat appeal after a maintainer-denied draft also goes to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.97);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "accept",
+          senderId: MAINTAINER,
+        }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item was denied",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
       },
     ]);
   });

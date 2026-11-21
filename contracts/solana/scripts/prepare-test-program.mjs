@@ -12,6 +12,16 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** Programs of this workspace that the pinned image builds, with the manifest and receipt
+ * names of each. The escrow keeps its original names. */
+const PROGRAMS = {
+  "slop-escrow": { manifest: "manifest.json", receipt: "test-program.json" },
+  "slop-submission-deposits": {
+    manifest: "slop-submission-deposits.manifest.json",
+    receipt: "slop-submission-deposits.test-program.json",
+  },
+};
+
 /** The caller supplies the trusted same-run build artifact. Its manifest is
  * consistency evidence, not authentication for arbitrary downloaded programs. */
 export async function prepareTestProgram(
@@ -25,13 +35,18 @@ export async function prepareTestProgram(
     runId = process.env.GITHUB_RUN_ID,
     runAttempt = process.env.SLOP_SOLANA_ARTIFACT_ATTEMPT ??
       process.env.GITHUB_RUN_ATTEMPT,
+    program = "slop-escrow",
   } = {},
 ) {
+  if (!Object.hasOwn(PROGRAMS, program))
+    throw new Error("Unknown Solana test program");
+  const names = PROGRAMS[program];
+  const file = `${program.replaceAll("-", "_")}.so`;
   const root = await realpath(repositoryRoot);
   const programRoot = join(root, "contracts/solana");
   const directory = await realpath(artifactDirectory);
   const manifest = JSON.parse(
-    await readFile(join(directory, "manifest.json"), "utf8"),
+    await readFile(join(directory, names.manifest), "utf8"),
   );
   const git = (...args) =>
     execFileSync("git", args, {
@@ -53,8 +68,8 @@ export async function prepareTestProgram(
     manifest.platform !== "linux/amd64" ||
     manifest.platformTools !== "v1.52" ||
     manifest.command !==
-      "cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version v1.52 -- --locked" ||
-    manifest.file !== "slop_escrow.so" ||
+      `cargo build-sbf --manifest-path programs/${program}/Cargo.toml --tools-version v1.52 -- --locked` ||
+    manifest.file !== file ||
     !/^[a-f0-9]{64}$/u.test(manifest.sha256 ?? "") ||
     !Number.isSafeInteger(manifest.sizeBytes) ||
     manifest.sizeBytes < 4 ||
@@ -89,10 +104,10 @@ export async function prepareTestProgram(
     if (rest === "" || rest.startsWith("..") || isAbsolute(rest))
       throw new Error("Solana test output escapes the program workspace");
   }
-  const temporary = join(output, `.slop-escrow-${randomUUID()}.tmp`);
+  const temporary = join(output, `.${program}-${randomUUID()}.tmp`);
   try {
     await writeFile(temporary, bytes, { flag: "wx", mode: 0o644 });
-    await rename(temporary, join(output, "slop_escrow.so"));
+    await rename(temporary, join(output, file));
   } finally {
     await unlink(temporary).catch(() => {});
   }
@@ -105,7 +120,7 @@ export async function prepareTestProgram(
     workflowAttempt: manifest.workflowAttempt,
   };
   await writeFile(
-    join(evidence, "test-program.json"),
+    join(evidence, names.receipt),
     `${JSON.stringify(receipt, null, 2)}\n`,
   );
   return receipt;
@@ -117,7 +132,14 @@ if (
 ) {
   if (!process.argv[2])
     throw new Error(
-      "Usage: node prepare-test-program.mjs /trusted/artifact-directory",
+      "Usage: node prepare-test-program.mjs /trusted/artifact-directory [program]",
     );
-  console.log(JSON.stringify(await prepareTestProgram(process.argv[2])));
+  console.log(
+    JSON.stringify(
+      await prepareTestProgram(
+        process.argv[2],
+        process.argv[3] ? { program: process.argv[3] } : {},
+      ),
+    ),
+  );
 }

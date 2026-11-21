@@ -35,7 +35,8 @@ export class D1BuybackStore implements BuybackStore {
   /**
    * Verified fee income of one asset in the fee wallet since `since`: the
    * output of finalized conversions into it, finalized vault claims of it,
-   * and completed direct awards that paid their fee in it to this wallet.
+   * completed direct awards that paid their fee in it to this wallet, and
+   * kept submission fees the deposit contract sent to it in that asset.
    * A fee in another token counts once, as the output of its conversion.
    */
   async feeIncome(
@@ -89,7 +90,46 @@ export class D1BuybackStore implements BuybackStore {
         : row.recipient === feeWallet;
       if (mine) income += BigInt(row.fee_base);
     }
-    return income;
+    return (
+      income + (await this.keptSubmissionFees(network, token, feeWallet, since))
+    );
+  }
+
+  /**
+   * Kept submission fees in one asset (PRD section 6, "Submission fee
+   * deposits"). A pull request closed without a merge keeps its deposit: the
+   * SubmissionDeposits contract sends a stablecoin deposit to the fee wallet
+   * named when it was made. `workers/submission-fee` records a deposit as
+   * `kept` only from the contract's finalized `Resolved` event, after the
+   * finalized receipt proved the transfer of the deposit's exact amount to
+   * that destination, and dates it by that block. A refunded or reclaimed
+   * deposit is not income. Kept SLOP goes to the burn address, never to the
+   * fee wallet, so it matches no row here. The contract exists only on EVM
+   * networks.
+   */
+  private async keptSubmissionFees(
+    network: Network,
+    token: string,
+    feeWallet: string,
+    since: string,
+  ) {
+    const definition = NETWORK_DEFINITIONS[network];
+    if (definition.family !== "evm" || definition.escrowNetworks.length === 0)
+      return 0n;
+    const { results } = await this.db
+      .prepare(
+        `SELECT amount FROM submission_fee_deposits
+          WHERE network IN (${definition.escrowNetworks.map(() => "?").join(", ")})
+            AND state = 'kept' AND accepted = 1 AND finalized_at IS NOT NULL
+            AND resolve_tx IS NOT NULL AND resolved_at >= ?
+            AND lower(token) = lower(?) AND lower(kept_to) = lower(?)`,
+      )
+      .bind(...definition.escrowNetworks, since, token, feeWallet)
+      .all<{ amount: string | null }>();
+    return total(
+      results.map((row) => row.amount),
+      "Kept submission fee",
+    );
   }
 
   /**

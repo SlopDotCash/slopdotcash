@@ -45,6 +45,7 @@ import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
   MonthlyPaymentError,
+  monthlyCuts,
   monthlyPaymentSettingSequence,
 } from "./monthly";
 import { readMonthlyAuthorization } from "./monthly-publication";
@@ -59,6 +60,8 @@ import {
   FundingVaultNotFoundError,
   handleSolanaFunding,
 } from "./solana-funding";
+import { handleSolanaMonthLock } from "./solana-month-lock";
+import { projectVaultDeposits } from "./vault-deposits";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -226,6 +229,18 @@ export async function handlePaymentsApi(
       );
     }
 
+    const monthLockRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-month-lock$/.exec(path);
+    if (monthLockRoute && request.method === "POST") {
+      const resolve = deps.solanaFundingConfig;
+      if (!resolve) return json(503, { error: "funding_unavailable" });
+      return await handleSolanaMonthLock(
+        request,
+        (network, vault) => resolve(monthLockRoute[1], network, vault),
+        deps.now?.() ?? new Date(),
+      );
+    }
+
     const monthlySettingRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-monthly-commitment$/.exec(
         path,
@@ -311,6 +326,21 @@ export async function handlePaymentsApi(
             publishedAt: saved.published_at,
           })
         : json(404, { error: "monthly_authorization_unavailable" });
+    }
+    // Owner cuts are public (PRD section 6, operator decision of
+    // 15 November 2026): each current cut below a proposed amount, with the
+    // owner's reason. Other allocation changes stay private.
+    const cutsRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/cuts$/.exec(
+        path,
+      );
+    if (cutsRoute && request.method === "GET") {
+      const [, projectId, period] = cutsRoute;
+      return json(200, {
+        projectId,
+        period,
+        cuts: await monthlyCuts(deps.db, projectId, period),
+      });
     }
     const totalsRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/totals$/.exec(path);
     if (totalsRoute && request.method === "GET") {
@@ -422,6 +452,38 @@ export async function handlePaymentsApi(
                 (s) => deps.tier === "staging" || !isTestnetNetwork(s.network),
               ),
               staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
+              servedAt: now,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
+                "x-content-type-options": "nosniff",
+              },
+            },
+          ),
+      );
+    // Finalized deposits the payments worker recorded, for "Funded by"
+    // (operator decision, 18 November 2026). Same cache and tier rule as the
+    // vault totals; a page view never reaches a chain RPC.
+    const depositsRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/deposits$/.exec(
+      path,
+    );
+    if (depositsRoute && request.method === "GET")
+      return await cachedPublicResponse(
+        deps.edgeCache,
+        request,
+        async () =>
+          new Response(
+            JSON.stringify({
+              projectId: depositsRoute[1],
+              ...(await projectVaultDeposits(
+                deps.db,
+                depositsRoute[1],
+                deps.tier === "staging",
+                isTestnetNetwork,
+              )),
               servedAt: now,
             }),
             {
@@ -746,7 +808,8 @@ export async function handlePaymentsApi(
             if (
               typeof body?.githubUserId !== "string" ||
               typeof body.grossBase !== "string" ||
-              !sequence(body.expectedSequence)
+              !sequence(body.expectedSequence) ||
+              (body.reason !== undefined && typeof body.reason !== "string")
             )
               return json(400, { error: "invalid_allocation" });
             return json(
@@ -755,6 +818,9 @@ export async function handlePaymentsApi(
                 githubUserId: body.githubUserId,
                 grossBase: body.grossBase,
                 expectedSequence: body.expectedSequence,
+                ...(typeof body.reason === "string"
+                  ? { reason: body.reason }
+                  : {}),
               }),
             );
           }
@@ -1101,12 +1167,26 @@ export async function handlePaymentsApi(
         return json(503, { error: "identity_attester_unavailable" });
       const bindingQuery =
         "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') ORDER BY t.created_at LIMIT 1";
+      const bindingPayment = async (db: D1Database) => {
+        if (!complete) {
+          // Mainnet has no hosted payment dispatcher. Admit only this actor's
+          // current authorized destination, under the dispatcher's same ready
+          // outbox fence, before asking the attester for a binding transaction.
+          await db
+            .prepare(
+              "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) SELECT ?,o.id,w.id,?,'prepared' FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_outbox b ON b.obligation_id=o.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM payment_attempts t WHERE t.obligation_id=o.id AND t.state IN ('prepared','unknown','submitted'))",
+            )
+            .bind(crypto.randomUUID(), now, body.obligationId, member.githubId)
+            .run();
+        }
+        return db
+          .prepare(bindingQuery)
+          .bind(body.obligationId, member.githubId)
+          .first<Record<string, string>>();
+      };
       let attester = deps.solanaAttester;
       let privateBinding = false;
-      let payment = await deps.db
-        .prepare(bindingQuery)
-        .bind(body.obligationId, member.githubId)
-        .first<Record<string, string>>();
+      let payment = await bindingPayment(deps.db);
       if (!payment && deps.securityPayments) {
         const owned = await deps.db
           .prepare(
@@ -1121,10 +1201,7 @@ export async function handlePaymentsApi(
             )
             .bind(owned.case_id, member.githubId, now)
             .run();
-          payment = await deps.securityPayments.db
-            .prepare(bindingQuery)
-            .bind(body.obligationId, member.githubId)
-            .first<Record<string, string>>();
+          payment = await bindingPayment(deps.securityPayments.db);
           attester = deps.securityPayments.solanaAttester;
           privateBinding = true;
         }

@@ -1,4 +1,5 @@
 import { valueBlobReader } from "./value-blob";
+import { hasVerifiedFullComparison } from "./value-comparison-counts";
 import type {
   AcceptedValueRange,
   EvidenceClient,
@@ -39,21 +40,42 @@ export async function collectAcceptedValueRange(
       (file) =>
         !["added", "modified", "removed"].includes(file.status) ||
         file.previous_filename !== undefined ||
-        !hasCompleteValuePatch(file),
+        (!hasCompleteValuePatch(file) && !hasVerifiedFullComparison(file)),
     )
   )
     return null;
   const changed = new Map(merge.files.map((file) => [file.filename, file]));
+  let submittedComparisonBase: string | undefined;
+  for (const file of files) {
+    if (!file.fullComparison) continue;
+    if (
+      file.fullComparison.headSha !== headSha ||
+      (submittedComparisonBase !== undefined &&
+        file.fullComparison.baseSha !== submittedComparisonBase)
+    )
+      return null;
+    submittedComparisonBase = file.fullComparison.baseSha;
+  }
   let overlappingDependency = false;
+  let statusChanged = false;
+  let fullComparison = files.some((file) => file.fullComparison !== undefined);
   for (const accepted of merge.files) {
     const submitted = files.find((file) => file.filename === accepted.filename);
     if (
       !submitted ||
       accepted.previous_filename !== undefined ||
-      accepted.status !== submitted.status ||
-      !hasCompleteValuePatch(accepted)
+      !["added", "modified", "removed"].includes(accepted.status) ||
+      (!hasCompleteValuePatch(accepted) && !hasVerifiedFullComparison(accepted))
     )
       return null;
+    if (
+      accepted.fullComparison &&
+      (accepted.fullComparison.baseSha !== merge.parents[0].sha ||
+        accepted.fullComparison.headSha !== merge.sha)
+    )
+      return null;
+    statusChanged ||= accepted.status !== submitted.status;
+    fullComparison ||= accepted.fullComparison !== undefined;
     overlappingDependency ||=
       valueAdditionCount(accepted) !== valueAdditionCount(submitted) ||
       valueDeletionCount(accepted) !== valueDeletionCount(submitted) ||
@@ -79,6 +101,8 @@ export async function collectAcceptedValueRange(
   // An earlier dependency can also change the same path. In that case patch
   // equality is insufficient: bind the complete resulting file and mode.
   if (
+    statusChanged ||
+    fullComparison ||
     overlappingDependency ||
     files.length > 16 ||
     files.some((file) => file.status === "removed")
@@ -87,6 +111,10 @@ export async function collectAcceptedValueRange(
     const accepted = await readValueTree(client, repository, merge.sha);
     const parent = await readValueTree(client, repository, proof.parentSha);
     if (!head || !accepted || !parent) return null;
+    const submittedBase = submittedComparisonBase
+      ? await readValueTree(client, repository, submittedComparisonBase)
+      : null;
+    if (submittedComparisonBase && !submittedBase) return null;
     for (const file of [...files].sort((a, b) =>
       a.filename.localeCompare(b.filename),
     )) {
@@ -95,6 +123,26 @@ export async function collectAcceptedValueRange(
       const after = accepted.get(path);
       const prior = parent.get(path);
       const alreadyPresent = !changed.has(path);
+      const acceptedChange = changed.get(path);
+      if (
+        file.fullComparison &&
+        (file.fullComparison.before.blobSha !== submittedBase?.get(path)?.sha ||
+          file.fullComparison.after.blobSha !== before?.sha)
+      )
+        return null;
+      if (
+        acceptedChange?.fullComparison &&
+        (acceptedChange.fullComparison.before.blobSha !== prior?.sha ||
+          acceptedChange.fullComparison.after.blobSha !== after?.sha)
+      )
+        return null;
+      if (
+        acceptedChange &&
+        ((acceptedChange.status === "added" && (prior || !after)) ||
+          (acceptedChange.status === "modified" && (!prior || !after)) ||
+          (acceptedChange.status === "removed" && (!prior || after)))
+      )
+        return null;
       if (file.status === "removed") {
         if (before || after || (alreadyPresent && prior)) return null;
         proof.files.push({ path, blobSha: null, alreadyPresent });

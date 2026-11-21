@@ -1,5 +1,17 @@
-import { ArrowRight, CircleAlert, RotateCcw, Wallet } from "lucide-react";
+import {
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  LoaderCircle,
+  RotateCcw,
+  Wallet,
+} from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  MAINNET_EXECUTION,
+  mainnetExecutionEnabled,
+} from "../workers/payment-executor/mainnet-execution.mjs";
 import { Link } from "./Link";
 import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -7,7 +19,6 @@ import { useNotFoundHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import { hasBountyOverview } from "./lib/home-projects";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
-import { POINTS_PER_THIRD } from "./lib/points";
 import {
   type ProjectSessionState,
   useProjectMaintainer,
@@ -16,9 +27,9 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   formatMicroUsdc,
   formatRewardMinor,
-  monthlyPoolLabel,
   monthlyPoolUnfunded,
 } from "./lib/reward-amount";
+import { scoreThirdsToPoints } from "./lib/score-units";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
@@ -236,11 +247,7 @@ export function DataNotice({
   retry: () => void;
 }) {
   if (state.status === "loading") {
-    return (
-      <p className="data-notice" role="status">
-        Loading records…
-      </p>
-    );
+    return <Spinner className="data-notice" label="Loading records" />;
   }
   if (state.status === "error") {
     return (
@@ -257,10 +264,10 @@ export function DataNotice({
   if (state.refreshError !== undefined) {
     return (
       <p className="data-notice data-stale" role="status">
-        Points may be outdated · updated{" "}
-        {formatDateTime(state.snapshot.generatedAt)}.
-        <button onClick={retry} type="button">
-          <RotateCcw aria-hidden="true" size={15} /> Retry
+        <span className="pr-dot pr-bar-open" aria-hidden="true" />
+        Data last updated · {formatDateTime(state.snapshot.generatedAt)}
+        <button aria-label="Retry" onClick={retry} title="Retry" type="button">
+          <RotateCcw aria-hidden="true" size={15} />
         </button>
       </p>
     );
@@ -269,8 +276,8 @@ export function DataNotice({
   if (stale(state.snapshot)) {
     return (
       <p className="data-notice data-stale" role="status">
-        Points may be outdated · updated{" "}
-        {formatDateTime(state.snapshot.generatedAt)}
+        <span className="pr-dot pr-bar-open" aria-hidden="true" />
+        Data last updated · {formatDateTime(state.snapshot.generatedAt)}
       </p>
     );
   }
@@ -340,15 +347,65 @@ export function NotFound({
   );
 }
 
-export {
-  formatMicroUsdc,
-  formatRewardMinor,
-  monthlyPoolLabel,
-  monthlyPoolUnfunded,
-};
+export { formatMicroUsdc, formatRewardMinor, monthlyPoolUnfunded };
 
 export function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
+}
+
+/** A loading state without visible words; the label stays for assistive tech. */
+export function Spinner({
+  label,
+  className,
+}: {
+  label: string;
+  className?: string;
+}) {
+  return (
+    <span className={className} role="status" title={label}>
+      <LoaderCircle aria-hidden="true" className="wallet-spin" size={18} />
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
+}
+
+/** The funded share of a cap as a small bar beside "{funded} / {cap}". */
+export function FundedMeter({
+  label,
+  fundedMinor,
+  capMinor,
+  funded,
+  cap,
+}: {
+  label?: string;
+  fundedMinor: string;
+  capMinor: string;
+  funded: string;
+  cap: string;
+}) {
+  const total = BigInt(capMinor);
+  const part = BigInt(fundedMinor);
+  const share =
+    total > 0n ? Number(((part > total ? total : part) * 10_000n) / total) : 0;
+  return (
+    <span className="funded-meter">
+      {label ? <span>{label}</span> : null}
+      <span className="pr-bar" aria-hidden="true">
+        {share > 0 ? (
+          <span className="vault-available" style={{ flexGrow: share }} />
+        ) : null}
+        {share < 10_000 ? (
+          <span
+            className="vault-reserved"
+            style={{ flexGrow: 10_000 - share }}
+          />
+        ) : null}
+      </span>
+      <span>
+        {funded} / {cap}
+      </span>
+    </span>
+  );
 }
 
 /** Previous and next controls for one zero-based page of a long list. */
@@ -368,23 +425,27 @@ export function Pager({
   return (
     <div className="points-controls points-pagination">
       <button
-        className="button secondary-button button-small"
+        aria-label={`Previous${suffix}`}
+        className="button secondary-button button-small icon-button"
         disabled={page === 0}
         onClick={() => onPage(page - 1)}
+        title={`Previous${suffix}`}
         type="button"
       >
-        Previous{suffix}
+        <ChevronLeft aria-hidden="true" />
       </button>
       <span>
-        Page {page + 1} of {pages}
+        {page + 1} / {pages}
       </span>
       <button
-        className="button secondary-button button-small"
+        aria-label={`Next${suffix}`}
+        className="button secondary-button button-small icon-button"
         disabled={page + 1 >= pages}
         onClick={() => onPage(page + 1)}
+        title={`Next${suffix}`}
         type="button"
       >
-        Next{suffix}
+        <ChevronRight aria-hidden="true" />
       </button>
     </div>
   );
@@ -431,12 +492,12 @@ export function formatCycleMonth(value: string): string {
  */
 const CYCLE_STATE_LABELS: Record<CycleIndexEntry["state"], string> = {
   "closed-no-awards": "Closed, no awards",
-  "external-provisional": "Provisional external shares",
+  "external-provisional": "Provisional",
   review: "Under review",
   "payment-ready": "Approved",
-  "settlement-planned": "Approved, payment ready",
+  "settlement-planned": "Payment ready",
   paid: "Paid",
-  "wound-up": "Approved, payment held",
+  "wound-up": "Held",
 };
 
 export function cycleStateLabel(state: CycleIndexEntry["state"]): string {
@@ -454,7 +515,7 @@ const CYCLE_CONTRIBUTOR_STATE_LABELS: Record<
   "external-share": "External prize share",
   unclaimed: "Awaiting wallet",
   held: "Held",
-  "held-below-minimum": "Held below the payment minimum",
+  "held-below-minimum": "Held · below min",
   paid: "Paid",
 };
 
@@ -484,16 +545,36 @@ export function cycleLifecycleLabel(
   cycle: Pick<CycleIndexEntry, "approvedAt" | "reviewEndsAt" | "state">,
 ): string {
   return awaitingApproval(cycle)
-    ? "Under review, awaiting approval"
+    ? "Awaiting approval"
     : cycleStateLabel(cycle.state);
 }
 
-export function reviewBudgetLabel(
-  reviewBudget: NonNullable<ProjectDefinition["reward"]["reviewBudget"]>,
-): string {
-  return reviewBudget.fundingState === "committed"
-    ? `${formatMicroUsdc(reviewBudget.committedMinor)} of ${reviewBudget.monthlyCapDisplay} review budget funded`
-    : `${reviewBudget.monthlyCapDisplay} review budget · not funded`;
+/** The chip colour for a cycle's lifecycle label. */
+export function cycleLifecycleTone(
+  cycle: Pick<CycleIndexEntry, "approvedAt" | "reviewEndsAt" | "state">,
+): RouteTone {
+  if (cycle.state === "paid") return "success";
+  if (cycle.state === "wound-up" || awaitingApproval(cycle)) return "warning";
+  if (cycle.state === "closed-no-awards") return "neutral";
+  return "info";
+}
+
+/** A funded review budget as a meter; a pledged one shows nothing. */
+export function ReviewBudget({
+  reviewBudget,
+}: {
+  reviewBudget: NonNullable<ProjectDefinition["reward"]["reviewBudget"]>;
+}) {
+  if (reviewBudget.fundingState !== "committed") return null;
+  return (
+    <FundedMeter
+      label="Reviews"
+      fundedMinor={reviewBudget.committedMinor}
+      capMinor={reviewBudget.monthlyCapMinor}
+      funded={formatMicroUsdc(reviewBudget.committedMinor)}
+      cap={reviewBudget.monthlyCapDisplay}
+    />
+  );
 }
 
 export function Avatar({
@@ -523,9 +604,9 @@ export function Avatar({
   );
 }
 
-/** Integer credit-thirds in the displayed Slop Points unit. */
+/** Legacy credit-thirds in the displayed whole Slop Points unit. */
 export function formatPointsFromThirds(thirds: number): string {
-  return (thirds * POINTS_PER_THIRD).toLocaleString();
+  return scoreThirdsToPoints(thirds).toLocaleString();
 }
 
 export function formatPercent(partsPerMillion: number): string {
@@ -580,19 +661,15 @@ export function PaymentLifecycle() {
       >
         <li>
           <strong>Projected</strong>
-          <span>An estimate, not an approved award.</span>
         </li>
         <li>
           <strong>Under review</strong>
-          <span>The amount may change before the monthly cutoff.</span>
         </li>
         <li>
           <strong>Approved</strong>
-          <span>The award amount is approved.</span>
         </li>
         <li>
           <strong>Paid</strong>
-          <span>The finalized payment matches the award.</span>
         </li>
       </ol>
     </div>
@@ -609,11 +686,7 @@ export function SignInPanel({
   purpose?: string;
 }) {
   if (state.status === "checking") {
-    return (
-      <p aria-live="polite" className="admin-status">
-        Checking sign-in…
-      </p>
-    );
+    return <Spinner className="admin-status" label="Checking sign-in" />;
   }
   return (
     <div className="sign-in-panel">
@@ -724,11 +797,6 @@ export function NoWalletFound({ solana }: { solana: boolean }) {
       <Wallet aria-hidden="true" size={22} />
       <p>
         <strong>{solana ? "No Solana wallet found" : "No wallet found"}</strong>
-        <span>
-          {solana
-            ? "Use a Solana wallet that can send transactions."
-            : "Use a wallet extension or your wallet app's browser."}
-        </span>
       </p>
     </div>
   );
@@ -756,7 +824,13 @@ export function WalletConnection<T extends { id: string; name: string }>({
   if (address)
     return (
       <p>
-        Connected: <code>{address}</code>
+        <span
+          className="pr-dot pr-bar-merged"
+          role="img"
+          aria-label="Connected"
+          title="Connected"
+        />{" "}
+        <code>{address}</code>
       </p>
     );
   if (!wallets.length) return empty ?? null;
@@ -777,13 +851,30 @@ export function WalletConnection<T extends { id: string; name: string }>({
   );
 }
 
-export function paymentStateLabel(project: ProjectDefinition): string {
-  return project.reward.paymentMode === "enabled" ? "Enabled" : "Disabled";
+/**
+ * Payments are on when the project has a recorded vault on a network that
+ * executes payouts. Mainnet networks follow the reviewed switch in
+ * `workers/payment-executor/mainnet-execution.mjs`; test networks are not on
+ * that switch. The legacy `reward.paymentMode` field is not read by the payout
+ * engine, so it does not decide this label (operator decision, 15 November
+ * 2026).
+ */
+export function paymentsOn(project: ProjectDefinition): boolean {
+  if (project.reward.kind === "external-prize-share") return false;
+  return (project.escrow?.deployments ?? []).some(
+    (deployment) =>
+      !Object.hasOwn(MAINNET_EXECUTION, deployment.network) ||
+      mainnetExecutionEnabled(deployment.network),
+  );
 }
 
-/** "Live" only when a recorded vault can pay: payments must be enabled too. */
+export function paymentStateLabel(project: ProjectDefinition): string {
+  return paymentsOn(project) ? "Enabled" : "Disabled";
+}
+
+/** "Live" only when a recorded vault is on a network that pays out. */
 export function vaultStateLabel(project: ProjectDefinition): string {
   if (project.reward.kind === "external-prize-share") return "Not applicable";
   if (!project.escrow?.deployments.length) return "Not set up";
-  return project.reward.paymentMode === "enabled" ? "Live" : "Set up";
+  return paymentsOn(project) ? "Live" : "Set up";
 }

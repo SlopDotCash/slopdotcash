@@ -107,10 +107,7 @@ function PendingApplication({
       try {
         await requireApplicationActor(actorId);
       } catch {
-        if (mounted.current)
-          onAccountLost(
-            "Your private session could not be checked. Reload your saved applications.",
-          );
+        if (mounted.current) onAccountLost("Session check failed. Reload.");
         return;
       }
       if (!mounted.current) return;
@@ -165,8 +162,8 @@ function PendingApplication({
                       publication.action === "publish"
                     ? "Retry"
                     : isRevision
-                      ? "Publish this change"
-                      : "Create this project"}
+                      ? "Publish"
+                      : "Create"}
               </button>
             )}
             <button
@@ -204,7 +201,6 @@ function PendingApplication({
       {publication.status === "published" ? (
         <ProjectSetupStatusPanel
           actorId={actorId}
-          compact
           projectId={publication.result.project.id}
           initial={publication.result.setup}
           showProjectLink={false}

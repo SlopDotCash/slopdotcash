@@ -18,6 +18,13 @@ const actor = {
 };
 const at = "2026-10-31T23:59:30.000Z";
 
+/** The retained-journal notice: a "Stale" status beside the retry control. */
+const staleNotice = (page: Page) =>
+  page.getByRole("status").filter({
+    has: page.getByRole("button", { name: "Retry points", exact: true }),
+    hasText: /^\s*Stale\s*$/u,
+  });
+
 /** One valid October award, published through the real sixteen-shard format. */
 function pointsFixture() {
   const sourceId = "PR_points_refresh_fixture";
@@ -79,6 +86,14 @@ async function servePointsSite(page: Page) {
       if (![deployment.site, deployment.api].includes(url.origin))
         return route.abort();
       if (url.pathname === "/api/v1/payments/received") return route.fallback();
+      if (url.pathname === "/api/v1/merge-activity")
+        return route.fulfill({
+          json: { schema: "slop-merge-activity-v1", projects: [] },
+        });
+      if (url.pathname === "/api/v1/pool-funding")
+        return route.fulfill({
+          json: { schema: "slop-pool-funding-v1", projects: [] },
+        });
       if (url.pathname === "/api/v1/project-session")
         return route.fulfill({ json: { session: null } });
       if (
@@ -139,7 +154,7 @@ async function servePointsSite(page: Page) {
   };
 }
 
-test("a failed Points refresh keeps verified totals, marks them stale and retries across the UTC month boundary", async ({
+test("a failed Points refresh keeps the verified journal, marks it stale and retries across the UTC month boundary", async ({
   diagnostics,
   page,
 }, info) => {
@@ -152,8 +167,13 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
   await page.goto(`${fixture.site}/contributors/${actor.login}`, {
     waitUntil: "networkidle",
   });
-  const total = page.locator(".profile-totals strong").last();
-  await expect(total).toHaveText("10");
+  // The profile shows the contribution record, never a Points total
+  // (operator decision, 18 November 2026).
+  await expect(
+    page.getByRole("region", { name: "Slop Points", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".profile-totals")).toHaveCount(0);
+  await expect(staleNotice(page)).toHaveCount(0);
   expect(fixture.reads()).toBe(1);
   fixture.fail();
   // Midnight refreshes the visible journal without navigation. Make the
@@ -172,43 +192,20 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
   await expect(
     page.getByRole("button", { name: "Retry points", exact: true }),
   ).toBeVisible();
-  await expect(total).toHaveText("10");
+  await expect(staleNotice(page)).toBeVisible();
+  // The retained journal still identifies the contributor.
   await expect(
-    page.getByText("Points may be outdated.", { exact: true }),
+    page.getByRole("region", { name: "Slop Points", exact: true }),
   ).toBeVisible();
   expect(fixture.reads()).toBe(3);
   await page.screenshot({
     path: info.outputPath("points-stale.png"),
     fullPage: true,
   });
-  // The retained October journal must not report October's award as November work.
-  await page
-    .getByRole("banner")
-    .getByRole("link", { name: "Slop home", exact: true })
-    .click();
-  await page
-    .getByRole("link", { name: "View leaderboard", exact: true })
-    .click();
-  await page.waitForLoadState("networkidle");
-  await page.getByRole("button", { name: "This month", exact: true }).click();
-  const table = page.getByRole("region", {
-    name: "Contributor standings table",
-    exact: true,
-  });
-  await expect(table.getByText(actor.login, { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "All time", exact: true }).click();
-  await expect(
-    table.getByRole("row").filter({ hasText: actor.login }),
-  ).toContainText("10");
   const readsBeforeRetry = fixture.reads();
   fixture.recover();
   await page.getByRole("button", { name: "Retry points", exact: true }).click();
-  await expect(
-    page.getByText("Points may be outdated.", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    table.getByRole("row").filter({ hasText: actor.login }),
-  ).toContainText("10");
+  await expect(staleNotice(page)).toHaveCount(0);
   expect(fixture.reads()).toBe(readsBeforeRetry + 1);
 });
 
@@ -221,17 +218,11 @@ test("an initial Points failure remains unavailable without a verified journal",
   diagnostics.allow(
     /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points\.json$/u,
   );
-  await page.goto(`${fixture.site}/points`, { waitUntil: "networkidle" });
+  await page.goto(`${fixture.site}/contributors/${actor.login}`, {
+    waitUntil: "networkidle",
+  });
   await expect(
     page.getByText("Points could not load.", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Points may be outdated.", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("region", {
-      name: "Contributor standings table",
-      exact: true,
-    }),
-  ).toHaveCount(0);
+  await expect(staleNotice(page)).toHaveCount(0);
 });

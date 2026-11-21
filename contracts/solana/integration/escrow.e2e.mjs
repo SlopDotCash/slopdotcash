@@ -1591,6 +1591,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
         month: pda(seed("month"), key(project), periodSeed(n)),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions(pre)
       .signers([stranger])
@@ -2389,6 +2390,77 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
   );
 });
 
+// The payment keeper resumes an admitted month once per scheduled run. Without its
+// per-run bound the executor settles one leaf per call, so every remaining leaf costs one
+// keeper run and the owner's direct commits stay blocked for that long.
+test("an admitted month settles all remaining leaves in one keeper run bounded by perRun", async () => {
+  const { stranger, period } = await monthlyPeriod();
+  await freshProject("monthly-keeper-bound", 200_000_000n);
+  // The executor reads only finalized accounts, including this newly created project.
+  await provider.connection.confirmTransaction(
+    await program.methods
+      .setMonthlyCommitment(bn(200_000_000), true)
+      .accountsStrict({ owner: payer.publicKey, project })
+      .rpc(),
+    "finalized",
+  );
+  const entries = entriesOf(
+    ["bound-a", "bound-b", "bound-c", "bound-d", "bound-e"],
+    701,
+  );
+  const frozenAt = String(await chainTime());
+  const { total, environment, authorization } = await monthlyExecutor(
+    stranger,
+    period,
+    entries,
+    frozenAt,
+    "monthly-keeper-bound",
+  );
+  const finalized = (signatures) =>
+    Promise.all(
+      signatures.map((signature) =>
+        provider.connection.confirmTransaction(signature, "finalized"),
+      ),
+    );
+  const admitted = await submitSolanaMonthly(environment, authorization);
+  await finalized([admitted.transactionId]);
+  const read = () => program.account.project.fetch(project);
+  assert.equal((await read()).monthlyOutstanding.toString(), total);
+  // The keeper's call without a bound: one leaf for this run.
+  const unbounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+  );
+  assert.equal(unbounded.transactionIds.length, 1);
+  await finalized(unbounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "100000000");
+  await assert.rejects(
+    commit("while-outstanding", 999, 1),
+    /MonthlyOutstanding/,
+  );
+  // The keeper's perRun bound: every remaining leaf in the next run.
+  const bounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+    10,
+  );
+  assert.equal(bounded.transactionIds.length, entries.length - 1);
+  await finalized(bounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "0");
+  assert.deepEqual(
+    await submitSolanaMonthly(environment, authorization, false, 10),
+    { transactionId: null, alreadyCommitted: true },
+  );
+  for (const entry of entries) {
+    const obligation = await program.account.obligation.fetch(awardAt(entry));
+    assert.equal(obligation.actorId.toString(), entry.githubUserId);
+    assert.equal(obligation.gross.toString(), entry.grossMicro);
+  }
+  await commit("after-keeper-month", 999, 1);
+});
+
 // The monthly gate tests share a funded payer that is neither owner nor attester, the one
 // recordable period, and entries whose source digests equal the ones `commit` derives.
 async function monthlyPeriod() {
@@ -2485,6 +2557,7 @@ const monthlyAdmission = (stranger, period, n) =>
         month: monthAt(n),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions([
         Ed25519Program.createInstructionWithPrivateKey({
@@ -3410,31 +3483,19 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
   assert.deepEqual(await accounts(), beforeHeld);
 });
 
-// Primitive accounting control only, not a qualified duplicate-source classification:
-// the signed tree repeats a source, so its second copy can never
-// settle or be released per leaf. Only the owner, with a fresh identity-authority
-// signature over the month's exact unsettled gross, returns that part to free balance.
-// The settleable leaves stay reserved and still commit; the period stays recorded.
-test("the owner releases a month's unsettleable gross only with a fresh attestation", async () => {
+// Aggregate and per-leaf releases cannot consume the same gross. A per-leaf
+// release keeps later honest leaves payable and prevents any aggregate release.
+test("monthly release paths cannot double-release an uncommittable leaf", async () => {
   const { stranger, period, n } = await monthlyPeriod();
-  await freshProject("monthly-unsettleable", 100_000_000n);
-  const [a, b] = entriesOf(["unsettle-a", "unsettle-b"], 731);
-  const entries = [
-    a,
-    b,
-    {
-      githubUserId: "733",
-      grossMicro: "5000000",
-      sourceDigest: a.sourceDigest,
-    },
-  ];
+  await freshProject("monthly-double-release", 100_000_000n);
+  const [a, b, c] = entriesOf(["settle-a", "settle-b", "release-c"], 731);
+  const entries = [a, b, { ...c, githubUserId: "0" }];
   const tree = allocationTree(
     entries.map((e) => [e.githubUserId, e.grossMicro, e.sourceDigest]),
   );
   const admit = monthlyAdmission(stranger, period, n);
   const { leaf } = await admit(entries, await chainTime(), tree);
   const read = () => program.account.project.fetch(project);
-  const month = () => program.account.monthlyAllocation.fetch(monthAt(n));
   const u64 = (x) => bn(x).toArrayLike(Buffer, "le", 8);
   const release = (unsettled, released, signer = authority, owner = payer) =>
     program.methods
@@ -3463,46 +3524,50 @@ test("the owner releases a month's unsettleable gross only with a fresh attestat
       ])
       .signers(owner === payer ? [] : [owner])
       .rpc();
-  let state = await read();
-  assert.equal(state.monthlyOutstanding.toString(), "35000000");
-  assert.equal(state.reserved.toString(), "35000000");
-  await assert.rejects(commit("blocked", 999, 1), /MonthlyOutstanding/);
-  // Only the owner, only the project's identity authority, only this exact state.
+  const before = await read();
+  const total = Number(tree.total);
+  const released = Number(c.grossMicro);
+  assert.equal(total, 60_000_000);
+  assert.equal(released, 10_000_000);
+  // Preserve the owner, authority and exact-state controls.
   await assert.rejects(
-    release(35_000_000, 5_000_000, authority, stranger),
+    release(total, total, authority, stranger),
     /ConstraintHasOne|has one/,
   );
   await assert.rejects(
-    release(35_000_000, 5_000_000, nextAuthority),
+    release(total, total, nextAuthority),
     /InvalidAttestation/,
   );
-  await assert.rejects(release(30_000_000, 5_000_000), /MonthlyReserveChanged/);
-  await assert.rejects(release(35_000_000, 35_000_001), /InvalidAmount/);
-  await assert.rejects(release(35_000_000, 0), /InvalidAmount/);
-  // Release only the repeated copy's gross before any leaf settles.
-  await release(35_000_000, 5_000_000);
-  state = await read();
-  assert.equal(state.monthlyOutstanding.toString(), "30000000");
-  assert.equal(state.reserved.toString(), "30000000");
-  let recorded = await month();
-  assert.equal(recorded.released.toString(), "5000000");
-  assert.equal(recorded.committed.toString(), "5000000");
-  await assert.rejects(release(35_000_000, 5_000_000), /MonthlyReserveChanged/);
-  // The settleable leaves still commit with their original terms.
+  await assert.rejects(
+    release(total - released, total - released),
+    /MonthlyReserveChanged/,
+  );
+  // The advisory's first step can no longer release only the uncommittable leaf.
+  await assert.rejects(release(total, released), /InvalidAmount/);
+  await assert.rejects(release(total, 0), /InvalidAmount/);
+  await leaf(2, "release", null);
+  const afterLeaf = await read();
+  assert.equal(afterLeaf.reserved.toNumber(), total - released);
+  assert.equal(afterLeaf.monthlyOutstanding.toNumber(), total - released);
+  // The reverse order is excluded too; neither reserve counter moves again.
+  await assert.rejects(
+    release(total - released, total - released),
+    /MonthlyReserveChanged/,
+  );
+  assert.deepEqual(await read(), afterLeaf);
   await leaf(0, "commit");
   await leaf(1, "commit");
-  await assert.rejects(leaf(2, "commit"), /already in use/);
-  state = await read();
-  assert.equal(state.monthlyOutstanding.toString(), "0");
-  assert.equal(state.reserved.toString(), "30000000");
-  recorded = await month();
-  assert.equal(recorded.committed.toString(), recorded.total.toString());
+  const settled = await read();
+  assert.equal(settled.monthlyOutstanding.toString(), "0");
+  assert.equal(settled.reserved.toNumber(), total - released);
+  assert.equal(
+    settled.reserved.toNumber(),
+    before.reserved.toNumber() - released,
+  );
   const award = await program.account.obligation.fetch(awardAt(a));
   assert.equal(award.gross.toString(), a.grossMicro);
   assert.equal(award.actorId.toString(), a.githubUserId);
-  // Nothing is left to release, and direct commits work again.
-  await assert.rejects(release(0, 1), /InvalidAmount/);
-  await commit("after-release", 999, 1);
+  await commit("after-double-release-control", 999, 1);
 });
 
 // The vault totals fail closed when the vault token account holds less than the

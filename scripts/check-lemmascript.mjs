@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   requireMeaningfulSpecifications,
@@ -96,7 +96,7 @@ async function run(command, label, cwd = sandbox, timeoutMs = 180_000) {
     cwd,
     env: {
       ...process.env,
-      PATH: `${join(root, ".tools/dafny/dafny")}:${process.env.PATH ?? ""}`,
+      PATH: `${join(root, ".tools/dafny/dafny")}${delimiter}${process.env.PATH ?? ""}`,
     },
     timeoutMs,
     signal: cancellation.signal,

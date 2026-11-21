@@ -1,7 +1,8 @@
 # Project-referral accrual job (workers/referral-accrual; PRD section 11,
 # "Referral program", approved by the owner). The checked main release installs
-# this private Worker. Off by default until the program token, funded distributor
-# and required operating controls are verified. Deployment does not activate it.
+# this private Worker. It runs in dry_run (record-only) since the reactivation
+# approval of 10 November 2026: it files accrual records, holds no key and
+# posts nothing. Posting stays off until the owner activates the program.
 # See README.md before changing any value here.
 name = "slop-referral-accrual"
 main = "index.ts"
@@ -23,7 +24,7 @@ migrations_dir = "../../migrations"
 # off | dry_run | live. dry_run files accrual rows and the public accrual file
 # and posts nothing; it loads no key. live also posts each filed root to the
 # distributor and is refused unless every REFERRAL_* value below it is set.
-REFERRAL_ACCRUAL_MODE = "off"
+REFERRAL_ACCRUAL_MODE = "dry_run"
 # First UTC month the job may file. Paid events before it are never accrued.
 REFERRAL_FIRST_PERIOD = "2026-11"
 # Program token base units per one stablecoin micro-unit. With an 18-decimal
@@ -46,18 +47,22 @@ PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 # activation and stays "false" until the token exists, the funding line is
 # agreed, an independent root watcher is operating and the owner activates
 # the program. Counsel review is not required (owner decision, 26 October 2026).
-# Nothing in the code sets it. The addresses are empty until a reviewed
-# deployment is recorded here. Live mode refuses to start while any is unset.
+# Nothing in the code sets it. Live mode refuses to start while it is "false".
 REFERRAL_PROGRAM_ENABLED = "false"
-REFERRAL_DISTRIBUTOR_ADDRESS = ""
-REFERRAL_TOKEN_ADDRESS = ""
-# Public deployment evidence for the independent root watcher. Fill these from
-# the finalized deployment receipt and verified runtime before activation.
-REFERRAL_DEPLOYMENT_BLOCK = ""
-REFERRAL_DISTRIBUTOR_CODE_HASH = ""
-# Root posting stays on testnet until the owner activates the program (PRD
-# section 11, "Referral program").
-REFERRAL_POST_NETWORK = "robinhood-testnet"
+# The mainnet ReferralDistributor deployed on 10 November 2026 and the program
+# token (contracts/evm/README.md records the deployment). They are recorded
+# here so the independent root watcher can read the contract. Recording them
+# activates nothing: dry_run never reads them and the poster stays unset.
+REFERRAL_DISTRIBUTOR_ADDRESS = "0x6a24e993e59cba950c6f91a964bef2a5f91227cc"
+REFERRAL_TOKEN_ADDRESS = "0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae"
+# Public deployment evidence for the independent root watcher, from the
+# finalized deployment receipt and the verified runtime code.
+REFERRAL_DEPLOYMENT_BLOCK = "111162445"
+REFERRAL_DISTRIBUTOR_CODE_HASH = "0xefde415000d56976d6320dc6efd6d1c262eb7a8bcd83e247b708fa11173c10e4"
+# The network of the distributor above, which the watcher reads. No root is
+# posted on any network while the mode is dry_run and the flag is "false"
+# (PRD section 11, "Referral program").
+REFERRAL_POST_NETWORK = "robinhood-mainnet"
 # Approved poster gas ceilings: 0.0002 ETH per transaction, 0.002 ETH per UTC day.
 REFERRAL_MAX_NATIVE_PER_TX_WEI = "200000000000000"
 REFERRAL_MAX_NATIVE_PER_DAY_WEI = "2000000000000000"

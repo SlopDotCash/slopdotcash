@@ -29,34 +29,58 @@ import {
 import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
+import { protectedPointAwardSql } from "./points-protection-sql";
 import { syncCycleIndex } from "./sync-cycle-index";
+import { loadVaultPayouts } from "./vault-payout-points";
 
 function hash(s: string) {
   return createHash("sha256").update(s).digest("hex");
 }
 type PointsOrigin = "https://slop.cash" | "https://staging.slop.cash";
 
+async function retryPointsTransport<T>(
+  read: () => Promise<T>,
+  wait: (milliseconds: number) => Promise<void>,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await read();
+    } catch (error) {
+      // A socket can reset before headers or while reading the bounded body.
+      // Retry that same read at most three times; validation refusals propagate.
+      if (
+        attempt === 2 ||
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "ECONNRESET"
+      )
+        throw error;
+      await wait(1000);
+    }
+  }
+}
+
 async function loadPublishedProjection(
   origin: PointsOrigin,
+  wait: (milliseconds: number) => Promise<void>,
   indexResponse?: Response,
 ): Promise<PointsJournal> {
   let previousIndex: string | undefined;
   let mismatch: unknown;
   for (;;) {
-    indexResponse ??= await fetch(
-      `${origin}/data/points.json${previousIndex === undefined ? "" : `?snapshot=${randomUUID()}`}`,
-      {
-        signal: AbortSignal.timeout(30000),
-        cache: "no-store",
-      },
-    );
-    if (!indexResponse.ok)
-      throw new Error("Published points projection unavailable");
-    const index = (await readBoundedJson(
-      indexResponse,
-      1024 * 1024,
-      "points index",
-    )) as PointsIndex;
+    const indexUrl = `${origin}/data/points.json${previousIndex === undefined ? "" : `?snapshot=${randomUUID()}`}`;
+    const index = (await retryPointsTransport(async () => {
+      const response =
+        indexResponse ??
+        (await fetch(indexUrl, {
+          signal: AbortSignal.timeout(30000),
+          cache: "no-store",
+        }));
+      indexResponse = undefined;
+      if (!response.ok)
+        throw new Error("Published points projection unavailable");
+      return readBoundedJson(response, 1024 * 1024, "points index");
+    }, wait)) as PointsIndex;
     const identity = JSON.stringify(index);
     // A deployment can replace the fixed shard URLs after the index read.
     // Retry once only when a fresh index proves publication changed. An
@@ -68,13 +92,15 @@ async function loadPublishedProjection(
       index.shards.map(async (shard, i) => {
         if (shard.path !== `/data/points/${i.toString(16)}.json`)
           throw new Error("Invalid published points shard path");
-        const response = await fetch(`${origin}${shard.path}`, {
-          signal: AbortSignal.timeout(30000),
-          cache: "no-store",
-        });
-        if (!response.ok)
-          throw new Error("Published points history unavailable");
-        return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+        return retryPointsTransport(async () => {
+          const response = await fetch(`${origin}${shard.path}`, {
+            signal: AbortSignal.timeout(30000),
+            cache: "no-store",
+          });
+          if (!response.ok)
+            throw new Error("Published points history unavailable");
+          return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+        }, wait);
       }),
     );
     try {
@@ -145,7 +171,7 @@ export async function loadPublishedPoints(
         await existing.body?.cancel();
         return null;
       }
-      return loadPublishedProjection(origin, existing);
+      return loadPublishedProjection(origin, wait, existing);
     }
     if (
       bootstrap &&
@@ -202,7 +228,10 @@ export async function loadPublishedPoints(
     throw new Error("Points batch digest mismatch");
   // Scheduled refreshes have Pages-only authority. Retain their published journal
   // as well as the latest protected-release D1 checkpoint; neither may fork history.
-  return retainPublishedHistory(journal, await loadPublishedProjection(origin));
+  return retainPublishedHistory(
+    journal,
+    await loadPublishedProjection(origin, wait),
+  );
 }
 export function retainPublishedHistory(
   checkpoint: PointsJournal,
@@ -242,6 +271,36 @@ export function pointsSql(journal: PointsJournal): string {
   assertPointsJournal(journal);
   const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
   const digest = hash(JSON.stringify(journal));
+  // Scoring's provisional flag is not financial state. Read the private
+  // settlement tables in the same atomic statement that accepts this batch.
+  // Unmapped legacy obligations protect their project because their period
+  // cannot safely be inferred from creation or indexing time.
+  // Freeze economic and source identity, not GitHub presentation or the score's
+  // provisional label. Renames and a fresh assessment of unchanged value must
+  // still be able to append their provenance without changing a frozen award.
+  const economicFields = [
+    "key",
+    "actor.id",
+    "projectId",
+    "category",
+    "amount",
+    "occurredAt",
+    "sourceId",
+    "workUnitId",
+  ];
+  const economicAward = (payload: string) => {
+    const fields = economicFields.map(
+      (field) => `json_extract(${payload},'$.award.${field}')`,
+    );
+    // Review finality and source URLs affect review deduplication in
+    // pointMembers. Unlike PR presentation, changing them may change totals.
+    fields.push(
+      `CASE WHEN json_extract(${payload},'$.award.category')='substantive-review' THEN json_extract(${payload},'$.award.provisional') END`,
+      `CASE WHEN json_extract(${payload},'$.award.category') IN ('substantive-review','evaluated-contribution') THEN json_extract(${payload},'$.award.sourceUrl') END`,
+    );
+    return `json_array(${fields.join(",")})`;
+  };
+  const changesProtectedAwards = `EXISTS (SELECT 1 FROM points_staging s LEFT JOIN points_revisions prior ON prior.id=json_extract(s.payload,'$.previous') WHERE s.batch_id=${quote(digest)} AND NOT EXISTS (SELECT 1 FROM points_revisions known WHERE known.id=json_extract(s.payload,'$.id')) AND json_extract(s.payload,'$.award.category')!='payout-received' AND (prior.id IS NULL OR ${economicAward("prior.payload")} IS NOT ${economicAward("s.payload")}) AND (${protectedPointAwardSql("s.payload")} OR ${protectedPointAwardSql("prior.payload")}))`;
   const statements = journal.revisions.map(
     (r, sequence) =>
       `INSERT INTO points_staging(batch_id,sequence,payload) VALUES(${quote(digest)},${sequence},${quote(JSON.stringify(r))}) ON CONFLICT(batch_id,sequence) DO NOTHING;`,
@@ -255,8 +314,9 @@ export function pointsSql(journal: PointsJournal): string {
   statements.push(
     // Skip the insert before its BEFORE trigger runs. A known older batch is
     // an idempotent replay, not a new candidate with a shorter history.
-    // Incomplete staged coverage yields NULL, which the NOT NULL column rejects.
-    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN COUNT(*)=${journal.coverage.length} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
+    // Missing coverage or a protected award change yields NULL. The NOT NULL
+    // constraint refuses the entire import before any Points become public.
+    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN COUNT(*)=${journal.coverage.length} AND NOT ${changesProtectedAwards} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     // Replayed batches skip the AFTER INSERT triggers that normally clear staging.
     `DELETE FROM points_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     `DELETE FROM points_coverage_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
@@ -289,8 +349,9 @@ async function archivePaths(directory: string): Promise<string[]> {
  * revisions in the chain. A snapshot application records its digest in
  * the journal coverage when it appends a revision, while a batch append
  * never records coverage. An award is batch-owned when its latest
- * revision carries the batch rule with a digest absent from the coverage.
- * A snapshot-owned award is never zeroed here, even when the snapshot
+ * revision carries the batch rule with a digest absent from coverage and
+ * no authoritative value decision. A snapshot-owned award is never zeroed
+ * here, even when the snapshot
  * that supplied it is absent from this run's inputs; snapshot corrections
  * stay with applyPointsSnapshot. An already-zero latest award needs no
  * successor, so replaying the same inputs appends nothing. Removing a whole
@@ -546,7 +607,7 @@ export async function generatePoints(
       );
     journal = published;
   }
-  const now = new Date().toISOString();
+  let now = new Date().toISOString();
   const snapshots = [];
   for (const path of [
     ...(await archivePaths("cycles")),
@@ -572,10 +633,21 @@ export async function generatePoints(
     checkOnly: true,
     generatedAt: now,
   });
+  const vaults = options.online
+    ? await loadVaultPayouts(
+        journal.revisions.map((revision) => revision.award.actor),
+        options.origin ?? "https://slop.cash",
+      )
+    : [];
+  now = new Date().toISOString();
   journal = appendPointAwards(
     journal,
-    payoutPointAwards(cycles),
-    hash(JSON.stringify(cycles)),
+    payoutPointAwards(
+      cycles,
+      vaults,
+      journal.revisions.map((revision) => revision.award),
+    ),
+    hash(JSON.stringify({ cycles, vaults })),
     "verified-payout-v1",
     now,
   );

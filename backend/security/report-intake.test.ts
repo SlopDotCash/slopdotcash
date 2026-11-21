@@ -8,6 +8,7 @@ import {
   REWARD_ASSET_NETWORKS,
   rewardAssetChoice,
 } from "../../src/lib/reward-asset.mjs";
+import { SECURITY_DEFAULT_EXCLUSIONS } from "../../src/lib/security-bounty.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1QueryStatement } from "../d1";
@@ -21,7 +22,7 @@ import type {
 } from "./analysis";
 import type { SecurityApiDependencies, SecurityD1Database } from "./case-store";
 import { handleSecurityApi } from "./handler";
-import { readStoredReportByCase } from "./report-intake";
+import { readStoredReportByCase, scheduleAnalysis } from "./report-intake";
 
 const ORIGIN = "https://slop.test";
 const START = "2026-10-27T12:00:00.000Z";
@@ -75,11 +76,12 @@ type Case = {
 type Body = {
   recipientGithubId?: string;
   error?: string;
+  message?: string;
   authorityUnavailable?: boolean;
   replayed?: boolean;
   submission?: Submission;
   submissions?: Submission[];
-  report?: typeof REPORT;
+  report?: Record<string, unknown>;
   case?: Case;
   cases?: Case[];
 };
@@ -89,6 +91,15 @@ function required<T>(value: T | null | undefined): T {
     throw new Error("Required fixture response is missing");
   return value;
 }
+
+const PROGRAM_EXCLUSION = "Rounding dust below one cent in the fixture vault";
+/** What a model call receives: the receipt-time scope and every exclusion. */
+const MODEL_SCOPE = {
+  includedAssets: ["Synthetic local vault"],
+  severityRubric: "Critical means loss of covered funds.",
+  lossDefinition: "Unauthorized loss of covered assets.",
+  doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, PROGRAM_EXCLUSION],
+};
 
 function program() {
   return {
@@ -118,6 +129,7 @@ function program() {
       includedAssets: ["Synthetic local vault"],
       severityRubric: "Critical means loss of covered funds.",
       lossDefinition: "Unauthorized loss of covered assets.",
+      excludedFindings: [PROGRAM_EXCLUSION],
     },
     settlement: {
       chain: "base",
@@ -131,6 +143,8 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const { db, sqlite } = sqliteD1();
   const statementSql = new WeakMap<object, string>();
   let routeFails = false;
+  let afterScreenClaim: (() => Promise<void>) | null = null;
+  let afterScreenFinish: (() => Promise<void>) | null = null;
   const tracked = (
     statement: D1QueryStatement,
     sql: string,
@@ -157,7 +171,34 @@ function fixture(overrides: Record<string, unknown> = {}) {
         })
       )
         throw new Error("Fixture owner-route outage");
-      return db.batch(statements);
+      const results = await db.batch(statements);
+      if (
+        afterScreenClaim &&
+        results[0]?.meta?.changes === 1 &&
+        statements.some((statement) =>
+          statementSql
+            .get(statement)
+            ?.includes("SET screening_state='running',screening_started_at="),
+        )
+      ) {
+        const callback = afterScreenClaim;
+        afterScreenClaim = null;
+        await callback();
+      }
+      if (
+        afterScreenFinish &&
+        results[0]?.meta?.changes === 1 &&
+        statements.some((statement) =>
+          statementSql
+            .get(statement)
+            ?.includes("SET screening_state=?,screening_reason="),
+        )
+      ) {
+        const callback = afterScreenFinish;
+        afterScreenFinish = null;
+        await callback();
+      }
+      return results;
     },
   };
   const base = applicationManifest(PROJECT, REPOSITORY, {
@@ -315,7 +356,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const create = (
     key = `intake-key-${++sequence}`,
     as: Actor = REPORTER,
-    report: typeof REPORT = REPORT,
+    report: Record<string, unknown> = REPORT,
   ) =>
     call(as, "POST", "security-submissions", {
       projectId: PROJECT,
@@ -362,6 +403,12 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     beforeScreen: (callback: (() => Promise<void>) | null) => {
       beforeScreenResult = callback;
+    },
+    afterScreenClaim: (callback: () => Promise<void>) => {
+      afterScreenClaim = callback;
+    },
+    afterScreenFinish: (callback: () => Promise<void>) => {
+      afterScreenFinish = callback;
     },
     beforeAnalysis: (callback: (() => Promise<void>) | null) => {
       beforeAnalysisResult = callback;
@@ -421,6 +468,133 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("durable private report controls", () => {
+  test("a large receipt list shares current authority and storage reads without retaining access across requests", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    try {
+      const ids: string[] = [];
+      let firstCase = "";
+      for (let n = 0; n < 100; n++) {
+        const created = await t.create(
+          `receipt-list-${String(n).padStart(8, "0")}`,
+        );
+        expect(created.status).toBe(201);
+        const row = required(created.body.submission);
+        ids.push(row.id);
+        if (n === 0) firstCase = row.caseId;
+        t.advance(7 * 60 * 1000);
+      }
+      const own = required(
+        (await t.create("receipt-list-own", OWNER)).body.submission,
+      );
+      ids.push(own.id);
+      t.removePaidTerms();
+      let permission: "admin" | "read" | "unavailable" = "admin";
+      let authorityReads = 0;
+      t.deps.repositoryAccess = async () => {
+        authorityReads++;
+        if (permission === "unavailable")
+          throw new Error("Fixture authority outage");
+        return {
+          installation: "installed",
+          installationId: 1,
+          permission,
+          roleName: permission,
+          repository: {
+            id: 123456789,
+            node_id: "R_example",
+            full_name: REPOSITORY,
+            private: false,
+            owner: {
+              id: 987654321,
+              node_id: "O_example",
+              login: "example",
+              type: "Organization",
+            },
+          },
+        };
+      };
+      const storage = required(t.deps.reportStorage);
+      storage.get = async () => {
+        throw new Error("A receipt list must not read report text");
+      };
+      const expected = new Map<string, Submission>();
+      for (const id of ids) {
+        const receipt = await t.call(
+          OWNER,
+          "GET",
+          `security-submissions/${id}?view=receipt`,
+        );
+        expect(receipt.status).toBe(200);
+        expected.set(id, required(receipt.body.submission));
+        expect(receipt.body.report).toBeUndefined();
+      }
+      let storageReads = 0;
+      const db = t.deps.db;
+      const counted = (statement: D1QueryStatement): D1QueryStatement => ({
+        ...statement,
+        bind: (...values) => counted(statement.bind(...values)),
+        first: async <T>() => {
+          storageReads++;
+          return statement.first<T>();
+        },
+        all: async <T>() => {
+          storageReads++;
+          return statement.all<T>();
+        },
+      });
+      t.deps.db = { ...db, prepare: (sql) => counted(db.prepare(sql)) };
+      authorityReads = 0;
+      const listed = await t.call(OWNER, "GET", "security-submissions");
+      expect(listed.status).toBe(200);
+      expect(listed.body.authorityUnavailable).toBe(false);
+      expect(required(listed.body.submissions)).toHaveLength(ids.length);
+      expect(authorityReads).toBe(1);
+      expect(storageReads).toBeLessThan(20);
+      for (const receipt of required(listed.body.submissions))
+        expect(receipt).toEqual(required(expected.get(receipt.id)));
+
+      // Every later request rechecks both repository and explicit membership.
+      permission = "read";
+      const denied = await t.call(OWNER, "GET", "security-submissions");
+      expect(denied.body.submissions?.map((row) => row.id)).toEqual([own.id]);
+      expect(authorityReads).toBe(2);
+      t.sqlite
+        .prepare(
+          "INSERT INTO security_case_members(case_id,github_id,github_login,role,added_by_github_id,added_at) VALUES (?,?,?,'triager',?,?)",
+        )
+        .run(
+          firstCase,
+          OWNER.githubId,
+          OWNER.githubLogin,
+          OWNER.githubId,
+          START,
+        );
+      permission = "unavailable";
+      const unavailable = await t.call(OWNER, "GET", "security-submissions");
+      expect(unavailable.body.authorityUnavailable).toBe(true);
+      expect(unavailable.body.submissions?.map((row) => row.id).sort()).toEqual(
+        [own.id, ids[0]].sort(),
+      );
+      expect(authorityReads).toBe(3);
+      t.sqlite
+        .prepare(
+          "UPDATE security_case_members SET revoked_at=?,revoked_by_github_id=? WHERE case_id=? AND github_id=?",
+        )
+        .run(START, OWNER.githubId, firstCase, OWNER.githubId);
+      const revoked = await t.call(OWNER, "GET", "security-submissions");
+      expect(revoked.body.submissions?.map((row) => row.id)).toEqual([own.id]);
+      expect(authorityReads).toBe(4);
+      permission = "admin";
+      const restored = await t.call(OWNER, "GET", "security-submissions");
+      expect(restored.body.submissions).toHaveLength(ids.length);
+      expect(restored.body.authorityUnavailable).toBe(false);
+      expect(authorityReads).toBe(5);
+    } finally {
+      t.sqlite.close();
+    }
+  });
+
   test("an older receipt resolves outside the recent list without reading report text or widening access", async () => {
     const t = fixture();
     t.deps.analyzer = undefined;
@@ -913,7 +1087,7 @@ describe("durable private report controls", () => {
     });
     expect(t.analyzed).toHaveLength(1);
     expect(t.analyzed[0].report.description).toBe(REPORT.description);
-    expect(t.analyzed[0].scope).toEqual(program().scope);
+    expect(t.analyzed[0].scope).toEqual(MODEL_SCOPE);
     expect(t.notices(REPORTER)).toHaveLength(1);
     expect(t.notices(OWNER)).toHaveLength(1);
     const read = await t.call(
@@ -923,6 +1097,7 @@ describe("durable private report controls", () => {
     );
     expect(read.body.report).toEqual(REPORT);
     expect(t.screenedDescriptions).toEqual([REPORT.description]);
+    expect(t.screened[0]?.scope).toEqual(MODEL_SCOPE);
     expect(
       t.sqlite.query("SELECT * FROM security_intake_access_log").all(),
     ).toHaveLength(1);
@@ -938,6 +1113,95 @@ describe("durable private report controls", () => {
         JSON.stringify(t.sqlite.query(`SELECT * FROM ${table}`).all()),
       ).not.toContain("PRIVATE-REPORT-SENTINEL");
     }
+  });
+
+  test("keeps a proof-of-concept file with the report and shows it to screening, analysis and the owner", async () => {
+    const t = fixture();
+    const proofOfConcept = {
+      fileName: "WithdrawRounding.t.sol",
+      patch:
+        "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,3 @@\n+function testWithdrawRounding() public {\n+  // ``` inside the test\n+}\n",
+    };
+    const accepted = await t.create(undefined, REPORTER, {
+      ...REPORT,
+      proofOfConcept,
+    });
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(t.screened[0]?.report.proofOfConcept).toEqual(proofOfConcept);
+    await t.call(OWNER, "GET", `security-cases/${submission.caseId}`);
+    expect(t.analyzed[0]?.report.proofOfConcept).toEqual(proofOfConcept);
+    for (const as of [OWNER, REPORTER]) {
+      const read = await t.call(
+        as,
+        "GET",
+        `security-submissions/${submission.id}`,
+      );
+      expect(read.body.report).toEqual({ ...REPORT, proofOfConcept });
+    }
+  });
+
+  test("a report without a proof file keeps its stored shape and digest", async () => {
+    const t = fixture();
+    const submission = required((await t.create()).body.submission);
+    const stored = [...t.objects.values()][0];
+    expect(JSON.parse(new TextDecoder().decode(stored?.bytes))).toEqual(REPORT);
+    expect(t.screened[0]?.report).not.toHaveProperty("proofOfConcept");
+    const read = await t.call(
+      OWNER,
+      "GET",
+      `security-submissions/${submission.id}`,
+    );
+    expect(read.body.report).toEqual(REPORT);
+  });
+
+  test.each([
+    ["an unsafe file name", { fileName: "../test.patch", patch: "+x\n" }],
+    ["a name with a space", { fileName: "my test.patch", patch: "+x\n" }],
+    [
+      "a file ending that is not a test or patch",
+      { fileName: "exploit.sh", patch: "+x\n" },
+    ],
+    ["an extension with no name", { fileName: ".patch", patch: "+x\n" }],
+    ["a long name", { fileName: `${"a".repeat(195)}.patch`, patch: "+x\n" }],
+    ["an empty file", { fileName: "test.patch", patch: "  \n" }],
+    ["a NUL byte", { fileName: "test.patch", patch: "+x\u0000y\n" }],
+    ["invalid UTF-16 text", { fileName: "test.patch", patch: "+x\ud800y\n" }],
+    [
+      "a file over 60,000 bytes",
+      { fileName: "test.patch", patch: "\u00e9".repeat(30_001) },
+    ],
+    ["an extra field", { fileName: "test.patch", patch: "+x\n", extra: true }],
+    ["a missing name", { patch: "+x\n" }],
+    ["a string", "+x\n"],
+  ])("refuses a proof file with %s and stores nothing", async (_, proof) => {
+    const t = fixture();
+    const refused = await t.create(undefined, REPORTER, {
+      ...REPORT,
+      proofOfConcept: proof,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe("invalid_report");
+    expect(t.objects.size).toBe(0);
+    expect(t.screeningCalls()).toBe(0);
+  });
+
+  test("refuses a description and proof file too long together for GitHub", async () => {
+    const t = fixture();
+    const refused = await t.create(undefined, REPORTER, {
+      summary: REPORT.summary,
+      description: "d".repeat(64_000),
+      proofOfConcept: { fileName: "test.patch", patch: "+x\n".repeat(400) },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toContain("Shorten the description");
+    expect(t.objects.size).toBe(0);
+    const fits = await t.create(undefined, REPORTER, {
+      summary: REPORT.summary,
+      description: "d".repeat(60_000),
+      proofOfConcept: { fileName: "test.patch", patch: "+x\n".repeat(400) },
+    });
+    expect(fits.status).toBe(201);
   });
 
   test("identical evidence digest holds screening without a model call", async () => {
@@ -1059,6 +1323,104 @@ describe("durable private report controls", () => {
     expect(t.screeningCalls()).toBe(1);
     expect(t.screened[0]?.priorCases).toEqual([]);
     expect(t.analyzed).toHaveLength(1);
+  });
+
+  test("semantic overlap uses current private summaries and stays recoverable without leaking them", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("semantic-original")).body.submission,
+    );
+    const privateSummary = `Assessment 1: ${REPORT.summary}`;
+    required(t.deps.analyzer).screen = async (input) => {
+      expect(input.priorCases).toEqual([
+        {
+          id: first.caseId,
+          rootCauseKey: null,
+          summary: privateSummary,
+        },
+      ]);
+      return {
+        decision: "legitimate",
+        reason: privateSummary,
+        duplicateCaseIds: [first.caseId],
+      };
+    };
+    const duplicate = await t.create("semantic-paraphrase", OTHER, {
+      summary: "Redeeming tiny fractions costs too few vault shares",
+      description:
+        "An independent reproduction describes the same rounding path in different words.",
+    });
+    expect(duplicate.status).toBe(201);
+    const held = required(duplicate.body.submission);
+    expect(held.intake).toMatchObject({
+      state: "needs-information",
+      canRevise: true,
+      canForward: false,
+    });
+    expect(held.intake.reason).toContain("may overlap");
+    expect(JSON.stringify(duplicate.body)).not.toContain(privateSummary);
+    expect(JSON.stringify(duplicate.body)).not.toContain(first.caseId);
+    expect(t.analyzed).toHaveLength(1);
+    const approved = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${held.id}/review`,
+      {
+        expectedRevision: held.intake.revision,
+        decision: "forward",
+        reason: "Private review establishes distinct useful evidence.",
+      },
+    );
+    expect(approved.status).toBe(200);
+    expect(required(approved.body.submission).intake.canForward).toBe(true);
+    expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("screening omits stale summaries and withholds prior-derived free text", async () => {
+    const t = fixture();
+    const first = required((await t.create("context-current")).body.submission);
+    const privateSummary = `Assessment 1: ${REPORT.summary}`;
+    const stale = required(
+      (
+        await t.create("context-stale", REPORTER, {
+          ...REPORT,
+          description: "Different old reproduction pending updated evidence.",
+        })
+      ).body.submission,
+    );
+    const review = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${stale.id}/review`,
+      {
+        expectedRevision: stale.intake.revision,
+        decision: "request-information",
+        reason:
+          "Provide a fresh reproduction before relying on the prior assessment.",
+      },
+    );
+    expect(review.status).toBe(200);
+    required(t.deps.analyzer).screen = async (input) => {
+      expect(input.priorCases).toEqual([
+        {
+          id: first.caseId,
+          rootCauseKey: null,
+          summary: privateSummary,
+        },
+      ]);
+      return {
+        decision: "legitimate",
+        reason: privateSummary,
+        duplicateCaseIds: [],
+      };
+    };
+    const response = await t.create("context-distinct", OTHER, {
+      summary: "An independent access-control flaw",
+      description: "A distinct concrete reproduction with another root cause.",
+    });
+    expect(response.status).toBe(201);
+    expect(required(response.body.submission).intake.state).toBe("legitimate");
+    expect(JSON.stringify(response.body)).not.toContain(privateSummary);
   });
 
   test.each(["needs-information", "spam"] as const)(
@@ -1201,7 +1563,7 @@ describe("durable private report controls", () => {
     expect(t.analyzed.at(-1)?.report.description).toBe(
       revisedReport.description,
     );
-    expect(t.analyzed.at(-1)?.scope).toEqual(program().scope);
+    expect(t.analyzed.at(-1)?.scope).toEqual(MODEL_SCOPE);
     expect(
       (await readStoredReportByCase(t.deps, submission.caseId, 1))?.description,
     ).toBe(REPORT.description);
@@ -1310,7 +1672,7 @@ describe("durable private report controls", () => {
     expect(appealed.status).toBe(200);
     expect(appealInputs).toHaveLength(1);
     expect(appealInputs[0].analysisSummary).toBeNull();
-    expect(appealInputs[0].scope).toEqual(program().scope);
+    expect(appealInputs[0].scope).toEqual(MODEL_SCOPE);
     expect(
       t.sqlite
         .query("SELECT state FROM security_appeal_triages WHERE case_id=?")
@@ -1386,6 +1748,237 @@ describe("durable private report controls", () => {
     });
     expect(t.analyzed).toHaveLength(2);
   });
+
+  test("a delayed screening claim cannot adopt a revised report's running attempt", async () => {
+    const t = fixture();
+    const claimed = Promise.withResolvers<void>();
+    const releaseOld = Promise.withResolvers<void>();
+    const currentScreen = Promise.withResolvers<void>();
+    const releaseCurrent = Promise.withResolvers<void>();
+    const background: Promise<unknown>[] = [];
+    t.deps.waitUntil = (work) => background.push(work);
+    t.afterScreenClaim(async () => {
+      claimed.resolve();
+      await releaseOld.promise;
+    });
+    const analyzer = required(t.deps.analyzer);
+    const screen = required(analyzer.screen);
+    let calls = 0;
+    analyzer.screen = async (input, timeoutMs) => {
+      calls++;
+      if (calls > 1) throw new Error("PRIVATE-STALE-SCREEN-ERROR");
+      currentScreen.resolve();
+      await releaseCurrent.promise;
+      return screen(input, timeoutMs);
+    };
+    try {
+      const initial = await t.create("delayed-screen-claim");
+      expect(initial.status).toBe(201);
+      await claimed.promise;
+      const submission = required(initial.body.submission);
+      const receipt = await t.call(
+        OWNER,
+        "GET",
+        `security-submissions/${submission.id}?view=receipt`,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${submission.id}/review`,
+        {
+          expectedRevision: required(receipt.body.submission).intake.revision,
+          decision: "request-information",
+          reason: "Please include the affected revision.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      const revised = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/report`,
+        {
+          expectedRevision: required(reviewed.body.submission).intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Revision def.`,
+          },
+        },
+      );
+      expect(revised.status).toBe(200);
+      await currentScreen.promise;
+      // The original database write succeeded, but its caller resumes only
+      // after the replacement report has claimed its own screening attempt.
+      releaseOld.resolve();
+      await background[0];
+      releaseCurrent.resolve();
+      for (let n = 0; n < background.length; n++) await background[n];
+      const final = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${submission.id}?view=receipt`,
+      );
+      expect(required(final.body.submission).intake).toMatchObject({
+        reportVersion: 2,
+        state: "legitimate",
+        routingState: "routed",
+        canRetryScreening: false,
+      });
+      expect(calls).toBe(1);
+      expect(t.analyzed).toHaveLength(1);
+      expect(t.analyzed[0].report.description).toEndWith("Revision def.");
+      expect(JSON.stringify(final.body)).not.toContain(
+        "PRIVATE-STALE-SCREEN-ERROR",
+      );
+      expect(t.objects.size).toBe(2);
+      expect(
+        (await t.call(OTHER, "GET", `security-submissions/${submission.id}`))
+          .status,
+      ).toBe(404);
+    } finally {
+      releaseOld.resolve();
+      releaseCurrent.resolve();
+      for (let n = 0; n < background.length; n++) await background[n];
+      t.sqlite.close();
+    }
+  });
+
+  test("a committed screen cannot adopt a replacement during delayed completion readback", async () => {
+    const t = fixture();
+    let failed = false;
+    t.beforeAnalysis(async () => {
+      if (failed) throw new Error("Fixture replacement assessment failure");
+    });
+    t.afterScreenFinish(async () => {
+      const old = required(
+        t.sqlite
+          .query(
+            "SELECT submission_id, revision FROM security_submission_intake",
+          )
+          .get() as { submission_id: string; revision: number } | null,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${old.submission_id}/review`,
+        {
+          expectedRevision: old.revision,
+          decision: "request-information",
+          reason: "Provide the current affected version.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      failed = true;
+      const replacement = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${old.submission_id}/report`,
+        {
+          expectedRevision: required(reviewed.body.submission).intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Current affected version supplied.`,
+          },
+        },
+      );
+      expect(replacement.status).toBe(200);
+      expect(t.analyzed).toHaveLength(1);
+    });
+    const created = await t.create("delayed-finish-readback");
+    expect(created.status).toBe(201);
+    const submission = required(created.body.submission);
+    expect(t.analyzed).toHaveLength(1);
+    // A delayed handoff must not adopt a new version or retry its failed attempt.
+    await scheduleAnalysis(t.deps, submission.caseId, null, 5000, 1);
+    await scheduleAnalysis(t.deps, submission.caseId, null, 5000, 2);
+    expect(t.analyzed).toHaveLength(1);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT attempt, report_version, state FROM security_case_analyses",
+        )
+        .all(),
+    ).toEqual([{ attempt: 1, report_version: 2, state: "failed" }]);
+  });
+
+  test.each([false, true])(
+    "a stale screen cannot retry the replacement assessment (failed=%s)",
+    async (failed) => {
+      const t = fixture();
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const pending: Promise<unknown>[] = [];
+      t.deps.waitUntil = (task) => pending.push(task);
+      t.beforeScreen(async () => {
+        t.beforeScreen(null);
+        started.resolve();
+        await release.promise;
+      });
+      if (failed)
+        t.beforeAnalysis(async () => {
+          throw new Error("Fixture assessment outage");
+        });
+      try {
+        const submission = required((await t.create()).body.submission);
+        await started.promise;
+        const current = required(
+          (
+            await t.call(
+              OWNER,
+              "GET",
+              `security-submissions/${submission.id}?view=receipt`,
+            )
+          ).body.submission,
+        );
+        const review = await t.call(
+          OWNER,
+          "POST",
+          `security-submissions/${submission.id}/review`,
+          {
+            expectedRevision: current.intake.revision,
+            decision: "request-information",
+            reason: "Clarify the affected revision.",
+          },
+        );
+        expect(review.status).toBe(200);
+        const from = pending.length;
+        const revised = await t.call(
+          REPORTER,
+          "POST",
+          `security-submissions/${submission.id}/report`,
+          {
+            expectedRevision: required(review.body.submission).intake.revision,
+            report: { ...REPORT, summary: "Replacement report" },
+          },
+        );
+        expect(revised.status).toBe(200);
+        for (let n = from; n < pending.length; n++) await pending[n];
+        const analyses = () =>
+          t.sqlite
+            .query(
+              "SELECT attempt,state,report_version FROM security_case_analyses WHERE case_id=? ORDER BY attempt",
+            )
+            .all(submission.caseId);
+        const before = analyses();
+        expect(before).toEqual([
+          {
+            attempt: 1,
+            state: failed ? "failed" : "complete",
+            report_version: 2,
+          },
+        ]);
+        release.resolve();
+        for (let n = 0; n < pending.length; n++) await pending[n];
+        // No owner analysis retry occurred. The old screen did not commit a result
+        // and must not spend another provider call on the replacement report.
+        expect(analyses()).toEqual(before);
+        expect(t.analyzed).toHaveLength(1);
+      } finally {
+        release.resolve();
+        for (let n = 0; n < pending.length; n++) await pending[n];
+        t.sqlite.close();
+      }
+    },
+  );
 
   test("reporter screening retries cannot repeat a failed assessment, but the owner can retry", async () => {
     const t = fixture();
@@ -1657,10 +2250,8 @@ describe("durable private report controls", () => {
         },
       },
     };
-    let reads = 0;
     t.deps.repositoryAccess = async () => {
-      if (++reads === 2) throw new Error("Fixture authority outage");
-      return access;
+      throw new Error("Fixture authority outage");
     };
     const interrupted = await t.call(OWNER, "GET", "security-submissions");
     expect(interrupted.status).toBe(200);
@@ -1731,14 +2322,15 @@ describe("durable private report controls", () => {
       prepare(sql) {
         const statement = db.prepare(sql);
         if (
-          sql !==
-          "SELECT * FROM security_submission_intake WHERE submission_id = ?"
+          !sql.startsWith(
+            "SELECT * FROM security_submission_intake WHERE submission_id IN (",
+          )
         )
           return statement;
         return {
           ...statement,
           bind(...values) {
-            if (values[0] === other.id)
+            if (values.includes(other.id))
               throw new Error("Fixture candidate storage failure");
             return statement.bind(...values);
           },
@@ -2617,4 +3209,155 @@ test("failed report-version insertion rolls back the case revision and both even
       )
       .get(submission.id),
   ).toEqual({ report_version: 2 });
+});
+
+// A registered project without paid terms grants technical case access from
+// current repository authority (README "Roles"). An account that also holds a
+// triager or moderator role on one case keeps that authority there.
+describe("repository authority on a project without paid terms", () => {
+  const repositoryAccess = (permission: "admin" | "read") => ({
+    installation: "installed" as const,
+    installationId: 1,
+    permission,
+    roleName: permission,
+    repository: {
+      id: 123456789,
+      node_id: "R_example",
+      full_name: REPOSITORY,
+      private: false,
+      owner: {
+        id: 987654321,
+        node_id: "O_example",
+        login: "example",
+        type: "Organization" as const,
+      },
+    },
+  });
+  const rejection = {
+    action: "decide",
+    outcome: "rejected",
+    severity: "low",
+    loss: "not-verified",
+    inScope: false,
+    reason: "The owner could not reproduce this report.",
+    relatedParty: false,
+  };
+
+  test("a repository admin who is also a moderator decides again after a returned appeal", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    t.removePaidTerms();
+    // OWNER administers the repository and is a moderator; OTHER is a
+    // moderator without repository authority.
+    t.deps.repositoryAccess = async (_repository, actor) =>
+      repositoryAccess(actor.githubId === OWNER.githubId ? "admin" : "read");
+    t.deps.moderatorGithubIds = new Set([OWNER.githubId, OTHER.githubId]);
+    const caseId = required(
+      (await t.create("unpaid-moderator-admin")).body.submission,
+    ).caseId;
+    const first = await t.call(OWNER, "GET", `security-cases/${caseId}`);
+    expect(required(first.body.case).allowedActions).toContain("decide");
+    expect((await t.caseAction(caseId, rejection)).status).toBe(200);
+    const rejected = await t.call(REPORTER, "GET", `security-cases/${caseId}`);
+    const appealed = await t.call(
+      REPORTER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "appeal",
+        expectedRevision: required(rejected.body.case).revision,
+        idempotencyKey: "unpaid-appeal-000000001",
+        reason: "The reproduction works on the stated commit; please recheck.",
+      },
+    );
+    expect(appealed.status).toBe(200);
+    const open = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    // OWNER now holds dispute beside security-maintainer, but made the
+    // technical decision, so the appeal goes to another moderator.
+    const conflicted = await t.call(
+      OWNER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "decide-appeal",
+        expectedRevision: required(open.body.case).revision,
+        idempotencyKey: "unpaid-conflict-0000001",
+        outcome: "uphold",
+        reason: "The owner upholds their own rejection.",
+      },
+    );
+    expect(conflicted.status).toBe(403);
+    expect(conflicted.body.error).toBe("conflicted");
+    const returned = await t.call(
+      OTHER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "decide-appeal",
+        expectedRevision: required(open.body.case).revision,
+        idempotencyKey: "unpaid-return-000000001",
+        outcome: "return",
+        reason: "Decide again with the reporter's commit.",
+      },
+    );
+    expect(returned.status).toBe(200);
+    const after = await t.call(OWNER, "GET", `security-cases/${caseId}`);
+    expect(after.status).toBe(200);
+    expect(required(after.body.case).allowedActions).toContain("decide");
+  });
+
+  test("a repository admin assigned as triager keeps the maintainer actions", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    t.removePaidTerms();
+    // OWNER and OTHER both administer the repository.
+    t.deps.repositoryAccess = async () => repositoryAccess("admin");
+    const caseId = required(
+      (await t.create("unpaid-triager-admin")).body.submission,
+    ).caseId;
+    const before = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    expect(required(before.body.case).allowedActions).toContain("decide");
+    const assigned = await t.caseAction(caseId, {
+      action: "assign-triager",
+      githubId: OTHER.githubId,
+      githubLogin: OTHER.githubLogin,
+    });
+    expect(assigned.status).toBe(200);
+    const after = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    expect(after.status).toBe(200);
+    expect(required(after.body.case).allowedActions).toContain("decide");
+    const listed = await t.call(OTHER, "GET", "security-cases");
+    expect(listed.status).toBe(200);
+    const row = listed.body.cases?.find((entry) => entry.id === caseId);
+    expect(required(row).allowedActions).toContain("decide");
+  });
+
+  test("an authority outage keeps an assigned triager's own role", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    t.removePaidTerms();
+    t.deps.repositoryAccess = async (_repository, actor) =>
+      repositoryAccess(actor.githubId === OWNER.githubId ? "admin" : "read");
+    const caseId = required(
+      (await t.create("unpaid-triager-outage")).body.submission,
+    ).caseId;
+    const assigned = await t.caseAction(caseId, {
+      action: "assign-triager",
+      githubId: OTHER.githubId,
+      githubLogin: OTHER.githubLogin,
+    });
+    expect(assigned.status).toBe(200);
+    t.deps.repositoryAccess = async () => {
+      throw new Error("Fixture authority outage");
+    };
+    const read = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    expect(read.status).toBe(200);
+    expect(required(read.body.case).allowedActions).toEqual([
+      "request-information",
+      "remediation",
+    ]);
+    const listed = await t.call(OTHER, "GET", "security-cases");
+    expect(listed.status).toBe(200);
+    expect(listed.body.cases?.map((entry) => entry.id)).toEqual([caseId]);
+  });
 });

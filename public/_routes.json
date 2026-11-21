@@ -3,7 +3,11 @@
   "include": [
     "/",
     "/api/v1/*",
+    "/sponsors",
+    "/sponsors/",
     "/projects/*",
+    "/referral",
+    "/referral/*",
     "/contributors/*",
     "/cycles/*",
     "/.well-known/slop/*"

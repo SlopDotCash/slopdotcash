@@ -18,7 +18,7 @@ recipient. Notices report outcomes and exceptions, not routine admission:
 | `project_ready` | `notifyProjectRevision` on a revision that makes the project active | owners, never the publisher |
 | `project_scan_failed` | `notifyProjectScanFailed` for an `incomplete` assessment | owners |
 | `project_installation_lost` | `notifySlopbotInstallationLost` when an installation is suspended or removed | owners of each affected project |
-| `payout_held`, `payout_exception` | payout dispatch | contributor; project steward |
+| `payout_held`, `payout_exception` | payout dispatch; `notifyMonthlyCut` for an owner cut | contributor (for a cut, the one its cut record names); project steward, or the project's lister when the steward is an Organization |
 | `security_report_received` | `notifySecurityReportReceived` once a report is verified | reporter |
 | `security_case` | private case events | current case role holders |
 
@@ -432,6 +432,12 @@ prompt, response, key or request identifier.
 
 Migrations `0085` and `0122` queue new failed Surplus and Orbio cost records.
 Slopbot claims each notice before calling this route and retains accepted or ambiguous results.
+Operator decision, 17 November 2026 (migration `0133`): a notice waits two
+minutes so the rest of its route is recorded. It is claimed without an email,
+with a reason in `slopbot_provider_failure_suppressions`, when a later call
+served the same job (`served-by-fallback`, never for a spending denial) or
+when an email for the same model and cause was accepted in the last six hours
+(`repeat-within-6h`). A scheduled run sends at most one email.
 An unknown delivery is not sent again automatically. Earlier cost records do
 not become a fresh notification backlog. These notices neither change provider
 budgets nor configure Surplus's own low-balance notification threshold.

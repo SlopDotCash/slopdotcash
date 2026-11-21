@@ -10,7 +10,9 @@ import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
+  analysisScope,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  priorCaseSummaries,
   runAppealTriage,
   runCaseAnalysis,
   type SecurityAnalysisInput,
@@ -18,9 +20,11 @@ import {
   type SecurityScreeningProposal,
 } from "./analysis";
 import {
+  CASE_COLUMNS,
   type CaseRow,
   caseInsertStatement,
   caseRoles,
+  currentReportingProject,
   eventStatement,
   IDEMPOTENCY_KEY,
   json,
@@ -36,6 +40,7 @@ import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
+import { routineOwnerRanking } from "./routine-decisions";
 import {
   COLUMNS,
   type IntakeState,
@@ -405,6 +410,14 @@ function analysisReport(report: ReportInput): SecurityAnalysisReport {
     cvss: report.cvssVectorString ?? null,
     cweIds: [...(report.cweIds ?? [])],
     packages: [],
+    ...(report.proofOfConcept
+      ? {
+          proofOfConcept: {
+            fileName: report.proofOfConcept.fileName,
+            patch: report.proofOfConcept.patch,
+          },
+        }
+      : {}),
   };
 }
 async function storeReport(
@@ -540,7 +553,13 @@ async function screenStoredReport(
     const remaining = deps.waitUntil
       ? Math.max(1, Math.floor(timeoutMs - (performance.now() - started) - 500))
       : undefined;
-    await scheduleAnalysis(deps, qualified.case_id, null, remaining);
+    await scheduleAnalysis(
+      deps,
+      qualified.case_id,
+      null,
+      remaining,
+      qualified.report_version,
+    );
   };
   let row = await storedIntake(deps, id);
   if (!row) return;
@@ -568,7 +587,10 @@ async function screenStoredReport(
     intakeEvent(deps, row, "screen-start", null, at),
   ]);
   if (claimed[0].meta?.changes !== 1) return;
-  row = (await storedIntake(deps, id)) as StoredIntake;
+  const claimedRevision = row.revision + 1;
+  row = await storedIntake(deps, id);
+  // A revision or replacement attempt may have advanced while the claim returned.
+  if (row?.revision !== claimedRevision) return;
   let state: IntakeState = "unavailable";
   let reason =
     "Automatic screening is unavailable. Your report is saved for retry or private human review.";
@@ -614,14 +636,10 @@ async function screenStoredReport(
         : null;
       const input: SecurityAnalysisInput = {
         report: analysisReport(await reportVersion(deps, row)),
-        scope: scope
-          ? {
-              includedAssets: scope.includedAssets,
-              severityRubric: scope.severityRubric,
-              lossDefinition: scope.lossDefinition,
-            }
-          : null,
-        priorCases: [],
+        scope: analysisScope(scope),
+        priorCases: (
+          await priorCaseSummaries(deps.db, submission.project_id, row.case_id)
+        ).filter((entry) => entry.summary !== null),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -632,14 +650,25 @@ async function screenStoredReport(
         !proposal.reason.trim()
       )
         throw new Error("Invalid screening result");
-      state = proposal.decision;
-      reason = proposal.reason.trim().slice(0, 2000);
+      const overlap = proposal.duplicateCaseIds?.some((id) =>
+        input.priorCases.some((entry) => entry.id === id),
+      );
+      state = overlap ? "needs-information" : proposal.decision;
+      // Prior summaries belong to other reporters. Never return free-form
+      // model text influenced by those summaries through a reporter's receipt.
+      reason = overlap
+        ? "This report may overlap an earlier report. Provide distinct evidence, or request private maintainer review."
+        : input.priorCases.length > 0
+          ? state === "legitimate"
+            ? "Concrete security evidence merits private human review."
+            : "Provide the affected component, impact and safe reproduction for private human review."
+          : proposal.reason.trim().slice(0, 2000);
     }
   } catch {
     /* Do not expose provider errors or private evidence. */
   }
   const finished = deps.now().toISOString();
-  await deps.db.batch([
+  const completed = await deps.db.batch([
     deps.db
       .prepare(
         "UPDATE security_submission_intake SET screening_state=?,screening_reason=?,screening_finished_at=?,revision=revision+1 WHERE submission_id=? AND revision=? AND screening_state='running'",
@@ -647,8 +676,11 @@ async function screenStoredReport(
       .bind(state, reason, finished, id, row.revision),
     intakeEvent(deps, row, "screen-finish", null, finished),
   ]);
+  // A replaced screen does not own the current report's assessment or retry.
+  if (completed[0].meta?.changes !== 1 || state !== "legitimate") return;
   const updated = await storedIntake(deps, id);
-  if (updated && intakeQualified(updated)) {
+  if (updated?.report_version !== row.report_version) return;
+  if (intakeQualified(updated)) {
     await assess(updated);
     await routedNotice(deps, updated, null);
   }
@@ -702,14 +734,10 @@ export async function screenLegacyReport(
     proposal = await deps.analyzer.screen(
       {
         report: analysisReport(report),
-        scope: scope
-          ? {
-              includedAssets: scope.includedAssets,
-              severityRubric: scope.severityRubric,
-              lossDefinition: scope.lossDefinition,
-            }
-          : null,
-        priorCases: [],
+        scope: analysisScope(scope),
+        priorCases: (await priorCaseSummaries(deps.db, projectId, null)).filter(
+          (entry) => entry.summary !== null,
+        ),
       },
       ANALYSIS_TIMEOUT_MS,
     );
@@ -720,7 +748,7 @@ export async function screenLegacyReport(
       "Automatic screening is unavailable. Your draft is kept.",
     );
   }
-  if (proposal.decision !== "legitimate")
+  if (proposal.decision !== "legitimate" || proposal.duplicateCaseIds?.length)
     fail(
       409,
       "screening_required",
@@ -958,25 +986,56 @@ export async function listStoredSubmissions(
   const manifests = (
     await deps.db
       .prepare(
-        "SELECT manifest FROM projects WHERE id IN (SELECT project_id FROM security_cases)",
+        "SELECT id, manifest, revision FROM projects WHERE id IN (SELECT project_id FROM security_cases)",
       )
-      .all<{ manifest: string }>()
+      .all<{ id: string; manifest: string; revision: number }>()
   ).results;
+  // Reuse one current project and authority result for this request only.
+  // A later list or action still performs its own permission check.
+  const reportingProjects = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof currentReportingProject>>>
+  >(
+    manifests.map(({ id, manifest, revision }) => [
+      id,
+      Promise.resolve({
+        manifest: JSON.parse(manifest) as ProjectDefinition,
+        revision,
+      }),
+    ]),
+  );
+  const projectFor = (id: string) =>
+    currentReportingProject({ ...deps, reportingProjects }, id);
+  const authorities = new Map<string, Promise<boolean>>();
+  const authorityFor = (id: string) => {
+    let result = authorities.get(id);
+    if (!result) {
+      result = projectFor(id).then((project) =>
+        project
+          ? repositoryReportingAuthority(
+              deps.repositoryAccess,
+              project.manifest,
+              actor,
+            )
+          : false,
+      );
+      authorities.set(id, result);
+    }
+    return result;
+  };
   const projects: string[] = [];
   let authorityUnavailable = false;
-  for (const { manifest: raw } of manifests) {
-    const manifest = JSON.parse(raw) as ProjectDefinition;
+  for (const { id } of manifests) {
+    const project = await projectFor(id);
+    if (!project) continue;
+    const { manifest } = project;
     try {
       if (
         manifest.securityBounty
           ? manifest.securityBounty.approvers.technical.some(
               (x) => x.githubId === actor.githubId,
             )
-          : await repositoryReportingAuthority(
-              deps.repositoryAccess,
-              manifest,
-              actor,
-            )
+          : await authorityFor(id)
       )
         projects.push(manifest.id);
     } catch (error) {
@@ -996,22 +1055,102 @@ export async function listStoredSubmissions(
       )
       .all<SubmissionRow>()
   ).results;
-  const rows = await Promise.all(
-    own.map(async (row) => ({
-      createdAt: row.created_at,
-      submission: await decorateSubmission(
-        deps,
+  // The owner's short ranked list (PRD section 8, operator decision of
+  // 17 November 2026): reports a routine pass acknowledged lead the list in
+  // rank order, including ones older than the recent window above.
+  const ranking = await routineOwnerRanking(deps, projects);
+  const rankOf = new Map(ranking.map((caseId, index) => [caseId, index]));
+  const missing = ranking.filter(
+    (caseId) => !candidates.some((row) => row.case_id === caseId),
+  );
+  if (missing.length > 0)
+    candidates.push(
+      ...(
+        await deps.db
+          .prepare(
+            `SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id WHERE s.reporter_github_id<>? AND i.case_id IN (${missing.map(() => "?").join(",")})`,
+          )
+          .bind(actor.githubId, ...missing)
+          .all<SubmissionRow>()
+      ).results,
+    );
+  const storedBySubmission = new Map<string, StoredIntake>();
+  for (const part of chunked([...own, ...candidates].map((row) => row.id))) {
+    const loaded = await deps.db
+      .prepare(
+        `SELECT * FROM security_submission_intake WHERE submission_id IN (${part.map(() => "?").join(",")})`,
+      )
+      .bind(...part)
+      .all<StoredIntake>();
+    for (const row of loaded.results)
+      storedBySubmission.set(row.submission_id, row);
+  }
+  const records = new Map<string, CaseRow>();
+  const triagers = new Set<string>();
+  const caseIds = [
+    ...new Set([...storedBySubmission.values()].map((row) => row.case_id)),
+  ];
+  for (const part of chunked(caseIds)) {
+    const loaded = await deps.db
+      .prepare(
+        `SELECT ${CASE_COLUMNS} FROM security_cases WHERE id IN (${part.map(() => "?").join(",")})`,
+      )
+      .bind(...part)
+      .all<CaseRow>();
+    for (const row of loaded.results) records.set(row.id, row);
+    const members = await deps.db
+      .prepare(
+        `SELECT case_id FROM security_case_members WHERE github_id=? AND revoked_at IS NULL AND case_id IN (${part.map(() => "?").join(",")})`,
+      )
+      .bind(actor.githubId, ...part)
+      .all<{ case_id: string }>();
+    for (const row of members.results) triagers.add(row.case_id);
+  }
+  const access = async (stored: StoredIntake) => {
+    const record = records.get(stored.case_id);
+    if (!record) fail(404, "not_found", "Report not found");
+    return {
+      record,
+      roles: await caseRoles(deps, record, actor, {
+        project: await projectFor(record.project_id),
+        triager: triagers.has(record.id),
+        authority: () => authorityFor(record.project_id),
+      }),
+    };
+  };
+  const rows: {
+    createdAt: string;
+    rank?: number;
+    submission: Record<string, unknown>;
+  }[] = await Promise.all(
+    own.map(async (row) => {
+      const stored = storedBySubmission.get(row.id) ?? null;
+      const settled =
         // A failed settle shows the row as stored; the next read retries it.
-        await settle(deps, row).catch(() => row),
-        actor,
-      ),
-    })),
+        await settle(deps, row, stored ?? undefined).catch(() => row);
+      if (!stored)
+        return {
+          createdAt: row.created_at,
+          submission: { ...submissionView(settled), intake: null },
+        };
+      const { record, roles } = await access(stored);
+      return {
+        createdAt: row.created_at,
+        submission: decorateStoredSubmission(
+          settled,
+          stored,
+          record,
+          roles,
+          deps.now(),
+        ),
+      };
+    }),
   );
   for (const candidate of candidates) {
     try {
-      const stored = await storedIntake(deps, candidate.id);
+      const stored = storedBySubmission.get(candidate.id);
       if (!stored) fail(404, "not_found", "Report not found");
-      const { record, roles } = await accessFor(deps, stored, actor);
+      const { record, roles } = await access(stored);
       if (
         roles.has("security-maintainer") ||
         roles.has("triager") ||
@@ -1019,6 +1158,10 @@ export async function listStoredSubmissions(
       )
         rows.push({
           createdAt: candidate.created_at,
+          // Only a current security maintainer sees the ranked order.
+          ...(roles.has("security-maintainer") && rankOf.has(record.id)
+            ? { rank: rankOf.get(record.id) }
+            : {}),
           submission: decorateStoredSubmission(
             // A case authority's list applies the same time-based moves as
             // the reporter's own rows above: an interrupted forward becomes
@@ -1026,7 +1169,7 @@ export async function listStoredSubmissions(
             // showing as still sending or confirming until the reporter
             // happens to read first. A failed settle shows the row as
             // stored; the next read retries it.
-            await settle(deps, candidate).catch(() => candidate),
+            await settle(deps, candidate, stored).catch(() => candidate),
             stored,
             record,
             roles,
@@ -1038,7 +1181,12 @@ export async function listStoredSubmissions(
       authorityUnavailable = true;
     }
   }
-  rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  rows.sort(
+    (a, b) =>
+      (a.rank ?? Number.MAX_SAFE_INTEGER) -
+        (b.rank ?? Number.MAX_SAFE_INTEGER) ||
+      b.createdAt.localeCompare(a.createdAt),
+  );
   return json(200, {
     recipientGithubId: actor.githubId,
     automatic: deps.intake?.mode === "on",
@@ -1333,9 +1481,16 @@ export async function scheduleAnalysis(
   caseId: string,
   report: SecurityAnalysisReport | null,
   timeoutMs?: number,
+  expectedReportVersion?: number,
 ): Promise<void> {
   const run = (timeoutMs: number) =>
-    runCaseAnalysis(analysisDependencies(deps), caseId, report, timeoutMs);
+    runCaseAnalysis(
+      analysisDependencies(deps),
+      caseId,
+      report,
+      timeoutMs,
+      expectedReportVersion,
+    );
   if (deps.waitUntil)
     deps.waitUntil(run(timeoutMs ?? BACKGROUND_ANALYSIS_TIMEOUT_MS));
   else await run(timeoutMs ?? ANALYSIS_TIMEOUT_MS);

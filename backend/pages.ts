@@ -47,8 +47,15 @@ export type PagesEnv = {
   X_CLIENT_ID?: string;
   X_CLIENT_SECRET?: string;
   OPERATOR_GITHUB_IDS?: string;
+  /**
+   * Bearer token of the private reserved-awards feed for one operator
+   * service (PRD section 9). Unset keeps that route closed.
+   */
+  OPERATOR_FEED_TOKEN?: string;
   /** GitHub numeric actor IDs allowed to handle project exceptions. */
   ADMIN_GITHUB_IDS?: string;
+  /** One current admin eligible for the seven-day owner site session. */
+  OWNER_SESSION_GITHUB_ID?: string;
   /**
    * GitHub numeric actor IDs with the project moderation role: Quarantine,
    * Ban and reinstatement (PRD ADM-06). Unset keeps those actions closed.
@@ -92,6 +99,13 @@ export type PagesEnv = {
   SURPLUS_API_KEY?: string;
   /** Local browser tests only: a loopback analysis provider fixture origin. */
   SLOP_ANALYSIS_API_ORIGIN?: string;
+  /**
+   * Routine decisions on undecided private reports (PRD section 8, operator
+   * decision of 17 November 2026): exactly `dry_run` or `live`; anything
+   * else, including unset, is off. `wrangler.toml` sets production and
+   * `wrangler.staging.toml` sets staging.
+   */
+  SECURITY_ROUTINE_DECISIONS?: string;
   /** Notification Worker; absent where no notifier is deployed. */
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
   /**
@@ -169,12 +183,20 @@ export function vettingContext(
     vetting,
     github,
     loadTemplate,
-    /** A clearance counts only for the live branch head and template (VET-07). */
-    livePin: async (manifest: ProjectDefinition, templateSha256?: string) =>
+    /**
+     * A clearance counts only for the live branch head and template (VET-07).
+     * Each repository has its own head; the default is the first repository.
+     */
+    livePin: async (
+      manifest: ProjectDefinition,
+      repositoryId?: string,
+      templateSha256?: string,
+    ) =>
       readVettingPin(
         github,
         manifest,
         templateSha256 ?? (await loadTemplate()).index.templateSha256,
+        repositoryId,
       ),
   };
 }

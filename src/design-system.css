@@ -125,6 +125,8 @@ pre {
   border-color: var(--line-strong);
   background: transparent;
   color: var(--ink);
+  /* Keep enabled text and background paired, as for primary actions. */
+  transition: border-color var(--brand-motion-fast) var(--brand-motion-ease);
 }
 
 .secondary-button:hover {
@@ -393,13 +395,6 @@ label {
   width: 38px;
   height: 38px;
 }
-
-.account-points {
-  font-family: var(--brand-font-data);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
 .account-chevron {
   width: 16px;
   height: 16px;
@@ -624,8 +619,35 @@ label {
 }
 
 /* Home. */
+.home-audience-switch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  margin: 0 0 32px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--brand-radius-medium);
+}
+
+.home-audience-switch .button {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 0 18px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  transition: border-color var(--brand-motion-fast) var(--brand-motion-ease);
+}
+
+.home-audience-switch .button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
 .hero {
-  padding-block: clamp(72px, 10vw, 140px) clamp(72px, 9vw, 128px);
+  padding-block: clamp(48px, 5vw, 72px) clamp(72px, 9vw, 128px);
 }
 
 .hero h1 {
@@ -741,15 +763,35 @@ label {
   text-align: left;
 }
 
+.project-monthly-reward {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.project-monthly-amount {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-funding-warning {
+  color: var(--muted);
+}
+
 .project-rows {
   margin: 0;
   padding: 0;
-  list-style: none;
   border-top: 1px solid var(--line);
 }
 
 .project-rows li {
   border-bottom: 1px solid var(--line);
+}
+
+.project-rows li::marker {
+  color: transparent;
 }
 
 .project-row {
@@ -781,18 +823,19 @@ label {
 }
 
 .project-row-name small {
-  overflow: hidden;
   color: var(--muted);
   font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .project-row-amount {
+  max-inline-size: 36%;
+  display: grid;
+  gap: 4px;
   font-family: var(--brand-font-data);
   font-size: 15px;
   font-weight: 700;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .project-row > svg {
@@ -823,20 +866,6 @@ label {
   color: var(--muted);
   font-family: var(--brand-font-data);
   font-size: 14px;
-}
-
-/* Leaderboard. */
-.home-leaderboard-section {
-  padding-block: 0 144px;
-}
-
-.home-leaderboard-section > .points-panel > h2 {
-  margin: 0 0 32px;
-  font-size: clamp(44px, 6vw, 88px);
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  line-height: 0.88;
-  text-transform: uppercase;
 }
 
 .points-panel {
@@ -1030,11 +1059,6 @@ label {
   .wordmark {
     font-size: 19px;
   }
-
-  .account-points {
-    display: none;
-  }
-
   .points-person img {
     display: none;
   }
@@ -1076,8 +1100,21 @@ label {
     padding: 24px;
   }
 
+  .project-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px 12px;
+  }
+
   .project-row-amount {
-    display: none;
+    grid-column: 2;
+    max-inline-size: none;
+  }
+
+  .project-row > svg {
+    grid-column: 3;
+    grid-row: 1;
   }
 }
 
@@ -1301,6 +1338,19 @@ main h2 {
   margin: 0;
 }
 
+.email-link-action {
+  position: relative;
+  padding-right: 52px;
+}
+
+.email-link-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 44px;
+  border-bottom: 0;
+}
+
 .email-card h2 {
   color: var(--muted);
   font-family: inherit;
@@ -1347,7 +1397,8 @@ main h2 {
   gap: 6px;
 }
 
-.email-enrollment input[type="email"] {
+.email-enrollment input[type="email"],
+.email-enrollment input[type="text"] {
   width: 100%;
   min-width: 0;
   min-height: 44px;
@@ -1356,6 +1407,19 @@ main h2 {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--brand-radius-small);
+}
+
+.referral-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.referral-link code {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .email-enrollment fieldset {

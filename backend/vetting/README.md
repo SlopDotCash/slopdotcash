@@ -47,6 +47,22 @@ controlling: pending or incomplete results block admission, and confirmed malice
 requires the existing independent decision. No project or different repository
 inherits another admission. A row existing is not successful evidence.
 
+A project with more than one repository clears only when each repository
+clears on its own: its own scans, its own exemption, its own identity history
+(the window stops at the first revision that does not list it or lists another
+identity) and, for reinstatement, its own live pin. A confirmed malicious
+finding bans the whole project first. Otherwise the first repository in
+manifest order that does not clear decides the project's state, and
+`repository` names it; a project with one repository never carries that
+field. The migration-0075 exemption covers the repositories a project listed
+when it was recorded; an appended repository, which stores its own GitHub id,
+needs its own admission. Refresh and owner setup requests queue only the
+repositories that are not cleared. A flag-only pause lifts, and the flags
+bound to the fresh scans resolve, only when every repository has a clean
+fresh scan; reinstatement also checks each repository's live pin. A moderator
+reinstatement after confirmed malice needs the same fresh clean scan of every
+repository.
+
 Initial and explicitly requested scans still pin the actual current commit and
 template and pass the unchanged acquisition, model, result and evidence rules.
 If a release replaces the template before a pending scan can finish, the next
@@ -80,13 +96,32 @@ including after repository changes. Pending or incomplete normal investigations
 do not remove that exemption; confirmed malicious findings still ban the project
 until the required independent reinstatement decision.
 
+### Reconcile an omitted review surface
+
+After fixing a scanner coverage defect, compare the retained inventory with a
+rebuilt inventory of the same immutable repository commit. Record newly
+classified paths, changed surfaces, content hashes, review results and any
+remaining source, dependency or artifact gaps. Keep that follow-up evidence
+separate from the original immutable assessment; never rewrite an incomplete
+result as clean.
+
+Routine admission does not queue a rescan. An explicit investigation can use
+the existing administrator assessment route after the corrected scanner is
+released. A request after an owner-approved exemption controls clearance and
+can hold the project while review is incomplete. Read-only coverage
+reconciliation does not revoke the exemption, release artifacts or establish
+a passed scan. Preserve the original exemption decision and distinguish the
+content it reviewed from the content still awaiting review.
+
 ### Explicit owner-approved admission exemptions
 
 A platform administrator may record an explicit human owner decision through
 `POST /api/v1/admin/vetting/exemptions`. This is a separate audited D1 record,
 not a change to the fixed migration-0075 set or a project manifest field.
 The request supplies the current `projectId`, `revision`, `reason`,
-`decisionReference`, and `confirmation: true`. The administrator remains the
+`decisionReference`, and `confirmation: true`, and optionally the manifest
+`repository` it exempts (default: the first; HTTP 422 `repository_not_listed`
+when the revision does not list it). Authority is read on that repository. The administrator remains the
 audited approver and need not have repository write access (PRD section 8,
 owner decision of 11 November 2026). Separately, the server verifies that the
 registered project creator or individual steward retains current write/maintain
@@ -129,8 +164,8 @@ integrity checks still apply whenever a scan is actually required or requested.
 | Route                                    | Access         | Purpose                                                                                                                                                                      |
 | ---------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/v1/admin/vetting`              | admin          | Service state, clearance of every project, full results                                                                                                                      |
-| `POST /api/v1/admin/vetting/assessments` | admin          | Queues a scan of the current revision (`projectId`, `revision`, `reason`) at the live branch head and template digest; HTTP 503 `pin_unavailable` when either cannot be read |
-| `GET /api/v1/vetting/requests`           | signed service | Queued scans with the assigned `commitSha` and `templateSha256`, the revision URL and the template index URL                                                                 |
+| `POST /api/v1/admin/vetting/assessments` | admin          | Queues one scan per repository of the current revision (`projectId`, `revision`, `reason`, optional `repository` to queue only that one; HTTP 422 `repository_not_listed` when the revision does not list it) at that repository's live branch head and the template digest; HTTP 503 `pin_unavailable` when a pin cannot be read, and nothing is queued. A project with more than one repository also returns every queued row as `assessments` |
+| `GET /api/v1/vetting/requests`           | signed service | The latest scan of each project repository while it is pending, with the assigned `repository` (manifest repository id), `commitSha` and `templateSha256`, the revision URL and the template index URL. A row written before migration 0123 stores no repository and is the first repository of its revision |
 | `POST /api/v1/vetting/results`           | signed service | Records one `slop-vetting-result-v2` scan result, or a historical `slop-vetting-result-v1` result                                                                            |
 | `POST /api/v1/vetting/reuse`             | signed service | Reads an original clean scan by the acquired-input inventory digest, without granting clearance or returning trace bodies |
 | `POST /api/v1/vetting/refresh`           | signed service | Body `{}`. Queues initial admission scans and fresh scans for flag-only pauses. Completes a flag-only reinstatement that a fresh clean scan at the current live pin could not write when it landed. Returns the queued and reinstated assessment ids                                    |
@@ -288,6 +323,11 @@ it (see `backend/projects/README.md`).
 An owner or moderator files an appeal to start reinstatement. An independent human moderator may decide it only after
 a fresh complete scan of the restricted revision. Migration 0031 stores the exact
 clean scan and reviewed malicious assessment IDs with that append-only decision.
+For a project with more than one repository the handler requires a fresh
+clean scan of every repository, but that record stores one clean scan ID, the
+first repository's. The database therefore checks only that scan; the
+requirement for the other repositories is enforced in application code
+(`backend/projects/handler.ts`), not by migration 0031. This is a known gap.
 Every later malicious assessment remains a new ban; no old decision covers it.
 The changed listing revision still needs clearance before its skills can publish.
 Migration 0032 preserves human enforcement history and admits the signed service
@@ -296,6 +336,9 @@ issuer only for standing-rule Ban records.
 Confirmed-malicious bans notify the configured administrators and project moderators, the applicant and steward, and known affected contributors. Contributor recipients come from current positive contribution records resolved through immutable membership IDs, plus project payment obligations and imported transfers. Reversed awards and unrelated projects do not select recipients. People without a resolvable inbox identity cannot receive a direct notice. The private inbox notice contains no security reason, trace, or evidence reference. The result, ban, and notices commit together; a repeated signed result cannot duplicate them.
 
 A scan records the active flag IDs when it is queued. Its clean result resolves
-only those flags. New flags keep the project paused and cause the next automatic
+only those flags. On a project with more than one repository, migration 0123 resolves
+a flag only once every repository the current manifest lists has a clean scan
+bound to that flag; a one-repository project resolves exactly as migration
+0060 did. New flags keep the project paused and cause the next automatic
 refresh to queue another scan. Equal timestamps do not make a newer flag part
 of an older scan. The database checks this boundary when it records reinstatement.

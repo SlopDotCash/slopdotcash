@@ -24,8 +24,19 @@ function acceptedMerges() {
       commits:
         index === 0
           ? [
-              ...(pull.commits ?? []),
-              { oid: "b".repeat(40), author: PROJECT_OWNER },
+              ...(pull.commits ?? []).map((commit) => ({
+                ...commit,
+                additions: 2,
+                deletions: 0,
+                parentCount: 1,
+              })),
+              {
+                oid: "b".repeat(40),
+                author: PROJECT_OWNER,
+                additions: 1,
+                deletions: 0,
+                parentCount: 1,
+              },
             ]
           : pull.commits,
     }),

@@ -45,11 +45,16 @@ for (const pendingDestination of [false, true]) {
   }, info) => {
     diagnostics.allowPreviewApiMisses();
     diagnostics.allowCanceledBackgroundReads();
+    // The page ends soon after the section. A short window keeps the bottom
+    // reading position more than 100px past the section's own position.
+    const size = page.viewportSize();
+    if (size && size.height > 560)
+      await page.setViewportSize({ width: size.width, height: 560 });
     await page.goto("/how-it-works", { waitUntil: "networkidle" });
     // A plain anchor creates a fresh native history entry, unlike Link's
     // synthetic popstate. It must still land on the requested section.
     await page
-      .getByRole("link", { name: "Payment stages and timing", exact: true })
+      .getByRole("link", { name: "monthly cutoff", exact: true })
       .click();
     await expect(page).toHaveURL(/\/how-it-works#payments$/u);
     await expect
@@ -86,6 +91,11 @@ for (const pendingDestination of [false, true]) {
         ),
       )
       .toBeLessThan(2);
+    const destinationLink = page.locator('a[href="/earnings"]').last();
+    // Reaching the link can scroll a narrow page. Record the position from
+    // which the reader actually leaves, before testing history restoration.
+    await destinationLink.scrollIntoViewIfNeeded();
+    await afterPaint(page);
     const readingPosition = await page.evaluate(() => window.scrollY);
     const anchorPosition = await page
       .locator("#payments")
@@ -108,11 +118,11 @@ for (const pendingDestination of [false, true]) {
       });
     }
     try {
-      await page.locator('a[href="/earnings"]').last().click();
+      await destinationLink.click();
       await expect(page).toHaveURL(/\/earnings$/u);
       if (pendingDestination)
         await expect(
-          page.getByText("Loading page…", { exact: true }),
+          page.getByRole("status").filter({ hasText: /^Loading page$/u }),
         ).toBeVisible();
       // The immediate case deliberately returns before the destination has
       // finished rendering, as a reader can do with the browser Back button.

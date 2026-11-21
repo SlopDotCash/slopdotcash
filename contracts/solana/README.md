@@ -8,10 +8,12 @@ ordinary and bounty projects for the same digest (owner decision D13, 24
 October 2026). `initialize` is permissionless: the signing owner pays and owns
 the project. Classic SPL mints retain their existing behavior. Token-2022 mints
 must have disabled mint and freeze authorities and may contain only
-`MetadataPointer` and `TokenMetadata`; token accounts may contain only
-`ImmutableOwner`, or no extensions. Unknown extensions, transfer fees, transfer
-hooks and rebasing behavior remain unsupported (PRD section 6, owner decision
-26 October 2026). The program and TypeScript adapter both check this subset.
+`MetadataPointer` and `TokenMetadata`. Metadata must be self-hosted, both
+metadata authorities must be disabled, and the mint account cannot exceed 1,024
+bytes. Token accounts may contain only `ImmutableOwner`, or no extensions.
+Unknown extensions, transfer fees, transfer hooks and rebasing behavior remain
+unsupported (PRD section 6, owner decision 26 October 2026). The program and
+TypeScript adapter both check this subset.
 Every transfer uses the mint's own token program and decimals with
 `transfer_checked`, so the vault receives the exact amount sent.
 
@@ -287,15 +289,18 @@ source_digest]` marker.
    an admitted award's source by hand and strand its reserve. Anyone, including
    the owner, can clear the gate by committing the remaining awards. Time and
    owner opt-out never remove the gate or release funds. Later monthly admissions,
-   funded payments and withdrawals of free funds remain available. If part of a
-   month can never settle (an attester fault), the owner calls
-   `release_monthly_reserve(period, expected_unsettled, released)` after an
-   Ed25519 check of the project's identity authority signature over
-   `"slop-monthly-release-v1"`, the program, project, period, root, total,
-   unsettled and released gross, and network. The signature binds the exact
-   unsettled gross (`total - committed`). The released gross returns to free
-   balance and is added to `committed` and `released`; committed awards do not
-   change. See `docs/escrow-unsettleable-month-release.md`.
+   funded payments and withdrawals of free funds remain available. If the
+   complete retained allocation has the wrong authenticated total and no leaf
+   has settled, the owner calls
+   `release_monthly_reserve(period, expected_unsettled, released)` with
+   `released == expected_unsettled == total` after an Ed25519 check of the
+   project's identity authority signature over `"slop-monthly-release-v1"`, the
+   program, project, period, root, total, unsettled and released gross, and
+   network. Partial or partly settled allocations refuse aggregate release.
+   This prevents the same gross also being consumed by `release_monthly_award`.
+   The released gross returns to free balance and is added to `committed` and
+   `released`; committed awards do not change. See
+   `docs/escrow-unsettleable-month-release.md`.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
 proof)`, passing the source's `origin`, its `monthly-source` marker and the
@@ -337,6 +342,81 @@ token account owners, vault PDA, project account and signer. Failed token transf
 entire transaction, including fees and accounting. Frozen destinations do not block
 other awards. `paid`, reserve, principal paid and fee counters are on-chain. Paid
 records remain permanently allocated to prevent account recreation replay.
+
+## Month pledges
+
+Operator decision of 15 November 2026. Until a month is committed, its money is free
+balance the owner could withdraw. A month pledge locks it in the vault on chain. The owner
+calls `pledge_month(period, amount)` for a UTC period (`YYYYMM`): the current period or
+one of the next 11. One `MonthPledge` PDA per project and period
+(`["pledge", project, period u32 LE]`, 54 bytes) records the amount and whether it is
+open; `Project.pledged_open` is the sum of open pledges. Clients pledge several periods
+in one transaction, one instruction each; twelve fit in one legacy transaction.
+The owner pays the account's rent (about 0.0013 SOL) and gets it back with
+`close_month_pledge` once the pledge has closed.
+
+- A pledge must fit: free balance stays at or above `pledged_open` after it, otherwise
+  `InsufficientFreeBalance`. A pledge can be raised, never lowered (`PledgeTooLow`); an
+  equal amount changes nothing. A past period, one more than 11 months ahead, or a
+  period whose pledge already closed is refused with `PledgePeriodClosed`. A bounty
+  project cannot pledge (`WrongPurpose`). No `month` account is checked: a period's
+  window opens 72 hours after it ends, so the current or a later period cannot be
+  committed yet.
+- `withdraw`, `withdraw_native` and the owner's hand `commit` must leave free balance at
+  or above `pledged_open`, otherwise `PledgedFunds`. Deposits, payments, fee claims and
+  monthly award commits are unchanged.
+- `commit_monthly` takes an optional last account, `month_pledge`, the period's pledge
+  PDA. An open pledge is the owner's consent to that period: the month records even when
+  monthly commitments are off. With them off the limit is the pledge alone, whatever the
+  cap says; with them on it is the larger of the monthly cap and the pledge
+  (`MonthlyCapExceeded` above it). So `set_monthly_commitment(_, false)` or a lowered cap
+  after pledging stops only unpledged months, and turning monthly off never lets a month
+  take more than its pledge. A month never takes funds another period's open pledge holds (`PledgedFunds`).
+  On success the pledge closes and leaves `pledged_open`; any amount above the recorded
+  total is free again. `MonthPledged { project, period, amount }` and
+  `PledgeClosed { project, period, amount, reserved }` are emitted.
+- The program is built with Anchor's `allow-missing-optionals`, so a caller that predates
+  pledges may leave `month_pledge` off entirely (or pass the program ID). Such a commit
+  still counts every open pledge, the period's own included. Anyone can then close that
+  period's pledge at once with `expire_pledge`, which reports `reserved: true`.
+- `expire_pledge(period)` is permissionless. It closes an open pledge whose period was
+  never committed once the period's window has closed (00:00 UTC on the 4th of the
+  second month after it), so pledged funds return to the owner if the executor misses
+  the whole window. Before that, or on a closed pledge, it fails `PledgeNotLapsed`.
+- `close_month_pledge(period)` is the owner's. It deletes a pledge that has already
+  closed (committed or lapsed) and returns its rent to the owner; an open pledge fails
+  `PledgeOpen`. A closed pledge's period is always before the current one (its window
+  opened after the period ended), so `pledge_month` can never reopen it. A closed period
+  with no account reads amount 0 and closed, the same as a period never pledged.
+
+`adapter.ts` reads pledges with `readSolanaMonthPledges` (the open total and each
+requested period from one finalized `getMultipleAccounts`; `null` for a Project of the
+332-byte layout) and builds `pledge_month`, `expire_pledge` and `close_month_pledge`
+instructions. `month-pledge.ts` plans and simulates the owner's unsigned transactions
+(`prepareSolanaPledgeMonths`, `prepareSolanaExpirePledge`, `prepareSolanaClosePledge`,
+`solanaPledgeMonthsMessage`); it never signs or sends.
+
+Upgrading a live deployment, in this order:
+
+1. Release the site and executor that pass `month_pledge` to `commit_monthly` and read
+   both Project sizes (SlopDotCash/slopdotcash#2828) first, and confirm it is live. The
+   new program accepts a commit without the account, but such a commit counts the
+   period's own pledge against it, so the executor must name the pledge before any owner
+   can pledge.
+2. Upgrade the program.
+3. Right after the upgrade, run `migrate_project` on every live ordinary vault (Eliza,
+   Teeny's brain, Hyperliquid Source and pumpfun-source on 15 November 2026). The new
+   program cannot read a 332-byte Project, so every instruction on an unmigrated vault
+   fails (deposits, withdrawals, payments and `commit_monthly`) until it is migrated.
+   `config-plan.mjs migrate` plans one unsigned transaction per unmigrated project; any
+   payer signs it, and it only adds rent and a zero `pledged_open`. A migrated project
+   behaves exactly as before until its owner pledges.
+
+What stays: the program is upgradeable by its upgrade authority, which can replace these
+rules, so a pledge holds funds against the vault owner, not against that key. The owner
+can still lower contributors' amounts before the allocation is frozen; a pledge stops
+withdrawal, not cuts. A pledged month that is never committed lapses when its window
+closes.
 
 ## Local build and end-to-end tests
 
@@ -534,19 +614,21 @@ the current upgrade authority after it checks the deployed program bytes and
 that no Config exists. `config-plan.mjs projects` lists every Project account
 and marks which ones the Config pins and which still need migration.
 `config-plan.mjs migrate` builds one unsigned `migrate_project` transaction per
-316-byte project for the input's `payer`. No mode reads keys or sends a
+316- or 332-byte project for the input's `payer`. No mode reads keys or sends a
 transaction.
 
 ### Project account layout
 
-The `Project` account is 332 bytes. The D13 revision removed `service_fees` and
+The `Project` account is 340 bytes. The D13 revision removed `service_fees` and
 appended `purpose`, `monthly_cap` and `monthly_enabled`, and the purpose is a
 project PDA seed. The red-team revision of 24 October 2026 appended
 `accrued_fees` and `monthly_outstanding` (u64 each). A 316-byte project from the
 build before it cannot be read until anyone calls the permissionless
 `migrate_project`, which grows it to 332 bytes, takes any added rent from the
 payer and starts the new fields at zero (that build sent fees out at once).
-The same revision appended `released`, `frozen_at` and `expired` to
+The month pledge revision of 15 November 2026 appended `pledged_open` (u64);
+`migrate_project` also grows a 332-byte project to 340 bytes.
+The 24 October revision appended `released`, `frozen_at` and `expired` to
 `MonthlyAllocation` (now 109 bytes).
 The `expired` field remains for layout compatibility; this build removes
 `expire_month`. New funded months never expire. Before an in-place upgrade,
@@ -572,6 +654,9 @@ reads keys or sends a transaction. Its output omits the RPC URL. The checked-in
 IDL is generated from the program; regenerate it after instruction layout changes.
 
 `bootstrap-linux.sh` installs the pinned Linux x86_64 GitHub Actions toolchain.
+It checks the Agave archive's recorded SHA-256 before extraction and accepts only
+HTTPS downloads and redirects. The digest pins the bytes observed from the
+upstream release; it does not prove an independent build or producer signature.
 It is not a mainnet deployment path. The separate Node SDK package is used only
 for local integration and unsigned operator tools. Its upstream dependency audit
 has unresolved advisories; lifecycle scripts are disabled and the bigint code
@@ -585,3 +670,153 @@ its seed only in the owner-controlled signing environment. It must differ
 from the fee wallet, identity authority, project owner and vault.
 
 The owner approved zero mandatory award and identity-rotation delays and retained production upgrade authority on 24 October 2026. New project configurations use zero delays. Existing project accounts retain their recorded delays. The configured upgrade key and exact program bytes remain part of verification.
+
+## Submission deposits
+
+`programs/slop-submission-deposits` is a separate program that holds refundable
+submission deposits, the Solana counterpart of
+[`contracts/evm/src/SubmissionDeposits.sol`](../evm/README.md#submission-deposits)
+(operator decision, 18 November 2026: Solana is the second step of the platform
+submission fee, USDC only, with the same outcomes). **It is not deployed on any
+cluster.** No Slop service reads it, the pay page does not offer it, and
+`src/lib/submission-fee.mjs` names no Solana network. The program id in the
+source, `HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t`, is a local placeholder
+whose key was discarded; the owner generates the real address before the
+verifiable build ([runbook](../../docs/submission-deposits-solana-deploy-runbook.md)).
+It shares nothing with `slop-escrow`: its own id, its own accounts, no call
+between the two. It uses the escrow's two crates at the same versions and adds
+none, and the escrow's program bytes are unchanged by its presence in the
+workspace.
+
+Accounts, all program-derived:
+
+| Account | Seeds | Holds | Rent paid by | Closed |
+| --- | --- | --- | --- | --- |
+| `Config` | `"config"` | owner, pending owner, resolver, reclaim delay, deposit count, pause flag | the upgrade authority, at `initialize` | never |
+| `Ledger` | `"ledger"`, mint | the mint and `open_total`, the sum of its open deposits | whoever calls `open_vault` | never |
+| vault | `"vault"`, mint | a classic SPL token account; its token authority is the `Ledger` | whoever calls `open_vault` | never |
+| `Deposit` | `"deposit"`, id as 8 bytes little-endian | one open deposit | the payer | on its outcome; the rent returns to the payer |
+
+- The program's upgrade authority calls `initialize(owner, resolver, reclaim_delay)`
+  once. Nobody else can, the delay must be above zero and at most 365 days, and
+  no instruction changes the delay afterwards. It must run before the upgrade
+  authority is removed.
+- Anyone calls `open_vault` once per mint. Only mints of the classic SPL Token
+  program are admitted; a Token-2022 mint is refused whatever its extensions.
+- Anyone calls `deposit(item, amount, kept_to)`. `item` is the same 32 bytes as
+  on the EVM chains (`submissionFeeItem` in `src/lib/submission-fee.mjs`). The
+  program moves exactly `amount` from a token account the payer owns into the
+  vault and records the payer, the mint, the amount and `kept_to`, a wallet.
+  None of those can change afterwards. Ids count up from 1, and the next id is
+  part of the record's address, so two deposits built against the same count
+  have one winner and the other is rebuilt. The program keeps no list of
+  accepted mints, amounts or kept wallets; that check is off chain.
+- The resolver calls `resolve(refund)` once per open deposit: `true` sends the
+  amount to the payer's associated token account, `false` to the associated
+  token account of `kept_to`. No other destination is accepted, and the account
+  must still be owned by that wallet. Several `resolve` instructions in one
+  transaction are the batch; a Solana transaction is all or nothing.
+- If a deposit is still open `reclaim_delay` after it was made, its payer calls
+  `reclaim` and takes it back, to any token account of that mint the payer owns.
+- The owner calls `set_resolver`, `pause_deposits` and the two-step
+  `transfer_ownership` / `accept_ownership`. Pausing refuses new deposits only.
+  The resolver is never the owner or the pending owner. No owner action moves,
+  redirects or resolves a deposit.
+
+Where it differs from the EVM contract, and why:
+
+- **A deposit's record is closed on its outcome.** An account costs rent, about
+  0.002 SOL for this record; kept forever it would be a charge on every fee that
+  never comes back. Closed, the rent returns to the payer on a refund, a kept
+  fee and a reclaim alike. An id at or below `deposit_count` with no account has
+  been settled, and the transaction that closed it says how.
+- **Wallets, and token accounts of those wallets.** The record names wallets.
+  A refund and a kept fee go to the wallet's associated token account, the one
+  address that follows from the wallet and the mint, so the resolver chooses
+  nothing. The program never creates a token account: a destination that is
+  missing, frozen by the mint's issuer, or handed to another owner makes that
+  payout fail and leaves the deposit open. The other outcome and the reclaim
+  still work.
+- **Classic SPL mints only**, instead of measuring balances on both sides.
+  Their transfers are exact by construction. The program still checks that the
+  vault rose by exactly the amount on a deposit and still covers `open_total`
+  after a payout.
+- **Accounts and transactions are the record, not events.** The program logs
+  `Deposited`, `Resolved`, `Reclaimed` and the role events for people and
+  explorers, but another instruction in the same transaction can push program
+  logs past their size limit. A reader takes the open deposits from the
+  `Deposit` accounts and an outcome from the instruction that closed one.
+- **Upgrade authority.** The EVM contract cannot be changed by anyone. A Solana
+  program is deployed with an upgrade authority, and whoever holds it can
+  replace the code and so move every open deposit. Nothing in the program needs
+  that authority after `initialize`. The program equals the EVM contract on this
+  point only once the authority is removed
+  (`solana program set-upgrade-authority <program> --final`), which cannot be
+  undone. Until then do not describe it as fixed or not upgradeable.
+- **The cluster clock.** `deposited_at` and the reclaim check both read the
+  validators' voted time, so the delay is never shorter than its length in
+  cluster time, which can run behind wall time when the cluster is slow.
+
+What a stolen resolver key can do: settle any open deposit either way. It
+cannot send a deposit anywhere but its payer's or its kept wallet's associated
+token account, take anything for itself, or stay once the owner replaces it.
+What a stolen owner key can do: name a resolver it controls, with exactly those
+two outcomes, and pause new deposits. What a held upgrade authority can do:
+everything. The most the resolver or the owner can affect is the deposits open
+at that moment (`open_total` of each mint).
+
+Other limits. The issuer of a mint with a freeze authority (USDC has one) can
+freeze a payer's account, which blocks that payer's refund but not the kept
+outcome or a reclaim to another account the payer owns; it can also freeze a
+vault, which blocks every movement of that mint until it is thawed, and no
+instruction works around that. A payer who hands their associated token account
+to another owner cannot be refunded to it and reclaims instead. Tokens sent to a
+vault without `deposit` belong to no deposit and cannot be moved by anyone.
+There is no rescue instruction. Because the next id is part of a record's
+address, someone who keeps landing deposits can keep other payers' deposits
+failing and retrying; each such deposit locks its rent until it is reclaimed
+after the delay, nothing is lost or misdirected, and the pause is the owner's
+only lever (it stops honest deposits too). The review note describes the
+alternative.
+
+`scripts/test-submission-deposits.sh` (`bun run test:contracts:solana:submission-deposits`
+from the repository root) builds the program, requires the committed
+`idl/slop_submission_deposits.json` to equal the built IDL, runs the host unit
+tests, and then runs three suites on two isolated local validators, because the
+delay is fixed once per deployment:
+
+- `integration/submission-deposits-rehearsal.e2e.mjs`, with the 30-day delay:
+  the runbook's planner builds the `initialize` and `open_vault` transactions
+  and refuses a wrong cluster, build, authority or roles; a mint at the mainnet
+  USDC address (local bytes: classic, six decimals, a freeze authority); the
+  real fee wallet address as the kept wallet; the item hash the site computes;
+  a refund, a kept fee and a frozen payer; two deposits loaded at genesis, one
+  five minutes past thirty days (reclaimed) and one an hour short (refused);
+  the finalized reads a Worker will make, decoded by hand; and removal of the
+  upgrade authority, after which deposits and refunds still work.
+- `integration/submission-deposits.e2e.mjs`, with a six-second delay: every
+  instruction and every refusal, including each wrong destination a resolver
+  could name, the rent recipient, single settlement, frozen, closed and
+  handed-over token accounts, a batch that is all or nothing, reclaim timing,
+  pausing, the roles, stray tokens, and mints of zero and nine decimals.
+- `integration/submission-deposits-invariant.e2e.mjs`: a seeded random campaign
+  of 240 steps over two mints that checks after every step that each vault
+  equals its ledger's open total and the sum of the open deposits, that each
+  record is present exactly while open, and that every wallet holds what the
+  outcomes imply.
+
+CI builds the program in the same pinned image as the escrow, keeps it with its
+own manifest in the `solana-verifiable` artifact, and the `solana` job tests
+those exact bytes in the pinned validator container. On a machine without a
+container engine, `SLOP_SOLANA_VALIDATOR=host` runs the suites on the
+`solana-test-validator` on `PATH`; that is an explicit choice, and its results
+are not evidence for the pinned validator version. These suites are regression
+evidence, not a security review. The AI-assisted review note is
+[`docs/submission-deposits-solana-ai-review-2026-11-20.md`](../../docs/submission-deposits-solana-ai-review-2026-11-20.md);
+it is not an audit. The state models are
+`formal/models/contracts/solana_submission_deposits*.qnt`.
+
+`scripts/submission-deposits-plan.mjs` is the deployment's read-only planner:
+it builds the unsigned `initialize` and `open_vault` transactions and reads the
+result back, after checking the cluster, the deployed bytes and the upgrade
+authority. It signs and sends nothing.

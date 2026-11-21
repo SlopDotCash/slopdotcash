@@ -1255,6 +1255,23 @@ describe("private intake: recorded repository rename", () => {
 });
 
 describe("private intake: send outcomes", () => {
+  test("a proof-of-concept file is forwarded as its own fenced section before the reference line", async () => {
+    const t = setup();
+    const submission = await t.ready();
+    const patch =
+      "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,2 @@\n+// a ```` run of four backticks\n+function testDrain() public {}";
+    const sent = await t.send(submission.id, 1, {
+      ...REPORT,
+      proofOfConcept: { fileName: "drain.patch", patch },
+    });
+    expect(sent.status).toBe(200);
+    const [advisory] = t.github.advisories;
+    const marker = t.row(submission.id).marker;
+    expect(advisory.advisory.description).toBe(
+      `${REPORT.description}\n\n### Proof of concept: drain.patch\n\n\`\`\`\`\`diff\n${patch}\n\`\`\`\`\`\n\nReport reference: ${marker}`,
+    );
+  });
+
   test("a report is filed as the reporter and its receipt is verified with GitHub", async () => {
     const t = setup();
     const submission = await t.ready();
@@ -2163,6 +2180,29 @@ describe("private intake: direct GitHub reports", () => {
       failure_code: "already-recorded",
     });
     expect(t.cases()).toHaveLength(1);
+  });
+
+  test("a direct report's shown response due runs from its verified receipt, not the GitHub filing time", async () => {
+    const t = setup();
+    // Filed on GitHub on 2026-10-20, verified at the harness clock three
+    // days later. Counted from the filing, the published 24-hour
+    // acknowledgement target would already be past at the first view,
+    // before the owner was ever notified or could act.
+    const { verified } = await direct(t, REPORTER);
+    expect(verified.body.submission?.state).toBe("receipt-verified");
+    const [row] = t.cases();
+    expect(row.received_at).toBe("2026-10-20T08:30:00.000Z");
+    expect(row.verified_at).toBe(START);
+    // Intake stores the due from the verification time, and the notice
+    // escalation measures the same window from the notice written at
+    // verification. The reporter's view must show that same due.
+    expect(row.next_action_due_at).toBe("2026-10-24T10:00:00.000Z");
+    const view = await t.call(REPORTER, "GET", `security-cases/${row.id}`);
+    expect(view.body.case).toMatchObject({
+      receivedAt: "2026-10-20T08:30:00.000Z",
+      nextStep: "Waiting for the project owner's response.",
+      nextStepDueAt: "2026-10-24T10:00:00.000Z",
+    });
   });
 });
 

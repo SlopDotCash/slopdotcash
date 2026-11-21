@@ -8,7 +8,7 @@ module solana_preload_cases {
   var s:S
   action init=s'={kind:"none",bytes:0,obligation:0,balance:0,expired:false,written:false,local:true}
   action legacy=all{not(s.written),s'=s.with("kind","legacy").with("bytes",316)}
-  action shortVault=all{not(s.written),s'=s.with("kind","short").with("bytes",332).with("obligation",5).with("balance",4)}
+  action shortVault=all{not(s.written),s'=s.with("kind","short").with("bytes",340).with("obligation",5).with("balance",4)}
   action expiredMonth=all{not(s.written),s'=s.with("kind","expired").with("bytes",109).with("obligation",1).with("balance",10).with("expired",true)}
   action token2022=all{not(s.written),s'=s.with("kind","token2022").with("bytes",170)}
   action write=all{s.kind!="none",s'=s.with("written",true)}

@@ -119,7 +119,7 @@ test("a valid retained debit journal refuses an inexact negative Points total", 
 });
 
 test("safe penalties in three project scopes refuse an inexact actor total", () => {
-  const maximum = Number.MAX_SAFE_INTEGER;
+  const maximum = Math.floor(Number.MAX_SAFE_INTEGER / 10);
   const events = [0, 1, 2].map((index) => ({
     actor: PENALIZED_AUTHOR,
     repository: `https://github.com/example/project-${index}`,
@@ -699,6 +699,63 @@ test("Quint retained-award traces preserve recovery and explicit decisions throu
   } finally {
     api.close();
   }
+});
+
+test("a retained file omission preserves a reviewed value decision outside snapshot coverage", () => {
+  const actor = { id: PENALIZED_AUTHOR.id, login: PENALIZED_AUTHOR.login };
+  function review(sourceId: string, number: number): PointAward {
+    return {
+      key: pointKey("thenetwork", actor.id, "substantive-review", sourceId),
+      actor,
+      projectId: "thenetwork",
+      category: "substantive-review",
+      amount: 30,
+      occurredAt: "2026-10-18T00:00:00.000Z",
+      sourceId,
+      sourceUrl: `https://github.com/eliza-research/thenetwork/pull/100#pullrequestreview-${number}`,
+      workUnitId: `wu_thenetwork_${sourceId.toLowerCase()}`,
+      provisional: false,
+    };
+  }
+  const approved = review("PRR_reviewed_value", 4990521103);
+  const fileOwned = review("PRR_file_owned", 4990521104);
+  const recordedAt = "2026-10-20T00:00:00.000Z";
+  const journal = appendPointAwards(
+    emptyPointsJournal(recordedAt),
+    [approved, fileOwned],
+    "a".repeat(64),
+    "slop-score-v2",
+    recordedAt,
+    new Map([
+      [
+        approved.key,
+        {
+          sourceId: `value:${"b".repeat(64)}`,
+          effectiveAt: recordedAt,
+          reason: "Approved historical review assessment.",
+        },
+      ],
+    ]),
+  );
+  const after = applyRetainedHistoryBatch(
+    journal,
+    [],
+    "c".repeat(64),
+    "2026-10-21T00:00:00.000Z",
+  );
+  expect(latestPoints(after).get(approved.key)).toEqual(
+    latestPoints(journal).get(approved.key),
+  );
+  expect(latestPoints(after).get(fileOwned.key)?.award.amount).toBe(0);
+  expect(after.revisions).toHaveLength(journal.revisions.length + 1);
+
+  const explicit = applyRetainedHistoryBatch(
+    after,
+    [{ ...approved, amount: 20 }],
+    "d".repeat(64),
+    "2026-10-22T00:00:00.000Z",
+  );
+  expect(latestPoints(explicit).get(approved.key)?.award.amount).toBe(20);
 });
 
 test("points publication retains the exact permanent history prefix", async () => {

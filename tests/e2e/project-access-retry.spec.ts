@@ -155,9 +155,9 @@ for (const denied of [false, true]) {
         });
         if (denied) {
           await expect(
-            page.getByText(
-              "Project settings are available only to this project's maintainers.",
-            ),
+            page
+              .getByRole("status")
+              .filter({ hasText: /^\s*Maintainers only$/u }),
           ).toBeVisible();
           await expect(publish).toHaveCount(0);
           expect(successfulAccessReads).toBe(0);
@@ -178,25 +178,38 @@ for (const denied of [false, true]) {
           document.documentElement.style.fontSize = "200%";
         });
         await expectAccessible(page);
-        const retry = page.getByRole("button", {
-          name: "Retry access check",
-          exact: true,
-        });
+        const retry = page
+          .getByRole("alert")
+          .getByRole("button", { name: "Retry", exact: true });
         await retry.click();
         await expect(retry).toBeEnabled();
         await expect(publish).toHaveCount(0);
         unavailable = false;
         await retry.focus();
         await page.keyboard.press("Enter");
-        await expect(publish).toBeVisible();
+        await expect(publish).toBeEnabled();
         expect(successfulAccessReads).toBeGreaterThan(0);
         expect(writes).toBe(0);
+        // The recovered editor enables both controls before their colors finish
+        // transitioning. Audit their settled, usable state.
+        await publish.evaluate(async (button) => {
+          await Promise.all(
+            button
+              .parentElement!.getAnimations({ subtree: true })
+              .filter((animation) =>
+                Number.isFinite(animation.effect?.getComputedTiming().endTime),
+              )
+              .map((animation) => animation.finished.catch(() => {})),
+          );
+        });
         await expectAccessible(page);
         await page.screenshot({
           path: info.outputPath("access-recovered.png"),
           fullPage: true,
         });
       } finally {
+        // Drain routed requests before disposing the server they use.
+        await page.unrouteAll({ behavior: "wait" });
         await api.dispose();
       }
     },
@@ -259,14 +272,15 @@ for (const boundary of ["viewer", "final-session", "admission"] as const) {
       }
       if (boundary === "admission")
         await expect(
-          page.getByText(
-            "Project settings are available only to this project's maintainers.",
-            { exact: true },
-          ),
+          page
+            .getByRole("status")
+            .filter({ hasText: /^\s*Maintainers only$/u }),
         ).toBeVisible();
       else
         await expect(
-          page.getByRole("button", { name: "Retry access check", exact: true }),
+          page
+            .getByRole("alert")
+            .getByRole("button", { name: "Retry", exact: true }),
         ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Publish changes", exact: true }),
@@ -355,7 +369,7 @@ for (const outcome of ["refused", "temporary", "changed-actor"] as const) {
       await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
       const panel = page.locator(".project-setup-status");
       await expect(
-        panel.getByText("Fixture scan is queued.", { exact: true }).first(),
+        panel.getByTitle("Fixture scan is queued.", { exact: true }),
       ).toBeVisible();
       await panel
         .getByRole("button", { name: "Check again", exact: true })
@@ -374,16 +388,13 @@ for (const outcome of ["refused", "temporary", "changed-actor"] as const) {
       }
       if (outcome === "temporary") {
         await expect(
-          panel.getByText("Fixture scan is queued.", { exact: true }).first(),
+          panel.getByTitle("Fixture scan is queued.", { exact: true }),
         ).toBeVisible();
         await panel
           .getByRole("button", { name: "Try again", exact: true })
           .click();
         await expect(
-          panel.getByRole("heading", {
-            name: "Setup status: Ready",
-            exact: true,
-          }),
+          panel.getByRole("heading", { name: /^Setup\s*Ready$/u }),
         ).toBeVisible();
       } else {
         await expect(panel.locator(".setup-checks")).toHaveCount(0);
@@ -424,10 +435,7 @@ test("a confirmed setup identity mismatch retains the observed installation", as
     await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
     const panel = page.locator(".project-setup-status");
     await expect(
-      panel.getByRole("heading", {
-        name: "Setup status: Action needed",
-        exact: true,
-      }),
+      panel.getByRole("heading", { name: /^Setup\s*Action needed$/u }),
     ).toBeVisible();
     await expect(
       panel.getByRole("status").filter({ hasText: reason }),

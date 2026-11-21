@@ -29,7 +29,11 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
-import { runMonthlyCoordinator, syncRegistryVaults } from "../payments/index";
+import {
+  recordRegistryDeposits,
+  runMonthlyCoordinator,
+  syncRegistryVaults,
+} from "../payments/index";
 import {
   isBindingRecoveryInput,
   reconcileBindingWinner,
@@ -52,6 +56,7 @@ import {
   runStoredBindings,
   submitEvmMonthly,
 } from "./core";
+import { readDeploymentPinBinding } from "./deployment-pin-bindings";
 import { signMonthlyAllocation } from "./monthly";
 import {
   checkMonthlyReserveRelease,
@@ -113,10 +118,13 @@ interface State {
 }
 /** One instance per signer role serializes nonce allocation and preserves signed bytes before broadcast. */
 export class PaymentSignerJournal {
+  private readonly env: Environment;
   constructor(
     private readonly state: State,
-    private readonly env: Environment,
-  ) {}
+    env: Environment,
+  ) {
+    this.env = withDeploymentPinBindings(env);
+  }
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const bindingNonceLimit = testBindingNonceLimit(this.env);
@@ -696,6 +704,8 @@ export async function runMonthlyAttester(env: Environment) {
     },
   });
   failures.push(...report.failures);
+  // Display evidence for "Funded by"; after every signing step, never fatal.
+  await recordRegistryDeposits(worker, sync.deployments, sync.rpcUrls);
   if (failures.length)
     throw new AggregateError(
       failures,
@@ -852,18 +862,33 @@ export function privateScopeJournal(storage: JournalStore): JournalStore {
   };
 }
 
+// Overlay only the pin reads. Other bindings stay available by direct access
+// and are never read merely to construct an ordinary or private environment.
+function withDeploymentPinBindings(env: Environment): Environment {
+  return Object.create(env, {
+    PAYMENT_DEPLOYMENTS: {
+      get: () => readDeploymentPinBinding(env, "PAYMENT_DEPLOYMENTS"),
+    },
+    SECURITY_PAYMENT_DEPLOYMENTS: {
+      get: () => readDeploymentPinBinding(env, "SECURITY_PAYMENT_DEPLOYMENTS"),
+    },
+  });
+}
+
 function privateAttesterEnvironment(env: Environment): Environment {
-  return {
-    ...env,
-    PAYMENT_SCOPE: "security-bounty",
-    PAYMENT_DEPLOYMENTS: env.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]",
-    SECURITY_PAYMENT_DEPLOYMENTS: undefined,
-  };
+  return Object.create(env, {
+    PAYMENT_SCOPE: { value: "security-bounty" },
+    PAYMENT_DEPLOYMENTS: {
+      get: () => env.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]",
+    },
+    SECURITY_PAYMENT_DEPLOYMENTS: { value: undefined },
+  });
 }
 
 /** Service bindings only. workers_dev and preview URLs must remain disabled in both deployments. */
 export default {
-  async scheduled(_event: unknown, env: Environment) {
+  async scheduled(_event: unknown, bindings: Environment) {
+    const env = withDeploymentPinBindings(bindings);
     testBindingNonceLimit(env);
     // The binding run follows the indexing of new awards and runs even when
     // a monthly step fails; either failure fails the scheduled run.

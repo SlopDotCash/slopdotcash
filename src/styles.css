@@ -643,10 +643,6 @@ p {
   padding-block: 0 96px;
 }
 
-.home-leaderboard-section {
-  scroll-margin-top: 64px;
-}
-
 .home-section-heading {
   grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
 }
@@ -746,8 +742,7 @@ p {
   margin: 0;
 }
 
-.person-cell span,
-.profile-totals div {
+.person-cell span {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -759,7 +754,9 @@ small {
   font-size: 13px;
 }
 
-.project-bounty span {
+.project-bounty > span:not(.project-monthly-reward),
+.project-bounty .project-monthly-unit,
+.project-bounty .project-funding-warning {
   color: var(--muted);
   font-size: 15px;
   font-weight: 700;
@@ -1019,21 +1016,6 @@ small {
   border-color: rgba(255, 255, 255, 0.36);
   background: rgba(255, 255, 255, 0.08);
 }
-
-.profile-totals strong {
-  font-size: 24px;
-  letter-spacing: -0.04em;
-}
-
-.profile-totals span {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .install-panel {
   margin-top: 56px;
   padding: 32px;
@@ -1208,17 +1190,6 @@ small {
   align-items: center;
   gap: 6px;
 }
-
-.profile-totals {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  border-block: 1px solid var(--line);
-}
-
-.profile-totals div {
-  padding: 18px 14px 18px 0;
-}
-
 .profile-section {
   padding-block: 46px;
 }
@@ -1769,20 +1740,6 @@ small {
     padding-inline: 8px;
     font-size: 13px;
   }
-
-  .profile-totals {
-    grid-template-columns: repeat(2, 1fr);
-    column-gap: 18px;
-  }
-
-  .profile-totals div:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
-
-  .profile-totals div {
-    padding: 16px 8px 16px 0;
-  }
-
   .profile-section {
     padding-block: 38px;
   }
@@ -2123,17 +2080,8 @@ small {
   overflow-wrap: anywhere;
   margin-top: 0;
 }
-.home-leaderboard-section > .points-panel {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
 .points-panel p {
   max-width: 72ch;
-}
-.home-leaderboard-section > .points-panel + .points-panel {
-  margin-top: 3rem;
 }
 .points-meta {
   font-size: 0.875rem;
@@ -3019,28 +2967,6 @@ a.payout-tx:hover {
 }
 
 /* Contributor profile: tiles, charts and payout states. */
-.profile-page .profile-totals {
-  gap: 12px;
-  margin-block: 28px 8px;
-  border: 0;
-}
-
-.profile-page .profile-totals div {
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--brand-color-surface);
-}
-
-.profile-page .profile-totals strong {
-  font-family: var(--brand-font-data);
-  font-size: 28px;
-}
-
-.profile-page .profile-totals div:nth-child(2) strong {
-  color: var(--brand-color-accent);
-}
-
 .profile-card {
   margin-block: 20px;
   padding: 22px;
@@ -3119,9 +3045,15 @@ a.payout-tx:hover {
 }
 
 .pr-dot {
+  display: inline-block;
+  flex: none;
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+
+.pr-dot-hollow {
+  border: 2px solid var(--muted);
 }
 
 .project-bars {
@@ -3169,28 +3101,6 @@ a.payout-tx:hover {
 .project-bars a:hover .project-bar-track > span {
   background: var(--brand-color-accent-hover);
 }
-
-.activity-chart {
-  margin: 0 0 24px;
-}
-
-.activity-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 72px;
-}
-
-.activity-bars > span {
-  flex: 1;
-  border-radius: 3px 3px 0 0;
-  background: var(--brand-color-accent);
-}
-
-.activity-bars > .activity-bar-empty {
-  background: var(--brand-color-raised);
-}
-
 .profile-badges {
   display: flex;
   flex-wrap: wrap;
@@ -3841,6 +3751,12 @@ html:has(.security-page) {
 .owner-section.project-setup-status {
   display: block;
 }
+.project-setup-status > h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
 .project-setup-status > .handoff-actions {
   margin: 16px 0;
 }
@@ -4112,6 +4028,18 @@ html:has(.security-page) {
   margin: 0;
 }
 
+.funded-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.funded-meter > .pr-bar {
+  flex: none;
+  width: 64px;
+  height: 6px;
+}
+
 .vault-available {
   background: var(--orange);
 }
@@ -4291,4 +4219,44 @@ nav[aria-label="Project navigation"] {
   width: 100%;
   min-width: 0;
   max-width: 100%;
+}
+
+.vault-covers {
+  margin: 0;
+  color: var(--muted);
+}
+
+.vault-public-funding,
+.vault-funders {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.vault-public-funding > p,
+.vault-funders > p {
+  margin: 0;
+}
+
+.vault-public-funding > .vault-actions,
+.vault-funders > .payment-records {
+  justify-self: stretch;
+}
+
+.vault-funders > h3 {
+  margin: 0;
+}
+
+/* The public deposit form keeps the manage page's compact contract details. */
+.vault-public-funding .vault-contract-details {
+  margin-block: 0.5rem;
+}
+
+.vault-public-funding .vault-contract-details summary {
+  font-size: 0.85rem;
+  color: #b9b5aa;
+}
+
+.vault-public-funding .vault-contract-details[open] summary {
+  margin-bottom: 0.65rem;
 }

@@ -25,7 +25,7 @@
     "cycles:check": "bun scripts/sync-cycle-index.ts --check",
     "protocol:check": "node scripts/protocol-identity.mjs",
     "rewards:propose-month": "bun scripts/prepare-monthly-rewards.ts",
-    "audit:dependencies": "bun audit",
+    "audit:dependencies": "bun --no-env-file scripts/verify-dependency-audit.mjs",
     "verify": "bun run lemmascript:check && bun run verify:contracts && bun run cycles:check && bun run audit:dependencies && bun run verify:code && bun run build",
     "typecheck": "tsc -b",
     "test": "bun test --timeout 30000 ./scripts ./workers ./backend ./contracts ./formal/tests",
@@ -37,6 +37,8 @@
     "test:referral-accrual": "bun test --timeout 30000 ./workers/referral-accrual ./backend/referrals",
     "test:referral-accrual:anvil": "bun workers/referral-accrual/anvil.integration.ts",
     "referral-accrual:dry-run": "bun workers/referral-accrual/dry-run.ts",
+    "test:submission-fee": "bun test --timeout 30000 ./src/lib/submission-fee.test.ts ./workers/submission-fee ./backend/submission-fee ./workers/fee-converter/submission-fee-income.test.ts ./scripts/release-submission-fee.test.ts",
+    "test:submission-fee:anvil": "bun workers/submission-fee/anvil.integration.ts",
     "payments:keep": "bun scripts/payment-keeper/run.ts",
     "fee-converter:dry-run": "bun workers/fee-converter/dry-run.ts",
     "test:fee-converter:fork": "bun workers/fee-converter/fork.integration.ts",
@@ -67,6 +69,7 @@
     "test:payments": "bun run test:security-payments && bun backend/payments/evm.integration.ts && bun workers/payments/recovery.integration.ts && bun workers/payments/reconcile.integration.ts && bun workers/payments/registry.integration.ts && bun workers/payment-executor/bind-trigger.integration.ts && bun workers/payment-executor/binding-nonce-limit.integration.ts",
     "build:contracts:solana": "bash contracts/solana/scripts/build-local.sh",
     "test:contracts:solana": "bash contracts/solana/scripts/test-e2e.sh",
+    "test:contracts:solana:submission-deposits": "bash contracts/solana/scripts/test-submission-deposits.sh",
     "escrow:acceptance": "bun scripts/escrow-acceptance.ts",
     "test:escrow-acceptance:local": "bun scripts/escrow-acceptance/local.ts",
     "test:vetting:sandbox": "bun workers/vetting-sandbox/workflow.ts",
@@ -125,7 +128,12 @@
     "sharp": "0.35.5",
     "source-map-js": "1.2.2",
     "undici": "7.30.1",
-    "minimatch": "11.0.5"
+    "minimatch": "11.0.5",
+    "hono": "4.13.16"
+  },
+  "patchedDependencies": {
+    "picomatch@2.3.2": "patches/picomatch@2.3.2.patch",
+    "picomatch@4.0.5": "patches/picomatch@4.0.5.patch"
   },
   "packageManager": "bun@1.3.14",
   "engines": {

@@ -42,6 +42,17 @@ report meets the published scope and criteria. Existing
 Eligibility is frozen at receipt, so later edits cannot change an existing
 report's award conditions.
 
+Every program page lists Slop's ten default "Does not qualify" lines
+(`SECURITY_DEFAULT_EXCLUSIONS` in `src/lib/security-bounty.mjs`, operator
+decision of 16 November 2026), then the owner's optional
+`scope.excludedFindings`: at most 20 trimmed single-line entries of 3 to 300
+characters, no case-insensitive duplicates. Terms without the field have no
+owner lines. Owner lines change through an ordinary terms revision, so they
+apply only to reports received after it. Screening, case analysis and appeal
+triage receive both lists, in that order, as `doesNotQualify` beside the
+scope fields they already read from the same terms revision (`analysisScope`
+in `analysis.ts`); a match is advice only, never a decision.
+
 A bounty does not require a payment vault. Existing registered bounty vaults
 remain available with their verified asset and purpose. Their balances stay
 private and never enter ordinary contribution payment totals.
@@ -160,6 +171,23 @@ no-store and noindex. Financial roles alone receive no body. Contributor
 trace APIs cannot read this prefix. Bodies are never included in notification
 text, activity mail, public pages, exports, analytics or logs.
 
+The `report` may carry one optional `proofOfConcept: { fileName, patch }`
+(operator decision, 20 November 2026; PRD section 8). `fileName` is 1 to 200
+letters, digits, dots, hyphens and underscores, ending in `.patch`, `.diff`,
+`.sol` (so `.t.sol`), `.ts`, `.js`, `.rs`, `.py` or `.go`; `patch` is 1 to
+60,000 bytes of UTF-8 text with no NUL byte or lone surrogate. Both rules live
+in `src/lib/report-proof.ts`, shared with the form. The file is part of the
+stored report JSON, so it is versioned, digested and bounded by the same
+256 KB limit; a report without it stores exactly what it stored before. The
+analysis input labels it `reporterProofOfConceptFile` (untrusted, never run)
+for screening, case analysis (`slop-security-case-analysis-3`) and the
+routine pass. GitHub forwarding appends it after the description as
+`### Proof of concept: <fileName>` and a fenced block one backtick longer than
+the longest backtick run in the file (at least three), before the report
+reference line. Description plus that section must fit in 65,000 characters;
+`parseReportInput` refuses a longer combination with `invalid_report` and a
+message to shorten the description, so nothing is truncated.
+
 Public report creation, evidence revisions and rescreen work share ten
 admissions per account in a rolling hour. An atomic D1 admission precedes each
 R2 write or paid call, including retained legacy drafts. Expired admission
@@ -178,6 +206,14 @@ queues the existing generic private-case email and Inbox link. Held reports
 stay readable to their reporter and current case authorities. They are not
 automatically rejected or awarded. Failed delivery preserves the receipt;
 retrying `/screen` on a legitimate report retries only idempotent routing.
+
+Screening also compares current assessment summaries from the latest 25 verified
+cases in the same project. It omits stale or held assessments. Possible semantic
+overlap stays `needs-information` for reporter revision or maintainer review;
+the model cannot reject a report or decide an award. When prior summaries enter
+the model input, reporter receipts use a generic reason so the model cannot
+return another report's private content. Each screening worker must retain its
+claimed revision, and only its committed result may start an assessment.
 
 - `POST /:id/screen` retries an unavailable or lost screen, or pending routing.
 - `POST /:id/review` lets a current technical maintainer record `forward` or
@@ -205,6 +241,95 @@ root cause is held against duplicate awards. An `in-scope-security` award
 requires the owner's confirmed finding against the published scope and criteria.
 Historical `critical-loss-of-funds` terms retain their severity and impact
 conditions. Existing approved awards and prefunded-program behavior stay unchanged.
+
+## Routine decisions
+
+PRD section 8, operator decision of 17 November 2026
+(`routine-decisions.ts`, migration `0133_security_routine_decisions.sql`).
+The screening agent decides routine reports; a person still decides every
+finding it leaves open, every appeal and every award.
+
+A pass reads verified cases still in `received`, oldest first, plus cases
+whose routine request for proof is due or has a new report version. It
+records one decision per case revision:
+
+| Decision | Rule | Case change in `live` |
+|---|---|---|
+| `duplicate` | Same report digest as an earlier case of the program (no model call), or both calls name the same earlier case | `receipt_state: duplicate`, `duplicate_of`, event `decide` |
+| `does-not-qualify` | Both calls name the same published line and neither finds loss of funds plausible | `receipt_state: out-of-scope`, the line quoted in the reason, event `decide` |
+| `needs-proof` | Both calls find no reproduction steps or runnable proof | `receipt_state: needs-information`, a 14-day clock in `next_action_due_at`, event `request-information` |
+| `no-proof-received` | The clock ran out with no new report version | `receipt_state: rejected`, event `decide` |
+| `acknowledged` | Everything else, and every hold below | `receipt_state: triaging`, event `triage` |
+| `unavailable` | A call failed; retried after six hours, three times at most | none |
+
+Holds, which always acknowledge and never close: a call finds theft or
+permanent freezing of funds plausible (`loss-plausible`); the calls disagree
+(`calls-disagreed`); three failed attempts (`analysis-unavailable`); the
+report is on GitHub, where Slop cannot read a maintainer's discussion
+(`github-advisory`); no retained report (`report-not-stored`); a revision
+that still lacks proof (`proof-still-missing`, so there is one clock per
+report). A case with any appeal, a reserved or approved award, a pending
+related-party review, or a report revision still being screened is not read.
+
+The two calls are separate requests with the prompt label
+`slop-security-routine-decision-2`. A report version that carries a
+proof-of-concept file has proof present whatever the calls answer, so it is
+never asked for proof. The second lists the published lines and
+the earlier reports in the opposite order. Each call returns only fixed
+fields; an earlier case or a line that was not supplied makes the answer
+invalid. The closing lines are the published list without the two proof
+lines and the duplicate line, which have their own rules
+(`routineClosingExclusions`). A case received without published program
+terms has no closing lines. Earlier reports reach a call only as Slopbot's
+own summaries. The reporter reads fixed text and the published line, never
+model text, another report or another reporter.
+
+Events reuse the existing kinds with the actor `slop` in the `triager`
+role and `detail.automatic: true`; `detail.routine` and the
+`security_routine_decisions` row hold the audit record: outcome, basis,
+hold reason, published line, earlier case, prompt label and each call's
+provider, model and state. The reporter's Inbox notice is the ordinary case
+notice. Every live write is one batch guarded by the case revision, so a
+person's concurrent action wins and the routine decision is dropped.
+
+Undoing a wrong close: the reporter appeals (`appeal` on a `duplicate`,
+`out-of-scope` or `rejected` case, as before). When the latest decision is a
+routine one that no person reviewed, the appeal does not wait for a
+moderator: the case returns to `triaging` with `appeal_state: returned`, a
+withheld award returns to `pending`, the program's technical approvers get
+the Inbox notice, and the owner decides with the ordinary `decide` action.
+The pass never reads a case with an appeal again. An appeal of the owner's
+later decision goes to a moderator as before.
+
+The owner's Inbox list (`GET /api/v1/security-submissions`) leads with up to
+20 acknowledged reports that still wait for the owner, ordered by plausible
+severity, then proof present, then age.
+
+`SECURITY_ROUTINE_DECISIONS` in the Pages environment is `off`, `dry_run`
+or `live`; any other value is off. `wrangler.toml` sets production
+(`live` since 20 November 2026) and `wrangler.staging.toml` sets staging (`off`); the release
+publishes that file with the Pages project, so a change takes effect with
+the next release. `dry_run` runs every rule, model calls included, and
+writes only `security_routine_decisions` rows with `applied = 0`: no case
+change, no event, no notice. Pages has no schedule, so a pass starts behind
+a security API request, at most once a minute per isolate and three minutes
+apart overall (the `security_routine_runs` lease), with one model-read
+report per pass and 120 per UTC day. `GET /api/v1/security-routine` returns
+the mode and aggregate counts to a platform admin, and `POST` with
+`{"action":"run"}` runs one pass inside the request (three model-read
+reports). The same counts by query:
+
+```sql
+SELECT mode, outcome, basis, hold_reason, COUNT(*) AS cases
+  FROM security_routine_decisions d
+ WHERE id = (SELECT MAX(id) FROM security_routine_decisions x
+              WHERE x.case_id = d.case_id AND x.mode = d.mode)
+ GROUP BY mode, outcome, basis, hold_reason;
+```
+
+The fixture tests prove the controls, not the model. The release qualifies
+the routine call with the real provider
+(`scripts/qualify-security-routine.ts`).
 
 ## Legacy GitHub-first private intake
 

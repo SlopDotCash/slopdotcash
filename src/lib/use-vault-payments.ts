@@ -1,13 +1,11 @@
 import { useCallback } from "react";
 import { browserDeployment } from "./browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
-import { isEscrowChain } from "./escrow-policy.mjs";
 import { readCompletePages } from "./paged-history";
 import {
-  isBaseUnits,
+  isPublicVaultPayment,
   type PublicVaultPayment,
   type PublicVaultPaymentPage,
-  transactionUrl,
 } from "./payments/contracts";
 import { usePublicResource } from "./use-public-resource";
 
@@ -16,28 +14,6 @@ export type PublicPaymentScope =
   | { githubUserId: string }
   | { projectId: string }
   | null;
-
-function isPayment(value: unknown): value is PublicVaultPayment {
-  if (!value || typeof value !== "object") return false;
-  const p = value as PublicVaultPayment;
-  return (
-    typeof p.id === "string" &&
-    typeof p.projectId === "string" &&
-    typeof p.network === "string" &&
-    isEscrowChain(p.chain) &&
-    typeof p.assetAddress === "string" &&
-    Number.isSafeInteger(p.assetDecimals) &&
-    p.assetDecimals >= 0 &&
-    p.assetDecimals <= 36 &&
-    isBaseUnits(p.netBase) &&
-    (p.contributionMonth === null ||
-      /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(p.contributionMonth)) &&
-    typeof p.transactionId === "string" &&
-    transactionUrl(p.network, p.transactionId) !== null &&
-    typeof p.indexedAt === "string" &&
-    Number.isFinite(Date.parse(p.indexedAt))
-  );
-}
 
 export function useVaultPayments(scope: PublicPaymentScope) {
   const path =
@@ -69,7 +45,7 @@ export function useVaultPayments(scope: PublicPaymentScope) {
           if (
             !value ||
             !Array.isArray(value.payments) ||
-            !value.payments.every(isPayment)
+            !value.payments.every(isPublicVaultPayment)
           )
             throw new Error("Project payment history could not be verified");
           return {

@@ -24,10 +24,7 @@ export const UNIVERSAL_CATEGORIES: ReadonlySet<Category> = new Set([
   "duplicate",
 ]);
 // These categories never close, whatever the repository configures.
-export const NEVER_CLOSE: ReadonlySet<Category> = new Set([
-  "none",
-  "missing_evidence",
-]);
+export const NEVER_CLOSE: ReadonlySet<Category> = new Set(["none"]);
 
 // The only categories a security-only review acts on, while contributor work
 // on a paused, flagged or removed project is stopped (PRD section 5).
@@ -56,7 +53,7 @@ const DEFAULT_CATEGORIES: RepositoryConfig["categories"] = {
   duplicate: "close",
   out_of_scope: "label",
   busywork: "close",
-  missing_evidence: "label",
+  missing_evidence: "close",
   gaming: "close",
   low_quality: "label",
 };
@@ -236,6 +233,25 @@ export const VERDICT_SCHEMA = {
     limitations: { type: "array", items: { type: "string" } },
   },
 } as const;
+
+/** The verdict checks a JSON Schema cannot express, named for a refused
+ * reply that matches the schema. Never returns reply text. */
+export function explainVerdict(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.confidence === "number" &&
+    !(value.confidence >= 0 && value.confidence <= 1)
+  )
+    return "field confidence is outside 0 to 1";
+  if (value.summary === "") return "field summary is empty";
+  if (
+    typeof value.objective_defect === "string" &&
+    !/^[a-f0-9]{64}$/u.test(value.objective_defect)
+  )
+    return "field objective_defect is not a 64-character hex digest";
+  return null;
+}
 
 export function validateVerdict(raw: unknown): Verdict | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -438,6 +454,28 @@ export type Job =
       owner: string;
       repo: string;
       itemKind: "issue" | "pull_request";
+      number: number;
+    }
+  | {
+      /** Re-check the slopbot:ready label of a pull request (PRD section 5). */
+      kind: "ready_label";
+      deliveryId: string;
+      installationId: number;
+      repositoryId: number;
+      owner: string;
+      repo: string;
+      itemKind: "pull_request";
+      number: number;
+    }
+  | {
+      /** Re-check the submission fee of a pull request (PRD section 5). */
+      kind: "submission_fee";
+      deliveryId: string;
+      installationId: number;
+      repositoryId: number;
+      owner: string;
+      repo: string;
+      itemKind: "pull_request";
       number: number;
     }
   | {

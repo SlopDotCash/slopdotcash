@@ -13,6 +13,7 @@ import {
   appealByKey,
   escalateAppeal,
   escalationFor,
+  hasDeniedAppeal,
   latestAppealFor,
   MODERATOR_LABEL,
   moderatorIds,
@@ -58,6 +59,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { INTAKE_CAP_REASON, intakeCapRefuses } from "./intake-cap";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -101,7 +103,18 @@ import {
   confirmReopen,
   reopenSource,
 } from "./reopen-source";
+import {
+  admitMonthlyReview,
+  MONTHLY_REVIEW_CAP_REASON,
+  monthlyReviewOpen,
+} from "./review-cap";
 import { route } from "./routing";
+import { missingSubmissionEvidence } from "./submission-evidence";
+import {
+  gateSubmissionFee,
+  releaseExemptFee,
+  SubmissionFeeGateError,
+} from "./submission-fee";
 import {
   affectedValueActor,
   currentValueDispute,
@@ -123,6 +136,9 @@ export type ReviewEnv = ModelEnv &
     SLOPBOT_APP_USER_ID: string;
     // Global switch, off until the owner approves Slopbot v2 closures.
     SLOPBOT_CLOSURE_ENABLED?: string;
+    SLOPBOT_EVIDENCE_CLOSURE_ENABLED?: string;
+    // The submission fee switch: off, dry_run or live. Absent means off.
+    SUBMISSION_FEE_MODE?: string;
     // Slop moderators (immutable GitHub IDs) who decide escalated appeals.
     // Unset means no moderator decision is possible; escalation still records.
     PROJECT_MODERATOR_GITHUB_IDS?: string;
@@ -164,6 +180,7 @@ type Issue = {
 type Pull = {
   draft: boolean;
   merged: boolean;
+  created_at?: string | null;
   head: { sha: string };
   base: { sha: string; ref: string; repo: { id: number } };
   additions: number;
@@ -184,7 +201,7 @@ Categories:
 - duplicate: substantially repeats another open item by the same author.
 - out_of_scope: contradicts scope rules the repository publishes.
 - busywork: preference-only or unnecessary work the repository's guidance says it does not want.
-- missing_evidence: a required template, test result or evidence the guidance demands is absent.
+- missing_evidence: a required template, test result or evidence the guidance demands is absent. Match the declared change types to the diff and scope. A generic success phrase or a link without an accessible relevant result does not demonstrate the outcome. Check whether the original problem and reachable path are shown, and whether the test output, logs, video, benchmark or physical-device result actually covers the change.
 - gaming: farming rewards, split or near-identical submissions, forged attribution, self-dealing.
 - low_quality: weak work, or one of the supplied verified objective defects. Weak work alone is label-only.
 
@@ -717,6 +734,33 @@ async function sameReviewEvidence(
   return JSON.stringify(current) === JSON.stringify(related);
 }
 
+function evidenceVerdict(
+  context: Pick<
+    Context,
+    "pull" | "issue" | "policy" | "registration" | "limitations"
+  >,
+): Verdict | null {
+  if (
+    context.pull === null ||
+    context.registration.scope !== "contributor" ||
+    context.limitations.length > 0
+  )
+    return null;
+  const finding = missingSubmissionEvidence(
+    context.issue.body ?? "",
+    context.policy,
+  );
+  if (finding === null) return null;
+  return {
+    category: "missing_evidence",
+    confidence: 1,
+    rule_refs: [{ source: finding.source, quote: finding.quote }],
+    evidence: [],
+    summary: `The Evidence section is missing or incomplete. Supply these required fields with checkable results: ${finding.fields.join(", ")}.`,
+    limitations: [],
+  };
+}
+
 function prefilter(context: Pick<Context, "pull" | "issue">): Verdict | null {
   if (context.pull !== null && context.pull.changed_files === 0) {
     return {
@@ -790,9 +834,14 @@ async function closureState(
   job: Job,
   context: Context,
   mayClose: boolean,
+  category: Category,
 ) {
   const db = env.SLOPBOT_DB;
-  if (env.SLOPBOT_CLOSURE_ENABLED !== "true")
+  const enabled =
+    category === "missing_evidence"
+      ? env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED
+      : env.SLOPBOT_CLOSURE_ENABLED;
+  if (enabled !== "true")
     return {
       allowed: false,
       why: "closure is disabled for Slopbot (pending production activation)",
@@ -1153,6 +1202,12 @@ export async function reviewItem(
       await sha256Hex(context.itemText),
       env.SLOPBOT_QUALITY_VERIFIER_KEY ?? "",
       ...context.quality.map((q) => q.id).sort(),
+      ...(evidenceVerdict(context) === null
+        ? []
+        : [
+            "submission-evidence-v1",
+            env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED ?? "",
+          ]),
       // A security-only review is distinct; contributor keys stay unchanged.
       ...(registration.scope === "security" ? ["security-review"] : []),
     ].join("|"),
@@ -1375,12 +1430,18 @@ export async function reviewItem(
       reviewKey,
       contentDigest,
       claimToken,
+      exemption,
     );
   } catch (error) {
     // A provider failure must not leave an apparently untouched submission.
     // Only publish while this attempt still owns the exact current source.
-    // Do not echo provider errors, which may contain request data.
-    if (routing.review && context.registration.scope === "contributor") {
+    // Do not echo provider errors, which may contain request data. A failed
+    // submission fee step is not a review attempt and posts no review comment.
+    if (
+      routing.review &&
+      context.registration.scope === "contributor" &&
+      !(error instanceof SubmissionFeeGateError)
+    ) {
       try {
         const fresh = await loadContext(env, job, context.registration);
         if (await sameReviewEvidence(job, fresh, context))
@@ -1415,6 +1476,7 @@ async function runReview(
   reviewKey: string,
   contentDigest: string,
   claimToken: string,
+  exemption: Exemption,
 ): Promise<string> {
   let context = initialContext;
   const db = env.SLOPBOT_DB;
@@ -1423,6 +1485,18 @@ async function runReview(
   const claim = { reviewKey, token: claimToken };
   await store.assertReviewClaim(db, claim);
   await requireScope(db, job, scope);
+  // An author who was asked a submission fee and is now a maintainer or
+  // member is skipped below as exempt; the ask is taken back first.
+  if (
+    scope === "contributor" &&
+    job.itemKind === "pull_request" &&
+    exemption === "exempt"
+  )
+    try {
+      await releaseExemptFee(env, { job, github: context.github });
+    } catch (error) {
+      throw new SubmissionFeeGateError(error);
+    }
   if (!routing.review) {
     await reconcileConfirmedReopen(env, job, context);
     await store.finishReview(db, reviewKey, claimToken, "skipped", {
@@ -1430,8 +1504,80 @@ async function runReview(
     });
     return routing.reason;
   }
+  // A project over its owner's intake cap has paused new contributors
+  // (operator decision, 17 November 2026). A pull request from an outside
+  // contributor that Slopbot has not reviewed before gets no model call and
+  // no label, comment or close; the skip is recorded and uses no monthly
+  // review. A later delivery for the pull request is reviewed once the
+  // project is under the cap. Value assessment and scoring are a separate
+  // pipeline and unchanged.
+  if (
+    scope === "contributor" &&
+    job.itemKind === "pull_request" &&
+    exemption === "not-exempt" &&
+    (await intakeCapRefuses(
+      db,
+      context.registration.projectId,
+      job.repositoryId,
+      issue.user.id,
+      job.number,
+    ))
+  ) {
+    await store.finishReview(db, reviewKey, claimToken, "skipped", {
+      skipReason: INTAKE_CAP_REASON,
+    });
+    return INTAKE_CAP_REASON;
+  }
+  // A project that asks a submission fee has Slopbot wait for an outside
+  // contributor's deposit before it reviews (operator decision, 18 November
+  // 2026; PRD section 5). The first sight posts one comment and one label and
+  // records the skip; a paid pull request is reviewed as usual. Nothing is
+  // closed, and no fee is asked for a review the monthly cap would refuse.
+  // Value assessment and scoring are a separate pipeline and unchanged.
+  if (scope === "contributor" && job.itemKind === "pull_request") {
+    let waits: string | null;
+    try {
+      waits = await gateSubmissionFee(env, {
+        job,
+        github: context.github,
+        projectId: context.registration.projectId,
+        exemption,
+        openedAt: context.pull?.created_at,
+        mayAsk: await monthlyReviewOpen(
+          db,
+          job.repositoryId,
+          job.itemKind,
+          job.number,
+        ),
+      });
+    } catch (error) {
+      throw new SubmissionFeeGateError(error);
+    }
+    if (waits !== null) {
+      await store.finishReview(db, reviewKey, claimToken, "skipped", {
+        skipReason: waits,
+      });
+      return waits;
+    }
+  }
+  // Free advisory reviews are capped at a number of distinct pull requests or
+  // issues per repository and UTC month (operator decision, 16 November 2026).
+  // An item already admitted this month is always reviewed again. A new item
+  // over the cap gets no model call and no label, comment or close; the skip
+  // is recorded and a later month starts fresh.
+  if (
+    !(await admitMonthlyReview(db, job.repositoryId, job.itemKind, job.number))
+  ) {
+    await store.finishReview(db, reviewKey, claimToken, "skipped", {
+      skipReason: MONTHLY_REVIEW_CAP_REASON,
+    });
+    return MONTHLY_REVIEW_CAP_REASON;
+  }
 
-  let verdict = context.limitations.length ? null : prefilter(context);
+  const evidenceFinding = evidenceVerdict(context);
+  let verdict = context.limitations.length
+    ? null
+    : (evidenceFinding ?? prefilter(context));
   if (verdict === null && context.limitations.length === 0) {
     const duplicate = await duplicateOf(env, job, context, contentDigest);
     if (duplicate) {
@@ -1447,11 +1593,13 @@ async function runReview(
   const reviewPrefilterForClosure =
     verdict !== null &&
     verdict.category !== "none" &&
+    verdict.category !== "missing_evidence" &&
     scope === "contributor" &&
     config.config.categories[verdict.category] === "close" &&
     !NEVER_CLOSE.has(verdict.category) &&
     penaltyFor(verdict.category)?.action === "close" &&
-    (await closureState(env, job, context, routing.mayClose)).allowed;
+    (await closureState(env, job, context, routing.mayClose, verdict.category))
+      .allowed;
   if (verdict === null || reviewPrefilterForClosure) {
     await store.assertReviewClaim(db, claim);
     await requireScope(db, job, scope);
@@ -1493,7 +1641,14 @@ async function runReview(
     });
     return `no action (${category}; security review only)`;
   }
-  const mode = category === "none" ? "off" : config.config.categories[category];
+  const configuredMode =
+    category === "none" ? "off" : config.config.categories[category];
+  const mode =
+    category === "missing_evidence" &&
+    evidenceFinding === null &&
+    configuredMode === "close"
+      ? "label"
+      : configuredMode;
   if (
     (category === "none" && scope === "contributor") ||
     context.limitations.length > 0
@@ -1583,7 +1738,13 @@ async function runReview(
     // The published penalty table makes some categories label-only (D7).
     penaltyFor(category)?.action === "close"
   ) {
-    const state = await closureState(env, job, context, routing.mayClose);
+    const state = await closureState(
+      env,
+      job,
+      context,
+      routing.mayClose,
+      category,
+    );
     if (initialUncertainty !== null) blockedClose = initialUncertainty;
     else if (category === "duplicate" && !context.relatedOpenItem) {
       blockedClose = "no verified matching open item by the same author";
@@ -1592,7 +1753,9 @@ async function runReview(
       blockedClose = "no trusted verification of the cited objective defect";
     else if (!state.allowed && category !== "low_quality")
       blockedClose = state.why;
-    else if (deterministic || triage === null) {
+    else if (category === "missing_evidence" && evidenceFinding !== null) {
+      close = true;
+    } else if (deterministic || triage === null) {
       // A closure guard can change after the initial advisory-only decision.
       // Never promote a prefilter to a close without its model triage.
       blockedClose = "two independent model reviews were not performed";
@@ -1736,6 +1899,7 @@ async function runReview(
       job,
       fresh,
       eligibility.eligible && reopened === 0,
+      category,
     );
     if (!currentClosure.allowed) {
       close = false;
@@ -2087,7 +2251,13 @@ async function stillMayClose(
     )
       return false;
   }
-  return !forClosure || (await closureState(env, job, fresh, true)).allowed
+  if (
+    verdict.category === "missing_evidence" &&
+    evidenceVerdict(fresh) === null
+  )
+    return false;
+  return !forClosure ||
+    (await closureState(env, job, fresh, true, verdict.category)).allowed
     ? fresh
     : false;
 }
@@ -2713,12 +2883,14 @@ async function triageAppeal(
   const penalty = await activePenalty(db, session.issue.node_id);
   const reason = (await hasParticipationBan(db, current.appellant_github_id))
     ? "the appellant has an active participation ban"
-    : escalationFor({
-        category: finding,
-        debitThirds: penalty?.debit_thirds ?? 0,
-        moderatorReview: penalty?.moderator_review === 1,
-        draftConfidence: current.draft_confidence,
-      });
+    : (await hasDeniedAppeal(db, session.issue.node_id, appeal.appeal_key))
+      ? "an earlier appeal of this item was denied"
+      : escalationFor({
+          category: finding,
+          debitThirds: penalty?.debit_thirds ?? 0,
+          moderatorReview: penalty?.moderator_review === 1,
+          draftConfidence: current.draft_confidence,
+        });
   if (reason !== null)
     await escalateAppeal(
       db,
@@ -2756,7 +2928,16 @@ async function draftResolution(
   };
   const context = await loadContext(env, reviewJob, session.registration);
   if (context === null) throw new Error("the appealed item is not readable");
+  if (
+    finding === "missing_evidence" &&
+    (await activePenalty(env.SLOPBOT_DB, session.issue.node_id))?.category ===
+      finding
+  )
+    return evidenceVerdict(context) === null
+      ? { draft: "uphold", confidence: 1 }
+      : { draft: "deny", confidence: 1 };
   const deterministic =
+    evidenceVerdict(context) ??
     prefilter(context) ??
     (
       await duplicateOf(

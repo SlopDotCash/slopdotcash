@@ -22,7 +22,7 @@ function penaltyDebit(category: string): int
     if (category == "scam") then
       24
     else
-      if ((category == "busywork") || (category == "gaming")) then
+      if (((category == "busywork") || (category == "gaming")) || (category == "missing_evidence")) then
         1
       else
         0
@@ -31,8 +31,8 @@ function penaltyDebit(category: string): int
 lemma penaltyDebit_ensures(category: string)
   ensures ((category == "spam") ==> (penaltyDebit(category) == 3))
   ensures ((category == "scam") ==> (penaltyDebit(category) == 24))
-  ensures (((category == "busywork") || (category == "gaming")) ==> (penaltyDebit(category) == 1))
-  ensures ((category != "spam") ==> (category != "scam") ==> (category != "busywork") ==> (category != "gaming") ==> (penaltyDebit(category) == 0))
+  ensures ((((category == "busywork") || (category == "gaming")) || (category == "missing_evidence")) ==> (penaltyDebit(category) == 1))
+  ensures ((category != "spam") ==> (category != "scam") ==> (category != "busywork") ==> (category != "gaming") ==> (category != "missing_evidence") ==> (penaltyDebit(category) == 0))
   ensures (penaltyDebit(category) >= 0)
   ensures (penaltyDebit(category) <= 24)
 {

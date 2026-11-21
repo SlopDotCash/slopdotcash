@@ -87,7 +87,8 @@ test("a recipient without a wallet is linked to register it before the deadline"
   // Only this account's row is shown.
   await expect(section(page)).not.toContainText("9,000");
   const link = section(page).getByRole("link", {
-    name: "Add or confirm your Robinhood Chain wallet",
+    name: "Add Robinhood Chain wallet",
+    exact: true,
   });
   await expect(link).toHaveAttribute("href", "/account#wallets");
   await expect(section(page)).toContainText("Jan 1, 2099");
@@ -186,9 +187,7 @@ test("an invalid file is an error with retry, never an empty allocation", async 
 }) => {
   await setup(page, { distribution: { network: "solana-mainnet" } });
   await page.goto("/earnings", { waitUntil: "networkidle" });
-  const alert = page
-    .getByRole("alert")
-    .filter({ hasText: "The contributor allocation could not load." });
+  const alert = page.getByRole("alert").filter({ hasText: "Unavailable" });
   await expect(alert).toBeVisible();
   await page.unroute("**/contributor-allocation.json");
   await page.route("**/contributor-allocation.json", (route) =>

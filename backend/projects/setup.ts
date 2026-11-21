@@ -21,6 +21,10 @@ import {
   SLOPBOT_INSTALL_URL,
   slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
+import {
+  findListedRepository,
+  repositoryIdentity,
+} from "../../src/lib/project-repositories.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { scanClearanceView } from "../../src/lib/scan-clearance";
@@ -119,8 +123,7 @@ export async function readRepositoryAccess(
   if (reader === undefined)
     return {
       state: "retry",
-      message:
-        "Slop cannot reach Slopbot to check the installation right now. Try again later.",
+      message: "Slopbot unreachable.",
     };
   try {
     return {
@@ -138,10 +141,76 @@ export async function readRepositoryAccess(
   } catch {
     return {
       state: "retry",
+      message: "Check failed.",
+    };
+  }
+}
+
+/**
+ * Reads repository access for one listed repository of the manifest, by its
+ * current GitHub path and permanent GitHub id. The first repository reads
+ * exactly as `readRepositoryAccess`. Returns null when the manifest does not
+ * list the repository or records no permanent identity for it.
+ */
+export async function readListedRepositoryAccess(
+  reader: RepositoryAccessReader | undefined,
+  manifest: ProjectDefinition,
+  repositoryId: string,
+  actor: GithubActor,
+): Promise<AccessCheck | null> {
+  const found = findListedRepository(manifest.repositories, repositoryId);
+  if (found === null) return null;
+  if (found.index === 0) return readRepositoryAccess(reader, manifest, actor);
+  const identity = repositoryIdentity(manifest, found.repository.id);
+  if (identity === null) return null;
+  if (reader === undefined)
+    return {
+      state: "retry",
+      message:
+        "Slop cannot reach Slopbot to check the installation right now. Try again later.",
+    };
+  try {
+    return {
+      state: "read",
+      access: await reader(
+        {
+          path: currentRepositoryPath(found.repository),
+          githubId: identity.githubId,
+        },
+        actor,
+      ),
+    };
+  } catch {
+    return {
+      state: "retry",
       message:
         "GitHub or Slopbot did not answer the installation check. Try again.",
     };
   }
+}
+
+/**
+ * GitHub reports a listed repository under its permanent identity and
+ * current manifest name, as a public repository. The first repository also
+ * matches its steward (`manifestMatchesRepository`).
+ */
+export function listedRepositoryMatches(
+  manifest: ProjectDefinition,
+  repositoryId: string,
+  facts: RepositoryFacts,
+): boolean {
+  const found = findListedRepository(manifest.repositories, repositoryId);
+  if (found === null) return false;
+  if (found.index === 0) return manifestMatchesRepository(manifest, facts);
+  const identity = repositoryIdentity(manifest, found.repository.id);
+  return (
+    identity !== null &&
+    String(facts.id) === identity.githubId &&
+    facts.node_id === identity.nodeId &&
+    String(facts.full_name).toLowerCase() ===
+      currentRepositoryPath(found.repository).toLowerCase() &&
+    facts.private === false
+  );
 }
 
 function authorityAccess(access: AccessCheck): AuthorityAccess {
@@ -235,6 +304,10 @@ function setupFunding(
 
 type ScanState = ProjectSetupStatus["checks"]["scan"];
 
+function restrictedLabel(state: string): string {
+  return `${state.charAt(0).toUpperCase()}${state.slice(1)}`;
+}
+
 function scanCheck(
   clearance: VettingClearance | { state: "unavailable"; message: string },
 ): ScanState {
@@ -250,8 +323,8 @@ function scanCheck(
                 : "existing-project",
             message:
               "exemption" in clearance
-                ? "Owner-approved admission exemption. No passed scan is claimed."
-                : "Existing project, permanently exempt from scan clearance.",
+                ? "Owner-approved exemption"
+                : "Exempt · existing project",
           }
         : {
             state: "cleared",
@@ -263,7 +336,7 @@ function scanCheck(
     case "queued":
       return {
         state: "queued",
-        message: "The security scan is queued. Nothing is needed from you.",
+        message: "Scan queued.",
       };
     case "unscanned":
       return {
@@ -273,8 +346,7 @@ function scanCheck(
     case "stale":
       return {
         state: "stale",
-        message:
-          "The repository or skill template changed since the last scan.",
+        message: "Scan stale.",
       };
     case "quarantined": {
       // Badges from the recorded result (issue #1991); a historical result or
@@ -307,6 +379,11 @@ export function projectSetupStatus(input: {
   restriction: ProjectRestriction;
   authority: SetupAuthority;
   access: AccessCheck;
+  /**
+   * The Slopbot installation read of each repository after the first, in
+   * manifest order. Every repository needs Slopbot.
+   */
+  repositoryAccess?: readonly { repositoryId: string; access: AccessCheck }[];
   clearance: VettingClearance | { state: "unavailable"; message: string };
   scanRequest: ScanRequest | null;
   activatedRevision: number | null;
@@ -314,32 +391,64 @@ export function projectSetupStatus(input: {
 }): ProjectSetupStatus {
   const { project, restriction, authority, access, clearance } = input;
   const manifest = project.manifest;
-  const repository = manifest.repositories[0].id;
+  const reads = [
+    { repositoryId: manifest.repositories[0].id, access },
+    ...(input.repositoryAccess ?? []),
+  ];
+  // The first repository that is not installed decides; else every one is.
+  const unmet =
+    reads.find(
+      (read) =>
+        read.access.state === "retry" ||
+        read.access.access.installation !== "installed",
+    ) ?? null;
+  const repository = unmet?.repositoryId ?? manifest.repositories[0].id;
   const installation: ProjectSetupStatus["checks"]["installation"] =
-    access.state === "retry"
-      ? { state: "retry", message: access.message }
-      : access.access.installation === "installed"
-        ? {
-            state: "installed",
-            message: `Slopbot is installed on ${repository}.`,
-          }
-        : access.access.installation === "suspended"
+    unmet === null
+      ? {
+          state: "installed",
+          message:
+            reads.length === 1
+              ? "Installed."
+              : `Installed on ${reads
+                  .slice(0, -1)
+                  .map((read) => read.repositoryId)
+                  .join(", ")} and ${reads.at(-1)?.repositoryId}.`,
+        }
+      : unmet.access.state === "retry"
+        ? { state: "retry", message: unmet.access.message }
+        : unmet.access.access.installation === "suspended"
           ? {
               state: "suspended",
-              message: `The Slopbot installation for ${repository} is suspended on GitHub.`,
+              message:
+                reads.length === 1
+                  ? "Suspended on GitHub."
+                  : `Suspended on GitHub for ${repository}.`,
             }
           : {
               state: "missing",
-              message: `Slopbot is not installed on ${repository}.`,
+              message:
+                reads.length === 1
+                  ? "Not installed."
+                  : `Not installed on ${repository}.`,
             };
   let scan = scanCheck(input.clearance);
+  // A project with more than one repository names an appended repository
+  // that has not cleared.
+  if (
+    "repository" in clearance &&
+    clearance.repository !== undefined &&
+    clearance.repository !== manifest.repositories[0].id
+  ) {
+    scan = { ...scan, message: `${clearance.repository}: ${scan.message}` };
+  }
   const queuedNow =
     input.scanRequest?.state === "queued" ||
     input.scanRequest?.state === "already_queued";
   if (queuedNow && scan.state !== "cleared" && scan.state !== "banned")
     scan = {
       state: "queued",
-      message: "The security scan is queued. Nothing is needed from you.",
+      message: "Scan queued.",
     };
   else if (input.scanRequest?.state === "unavailable")
     scan = { state: "unavailable", message: input.scanRequest.message };
@@ -359,8 +468,8 @@ export function projectSetupStatus(input: {
     nextAction = action(
       "restricted",
       restriction.state !== "clear" || scan.state === "banned"
-        ? `This project is ${restriction.state === "clear" ? "banned" : restriction.state}. Contributor work is closed. The steward or the account that created the project may request reinstatement.`
-        : "This project is delisted. Its history stays public.",
+        ? `${restrictedLabel(restriction.state === "clear" ? "banned" : restriction.state)}. Steward can request reinstatement.`
+        : "Delisted",
     );
   } else if (installation.state === "retry") {
     state = "retry";
@@ -369,7 +478,7 @@ export function projectSetupStatus(input: {
     state = "action_required";
     nextAction = action(
       "install_slopbot",
-      `${installation.message} Install it to continue. It is free. ${slopbotInstallScopeNote(repository)}`,
+      `${installation.message} ${slopbotInstallScopeNote(repository)}`,
       SLOPBOT_INSTALL_URL,
     );
   } else if (authority.state === "retry") {
@@ -390,14 +499,8 @@ export function projectSetupStatus(input: {
     // paused project with complete skill fields was kept paused by an edit.
     state = "action_required";
     nextAction = publishesGeneratedSkills(manifest)
-      ? action(
-          "activate_project",
-          `${scan.message} Your edit kept the project paused. Check again to activate it.`,
-        )
-      : action(
-          "complete_skill_fields",
-          `${scan.message} The project stays paused until its contributor guide and skill fields are complete. Add them in a project update.`,
-        );
+      ? action("activate_project", "Paused by your edit.")
+      : action("complete_skill_fields", "Paused: add contributor rules.");
   } else if (scan.state === "queued") {
     state = "waiting";
     nextAction = action("wait_for_scan", scan.message);
@@ -407,21 +510,17 @@ export function projectSetupStatus(input: {
       clearance.state === "quarantined"
         ? clearance.assessment.findingsLocation
         : undefined;
-    const guidance =
+    nextAction = action(
+      "request_scan",
       loc === "template"
-        ? "Check for an updated skill template before requesting a new scan."
+        ? `${scan.message} Check for an updated skill template first.`
         : loc === "unknown"
-          ? "Review the scan result before requesting a new scan."
-          : "Fix the cause if you know it, then request a new scan.";
-    nextAction = action("request_scan", `${scan.message} ${guidance}`);
+          ? `${scan.message} Review the scan result first.`
+          : scan.message,
+    );
   } else {
     state = "retry";
-    nextAction = action(
-      "retry_scan",
-      scan.state === "unavailable" || scan.state === "unverified"
-        ? scan.message
-        : `${scan.message} Check again to queue it.`,
-    );
+    nextAction = action("retry_scan", scan.message);
   }
   return {
     projectId: project.id,

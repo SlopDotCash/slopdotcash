@@ -30,6 +30,18 @@ export type NewProjectInput = {
   referrer: GithubActor | null;
 };
 
+/** An owner's register request the server repeats until it settles. */
+export type SavedVaultCreation = {
+  id: string;
+  projectId: string;
+  network: string;
+  transactionId: string;
+  requestJson: string;
+  actor: GithubActor;
+  attempts: number;
+  createdAt: string;
+};
+
 export interface ProjectPersistence {
   listProjects(): Promise<ProjectRecord[]>;
   getProject(id: string): Promise<ProjectRecord | null>;
@@ -40,6 +52,46 @@ export interface ProjectPersistence {
     projectId: string,
     revision: number,
   ): Promise<{ manifestText: string; manifestSha256: string } | null>;
+  /**
+   * Keeps an owner's register request for a creation that is not final yet.
+   * A request already kept is left alone, except that an expired one waits
+   * again. At most three wait per project. Returns nothing: saving is best
+   * effort and never changes the owner's answer.
+   */
+  saveVaultCreation(saved: {
+    id: string;
+    projectId: string;
+    network: string;
+    transactionId: string;
+    requestJson: string;
+    actor: GithubActor;
+    now: string;
+    nextAttemptAt: string;
+  }): Promise<void>;
+  /** Waiting creations whose next check is due, oldest check first. */
+  dueVaultCreations(now: string, limit: number): Promise<SavedVaultCreation[]>;
+  /** Takes one due check; false when another request took it first. */
+  claimVaultCreation(
+    id: string,
+    attempts: number,
+    nextAttemptAt: string,
+  ): Promise<boolean>;
+  /** Records why a waiting creation's latest check did not register it. */
+  noteVaultCreation(id: string, code: string): Promise<void>;
+  /** Ends a waiting creation by its id. */
+  endVaultCreation(
+    id: string,
+    state: "refused" | "expired",
+    code: string,
+    now: string,
+  ): Promise<void>;
+  /** Ends the waiting creation of a registered vault. */
+  closeRegisteredVaultCreation(
+    projectId: string,
+    network: string,
+    transactionId: string,
+    now: string,
+  ): Promise<void>;
   getApplication(id: string): Promise<ProjectApplication | null>;
   listApplicantApplications(githubId: string): Promise<ProjectApplication[]>;
   /** Projects the account created, applied for, or stewards on GitHub. */
@@ -66,11 +118,13 @@ export interface ProjectPersistence {
   /**
    * Appends the revision only while the project is at `expectedRevision`
    * and the enforcement generation is still `expectedEnforcementGeneration`.
+   * `repository_conflict` means another project holds a repository path
+   * the manifest claims.
    */
   appendProjectRevision(
     input: ProjectRevisionInput,
     expectedEnforcementGeneration: number,
-  ): Promise<"updated" | "conflict">;
+  ): Promise<"updated" | "conflict" | "repository_conflict">;
   /**
    * Changes whenever an admission assessment of the project is created or
    * changes state, or an admission exemption is granted or revoked. A revision

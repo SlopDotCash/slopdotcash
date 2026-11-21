@@ -1,6 +1,7 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { prospectiveMaintainerShare } from "../../src/lib/maintainer-share.mjs";
 import {
   shiftPeriod,
   utcPeriodOf,
@@ -24,7 +25,11 @@ import {
   type RepositoryIdentity,
   validRepositoryPath,
 } from "../../src/lib/project-contracts";
-import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import {
+  assertProjectPolicyTransition,
+  type VerifiedBranchChange,
+} from "../../src/lib/project-policy.mjs";
+import { appendedRepositories } from "../../src/lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
   assertProjectDefinition,
@@ -32,6 +37,7 @@ import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
+  validIntegrationBranch,
 } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
@@ -51,6 +57,7 @@ import {
   type VaultSetupInput,
 } from "../../src/lib/vault-setup";
 import {
+  type ApiError,
   apiErrorResponse,
   exactKeys,
   fail,
@@ -64,6 +71,11 @@ import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
+import {
+  assertAppendedIdentitiesUnlisted,
+  assertNewRepositoryIdentityUnlisted,
+  verifyAppendedRepositories,
+} from "./appended-repositories";
 import {
   PROJECT_API_CONTRACT_VERSION,
   type ProjectPersistence,
@@ -99,12 +111,15 @@ import {
   listOwnedRepositories,
   lookupGitHubActor,
   lookupGitHubRepository,
+  readIntegrationBranchAuthority,
   validGithubLogin,
 } from "./github-lookup";
 import {
   type AccessCheck,
+  manifestMatchesRepository,
   projectSetupStatus,
   type RepositoryAccessReader,
+  readListedRepositoryAccess,
   readRepositoryAccess,
   type ScanRequest,
   type ScanRequester,
@@ -282,6 +297,13 @@ function assertNewProjectManifest(
             reviewBudget.committedMinor === "0" &&
             reviewBudget.fundingState === "pledged")),
       "A new project may only pledge a monthly amount with payments disabled; a separate review budget is not offered",
+    ],
+    [
+      // Only the server writes the history, when a later revision changes
+      // the share. A submitted history would fix the share of every month it
+      // names, and no owner revision can change it afterwards.
+      reward.maintainerShareHistory === undefined,
+      "A new project has no maintainer share history; set only the maintainer share",
     ],
     [
       (manifest.funding.addresses ?? []).length === 0 &&
@@ -562,12 +584,24 @@ function prospectiveFinancialChange(
       chain: _chain,
       currency: _currency,
       feeBasisPoints: _fee,
+      // A published promise changes display only, never amounts or payments.
+      honorSystem: _honorSystem,
+      // The share changes prospectively below; its history is compared
+      // separately because only the server writes it.
+      maintainerShare: _maintainerShare,
+      maintainerShareHistory: _maintainerShareHistory,
       // Checked for every revision by assertPayoutExclusionTransition.
       payoutExclusions: _exclusions,
       ...rest
     } = reward;
     return rest;
   };
+  if (!sameValue(before.maintainerShareHistory, after.maintainerShareHistory))
+    fail(
+      422,
+      "financial_change_restricted",
+      "The maintainer share history cannot change",
+    );
   const assetChanged =
     !sameValue(previous.rewardAsset, next.rewardAsset) ||
     before.chain !== after.chain ||
@@ -581,9 +615,14 @@ function prospectiveFinancialChange(
     fail(
       422,
       "financial_change_restricted",
-      "Only the monthly amount, network and asset change through owner self-service",
+      "Only the monthly amount, network, asset, honor-system promise and maintainer share change through owner self-service",
     );
   const cycleId = utcPeriodOf(now);
+  // A changed maintainer share starts with the next UTC month (operator
+  // decision, 18 November 2026): every month through the open one keeps the
+  // share it had.
+  const shared = <T extends typeof after>(reward: T): T =>
+    prospectiveMaintainerShare(before, reward, cycleId);
   if (assetChanged) {
     // Old caps remain in immutable revisions of the old asset. The new
     // asset starts next month: every month from the reward start through
@@ -596,26 +635,28 @@ function prospectiveFinancialChange(
     const { cycleCaps: _none, ...reward } = after;
     return {
       ...next,
-      reward:
+      reward: shared(
         zeroCaps.length === 0 ? reward : { ...reward, cycleCaps: zeroCaps },
+      ),
     };
   }
-  if (before.monthlyCapMinor === after.monthlyCapMinor) return next;
+  if (before.monthlyCapMinor === after.monthlyCapMinor)
+    return { ...next, reward: shared(after) };
   // An unlisted month used the previous default amount; it keeps it.
   const caps = before.cycleCaps ?? [];
   const listed = new Set(caps.map((cap) => cap.cycleId));
   const kept = monthsThrough(before.rewardStartAt, cycleId)
     .filter((id) => !listed.has(id))
     .map((id) => ({ cycleId: id, monthlyCapMinor: before.monthlyCapMinor }));
-  if (kept.length === 0) return next;
+  if (kept.length === 0) return { ...next, reward: shared(after) };
   return {
     ...next,
-    reward: {
+    reward: shared({
       ...after,
       cycleCaps: [...caps, ...kept].sort((left, right) =>
         left.cycleId.localeCompare(right.cycleId),
       ),
-    },
+    }),
   };
 }
 
@@ -853,6 +894,46 @@ function assertReviewBudgetTransition(
       "A review budget cannot affect an open or past cycle",
     );
   }
+}
+
+/**
+ * A new project whose repository or id is already listed would only fail the
+ * registry check with an internal message. Say which listing holds it (by
+ * repository name or alias, the registry's own rule), so an
+ * owner who already created the project continues its setup instead.
+ */
+function assertNotAlreadyListed(
+  projects: ProjectRecord[],
+  candidate: ProjectDefinition,
+  origin: string,
+): void {
+  const names = new Set(
+    candidate.repositories.flatMap((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].map((name) =>
+        name.toLowerCase(),
+      ),
+    ),
+  );
+  const repositoryName = candidate.repositories[0]?.id ?? "This repository";
+  for (const project of projects) {
+    const listsRepository = project.manifest.repositories.some((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].some((name) =>
+        names.has(name.toLowerCase()),
+      ),
+    );
+    if (listsRepository)
+      fail(
+        409,
+        "registry_conflict",
+        `${repositoryName} is already listed on Slop as ${project.id}. Open ${origin}/projects/${project.id}/manage to continue its setup instead of creating it again.`,
+      );
+  }
+  if (projects.some((project) => project.id === candidate.id))
+    fail(
+      409,
+      "registry_conflict",
+      `The project id ${candidate.id} is already used by another project. Choose a different project id.`,
+    );
 }
 
 /**
@@ -1145,6 +1226,26 @@ async function runSetupCheck(
     }
   }
   const { authority, access } = checked;
+  // Every repository of the project needs the Slopbot installation.
+  const repositoryAccess: { repositoryId: string; access: AccessCheck }[] = [];
+  for (const entry of project.manifest.repositories.slice(1))
+    repositoryAccess.push({
+      repositoryId: entry.id,
+      access: (await readListedRepositoryAccess(
+        deps.repositoryAccess,
+        project.manifest,
+        entry.id,
+        actor,
+      )) ?? {
+        state: "retry",
+        message: `Slop has no permanent GitHub identity for ${entry.id}.`,
+      },
+    });
+  const installedEverywhere = repositoryAccess.every(
+    (read) =>
+      read.access.state === "read" &&
+      read.access.access.installation === "installed",
+  );
   const clearance = await deps.vettingClearance(
     project.id,
     project.manifest,
@@ -1177,6 +1278,7 @@ async function runSetupCheck(
     authority.state === "verified" &&
     access.state === "read" &&
     access.access.installation === "installed" &&
+    installedEverywhere &&
     clearance.state === "cleared" &&
     publishesGeneratedSkills(project.manifest)
   ) {
@@ -1194,6 +1296,7 @@ async function runSetupCheck(
     restriction,
     authority,
     access,
+    ...(repositoryAccess.length > 0 ? { repositoryAccess } : {}),
     clearance,
     scanRequest,
     activatedRevision,
@@ -1247,9 +1350,10 @@ async function createProject(
   assertMaintainerNotBanned(manifest, actor, enforcements);
   assertRepositoryUnrestricted(manifest, enforcements);
   const referrer = await resolveReferrer(body.referrer, manifest, actor, deps);
-  assertRegistryWith(await deps.persistence.listProjects(), manifest, {
-    replaces: false,
-  });
+  const listed = await deps.persistence.listProjects();
+  assertNotAlreadyListed(listed, manifest, new URL(request.url).origin);
+  assertRegistryWith(listed, manifest, { replaces: false });
+  assertNewRepositoryIdentityUnlisted(listed, manifest);
   const checked = await currentAuthority(deps, manifest, actor);
   requireAuthority(checked);
   const at = deps.now().toISOString();
@@ -1345,8 +1449,10 @@ async function ownerVault(
   request: Request,
   deps: ProjectApiDependencies,
   projectId: string,
+  /** A saved register request the server repeats as the account that made it. */
+  saved?: { actor: GithubActor; body: Record<string, unknown> },
 ): Promise<Response> {
-  const actor = actorOf(await requireSession(request, deps));
+  const actor = saved?.actor ?? actorOf(await requireSession(request, deps));
   const current = await deps.persistence.getProject(projectId);
   if (!current) fail(404, "not_found", "Project not found");
   const enforcements = await deps.persistence.listEnforcements();
@@ -1409,7 +1515,7 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
-  const body = await readStrictJsonObject(request);
+  const body = saved?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
     ["step", "expectedRevision", "network", "claimId", "automatic"],
@@ -1448,6 +1554,12 @@ async function ownerVault(
     );
     if (existing) {
       await deps.vaultSetup.observe(current, existing, input.payoutPolicy);
+      await deps.persistence.closeRegisteredVaultCreation(
+        projectId,
+        input.network,
+        transactionId,
+        deps.now().toISOString(),
+      );
       return json(200, {
         status: "registered",
         deployment: existing,
@@ -1536,13 +1648,44 @@ async function ownerVault(
       manifestSha256: stored.manifestSha256,
     };
   }
-  const deployment = await deps.vaultSetup.register(
+  const verified = await deps.vaultSetup.register(
     creation,
     actor,
     input,
     transactionId,
   );
-  if (!deployment) return json(200, { status: "pending" });
+  if (!verified || verified.evidence !== "finalized") {
+    // Not final yet. Keep the owner's request so the server can repeat it
+    // after the owner leaves the page; a failed save never changes the answer.
+    if (!saved) {
+      const now = deps.now();
+      await deps.persistence
+        .saveVaultCreation({
+          id: `svc_${deps.randomId().replaceAll("-", "")}`,
+          projectId,
+          network: input.network,
+          transactionId,
+          requestJson: JSON.stringify(body),
+          actor,
+          now: now.toISOString(),
+          nextAttemptAt: new Date(
+            now.getTime() + SAVED_CREATION_RETRY_MS,
+          ).toISOString(),
+        })
+        .catch((error) =>
+          console.error("vault creation save failed", errorName(error)),
+        );
+    }
+    // Included but not final: answer the verified deployment so the owner can
+    // fund it now. Nothing is registered, appended or observed before finality.
+    return json(
+      200,
+      verified
+        ? { status: "pending", provisional: verified.deployment }
+        : { status: "pending" },
+    );
+  }
+  const { deployment } = verified;
   const updated = await appendRevision(request, deps, {
     current,
     actor,
@@ -1550,9 +1693,16 @@ async function ownerVault(
       ? attachBountyVault(current.manifest, deployment, utcPeriodOf(deps.now()))
       : attachOrdinaryVault(current.manifest, deployment),
     ownerParticipation: true,
-    reason:
-      "Owner registered a finalized vault verified against the reviewed factory and project policy.",
+    reason: saved
+      ? "Slop finished the owner's saved vault registration after finality, verified against the reviewed factory and project policy."
+      : "Owner registered a finalized vault verified against the reviewed factory and project policy.",
   });
+  await deps.persistence.closeRegisteredVaultCreation(
+    projectId,
+    input.network,
+    transactionId,
+    deps.now().toISOString(),
+  );
   await deps.vaultSetup.observe(updated, deployment, input.payoutPolicy);
   return json(200, {
     status: "registered",
@@ -1567,6 +1717,132 @@ async function ownerVault(
         }
       : {}),
   });
+}
+
+/** Log the kind of an unexpected failure, never its message. */
+const errorName = (error: unknown) =>
+  error instanceof Error ? error.name : "unknown";
+
+const SAVED_CREATION_RETRY_MS = 2 * 60_000;
+const SAVED_CREATION_SLOW_RETRY_MS = 10 * 60_000;
+const SAVED_CREATION_FAST_ATTEMPTS = 15;
+const SAVED_CREATION_EXPIRY_MS = 48 * 60 * 60_000;
+const SAVED_CREATION_BATCH = 3;
+const SAVED_CREATION_SWEEP_MS = 60_000;
+/** Refusals of the creation itself. Access or network trouble is asked again. */
+const SAVED_CREATION_FINAL = new Set([
+  "vault_creation_failed",
+  "vault_creation_invalid",
+  "vault_already_registered",
+]);
+
+/**
+ * Repeats each due saved register request as the account that made it,
+ * through the ordinary owner route: current access, restrictions, policy and
+ * finalized chain evidence are all checked again, and nothing registers
+ * without them. A creation ends when it registers, is refused, or is two days
+ * old (PRD section 6, operator decision of 17 November 2026).
+ */
+export async function finishSavedVaultCreations(
+  request: Request,
+  deps: ProjectApiDependencies,
+): Promise<{ registered: number; waiting: number; ended: number }> {
+  const result = { registered: 0, waiting: 0, ended: 0 };
+  if (!deps.vaultSetup) return result;
+  const now = deps.now();
+  const origin = new URL(request.url).origin;
+  for (const saved of await deps.persistence.dueVaultCreations(
+    now.toISOString(),
+    SAVED_CREATION_BATCH,
+  )) {
+    if (
+      now.getTime() - Date.parse(saved.createdAt) >
+      SAVED_CREATION_EXPIRY_MS
+    ) {
+      await deps.persistence.endVaultCreation(
+        saved.id,
+        "expired",
+        "expired",
+        now.toISOString(),
+      );
+      result.ended += 1;
+      continue;
+    }
+    const next = new Date(
+      now.getTime() +
+        (saved.attempts < SAVED_CREATION_FAST_ATTEMPTS
+          ? SAVED_CREATION_RETRY_MS
+          : SAVED_CREATION_SLOW_RETRY_MS),
+    ).toISOString();
+    // Another request may be finishing the same creation: take the check
+    // before any chain or GitHub read.
+    if (
+      !(await deps.persistence.claimVaultCreation(
+        saved.id,
+        saved.attempts,
+        next,
+      ))
+    )
+      continue;
+    try {
+      const response = await ownerVault(
+        new Request(
+          `${origin}/api/v1/project-vaults/${encodeURIComponent(saved.projectId)}`,
+          { method: "POST" },
+        ),
+        deps,
+        saved.projectId,
+        {
+          actor: saved.actor,
+          body: JSON.parse(saved.requestJson) as Record<string, unknown>,
+        },
+      );
+      const answer = (await response.json()) as { status?: unknown };
+      if (answer.status === "registered") result.registered += 1;
+      else result.waiting += 1;
+    } catch (error) {
+      const code = String((error as ApiError)?.code ?? errorName(error));
+      if (SAVED_CREATION_FINAL.has(code)) {
+        await deps.persistence.endVaultCreation(
+          saved.id,
+          "refused",
+          code,
+          now.toISOString(),
+        );
+        result.ended += 1;
+      } else {
+        // Keep the reason of the latest refusal with the waiting creation.
+        await deps.persistence
+          .noteVaultCreation(saved.id, code)
+          .catch(() => undefined);
+        result.waiting += 1;
+      }
+    }
+  }
+  return result;
+}
+
+/** When this isolate next looks for due saved creations. Tests reset it. */
+export const savedVaultCreationSweep = { nextAt: 0 };
+
+/**
+ * Looks for due saved creations behind a project API request, at most once a
+ * minute per isolate. The request only supplies the moment; the saved request
+ * carries the owner. A failure is logged and never reaches the response.
+ */
+function sweepSavedVaultCreations(
+  request: Request,
+  deps: ProjectApiDependencies,
+): void {
+  if (!deps.waitUntil || !deps.vaultSetup) return;
+  const now = Date.now();
+  if (now < savedVaultCreationSweep.nextAt) return;
+  savedVaultCreationSweep.nextAt = now + SAVED_CREATION_SWEEP_MS;
+  deps.waitUntil(
+    finishSavedVaultCreations(request, deps).catch((error) =>
+      console.error("saved vault creation sweep failed", errorName(error)),
+    ),
+  );
 }
 
 /**
@@ -1591,11 +1867,18 @@ async function publishOwnerRevision(
   const actor = stored?.actor ?? actorOf(await requireSession(request, deps));
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
   const body = stored?.body ?? (await readStrictJsonObject(request));
-  exactKeys(
-    body,
-    ["manifest", "expectedRevision"],
-    ["reason", "monthlyAmount", "bountyAmount"],
-  );
+  if (body.integrationBranch === undefined)
+    exactKeys(
+      body,
+      ["manifest", "expectedRevision"],
+      ["reason", "monthlyAmount", "bountyAmount"],
+    );
+  else
+    exactKeys(
+      body,
+      ["integrationBranch", "expectedRevision"],
+      ["reason", "contribution"],
+    );
   const expectedRevision = positiveInteger(
     body.expectedRevision,
     "expectedRevision",
@@ -1605,9 +1888,10 @@ async function publishOwnerRevision(
       ? null
       : boundedText(body.reason, "reason", 1, 500);
   if (
-    typeof body.manifest !== "object" ||
-    body.manifest === null ||
-    Array.isArray(body.manifest)
+    body.integrationBranch === undefined &&
+    (typeof body.manifest !== "object" ||
+      body.manifest === null ||
+      Array.isArray(body.manifest))
   )
     fail(422, "invalid_manifest", "Project manifest is invalid");
   const current = await deps.persistence.getProject(projectId);
@@ -1633,6 +1917,24 @@ async function publishOwnerRevision(
   // never authorize private funding reads or a revision of another project.
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
+  if (body.integrationBranch !== undefined)
+    return publishIntegrationBranch(request, deps, current, actor, checked, {
+      selection: body.integrationBranch,
+      contribution: body.contribution,
+      note,
+    });
+  // An appended repository's permanent GitHub id must be new to the registry.
+  const submittedRepositories = (body.manifest as Record<string, unknown>)
+    .repositories;
+  if (
+    Array.isArray(submittedRepositories) &&
+    submittedRepositories.length > current.manifest.repositories.length
+  )
+    assertAppendedIdentitiesUnlisted(
+      await deps.persistence.listProjects(),
+      current,
+      submittedRepositories,
+    );
   // The server decides status and listing; the owner sends content.
   let prepared = (await verifiedBountyAmount(
     withMonthlyAmount(
@@ -1721,6 +2023,11 @@ async function publishOwnerRevision(
     0
   )
     fail(422, "no_change", "The revision changes nothing");
+  // Appended repositories are verified on GitHub and through their own
+  // Slopbot installation before anything is recorded.
+  const added = appendedRepositories(current.manifest, submitted) ?? [];
+  if (added.length > 0)
+    await verifyAppendedRepositories(deps, actor, added, deps.now());
   let manifest =
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
@@ -1736,6 +2043,9 @@ async function publishOwnerRevision(
   if (scanRequired && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
   const summary = [
+    added.length > 0
+      ? `added ${added.length === 1 ? "repository" : "repositories"} ${added.map((entry) => entry.id).join(", ")}`
+      : null,
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`
       : null,
@@ -1780,6 +2090,146 @@ async function publishOwnerRevision(
   });
 }
 
+function branchDeclarationMatches(
+  value: unknown,
+  current: ProjectDefinition,
+  repository: string,
+  branch: string,
+): boolean {
+  if (!value || typeof value !== "object") return false;
+  const declaration = value as Record<string, unknown>;
+  const target = declaration.repository;
+  const steward = declaration.steward;
+  if (
+    !target ||
+    typeof target !== "object" ||
+    !steward ||
+    typeof steward !== "object"
+  )
+    return false;
+  const targetFields = target as Record<string, unknown>;
+  const stewardFields = steward as Record<string, unknown>;
+  return (
+    declaration.kind === "slop-project-authority" &&
+    declaration.schemaVersion === "1" &&
+    declaration.projectId === current.id &&
+    declaration.policyRevision === current.terms.revision &&
+    targetFields.fullName === repository &&
+    targetFields.id === current.authority.repositoryId &&
+    targetFields.integrationBranch === branch &&
+    stewardFields.actorId === current.steward.github.actorId &&
+    stewardFields.nodeId === current.steward.github.nodeId
+  );
+}
+
+async function publishIntegrationBranch(
+  request: Request,
+  deps: ProjectApiDependencies,
+  current: ProjectRecord,
+  actor: GithubActor,
+  checked: Awaited<ReturnType<typeof currentAuthority>>,
+  input: { selection: unknown; contribution: unknown; note: string | null },
+): Promise<Response> {
+  const { access } = checked;
+  const project = current.manifest;
+  const [primary, ...additional] = project.repositories;
+  if (
+    access.state !== "read" ||
+    access.access.installation !== "installed" ||
+    access.access.permission !== "admin" ||
+    !access.access.repository ||
+    !manifestMatchesRepository(project, access.access.repository)
+  )
+    fail(
+      403,
+      "authority_required",
+      "The integration branch requires current GitHub repository admin permission.",
+    );
+  const facts = access.access.repository;
+  const repository = facts.full_name;
+  if (
+    !input.selection ||
+    typeof input.selection !== "object" ||
+    Array.isArray(input.selection)
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Expected an integration branch and its GitHub commit.",
+    );
+  const selection = input.selection as Record<string, unknown>;
+  exactKeys(selection, ["name", "commitSha"]);
+  const { name, commitSha } = selection;
+  if (
+    typeof name !== "string" ||
+    !validIntegrationBranch(name) ||
+    typeof commitSha !== "string" ||
+    !/^[0-9a-f]{40}$/u.test(commitSha)
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Expected an integration branch and its GitHub commit.",
+    );
+  if (primary.integrationBranch === name)
+    fail(422, "no_change", "The integration branch is unchanged.");
+  if (project.listingTier === "retired")
+    fail(
+      409,
+      "project_restricted",
+      "A retired project cannot change integration branches.",
+    );
+  const { manifest } = canonicalManifest({
+    ...project,
+    repositories: [{ ...primary, integrationBranch: name }, ...additional],
+    ...(input.contribution === undefined
+      ? {}
+      : { contribution: input.contribution }),
+  });
+  const proof = await readIntegrationBranchAuthority(
+    deps.github,
+    { numericId: facts.id, nodeId: facts.node_id },
+    name,
+    commitSha,
+  );
+  if (!branchDeclarationMatches(proof, project, repository, name))
+    fail(
+      422,
+      "branch_proof_required",
+      "The selected commit must contain a matching .github/slop-project.json declaration.",
+    );
+  const updated = await appendRevision(request, deps, {
+    current,
+    manifest,
+    actor,
+    ownerParticipation: true,
+    verifiedBranchChange: {
+      repositoryId: primary.id,
+      from: primary.integrationBranch,
+      to: name,
+    },
+    reason: `Owner integration branch change by @${actor.githubLogin}: ${primary.integrationBranch} to ${name} at ${commitSha}.${input.note ? ` ${input.note}` : ""}`,
+  });
+  const setup = await runSetupCheck(request, deps, updated, actor, {
+    authority: checked,
+    allowActivation: false,
+  });
+  return json(200, {
+    project: adminProject(updated),
+    changes: {
+      presentation: [],
+      executable: [
+        "repositories",
+        ...(!sameValue(project.contribution, manifest.contribution)
+          ? ["contribution"]
+          : []),
+      ],
+      financial: [],
+    },
+    setup,
+  });
+}
+
 /** Removes public participation while preserving registry and financial history. */
 async function removeProject(
   request: Request,
@@ -1799,6 +2249,10 @@ async function removeProject(
   // The stored immutable repository, never submitted facts or creator status,
   // supplies authority. Recheck even an already-removed retry.
   requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  // A restriction's own paused, retired revision is not a removal.
+  refuseRestrictedRemoval(
+    projectRestriction(projectId, await deps.persistence.listEnforcements()),
+  );
   if (enforcedManifest(current.manifest))
     return json(200, { project: adminProject(current) });
   if (current.revision !== expectedRevision)
@@ -1808,6 +2262,7 @@ async function removeProject(
     manifest: { ...current.manifest, status: "paused", listingTier: "retired" },
     actor,
     reason: "Removed by a current repository maintainer",
+    removal: true,
   });
   return json(200, { project: adminProject(project) });
 }
@@ -1966,11 +2421,9 @@ async function publishPendingApplication(
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(application.manifest, actor, enforcements);
   assertRepositoryUnrestricted(application.manifest, enforcements);
-  assertRegistryWith(
-    await deps.persistence.listProjects(),
-    application.manifest,
-    { replaces: false },
-  );
+  const listed = await deps.persistence.listProjects();
+  assertRegistryWith(listed, application.manifest, { replaces: false });
+  assertNewRepositoryIdentityUnlisted(listed, application.manifest);
   const checked = await currentAuthority(deps, application.manifest, actor);
   requireAuthority(checked);
   const at = deps.now().toISOString();
@@ -2128,6 +2581,9 @@ async function appendRevision(
     applicationId?: string;
     /** Recheck owner eligibility within the guarded enforcement snapshot. */
     ownerParticipation?: true;
+    verifiedBranchChange?: VerifiedBranchChange;
+    /** Recheck a maintainer removal within the same snapshot. */
+    removal?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -2140,6 +2596,7 @@ async function appendRevision(
   if (input.ownerParticipation)
     assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = projectRestriction(projectId, enforcements);
+  if (input.removal) refuseRestrictedRemoval(restriction);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
     fail(
@@ -2162,7 +2619,11 @@ async function appendRevision(
       enforcements.filter((record) => record.projectId !== projectId),
     );
   try {
-    assertProjectPolicyTransition(current.manifest, manifest);
+    assertProjectPolicyTransition(
+      current.manifest,
+      manifest,
+      input.verifiedBranchChange,
+    );
     assertPayoutExclusionTransition(current.manifest, manifest, deps.now());
   } catch (error) {
     invalidManifest(error);
@@ -2205,11 +2666,19 @@ async function appendRevision(
       manifest,
       current.revision,
     );
+    // A multi-repository clearance names the repository that did not
+    // clear; a single-repository one never does.
+    const uncleared =
+      vetting.state !== "cleared" && "repository" in vetting
+        ? vetting.repository
+        : undefined;
     if (vetting.state !== "cleared")
       fail(
         422,
         "vetting_required",
-        `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`,
+        uncleared === undefined
+          ? `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`
+          : `Security vetting of ${uncleared} is ${vetting.state}. A successful retained admission scan of ${uncleared} is required before activation; reinstatement requires fresh evidence.`,
       );
   }
   const manifestSha256 = await sha256Hex(new TextEncoder().encode(text));
@@ -2231,7 +2700,18 @@ async function appendRevision(
     },
     enforcementGeneration,
   );
-  if (result === "conflict") {
+  // Another project taking an appended repository's name during the write
+  // is a registry conflict; every other race keeps its earlier answer.
+  if (
+    result === "repository_conflict" &&
+    manifest.repositories.length > current.manifest.repositories.length
+  )
+    fail(
+      409,
+      "registry_conflict",
+      "Another project lists a repository of this revision. Reload before retrying.",
+    );
+  if (result !== "updated") {
     fail(409, "stale_revision", "The project changed since you loaded it");
   }
   await purgeProjectCache(
@@ -2316,6 +2796,20 @@ function assertMaintainerNotBanned(
       403,
       "maintainer_banned",
       "A moderator banned this maintainer after a confirmed malicious scan result. The account cannot start new Slop participation. The banned account, project steward or original applicant may appeal the project decision.",
+    );
+}
+
+/**
+ * Removal waits until the project's own Quarantine or Ban is lifted.
+ * Reinstatement lists the project again from the revision the restriction
+ * opened on (PRD ADM-06), which would undo a removal recorded under it.
+ */
+function refuseRestrictedRemoval(restriction: ProjectRestriction): void {
+  if (restriction.state !== "clear")
+    fail(
+      409,
+      "project_restricted",
+      `The project is ${restriction.state}; request reinstatement before removing it`,
     );
 }
 
@@ -2652,12 +3146,20 @@ async function recordEnforcement(
     const latestRestriction = restriction.records.findLast(
       (record) => record.action === "quarantine" || record.action === "ban",
     );
+    // A project with more than one repository needs this fresh clean scan
+    // of every repository, each at its own live pin.
+    const fresh =
+      vetting.state === "cleared" && vetting.assessment !== null
+        ? (vetting.repositoryAssessments ?? [vetting.assessment])
+        : [];
     if (
-      vetting.state !== "cleared" ||
-      vetting.assessment === null ||
-      vetting.assessment.revision !== project.revision ||
-      (latestRestriction !== undefined &&
-        vetting.assessment.requestedAt < latestRestriction.createdAt)
+      fresh.length === 0 ||
+      fresh.some(
+        (assessment) =>
+          assessment.revision !== project.revision ||
+          (latestRestriction !== undefined &&
+            assessment.requestedAt < latestRestriction.createdAt),
+      )
     )
       fail(
         409,
@@ -2665,8 +3167,11 @@ async function recordEnforcement(
         "Reinstatement requires a fresh clean scan of the current restricted revision, requested after the latest restriction, at the current integration-branch head and skill template.",
       );
     vettingReview = {
-      assessmentId: vetting.assessment.id,
-      maliciousAssessmentIds: vetting.reviewedMaliciousAssessmentIds ?? [],
+      assessmentId: fresh[0].id,
+      maliciousAssessmentIds:
+        vetting.state === "cleared" && vetting.assessment !== null
+          ? (vetting.reviewedMaliciousAssessmentIds ?? [])
+          : [],
     };
   }
   const selectedAccounts = input.responsibleAccounts ?? [];
@@ -2962,7 +3467,7 @@ async function githubLookup(
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
       ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
-      : `${url.origin}/api/v1/project-github/repository-node-v1/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
+      : `${url.origin}/api/v1/project-github/repository-node-v2/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
   );
   const build = async () => {
     if (parts[1] === "owned-repositories") {
@@ -3052,6 +3557,8 @@ export async function handleProjectApi(
           : part,
     )
     .join("/")}`;
+  if (parts.length > 0 && isProjectRoute(parts))
+    sweepSavedVaultCreations(request, deps);
   try {
     if (
       request.method !== "GET" &&

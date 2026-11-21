@@ -155,6 +155,7 @@ export type FundingChoice = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
+  honorSystem?: boolean;
 };
 
 /**
@@ -230,6 +231,7 @@ export function rewardFields(
       cycle: "calendar-month-utc",
       monthlyCapMinor: amount.minor,
       monthlyCapDisplay: amount.display,
+      ...(choice.honorSystem === true ? { honorSystem: true } : {}),
       committedMinor: "0",
       paymentMode: "disabled",
       feeBasisPoints: expectedRewardFeeBasisPoints("monthly-pool", escrow),

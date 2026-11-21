@@ -6,6 +6,9 @@
 // @source contracts/solana/scripts/failure-evidence.mjs
 // Same-run artifacts carry consistency evidence, not an independent trust root.
 // Replacement is atomic for the program file, not across its separate receipt.
+// For bootstrap-linux.sh, exactBytes is the pinned archive SHA-256 check;
+// activation (extraction and use) cannot precede that check. The release's
+// HTTPS origin is the initial trust assumption, not independent build proof.
 module deployment_artifact {
   var s: { phase: str, matchingManifest: bool, exactBytes: bool,
     trustedSource: bool, withinWorkspace: bool, program: int, receipt: int,

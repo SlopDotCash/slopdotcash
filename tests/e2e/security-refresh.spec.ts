@@ -34,13 +34,12 @@ test("private case refresh retains the view but clears revoked access", async ({
     }),
   );
   await page.goto("/security");
-  const heading = page.getByRole("heading", { name: "Decisions and payments" });
+  const heading = page.getByRole("heading", { name: "Cases", exact: true });
   await expect(heading).toBeVisible();
   status = 503;
   await page.getByRole("button", { name: "Retry access check" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Showing the last loaded cases.",
-  );
+  const stale = page.getByRole("alert").filter({ hasText: "Stale" });
+  await expect(stale).toContainText("Case refresh unavailable.");
   await expect(heading).toBeVisible();
   await expectAccessible(page);
   await page.screenshot({
@@ -48,20 +47,13 @@ test("private case refresh retains the view but clears revoked access", async ({
     fullPage: true,
   });
   status = 200;
-  await page
-    .getByRole("alert")
-    .getByRole("button", { name: "Retry", exact: true })
-    .click();
-  await expect(
-    page.getByText("Showing the last loaded cases.", { exact: false }),
-  ).toHaveCount(0);
+  await stale.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(stale).toHaveCount(0);
   await expect(heading).toBeVisible();
   status = 403;
   await page.getByRole("button", { name: "Retry access check" }).click();
   await expect(
-    page.getByText(
-      "Private report access changed. Reload your private reports.",
-    ),
+    page.getByRole("alert").filter({ hasText: "Access revoked." }),
   ).toBeVisible();
   await expect(heading).toHaveCount(0);
 });

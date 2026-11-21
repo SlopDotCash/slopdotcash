@@ -1,4 +1,6 @@
+import { ExternalLink, Link2Off } from "lucide-react";
 import type { ReactNode } from "react";
+import { ChainIcon } from "./ChainIcon";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import {
   knownAssetSymbol,
@@ -6,9 +8,8 @@ import {
   transactionUrl,
 } from "./lib/payments/contracts";
 import { findProject } from "./lib/projects.mjs";
-import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { PayoutAmount } from "./PayoutRows";
-import { ExternalLinkAnchor, formatCycleMonth } from "./Presentation";
+import { formatCycleMonth, StatusBadge } from "./Presentation";
 import "./public-records.css";
 
 /** A common layout only; the caller retains its record's amount and state. */
@@ -48,16 +49,21 @@ export function VaultPaymentRecord({
       name={findProject(payment.projectId)?.name ?? payment.projectId}
       detail={
         <>
-          Finalized vault payment · {NETWORK_NAMES[payment.chain]}
-          {network?.testnet ? " testnet" : ""} · Work month:{" "}
+          <StatusBadge>Vault</StatusBadge> <ChainIcon chain={payment.chain} />{" "}
           {payment.contributionMonth
             ? formatCycleMonth(payment.contributionMonth)
-            : "Not recorded"}
+            : "—"}
+          {network?.testnet ? (
+            <>
+              {" "}
+              <StatusBadge>Testnet</StatusBadge>
+            </>
+          ) : null}
         </>
       }
       amount={
         <>
-          <small>Net paid</small>
+          <small>Net</small>
           <PayoutAmount
             base={payment.netBase}
             decimals={payment.assetDecimals}
@@ -72,9 +78,25 @@ export function VaultPaymentRecord({
       }
       action={
         href ? (
-          <ExternalLinkAnchor href={href}>View transaction</ExternalLinkAnchor>
+          <a
+            className="payout-tx"
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="View transaction"
+            title="View transaction"
+          >
+            <ExternalLink aria-hidden="true" size={16} />
+          </a>
         ) : (
-          "Transaction unavailable"
+          <span
+            className="payout-tx"
+            role="img"
+            aria-label="Transaction unavailable"
+            title="Transaction unavailable"
+          >
+            <Link2Off aria-hidden="true" size={16} />
+          </span>
         )
       }
     />

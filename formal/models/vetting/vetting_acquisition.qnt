@@ -9,14 +9,19 @@
 // Refuse stops acquisition before queue mutation. The worker's distinction
 // between retry and terminal incomplete is in vetting_terminal_outcomes.
 module vetting_acquisition {
-  var s: { phase: str, queued: bool, manifest: bool, source: bool, templates: bool,
+  var s: { phase: str, queued: bool, manifest: bool, source: bool, stream: str, templates: bool,
     reviewed: Set[int], gaps: bool, modelCompleted: bool, published: bool }
   action init = s' = { phase: "queued", queued: true, manifest: false,
-    source: false, templates: false, reviewed: Set(), gaps: false,
+    source: false, stream: "unread", templates: false, reviewed: Set(), gaps: false,
     modelCompleted: false, published: false }
   action rereadQueue = all { s.queued, s.phase == "queued", s' = s.with("phase", "acquiring") }
   action pinManifest = all { s.phase == "acquiring", s' = s.with("manifest", true) }
-  action pinSource = all { s.phase == "acquiring", s.manifest, s' = s.with("source", true) }
+  action readSource = all { s.phase == "acquiring", s.manifest, s.stream == "unread",
+    s' = s.with("stream", "reading") }
+  action sourceEof = all { s.phase == "acquiring", s.stream == "reading", s' = s.with("stream", "eof") }
+  action trailingSource = all { s.phase == "acquiring", s.stream == "reading",
+    s' = s.with("stream", "invalid").with("phase", "refused") }
+  action pinSource = all { s.phase == "acquiring", s.manifest, s.stream == "eof", s' = s.with("source", true) }
   action pinTemplates = all { s.phase == "acquiring", s.manifest, s' = s.with("templates", true) }
   action reviewBatch(batch) = all { s.phase == "acquiring", s.source, s.templates, batch.in(Set(1, 2, 3)),
     s' = s.with("reviewed", s.reviewed.union(Set(batch))) }
@@ -29,19 +34,22 @@ module vetting_acquisition {
   action refuse = all { not(s.published), s' = s.with("phase", "refused") }
   action step = {
     nondet batch = Set(1, 2, 3).oneOf()
-    any { rereadQueue, pinManifest, pinSource, pinTemplates, reviewBatch(batch), missingCoverage, synthesize, publishClean, refuse }
+    any { rereadQueue, pinManifest, readSource, sourceEof, trailingSource, pinSource, pinTemplates, reviewBatch(batch), missingCoverage, synthesize, publishClean, refuse }
   }
   val invariant = all {
     s.published implies all { s.manifest, s.source, s.templates, s.modelCompleted,
       s.reviewed == Set(1, 2, 3), not(s.gaps) },
     s.queued,
+    s.source implies s.stream == "eof",
   }
-  run completePinnedAcquisitionTest = init.then(rereadQueue).then(pinManifest).then(pinSource)
+  run completePinnedAcquisitionTest = init.then(rereadQueue).then(pinManifest).then(readSource).then(sourceEof).then(pinSource)
     .then(pinTemplates).then(reviewBatch(1)).then(reviewBatch(2)).then(reviewBatch(3))
     .then(synthesize).then(publishClean).expect(s.published)
   run acquisitionFailureDoesNotConsumeQueueTest = init.then(rereadQueue).then(pinManifest).then(refuse)
     .expect(s.queued and not(s.published))
-  run partialBatchCannotClearTest = init.then(rereadQueue).then(pinManifest).then(pinSource)
+  run partialBatchCannotClearTest = init.then(rereadQueue).then(pinManifest).then(readSource).then(sourceEof).then(pinSource)
     .then(pinTemplates).then(reviewBatch(1)).then(missingCoverage)
     .expect(not(s.modelCompleted) and not(s.published))
+  run trailingSourceCannotCompleteTest = init.then(rereadQueue).then(pinManifest).then(readSource).then(trailingSource)
+    .expect(s.queued and not(s.source) and not(s.published))
 }
