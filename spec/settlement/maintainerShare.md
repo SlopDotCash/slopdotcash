@@ -150,7 +150,8 @@ pure def nextMonth(m: ShareMonth, by: str): ShareMonth =
 The month keeps the share it opened with. A proposed month distributes
 exactly its amount: the maintainer amounts sum to the share, and the share
 plus the contributors' amount is the monthly amount. A month with a share is
-split only from a complete read, and an excluded account receives nothing.
+split only from a complete read, a complete read is the valid record of that
+month and its counted repositories, and an excluded account receives nothing.
 
 ```quint
 pure def alwaysShareWithinLimits(m: ShareMonth): bool =
@@ -164,6 +165,8 @@ pure def alwaysMaintainersSplitTheShare(m: ShareMonth): bool = m.phase == MonthP
   (m.maintainers.length() == 0 or M::equalAmounts(A::allocatedTotal(m.maintainers), m.pool))
 pure def alwaysShareOnlyFromCompleteRead(m: ShareMonth): bool =
   (m.phase == MonthProposed and M::positiveAmount(m.pool)) implies (m.read == ReadComplete and m.monthShare > 0)
+pure def alwaysCompleteReadIsTheMonth(m: ShareMonth): bool =
+  m.read == ReadComplete implies validRecord(m.record, m.period, m.repositories)
 pure def alwaysExcludedReceivesNothing(m: ShareMonth): bool = m.phase == MonthProposed implies
   m.maintainers.every(s => not(X::excludedIn(m.exclusions, s.actor, m.period)))
 pure def alwaysReadOnlyForAShare(m: ShareMonth): bool = m.read != NotRead implies (m.monthShare > 0 and m.phase != MonthOpen)
