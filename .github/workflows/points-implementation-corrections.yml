@@ -135,16 +135,30 @@ jobs:
           IFS=$'\t' read -r upload_start upload_end <<< "$upload_window"
           temp="$(mktemp -d "$RUNNER_TEMP/completed-campaign.XXXXXX")"
           trap 'rm -rf "$temp"' EXIT
-          if ! bun --no-env-file build --target=bun --packages=external --outdir="$temp/bundle" --metafile="$temp/modules.json" \
-            scripts/collect-implementation-corrections.ts scripts/prepare-implementation-corrections.ts \
-            scripts/install-value-merge-git.ts scripts/sync-project-registry.mjs >/dev/null; then
+          config=(bun.lock bunfig.toml package.json tsconfig.json)
+          if ! git diff --quiet "$RESUME_SHA" "$GITHUB_SHA" -- "${config[@]}"; then
             exit 0
           fi
-          jq -er '.inputs | keys[]' "$temp/modules.json" > "$temp/modules.txt"
-          mapfile -t modules < "$temp/modules.txt"
+          # Resolve both graphs from their own trees. A file present only on
+          # the donor can otherwise shadow the same unchanged import.
+          build_input_list() (
+            cd "$1" || exit 1
+            bun --no-env-file build --target=bun --packages=external --outdir="$temp/$2-build" --metafile="$temp/$2.json" \
+              scripts/collect-implementation-corrections.ts scripts/prepare-implementation-corrections.ts \
+              scripts/install-value-merge-git.ts scripts/sync-project-registry.mjs >/dev/null \
+              && jq -er '.inputs | keys[]' "$temp/$2.json" > "$temp/$2.txt"
+          )
+          mkdir "$temp/donor"
+          if ! git archive "$RESUME_SHA" | tar -xf - -C "$temp/donor" \
+            || ! build_input_list "$PWD" current \
+            || ! build_input_list "$temp/donor" donor \
+            || ! cmp -s "$temp/current.txt" "$temp/donor.txt"; then
+            exit 0
+          fi
+          mapfile -t modules < "$temp/current.txt"
           if [[ ${#modules[@]} -eq 0 ]] \
             || ! git ls-files --error-unmatch -- "${modules[@]}" >/dev/null \
-            || ! git diff --quiet "$RESUME_SHA" "$GITHUB_SHA" -- "${modules[@]}" bun.lock bunfig.toml package.json tsconfig.json; then
+            || ! git diff --quiet "$RESUME_SHA" "$GITHUB_SHA" -- "${modules[@]}"; then
             exit 0
           fi
           producer_recipe() {
