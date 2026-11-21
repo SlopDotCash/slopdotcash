@@ -324,14 +324,15 @@ or ban the financial approver.
 
 Discovered by simulation: with no related reporter and no moderator among
 the deciding actors, the guard probe for a related-party review found no
-reachable state in which a moderator could review a proposal, so the
-snapshot that revokes the financial approver also names the reporter a
-related party, and moderator 4 is among the actors. A separate fourth
-related-party snapshot diluted the revoke and ban observations until the
-search for a direct award paid after its payer lost the role found no
-witness; an award decided after the revoke snapshot can never be admitted
-as a direct award, since no later snapshot restores a financial approver, so
-correlating the two observations costs that search nothing.
+reachable state in which a moderator could review a proposal. The snapshot
+that revokes the financial approver therefore also names the reporter a
+related party and makes actor 5 a moderator. A separate related-party
+snapshot and moderator 4 among the actors diluted every other observation
+and actor choice until the search for a direct award paid after its payer
+lost the role found no witness. An award decided after the revoke snapshot
+can never be admitted as a direct award, since no later snapshot restores a
+financial approver, so correlating these observations costs that search
+nothing.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
@@ -341,12 +342,13 @@ pure val sourceValues = Set(C::SlopReceived)
 pure val termsValues = Set(awardTerms, { ...awardTerms, receivedAt: 5 })
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
-pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List(), relatedParties: List(1) },
+pure val snapshotValues = Set(C::staff,
+  { ...C::staff, epoch: 2, financial: List(), moderators: List(4, 5, 7), relatedParties: List(1) },
   { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
-pure val byValues = Set(1, 2, 4, 5)
+pure val byValues = Set(1, 2, 5)
 pure val checkedEpochValues = Set(1, 2)
 pure val amountValues = Set(List(4))
 pure val grossValues = Set(List(4))
