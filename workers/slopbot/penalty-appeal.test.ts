@@ -1911,6 +1911,7 @@ for (const scenario of [
   "no-consent",
   "activation-off",
   "late-edit",
+  "change-types-period",
 ] as const) {
   test(`Slop evidence takes the correct action with ${scenario}`, async () => {
     await closedItem(async (run) => {
@@ -1921,12 +1922,17 @@ for (const scenario of [
       const submission =
         scenario === "complete"
           ? evidencedSubmission
-          : scenario === "invalid-video-link"
+          : scenario === "change-types-period"
             ? evidencedSubmission.replace(
-                /^- UI video:.*$/mu,
-                "- UI video: https://github.com",
+                "- Change types: ui, non-ui",
+                "- Change types: ui, non-ui.",
               )
-            : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
+            : scenario === "invalid-video-link"
+              ? evidencedSubmission.replace(
+                  /^- UI video:.*$/mu,
+                  "- UI video: https://github.com",
+                )
+              : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
       run.submissionBody(
         scenario === "unsigned"
           ? submission.replace(

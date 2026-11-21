@@ -1015,8 +1015,12 @@ export class VettingEvidence {
               isRecord(source) && Object.hasOwn(source, "classifications");
             const policyBound =
               isRecord(source) && Object.hasOwn(source, "rulePolicySha256");
+            // Well-formed images are listed by digest under `media` when the
+            // inventory has any (`inspectRepository`, PRD section 8).
+            const imaged = isRecord(source) && Object.hasOwn(source, "media");
             if (classified) inventoryKeys.push("classifications");
             if (policyBound) inventoryKeys.push("rulePolicySha256");
+            if (imaged) inventoryKeys.push("media");
             if (
               !isRecord(source) ||
               !isRecord(final) ||
@@ -1031,6 +1035,11 @@ export class VettingEvidence {
                   typeof source.rulePolicySha256 !== "string" ||
                   !HEX.test(source.rulePolicySha256) ||
                   source.rulePolicySha256 !== final.rulePolicySha256)) ||
+              (imaged &&
+                (!Array.isArray(source.media) ||
+                  source.media.length === 0 ||
+                  JSON.stringify(source.media) !==
+                    JSON.stringify(final.media))) ||
               source.schemaVersion !== "slop-scan-inventory-v2" ||
               final.schemaVersion !== source.schemaVersion ||
               !Array.isArray(source.items) ||
