@@ -44,6 +44,11 @@ export type Submission = {
     canAuthorize?: boolean;
     canRevise?: boolean;
   } | null;
+  /**
+   * The report's refundable deposit, in the reporter's own read (PRD section
+   * 8); null or absent when none is asked. `reportDepositStatus` reads it.
+   */
+  deposit?: unknown;
 };
 
 const FAILURE_LABELS: Record<string, string> = {
