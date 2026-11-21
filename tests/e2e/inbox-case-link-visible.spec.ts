@@ -1,7 +1,5 @@
 import { expect, test } from "./fixtures";
 
-// A reporter with several private reports. Every report is listed before the
-// Cases section, so an opened case renders below all of them.
 const ACTOR = "4242";
 const REPORTS = 8;
 const caseId = (index: number) =>
@@ -163,4 +161,21 @@ test("Open case in the Inbox report list shows the case where the reader is", as
   const heading = page.locator(`h3[id="case-${target}"]`);
   await expect(heading).toBeAttached();
   await expect(heading).toBeInViewport();
+});
+
+test("Refresh reports keeps the reader where they are after a case opens", async ({
+  page,
+}) => {
+  await page.goto("/inbox", { waitUntil: "networkidle" });
+  await page
+    .locator(`[aria-labelledby="submission-${submissionId(REPORTS - 1)}"]`)
+    .getByRole("button", { name: "Open case", exact: true })
+    .click();
+  await expect(page.locator(`h3[id="case-${target}"]`)).toBeInViewport();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const refreshed = page.waitForResponse("**/api/v1/security-submissions");
+  await page.getByRole("button", { name: "Refresh reports" }).click();
+  await refreshed;
+  await expect(page.locator(`h3[id="case-${target}"]`)).toBeAttached();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 });
