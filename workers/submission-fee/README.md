@@ -235,7 +235,7 @@ with its resolve transaction, whose `kept_to` is that fee wallet and whose
 token is the asset asked about. Kept SLOP goes to the burn address and is not
 income. Refunds and reclaims are not income.
 
-## Going live (steps 1 to 4 done 19 November 2026; each step is the operator's)
+## Going live (steps 1 to 4 done 19 November 2026, step 5 on 21 November 2026; each step is the operator's)
 
 1. Done. `SubmissionDeposits` is deployed on Base and Robinhood Chain
    (`contracts/DEPLOY-MAINNET.md`).
@@ -247,12 +247,13 @@ income. Refunds and reclaims are not income.
    passed to CI. Its address `0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`
    holds a little ETH on each network, and the owner named it with
    `setResolver` on both contracts.
-4. Done. The mode is `dry_run`. Read a few days of `submission_fee_sends`
-   rows before the next step.
-5. Set the mode to `live` in its own reviewed change, together with
-   Slopbot's mode and `SUBMISSION_FEE_SWITCHED_ON`. The release refuses
-   `live` unless both contracts and start blocks are set and the Worker holds
-   the key.
+4. Done. The mode was `dry_run` from 19 to 21 November 2026. Every scheduled
+   run after the first hour succeeded; no deposit and no fee row was recorded,
+   because no project had the setting on.
+5. Done 21 November 2026 (operator decision). The mode is `live`, changed in
+   one reviewed change together with Slopbot's mode and
+   `SUBMISSION_FEE_SWITCHED_ON`. The release refuses `live` unless both
+   contracts and start blocks are set and the Worker holds the key.
 
 ## Checks
 

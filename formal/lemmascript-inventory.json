@@ -11642,7 +11642,7 @@
 {"path":"src/lib/submission-fee-setup.ts","sha256":"24a968fe638971f42dfa4aeb93705fd0726483e9fc74ed366e6cda2f09a6ebe2","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"feePageSetup","kind":"FunctionDeclaration","line":18,"sha256":"a55572f2aea5aa3e9982fa0c8b409b0f1af39189540e43ee1dbb2a8356091616","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/submission-fee.mjs","sha256":"6fdccd92b2118eec14abce4f3da1f0f6fccd66f2d393c877b6c04de78faa6a3c","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/submission-fee.mjs","sha256":"0daa31260e05cae5405818d262baedff0fc34c0bda479d9c19807aa8805be60f","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"uint64","kind":"FunctionDeclaration","line":105,"sha256":"ad5443201390a2aa4bafb29db816c78934117c2a54fb45f3bb117ed942b10a29","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"submissionFeeItem","kind":"FunctionDeclaration","line":123,"sha256":"901bce6a782edb01949f2ce1f96adb2dac52d8e306449ff953457920827770fc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@133>","kind":"ArrowFunction","line":133,"sha256":"d8cde819659e4d1a74d3964436a1a38d10cbfd1ad1af8f528cdc99bd28614619","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

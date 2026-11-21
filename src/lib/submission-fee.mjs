@@ -41,7 +41,7 @@ export const SUBMISSION_FEE_CONTRACTS = {
  * owner's settings page says the fee is not switched on while this is false.
  * A test holds the two together; change them in the same reviewed change.
  */
-export const SUBMISSION_FEE_SWITCHED_ON = false;
+export const SUBMISSION_FEE_SWITCHED_ON = true;
 export const SUBMISSION_FEE_DEFAULT_MINOR = "2000000"; // 2.00, six decimals
 export const SUBMISSION_FEE_MIN_MINOR = "1000000";
 export const SUBMISSION_FEE_MAX_MINOR = "10000000";
