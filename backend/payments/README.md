@@ -408,8 +408,10 @@ Points history. Replaying an identical batch remains valid.
    `GET .../monthly/:YYYY-MM/cuts` is public and lists each contributor whose
    latest change is a cut, with login, proposed amount, new amount, reason and
    time; the cycle page shows it. Other changes stay private and are kept for
-   dispute handling and reconciliation. With automatic finalization on, a cut
-   is refused in the last 24 hours before the cutoff (`cut_notice_window`),
+   dispute handling and reconciliation. When the month freezes at the cutoff
+   (automatic finalization on, or the month pledged on chain in the vault
+   that pays it), a cut is refused in the last 24 hours before the cutoff
+   (`cut_notice_window`),
    and the owner's finalize is refused until 24 hours after the latest cut
    (`cut_notice_pending`). The coordinator's freeze at the cutoff is
    unchanged. `POST .../monthly-settings` (`automatic`) turns
