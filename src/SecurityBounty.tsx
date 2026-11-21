@@ -51,7 +51,7 @@ import {
   DirectBountyPayment,
   type DirectEvmTransaction,
 } from "./DirectBountyPayment";
-import { Link } from "./Link";
+import { Link, settleAlignment } from "./Link";
 import { hasBountyOverview } from "./lib/home-projects";
 import { PrivateReportForm, usePrivateDraftSession } from "./PrivateReportForm";
 import {
@@ -3734,7 +3734,10 @@ function CaseDetail({
   );
   const [note, setNote] = useState<string | null>(null);
   const reveal = useCallback((article: HTMLElement | null) => {
-    article?.scrollIntoView({ block: "start" });
+    if (!article) return;
+    return settleAlignment(() =>
+      article.scrollIntoView({ behavior: "auto", block: "start" }),
+    ).stop;
   }, []);
   if (state.status === "loading") return <Spinner label="Loading case…" />;
   if (state.status === "signed-out")

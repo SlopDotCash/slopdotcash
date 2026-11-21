@@ -34,6 +34,41 @@ function scrollToTarget(targetId: string): boolean {
   return true;
 }
 
+export function settleAlignment(align: () => void): {
+  settling: () => boolean;
+  stop: () => void;
+} {
+  let settling = true;
+  const realign = () => {
+    if (settling) align();
+  };
+  const observer = new MutationObserver(realign);
+  const timer = window.setTimeout(stop, HASH_SETTLE_MS);
+  // Native traversal can scroll against the outgoing page before React paints.
+  const frame = window.requestAnimationFrame(realign);
+  function stop() {
+    settling = false;
+    observer.disconnect();
+    window.clearTimeout(timer);
+    window.cancelAnimationFrame(frame);
+    for (const type of READER_INPUT_EVENTS) {
+      window.removeEventListener(type, stop, true);
+    }
+  }
+  realign();
+  observer.observe(document.body, { childList: true, subtree: true });
+  for (const type of READER_INPUT_EVENTS) {
+    // Stop before native scrolling. A passive wheel handler can run after
+    // the scroll event and let restoration undo the reader's first gesture.
+    window.addEventListener(type, stop, {
+      capture: true,
+      passive: type !== "wheel",
+    });
+  }
+  void document.fonts?.ready.then(realign);
+  return { settling: () => settling, stop };
+}
+
 /**
  * A fragment can name content that is still loading on direct entry or
  * client navigation. Reuse the bounded observer for each destination.
@@ -87,48 +122,23 @@ export function useHashScroll(href: string, alignmentKey = href): void {
     // A presentation-only URL change still owns a distinct history entry.
     // Seed it even if retaining the viewport produces no native scroll event.
     if (restore) positions.current.set(entry.key, restore);
-    let settling = true;
     const align = () => {
-      if (!settling) return;
       if (restore) window.scrollTo({ ...restore, behavior: "instant" });
       else scrollToTarget(targetId);
     };
+    const settle = settleAlignment(align);
     const remember = () => {
       if (active.current !== entry || entry.href !== window.location.href)
         return;
       // Native history restoration can run after React's first frame. Keep
       // that transient offset out of the saved entry and restore it again.
       // Reader input stops settling before its scroll event is recorded.
-      if (settling && restore) align();
+      if (settle.settling() && restore) align();
       else positions.current.set(entry.key, { left: scrollX, top: scrollY });
     };
-    const observer = new MutationObserver(align);
-    const timer = window.setTimeout(stop, HASH_SETTLE_MS);
-    // Native traversal can scroll against the outgoing page before React paints.
-    const frame = window.requestAnimationFrame(align);
-    function stop() {
-      settling = false;
-      observer.disconnect();
-      window.clearTimeout(timer);
-      window.cancelAnimationFrame(frame);
-      for (const type of READER_INPUT_EVENTS) {
-        window.removeEventListener(type, stop, true);
-      }
-    }
-    align();
     window.addEventListener("scroll", remember, { passive: true });
-    observer.observe(document.body, { childList: true, subtree: true });
-    for (const type of READER_INPUT_EVENTS) {
-      // Stop before native scrolling. A passive wheel handler can run after
-      // the scroll event and let restoration undo the reader's first gesture.
-      window.addEventListener(type, stop, {
-        capture: true,
-        passive: type !== "wheel",
-      });
-    }
-    void document.fonts?.ready.then(align);
     return () => {
-      stop();
+      settle.stop();
       window.removeEventListener("scroll", remember);
     };
   }, [href, alignmentKey]);

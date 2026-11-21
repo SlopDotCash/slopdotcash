@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 const ACTOR = "4242";
@@ -134,6 +135,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+async function expectShown(page: Page, id: string) {
+  const heading = page.locator(`h3[id="case-${id}"]`);
+  await expect(heading).toBeInViewport();
+  await expect
+    .poll(async () => {
+      const header = await page.locator(".site-header").boundingBox();
+      const title = await heading.boundingBox();
+      return header && title ? title.y - (header.y + header.height) : -1;
+    })
+    .toBeGreaterThanOrEqual(0);
+}
+
 for (const [kind, id] of [
   ["security_case", target],
   ["security_report_received", unlinked],
@@ -144,11 +157,39 @@ for (const [kind, id] of [
     await page.goto("/inbox", { waitUntil: "networkidle" });
     await page.locator(`a.inbox-title[href="/security?case=${id}"]`).click();
     await expect(page).toHaveURL(new RegExp(`/security\\?case=${id}$`, "u"));
-    const heading = page.locator(`h3[id="case-${id}"]`);
-    await expect(heading).toBeAttached();
-    await expect(heading).toBeInViewport();
+    await expectShown(page, id);
   });
 }
+
+test("a case stays in view when the reports above it load after the case", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "* { overflow-anchor: none; }";
+      document.head.append(style);
+    });
+  });
+  await page.goto("/inbox", { waitUntil: "networkidle" });
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    await held;
+    await route.fallback();
+  });
+  await page.locator(`a.inbox-title[href="/security?case=${target}"]`).click();
+  const heading = page.locator(`h3[id="case-${target}"]`);
+  await expect(heading).toBeAttached();
+  await expect(page.getByRole("button", { name: "Open case" })).toHaveCount(0);
+  release();
+  await expect(page.getByRole("button", { name: "Open case" })).toHaveCount(
+    REPORTS,
+  );
+  await expectShown(page, target);
+});
 
 test("Open case in the Inbox report list shows the case where the reader is", async ({
   page,
@@ -158,9 +199,7 @@ test("Open case in the Inbox report list shows the case where the reader is", as
     .locator(`[aria-labelledby="submission-${submissionId(REPORTS - 1)}"]`)
     .getByRole("button", { name: "Open case", exact: true })
     .click();
-  const heading = page.locator(`h3[id="case-${target}"]`);
-  await expect(heading).toBeAttached();
-  await expect(heading).toBeInViewport();
+  await expectShown(page, target);
 });
 
 test("Refresh reports keeps the reader where they are after a case opens", async ({
@@ -171,8 +210,9 @@ test("Refresh reports keeps the reader where they are after a case opens", async
     .locator(`[aria-labelledby="submission-${submissionId(REPORTS - 1)}"]`)
     .getByRole("button", { name: "Open case", exact: true })
     .click();
-  await expect(page.locator(`h3[id="case-${target}"]`)).toBeInViewport();
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await expectShown(page, target);
+  await page.keyboard.press("Home");
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   const refreshed = page.waitForResponse("**/api/v1/security-submissions");
   await page.getByRole("button", { name: "Refresh reports" }).click();
   await refreshed;
