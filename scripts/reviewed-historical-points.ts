@@ -137,12 +137,14 @@ export interface HistoricalPointsPacket {
       }[];
     };
     earlierSources: CorrectionSource[];
-    /** Both accepted merges have the same complete nonempty first-parent diff. */
+    /** The later PR repeats the complete earlier accepted first-parent diff. */
     identicalAcceptedChange?: {
       earlierSourceId: string;
       earlierMergeSha: string;
       mergeSha: string;
       diffSha256: string;
+      /** The later squash is empty and its parent already contains the change. */
+      emptySquash?: true;
     };
     /** Complete native commit membership already accepted before this promotion. */
     earlierAcceptanceProof?: {
@@ -675,7 +677,9 @@ export function reconstructHistoricalPoints(
       const owner = earlier.get(identical.earlierSourceId);
       check(
         Object.keys(identical).sort().join() ===
-          "diffSha256,earlierMergeSha,earlierSourceId,mergeSha" &&
+          (identical.emptySquash === true
+            ? "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha"
+            : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
           /^[a-f0-9]{64}$/u.test(identical.diffSha256) &&
           /^[a-f0-9]{40}$/u.test(identical.earlierMergeSha) &&
           /^[a-f0-9]{40}$/u.test(identical.mergeSha) &&
@@ -703,6 +707,8 @@ export function reconstructHistoricalPoints(
               award.occurredAt === owner.occurredAt &&
               award.category === "merged-pull-request" &&
               award.amount > 0 &&
+              (identical.emptySquash !== true ||
+                (latestBaseline.get(award.key)?.award.amount ?? 0) > 0) &&
               award.key ===
                 pointKey(
                   award.projectId,

@@ -4924,10 +4924,10 @@
     },
     {
       "path": "scripts/pull-request-git-files.ts",
-      "sha256": "42e0c12a470855bcba8dcd1a5352f66c4faf0624ac56d088da69969addcd1e9a",
+      "sha256": "2fb486e6d86b957cfdd4e557e7f889998d27d3c6478d9e041c50a6a6c905d962",
       "models": ["formal/models/tooling/git_file_recovery.qnt"],
       "candidateLines": [
-        6, 114, 156, 157, 182, 183, 184, 186, 187, 204, 221, 229, 232, 254
+        6, 128, 169, 170, 195, 196, 197, 199, 200, 217, 234, 242, 245, 263
       ],
       "review": "mapped-abstraction"
     },
@@ -5182,9 +5182,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "aba57c764d92b4ab7f62d432927b93680deaef37c73bce130c2a094b051d194d",
+      "sha256": "317af80ba78df3df384557aa4d5302c5e889d02f3210a8197076f46084123d69",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 501, 737, 972, 973, 974, 977, 1300],
+      "candidateLines": [55, 56, 503, 743, 978, 979, 980, 983, 1306],
       "review": "mapped-abstraction"
     },
     {
@@ -5262,9 +5262,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "c0651c1b16d20b56fa5e90868940dca2812d819e98f645f8f97200adfa51c7e3",
+      "sha256": "12b68e0de53f17a312984513d7da3c12495a49f2ddfd1992fcd5248df8370302",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 727, 747, 850, 954],
+      "candidateLines": [3, 206, 847, 867, 970, 1074],
       "review": "mapped-abstraction"
     },
     {
