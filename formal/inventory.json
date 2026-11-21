@@ -118,12 +118,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "2f16cb82a3d5b3e5e30a0af0f4dbd6aac57fc985560f7383548e9c2af5a008d3",
+      "sha256": "078f7b027cfbf478a56c89d7fbcd6d2f405a8b71550560b864c3031ce22ba21d",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [103, 122, 221, 330],
+      "candidateLines": [103, 122, 225, 334],
       "review": "mapped-abstraction"
     },
     {
@@ -7766,7 +7766,7 @@
     },
     {
       "path": "src/lib/security-report-deposit.mjs",
-      "sha256": "5f6dd74446e1936321f37905b92343d5884a0116b3d67c2ce983219ca89e5ec7",
+      "sha256": "648329c1a0146deed2870feb546596fb8a7ce3c0ce82c8e0fc7990eedb3d3484",
       "models": [
         "formal/models/api/api_security_report_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
@@ -10648,7 +10648,7 @@
     },
     {
       "path": "wrangler.toml",
-      "sha256": "781ced72900ca591b1165847ce4a5350a82a5c6fd4f0ec2c17fdbca0b45eedc7",
+      "sha256": "5fe4994e75b552f37872a97659289f895d4010b27c802bbea2ea9678a74b534f",
       "models": ["formal/models/api/api_points_session_lifetime.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
