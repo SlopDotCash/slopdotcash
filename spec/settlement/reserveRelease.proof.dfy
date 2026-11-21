@@ -238,3 +238,49 @@ lemma settlePart_ensures(r: ReserveRelease, amount: seq<int>)
     assert alwaysConserved(settlePart(r, amount));
   }
 }
+
+lemma admitRetained_ensures(r: ReserveRelease, evidence: RetainedAllocation)
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysAbsentEmpty(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysNoSettlementOnRelease(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysWholeRelease(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysBoundApproval(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysSignedIdentity(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysLiveAttemptFresh(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysFinalizedHeight(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysObservedAfterSignature(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysApprovedEvm(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysRefusalNamed(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysNetworkPinned(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysUntouchedBalances(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysSettlementHistory(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysOwnerRevision(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysQualifiedAgainstPin(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysValidAmounts(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysConserved(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepAttemptHistoryRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepSignedAttemptRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepNetworkFixed(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepRefusalRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepPinFixed(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepOriginalTermsRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepSettlementHistoryRetained(r, admitRetained(r, evidence)))
+{
+  if inv(r) && canAdmitRetained(r, evidence) {
+    var admitted := admitRetained(r, evidence);
+    assert r.settledAmount == settlement__money_zero;
+    var total := settlement__money_addAmounts(evidence.free, evidence.reserve);
+    settlement__money_lawAdditionValid_ensures(evidence.free, evidence.reserve);
+    settlement__money_lawZeroIdentity_ensures(total);
+    assert alwaysConserved(admitted);
+  }
+}
+
+lemma initialHolds_ensures()
+  ensures inv(initialHolds())
+{
+  var zero := settlement__money_zero;
+  var total := settlement__money_addAmounts(zero, zero);
+  settlement__money_lawAdditionValid_ensures(zero, zero);
+  settlement__money_lawZeroIdentity_ensures(total);
+  assert alwaysConserved(initialHolds());
+}
