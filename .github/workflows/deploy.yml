@@ -251,7 +251,7 @@ jobs:
       # has no 6-hour job limit (operator decision, 20 November 2026). The
       # runner refuses any job that is not a main-branch run of this
       # workflow. Clearing the repository variable returns it to hosted runners.
-      SLOP_COLLECTION_DEADLINE_S: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '18000' }}
+      SLOP_COLLECTION_DEADLINE_S: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '19200' }}
     runs-on: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && vars.SLOP_COLLECTOR_RUNNER || 'ubuntu-24.04' }}
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
