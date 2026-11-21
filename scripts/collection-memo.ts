@@ -469,6 +469,8 @@ export class CollectionMemoSession {
     auditMismatches: 0,
     fenceMisses: 0,
   };
+  /** Why live attributions could not be recorded for reuse, by reason. */
+  readonly notReusable = new Map<string, number>();
 
   constructor(
     readonly mode: CollectionMode,
@@ -491,6 +493,24 @@ export class CollectionMemoSession {
     this.next.clear();
     for (const key of Object.keys(this.stats) as (keyof typeof this.stats)[])
       this.stats[key] = 0;
+    this.notReusable.clear();
+  }
+
+  /**
+   * Counts why one live attribution was not recorded for reuse. Diagnostic
+   * only: numbers, hashes and paths are masked so reasons group by kind.
+   */
+  noteNotReusable(reasons: readonly string[]) {
+    const kinds = new Set(
+      (reasons.length ? reasons : ["no reason recorded"]).map((reason) =>
+        reason
+          .replace(/[a-f0-9]{40}/gu, "SHA")
+          .replace(/\d+/gu, "N")
+          .slice(0, 80),
+      ),
+    );
+    for (const kind of kinds)
+      this.notReusable.set(kind, (this.notReusable.get(kind) ?? 0) + 1);
   }
 
   /** Deterministic audit sample, stable for one cutoff. */

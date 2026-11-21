@@ -1086,6 +1086,7 @@ export async function loadValueInputs(
         memoResult(answer),
       );
       if (entry) memo.session.next.set(outcome.id, entry);
+      else memo.session.noteNotReusable(active.reasons);
     }
     return answer;
   }
