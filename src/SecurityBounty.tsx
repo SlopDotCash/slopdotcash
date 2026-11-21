@@ -4701,7 +4701,9 @@ export function SecurityInbox({
   onIdentityChange?: (actorId: string | null) => void;
 }) {
   const [sessionEpoch, setSessionEpoch] = useState(0);
-  const session = useProjectSession(sessionEpoch);
+  // A tab return rechecks the account behind the shown reports; only a
+  // changed or ended session closes them.
+  const session = useProjectSession(sessionEpoch, true, true);
   usePrivateDraftSession(session);
   const [problem, setProblem] = useState<string | null>(null);
   const mounted = useRef(true);
