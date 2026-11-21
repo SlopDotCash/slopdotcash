@@ -9154,7 +9154,8 @@
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/points_dispute_lease.qnt",
-        "formal/models/slopbot/bot_appeal.qnt"
+        "formal/models/slopbot/bot_appeal.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
       ],
       "candidateLines": [1, 84, 118, 157, 171, 203, 237],
       "review": "mapped-abstraction"
@@ -9480,17 +9481,17 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "28e422b64af338c8dd14fcccadc84e3127d2137ad206e74591fcf791498a90cf",
+      "sha256": "7215075b7fdb8c00d017b176006750bb130ba81d89d8892e63ac3a56a0d2e857",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
       "candidateLines": [
-        303, 323, 334, 343, 345, 347, 356, 412, 433, 438, 445, 448, 450, 484,
-        485, 487, 488, 499, 505, 530, 539, 540, 571, 575, 675, 708, 716, 724,
-        726, 728, 729, 730, 751, 753, 785, 786, 788, 791, 792, 806, 807, 868,
-        894, 934, 938, 944, 968, 981, 997, 1018, 1041, 1051, 1074, 1078, 1122,
-        1123, 1125, 1150
+        304, 343, 354, 363, 365, 367, 376, 432, 453, 458, 465, 468, 470, 504,
+        505, 507, 508, 519, 525, 550, 559, 560, 591, 595, 695, 728, 736, 744,
+        746, 748, 749, 750, 771, 773, 805, 806, 808, 811, 812, 826, 827, 894,
+        920, 960, 964, 970, 994, 1007, 1023, 1044, 1063, 1083, 1106, 1110, 1154,
+        1155, 1157, 1182
       ],
       "review": "mapped-abstraction"
     },
@@ -17340,12 +17341,13 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "bae14c1adea3bc0a02594a4fcab690a6e1297051f2b742246eb30d0ac3b7a247",
+      "sha256": "cbba27dc06634f5075c0c7d1bdba768ae5d28e7c6381cef050b81a7ee3a6bf15",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
         "src/lib/submission-fee-setting.mjs",
         "src/lib/submission-fee.mjs",
+        "workers/slopbot/appeals.ts",
         "workers/slopbot/index.ts",
         "workers/slopbot/ready-label.ts",
         "workers/slopbot/review-cap.ts",
@@ -17353,9 +17355,11 @@
         "workers/slopbot/submission-fee.ts"
       ],
       "scenarios": [
+        "appealOfSlopbotCloseHoldsTheFeeTest",
         "authorGainingAccessReleasesTest",
         "closedIsKeptAfterTheWaitTest",
         "crashDoesNotDuplicateTheCommentTest",
+        "deniedAppealKeepsTheFeeTest",
         "dryRunRecordsAndReviewsTest",
         "exemptAuthorIsNeverAskedTest",
         "firstSightAsksOnceTest",
@@ -17372,6 +17376,7 @@
         "undecidedIsDueBackTest",
         "unpaidIsNeverReadyTest",
         "unpaidMergeHasNothingDueTest",
+        "upheldAppealReopensAndRefundsTest",
         "withdrawnPaymentAsksAgainTest"
       ]
     },

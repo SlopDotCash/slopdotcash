@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a0b5fc38c57febff02b7f20fa8d30315cd653b27906fed1a4a20e1845e966166",
+  "inventorySha256": "da1c10605b99c8fbff7f7a46d676601159dc791ecb9ffeadfca47f448b894c37",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4803,7 +4803,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 48,
+      "line": 49,
       "name": "FeeMode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -4816,7 +4816,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 178,
+      "line": 179,
       "name": "FeeOutcomeWhy",
       "kind": "string-union",
       "values": ["closed", "merged", "undecided"],
@@ -4829,7 +4829,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 301,
+      "line": 302,
       "name": "GateState",
       "kind": "string-union",
       "values": ["asked", "asking", "paid", "recorded", "released"],
@@ -4842,7 +4842,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 827,
+      "line": 849,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],

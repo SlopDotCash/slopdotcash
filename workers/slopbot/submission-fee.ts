@@ -9,7 +9,8 @@
 //                the review;
 //   outcome      merged, or still open 14 days after payment: `refund_due`.
 //                Closed without a merge and still closed 7 days later:
-//                `kept_due`. The Worker sends what is due.
+//                `kept_due`, never while an appeal of Slopbot's own close
+//                is undecided. The Worker sends what is due.
 // Slopbot moves no money and never closes a pull request for an unpaid fee. A
 // maintainer can review and merge an unpaid pull request; scoring is unchanged.
 import {
@@ -315,6 +316,25 @@ function itemRow(db: store.D1Database, job: PullRef) {
     )
     .bind(job.repositoryId, job.number)
     .first<ItemRow>();
+}
+
+function slopbotCloseAppeal(
+  db: store.D1Database,
+  job: PullRef,
+  nodeId: string,
+) {
+  return db
+    .prepare(
+      `SELECT
+         EXISTS (SELECT 1 FROM slopbot_appeals WHERE repository_id = ?1 AND item_node_id = ?2
+           AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at IS NULL) AS open,
+         (SELECT MAX(resolved_at) FROM slopbot_appeals WHERE repository_id = ?1 AND item_node_id = ?2
+           AND appeal_key NOT LIKE 'value-appeal:%' AND resolution = 'upheld') AS upheld_at
+       WHERE EXISTS (SELECT 1 FROM slopbot_actions WHERE repository_id = ?1 AND item_node_id = ?2
+         AND action = 'close')`,
+    )
+    .bind(job.repositoryId, nodeId)
+    .first<{ open: number; upheld_at: string | null }>();
 }
 
 function gateRow(db: store.D1Database, job: PullRef) {
@@ -820,6 +840,8 @@ export type FeeOutcomeFacts = {
   /** Closed without a merge. */
   closed: boolean;
   closedAt: string | null;
+  appealOpen: boolean;
+  appealUpheldAt: string | null;
 };
 
 export type FeeOutcome =
@@ -845,9 +867,12 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
     // Without a close time, wait rather than keep a fee on a guess.
     if (!Number.isFinite(closedAt) || !Number.isFinite(paid))
       return wait(time + FEE_RECHECK_MS);
+    if (facts.appealOpen) return wait(time + FEE_RECHECK_MS);
+    const upheldAt = Date.parse(facts.appealUpheldAt ?? "");
     // A deposit made after the close still gets the full wait.
     const due =
-      Math.max(closedAt, paid) + SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS * DAY_MS;
+      Math.max(closedAt, paid, Number.isFinite(upheldAt) ? upheldAt : 0) +
+      SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS * DAY_MS;
     return time >= due
       ? { outcome: "kept_due", why: "closed", nextCheckAt: null }
       : wait(due);
@@ -864,6 +889,7 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
 // The scheduled and event-driven check of one asked pull request.
 
 type Pull = {
+  node_id: string;
   number: number;
   state: string;
   draft?: boolean;
@@ -1034,12 +1060,18 @@ export async function refreshSubmissionFee(
   let reason = "fee-paid";
   let nextCheckAt: string | null = null;
   if (row.outcome === null) {
+    const closed = pull.state !== "open" && !merged;
+    const appeal = closed
+      ? await slopbotCloseAppeal(db, job, pull.node_id)
+      : null;
     const decided = feeOutcome(
       {
         paidAt: row.paid_at,
         merged,
-        closed: pull.state !== "open" && !merged,
+        closed,
         closedAt: pull.closed_at ?? null,
+        appealOpen: appeal?.open === 1,
+        appealUpheldAt: appeal?.upheld_at ?? null,
       },
       now,
     );

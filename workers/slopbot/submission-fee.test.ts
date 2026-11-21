@@ -4,7 +4,7 @@
 // review until a deposit is seen. Local HTTP fixtures exercise the control
 // only; synthetic verdicts do not qualify any model, and no chain is read.
 
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import { findProject } from "../../src/lib/projects.mjs";
 import {
@@ -20,9 +20,10 @@ import {
   D1FeeStore,
   type SubmissionFeeD1Database,
 } from "../submission-fee/store";
+import { openAppeal, resolveAppeal } from "./appeals";
 import type { Job } from "./contracts";
 import worker from "./index";
-import type { D1Database } from "./persistence";
+import { type D1Database, recordAction } from "./persistence";
 import {
   READY_LABEL,
   type ReadyFacts,
@@ -76,6 +77,7 @@ const RATE = { effectiveAt: SETTING_ON_AT, slopPerUsd: "75.4717" };
 
 afterEach(() => {
   feeContracts.current = SUBMISSION_FEE_CONTRACTS;
+  setSystemTime();
 });
 
 type Comment = {
@@ -96,6 +98,7 @@ type WorldOptions = {
   readyLabel?: boolean;
   /** Whole SLOP per 1.00 of stablecoin; null publishes no rate. */
   rate?: string | null;
+  slopbotCloses?: boolean;
 };
 
 /** One registered repository with pull request #5 and a local GitHub. */
@@ -178,6 +181,7 @@ function world(options: WorldOptions = {}) {
     [owner, SETTING_ON_AT],
   );
   const repositoryId = Number(fixture.authority.repositoryId);
+  const slopbotCloses = options.slopbotCloses ?? true;
 
   // The local GitHub's mutable state.
   const github = {
@@ -540,6 +544,41 @@ function world(options: WorldOptions = {}) {
       );
       return response.status;
     },
+    async slopbotClosesAndAuthorAppeals(closedAt: Date, appealedAt: Date) {
+      setSystemTime(appealedAt);
+      github.state = "closed";
+      github.closedAt = closedAt.toISOString();
+      if (slopbotCloses)
+        await recordAction(
+          env.SLOPBOT_DB,
+          `review:PR_local:${github.head}`,
+          repositoryId,
+          "PR_local",
+          "close",
+          "missing_evidence",
+        );
+      const appeal = await openAppeal(env.SLOPBOT_DB, {
+        appealKey: `appeal:PR_local:${github.head}`,
+        job: {
+          kind: "appeal",
+          deliveryId: `appeal-${++deliveries}`,
+          senderId: author.id,
+          itemKind: "pull_request",
+          ...base,
+        },
+        itemNodeId: "PR_local",
+        appellantId: author.id,
+      });
+      return (resolution: "upheld" | "denied", at: Date) => {
+        setSystemTime(at);
+        return resolveAppeal(
+          env.SLOPBOT_DB,
+          appeal.appeal_key,
+          resolution,
+          "moderator",
+        );
+      };
+    },
     feeComments: () =>
       github.comments.filter(
         (comment) =>
@@ -775,6 +814,110 @@ test("reopened before the 7 days: nothing is kept, and a later merge refunds", a
     w.github.merged = true;
     await w.check(new Date(paid.getTime() + 11 * DAY));
     expect(w.item()).toMatchObject({ outcome: "refund_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("an appeal of Slopbot's own close holds the kept fee until a moderator decides it", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    const closed = new Date(paid.getTime() + DAY);
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    const decide = await w.slopbotClosesAndAuthorAppeals(
+      closed,
+      new Date(closed.getTime() + DAY),
+    );
+    const day7 = new Date(closed.getTime() + 7 * DAY);
+    expect((await w.check(day7)).outcome).toBe("submission fee: fee-paid");
+    expect(w.item()).toMatchObject({ outcome: null });
+    expect(w.gate()?.next_check_at).toBe(
+      new Date(day7.getTime() + DAY).toISOString(),
+    );
+    const day8 = new Date(closed.getTime() + 8 * DAY);
+    expect(await w.dispatch(day8)).toBe(1);
+    await w.check(day8);
+    expect(w.item()).toMatchObject({ outcome: null });
+    expect(await decide("upheld", day8)).toBe(true);
+    await w.check(new Date(closed.getTime() + 8.5 * DAY));
+    expect(w.item()).toMatchObject({ outcome: null });
+    w.github.state = "open";
+    w.github.closedAt = null;
+    await w.check(new Date(closed.getTime() + 9 * DAY));
+    expect(w.item()).toMatchObject({ outcome: null });
+    w.github.state = "closed";
+    w.github.merged = true;
+    w.github.closedAt = new Date(closed.getTime() + 10 * DAY).toISOString();
+    expect((await w.check(new Date(closed.getTime() + 10 * DAY))).outcome).toBe(
+      "submission fee: refund_due: merged",
+    );
+    expect(w.item()).toMatchObject({ outcome: "refund_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("a denied appeal of Slopbot's close keeps the fee at the next check", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    const closed = new Date(paid.getTime() + DAY);
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    const decide = await w.slopbotClosesAndAuthorAppeals(
+      closed,
+      new Date(closed.getTime() + DAY),
+    );
+    await w.check(new Date(closed.getTime() + 7 * DAY));
+    expect(w.item()).toMatchObject({ outcome: null });
+    await openAppeal(w.env.SLOPBOT_DB, {
+      appealKey: `value-appeal:single:${"e".repeat(64)}:42:${w.repositoryId}:5`,
+      job: {
+        kind: "appeal",
+        deliveryId: "value-dispute",
+        senderId: 42,
+        itemKind: "pull_request",
+        subject: "value",
+        installationId: 1,
+        repositoryId: w.repositoryId,
+        owner: w.owner,
+        repo: w.repo,
+        number: 5,
+      },
+      itemNodeId: "PR_local",
+      appellantId: 42,
+    });
+    expect(await decide("denied", new Date(closed.getTime() + 8 * DAY))).toBe(
+      true,
+    );
+    expect((await w.check(new Date(closed.getTime() + 8 * DAY))).outcome).toBe(
+      "submission fee: kept_due: closed",
+    );
+    expect(w.item()).toMatchObject({ outcome: "kept_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("an appeal does not hold the fee of a pull request a maintainer closed", async () => {
+  const w = world({ slopbotCloses: false });
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    const closed = new Date(paid.getTime() + DAY);
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    await w.slopbotClosesAndAuthorAppeals(
+      closed,
+      new Date(closed.getTime() + DAY),
+    );
+    expect((await w.check(new Date(closed.getTime() + 7 * DAY))).outcome).toBe(
+      "submission fee: kept_due: closed",
+    );
   } finally {
     w.close();
   }
@@ -1410,7 +1553,14 @@ test("the outcome rule", () => {
   const paidAt = "2026-11-12T00:00:00.000Z";
   const paid = Date.parse(paidAt);
   const at = (days: number) => new Date(paid + days * DAY);
-  const open = { paidAt, merged: false, closed: false, closedAt: null };
+  const open = {
+    paidAt,
+    merged: false,
+    closed: false,
+    closedAt: null,
+    appealOpen: false,
+    appealUpheldAt: null,
+  };
   expect(feeOutcome({ ...open, merged: true }, at(0))).toEqual({
     outcome: "refund_due",
     why: "merged",
@@ -1436,6 +1586,14 @@ test("the outcome rule", () => {
     why: "closed",
     nextCheckAt: null,
   });
+  expect(feeOutcome({ ...closed, appealOpen: true }, at(30))).toEqual({
+    outcome: null,
+    why: null,
+    nextCheckAt: at(31).toISOString(),
+  });
+  const upheld = { ...closed, appealUpheldAt: at(12).toISOString() };
+  expect(feeOutcome(upheld, at(18.9)).nextCheckAt).toBe(at(19).toISOString());
+  expect(feeOutcome(upheld, at(19)).outcome).toBe("kept_due");
   // A deposit made after the close gets the full 7 days from the deposit.
   const closedBefore = {
     ...open,
