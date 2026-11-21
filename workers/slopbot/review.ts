@@ -13,13 +13,13 @@ import {
   appealByKey,
   escalateAppeal,
   escalationFor,
-  hasDeniedAppeal,
   latestAppealFor,
   MODERATOR_LABEL,
   moderatorIds,
   openAppeal,
   recordDraft,
   resolveAppeal,
+  siblingAppealHold,
 } from "./appeals";
 import { activeBudgetBlock, recordBudgetBlock } from "./budget-blocks";
 import {
@@ -2883,14 +2883,17 @@ async function triageAppeal(
   const penalty = await activePenalty(db, session.issue.node_id);
   const reason = (await hasParticipationBan(db, current.appellant_github_id))
     ? "the appellant has an active participation ban"
-    : (await hasDeniedAppeal(db, session.issue.node_id, appeal.appeal_key))
-      ? "an earlier appeal of this item was denied"
-      : escalationFor({
-          category: finding,
-          debitThirds: penalty?.debit_thirds ?? 0,
-          moderatorReview: penalty?.moderator_review === 1,
-          draftConfidence: current.draft_confidence,
-        });
+    : ((await siblingAppealHold(
+        db,
+        session.issue.node_id,
+        appeal.appeal_key,
+      )) ??
+      escalationFor({
+        category: finding,
+        debitThirds: penalty?.debit_thirds ?? 0,
+        moderatorReview: penalty?.moderator_review === 1,
+        draftConfidence: current.draft_confidence,
+      }));
   if (reason !== null)
     await escalateAppeal(
       db,
@@ -3266,6 +3269,27 @@ export async function applyAppealCommand(
       if (current === null) throw new Error("Appeal is missing");
       await publishAppealState(env, job, session, current, "escalation");
       return `appeal escalated: ${current.escalation}`;
+    }
+    // Another appeal of the same debit may have been denied, escalated or
+    // drafted deny after this one was triaged. The appellant then cannot
+    // uphold alone: a moderator decides.
+    if (by === "appellant" && appeal.draft === "uphold") {
+      const hold = await siblingAppealHold(
+        db,
+        session.issue.node_id,
+        appeal.appeal_key,
+      );
+      if (hold !== null) {
+        await escalateAppeal(
+          db,
+          appeal.appeal_key,
+          hold,
+          moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+        );
+        const current = (await appealByKey(db, appeal.appeal_key)) ?? appeal;
+        await publishAppealState(env, job, session, current, "escalation");
+        return "a Slop moderator decides this appeal";
+      }
     }
     return finishAppeal(
       env,
