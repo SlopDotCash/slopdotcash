@@ -39,6 +39,7 @@ import {
 import { assertSecurityBountyTerms } from "./security-bounty.mjs";
 import { assertReadyLabelSettings } from "./slopbot-ready.mjs";
 import { assertSubmissionFeeSetting } from "./submission-fee-setting.mjs";
+import { assertWantedIssues } from "./wanted-label.mjs";
 
 /**
  * The canonical generic templates every generated project skill renders from
@@ -1311,6 +1312,7 @@ function validateProjectDefinition(
         ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
         ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
         ...(slopbot.submissionFee === undefined ? [] : ["submissionFee"]),
+        ...(slopbot.wantedIssues === undefined ? [] : ["wantedIssues"]),
       ],
       "project.slopbot",
     );
@@ -1328,6 +1330,8 @@ function validateProjectDefinition(
         slopbot.submissionFee,
         "project.slopbot.submissionFee",
       );
+    if (slopbot.wantedIssues !== undefined)
+      assertWantedIssues(slopbot.wantedIssues, "project.slopbot.wantedIssues");
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&

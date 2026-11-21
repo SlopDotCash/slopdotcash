@@ -1215,10 +1215,11 @@ export function applyPointsSnapshot(
       )
         continue;
       // A joint unit can finish in another PR. Its assessed source coverage
-      // still binds removal of this source's superseded ordinary award.
+      // still binds removal of this source's superseded award, whether that
+      // is the ordinary award or the award of a joint unit it completed
+      // earlier.
       if (
         a.category === "merged-pull-request" &&
-        a.key === pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
         coverage?.pullRequestId === a.sourceId &&
         coverage.status === "assessed" &&
         coverage.recordDigest

@@ -15,6 +15,7 @@ import {
   applyPointsSnapshot,
   awardForScore,
   latestPoints,
+  pointKey,
   type PointsJournal,
 } from "../src/lib/points";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
@@ -636,3 +637,350 @@ test.each(["stale", "incomplete", "unresolved"] as const)(
     expect(latestPoints(historical).get(key)).toEqual(earlier);
   },
 );
+
+test("a source's earlier joint award retains the value decision on its zero when another PR's joint unit absorbs the source", () => {
+  const before = createLeaderboardSnapshot(penaltyScoreInput([], GENERATED_AT));
+  const original = before.ledger.find(
+    (event) => event.source.id === "PR_november",
+  );
+  if (!original) throw new Error("original award missing");
+  // The source first completed its own joint unit, so its award key names
+  // that unit instead of being the ordinary source key.
+  const ordinary = awardForScore(original);
+  const earlierUnit = `wu_${"e".repeat(64)}`;
+  const earlierJoint = {
+    ...ordinary,
+    key: pointKey(
+      ordinary.projectId,
+      ordinary.actor.id,
+      ordinary.category,
+      ordinary.sourceId,
+      earlierUnit,
+    ),
+    workUnitId: earlierUnit,
+  };
+  const empty: PointsJournal = {
+    schemaVersion: "1",
+    ruleVersion: "slop-points-v1",
+    generatedAt: GENERATED_AT,
+    coverage: [],
+    revisions: [],
+  };
+  const journal = appendPointAwards(
+    empty,
+    [earlierJoint],
+    "a".repeat(64),
+    before.ruleVersion,
+    GENERATED_AT,
+    new Map([
+      [
+        earlierJoint.key,
+        {
+          sourceId: `value:${"9".repeat(64)}`,
+          effectiveAt: GENERATED_AT,
+          reason: "Earlier joint assessment of this source alone.",
+        },
+      ],
+    ]),
+  );
+  const snapshot = snapshotWithJointUnits([PROJECT_OWNER.id], [90, 10], {
+    completionInOtherPR: true,
+  });
+  assertLeaderboardSnapshot(snapshot);
+  const result = applyPointsSnapshot(
+    journal,
+    snapshot,
+    "b".repeat(64),
+    GENERATED_AT,
+  );
+  const removed = latestPoints(result).get(earlierJoint.key);
+  expect(removed?.award.amount).toBe(0);
+  // A reviewed historical packet can select only value-decided changes, so
+  // without this decision the earlier unit's award stays beside the new one.
+  expect(removed?.decision?.sourceId).toBe(`value:${"d".repeat(64)}`);
+  expect(removed?.decision?.reason).toContain("superseded");
+  expect(
+    [...latestPoints(result).values()]
+      .filter((row) => row.award.workUnitId === `wu_${"c".repeat(64)}`)
+      .reduce((sum, row) => sum + row.award.amount, 0),
+  ).toBe(240);
+  expect(
+    applyPointsSnapshot(result, snapshot, "c".repeat(64), GENERATED_AT)
+      .revisions,
+  ).toEqual(result.revisions);
+  const unrelated = structuredClone(snapshot);
+  const coverage = unrelated.valueAssessmentCoverage?.find(
+    (row) => row.pullRequestId === original.source.id,
+  );
+  if (!coverage) throw new Error("source coverage missing");
+  coverage.recordDigest = "f".repeat(64);
+  expect(
+    latestPoints(
+      applyPointsSnapshot(journal, unrelated, "e".repeat(64), GENERATED_AT),
+    ).get(earlierJoint.key)?.decision?.sourceId,
+  ).not.toBe(`value:${"d".repeat(64)}`);
+});
+
+// One joint unit over two pull requests by two authors. Each claim is carried
+// by its own pull request only. A maintainer can ratify the first one.
+const SECOND_CLAIM = "c".repeat(64);
+const THIRD_CLAIM = "f".repeat(64);
+const MAINTAINER = {
+  ...PROJECT_OWNER,
+  id: "MDQ6VXNlcjQ0",
+  login: "maintainer",
+  url: "https://github.com/maintainer",
+};
+const CO_AUTHOR = {
+  ...PROJECT_OWNER,
+  id: "MDQ6VXNlcjQ1",
+  login: "co-author",
+  url: "https://github.com/co-author",
+};
+function ratifiedSiblingSnapshot(
+  ratifyFirst: boolean,
+  // How the census describes the second pull request's commits. The last two
+  // also add a third pull request whose claim is a second unit of the group.
+  second: "one-author" | "sync-only" | "two-authors" = "one-author",
+) {
+  const input = penaltyScoreInput([], GENERATED_AT);
+  const pulls = ["PR_november", "PR_owner"].map((id) => {
+    const pull = input.mergedPullRequests.find((record) => record.id === id);
+    if (!pull) throw new Error("fixture pull request missing");
+    return pull;
+  });
+  const authors = [PENALIZED_AUTHOR, PROJECT_OWNER];
+  const claimIds = [HUMAN_CLAIM, SECOND_CLAIM];
+  const outcome = input.mergedPullRequestOutcomes.find(
+    (record) => record.id === "PR_owner",
+  );
+  if (!outcome) throw new Error("fixture outcome missing");
+  if (second === "sync-only")
+    outcome.commits = [
+      { oid: pulls[1].headRefOid, author: PROJECT_OWNER, parentCount: 2 },
+    ];
+  if (second === "two-authors")
+    // No collected parent counts: the line weights are unavailable.
+    outcome.commits = [
+      { oid: pulls[1].headRefOid, author: PROJECT_OWNER },
+      { oid: "e".repeat(40), author: CO_AUTHOR },
+    ];
+  if (second !== "one-author") {
+    const third = {
+      ...structuredClone(pulls[0]),
+      id: "PR_third",
+      number: 11,
+      url: pulls[0].url.replace(/\d+$/u, "11"),
+      headRefOid: "1".repeat(40),
+      createdAt: "2026-11-13T00:00:00.000Z",
+      updatedAt: "2026-11-14T00:00:00.000Z",
+      mergedAt: "2026-11-14T00:00:00.000Z",
+      closedAt: "2026-11-14T00:00:00.000Z",
+    };
+    input.mergedPullRequests.push(third);
+    input.mergedPullRequestOutcomes.push({
+      ...structuredClone(outcome),
+      id: third.id,
+      number: third.number,
+      url: third.url,
+      createdAt: third.createdAt,
+      updatedAt: third.updatedAt,
+      mergedAt: third.mergedAt,
+      headRefOid: third.headRefOid,
+      author: third.author,
+      commits: [{ oid: third.headRefOid, author: third.author }],
+    });
+    input.detailEligibleMergedPullRequestIds?.push(third.id);
+    input.source.counts.mergedPullRequests += 1;
+    input.source.counts.detailedMergedPullRequests += 1;
+    input.sourceUpdatedAt = third.closedAt;
+    pulls.push(third);
+    authors.push(PENALIZED_AUTHOR);
+    claimIds.push(THIRD_CLAIM);
+  }
+  input.valueActors = new Map(authors.map((actor) => [actor.id, actor]));
+  if (ratifyFirst)
+    pulls[0].comments.push({
+      id: "IC_ratification",
+      artifactId: pulls[0].id,
+      kind: "comment",
+      url: `${pulls[0].url}#issuecomment-1`,
+      createdAt: "2026-11-13T00:00:00.000Z",
+      updatedAt: "2026-11-13T00:00:00.000Z",
+      author: MAINTAINER,
+      authorAssociation: "MEMBER",
+      body: `\`\`\`slop-score\n${JSON.stringify({
+        schemaVersion: "1",
+        ruleVersion: "slop-score-v2",
+        projectId: "asi",
+        pullRequestNodeId: pulls[0].id,
+        headSha: pulls[0].headRefOid,
+        workUnitId: "wu_ratified_fix",
+        tier: "micro",
+        scoreThirds: 1,
+        proposalReviewNodeIds: [],
+        coRatifierNodeIds: [],
+        reason: "Maintainer correction of the first pull request only.",
+        supersedes: null,
+      })}\n\`\`\``,
+    });
+  const unit = (id: string, unitClaimIds: string[], tier: string) => ({
+    workUnitId: `wu_${id}`,
+    claimIds: unitClaimIds,
+    assessment: {
+      status: "assessed",
+      tier,
+      rationale: "Fixture shared unit.",
+      reviews: [],
+    },
+  });
+  const decision = {
+    status: "assessed",
+    latestDigest: "d".repeat(64),
+    history: [{ recorded_at: "2026-11-14T01:00:00.000Z" }],
+    record: {
+      sources: pulls.map((pull) => ({
+        pullRequestNodeId: pull.id,
+        headSha: pull.headRefOid,
+      })),
+      units: [
+        unit(SECOND_CLAIM, claimIds.slice(0, 2), "large"),
+        ...(claimIds.length > 2
+          ? [unit(THIRD_CLAIM, claimIds.slice(2), "micro")]
+          : []),
+      ],
+    },
+    evidence: {
+      claims: pulls.map((pull, index) => ({
+        id: claimIds[index],
+        commitSha: claimIds[index].slice(0, 40),
+        path: `src/${claimIds[index][0]}.ts`,
+        carrierPullRequestIds: [pull.id],
+        creditPullRequestId: pull.id,
+        implementationActorNodeIds: [authors[index].id],
+      })),
+      sources: pulls.map((pull, index) => ({
+        evidence: {
+          repository: "SlopDotCash/asi",
+          pull: {
+            node_id: pull.id,
+            number: pull.number,
+            title: pull.title,
+            html_url: pull.url,
+            head: { sha: pull.headRefOid },
+            updated_at: pull.updatedAt,
+            merged_at: pull.mergedAt,
+            closed_at: pull.closedAt,
+            user: { node_id: authors[index].id, type: "User" },
+            base: { ref: "release" },
+          },
+          comments: [],
+          reviews: [],
+          commitAttribution: [
+            {
+              sha: claimIds[index].slice(0, 40),
+              limitations: [],
+              files: [
+                {
+                  filename: `src/${claimIds[index][0]}.ts`,
+                  status: "modified",
+                  additions: 10,
+                  deletions: 0,
+                },
+              ],
+            },
+          ],
+        },
+      })),
+    },
+  };
+  input.jointValueDecisions = new Map(
+    pulls.map((pull) => [pull.id, decision as never]),
+  );
+  const snapshot = createLeaderboardSnapshot(input);
+  assertLeaderboardSnapshot(snapshot);
+  return snapshot;
+}
+const novemberMerges = (
+  snapshot: ReturnType<typeof createLeaderboardSnapshot>,
+) =>
+  snapshot.ledger
+    .filter(
+      (event) =>
+        event.category === "merged-pull-request" &&
+        event.occurredAt >= "2026-11-01",
+    )
+    .map((event) => [event.source.id, event.actor.id, event.scoreThirds])
+    .sort();
+/** The second author's Points for that merge after the snapshot is applied. */
+function secondAuthorPointsAfter(
+  snapshot: ReturnType<typeof createLeaderboardSnapshot>,
+) {
+  const before = createLeaderboardSnapshot(penaltyScoreInput([], GENERATED_AT));
+  const original = before.ledger.find(
+    (event) => event.source.id === "PR_owner",
+  );
+  if (!original) throw new Error("original award missing");
+  const journal = appendPointAwards(
+    {
+      schemaVersion: "1",
+      ruleVersion: "slop-points-v1",
+      generatedAt: GENERATED_AT,
+      coverage: [],
+      revisions: [],
+    },
+    [awardForScore(original)],
+    "a".repeat(64),
+    before.ruleVersion,
+    GENERATED_AT,
+  );
+  expect(
+    latestPoints(journal).get(awardForScore(original).key)?.award.amount,
+  ).toBe(10);
+  return latestPoints(
+    applyPointsSnapshot(journal, snapshot, "b".repeat(64), GENERATED_AT),
+  ).get(awardForScore(original).key)?.award.amount;
+}
+
+test("a maintainer ratification of one joint member leaves the other member its merge minimum", () => {
+  // Unratified, the unit scores once and splits by claimed lines.
+  expect(novemberMerges(ratifiedSiblingSnapshot(false))).toEqual([
+    ["PR_owner", PENALIZED_AUTHOR.id, 12],
+    ["PR_owner", PROJECT_OWNER.id, 12],
+  ]);
+  // The ratification re-scores the first pull request and withholds the
+  // unit. The second author's own accepted merge keeps the minimum.
+  const ratified = ratifiedSiblingSnapshot(true);
+  expect(novemberMerges(ratified)).toEqual([
+    ["PR_november", PENALIZED_AUTHOR.id, 1],
+    ["PR_owner", PROJECT_OWNER.id, 1],
+  ]);
+  // Points the second author already holds for that merge are not zeroed.
+  expect(secondAuthorPointsAfter(ratified)).toBe(10);
+});
+
+// Without proof of who implemented it, the per-pull-request path holds a
+// merge: its Points stay as they are and nothing new is awarded. A withheld
+// member is held the same way, and the hold does not stop the other unit.
+for (const [second, name] of [
+  ["sync-only", "made only of synchronization merges"],
+  ["two-authors", "without line evidence for its two authors"],
+] as const)
+  test(`a withheld joint member ${name} holds its Points and the group's other unit still scores`, () => {
+    expect(novemberMerges(ratifiedSiblingSnapshot(false, second))).toEqual([
+      ["PR_owner", PENALIZED_AUTHOR.id, 12],
+      ["PR_owner", PROJECT_OWNER.id, 12],
+      ["PR_third", PENALIZED_AUTHOR.id, 1],
+    ]);
+    const ratified = ratifiedSiblingSnapshot(true, second);
+    expect(novemberMerges(ratified)).toEqual([
+      ["PR_november", PENALIZED_AUTHOR.id, 1],
+      ["PR_third", PENALIZED_AUTHOR.id, 1],
+    ]);
+    expect(
+      ratified.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === "PR_owner",
+      ),
+    ).toMatchObject({ status: "incomplete", recordDigest: null });
+    expect(secondAuthorPointsAfter(ratified)).toBe(10);
+  });

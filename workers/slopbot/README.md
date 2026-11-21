@@ -132,8 +132,9 @@ only after their line counts match the accepted file metadata.
    page). `scripts/generate-leaderboard.ts` binds them into the score census.
 9. **Appeals.** `/slopbot appeal` from the author, or any reopen, blocks
    re-closing that revision (`appeals.ts`). Escalation to a moderator (label
-   `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A maintainer
-   reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
+   `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A repeat
+   appeal of a finding on an item whose earlier appeal was denied is always
+   escalated (value disputes excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
    binding and late-close races.
 
 For an ordinary PR value assessment, an affected author, implementation actor,
@@ -220,6 +221,16 @@ to GitHub, uses no monthly review and is recorded as skipped with the reason
 own pull request is not refused, and a count that was never read or is older
 than three days refuses nothing. Value assessment and scoring are unchanged.
 
+A project owner may turn on wanted issues (operator decision, 21 November
+2026; PRD section 5, `src/lib/wanted-label.mjs`). Every project uses the one
+label `slop-wanted`. The scheduled merge activity job
+(`refreshRegisteredMergeActivity` in `reporting-readiness.ts`) stores the open
+issues that carry it and, once per repository, creates the label if it is
+missing with a token narrowed to `issues: write` (`ensureWantedLabel`). That
+is its only GitHub write: it never edits, renames or applies a label. A failed
+creation keeps the list and is tried again at the next read. Reviews, value
+assessment and scoring never read the label.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
 provider window opens. A Surplus spending denial skips the other Surplus model
 and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
@@ -254,7 +265,8 @@ A project owner may turn on the refundable submission fee (operator decision,
 `submission-fee.ts` holds Slopbot's part; it moves no money and reads no chain.
 
 `SUBMISSION_FEE_MODE` in `wrangler.toml` is `off`, `dry_run` or `live`; it is
-`dry_run` since 19 November 2026. Any other value is `off`. While no deposit contract address is
+`live` since 21 November 2026 (operator decision; record-only from
+19 November). Any other value is `off`. While no deposit contract address is
 published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
 
 - **Who is asked.** A pull request of a project open to contributor work,
@@ -269,7 +281,9 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   `slopbot:fee-needed`, and the review is recorded as skipped with the reason
   `fee-needed`. No model call. Slopbot's own state is in `slopbot_fee_gates`
   (`recorded`, `asking`, `asked`, `paid`, `released`); the first ask holds a
-  ten-minute lease so two jobs never post two comments.
+  ten-minute lease so two jobs never post two comments. A job whose comment
+  or label write fails gives the lease back, so the queue's retry a minute
+  later asks again instead of recording `fee-needed` with nothing posted.
 - **Paid.** The submission-fee Worker sets `paid_at`. The five-minute schedule
   (`dispatchFeeChecks`), or the review job that notices it first, queues a
   `submission_fee` job. `refreshSubmissionFee` swaps the label for
@@ -282,10 +296,13 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   within a day. The Worker sends what is due and writes `refunded` or `kept`.
 - **Taken back.** When the owner turns the setting off, or the author gains
   write access, an unpaid ask is released: the label comes off, the comment
-  says so and the review runs.
-- **`dry_run`.** Inserts the item row and a `recorded` gate row with the
-  reason it would have skipped, writes nothing to GitHub and runs the review
-  as today.
+  says so and the review runs. The unpaid row in `submission_fee_items` is
+  removed, so a deposit sent afterwards pays for nothing and is refunded.
+- **`dry_run`.** Inserts a `recorded` gate row with the reason it would have
+  skipped, writes nothing to GitHub and runs the review as today. It inserts
+  no row in `submission_fee_items`: nobody was asked, so a deposit naming that
+  pull request pays for nothing and is refunded, and the pay page shows no
+  fee. The first real ask writes the item row.
 
 - **Payment withdrawn.** The Worker may clear `paid_at` again while no outcome
   is set, when the deposit's block is reorganised away before it is final.

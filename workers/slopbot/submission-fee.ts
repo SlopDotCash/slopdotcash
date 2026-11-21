@@ -544,7 +544,10 @@ function askStands(gate: GateRow | null, at: string): gate is GateRow {
 /**
  * The fee stopped applying before it was paid: take the ask back. The label
  * comes off and the comment says so, open or closed, so a pull request that
- * is reopened later does not still read as waiting for a fee.
+ * is reopened later does not still read as waiting for a fee. The unpaid item
+ * row goes last, once the gate reads `released`: Slop no longer asks, so a
+ * deposit sent afterwards names an unknown item and is refunded (FEE-01), as
+ * the comment says. A later first ask writes the row again.
  */
 async function releaseFee(
   env: FeeEnv,
@@ -568,6 +571,12 @@ async function releaseFee(
     { state: "released", reason: why, commentId, nextCheckAt: null },
     at,
   );
+  await env.SLOPBOT_DB.prepare(
+    `DELETE FROM submission_fee_items
+     WHERE repository_id = ? AND pull_number = ? AND paid_at IS NULL AND paid_deposit_id IS NULL`,
+  )
+    .bind(job.repositoryId, job.number)
+    .run();
 }
 
 /**
@@ -649,23 +658,18 @@ export async function gateSubmissionFee(
     opened > Date.parse(since);
 
   if (mode === "dry_run") {
-    // Record what would be asked. Nothing is written to GitHub and the
-    // review runs as it does today.
-    if (applies && fee !== null && row === null) {
-      await db
-        .prepare(
-          `INSERT OR IGNORE INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          job.repositoryId,
-          job.number,
-          input.projectId,
-          submissionFeeItem(job.repositoryId, job.number),
-          fee.amountMinor,
-          at,
-        )
-        .run();
+    // Record what live would ask, so nothing past the monthly cap. Nothing
+    // is written to GitHub and the review runs as it does today. Only
+    // Slopbot's own gate row is written: nobody was asked, so there is no
+    // `submission_fee_items` row for a deposit to pay or the pay page to
+    // show. The first real ask writes that row.
+    if (
+      applies &&
+      fee !== null &&
+      row === null &&
+      gate === null &&
+      input.mayAsk
+    ) {
       await db
         .prepare(
           `INSERT OR IGNORE INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at)
@@ -761,20 +765,42 @@ export async function gateSubmissionFee(
     .run();
   if (!(await scopeAllowed(db, job, "contributor")))
     throw new Error("Repository is not active in the Slop project registry");
-  const commentId = await writeFeeComment(
-    env,
-    github,
-    job,
-    gate?.comment_id ?? null,
-    feeNeededComment(
-      commentFacts(
-        job,
-        { item, stable_minor: fee.amountMinor },
-        feeWays(fee.amountMinor, await feeRates(db), at),
+  let commentId: number;
+  try {
+    commentId = await writeFeeComment(
+      env,
+      github,
+      job,
+      gate?.comment_id ?? null,
+      feeNeededComment(
+        commentFacts(
+          job,
+          { item, stable_minor: fee.amountMinor },
+          feeWays(fee.amountMinor, await feeRates(db), at),
+        ),
       ),
-    ),
-  );
-  await addLabel(github, job, FEE_NEEDED_LABEL);
+    );
+    await addLabel(github, job, FEE_NEEDED_LABEL);
+  } catch (error) {
+    // The queue retries this job a minute later, inside its own lease, and
+    // nothing else asks again. Hand the lease back as run out, so the retry
+    // takes the ask; a comment already posted is found again by its marker.
+    // If this write fails too, the lease runs out as before.
+    await db
+      .prepare(
+        `UPDATE slopbot_fee_gates SET updated_at = ?
+         WHERE repository_id = ? AND pull_number = ? AND state = 'asking' AND updated_at = ?`,
+      )
+      .bind(
+        new Date(Date.parse(at) - FEE_ASK_LEASE_MS).toISOString(),
+        job.repositoryId,
+        job.number,
+        at,
+      )
+      .run()
+      .catch(() => undefined);
+    throw error;
+  }
   await db
     .prepare(
       `UPDATE slopbot_fee_gates SET state = 'asked', comment_id = ?, updated_at = ?

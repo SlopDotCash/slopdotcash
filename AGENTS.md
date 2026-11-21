@@ -124,8 +124,8 @@ alias only.
     sends only for finalized deposits, keeps a fee only for the deposit that
     paid a pull request whose row says kept, records each signed transaction
     before broadcasting it, and stays inside its native-fee ceilings.
-    `SUBMISSION_FEE_MODE` ships off; `dry_run` loads no key. Going live needs
-    its own reviewed change after the contracts are deployed.
+    `SUBMISSION_FEE_MODE` is `live` since 21 November 2026 (operator
+    decision); `dry_run` loads no key.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -349,8 +349,9 @@ record's contract, chain, token and kept-to address equal the tables in
 `src/lib/submission-fee.mjs`; it takes none of them from the address bar or
 from input, and offers nothing while `SUBMISSION_FEE_SWITCHED_ON` is false.
 `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `off`, `dry_run`
-or `live`. It is `dry_run` since 19 November 2026: Slopbot records what it
-would ask and writes nothing to GitHub. `live` needs its own reviewed change. Automatic closure is limited to verified
+or `live`. It is `live` since 21 November 2026 (operator decision; record-only
+from 19 November): Slopbot asks for the fee on a project whose owner turned
+it on, and on no other project. Automatic closure is limited to verified
 Slop-skill participants, excluding maintainers: a slop.cash member whose own
 authenticated Slop run records a `pull_request_opened` event for that exact PR
 (PRD section 11). A copied marker is never proof. An uncertain finding goes to
@@ -491,6 +492,10 @@ publishes a deterministic selection decision, and the UI advertises only
 bounded unblocked candidates. Existing assignees, maintainer claims, drafts,
 active review requests, approvals, changes requested, security labels,
 human-gated work, and epics fail closed. Re-read live GitHub before acting.
+Issues labelled `slop-wanted` are the ones maintainers most want done (PRD
+section 5, operator decision of 21 November 2026). The contributor skill
+starts with an unclaimed one that no open pull request closes; the label never
+changes Points, scoring or payment.
 
 The rolling ledger covers a complete 35-day window, publishes exact bounds and
 record counts, and deduplicates immutable GitHub IDs. Exclude bots, self-review,
@@ -532,6 +537,24 @@ historical settlements and compatibility fields without exposing a separate
 score metric. Preserve the append-only journal,
 source coverage, original contribution dates, and distinct recording dates.
 Generated points projections are build outputs; do not edit them by hand.
+
+Operator decision, 20 November 2026: the Points of a project month that has a
+recorded payment are frozen. The points generator holds any candidate revision
+that would add or change an award in such a month, or move one out of it, and
+publishes the rest; `data/points/protected-months.json` lists those months and
+mirrors the private settlement tables. The atomic import still refuses a batch
+that changes a protected award, so a month missing from the list fails closed.
+Add a month to the list when its first payment is recorded.
+Operator decision, 21 November 2026: a trusted `main` release also reads the
+protected months from the private route
+`GET /api/v1/operator/protected-point-months` (bearer token
+`POINTS_PROTECTION_TOKEN`, an optional Pages secret and repository Actions
+secret) and holds the union of its answer and the committed list. The route
+uses the import guard's own tables and clauses and names project months and
+projects only, so with both secrets set a new month needs no hand edit.
+Without the secret the generator uses the committed list alone; a failed or
+invalid read is one warning and the committed list alone. Never print the
+token or the months the route returns.
 
 ## Rewards, funding, and settlement
 

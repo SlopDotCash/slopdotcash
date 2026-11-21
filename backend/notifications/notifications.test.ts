@@ -994,3 +994,318 @@ describe("slopbot scam review notices", () => {
     expect(rows(MODERATOR)).toHaveLength(1);
   });
 });
+
+// A reinstatement request asks the moderators who may decide it (ELG-02).
+// The decision is another moderator's enforcement record; once it lands,
+// the request is decided and the review ask is moot for everyone else.
+describe("reinstatement review notice retirement", () => {
+  const DECIDER = "900000007";
+  const BANNED = "900000008";
+  const VETTING_ISSUER = {
+    kind: "vetting-service",
+    keySha256: "c".repeat(64),
+    assessmentId: "assessment-1",
+    policyVersion: "v1",
+    rule: "confirmed-malicious",
+  } as const;
+
+  function project() {
+    const { db, sqlite, rows } = open();
+    const persistence = new CloudflareProjectPersistence(db);
+    const manifest = {
+      id: "alpha",
+      status: "paused",
+      repositories: [{ id: "example/alpha" }],
+      steward: { github: { actorId: STEWARD } },
+    };
+    const text = JSON.stringify(manifest);
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,decided_at,decided_by_github_id,decided_by_github_login)
+         VALUES ('application-alpha','alpha','example/alpha','${text}','${"a".repeat(64)}','Merged pull requests','${APPLICANT}','e2e-applicant','${T}','approved','sent','${T}','${T}','1','admin');
+       INSERT INTO project_revisions (project_id,revision,manifest,manifest_sha256,reason,created_at)
+         VALUES ('alpha',1,'${text}','${"a".repeat(64)}','Approved','${T}');
+       INSERT INTO projects (id,status,revision,manifest,manifest_sha256,created_at,updated_at,source_application_id)
+         VALUES ('alpha','paused',1,'${text}','${"a".repeat(64)}','${T}','${T}','application-alpha');`,
+    );
+    const record = (
+      sequence: number,
+      action: ProjectEnforcement["action"],
+      stateAfter: ProjectEnforcement["stateAfter"],
+      appealAfter: ProjectEnforcement["appealAfter"],
+      actor: { githubId: string; githubLogin: string } | null,
+      actorRole: ProjectEnforcement["actorRole"],
+      decisionSource: ProjectEnforcement["decisionSource"],
+      extra: Partial<ProjectEnforcement> = {},
+    ): ProjectEnforcement => ({
+      id: `enf_testrecord${sequence}`,
+      projectId: "alpha",
+      sequence,
+      action,
+      stateAfter,
+      appealAfter,
+      reason: "Private moderation reason",
+      evidenceReference: "private-evidence-1",
+      repositoryGithubId: "123",
+      repositoryKeys: ["example/alpha"],
+      actor,
+      actorRole,
+      decisionSource,
+      beforeRevision: 1,
+      beforeManifestSha256: "a".repeat(64),
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "no_revision_needed",
+      createdAt: R,
+      ...extra,
+    });
+    const call = (
+      actor: string,
+      moderators: string[],
+      path: string,
+      init?: RequestInit,
+    ) =>
+      handleNotificationsApi(new Request(`https://slop.cash${path}`, init), {
+        db: db as never,
+        sessionActor: async () => ({ githubId: actor }),
+        now: () => new Date(R),
+        moderatorGithubIds: new Set(moderators),
+      }) as Promise<Response>;
+    const list = async () =>
+      parseNotificationsResponse(
+        await (
+          await call(MODERATOR, [MODERATOR], "/api/v1/notifications")
+        ).json(),
+      );
+    const markRead = (eventKeys: string[]) =>
+      call(MODERATOR, [MODERATOR], "/api/v1/notifications/read", {
+        method: "POST",
+        headers: {
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ eventKeys }),
+      });
+    const placer = { githubId: OTHER, githubLogin: "moderator-a" };
+    const steward = { githubId: STEWARD, githubLogin: "steward" };
+    return { rows, persistence, record, list, markRead, placer, steward };
+  }
+
+  test("a decided project request retires the review notice from list, unread count and mark-read", async () => {
+    const { rows, persistence, record, list, markRead, placer, steward } =
+      project();
+    await persistence.appendEnforcement(
+      record(
+        1,
+        "quarantine",
+        "quarantined",
+        "none",
+        placer,
+        "project-moderator",
+        "admin-panel",
+      ),
+      null,
+      [],
+    );
+    await persistence.appendEnforcement(
+      record(
+        2,
+        "request_reinstatement",
+        "quarantined",
+        "requested",
+        steward,
+        "project-steward",
+        "owner-request",
+      ),
+      null,
+      [MODERATOR],
+    );
+    expect((await list()).notifications.map((n) => n.kind)).toEqual([
+      "reinstatement_review",
+    ]);
+    expect((await list()).unread).toBe(1);
+    // Another moderator reinstates the project: the request is decided, so
+    // the remaining reviewer's ask is moot.
+    await persistence.appendEnforcement(
+      record(
+        3,
+        "reinstate",
+        "clear",
+        "granted",
+        { githubId: DECIDER, githubLogin: "moderator-c" },
+        "project-moderator",
+        "admin-panel",
+      ),
+      null,
+      [],
+    );
+    expect((await list()).notifications).toEqual([]);
+    expect((await list()).unread).toBe(0);
+    expect(
+      await (await markRead(["reinstatement-review:enf_testrecord2"])).json(),
+    ).toEqual({ marked: 0 });
+    // The stored row is append-only history; only the live views retire it.
+    expect(rows(MODERATOR)).toHaveLength(1);
+  });
+
+  test("a scam ban that keeps the appeal leaves the notice; the moderator decision retires it", async () => {
+    const { persistence, record, list, placer, steward } = project();
+    await persistence.appendEnforcement(
+      record(
+        1,
+        "quarantine",
+        "quarantined",
+        "none",
+        placer,
+        "project-moderator",
+        "admin-panel",
+      ),
+      null,
+      [],
+    );
+    await persistence.appendEnforcement(
+      record(
+        2,
+        "request_reinstatement",
+        "quarantined",
+        "requested",
+        steward,
+        "project-steward",
+        "owner-request",
+      ),
+      null,
+      [MODERATOR],
+    );
+    // A signed confirmed-malicious ban keeps the owner's appeal for the
+    // moderator decision, so the review ask still stands.
+    await persistence.appendEnforcement(
+      record(
+        3,
+        "ban",
+        "banned",
+        "requested",
+        null,
+        "vetting-service",
+        "standing-rule",
+        {
+          systemIssuer: VETTING_ISSUER,
+        },
+      ),
+      null,
+      [],
+    );
+    expect((await list()).notifications.map((n) => n.kind)).toEqual([
+      "reinstatement_review",
+    ]);
+    // The moderator decision bans the project and closes the appeal.
+    await persistence.appendEnforcement(
+      record(
+        4,
+        "ban",
+        "banned",
+        "denied",
+        { githubId: DECIDER, githubLogin: "moderator-c" },
+        "project-moderator",
+        "admin-panel",
+      ),
+      null,
+      [],
+    );
+    expect((await list()).notifications).toEqual([]);
+    expect((await list()).unread).toBe(0);
+  });
+
+  test("an account request retires only when its own account is decided", async () => {
+    const { persistence, record, list, placer } = project();
+    const banned = { githubId: BANNED, githubLogin: "banned-owner" };
+    const alsoBanned = { githubId: "900000009", githubLogin: "also-banned" };
+    // A signed malicious ban lands first; the moderator decision on it
+    // stores the account bans. Each banned account files its own appeal.
+    await persistence.appendEnforcement(
+      record(
+        1,
+        "ban",
+        "banned",
+        "none",
+        null,
+        "vetting-service",
+        "standing-rule",
+        {
+          systemIssuer: VETTING_ISSUER,
+        },
+      ),
+      null,
+      [],
+    );
+    await persistence.appendEnforcement(
+      record(
+        2,
+        "ban",
+        "banned",
+        "none",
+        placer,
+        "project-moderator",
+        "admin-panel",
+        {
+          maintainerBans: [banned, alsoBanned],
+        },
+      ),
+      null,
+      [],
+    );
+    await persistence.appendEnforcement(
+      record(
+        3,
+        "request_reinstatement",
+        "banned",
+        "requested",
+        banned,
+        "banned-account",
+        "account-request",
+      ),
+      null,
+      [MODERATOR],
+    );
+    await persistence.appendEnforcement(
+      record(
+        4,
+        "request_reinstatement",
+        "banned",
+        "requested",
+        alsoBanned,
+        "banned-account",
+        "account-request",
+      ),
+      null,
+      [MODERATOR],
+    );
+    expect((await list()).unread).toBe(2);
+    // Releasing one appellant decides only that account's appeal; the
+    // other account's review ask still stands.
+    await persistence.appendEnforcement(
+      record(
+        5,
+        "reinstate_accounts",
+        "banned",
+        "requested",
+        { githubId: DECIDER, githubLogin: "moderator-c" },
+        "project-moderator",
+        "admin-panel",
+        {
+          accountReinstatements: [
+            {
+              githubId: BANNED,
+              githubLogin: "banned-owner",
+              banEnforcementId: "enf_testrecord2",
+            },
+          ],
+        },
+      ),
+      null,
+      [],
+    );
+    expect((await list()).notifications.map((n) => n.eventKey)).toEqual([
+      "reinstatement-review:enf_testrecord4",
+    ]);
+    expect((await list()).unread).toBe(1);
+  });
+});

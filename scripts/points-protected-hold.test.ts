@@ -210,8 +210,63 @@ test("reviewed membership holds a standalone replacement without holding an inde
     journal([prior, replacement, retirement, independent]),
     new Set([prior.id]),
     months,
+    [],
     groups,
   );
   expect(result.held).toBe(2);
   expect(result.journal.revisions).toEqual([prior, independent]);
+});
+
+test("a project protected in every month holds its candidate revisions in any month", () => {
+  const known = new Set(["a1", "b1", "c1"]);
+  const input = journal([
+    revision("a1", null, { key: "a" }),
+    revision("b1", null, { key: "b", projectId: "eliza" }),
+    revision("c1", null, { key: "c" }),
+    // Whole project: a change in a month no list names is held.
+    revision("a2", "a1", { key: "a", amount: 0 }),
+    // So is a new award in any other month of that project.
+    revision("d1", null, { key: "d", occurredAt: "2026-03-09T00:00:00.000Z" }),
+    // And an award moved to another project.
+    revision("c2", "c1", { key: "c", projectId: "eliza" }),
+    // Another project is untouched.
+    revision("b2", "b1", { key: "b", projectId: "eliza", amount: 0 }),
+    revision("e1", null, { key: "e", projectId: "eliza" }),
+    // A recorded payout is never held.
+    revision("p1", null, { key: "p", category: "payout-received" }),
+  ]);
+  const result = holdProtectedPointAwards(input, known, [], ["asi"]);
+  expect(result.held).toBe(3);
+  expect(result.journal.revisions.map((r) => r.id)).toEqual([
+    "a1",
+    "b1",
+    "c1",
+    "b2",
+    "e1",
+    "p1",
+  ]);
+  // Presentation alone still publishes, and known revisions never are held.
+  const renamed = journal([
+    revision("a1", null, { key: "a" }),
+    revision("a2", "a1", { key: "a", actor: { id: "1", login: "renamed" } }),
+  ]);
+  expect(
+    holdProtectedPointAwards(renamed, new Set(["a1"]), [], ["asi"]).held,
+  ).toBe(0);
+  // Months and whole projects add up; neither list alone names both.
+  const both = holdProtectedPointAwards(
+    input,
+    known,
+    [{ projectId: "eliza", period: "2026-10" }],
+    ["asi"],
+  );
+  expect(both.journal.revisions.map((r) => r.id)).toEqual([
+    "a1",
+    "b1",
+    "c1",
+    "p1",
+  ]);
+  // Without the fourth argument the function behaves as before.
+  expect(holdProtectedPointAwards(input, known, []).held).toBe(0);
+  expect(holdProtectedPointAwards(input, known, [], []).held).toBe(0);
 });

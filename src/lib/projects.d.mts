@@ -239,6 +239,11 @@ export interface ProjectDefinition {
      * The refundable submission fee (PRD section 5); absent means off.
      */
     readonly submissionFee?: SubmissionFeeSetting;
+    /**
+     * Wanted issues: Slopbot creates the `slop-wanted` label and the project
+     * page lists the issues that carry it (PRD section 5); absent is off.
+     */
+    readonly wantedIssues?: boolean;
   };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;

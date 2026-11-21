@@ -32,6 +32,11 @@ import {
 import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
+import {
+  type PointProtectionEnvironment,
+  type ProtectedPointMonth,
+  resolvePointProtection,
+} from "./points-protection-read";
 import { protectedPointAwardSql } from "./points-protection-sql";
 import { syncCycleIndex } from "./sync-cycle-index";
 import { loadVaultPayouts } from "./vault-payout-points";
@@ -598,10 +603,7 @@ export function pointsSummary(
   };
 }
 
-export interface ProtectedPointMonth {
-  projectId: string;
-  period: string;
-}
+export type { ProtectedPointMonth };
 
 function mergeCoverageKey(
   snapshotDigest: string,
@@ -697,17 +699,24 @@ function protectedMergePoolKeys(
  * correction on hold if it would change a protected award.
  * `data/points/protected-months.json` mirrors the private
  * settlement tables; a month missing from it still fails closed at import.
+ * Operator decision, 21 November 2026: a trusted release also reads the
+ * protected months from the site's private route (points-protection-read.ts).
+ * That route can name a project that is protected in every month; `projects`
+ * holds every candidate revision of such a project.
  */
 export function holdProtectedPointAwards(
   journal: PointsJournal,
   known: ReadonlySet<string>,
   months: readonly ProtectedPointMonth[],
+  projects: readonly string[] = [],
   reviewedGroups: ReviewedMergeGroups = new Map(),
 ): { journal: PointsJournal; held: number } {
-  if (months.length === 0) return { journal, held: 0 };
+  if (months.length === 0 && projects.length === 0) return { journal, held: 0 };
   const scopes = new Set(months.map((m) => `${m.projectId}\0${m.period}`));
-  const scope = (award: PointAward) =>
-    `${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+  const wholeProjects = new Set(projects);
+  const isProtected = (award: PointAward) =>
+    wholeProjects.has(award.projectId) ||
+    scopes.has(`${award.projectId}\0${award.occurredAt.slice(0, 7)}`);
   // The same identity pointsSql freezes: economic and source fields, never
   // GitHub presentation.
   const economic = (award: PointAward) =>
@@ -762,8 +771,8 @@ export function holdProtectedPointAwards(
       else revisionsByPool.set(key, [revision.id]);
     }
     if (
-      scopes.has(scope(revision.award)) ||
-      (prior !== undefined && scopes.has(scope(prior.award)))
+      isProtected(revision.award) ||
+      (prior !== undefined && isProtected(prior.award))
     ) {
       blocked.push(revision.id);
     }
@@ -821,6 +830,8 @@ export async function generatePoints(
     online?: boolean;
     bootstrap?: boolean;
     origin?: PointsOrigin;
+    /** The private protected-months read; absent means the file only. */
+    protection?: PointProtectionEnvironment;
   } = {},
 ) {
   const history: unknown = JSON.parse(
@@ -862,19 +873,25 @@ export async function generatePoints(
   const knownRevisions = published
     ? new Set(published.revisions.map((r) => r.id))
     : null;
-  const protectedMonths = knownRevisions
-    ? await loadProtectedPointMonths()
-    : [];
-  const reviewedGroups = protectedMonths.length
-    ? reviewedMergeGroups(snapshots)
-    : new Map();
+  const protection = knownRevisions
+    ? await resolvePointProtection(
+        await loadProtectedPointMonths(),
+        options.protection ?? {},
+        options.origin ?? "https://slop.cash",
+      )
+    : { months: [], projects: [] };
+  const reviewedGroups =
+    protection.months.length || protection.projects.length
+      ? reviewedMergeGroups(snapshots)
+      : new Map();
   let heldRevisions = 0;
   const holdProtected = () => {
     if (!knownRevisions) return;
     const result = holdProtectedPointAwards(
       journal,
       knownRevisions,
-      protectedMonths,
+      protection.months,
+      protection.projects,
       reviewedGroups,
     );
     journal = result.journal;
@@ -1011,5 +1028,9 @@ if (import.meta.main) {
       process.env.VITE_SLOP_ENVIRONMENT === "staging"
         ? "https://staging.slop.cash"
         : "https://slop.cash",
+    protection: {
+      POINTS_PROTECTION_URL: process.env.POINTS_PROTECTION_URL,
+      POINTS_PROTECTION_TOKEN: process.env.POINTS_PROTECTION_TOKEN,
+    },
   });
 }

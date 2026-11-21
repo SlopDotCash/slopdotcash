@@ -21,8 +21,34 @@ const baseQualificationPaid = `(
   )
 )`.replace(/\s+/gu, " ");
 
+// Each table whose own row protects one project month, with the column that
+// names the month. The predicate and the private listing below are both built
+// from this list, so they cannot name different tables.
+const protectedMonthSources = [
+  { table: "monthly_payment_runs", alias: "m", period: "period" },
+  { table: "monthly_allocation_changes", alias: "m", period: "period" },
+  {
+    table: "payment_direct_transfers",
+    alias: "p",
+    period: "contribution_month",
+  },
+] as const;
+
+/**
+ * A payment obligation that no monthly allocation accounts for, other than
+ * the reviewed Base qualification payment. It protects every month of its
+ * project.
+ */
+function unmappedObligation(project: string): string {
+  return `EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT ${baseQualificationPaid} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest))`;
+}
+
 function protectedScope(project: string, period: string): string {
-  return `(EXISTS (SELECT 1 FROM monthly_payment_runs m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM monthly_allocation_changes m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM payment_direct_transfers p WHERE p.project_id=${project} AND p.contribution_month=${period}) OR EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT ${baseQualificationPaid} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest)))`;
+  const months = protectedMonthSources.map(
+    ({ table, alias, period: column }) =>
+      `EXISTS (SELECT 1 FROM ${table} ${alias} WHERE ${alias}.project_id=${project} AND ${alias}.${column}=${period})`,
+  );
+  return `(${[...months, unmappedObligation(project)].join(" OR ")})`;
 }
 
 export function protectedPointAwardSql(payload: string): string {
@@ -66,4 +92,28 @@ export function pointProtectionQuery(
     .map(({ projectId, period }) => `(${quote(projectId)},${quote(period)})`)
     .join(",");
   return `WITH scopes(project_id,period) AS (VALUES ${rows}) SELECT scopes.project_id,scopes.period,CASE WHEN ${protectedScope("scopes.project_id", "scopes.period")} THEN 1 ELSE 0 END AS protected FROM scopes ORDER BY scopes.project_id,scopes.period;`;
+}
+
+/**
+ * Private listing of every project month that a row of its own protects: the
+ * same tables and month columns as the predicate above. One statement; keep
+ * its output private, like the preflight.
+ */
+export function protectedPointMonthsQuery(): string {
+  const sources = protectedMonthSources
+    .map(
+      ({ table, period }) =>
+        `SELECT project_id,${period} AS period FROM ${table}`,
+    )
+    .join(" UNION ");
+  return `SELECT project_id,period FROM (${sources}) ORDER BY project_id,period;`;
+}
+
+/**
+ * Private listing of every project that the predicate protects in every
+ * month: the same unmapped-obligation clause, asked once per project that has
+ * an obligation.
+ */
+export function protectedPointProjectsQuery(): string {
+  return `SELECT DISTINCT o.project_id FROM payment_obligations o WHERE ${unmappedObligation("o.project_id")} ORDER BY o.project_id;`;
 }

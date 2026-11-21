@@ -3748,6 +3748,35 @@ function createSnapshotWithReviewCutoff(
     jointDecisions.set(decision.latestDigest as string, decision);
   }
 
+  // A ratified carrier withholds its whole joint unit below. A member whose
+  // own claims that human decision does not cover would lose the unit and its
+  // merge event together, so it keeps the accepted-merge minimum (PRD
+  // section 7), never its superseded per-PR assessment.
+  const ratificationWithheldMemberIds = new Set<string>();
+  const jointScoredMemberIds = new Set<string>();
+  // Such a member can still lack attribution proof. Its hold keeps the Points
+  // it already has, and it has no claim in the group's other units, so it
+  // does not stop them.
+  const withheldMemberHoldIds = new Set<string>();
+  for (const decision of jointDecisions.values()) {
+    if (decision.status !== "assessed") continue;
+    const claims = new Map(
+      decision.evidence.claims.map((claim) => [claim.id, claim]),
+    );
+    for (const unit of decision.record.units) {
+      const scoped = unit.claimIds.flatMap((id) => claims.get(id) ?? []);
+      const ratified = scoped.map((claim) =>
+        claim.carrierPullRequestIds.some((id) => scoreRatifications.has(id)),
+      );
+      const withheld = ratified.includes(true);
+      for (const [index, claim] of scoped.entries()) {
+        if (!withheld) jointScoredMemberIds.add(claim.creditPullRequestId);
+        else if (!ratified[index])
+          ratificationWithheldMemberIds.add(claim.creditPullRequestId);
+      }
+    }
+  }
+
   // SCR-04 credit actors by pull request. A shared work unit can suppress a
   // pull request's merge events; its credit actors stay self-reviewers.
   const creditActorIds = new Map<string, ReadonlySet<string>>();
@@ -3809,8 +3838,13 @@ function createSnapshotWithReviewCutoff(
     const joint = valuePolicyApplies
       ? input.jointValueDecisions?.get(pullRequest.id)
       : undefined;
+    const ratificationWithheld =
+      !ratification &&
+      ratificationWithheldMemberIds.has(pullRequest.id) &&
+      !jointScoredMemberIds.has(pullRequest.id);
     if (
       !ratification &&
+      !ratificationWithheld &&
       joint?.status === "assessed" &&
       !spansValuePolicyStart(joint)
     )
@@ -3821,6 +3855,7 @@ function createSnapshotWithReviewCutoff(
       pullRequest.commits?.length &&
       pullRequest.commits.every((commit) => (commit.parentCount ?? 0) > 1)
     ) {
+      if (ratificationWithheld) withheldMemberHoldIds.add(pullRequest.id);
       attributionHeldSourceIds.add(pullRequest.id);
       heldSourceIds.add(pullRequest.id);
       continue;
@@ -3927,6 +3962,7 @@ function createSnapshotWithReviewCutoff(
             (id) => !actors.some((actor) => actor.id === id),
           )
     ) {
+      if (ratificationWithheld) withheldMemberHoldIds.add(pullRequest.id);
       attributionHeldSourceIds.add(pullRequest.id);
       heldSourceIds.add(pullRequest.id);
       continue;
@@ -3971,9 +4007,11 @@ function createSnapshotWithReviewCutoff(
       ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
       : valueRecord
         ? `Provisional value assessment (${valueRecord.assessment.tier}): ${valueRecord.assessment.rationale}${valueRecord.assessment.tier === "none" ? " The accepted merge keeps the one-third minimum." : ""}`
-        : valuePolicyApplies
-          ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
-          : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
+        : ratificationWithheld
+          ? "A maintainer ratification of another pull request withheld this merge's joint value assessment; the accepted merge keeps the one-third minimum."
+          : valuePolicyApplies
+            ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
+            : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
     for (const [index, actor] of actors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
@@ -4057,8 +4095,10 @@ function createSnapshotWithReviewCutoff(
     if (decision.status !== "assessed" || spansValuePolicyStart(decision))
       continue;
     if (
-      decision.record.sources.some((source) =>
-        attributionHeldSourceIds.has(source.pullRequestNodeId),
+      decision.record.sources.some(
+        (source) =>
+          attributionHeldSourceIds.has(source.pullRequestNodeId) &&
+          !withheldMemberHoldIds.has(source.pullRequestNodeId),
       )
     )
       continue;
