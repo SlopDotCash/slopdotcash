@@ -4,7 +4,6 @@
  * Trusted main builds always regenerate from GitHub and never call this.
  */
 
-import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
@@ -23,11 +22,7 @@ import {
   SCORE_RULE_VERSION,
 } from "../src/lib/leaderboard-constants";
 import { isUnavailableModelIdentifier } from "../src/lib/model-identity";
-import {
-  findListedRepository,
-  repositoryIdentity,
-} from "../src/lib/project-repositories.mjs";
-import { assertHistoricalProjectDefinition } from "../src/lib/project-schema.mjs";
+import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { findProject } from "../src/lib/projects.mjs";
 import {
   REGISTERED_REPOSITORIES,
@@ -35,7 +30,6 @@ import {
 } from "../src/lib/repositories.mjs";
 import { eventThirds } from "../src/lib/score-penalties";
 import { addScoreThirds } from "../src/lib/score-units";
-import { sha256Hex } from "../src/lib/sha256";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
 
 type JsonRecord = Record<string, unknown>;
@@ -64,89 +58,8 @@ function array(value: unknown, field: string): unknown[] {
   return value;
 }
 
-function assertRetainedIntegrationBranch(
-  candidate: JsonRecord,
-  deployed: JsonRecord,
-  current: (typeof REGISTERED_REPOSITORIES)[number],
-  path: string,
-  revisionHistory: readonly unknown[] | undefined,
-): void {
-  const field = `${path}.integrationBranch is not verified by registry history`;
-  const cutoff = record(candidate.window, "snapshot.window").to;
-  const cutoffMs = typeof cutoff === "string" ? Date.parse(cutoff) : NaN;
-  if (
-    !Number.isFinite(cutoffMs) ||
-    new Date(cutoffMs).toISOString() !== cutoff
-  ) {
-    throw new TypeError(field);
-  }
-
-  const revisions =
-    revisionHistory ??
-    array(
-      JSON.parse(
-        readFileSync(
-          new URL(
-            "../src/lib/project-revisions.generated.json",
-            import.meta.url,
-          ),
-          "utf8",
-        ),
-      ),
-      "project revisions",
-    );
-  const projectRevisions = revisions
-    .map((revision) => record(revision, "project revision"))
-    .filter((revision) => revision.projectId === current.projectId);
-  const collected = projectRevisions.findLast(
-    (revision) =>
-      typeof revision.createdAt === "string" &&
-      Date.parse(revision.createdAt) <= cutoffMs,
-  );
-  const latest = projectRevisions.at(-1);
-  const latestAt =
-    typeof latest?.createdAt === "string" ? Date.parse(latest.createdAt) : NaN;
-  const source = record(candidate.source, "snapshot.source");
-  const repositories = array(
-    source.repositories,
-    "snapshot.source.repositories",
-  )
-    .map((repository) => record(repository, "snapshot source repository"))
-    .filter((repository) => repository.id === current.id);
-  if (
-    !collected ||
-    !latest ||
-    !(latestAt > cutoffMs) ||
-    repositories.length !== 1
-  ) {
-    throw new TypeError(field);
-  }
-  for (const [revision, branch] of [
-    [collected, deployed.integrationBranch],
-    [latest, current.integrationBranch],
-  ] as const) {
-    if (
-      sha256Hex(JSON.stringify(revision.manifest)) !== revision.manifestSha256
-    ) {
-      throw new TypeError(field);
-    }
-    const manifest = assertHistoricalProjectDefinition(revision.manifest);
-    const identity = repositoryIdentity(manifest, current.id);
-    if (
-      manifest.id !== current.projectId ||
-      !identity ||
-      identity.nodeId !== repositories[0].repositoryId ||
-      findListedRepository(manifest.repositories, current.id)?.repository
-        .integrationBranch !== branch
-    ) {
-      throw new TypeError(field);
-    }
-  }
-}
-
 function rebindTransferredRepositoryPresentation(
   candidate: JsonRecord,
-  revisionHistory: readonly unknown[] | undefined,
 ): JsonRecord {
   const repositories = array(candidate.repositories, "snapshot.repositories");
   let changed = false;
@@ -163,21 +76,12 @@ function rebindTransferredRepositoryPresentation(
     ) {
       throw new TypeError(`${path} must publish exactly the registry fields`);
     }
+    // A verified owner revision may move the integration branch (PRD
+    // section 4); the current registry branch replaces the collected one.
     for (const key of ["id", "description", "projectId"] as const) {
       if (deployed[key] !== current[key]) {
         throw new TypeError(`${path}.${key} cannot change during a transfer`);
       }
-    }
-    // The fixture may project a newer branch after proving which registered
-    // branch and permanent repository identity applied when collection ended.
-    if (deployed.integrationBranch !== current.integrationBranch) {
-      assertRetainedIntegrationBranch(
-        candidate,
-        deployed,
-        current,
-        path,
-        revisionHistory,
-      );
     }
     const deployedIdentity = `${String(deployed.owner)}/${String(deployed.name)}`;
     if (
@@ -552,10 +456,7 @@ function emptyRegistryLedger(input: JsonRecord): LeaderboardSnapshot {
   });
 }
 
-export function preparePullRequestLedger(
-  value: unknown,
-  revisionHistory?: readonly unknown[],
-): LeaderboardSnapshot {
+export function preparePullRequestLedger(value: unknown): LeaderboardSnapshot {
   const input = record(value, "snapshot");
   if (
     typeof input.generatedAt !== "string" ||
@@ -565,7 +466,7 @@ export function preparePullRequestLedger(
   }
   if (TARGET_REPOSITORIES.length === 0) return emptyRegistryLedger(input);
   const candidate = addActivatedRepositories(
-    rebindTransferredRepositoryPresentation(input, revisionHistory),
+    rebindTransferredRepositoryPresentation(record(value, "snapshot")),
   );
   if (candidate.schemaVersion === LEADERBOARD_SCHEMA_VERSION) {
     assertLeaderboardSnapshot(candidate);

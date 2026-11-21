@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "50807217f6b2126501f5b5fb2bc4539e49eb4ad802261d130aa6a07a11d8b7d4",
+  "inventorySha256": "408c7051a9d7fcdbacbc62b311998fbc9c55c2c812a238bec1e909853fcfdc23",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 631,
+      "line": 684,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -50,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1044,
+      "line": 1052,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -69,7 +69,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1663,
+      "line": 1699,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -150,7 +150,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2879,
+      "line": 2886,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -187,7 +187,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 3083,
+      "line": 3090,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -426,6 +426,7 @@
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/api/submission_receipt_verification.qnt"
       ],
       "lexicallyUnmentionedValues": ["no", "unknown"],
@@ -2766,7 +2767,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 506,
+      "line": 522,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2794,7 +2795,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1243,
+      "line": 1271,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -3025,7 +3026,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1138,
+      "line": 1174,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -3033,6 +3034,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3051,7 +3053,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1630,
+      "line": 1669,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -3059,6 +3061,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3077,7 +3080,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2624,
+      "line": 2675,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -3085,6 +3088,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3103,7 +3107,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2629,
+      "line": 2680,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3111,6 +3115,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3129,7 +3134,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2636,
+      "line": 2687,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3137,6 +3142,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3155,7 +3161,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2639,
+      "line": 2690,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3163,6 +3169,7 @@
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/api/api_wanted_issues.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -3548,7 +3555,7 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 390,
+      "line": 392,
       "name": "status",
       "kind": "string-union",
       "values": [
@@ -3564,6 +3571,7 @@
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
@@ -3668,7 +3676,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4804,
+      "line": 4872,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -4143,7 +4151,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 162,
+      "line": 163,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -4160,7 +4168,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 225,
+      "line": 226,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4177,7 +4185,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 231,
+      "line": 232,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4194,7 +4202,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 332,
+      "line": 333,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],
@@ -4226,7 +4234,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 30,
+      "line": 34,
       "name": "ConversionState",
       "kind": "string-union",
       "values": [
@@ -4254,7 +4262,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 50,
+      "line": 54,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4273,7 +4281,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 316,
+      "line": 320,
       "name": "status",
       "kind": "string-union",
       "values": ["locked", "not_converted", "ran"],
@@ -4726,7 +4734,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2995,
+      "line": 2998,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -4749,7 +4757,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3069,
+      "line": 3072,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4772,7 +4780,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3132,
+      "line": 3135,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4834,7 +4842,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 801,
+      "line": 827,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],

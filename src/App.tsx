@@ -21,6 +21,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
 import { Link, useHashScroll } from "./Link";
@@ -499,16 +500,30 @@ function Footer({ marketing }: { marketing: boolean }) {
   );
 }
 
-function HeroHeading({ audience }: { audience: HomeAudience }) {
-  const campaign = HOME_AUDIENCES[audience];
+const HERO_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeToHeroMotion(onChange: () => void) {
+  const media = window.matchMedia(HERO_MOTION_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getHeroReducedMotion() {
+  return window.matchMedia(HERO_MOTION_QUERY).matches;
+}
+
+function HeroTypewriter({
+  actions,
+}: {
+  actions: readonly [string, ...string[]];
+}) {
   const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(campaign.actions[0].length);
+  const [characters, setCharacters] = useState(actions[0].length);
   const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
     "holding",
   );
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = campaign.actions[index];
+    const target = actions[index];
     let delay = 1;
     let advance: () => void;
     if (phase === "holding") {
@@ -520,7 +535,7 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
     } else if (phase === "deleting") {
       delay = HERO_GAP_MS;
       advance = () => {
-        setIndex((value) => (value + 1) % campaign.actions.length);
+        setIndex((value) => (value + 1) % actions.length);
         setPhase("typing");
       };
     } else if (characters < target.length) {
@@ -531,8 +546,17 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
     }
     const timer = window.setTimeout(advance, delay);
     return () => window.clearTimeout(timer);
-  }, [campaign.actions, characters, index, phase]);
-  const action = campaign.actions[index];
+  }, [actions, characters, index, phase]);
+  return actions[index].slice(0, characters);
+}
+
+function HeroHeading({ audience }: { audience: HomeAudience }) {
+  const campaign = HOME_AUDIENCES[audience];
+  // Unmounting the typewriter cancels its timer and discards any partial phrase.
+  const reducedMotion = useSyncExternalStore(
+    subscribeToHeroMotion,
+    getHeroReducedMotion,
+  );
   return (
     <h1 aria-label={campaign.accessibleHeading}>
       <span aria-hidden="true" className="hero-message">
@@ -545,7 +569,11 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
             </span>
           ))}
           <span className="hero-typewriter">
-            {action.slice(0, characters)}
+            {reducedMotion ? (
+              campaign.actions[0]
+            ) : (
+              <HeroTypewriter actions={campaign.actions} />
+            )}
             <span className="hero-typewriter-caret" />
           </span>
         </span>

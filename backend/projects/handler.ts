@@ -299,6 +299,13 @@ function assertNewProjectManifest(
       "A new project may only pledge a monthly amount with payments disabled; a separate review budget is not offered",
     ],
     [
+      // Only the server writes the history, when a later revision changes
+      // the share. A submitted history would fix the share of every month it
+      // names, and no owner revision can change it afterwards.
+      reward.maintainerShareHistory === undefined,
+      "A new project has no maintainer share history; set only the maintainer share",
+    ],
+    [
       (manifest.funding.addresses ?? []).length === 0 &&
         fundingCommitments(manifest).length === 0 &&
         (manifest.escrow?.deployments ?? []).length === 0,

@@ -1911,6 +1911,7 @@ for (const scenario of [
   "no-consent",
   "activation-off",
   "late-edit",
+  "change-types-period",
 ] as const) {
   test(`Slop evidence takes the correct action with ${scenario}`, async () => {
     await closedItem(async (run) => {
@@ -1921,12 +1922,17 @@ for (const scenario of [
       const submission =
         scenario === "complete"
           ? evidencedSubmission
-          : scenario === "invalid-video-link"
+          : scenario === "change-types-period"
             ? evidencedSubmission.replace(
-                /^- UI video:.*$/mu,
-                "- UI video: https://github.com",
+                "- Change types: ui, non-ui",
+                "- Change types: ui, non-ui.",
               )
-            : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
+            : scenario === "invalid-video-link"
+              ? evidencedSubmission.replace(
+                  /^- UI video:.*$/mu,
+                  "- UI video: https://github.com",
+                )
+              : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
       run.submissionBody(
         scenario === "unsigned"
           ? submission.replace(
@@ -2593,6 +2599,105 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         debit_thirds: 24,
         moderator_review: 1,
         reversal: "maintainer_reopen",
+      },
+    ]);
+  });
+});
+
+test("a moderator-denied appeal cannot be overturned by pushing a new head and re-appealing", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // The first appeal escalates on low draft confidence; a moderator denies.
+    run.model("spam", 0.5);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: Slopbot confidence is below 0.9",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The same revision cannot be appealed again.
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal already resolved",
+    );
+    // A new head opens a new revision key, but the penalty is the same one
+    // the moderator left in place: the repeat appeal goes to a moderator
+    // instead of letting the appellant accept a fresh uphold draft alone.
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item was denied",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The moderator can still uphold the repeat appeal, reversing once.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "uphold", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal upheld by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
+  });
+});
+
+test("a repeat appeal after a maintainer-denied draft also goes to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.97);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "accept",
+          senderId: MAINTAINER,
+        }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item was denied",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
       },
     ]);
   });

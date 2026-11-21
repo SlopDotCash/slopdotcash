@@ -259,6 +259,56 @@ test("a later completed assessment resolves an exhausted sibling's retained sour
   f.sqlite.close();
 });
 
+test("an exhausted assessment with no earlier source gap still appears until a later assessment completes", async () => {
+  const f = fixture();
+  // Times follow the fixture clock: a finish is refused once the lease has
+  // passed real time.
+  const at = f.at(1);
+  const received = f.at().toISOString();
+  // The delivery's evidence was always complete, so no finish ever records a
+  // source gap before the digest's paid attempts run out: the run that finds
+  // them exhausted ends attempts-exhausted, terminal but not an assessment.
+  f.sqlite.run(
+    "INSERT INTO slopbot_deliveries(delivery_id,event,received_at) VALUES('delivery-one','pull_request',?)",
+    [received],
+  );
+  f.sqlite.run(
+    "INSERT INTO slopbot_value_requests(delivery_id,installation_id,repository_id,owner,repo,pull_request_number,received_at) VALUES('delivery-one',1,123456789,'example','repo',7,?)",
+    [received],
+  );
+  const claim = await claimValueRequest(f.db, "delivery-one", at);
+  if (!claim) throw new Error("Fixture claim refused");
+  await finishValueRequest(f.db, claim, "attempts-exhausted", null, at);
+  expect(
+    f.sqlite
+      .query(
+        "SELECT incomplete_since FROM slopbot_value_processing WHERE delivery_id='delivery-one'",
+      )
+      .get(),
+  ).toEqual({ incomplete_since: at.toISOString() });
+  const value = await f.list();
+  expect(value.items).toEqual([
+    {
+      projectId: "incomplete",
+      projectName: "Project incomplete",
+      repository: "example/repo",
+      pullRequest: 7,
+      since: at.toISOString(),
+      retryAt: null,
+      running: false,
+    },
+  ]);
+  expect((await f.list(ADMIN)).items).toEqual(value.items);
+  // A later delivery that completes a real assessment resolves the entry.
+  await f.seed("new-source", 7, f.at(2).toISOString());
+  const resolvedAt = f.at(3);
+  const completed = await claimValueRequest(f.db, "new-source", resolvedAt);
+  if (!completed) throw new Error("Completed claim refused");
+  await finishValueRequest(f.db, completed, "published", null, resolvedAt);
+  expect((await f.list()).items).toEqual([]);
+  f.sqlite.close();
+});
+
 test("private queue pagination preserves numeric PR ordering without dropping entries", async () => {
   const f = fixture();
   for (let number = 1; number <= 27; number++)

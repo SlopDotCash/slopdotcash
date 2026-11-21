@@ -38,6 +38,11 @@ import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import {
+  SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
+  SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
+} from "./lib/submission-fee.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
@@ -260,6 +265,29 @@ export function HowItWorksPage() {
                 project&apos;s manage page, and a change starts with the next
                 UTC month. In a month with no such decision, the whole amount
                 stays with contributors.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Is there a fee to open a pull request?</h3>
+            <div>
+              <p>
+                Only on a project whose owner turned on the refundable
+                submission fee. There, Slopbot comments once on a pull request
+                from an outside contributor with a link to its pay page on
+                slop.cash, and holds its review until the fee is recorded. The
+                fee is {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000} USDC
+                on Base or {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000}{" "}
+                USDG on Robinhood Chain unless the owner set another amount, or
+                the same fee in SLOP on Robinhood Chain at half the price. It is
+                a deposit: a merge sends it back, and so do{" "}
+                {SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days without a maintainer
+                decision. A pull request closed without a merge for{" "}
+                {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days keeps it: a
+                stablecoin fee goes to Slop and a SLOP fee is burned. An unpaid
+                pull request is never closed for that reason, the fee does not
+                buy a merge and scoring does not read it. Pay only through the
+                page linked in Slopbot&apos;s own comment.
               </p>
             </div>
           </article>

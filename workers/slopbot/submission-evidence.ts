@@ -100,7 +100,8 @@ export function missingSubmissionEvidence(
     start === -1 ? [] : lines.slice(start + 1, end === -1 ? undefined : end);
   const types =
     evidenceValue(section, "Change types")
-      ?.split(",")
+      ?.replace(/\.$/u, "")
+      .split(",")
       .map((type) => type.trim()) ?? [];
   const validTypes =
     types.length > 0 &&
