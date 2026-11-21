@@ -54,9 +54,9 @@ or checked after every call of Foundry's invariant campaigns.
 | `currentPeriod` is a calendar month | `EscrowLemmas.periodIsACalendarMonth` | CHC |
 | Every window and current period is development's: years 2000 to 2899 and 9100 to 9999, the second before, at and a day after every month start from 1970 to 2800, and fuzzed periods and times | `MonthlyCommitment` `...Development...` tests | unit and fuzz tests |
 | No overflow or underflow in a referral claim | `ReferralClaims` | proved (BMC) |
-| A payable claim pays the cumulative less what the account claimed, and the claimed total never exceeds the root's total | `ReferralLemmas.claimNeverExceedsTotal` | CHC |
-| The root's remainder after a payable claim, `total - (totalClaimed + amount)`, is never negative | `ReferralLemmas.remainingIsNeverNegative` | CHC |
-| A claim is refused only when nothing is new, it exceeds the total, or the claimed total would overflow | `ReferralLemmas.refusesOnlyWhatDoesNotFit` | CHC |
+| A payable claim pays the cumulative less what the account claimed, and the claimed total never exceeds the root's total | `ReferralLemmas.claimNeverExceedsTotal` | proved (CHC) |
+| The root's remainder after a payable claim, `total - (totalClaimed + amount)`, is never negative | `ReferralLemmas.remainingIsNeverNegative` | proved (CHC) |
+| A claim is refused only when nothing is new, it exceeds the total, or the claimed total would overflow | `ReferralLemmas.refusesOnlyWhatDoesNotFit` | proved (CHC) |
 | `claim` and `claimable` answer, pay and revert exactly as development's inline arithmetic | `ReferralDistributor` `...Development...` tests | fuzz tests |
 
 `test` runs two checks in `evm/`, each with `--force`, so a cached build never
