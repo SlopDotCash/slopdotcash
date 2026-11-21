@@ -9667,9 +9667,9 @@
     },
     {
       "path": "workers/slopbot/submission-evidence.ts",
-      "sha256": "64c9f804552c40e07fa388c546079c6298af1557bb2cadea815279a5513b08a5",
+      "sha256": "3983be1a566a2646b14e6d6cc0898a7b94b5c566b5d85a1af64536d6adabd50f",
       "models": ["formal/models/slopbot/bot_submission_evidence.qnt"],
-      "candidateLines": [46],
+      "candidateLines": [57],
       "review": "mapped-abstraction"
     },
     {
@@ -17709,7 +17709,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_evidence.qnt",
-      "sha256": "711cb823e677faaf53c8d81dc5496325cef36fcb9b4b9949ef2a4228947f67c0",
+      "sha256": "8641b17053a6577d07b3bc955cc32d6b93ddfe1ac3b0e819425479a23be4f0f9",
       "sources": [
         "workers/slopbot/contracts.ts",
         "workers/slopbot/penalties.ts",
@@ -17719,7 +17719,11 @@
       "scenarios": [
         "evidenceAddedBeforeCloseTest",
         "missingFieldsCanCloseTest",
+        "missingRequiredScreenshotsCanCloseTest",
+        "nonUiScreenshotsCannotCloseTest",
         "optOutCannotCloseTest",
+        "screenshotsAddedBeforeCloseTest",
+        "unrequestedScreenshotsCannotCloseTest",
         "unsignedCannotCloseTest"
       ]
     },
