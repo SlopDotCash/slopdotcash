@@ -2,7 +2,7 @@
 // @source backend/projects/merge-activity.ts
 // @source workers/slopbot/reporting-readiness.ts
 // @source backend/security/github-advisories.ts
-// @source migrations/0143_merge_activity_wanted_issues.sql
+// @source migrations/0144_merge_activity_wanted_issues.sql
 // @source src/lib/merge-activity.ts
 // @source src/ProjectWork.tsx
 // @source src/ProjectProposalPage.tsx

@@ -3754,7 +3754,7 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": "migrations/0143_merge_activity_wanted_issues.sql",
+      "path": "migrations/0144_merge_activity_wanted_issues.sql",
       "sha256": "910c2045a15eea4b59c6d7184e19c9fcb771825934ac1be91436eb7d5c15fc30",
       "models": ["formal/models/api/api_wanted_issues.qnt"],
       "candidateLines": [],
@@ -11478,7 +11478,7 @@
       "sources": [
         "backend/projects/merge-activity.ts",
         "backend/security/github-advisories.ts",
-        "migrations/0143_merge_activity_wanted_issues.sql",
+        "migrations/0144_merge_activity_wanted_issues.sql",
         "skills/project-contributor-template/scripts/live-report.mjs",
         "src/ProjectProposalPage.tsx",
         "src/ProjectWork.tsx",

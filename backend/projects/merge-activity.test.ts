@@ -25,7 +25,7 @@ function d1() {
     readFileSync("migrations/0134_merge_activity_open_outside.sql", "utf8"),
   );
   sqlite.exec(
-    readFileSync("migrations/0143_merge_activity_wanted_issues.sql", "utf8"),
+    readFileSync("migrations/0144_merge_activity_wanted_issues.sql", "utf8"),
   );
   const prepare = (sql: string) => {
     let values: unknown[] = [];
