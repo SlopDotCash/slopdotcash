@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "da60dde4790f272311b35418c36798431d4f381ddd82fda9ccd3556285cd0fb9",
+  "inventorySha256": "408c7051a9d7fcdbacbc62b311998fbc9c55c2c812a238bec1e909853fcfdc23",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4234,7 +4234,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 30,
+      "line": 34,
       "name": "ConversionState",
       "kind": "string-union",
       "values": [
@@ -4262,7 +4262,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 50,
+      "line": 54,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4281,7 +4281,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 316,
+      "line": 320,
       "name": "status",
       "kind": "string-union",
       "values": ["locked", "not_converted", "ran"],

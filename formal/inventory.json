@@ -4443,7 +4443,7 @@
     },
     {
       "path": "scripts/inspect-fee-worker-operations.ts",
-      "sha256": "8eaabdb43a6e9ba3c5350872393af4d6dae9198e27eab2a71f7c9118aeaa81ac",
+      "sha256": "3f3af5585d1abe3eb9aafa12a89b2023ebce4f6115c7567520b2c203691a16be",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [
         42, 46, 58, 60, 94, 108, 187, 226, 235, 240, 243, 270, 287, 294, 333,
@@ -8205,7 +8205,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "sha256": "ae7da0caf235d54b222787e94e367ed5007edeadca38124d65a92b1c3c418195",
+      "sha256": "750981a4d56b64151638bac1f7fac9ea3018bffa26790d46cfe1f44035b8be1c",
       "models": [
         "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
@@ -8217,14 +8217,14 @@
         "formal/models/payments/signed_send.qnt"
       ],
       "candidateLines": [
-        32, 36, 43, 70, 147, 150, 152, 175, 240, 250, 251, 255, 261, 263, 265,
-        272, 316, 334, 335, 340, 342, 343, 429, 446, 453, 457, 458, 462, 517,
-        523, 525, 529, 530, 541, 543, 544, 545, 548, 569, 570, 571, 572, 576,
-        577, 594, 595, 600, 601, 602, 605, 613, 614, 615, 620, 621, 703, 707,
-        708, 713, 714, 746, 747, 761, 765, 778, 785, 788, 791, 792, 815, 860,
-        916, 931, 934, 951, 1083, 1091, 1107, 1108, 1162, 1174, 1175, 1176,
-        1181, 1186, 1188, 1189, 1199, 1227, 1243, 1245, 1247, 1248, 1261, 1263,
-        1293, 1301, 1302, 1306, 1324, 1325
+        36, 40, 47, 74, 151, 154, 156, 179, 244, 254, 255, 259, 265, 267, 269,
+        276, 320, 338, 339, 344, 346, 347, 370, 387, 394, 398, 399, 403, 458,
+        464, 466, 470, 471, 482, 484, 485, 486, 489, 510, 511, 512, 513, 517,
+        518, 535, 536, 541, 542, 543, 546, 554, 555, 556, 561, 562, 644, 648,
+        649, 654, 655, 687, 688, 702, 706, 719, 726, 729, 732, 733, 756, 801,
+        857, 872, 875, 892, 1024, 1032, 1048, 1049, 1103, 1115, 1116, 1117,
+        1122, 1127, 1129, 1130, 1140, 1168, 1184, 1186, 1188, 1189, 1202, 1204,
+        1234, 1242, 1243, 1247, 1265, 1266
       ],
       "review": "mapped-abstraction"
     },
@@ -8350,6 +8350,14 @@
         412, 470, 496, 498, 500, 513, 518
       ],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/fee-converter/provider-failure.ts",
+      "sha256": "4bde7fbac7402ad9047137e0c77122c701418d696964d84e503e815d2526fdb6",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure diagnostic projection of allowlisted provider, stage and method fields with a bounded HTTP status. No network, journal, signing or workflow state transition."
     },
     {
       "path": "workers/fee-converter/solana-accounts.ts",
