@@ -337,7 +337,21 @@ An admitted root is one of the journal's attempts. Attempt sequences strictly
 increase, so the latest attempt is the one with the highest source sequence,
 and a V2 or V3 admission is always that latest attempt's root.
 
+An authorized month keeps the period, leaves and whole gross its first
+authorization checked, so every attempt's remaining gross is a sum of some of
+those leaves. The chain view always names an identity authority and a source
+sequence of zero or more, so every attempt has a signer and the first
+attempt's sequence starts the increasing order. Only a signed Solana attempt
+freezes a block time, and only a legacy admission marks the admission as
+legacy.
+
 ```quint
+pure def alwaysAuthorizedMonthKept(c: Commitment): bool = c.phase != NoIntent implies
+  c.month.period >= 202611 and validLeaves(c.month.leaves) and M::validAmount(c.month.wholeGross)
+    and M::equalAmounts(leafTotal(c.month.leaves), c.month.wholeGross)
+pure def alwaysViewNamesAuthority(c: Commitment): bool = c.view.authority != "" and c.view.sourceSequence >= 0
+pure def alwaysFrozenOnlyWhenSigned(c: Commitment): bool = c.attempts.length() == 0 implies c.frozenAt == 0
+pure def alwaysLegacyOnlyWhenAdmitted(c: Commitment): bool = c.admittedLegacy implies (c.phase == Admitted or c.phase == Completed)
 pure def alwaysAttemptsBounded(c: Commitment): bool = c.attempts.every(a => a.id > 0 and a.root != "" and a.signer != ""
   and M::validAmount(a.remainingGross) and M::compareAmounts(a.remainingGross, c.month.wholeGross) <= 0
   and a.leafCount <= c.month.leaves.length() and c.attempts.select(o => o.id == a.id).length() == 1)

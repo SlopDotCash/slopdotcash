@@ -24462,7 +24462,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "3a6823935bac9f5363559205510e2c2267060e5749103534a0cc2559b0ed1e04",
+      "sha256": "f907e40e121b8e0660b67a6acb19c1a20a7eceeef372b36dcbe999dd0944b967",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -24620,6 +24620,10 @@
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
           "line": 332,
           "definitions": [
+            "alwaysAuthorizedMonthKept",
+            "alwaysViewNamesAuthority",
+            "alwaysFrozenOnlyWhenSigned",
+            "alwaysLegacyOnlyWhenAdmitted",
             "alwaysAttemptsBounded",
             "alwaysAuthorizedWithinCap",
             "alwaysAdmittedRootSigned",
@@ -24649,7 +24653,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 379,
+          "line": 393,
           "definitions": [
             "familyValues",
             "monthSample",
