@@ -1030,11 +1030,8 @@ test("dry run: records what it would ask, writes nothing to GitHub and reviews a
     expect(await w.review()).not.toBe(FEE_NEEDED_REASON);
     expect(w.prompts.length).toBeGreaterThan(0);
     expect(w.reviewRow()).toMatchObject({ status: "completed" });
-    expect(w.item()).toMatchObject({
-      item: submissionFeeItem(w.repositoryId, 5),
-      stable_minor: SUBMISSION_FEE_DEFAULT_MINOR,
-      paid_at: null,
-    });
+    // Nobody was asked, so there is no fee row: only Slopbot's own record.
+    expect(w.item()).toBeNull();
     expect(w.gate()).toMatchObject({
       state: "recorded",
       reason: `${FEE_NEEDED_REASON}: record only, review ran`,
@@ -1043,6 +1040,50 @@ test("dry run: records what it would ask, writes nothing to GitHub and reviews a
     expect(w.github.labels).toEqual([]);
     expect(w.feeComments()).toEqual([]);
     expect(await w.dispatch()).toBe(0);
+    // A second review of the same pull request records nothing more.
+    w.github.head = "d".repeat(40);
+    await w.review();
+    expect(w.item()).toBeNull();
+    expect(w.gate()).toMatchObject({ state: "recorded" });
+  } finally {
+    w.close();
+  }
+});
+
+test("a deposit naming a pull request that was only recorded pays for nothing", async () => {
+  const w = world({ mode: "dry_run" });
+  try {
+    await w.review();
+    expect(w.gate()).toMatchObject({ state: "recorded" });
+    // The deposit as the submission-fee Worker's `judge` reads and decides it:
+    // sent straight to the contract for a pull request nobody was asked about.
+    const store = new D1FeeStore(
+      w.env.SLOPBOT_DB as unknown as SubmissionFeeD1Database,
+    );
+    const item = submissionFeeItem(w.repositoryId, 5);
+    const verdict = submissionDepositCounts(
+      "base-mainnet",
+      {
+        depositId: 12,
+        token: SUBMISSION_FEE_TOKENS["base-mainnet"].usdc as string,
+        amount: SUBMISSION_FEE_DEFAULT_MINOR,
+        keptTo: SUBMISSION_FEE_KEPT_TO["base-mainnet"],
+        blockTime: "2026-11-16T00:00:00.000Z",
+      },
+      await store.itemByHash(item),
+      [],
+    );
+    expect(verdict).toEqual({ accepted: false, reason: "unknown_item" });
+    // Once the switch is live the same pull request is asked for real, and
+    // only then does a row exist for a deposit to pay.
+    (w.env as { SUBMISSION_FEE_MODE: string }).SUBMISSION_FEE_MODE = "live";
+    w.github.head = "d".repeat(40);
+    expect(await w.review()).toBe(FEE_NEEDED_REASON);
+    expect(w.item()).toMatchObject({
+      item,
+      stable_minor: SUBMISSION_FEE_DEFAULT_MINOR,
+      paid_at: null,
+    });
   } finally {
     w.close();
   }

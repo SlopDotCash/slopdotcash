@@ -659,22 +659,17 @@ export async function gateSubmissionFee(
 
   if (mode === "dry_run") {
     // Record what live would ask, so nothing past the monthly cap. Nothing
-    // is written to GitHub and the review runs as it does today.
-    if (applies && fee !== null && row === null && input.mayAsk) {
-      await db
-        .prepare(
-          `INSERT OR IGNORE INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          job.repositoryId,
-          job.number,
-          input.projectId,
-          submissionFeeItem(job.repositoryId, job.number),
-          fee.amountMinor,
-          at,
-        )
-        .run();
+    // is written to GitHub and the review runs as it does today. Only
+    // Slopbot's own gate row is written: nobody was asked, so there is no
+    // `submission_fee_items` row for a deposit to pay or the pay page to
+    // show. The first real ask writes that row.
+    if (
+      applies &&
+      fee !== null &&
+      row === null &&
+      gate === null &&
+      input.mayAsk
+    ) {
       await db
         .prepare(
           `INSERT OR IGNORE INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at)
