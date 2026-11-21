@@ -51,7 +51,7 @@ import {
   DirectBountyPayment,
   type DirectEvmTransaction,
 } from "./DirectBountyPayment";
-import { Link } from "./Link";
+import { Link, settleAlignment } from "./Link";
 import { hasBountyOverview } from "./lib/home-projects";
 import { PrivateReportForm, usePrivateDraftSession } from "./PrivateReportForm";
 import {
@@ -3733,6 +3733,12 @@ function CaseDetail({
     [replaceData],
   );
   const [note, setNote] = useState<string | null>(null);
+  const reveal = useCallback((article: HTMLElement | null) => {
+    if (!article) return;
+    return settleAlignment(() =>
+      article.scrollIntoView({ behavior: "auto", block: "start" }),
+    ).stop;
+  }, []);
   if (state.status === "loading") return <Spinner label="Loading case…" />;
   if (state.status === "signed-out")
     return (
@@ -3873,6 +3879,7 @@ function CaseDetail({
     <article
       aria-labelledby={`case-${record.id}`}
       className="admin-card security-case"
+      ref={reveal}
     >
       <header>
         <h3 id={`case-${record.id}`}>
