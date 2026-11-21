@@ -5,35 +5,34 @@
 import { afterAll, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
-  createLeaderboardSnapshot,
   assertLeaderboardSnapshot,
+  createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import {
   applyPointsSnapshot,
   emptyPointsJournal,
   latestPoints,
-  pointMembers,
   type PointsJournal,
+  pointMembers,
 } from "../src/lib/points";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../src/lib/value-assessment";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import {
-  penaltyScoreInput,
   PENALIZED_AUTHOR,
   PROJECT_OWNER,
+  penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 import { prepareValueRecord } from "../workers/slopbot/value-journal";
 import { valueSourceDigest } from "../workers/slopbot/value-review";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitSource,
-} from "../workers/slopbot/value-work-unit";
-import { prepareWorkUnitRecord } from "../workers/slopbot/value-work-unit-journal";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import {
   consumeWorkUnitHistory,
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
+import { prepareWorkUnitRecord } from "../workers/slopbot/value-work-unit-journal";
+import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
+import { holdProtectedPointAwards } from "./generate-points";
 
 setSystemTime(new Date("2027-01-16T00:00:00.000Z"));
 afterAll(() => setSystemTime());
@@ -59,14 +58,19 @@ const provenance = {
 
 type Pull = typeof old;
 
-function source(pull: Pull, path: string, who = actor): WorkUnitSource {
+function source(
+  pull: Pull,
+  path: string,
+  who = actor,
+  lines = 1,
+): WorkUnitSource {
   const user = { node_id: who.id, login: who.login, type: "User" };
   const file = {
     filename: path,
     status: "added",
-    additions: 1,
+    additions: lines,
     deletions: 0,
-    patch: "@@ -0,0 +1 @@\n+export const fixed = true;",
+    patch: lines === 0 ? "" : "@@ -0,0 +1 @@\n+export const fixed = true;",
     blob_url: `${repository.githubUrl}/blob/${pull.headRefOid}/${path}`,
   };
   return {
@@ -107,7 +111,7 @@ function source(pull: Pull, path: string, who = actor): WorkUnitSource {
         sha: pull.headRefOid,
         html_url: `${repository.githubUrl}/commit/${pull.headRefOid}`,
         parents: [{ sha: base }],
-        stats: { additions: 1, deletions: 0, total: 1 },
+        stats: { additions: lines, deletions: 0, total: lines },
         files: [file],
       },
       commits: [
@@ -417,7 +421,12 @@ function variantPull(
 
 /** Solo original at snapshot 1, then the assessed joint group. */
 async function basePair(
-  opts: { successorAt?: string; at?: string; followupWho?: typeof actor } = {},
+  opts: {
+    successorAt?: string;
+    at?: string;
+    followupWho?: typeof actor;
+    followupLines?: number;
+  } = {},
 ) {
   const successorAt = opts.successorAt ?? "2026-12-15T00:00:00.000Z";
   const at = opts.at ?? "2026-12-20T00:00:00.000Z";
@@ -434,7 +443,12 @@ async function basePair(
   ]);
   let journal = apply(emptyPointsJournal(initial.generatedAt), initial);
   expect(total(journal)).toBe(90);
-  const followSrc = source(followup, "second.ts", opts.followupWho ?? actor);
+  const followSrc = source(
+    followup,
+    "second.ts",
+    opts.followupWho ?? actor,
+    opts.followupLines ?? 1,
+  );
   const j = await joint({
     sources: [first.src, followSrc],
     legacy: [
@@ -591,6 +605,71 @@ test("multiple implementers: the joint total is conserved and split, the solo cr
   expect(ownerTotal).toBeGreaterThan(0);
   expect(authorTotal).toBeGreaterThan(0);
   expect(authorTotal + ownerTotal).toBe(90);
+});
+
+test("a unit is completely published when one actor has a zero line share", async () => {
+  const { first, j, later, journal } = await basePair({
+    followupWho: owner,
+    followupLines: 0,
+  });
+  // The zero line weight never holds the unit: its completion source stays
+  // assessed, and the successor still publishes its decision.
+  const coverage = later.valueAssessmentCoverage?.find(
+    (row) => row.pullRequestId === "PR_followup",
+  );
+  expect(coverage?.status).toBe("assessed");
+  expect(coverage?.recordDigest).toBe(j.digest);
+  // The whole unit total publishes to the actor with lines; the zero-share
+  // actor takes no ledger event and no phantom award.
+  const jointEvents = later.ledger.filter((e) => e.id.includes(":joint:"));
+  expect(jointEvents).toHaveLength(1);
+  expect(jointEvents[0].actor.id).toBe(actor.id);
+  expect(jointEvents[0].scoreThirds).toBe(9);
+  expect(jointEvents[0].points).toBe(3);
+  expect(jointEvents[0].scoreDecisionSourceId).toBe(`value:${j.digest}`);
+  expect(
+    later.ledger.some(
+      (e) => e.id.includes(":joint:") && e.actor.id === owner.id,
+    ),
+  ).toBe(false);
+  expect(later.valueAssessmentSupersessions).toEqual([
+    { predecessorDigest: first.digest, successorDigest: j.digest },
+  ]);
+  expect(total(journal, actor)).toBe(90);
+  expect(total(journal, owner)).toBe(0);
+  expect(latestAmount(journal, old.id)).toEqual([0]);
+});
+
+test("a retirement dated in a paid month is held", async () => {
+  const { later, journal } = await basePair();
+  // The retirement revision zeroes the original award, whose occurrence is
+  // 2026-11-05, so it is dated in the paid month asi/2026-11.
+  const before = journal.revisions.filter((r) => r.award.sourceId === old.id);
+  expect(before).toHaveLength(2);
+  const [original, retirement] = before;
+  expect(original.award.amount).toBe(90);
+  expect(retirement.award.amount).toBe(0);
+  expect(retirement.award.occurredAt).toBe("2026-11-05T00:00:00.000Z");
+  const known = new Set(
+    journal.revisions.filter((r) => r.id !== retirement.id).map((r) => r.id),
+  );
+  const months = [{ projectId: "asi", period: "2026-11" }];
+  const held = holdProtectedPointAwards(journal, known, months);
+  expect(held.held).toBe(1);
+  expect(
+    held.journal.revisions.filter((r) => r.award.sourceId === old.id),
+  ).toEqual([original]);
+  // The hold defers the correction, it does not cancel it: until the paid
+  // month opens, the original 90 and the joint 90 both stay live.
+  expect(total(held.journal)).toBe(180);
+  // The same retirement in an unpaid month publishes: the original retires.
+  const unheld = holdProtectedPointAwards(journal, known, [
+    { projectId: "asi", period: "2026-10" },
+  ]);
+  expect(unheld.held).toBe(0);
+  expect(unheld.journal.revisions.length).toBe(journal.revisions.length);
+  expect(latestAmount(unheld.journal, old.id)).toEqual([0]);
+  expect(later.valueAssessmentSupersessions).toHaveLength(1);
 });
 
 test("window boundary: an original exactly at the window start still retires through the relation", async () => {
