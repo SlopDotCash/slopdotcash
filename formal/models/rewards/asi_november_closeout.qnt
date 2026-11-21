@@ -1,4 +1,5 @@
 // @source .github/workflows/asi-november-closeout.yml
+// @source .github/workflows/operator.yml
 // @source backend/payments/monthly.ts
 // @source migrations/0143_asi_november_closeout.sql
 // @source scripts/guarded-monthly-import.ts
@@ -13,26 +14,33 @@
 // after calendar close, or after the ordinary automatic admission window.
 // Bytes, amounts, identity and DB atomicity are checked in the source test.
 module asi_november_closeout {
-  type S = { scope: bool, verified: bool, phase: int, base: int, previewed: bool,
-    frozen: bool, ownerSigned: bool, admitted: bool }
+  type S = { scope: bool, verified: bool, trustedDispatch: bool, phase: int,
+    base: int, previewed: bool, frozen: bool, ownerSigned: bool, admitted: bool }
   var s: S
 
-  pure def initial(scope: bool, verified: bool): S =
-    { scope: scope, verified: verified, phase: 0, base: 0, previewed: false,
-      frozen: false, ownerSigned: false, admitted: false }
+  pure def trustedDispatch(repository: str, ref: str, event: str): bool =
+    repository == "SlopDotCash/slopdotcash" and ref == "refs/heads/main" and
+      event == "workflow_dispatch"
+
+  pure def initial(scope: bool, verified: bool, dispatch: bool): S =
+    { scope: scope, verified: verified, trustedDispatch: dispatch, phase: 0,
+      base: 0, previewed: false, frozen: false, ownerSigned: false, admitted: false }
   action init = all {
     nondet scope = Bool.oneOf()
     nondet verified = Bool.oneOf()
-    s' = initial(scope, verified)
+    nondet dispatch = Bool.oneOf()
+    s' = initial(scope, verified, dispatch)
   }
-  action initApproved = s' = initial(true, true)
+  action initApproved = s' = initial(true, true,
+    trustedDispatch("SlopDotCash/slopdotcash", "refs/heads/main", "workflow_dispatch"))
   action advance = all { s.phase < 3, s' = s.with("phase", s.phase + 1) }
+  val closeoutAuthorized = s.trustedDispatch and s.scope and s.verified and s.phase >= 1
   action previewCloseout = all {
-    s.scope, s.verified, s.phase >= 1, s.base == 0,
+    closeoutAuthorized, s.base == 0,
     s' = s.with("previewed", true)
   }
   action importCloseout = all {
-    s.previewed, s.scope, s.verified, s.phase >= 1, s.base == 0,
+    s.previewed, closeoutAuthorized, s.base == 0,
     s' = s.with("base", 1)
   }
   action importOrdinary = all { s.phase >= 2, s.base == 0, s' = s.with("base", 2) }
@@ -58,7 +66,7 @@ module asi_november_closeout {
   }
 
   val invariant = all {
-    s.base == 1 implies (s.previewed and s.scope and s.verified and s.phase >= 1),
+    s.base == 1 implies (s.previewed and closeoutAuthorized),
     s.base == 2 implies s.phase >= 2,
     s.base == 1 implies (closeoutMonthVisible and not(proposalEditable)),
     s.frozen implies s.base != 0,
@@ -70,6 +78,13 @@ module asi_november_closeout {
   run ownerEarlyCloseTest = initApproved.then(advance)
     .then(previewCloseout).then(importCloseout).then(ownerFinalize).then(ownerReserve)
     .expect(s.ownerSigned and s.phase == 1 and closeoutMonthVisible and invariant)
+  run dispatchAuthorityTest = initApproved.expect(all {
+    s.trustedDispatch,
+    not(trustedDispatch("SlopDotCash/slopdotcash", "refs/pull/1/merge", "pull_request")),
+    not(trustedDispatch("SlopDotCash/slopdotcash", "refs/heads/vibestack", "workflow_dispatch")),
+    not(trustedDispatch("SlopDotCash/slopdotcash", "refs/heads/main", "workflow_run")),
+    not(trustedDispatch("other/slopdotcash", "refs/heads/main", "workflow_dispatch")),
+  })
   run ordinaryCalendarTest = init.then(advance).then(advance)
     .then(importOrdinary).then(advance).then(automaticFinalize).then(automaticAdmit)
     .expect(s.admitted and s.base == 2 and invariant)

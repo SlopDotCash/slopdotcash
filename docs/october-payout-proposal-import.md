@@ -39,10 +39,13 @@ When the verified source extends beyond the cutoff, calculate only from
 accepted-work events and debits before the cutoff. Preserve the original
 bytes, timestamps and digest. Dispatch the protected ASI closeout workflow on
 current `main` with `mode: inspect` before preparing the packet.
-It validates the published source against the cutoff and the exact matching
-coverage in the current canonical Points batch. Its output gives the source
-and batch digests, verified registry manifest digest, revision and enforcement
-generation. It does not require the packet or write to D1. Verify the corrected accepted work and
+The registered operator workflow can call it at the same revision with
+`gh workflow run operator.yml --ref main -f asi_mode=inspect`.
+The inspect job validates the published source against the cutoff and the
+exact matching coverage in the current canonical Points batch. Its output
+gives the source and batch digests, verified registry manifest digest, revision
+and enforcement generation. It does not require the packet or write to D1.
+Verify the corrected accepted work and
 protected settlement history before recording the producer and independent
 reviewer's numeric GitHub IDs and reviewed packet digest. Preserve the packet
 and exact ASI manifest privately.
