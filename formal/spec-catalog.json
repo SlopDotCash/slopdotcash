@@ -7700,7 +7700,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "057dde7ae302c1ccf11c4480122514226b25cadbe98c82b1d1c16769af297a84",
+      "sha256": "70edf6e631da4f8134e08fb7c0e8be9e2392929e81ea1abb5deac5e957283089",
       "module": "fees__conversion",
       "stories": [
         {
@@ -8072,7 +8072,8 @@
             "weight_claim",
             "weight_accrue",
             "weight_registerVault",
-            "weight_observeBalance"
+            "weight_observeBalance",
+            "weight_abandonIntent"
           ]
         }
       ],

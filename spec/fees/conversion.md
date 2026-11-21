@@ -859,6 +859,11 @@ claims, finalizing sends, and expiring and settling expired EVM sends are
 weighted up with them; 9 of 1200 traces then reach a fallen accrual, and 5
 of 1200 still reach the Solana expiry proof.
 
+Discovered by simulation: with signing weighted up, a live quote is rarely
+still open when its run's lease is lost, and none of 1200 traces reached a
+quote abandoned by a later run. Abandoning a quote is enabled only in that
+state, so it is weighted up too.
+
 ```quint
 pure val elapsedValues = Set(180000, 3600001, 86400000)
 pure val runIdValues = Set(1, 2)
@@ -965,4 +970,5 @@ pure val weight_claim = 20
 pure val weight_accrue = 10
 pure val weight_registerVault = 8
 pure val weight_observeBalance = 10
+pure val weight_abandonIntent = 30
 ```
