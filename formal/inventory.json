@@ -814,7 +814,7 @@
     },
     {
       "path": "backend/projects/merge-activity.ts",
-      "sha256": "8008360899c25ef4ffc044aef6f39d47750719aa65951814a4312108082157e9",
+      "sha256": "0efacd5504533012582503b43bcded2e8ab7fee5274f81af71b04510f7938912",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_merge_activity.qnt",
@@ -3775,7 +3775,7 @@
     },
     {
       "path": "migrations/0144_merge_activity_wanted_issues.sql",
-      "sha256": "910c2045a15eea4b59c6d7184e19c9fcb771825934ac1be91436eb7d5c15fc30",
+      "sha256": "f87d0152617989c69c469d74dc84c30eff1378d608f75071be801640197dda85",
       "models": ["formal/models/api/api_wanted_issues.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8136,7 +8136,7 @@
     },
     {
       "path": "src/lib/wanted-label.mjs",
-      "sha256": "bd7c1a6da3606a949138ae954d58d7138403aee43e872254b67467a59baaa5ac",
+      "sha256": "e521554f79636a415c11673e580e3b38a21885c6a05ab84909287399002c16a2",
       "models": ["formal/models/api/api_wanted_issues.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -9409,7 +9409,7 @@
     },
     {
       "path": "workers/slopbot/reporting-readiness.ts",
-      "sha256": "ce822b0645f648795b3e152145cc44c7041427e096e508c092bcd35ac11b7977",
+      "sha256": "c75b221243b8c464cefc99aaaba84c5b455e2b2d79d7ae8d5e7ca38753626f6f",
       "models": [
         "formal/models/api/api_reporting_readiness.qnt",
         "formal/models/api/api_wanted_issues.qnt"
@@ -11586,7 +11586,7 @@
     },
     {
       "path": "formal/models/api/api_wanted_issues.qnt",
-      "sha256": "38199ad6a43e635843f671a650a32a5161149f10752299265e65f22967858010",
+      "sha256": "87c7086ec448f96425196790cad2b1e713d1a012641817777583dbadd6fd61fd",
       "sources": [
         "backend/projects/merge-activity.ts",
         "backend/security/github-advisories.ts",
