@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "327ea76a2d5bb8973912ab720bd5c38c48c4be760621ae9a98d246d435db56b1",
+  "inventorySha256": "723bef6a4b51d7f49cf7b57b4ae2b0fa3f014a41305c19449d6c1e79408b912f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -372,7 +372,23 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 119,
+      "line": 99,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live", "off"],
+      "models": [
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["off"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/case-store.ts",
+      "line": 129,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -388,7 +404,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 695,
+      "line": 705,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -446,8 +462,62 @@
       "review": "candidate-only"
     },
     {
+      "path": "backend/security/report-deposit.ts",
+      "line": 54,
+      "name": "ReportDepositMode",
+      "kind": "string-union",
+      "values": ["dry_run", "live", "off"],
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/report-deposit.ts",
+      "line": 216,
+      "name": "ReportDepositReason",
+      "kind": "string-union",
+      "values": [
+        "duplicate",
+        "out-of-scope",
+        "responded",
+        "silent",
+        "spam",
+        "turned-off"
+      ],
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/report-deposit.ts",
+      "line": 265,
+      "name": "outcome",
+      "kind": "string-union",
+      "values": ["kept_due", "refund_due"],
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/report-deposit.ts",
+      "line": 597,
+      "name": "state",
+      "kind": "string-union",
+      "values": [
+        "kept",
+        "kept_due",
+        "needed",
+        "paid",
+        "refund_due",
+        "refunded"
+      ],
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "lexicallyUnmentionedValues": ["needed"],
+      "review": "candidate-only"
+    },
+    {
       "path": "backend/security/routine-decisions.ts",
-      "line": 53,
+      "line": 54,
       "name": "RoutineMode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -457,7 +527,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 130,
+      "line": 131,
       "name": "Outcome",
       "kind": "string-union",
       "values": [
@@ -480,7 +550,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 138,
+      "line": 139,
       "name": "HoldReason",
       "kind": "string-union",
       "values": [
@@ -504,7 +574,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 162,
+      "line": 163,
       "name": "state",
       "kind": "string-union",
       "values": ["answered", "failed"],
@@ -514,7 +584,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 189,
+      "line": 190,
       "name": "decision",
       "kind": "string-union",
       "values": ["exclusionLine", "missing", "outcome", "proofDueAt"],
@@ -529,7 +599,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 320,
+      "line": 321,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -539,7 +609,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 476,
+      "line": 479,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -549,7 +619,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 577,
+      "line": 580,
       "name": "state",
       "kind": "string-union",
       "values": ["answered", "failed"],
@@ -559,7 +629,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 672,
+      "line": 675,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -569,7 +639,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 805,
+      "line": 808,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -579,7 +649,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 902,
+      "line": 905,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -589,7 +659,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 915,
+      "line": 918,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
