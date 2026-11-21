@@ -6,6 +6,7 @@ import {ERC1967Utils} from "../vendor/openzeppelin/contracts/proxy/ERC1967/ERC19
 import {UUPSUpgradeable} from "../vendor/openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "../vendor/openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {EscrowMath} from "./EscrowMath.sol";
+import {MONTHLY_CUTOFF_DELAY, MonthlyCalendar} from "./MonthlyCalendar.sol";
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
@@ -17,10 +18,6 @@ interface IERC20 {
 /// @dev Bounds on award-commit and unpaid-binding review periods. Wallet activation is immediate.
 uint64 constant MIN_BINDING_DELAY = 0;
 uint64 constant MAX_BINDING_DELAY = 30 days;
-
-/// @dev A monthly allocation for calendar UTC month M can be committed from MONTHLY_CUTOFF_DELAY after M ends
-/// until MONTHLY_CUTOFF_DELAY after the next month ends (owner decision D1: 00:00 UTC on the 4th).
-uint64 constant MONTHLY_CUTOFF_DELAY = 72 hours;
 
 /// @notice What a vault holds funds for. One owner can hold one vault per project, token and purpose, so
 /// ordinary awards and private bounties never share a balance (owner decision D13).
@@ -423,24 +420,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// until MONTHLY_CUTOFF_DELAY after the next month ends. The period is YYYYMM in UTC, year 2000 to 9999.
     /// Only one period is open at a time, so a stolen authority key can commit at most one cap per month.
     function monthlyWindow(uint32 period) public pure returns (uint64 opensAt, uint64 closesAt) {
-        uint256 year = period / 100;
-        uint256 month = period % 100;
-        if (year < 2000 || year > 9999 || month == 0 || month > 12) revert InvalidInput();
-        (uint256 nextYear, uint256 nextMonth) = month == 12 ? (year + 1, uint256(1)) : (year, month + 1);
-        (uint256 afterYear, uint256 afterMonth) =
-            nextMonth == 12 ? (nextYear + 1, uint256(1)) : (nextYear, nextMonth + 1);
-        opensAt = uint64(monthStart(nextYear, nextMonth)) + MONTHLY_CUTOFF_DELAY;
-        closesAt = uint64(monthStart(afterYear, afterMonth)) + MONTHLY_CUTOFF_DELAY;
-    }
-
-    /// @dev Unix time of 00:00 UTC on the first day of a month (proleptic Gregorian, days from civil).
-    function monthStart(uint256 year, uint256 month) private pure returns (uint256) {
-        uint256 y = month <= 2 ? year - 1 : year;
-        uint256 era = y / 400;
-        uint256 yearOfEra = y - era * 400;
-        uint256 dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
-        uint256 dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
-        return (era * 146097 + dayOfEra - 719468) * 1 days;
+        (opensAt, closesAt) = MonthlyCalendar.window(period);
+        if (opensAt == 0) revert InvalidInput();
     }
 
     /// @dev Externally owned accounts only: a 65-byte canonical secp256k1 signature that recovers to the
@@ -529,7 +510,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         // The open window belongs to the month before the one containing now - MONTHLY_CUTOFF_DELAY.
         if (openPledgedGross != 0) {
-            uint32 open = periodAt(block.timestamp - MONTHLY_CUTOFF_DELAY);
+            uint32 open = MonthlyCalendar.periodAt(uint64(block.timestamp - MONTHLY_CUTOFF_DELAY));
             if (monthPledges[open % 100 == 1 ? open - 89 : open - 1].open) revert PledgedMonthOpen();
         }
         commit(id, actorId, gross, sourceDigest, payoutFee(gross));
@@ -608,17 +589,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice The UTC calendar month (YYYYMM) containing the current block.
     function currentPeriod() public view returns (uint32) {
-        return periodAt(block.timestamp);
-    }
-
-    function periodAt(uint256 time) private pure returns (uint32) {
-        // The mean Gregorian year puts the estimate within one year; monthStart settles it exactly.
-        uint256 year = 1970 + time / 31_556_952;
-        if (monthStart(year, 1) > time) --year;
-        else if (monthStart(year + 1, 1) <= time) ++year;
-        uint256 month = 12;
-        while (monthStart(year, month) > time) --month;
-        return uint32(year * 100 + month);
+        return MonthlyCalendar.periodAt(uint64(block.timestamp));
     }
 
     /// @dev The cap a period's allocation may use: monthlyCap while commitments are on, raised to an open

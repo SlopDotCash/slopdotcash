@@ -30,6 +30,7 @@ obligation.
 - [Skill package validation runtime](./skillValidation.md)
 - [Skill installation](./installation.md)
 - [Work and review](./workflow.md)
+- [Maintainer agent workflow](./maintainerWorkflow.md)
 - [Pull request evidence artifact transport](./artifactTransport.md)
 - [Optional contribution evidence](./evidence.md)
 - [Durable local contributor receipts](./localReceipt.md)
