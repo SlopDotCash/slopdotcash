@@ -37,43 +37,26 @@ lemma WindowOpensPositive(period: int)
   MonthStartPositive(nextPeriod(period));
 }
 
-ghost function CivilYear(period: int): int
-{
-  period / 100 - (if period % 100 <= 2 then 1 else 0)
-}
-
-ghost function MarchMonth(period: int): int
-{
-  if period % 100 > 2 then period % 100 - 3 else period % 100 + 9
-}
-
-ghost function YearDays(year: int): int
-  requires year >= 0
-{
-  var era := year / 400;
-  var yearOfEra := year - era * 400;
-  era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100
-}
-
-lemma MonthStartSplit(period: int)
+lemma MonthStartSplit(period: int) returns (year: int, march: int)
   requires period >= 202611 && 1 <= period % 100 <= 12
-  ensures monthStart(period) == (YearDays(CivilYear(period)) + (153 * MarchMonth(period) + 2) / 5 - 719468) * 86400
+  ensures year == (period / 100 - (if period % 100 <= 2 then 1 else 0)) && year >= 2025
+  ensures march == (if period % 100 > 2 then period % 100 - 3 else period % 100 + 9) && 0 <= march <= 11
+  ensures monthStart(period) == (((year) / 400 * 146097 + ((year) - (year) / 400 * 400) * 365 + ((year) - (year) / 400 * 400) / 4 - ((year) - (year) / 400 * 400) / 100) + (153 * march + 2) / 5 - 719468) * 86400
 {
   MonthlyCommitmentDivision(period, 100);
-  var year := CivilYear(period);
-  assert year >= 2025;
+  year := (period / 100 - (if period % 100 <= 2 then 1 else 0));
+  march := (if period % 100 > 2 then period % 100 - 3 else period % 100 + 9);
   MonthlyCommitmentDivision(year, 400);
   var yearOfEra := year - (year / 400) * 400;
   assert 0 <= yearOfEra < 400;
   MonthlyCommitmentDivision(yearOfEra, 4);
   MonthlyCommitmentDivision(yearOfEra, 100);
-  assert 0 <= MarchMonth(period) <= 11;
-  MonthlyCommitmentDivision(153 * MarchMonth(period) + 2, 5);
+  MonthlyCommitmentDivision(153 * march + 2, 5);
 }
 
 lemma YearDaysStep(year: int)
   requires year >= 0
-  ensures YearDays(year + 1) >= YearDays(year) + 364
+  ensures ((year + 1) / 400 * 146097 + ((year + 1) - (year + 1) / 400 * 400) * 365 + ((year + 1) - (year + 1) / 400 * 400) / 4 - ((year + 1) - (year + 1) / 400 * 400) / 100) >= ((year) / 400 * 146097 + ((year) - (year) / 400 * 400) * 365 + ((year) - (year) / 400 * 400) / 4 - ((year) - (year) / 400 * 400) / 100) + 364
 {
   var era := year / 400;
   var yearOfEra := year - era * 400;
@@ -84,24 +67,22 @@ lemma YearDaysStep(year: int)
     assert (yearOfEra + 1) / 100 <= yearOfEra / 100 + 1;
   } else {
     assert (year + 1) / 400 == era + 1;
-    assert YearDays(year) == era * 146097 + 399 * 365 + 99 - 3;
+    assert ((year) / 400 * 146097 + ((year) - (year) / 400 * 400) * 365 + ((year) - (year) / 400 * 400) / 4 - ((year) - (year) / 400 * 400) / 100) == era * 146097 + 399 * 365 + 99 - 3;
   }
 }
 
 lemma NextPeriodValid(period: int)
   requires period >= 202611 && 1 <= period % 100 <= 12
   ensures nextPeriod(period) >= 202611 && 1 <= nextPeriod(period) % 100 <= 12
-  ensures MarchMonth(period) < 11 ==> CivilYear(nextPeriod(period)) == CivilYear(period) && MarchMonth(nextPeriod(period)) == MarchMonth(period) + 1
-  ensures MarchMonth(period) == 11 ==> CivilYear(nextPeriod(period)) == CivilYear(period) + 1 && MarchMonth(nextPeriod(period)) == 0
+  ensures nextPeriod(period) / 100 == period / 100 + (if period % 100 == 12 then 1 else 0)
+  ensures nextPeriod(period) % 100 == (if period % 100 == 12 then 1 else period % 100 + 1)
 {
   MonthlyCommitmentDivision(period, 100);
   var next := nextPeriod(period);
   if period % 100 == 12 {
     assert next == (period / 100 + 1) * 100 + 1;
-    assert next / 100 == period / 100 + 1 && next % 100 == 1;
   } else {
     assert next == period + 1;
-    assert next / 100 == period / 100 && next % 100 == period % 100 + 1;
   }
 }
 
@@ -110,14 +91,14 @@ lemma MonthStartIncreases(period: int)
   ensures monthStart(period) < monthStart(nextPeriod(period))
 {
   NextPeriodValid(period);
-  var next := nextPeriod(period);
-  MonthStartSplit(period);
-  MonthStartSplit(next);
-  var s := MarchMonth(period);
-  if s < 11 {
-    assert (153 * (s + 1) + 2) / 5 > (153 * s + 2) / 5;
+  var year, march := MonthStartSplit(period);
+  var nextYear, nextMarch := MonthStartSplit(nextPeriod(period));
+  if march < 11 {
+    assert nextYear == year && nextMarch == march + 1;
+    assert (153 * (march + 1) + 2) / 5 > (153 * march + 2) / 5;
   } else {
-    YearDaysStep(CivilYear(period));
+    assert nextYear == year + 1 && nextMarch == 0;
+    YearDaysStep(year);
     assert (153 * 11 + 2) / 5 == 337;
   }
 }
