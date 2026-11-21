@@ -1,6 +1,7 @@
 // @source scripts/historical-assessment-catalog.ts
 // @source scripts/historical-assessment-reconciliation.ts
 // @source scripts/historical-assessment-transport.ts
+// @source scripts/historical-closed-review-source.ts
 // @source scripts/historical-merged-replay.ts
 // @source scripts/historical-replay-review.ts
 // @source scripts/historical-value-replay.ts
@@ -70,12 +71,14 @@ module historical_assessment_audit {
   action bindClosureReview(
     matchingLifecycle: bool,
     auditedMergedAnchor: bool,
+    standaloneReviewOnlyRecord: bool,
+    exactSource: bool,
     sameAssessedReviewAndActor: bool,
     beforeClose: bool,
     reviewOnly: bool,
   ): bool = {
-    val matches = matchingLifecycle and auditedMergedAnchor
-      and sameAssessedReviewAndActor and beforeClose and reviewOnly
+    val matches = matchingLifecycle and (auditedMergedAnchor or standaloneReviewOnlyRecord)
+      and exactSource and sameAssessedReviewAndActor and beforeClose and reviewOnly
     all {
       s.phase == "reading",
       complete,
@@ -116,12 +119,14 @@ module historical_assessment_audit {
     observe(false, false, false),
     changeCheckpoint(true),
     changeCheckpoint(false),
-    bindClosureReview(true, true, true, true, true),
-    bindClosureReview(false, true, true, true, true),
-    bindClosureReview(true, false, true, true, true),
-    bindClosureReview(true, true, false, true, true),
-    bindClosureReview(true, true, true, false, true),
-    bindClosureReview(true, true, true, true, false),
+    bindClosureReview(true, true, false, true, true, true, true),
+    bindClosureReview(false, true, false, true, true, true, true),
+    bindClosureReview(true, false, false, true, true, true, true),
+    bindClosureReview(true, true, false, true, false, true, true),
+    bindClosureReview(true, true, false, true, true, false, true),
+    bindClosureReview(true, true, false, true, true, true, false),
+    bindClosureReview(true, false, true, true, true, true, true),
+    bindClosureReview(true, false, true, false, true, true, true),
     stageReview(true, true, true),
     seal,
     s' = s,
@@ -165,19 +170,26 @@ module historical_assessment_audit {
     .then(seal).expect(s.reviewAvailable and invariant)
   action relevantCut = capture(true, true, false, 1, 0).then(observe(true, true, true))
   run verifiedClosureReviewCanBeStagedTest = init.then(relevantCut)
-    .then(bindClosureReview(true, true, true, true, true))
+    .then(bindClosureReview(true, true, false, true, true, true, true))
     .then(stageReview(true, true, true)).then(seal)
     .expect(s.reviewAvailable and s.boundClosureReview and invariant)
+  run exactStandaloneClosureReviewCanBeStagedTest = init.then(relevantCut)
+    .then(bindClosureReview(true, false, true, true, true, true, true))
+    .then(stageReview(true, true, true)).then(seal)
+    .expect(s.reviewAvailable and s.boundClosureReview and invariant)
+  run missingStandaloneSourceDigestRefusesClosureReviewTest = init.then(relevantCut)
+    .then(bindClosureReview(true, false, true, false, true, true, true))
+    .then(stageReview(true, true, true).fail())
   run missingAnchorRefusesClosureReviewTest = init.then(relevantCut)
-    .then(bindClosureReview(true, false, true, true, true))
+    .then(bindClosureReview(true, false, false, true, true, true, true))
     .then(stageReview(true, true, true).fail())
   run changedReviewIdentityRefusesClosureReviewTest = init.then(relevantCut)
-    .then(bindClosureReview(true, true, false, true, true))
+    .then(bindClosureReview(true, true, false, true, false, true, true))
     .then(stageReview(true, true, true).fail())
   run closureImplementationCannotBeStagedTest = init.then(relevantCut)
-    .then(bindClosureReview(true, true, true, true, false))
+    .then(bindClosureReview(true, true, false, true, true, true, false))
     .then(stageReview(true, true, true).fail())
   run postCloseReviewCannotBeStagedTest = init.then(relevantCut)
-    .then(bindClosureReview(true, true, true, false, true))
+    .then(bindClosureReview(true, true, false, true, true, false, true))
     .then(stageReview(true, true, true).fail())
 }

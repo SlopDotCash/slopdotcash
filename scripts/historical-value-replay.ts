@@ -24,7 +24,9 @@ import {
   type HistoricalAssessmentReceipt,
   type HistoricalContextGitHub,
   historicalClosedContextBindings,
+  isHistoricalClosedFinding,
 } from "./historical-assessment-reconciliation";
+import { isStandaloneHistoricalReview } from "./historical-closed-review-source";
 import type { HistoricalPointsPacket } from "./reviewed-historical-points";
 
 type ValueScope = Pick<HistoricalPointsPacket, "projectId" | "sourceAudit">;
@@ -106,6 +108,7 @@ type RestReview = {
   node_id: string;
   html_url: string;
   submitted_at: string | null;
+  state?: string;
   user: { id: number; node_id: string; type: string } | null;
 };
 
@@ -178,11 +181,13 @@ export async function verifyHistoricalClosedReviews(
         (row) =>
           row.journal === "joint" &&
           row.digest === context.digest &&
-          row.sources.some(
-            (source) =>
-              source.finding === "audited-head" ||
-              source.finding === "stale-head",
-          ),
+          (context.standaloneReview
+            ? row.sources.length === 1 && isStandaloneHistoricalReview(record)
+            : row.sources.some(
+                (source) =>
+                  source.finding === "audited-head" ||
+                  source.finding === "stale-head",
+              )),
       ) &&
         record.sources.some(
           (source) =>
@@ -210,6 +215,9 @@ export async function verifyHistoricalClosedReviews(
       current?.node_id === event.source.id &&
         String(current.id) === reviewId &&
         current.html_url === event.source.url &&
+        (!context.standaloneReview ||
+          current.state === "APPROVED" ||
+          current.state === "CHANGES_REQUESTED") &&
         current.submitted_at &&
         Date.parse(current.submitted_at) === Date.parse(event.occurredAt) &&
         current.user?.type === "User" &&
@@ -330,14 +338,14 @@ function verifyCoverage(
     for (const source of sources) {
       if (
         source.finding === "outside-audit" ||
-        (source.finding === "verified-closed-context" &&
+        (isHistoricalClosedFinding(source.finding) &&
           !reviewedParents.has(source.id))
       )
         continue;
       ensure(
         (source.finding === "audited-head" ||
           source.finding === "stale-head" ||
-          source.finding === "verified-closed-context") &&
+          isHistoricalClosedFinding(source.finding)) &&
           !active.has(source.id),
         "Historical assessment has a conflicting active source",
       );
@@ -471,7 +479,7 @@ function verifyLinkedScope(
           .filter(
             (source) =>
               source.finding === "outside-audit" ||
-              source.finding === "verified-closed-context",
+              isHistoricalClosedFinding(source.finding),
           )
           .map((source) => source.id),
       ),

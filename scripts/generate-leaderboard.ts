@@ -5829,6 +5829,8 @@ async function collectLeaderboardFromGitHub(
       session: options.collectionMemo,
       cutoffAt: now.toISOString(),
     },
+    undefined,
+    historical?.closedContexts,
   );
   // Some evidence lookups can record individual gaps. A collector deadline
   // invalidates the entire attempt even if a helper caught its exception.

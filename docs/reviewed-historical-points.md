@@ -24,7 +24,15 @@ the normal main collector's concurrency group and leaves the production
 publication lock available. It emits a qualification digest for a replay that
 matches the exact merged scope and satisfies the assessment checks. The digest
 binds the value changes and their provenance independently of collector timing.
-Extra closed-unmerged outcomes require their own reviewed source coverage.
+Closed-unmerged reviews retain separate lifecycle coverage and never enter the
+merged census. A standalone closed review requires matching public GitHub
+closure reads and one complete joint record with a single source, no
+implementation claims, and one review-only unit. Historical replay can omit a
+single same-repository related PR and its derived evidence URL when GitHub
+proves that exact public PR was created after the recorded assessment. Both the
+per-source and joint digests must match the original record after this change.
+Replay refuses stale or partial standalone evidence. The ordinary scorer still
+checks pre-close review eligibility, duplicate findings and caps.
 
 Use `operation=replay-assessments`, `apply=false`, and
 `stage_review_handoff=true` to prepare the exact replay inputs for owner review.

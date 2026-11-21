@@ -16,6 +16,7 @@ export type HistoricalClosedContextBindings = ReadonlyMap<
     number: number;
     headSha: string;
     occurredAt: string;
+    standaloneReview?: true;
   }
 >;
 
@@ -81,6 +82,8 @@ export function createMergedHistoricalReplaySnapshot(
       decision.latestDigest !== binding.digest
     )
       throw new HistoricalClosedOutcomeError("lifecycle");
+    if (binding.standaloneReview && decision.status !== "assessed")
+      throw new HistoricalClosedOutcomeError("assessment");
   }
   if (!closed.length) return createHistoricalLeaderboardSnapshot(input, scope);
   const closedIds = new Set(closedById.keys());
@@ -133,11 +136,13 @@ export function createMergedHistoricalReplaySnapshot(
     (complete.source.heldWorkUnits ?? []).some((unit) =>
       unit.sourceNodeIds.some((id) => closedIds.has(id)),
     ) ||
-    (complete.reviewedImplementationUnits ?? []).some(
-      (unit) =>
+    (complete.reviewedImplementationUnits ?? []).some((unit) => {
+      const binding = approvedContexts.get(unit.pullRequestId);
+      return (
         closedIds.has(unit.pullRequestId) &&
-        !approvedContexts.has(unit.pullRequestId),
-    )
+        (!binding || (binding.standaloneReview && unit.units.length > 0))
+      );
+    })
   )
     throw new HistoricalClosedOutcomeError("assessment");
 

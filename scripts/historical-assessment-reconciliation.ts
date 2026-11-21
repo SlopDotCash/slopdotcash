@@ -17,6 +17,7 @@ import {
 } from "../workers/slopbot/verified-source-ownership";
 import { completeClaimPartition } from "../workers/slopbot/verified-work-unit";
 import type { HistoricalAssessmentCatalog } from "./historical-assessment-catalog";
+import { isStandaloneHistoricalReview } from "./historical-closed-review-source";
 import type { HistoricalPointsPacket } from "./reviewed-historical-points";
 
 type SourceAudit = HistoricalPointsPacket["sourceAudit"];
@@ -25,10 +26,23 @@ type StoredRow =
   | HistoricalAssessmentCatalog["joint"][number]
   | HistoricalAssessmentCatalog["legacy"][number];
 
+type VerifiedClosedFinding =
+  | "verified-closed-context"
+  | "verified-standalone-closed-review";
+
+export function isHistoricalClosedFinding(
+  finding: SourceFinding,
+): finding is VerifiedClosedFinding {
+  return (
+    finding === "verified-closed-context" ||
+    finding === "verified-standalone-closed-review"
+  );
+}
+
 type SourceFinding =
   | "audited-head"
   | "stale-head"
-  | "verified-closed-context"
+  | VerifiedClosedFinding
   | "conflicting-audit-binding"
   | "missing-from-merged-audit"
   | "outside-audit";
@@ -413,20 +427,23 @@ const CLOSED_CONTEXT_QUERY =
   "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid repository{id databaseId isPrivate nameWithOwner}}}}";
 
 async function verifyClosedContexts(
-  candidates: readonly WorkUnitRecord["sources"][number][],
+  candidates: readonly {
+    source: WorkUnitRecord["sources"][number];
+    standalone: boolean;
+  }[],
   github: HistoricalContextGitHub,
 ) {
-  const verified = new Set<string>();
+  const verified = new Map<string, VerifiedClosedFinding>();
   for (let offset = 0; offset < candidates.length; offset += 30) {
     const batch = candidates.slice(offset, offset + 30);
     const result = await github.graphql<{ nodes: (ClosedLifecycle | null)[] }>(
       CLOSED_CONTEXT_QUERY,
-      { ids: batch.map((source) => source.pullRequestNodeId) },
+      { ids: batch.map(({ source }) => source.pullRequestNodeId) },
     );
     ensure(
       Array.isArray(result?.nodes) && result.nodes.length === batch.length,
     );
-    for (const [index, source] of batch.entries()) {
+    for (const [index, { source, standalone }] of batch.entries()) {
       const observed = result.nodes[index];
       if (
         observed?.__typename !== "PullRequest" ||
@@ -450,7 +467,7 @@ async function verifyClosedContexts(
       // REST can retain GitHub's test-merge identifier on an unmerged PR.
       // Keep the stored identifier and require the same immutable REST source
       // and explicit non-acceptance, alongside GraphQL's null actual merge.
-      if (source.mergeSha !== null) {
+      if (standalone || source.mergeSha !== null) {
         const rest = await github.get<RestLifecycle>(
           `/repos/${source.repository}/pulls/${source.pullRequestNumber}`,
         );
@@ -470,7 +487,12 @@ async function verifyClosedContexts(
         )
           continue;
       }
-      verified.add(source.pullRequestNodeId);
+      verified.set(
+        source.pullRequestNodeId,
+        standalone
+          ? "verified-standalone-closed-review"
+          : "verified-closed-context",
+      );
     }
   }
   return verified;
@@ -482,10 +504,21 @@ export function historicalClosedContextBindings(
   return new Map(
     receipt.records.flatMap(({ digest, sources }) =>
       sources
-        .filter(({ finding }) => finding === "verified-closed-context")
+        .filter(({ finding }) => isHistoricalClosedFinding(finding))
         .map(
-          ({ id, number, headSha, occurredAt }) =>
-            [id, { digest, number, headSha, occurredAt }] as const,
+          ({ id, number, headSha, occurredAt, finding }) =>
+            [
+              id,
+              {
+                digest,
+                number,
+                headSha,
+                occurredAt,
+                ...(finding === "verified-standalone-closed-review"
+                  ? { standaloneReview: true as const }
+                  : {}),
+              },
+            ] as const,
         ),
     ),
   );
@@ -498,7 +531,7 @@ function scopedRecord(
   audit: SourceAudit,
   byId: ReadonlyMap<string, SourceAudit["sources"][number]>,
   byNumber: ReadonlyMap<number, SourceAudit["sources"][number]>,
-  verifiedClosed?: ReadonlySet<string>,
+  verifiedClosed?: ReadonlyMap<string, VerifiedClosedFinding>,
 ): ScopedRecord {
   return {
     journal,
@@ -519,9 +552,8 @@ function scopedRecord(
               ? "audited-head"
               : "stale-head"
           : occurredAt >= audit.from && occurredAt < audit.through
-            ? verifiedClosed?.has(source.pullRequestNodeId)
-              ? "verified-closed-context"
-              : "missing-from-merged-audit"
+            ? (verifiedClosed?.get(source.pullRequestNodeId) ??
+              "missing-from-merged-audit")
             : "outside-audit";
         return {
           id: source.pullRequestNodeId,
@@ -677,7 +709,12 @@ export async function classifyHistoricalAssessmentScope(
   const verifiedClosed = github
     ? await verifyClosedContexts(
         jointSources.flatMap(({ initial, record }) => {
+          const standalone =
+            initial.sources.length === 1 &&
+            initial.sources[0].finding === "missing-from-merged-audit" &&
+            isStandaloneHistoricalReview(record);
           if (
+            !standalone &&
             !initial.sources.some(
               ({ finding }) =>
                 finding === "audited-head" || finding === "stale-head",
@@ -689,11 +726,13 @@ export async function classifyHistoricalAssessmentScope(
               .filter(({ finding }) => finding === "missing-from-merged-audit")
               .map(({ id }) => id),
           );
-          return record.sources.filter(
-            (source) =>
-              missing.has(source.pullRequestNodeId) &&
-              source.indirectAcceptance === undefined,
-          );
+          return record.sources
+            .filter(
+              (source) =>
+                missing.has(source.pullRequestNodeId) &&
+                source.indirectAcceptance === undefined,
+            )
+            .map((source) => ({ source, standalone }));
         }),
         github,
       )

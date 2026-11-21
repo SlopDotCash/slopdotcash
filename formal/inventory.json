@@ -4392,7 +4392,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "7a6c97a82e9caf74cdd6f8e7ab91728604ecd1a8b7efd166051431fc1e947140",
+      "sha256": "3802f1b2dc71822c321a5354ac02bbd515932d3b758482e7cef338bedcc64b9a",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4414,8 +4414,8 @@
         3615, 3616, 3807, 3823, 3835, 3842, 3868, 3878, 3882, 3886, 3890, 3945,
         3964, 3991, 4008, 4042, 4043, 4045, 4061, 4078, 4079, 4080, 4089, 4094,
         4274, 4632, 4654, 4663, 4713, 4748, 4754, 4761, 4830, 4900, 5030, 5151,
-        5349, 5508, 5843, 5853, 5855, 5868, 5901, 5903, 5904, 5908, 5912, 5968,
-        6032, 6085, 6088, 6177, 6225, 6305, 6315, 6322
+        5349, 5508, 5845, 5855, 5857, 5870, 5903, 5905, 5906, 5910, 5914, 5970,
+        6034, 6087, 6090, 6179, 6227, 6307, 6317, 6324
       ],
       "review": "mapped-abstraction"
     },
@@ -4512,9 +4512,9 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "sha256": "8efab3403458a3e8830e2636a2ce2da3809f845c95ec686c04725c106faa00ce",
+      "sha256": "76d6851a4892ba60550e6584362fa038ab0fa2891eeb6ead29d64cab118732fe",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [57, 180, 368, 385, 403, 413, 435, 460, 628, 636],
+      "candidateLines": [71, 194, 382, 399, 417, 427, 452, 477, 660, 668],
       "review": "mapped-abstraction"
     },
     {
@@ -4522,6 +4522,13 @@
       "sha256": "d8702120df90320704b96d94d5b419635de548360af3a4f9174a23f1c570287a",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
       "candidateLines": [138, 140, 146, 161, 186],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/historical-closed-review-source.ts",
+      "sha256": "5ca5a29cc9908ceb54cfcd5f58a6a57e7581b3626c60a59abbacb2624974c5c3",
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "candidateLines": [18, 66],
       "review": "mapped-abstraction"
     },
     {
@@ -4536,9 +4543,9 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "0d82910c09f0ba3c1ce2307e014dcecb6179331f88a11f6d5b2f9e8c8c842cf9",
+      "sha256": "efdce1d57ede9c56b4dc62b9e53ee9586bed82b7c0b0f85bcdf6812465e97f54",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [57, 118, 119, 122, 123, 195],
+      "candidateLines": [58, 85, 121, 122, 125, 126, 200],
       "review": "mapped-abstraction"
     },
     {
@@ -4557,9 +4564,11 @@
     },
     {
       "path": "scripts/historical-value-replay.ts",
-      "sha256": "93e129e31102d4044fa5d7ec8a466d4f5e7b47449e3781b35abf34f9a357b322",
+      "sha256": "43a4e7858fcc8e0fe0e9adfa546b16cda49c0156cbdab365c96c4e8d61aeeba9",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [129, 198, 270, 353, 361, 363, 364, 367, 581, 593],
+      "candidateLines": [
+        111, 132, 203, 219, 220, 278, 361, 369, 371, 372, 375, 589, 601
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -5564,7 +5573,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "412a3af4c723f0bff7900ea6c246d65876ea403bbf529af16b02f84ade4a622d",
+      "sha256": "b9679fb65ab9c62ac65a44acf89c1f674400d195d2935d0bf7ed2adf4dd7114e",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5575,8 +5584,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        80, 91, 148, 207, 208, 209, 210, 212, 213, 302, 303, 304, 306, 307, 966,
-        995, 1241, 1411, 1447, 1488, 1512
+        82, 93, 150, 209, 210, 211, 212, 214, 215, 304, 305, 306, 308, 309, 969,
+        998, 1244, 1414, 1451, 1469, 1510, 1534
       ],
       "review": "mapped-abstraction"
     },
@@ -15726,12 +15735,13 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "21f276ff6d77210a0b73b826aaf5f8f0ad3e7f9cdc36047a526efa89d0082b30",
+      "sha256": "0ff107811e27bc5042c35b0d946bbac5116894a9076bcbb9f2f11ac17e64ba75",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
         "scripts/historical-assessment-reconciliation.ts",
         "scripts/historical-assessment-transport.ts",
+        "scripts/historical-closed-review-source.ts",
         "scripts/historical-merged-replay.ts",
         "scripts/historical-replay-review.ts",
         "scripts/historical-value-replay.ts",
@@ -15744,9 +15754,11 @@
         "changedReviewIdentityRefusesClosureReviewTest",
         "changedScopeCannotEnterAuditTest",
         "closureImplementationCannotBeStagedTest",
+        "exactStandaloneClosureReviewCanBeStagedTest",
         "invalidRecordRemainsIncompleteTest",
         "matchedActiveRecordRequiresReplayTest",
         "missingAnchorRefusesClosureReviewTest",
+        "missingStandaloneSourceDigestRefusesClosureReviewTest",
         "postCloseReviewCannotBeStagedTest",
         "privateReviewNeedsExactReadbackTest",
         "privateReviewNeedsOptInTest",
