@@ -5,6 +5,7 @@ import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertLeaderboardSnapshot,
+  type LeaderboardSnapshot,
   ledgerWorkUnitId,
   SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
@@ -18,9 +19,11 @@ import {
   awardForScore,
   latestPoints,
   type PointAward,
+  type PointRevision,
   type PointsIndex,
   type PointsJournal,
   type PointsMember,
+  pointKey,
   pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
@@ -592,19 +595,106 @@ export interface ProtectedPointMonth {
   period: string;
 }
 
+function mergeCoverageKey(
+  snapshotDigest: string,
+  projectId: string,
+  sourceId: string,
+) {
+  return JSON.stringify([snapshotDigest, projectId, sourceId]);
+}
+
+interface ReviewedMergeGroup {
+  key: string;
+  valueSourceId: string;
+  workUnitId: string;
+}
+
+type ReviewedMergeGroups = ReadonlyMap<string, readonly ReviewedMergeGroup[]>;
+
+export function reviewedMergeGroups(
+  snapshots: ReadonlyArray<{
+    snapshot: Pick<LeaderboardSnapshot, "reviewedImplementationUnits">;
+    digest: string;
+  }>,
+): ReviewedMergeGroups {
+  const groups = new Map<string, ReviewedMergeGroup[]>();
+  for (const { snapshot, digest } of snapshots) {
+    for (const row of snapshot.reviewedImplementationUnits ?? []) {
+      const projectId = findHistoricalRepository(row.repository)?.projectId;
+      if (!projectId) continue;
+      groups.set(
+        mergeCoverageKey(digest, projectId, row.pullRequestId),
+        row.units.map(({ recordDigest, workUnitId, groupId }) => ({
+          key: JSON.stringify(["coverage", digest, projectId, groupId]),
+          valueSourceId: `value:${recordDigest}`,
+          workUnitId,
+        })),
+      );
+    }
+  }
+  return groups;
+}
+
+function protectedMergePoolKeys(
+  revision: PointRevision,
+  snapshotDigest: string,
+  reviewedGroups: ReviewedMergeGroups,
+): string[] {
+  const { award, decision } = revision;
+  if (award.category !== "merged-pull-request") return [];
+  const keys: string[] = [];
+  if (award.sourceId)
+    keys.push(JSON.stringify([award.projectId, "pull", award.sourceId]));
+  if (award.workUnitId)
+    keys.push(JSON.stringify([award.projectId, "work-unit", award.workUnitId]));
+  const memberships = reviewedGroups.get(
+    mergeCoverageKey(snapshotDigest, award.projectId, award.sourceId),
+  );
+  // Older snapshots lack exact work-unit membership. Keep the decision bound
+  // to this snapshot and use precise membership when it is available.
+  if (
+    !memberships &&
+    decision &&
+    /^value:[a-f0-9]{64}$/u.test(decision.sourceId)
+  )
+    keys.push(
+      JSON.stringify([
+        award.projectId,
+        "decision",
+        snapshotDigest,
+        decision.sourceId,
+      ]),
+    );
+  if (memberships) {
+    const standalone =
+      award.key ===
+      pointKey(award.projectId, award.actor.id, award.category, award.sourceId);
+    for (const member of memberships) {
+      if (
+        standalone ||
+        (award.workUnitId === member.workUnitId &&
+          decision?.sourceId === member.valueSourceId)
+      ) {
+        keys.push(member.key);
+      }
+    }
+  }
+  return keys;
+}
 /**
  * Operator decision, 20 November 2026 (PRD section 7): the Points of a project
  * month that has a recorded payment are frozen. The atomic import in
  * pointsSql refuses a whole batch that changes one of them, which stopped
- * every fresh collection after the first monthly payments. Hold exactly the
- * candidate revisions that import would refuse, so the rest of the collection
- * can publish. `data/points/protected-months.json` mirrors the private
+ * every fresh collection after the first monthly payments. Keep the complete
+ * correction on hold if it would change a protected award.
+ * `data/points/protected-months.json` mirrors the private
  * settlement tables; a month missing from it still fails closed at import.
  */
 export function holdProtectedPointAwards(
   journal: PointsJournal,
   known: ReadonlySet<string>,
   months: readonly ProtectedPointMonth[],
+  reviewedGroups: ReviewedMergeGroups = new Map(),
 ): { journal: PointsJournal; held: number } {
   if (months.length === 0) return { journal, held: 0 };
   const scopes = new Set(months.map((m) => `${m.projectId}\0${m.period}`));
@@ -629,25 +719,64 @@ export function holdProtectedPointAwards(
         : null,
     ]);
   const byId = new Map(journal.revisions.map((r) => [r.id, r]));
-  const held = new Set<string>();
-  // Revisions are append-only, so a predecessor is always seen first.
+  const successors = new Map<string, string>();
+  const poolKeysByRevision = new Map<string, string[]>();
+  const revisionsByPool = new Map<string, string[]>();
+  const blocked: string[] = [];
   for (const revision of journal.revisions) {
     if (known.has(revision.id)) continue;
-    if (revision.previous !== null && held.has(revision.previous)) {
-      held.add(revision.id);
-      continue;
-    }
+    const previous = revision.previous
+      ? byId.get(revision.previous)
+      : undefined;
+    if (previous) successors.set(previous.id, revision.id);
     if (revision.award.category === "payout-received") continue;
-    const prior =
-      revision.previous !== null && known.has(revision.previous)
-        ? byId.get(revision.previous)
-        : undefined;
+    const prior = previous && known.has(previous.id) ? previous : undefined;
     if (prior && economic(prior.award) === economic(revision.award)) continue;
+
+    const keys = [
+      ...protectedMergePoolKeys(
+        revision,
+        revision.sourceDigest,
+        reviewedGroups,
+      ),
+      ...(previous
+        ? protectedMergePoolKeys(
+            previous,
+            revision.sourceDigest,
+            reviewedGroups,
+          )
+        : []),
+    ];
+    poolKeysByRevision.set(revision.id, keys);
+    for (const key of keys) {
+      const members = revisionsByPool.get(key);
+      if (members) members.push(revision.id);
+      else revisionsByPool.set(key, [revision.id]);
+    }
     if (
       scopes.has(scope(revision.award)) ||
       (prior !== undefined && scopes.has(scope(prior.award)))
-    )
-      held.add(revision.id);
+    ) {
+      blocked.push(revision.id);
+    }
+  }
+
+  // A replacement and its retirement must stay together even when the
+  // accepted work spans months or its source or work-unit identity changes.
+  const held = new Set<string>();
+  const visitedPools = new Set<string>();
+  for (let i = 0; i < blocked.length; i++) {
+    const id = blocked[i];
+    if (held.has(id)) continue;
+    held.add(id);
+    const successor = successors.get(id);
+    if (successor) blocked.push(successor);
+    for (const key of poolKeysByRevision.get(id) ?? []) {
+      if (visitedPools.has(key)) continue;
+      visitedPools.add(key);
+      const members = revisionsByPool.get(key);
+      if (members) for (const member of members) blocked.push(member);
+    }
   }
   if (held.size === 0) return { journal, held: 0 };
   return {
@@ -728,6 +857,9 @@ export async function generatePoints(
   const protectedMonths = knownRevisions
     ? await loadProtectedPointMonths()
     : [];
+  const reviewedGroups = protectedMonths.length
+    ? reviewedMergeGroups(snapshots)
+    : new Map();
   let heldRevisions = 0;
   const holdProtected = () => {
     if (!knownRevisions) return;
@@ -735,6 +867,7 @@ export async function generatePoints(
       journal,
       knownRevisions,
       protectedMonths,
+      reviewedGroups,
     );
     journal = result.journal;
     heldRevisions += result.held;

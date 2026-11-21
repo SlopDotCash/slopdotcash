@@ -17,6 +17,12 @@ import {
   latestPoints,
   type PointsJournal,
 } from "../src/lib/points";
+import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
+import { sha256Hex } from "../src/lib/sha256";
+import {
+  VALUE_RUBRIC_VERSION,
+  type ValueAssessment,
+} from "../src/lib/value-assessment";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
@@ -24,6 +30,10 @@ import {
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
+import {
+  type WorkUnitRecord,
+  workUnitIdentity,
+} from "../workers/slopbot/value-work-unit-journal";
 
 beforeAll(() => setSystemTime(new Date(AFTER_NOVEMBER)));
 afterAll(() => setSystemTime());
@@ -377,4 +387,178 @@ test("a source absorbed into another PR's joint unit retains the value decision 
   expect(
     latestPoints(withoutBinding).get(awardForScore(original).key)?.decision,
   ).toBeUndefined();
+});
+
+test("the snapshot publishes exact unit memberships from hash-pinned stale history", async () => {
+  const input = penaltyScoreInput([], GENERATED_AT);
+  const repository = findRegisteredRepositoryById("SlopDotCash/asi");
+  const collected = input.source.repositories.find(
+    (row) => row.id === repository?.id,
+  );
+  if (!repository || !collected) throw new Error("Fixture repository missing");
+  collected.repositoryId = repository.expectedNodeId ?? collected.repositoryId;
+  const sources = input.mergedPullRequestOutcomes.map((pull) => {
+    if (!pull.headRefOid || !pull.mergedAt)
+      throw new Error("Fixture source acceptance missing");
+    return {
+      repository: repository.id,
+      repositoryNodeId: collected.repositoryId,
+      repositoryDatabaseId: 42,
+      pullRequestNodeId: pull.id,
+      pullRequestNumber: pull.number,
+      headSha: pull.headRefOid,
+      mergeSha: pull.headRefOid,
+      occurredAt: pull.mergedAt,
+      policySha: "0".repeat(40),
+      sourceDigest: sha256Hex(pull.id),
+    };
+  });
+  const claims: WorkUnitRecord["claims"] = sources.map((source) => ({
+    id: sha256Hex(source.pullRequestNodeId),
+    repositoryNodeId: source.repositoryNodeId,
+    commitSha: source.headSha,
+    path: "src/fix.ts",
+    carrierPullRequestIds: [source.pullRequestNodeId],
+    creditPullRequestId: source.pullRequestNodeId,
+    implementationActorNodeIds: [PENALIZED_AUTHOR.id],
+  }));
+  const evidence = "Complete fixture claim scope.";
+  const assessment: ValueAssessment = {
+    status: "assessed",
+    tier: "micro",
+    rationale: evidence,
+    dimensions: {
+      alignment: evidence,
+      impact: evidence,
+      complexity: evidence,
+      verification: evidence,
+      maintenance: evidence,
+      overlap: evidence,
+    },
+    evidenceUrls: [input.mergedPullRequests[0].url],
+    relatedPullRequests: [],
+    limitations: [],
+    reviews: [],
+  };
+  const units = await Promise.all(
+    [["PR_november", "PR_owner"], ["PR_october"]].map(async (members) => {
+      const unit = { claimIds: members.map(sha256Hex).sort(), assessment };
+      return { ...unit, workUnitId: await workUnitIdentity(unit) };
+    }),
+  );
+  const record: WorkUnitRecord = {
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: repository.projectId,
+    sourceDigest: sha256Hex(JSON.stringify(sources)),
+    sources,
+    claims,
+    units,
+    rubricVersion: VALUE_RUBRIC_VERSION,
+    producerRevision: "1".repeat(40),
+    assessedAt: GENERATED_AT,
+    supersedes: [],
+    legacyPredecessors: [],
+    revisionReason: null,
+    model: {
+      provider: "surplus",
+      requested: "gpt-6.1-sol",
+      reported: "gpt-6.1-sol",
+    },
+  };
+  const recordJson = JSON.stringify(record);
+  const recordDigest = sha256Hex(recordJson);
+  const row = {
+    sequence: 1,
+    record_digest: recordDigest,
+    record_json: recordJson,
+    recorded_at: GENERATED_AT,
+  };
+  const carrierClaim = claims.find(
+    (claim) => claim.creditPullRequestId === "PR_november",
+  );
+  if (!carrierClaim) throw new Error("Fixture carrier claim missing");
+  const newClaim = {
+    ...carrierClaim,
+    id: sha256Hex("additional-implementation-claim"),
+    path: "src/second-fix.ts",
+  };
+  const successorUnit = {
+    ...units[0],
+    claimIds: [...units[0].claimIds, newClaim.id].sort(),
+  };
+  successorUnit.workUnitId = await workUnitIdentity(successorUnit);
+  const successorJson = JSON.stringify({
+    ...record,
+    claims: [...claims, newClaim],
+    units: [successorUnit, units[1]],
+    supersedes: [recordDigest],
+  } satisfies WorkUnitRecord);
+  const successorDigest = sha256Hex(successorJson);
+  const decision = {
+    status: "stale" as const,
+    history: [
+      row,
+      {
+        ...row,
+        sequence: 2,
+        record_digest: successorDigest,
+        record_json: successorJson,
+      },
+    ],
+    throughSequence: 2,
+    latestDigest: successorDigest,
+  };
+  input.jointValueDecisions = new Map(
+    sources.map((source) => [source.pullRequestNodeId, decision]),
+  );
+
+  const snapshot = createLeaderboardSnapshot(input);
+  assertLeaderboardSnapshot(snapshot);
+  const coverage = new Map(
+    snapshot.valueAssessmentCoverage?.map((entry) => [
+      entry.pullRequestId,
+      entry,
+    ]),
+  );
+  const memberships = new Map(
+    snapshot.reviewedImplementationUnits?.map(({ pullRequestId, units }) => [
+      pullRequestId,
+      units,
+    ]),
+  );
+  const shared = memberships.get("PR_november");
+  const independent = memberships.get("PR_october");
+  if (!shared || !independent)
+    throw new Error("Fixture unit membership missing");
+  for (const source of ["PR_november", "PR_owner"])
+    expect(coverage.get(source)).toMatchObject({
+      status: "stale",
+      recordDigest: successorDigest,
+    });
+  const previous = shared.find(
+    (member) => member.recordDigest === recordDigest,
+  );
+  const successor = shared.find(
+    (member) => member.recordDigest === successorDigest,
+  );
+  expect(shared).toEqual(memberships.get("PR_owner") ?? []);
+  expect(previous?.workUnitId).toBe(units[0].workUnitId);
+  expect(successor?.workUnitId).toBe(successorUnit.workUnitId);
+  expect(successor?.workUnitId).not.toBe(previous?.workUnitId);
+  expect(successor?.groupId).toBe(previous?.groupId);
+  expect(independent.map((member) => member.workUnitId)).toEqual([
+    units[1].workUnitId,
+    units[1].workUnitId,
+  ]);
+  expect(independent[0].groupId).toBe(independent[1].groupId);
+  expect(shared[0].groupId).not.toBe(independent[0].groupId);
+  shared.push(shared[0]);
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+    "unique and consistent",
+  );
+
+  row.record_json = JSON.stringify({ ...record, projectId: "eliza" });
+  expect(() => createLeaderboardSnapshot(input)).toThrow(
+    "record digest does not match",
+  );
 });

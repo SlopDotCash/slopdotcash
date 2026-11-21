@@ -614,6 +614,13 @@ export interface HeldWorkUnit {
   unavailableNodeIds: string[];
 }
 
+/** A verified implementation unit that includes this pull request's claims. */
+export interface ReviewedImplementationUnit {
+  recordDigest: string;
+  workUnitId: string;
+  groupId: string;
+}
+
 export interface LeaderboardSourceMetadata {
   provider: "github-graphql";
   fetchedAt: string;
@@ -697,6 +704,12 @@ export interface LeaderboardSnapshot {
         changedLines: string;
       }[];
     };
+  }[];
+  /** Exact claim membership and overlap from verified joint assessment history. */
+  reviewedImplementationUnits?: {
+    repository: RepositoryId;
+    pullRequestId: string;
+    units: ReviewedImplementationUnit[];
   }[];
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */
