@@ -21,7 +21,11 @@ import {
 } from "../reward-cycle";
 import { sha256Hex as digest } from "../sha256";
 import { combineAwards } from "../verified-money";
-import { ASI_NOVEMBER_CLOSEOUT } from "./asi-november-closeout";
+import {
+  ASI_NOVEMBER_CLOSEOUT,
+  type AsiHeldWorkUnitRecord,
+  asiHeldSourcesAreDisjoint,
+} from "./asi-november-closeout";
 import {
   assertMaintainerDecisionRecord,
   maintainerShare,
@@ -54,6 +58,7 @@ export function buildEscrowCycle(
     cycleId: string;
     generatedAt: string;
     earlyCloseAt?: typeof ASI_NOVEMBER_CLOSEOUT.cutoff;
+    asiHeldWorkUnitRecords?: readonly AsiHeldWorkUnitRecord[];
   },
   bytes: Uint8Array,
   identityBytes: Uint8Array | null,
@@ -93,8 +98,11 @@ export function buildEscrowCycle(
       snapshot.source.verificationWindow.from !== snapshot.window.from ||
       snapshot.source.verificationWindow.to !== snapshot.window.to ||
       snapshot.source.evidenceVerification.status !== "complete" ||
-      snapshot.source.unavailableSources?.length ||
-      snapshot.source.heldWorkUnits?.length ||
+      !asiHeldSourcesAreDisjoint(
+        snapshot,
+        project,
+        input.asiHeldWorkUnitRecords ?? [],
+      ) ||
       snapshot.generatedAt < closeout.cutoff ||
       snapshot.generatedAt > generatedAt ||
       new Date(generatedAt).toISOString() !== generatedAt)

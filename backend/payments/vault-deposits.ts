@@ -111,8 +111,11 @@ type StoredWallet = { chain: string; address: string; login: string };
  * entered. A depositor is named by GitHub login only when exactly one public,
  * open Slop account currently has that address registered (on Solana for a
  * Solana deposit, on any EVM network for an EVM deposit); a private or closed
- * account, or an address two accounts registered, shows the address alone. `includeTestnets` follows the deployment tier, as
- * the vault totals do.
+ * account, or an address two accounts registered, shows the address alone.
+ * Only a registration the wallet itself signed counts: registration alone
+ * records intent and proves no control of the address, so it never names a
+ * funder and never hides one. `includeTestnets` follows the deployment tier,
+ * as the vault totals do.
  */
 export async function projectVaultDeposits(
   db: D1Database,
@@ -131,6 +134,7 @@ export async function projectVaultDeposits(
        (SELECT json_group_array(json_object('chain',chain,'address',wallet_address,'login',github_login)) FROM (
          SELECT w.chain,w.wallet_address,w.github_login
          FROM effective_payment_wallet_claims w
+         JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id
          WHERE EXISTS (SELECT 1 FROM vault_deposits d WHERE d.project_id=?1
              AND ((d.chain='solana' AND w.chain='solana' AND d.depositor=w.wallet_address)
                OR (d.chain!='solana' AND w.chain!='solana' AND d.depositor=lower(w.wallet_address))))

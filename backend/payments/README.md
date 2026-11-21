@@ -307,8 +307,10 @@ newest first. Each page's rows and its cursor are one atomic write. It never
 throws: a failed read is logged by error name and retried on the next run,
 and it cannot fail or delay a payout step. Private bounty vaults are skipped.
 A depositor is named by GitHub login only when exactly one public, open Slop
-account currently has that address registered. The list is display evidence;
-no balance, funded month or payment reads it.
+account currently has that address registered and the wallet signed that
+registration (`payment_wallet_authorizations`); an unsigned registration
+neither names a depositor nor hides one. The list is display evidence; no
+balance, funded month or payment reads it.
 
 `GET /api/v1/payments/projects/<id>/vault` serves these rows with
 `staleAfterMs` (30 minutes). A page view reads D1 or the edge cache
@@ -443,8 +445,10 @@ Points history. Replaying an identical batch remains valid.
    `GET .../monthly/:YYYY-MM/cuts` is public and lists each contributor whose
    latest change is a cut, with login, proposed amount, new amount, reason and
    time; the cycle page shows it. Other changes stay private and are kept for
-   dispute handling and reconciliation. With automatic finalization on, a cut
-   is refused in the last 24 hours before the cutoff (`cut_notice_window`),
+   dispute handling and reconciliation. When the month freezes at the cutoff
+   (automatic finalization on, or the month pledged on chain in the vault
+   that pays it), a cut is refused in the last 24 hours before the cutoff
+   (`cut_notice_window`),
    and the owner's finalize is refused until 24 hours after the latest cut
    (`cut_notice_pending`). The coordinator's freeze at the cutoff is
    unchanged. `POST .../monthly-settings` (`automatic`) turns

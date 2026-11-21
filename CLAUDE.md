@@ -741,7 +741,10 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). A source GitHub cannot resolve still forces one
+decision, 19 November 2026). GitHub fires scheduled and after-release jobs
+only from the default branch, so while the default branch is not main an
+outside scheduler starts main's scheduled workflows by hand with a token that
+can only start workflows here (operator decision, 21 November 2026). A source GitHub cannot resolve still forces one
 complete recollection, except a joint value-record member outside the live
 census: when three availability probes a few seconds apart all report it
 unavailable, the first attempt records it and holds its work unit; any

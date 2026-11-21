@@ -15,6 +15,9 @@
 // shares the release workflow's single fresh-collection lane, so it queues
 // behind a running one; it is abstracted as the same collecting flag. GitHub
 // API retries, token renewal and wall clock waits are outside this model.
+// What starts a tick or a follow-up (GitHub's own event, or an outside
+// scheduler's manual run while main is not the default branch; operator
+// decision, 21 November 2026) is outside it too: both run the same script.
 module daily_collection {
   type State = {tick:int, collecting:bool, collectedAt:int, live:int, peak:int,
     pendingPublish:bool, attempts:int, pendingResume:bool, resumedThisChain:bool,
