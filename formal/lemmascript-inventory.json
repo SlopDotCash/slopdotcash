@@ -5079,7 +5079,7 @@
 {"name":"<ArrowFunction@131>","kind":"ArrowFunction","line":131,"sha256":"aaf3edc857e5055a758594b621bf1ee6d6c0351097dcc461d978761a4f604bfa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@135>","kind":"ArrowFunction","line":135,"sha256":"fa792d34d174eea63da35bf2e190dec4bfa26b5251937c182027344534dc9e9f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/points-protection-read.ts","sha256":"ce79290a95b63e4d58aa2065491424726efa0c656d724bf4791ba30a631e027a","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/points-protection-read.ts","sha256":"47ed37e4780b866cc4aec69c61882963fbe6fb257f5c4e0a17e6f5d5cfdbd4c7","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"record","kind":"FunctionDeclaration","line":50,"sha256":"d825c98beb719579f52498c34ed7e23fd5d2b5bb8da6b3e9ab39094604684757","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]},
 {"name":"projectId","kind":"FunctionDeclaration","line":59,"sha256":"1763fa74e57d76f1f99e0b0536b58f4e3769504a54c39db765936b8ac727c272","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"list","kind":"FunctionDeclaration","line":70,"sha256":"7340a44aa98b0989a56589171a230e6a247413d2d2a8adab38defd00ded2bbad","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
@@ -5087,7 +5087,7 @@
 {"name":"<ArrowFunction@91>","kind":"ArrowFunction","line":91,"sha256":"7d0a3389c66202f6beb36d5d984f8fd3d706d7a07e51719fef75399e637330ca","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"readPrivatePointProtection","kind":"FunctionDeclaration","line":106,"sha256":"e293ca481bdc492fc1e7a1749bf64d51712eefe3ccbeba5eb3f464fe9fcebdae","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"reason","kind":"FunctionDeclaration","line":146,"sha256":"730bb85935741186ccfa179d96fa0517c4eccf1f4e424e54bf6cad86e077869c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"resolvePointProtection","kind":"FunctionDeclaration","line":156,"sha256":"d6282be556f980423b9bcb256059f3628e2df670fce852637d351e552cc8bdb7","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+{"name":"resolvePointProtection","kind":"FunctionDeclaration","line":156,"sha256":"502c002af99775e84dfc4b90091cd47571f10e03f2d7e4e47f422e51cf5976c0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"scripts/points-protection-sql.ts","sha256":"d584dd981d4da08760f5bc5dd5552d8277c30e5f571136d85443b8b78f98e7c5","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"unmappedObligation","kind":"FunctionDeclaration","line":42,"sha256":"a0263bdfbf94846c29a7aff74e53adebe6fd84ce945003a0a339ef1302a7d405","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

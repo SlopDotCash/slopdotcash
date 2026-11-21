@@ -4674,7 +4674,7 @@
     },
     {
       "path": "scripts/points-protection-read.ts",
-      "sha256": "ce79290a95b63e4d58aa2065491424726efa0c656d724bf4791ba30a631e027a",
+      "sha256": "47ed37e4780b866cc4aec69c61882963fbe6fb257f5c4e0a17e6f5d5cfdbd4c7",
       "models": ["formal/models/api/api_protected_point_months.qnt"],
       "candidateLines": [47, 124, 126],
       "review": "mapped-abstraction"
