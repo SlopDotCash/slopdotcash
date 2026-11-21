@@ -5049,7 +5049,7 @@
     },
     {
       "path": "spec/contributor/maintainerWorkflow.md",
-      "sha256": "9c90c778831ecda5728e115f6f9b921d0c4e0ba41149add7d94ba971ed5feac5",
+      "sha256": "cec731909348e1d3992002508c1d5c7139b5f4077a71b8644fe891812bd9ed49",
       "module": "contributor__maintainerWorkflow",
       "stories": [
         {
@@ -5101,12 +5101,13 @@
             "policyAction",
             "lawEntryFlowServesNoPolicyChange",
             "alwaysWorkHasOneMatchedRepository",
+            "alwaysNothingAppliedBeforeTheRepository",
             "sometimesAmbiguousTargetAsked"
           ]
         },
         {
           "heading": "Story: Carry out the maintainer's task under current authority / Each sensitive action needs its own permission, freshly checked for the current account",
-          "line": 125,
+          "line": 128,
           "definitions": [
             "required",
             "holds",
@@ -5128,7 +5129,7 @@
         },
         {
           "heading": "Story: Carry out the maintainer's task under current authority / Website actions run through existing controls; without a browser they are only prepared",
-          "line": 171,
+          "line": 174,
           "definitions": [
             "canGiveDecision",
             "giveDecision",
@@ -5142,6 +5143,7 @@
             "alwaysNoPolicyActionApplied",
             "alwaysAppliedServesTheTask",
             "alwaysWithoutBrowserNothingApplied",
+            "alwaysUncertainAttemptWasAllowed",
             "stepDecisionRecordedOnlyWhenGiven",
             "unchangedActions",
             "stepNoActionWhileUncertain",
@@ -5154,7 +5156,7 @@
         },
         {
           "heading": "Story: Carry out the maintainer's task under current authority / Repository work needs current write access, and a review or CI request never authorizes a merge or release",
-          "line": 230,
+          "line": 236,
           "definitions": [
             "canAuthorizeWrite",
             "authorizeWrite",
@@ -5169,7 +5171,7 @@
         },
         {
           "heading": "Story: Carry out the maintainer's task under current authority / The session finishes with its actual results and nothing uncertain left unread",
-          "line": 258,
+          "line": 264,
           "definitions": [
             "canFinish",
             "finish",
@@ -10146,7 +10148,7 @@
     },
     {
       "path": "spec/frontend/presentation.md",
-      "sha256": "2d3fdcd47bf897494dac8442ff5e84a06d3de119c6abc81fed00839aa5ce8e9c",
+      "sha256": "efe508ef5e7862f326d64d16dd9d901f54a06bb76cc202d8bd36bbf87d208f00",
       "module": "frontend__presentation",
       "stories": [
         {
@@ -10175,15 +10177,15 @@
         },
         {
           "heading": "Story: See the site under the name it was reached by",
-          "line": 364
+          "line": 365
         },
         {
           "heading": "Story: Hand the contribution prompt to an agent",
-          "line": 388
+          "line": 389
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home",
-          "line": 434
+          "line": 435
         }
       ],
       "rules": [
@@ -10321,6 +10323,8 @@
             "decimalPlaces",
             "tenTo",
             "validDecimals",
+            "scaledDown",
+            "belowScale",
             "trailingZeros",
             "showAmount",
             "lawShownAmountRoundTrips",
@@ -10332,7 +10336,7 @@
         },
         {
           "heading": "Story: See the site under the name it was reached by / The wordmark and footer domain follow the serving host",
-          "line": 369,
+          "line": 370,
           "definitions": [
             "PublicDomain",
             "publicDomain",
@@ -10342,7 +10346,7 @@
         },
         {
           "heading": "Story: Hand the contribution prompt to an agent / Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt",
-          "line": 393,
+          "line": 394,
           "definitions": [
             "AgentTarget",
             "AgentShortcut",
@@ -10361,7 +10365,7 @@
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home / Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together",
-          "line": 439,
+          "line": 440,
           "definitions": [
             "HomeAudience",
             "CopyFeedback",
@@ -10523,7 +10527,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "ac6bc5f138a003a0aeaf740905cc07c84833693956c540a91107551e76d85cfa",
+      "sha256": "eb8bb1e166619e3226d62988cee6515554fb90a756c3c7c468980264c52e8bd6",
       "module": "frontend__projections",
       "stories": [
         {
@@ -10780,8 +10784,8 @@
             "lawPrivateOrClosedAccountNamesNobody",
             "lawFundersNeedCounters",
             "lawFailedFundersReadOffersRetry",
-            "aValues",
-            "bValues"
+            "accountValues",
+            "otherAccountValues"
           ]
         }
       ],
@@ -15452,7 +15456,7 @@
     },
     {
       "path": "spec/points/collectorToken.md",
-      "sha256": "c0523a59167632ed107c541febe5ac09e4192577b213fc2d660d07c6d2b7d8e8",
+      "sha256": "5df8e3036555622b7c6cd6ade6e7af3b79986abfffe731c6b7446d91ef582f23",
       "module": "points__collectorToken",
       "stories": [
         {
@@ -15496,6 +15500,7 @@
             "canFinishCollection",
             "finishCollection",
             "alwaysRenewalsOnlyForTheAppToken",
+            "alwaysNoMintBeforeTheCredential",
             "alwaysCollectedNeverUnauthorized",
             "stepRenewOnlyWhenDue",
             "stepFailedMintKeepsCurrentToken",
@@ -21061,7 +21066,7 @@
     },
     {
       "path": "spec/security/routineDecisions.md",
-      "sha256": "2349e9a31480ab331c37811b7c2f711396b1f836e1955011cd895813e116d6b4",
+      "sha256": "e65d2ca46ef342eb92fcc0e06988a4662ee605695dc4582a6b6b2f6d724db72f",
       "module": "security__routineDecisions",
       "stories": [
         {
@@ -21150,7 +21155,7 @@
         },
         {
           "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / The reporter appeals a routine close once, to the owner, and the pass never reads the report again",
-          "line": 207,
+          "line": 210,
           "definitions": [
             "epoch",
             "canRequestInformation",
@@ -21181,7 +21186,7 @@
         },
         {
           "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Simulation samples",
-          "line": 262,
+          "line": 265,
           "definitions": [
             "clean",
             "readingValues",
@@ -21230,15 +21235,19 @@
         },
         {
           "target": "./cases.md",
-          "line": 213
+          "line": 140
+        },
+        {
+          "target": "./cases.md",
+          "line": 216
         },
         {
           "target": "./screening.md",
-          "line": 214
+          "line": 217
         },
         {
           "target": "./forwarding.md",
-          "line": 215
+          "line": 218
         }
       ]
     },
@@ -23591,7 +23600,7 @@
     },
     {
       "path": "spec/settlement/maintainerShare.md",
-      "sha256": "0b371f8762fce4e9786134c72191f22e7aecf0a1ff1d569f88ee67b4c738b337",
+      "sha256": "e58a4ce50a9b228ade9e689aa7a5f4bf09e31779a9df707f99eed7e2284272bf",
       "module": "settlement__maintainerShare",
       "stories": [
         {
@@ -23665,6 +23674,7 @@
             "alwaysProposalIsTheAmount",
             "alwaysMaintainersSplitTheShare",
             "alwaysShareOnlyFromCompleteRead",
+            "alwaysCompleteReadIsTheMonth",
             "alwaysExcludedReceivesNothing",
             "alwaysReadOnlyForAShare",
             "sometimesSplitBetweenMaintainers",
@@ -23676,7 +23686,7 @@
         },
         {
           "heading": "Story: Take the maintainer share out of the monthly amount / Simulation samples",
-          "line": 179,
+          "line": 182,
           "definitions": [
             "decided",
             "recordValues",
@@ -27442,7 +27452,7 @@
     },
     {
       "path": "spec/settlement/solanaVaultDeposits.md",
-      "sha256": "628aa7c06fdea51a9d100750b5c81fd7bc3e5f487641da8dcf0d31a9b2c1f1bf",
+      "sha256": "94b05f5a52f8e9c1338ecbcaf285d07c52120841cc1a4bcc8f074616bf4a94fb",
       "module": "settlement__solanaVaultDeposits",
       "stories": [
         {
@@ -27487,6 +27497,8 @@
             "alwaysPositionCovered",
             "alwaysIntervalRead",
             "alwaysRecordedExactlyRead",
+            "runKeepsItsPlace",
+            "alwaysRunsKeepTheirPlace",
             "stepPositionNeverGoesBack",
             "stepRecordPermanent",
             "sometimesAllCovered",
