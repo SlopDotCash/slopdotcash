@@ -73,18 +73,31 @@ test("a bundle with the deposit switched off says so and offers no way to pay", 
 
 test("Pages rewrites the report pay address to the app", {
   tag: ["@pages", "@pages-only"],
-}, async ({ page }) => {
+}, async ({ diagnostics, page }) => {
+  // The local Pages backend has asked no deposit for anything, so the page's
+  // one read answers 404.
+  diagnostics.allowResponse(
+    404,
+    "GET",
+    `/api/v1/submission-fee/reports/${CASE}`,
+  );
   for (const address of [PAGE, `${PAGE}/`]) {
     const response = await page.goto(address, { waitUntil: "networkidle" });
     expect(response?.status()).toBe(200);
     await expect(
       page.getByRole("heading", { level: 1, name: "Report deposit" }),
     ).toBeVisible();
-    // As deployed: switched off.
+    // As deployed: switched off, and nothing was asked for this report.
     await expect(
       page.getByText("The report deposit is not switched on.", {
         exact: false,
       }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Slop has not asked a deposit for this report. No deposit is due.",
+        { exact: true },
+      ),
     ).toBeVisible();
   }
 });
