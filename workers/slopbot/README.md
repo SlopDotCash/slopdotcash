@@ -286,9 +286,11 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   write access, an unpaid ask is released: the label comes off, the comment
   says so and the review runs. The unpaid row in `submission_fee_items` is
   removed, so a deposit sent afterwards pays for nothing and is refunded.
-- **`dry_run`.** Inserts the item row and a `recorded` gate row with the
-  reason it would have skipped, writes nothing to GitHub and runs the review
-  as today.
+- **`dry_run`.** Inserts a `recorded` gate row with the reason it would have
+  skipped, writes nothing to GitHub and runs the review as today. It inserts
+  no row in `submission_fee_items`: nobody was asked, so a deposit naming that
+  pull request pays for nothing and is refunded, and the pay page shows no
+  fee. The first real ask writes the item row.
 
 - **Payment withdrawn.** The Worker may clear `paid_at` again while no outcome
   is set, when the deposit's block is reorganised away before it is final.
