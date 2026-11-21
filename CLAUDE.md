@@ -492,7 +492,7 @@ bounded unblocked candidates. Existing assignees, maintainer claims, drafts,
 active review requests, approvals, changes requested, security labels,
 human-gated work, and epics fail closed. Re-read live GitHub before acting.
 Issues labelled `slop-wanted` are the ones maintainers most want done (PRD
-section 5, operator decision of 20 November 2026). The contributor skill
+section 5, operator decision of 21 November 2026). The contributor skill
 starts with an unclaimed one that no open pull request closes; the label never
 changes Points, scoring or payment.
 

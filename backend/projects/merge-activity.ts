@@ -19,7 +19,7 @@
  * `src/lib/intake-cap.mjs`). A project with an intake cap is read at every
  * hourly run instead of once a day, so its pause follows the queue.
  *
- * For a project with a wanted label (operator decision, 20 November 2026;
+ * For a project with a wanted label (operator decision, 21 November 2026;
  * `src/lib/wanted-label.mjs`) the read also lists the open issues that carry
  * the label, and Slopbot creates the label on the repository once if it is
  * missing. That label creation is the only GitHub write here. Such a project

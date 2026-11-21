@@ -221,7 +221,7 @@ to GitHub, uses no monthly review and is recorded as skipped with the reason
 own pull request is not refused, and a count that was never read or is older
 than three days refuses nothing. Value assessment and scoring are unchanged.
 
-A project owner may turn on wanted issues (operator decision, 20 November
+A project owner may turn on wanted issues (operator decision, 21 November
 2026; PRD section 5, `src/lib/wanted-label.mjs`). Every project uses the one
 label `slop-wanted`. The scheduled merge activity job
 (`refreshRegisteredMergeActivity` in `reporting-readiness.ts`) stores the open

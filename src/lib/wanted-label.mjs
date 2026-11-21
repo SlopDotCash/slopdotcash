@@ -1,5 +1,5 @@
 /**
- * Wanted issues (operator decision, 20 November 2026; PRD section 5). One
+ * Wanted issues (operator decision, 21 November 2026; PRD section 5). One
  * standard GitHub label, `slop-wanted`, marks the issues a project's
  * maintainers most want done, so contributors and their agents start there
  * instead of guessing what the codebase needs. Every project uses the same

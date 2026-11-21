@@ -11,7 +11,7 @@
 // @evidence workers/slopbot/reporting-readiness.test.ts
 // @evidence src/lib/wanted-label.test.ts
 // @evidence scripts/live-report-wanted.test.ts
-// Wanted issues (operator decision, 20 November 2026; PRD section 5). The
+// Wanted issues (operator decision, 21 November 2026; PRD section 5). The
 // owner turns the setting on or off by immutable revision; every project uses
 // the one label `slop-wanted`. The scheduled merge activity read stores the
 // open issues that carry the label (`stored`: the label the stored list was

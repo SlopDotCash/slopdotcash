@@ -1,4 +1,4 @@
--- A project's wanted label (operator decision, 20 November 2026; PRD
+-- A project's wanted label (operator decision, 21 November 2026; PRD
 -- section 5). The same scheduled read that fills `repository_merge_activity`
 -- also lists the open issues that carry the owner's wanted label, so project
 -- pages show what the maintainers most want done without reading GitHub per

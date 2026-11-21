@@ -62,7 +62,7 @@ export const WANTED_LABEL_DESCRIPTION =
 
 /**
  * Creates the project's wanted label on one repository when it is missing
- * (operator decision, 20 November 2026). True once the label exists. It only
+ * (operator decision, 21 November 2026). True once the label exists. It only
  * reads and creates the label; it never edits, renames or applies one.
  */
 export async function ensureWantedLabel(
