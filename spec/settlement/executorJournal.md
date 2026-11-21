@@ -182,12 +182,21 @@ pure val journalKeyValues = Set(rootKey(202611, LegacyRoot), rootKey(202611, V2R
 
 ### The journal keeps every attempt, every committed step and every cursor
 
+Each attempt holds a nonce and bytes issued once, in signing order, and the
+shape its step was signed with: a leaf names its own tree root with no total
+or count, and a root names a tree root with its positive gross total and leaf
+count. The finalized nonce starts at zero and never passes the signer's next
+nonce.
+
 ```quint
 pure def alwaysOneLiveAttemptPerKey(j: Journal): bool =
   j.entries.every(e => e.phase != Live or j.entries.select(o => o.key == e.key and o.phase == Live).length() == 1)
-pure def alwaysNoncesIssued(j: Journal): bool = j.finalizedNonce <= j.nextNonce
-  and j.entries.every(e => validKey(e.key) and e.bytes > 0 and e.nonce >= 0 and e.nonce < j.nextNonce
+pure def alwaysNoncesIssued(j: Journal): bool = j.finalizedNonce >= 0 and j.finalizedNonce <= j.nextNonce
+  and j.entries.every(e => validKey(e.key) and e.bytes > 0 and e.bytes <= j.entries.length() and e.nonce >= 0 and e.nonce < j.nextNonce
     and j.entries.select(o => o.nonce == e.nonce).length() == 1 and j.entries.select(o => o.bytes == e.bytes).length() == 1)
+pure def alwaysAttemptsSignedAsSteps(j: Journal): bool = j.entries.every(e =>
+  if (e.key.kind == Leaf) e.root == e.key.root and e.count == 0 and M::equalAmounts(e.total, M::zero)
+  else e.root != "" and e.count > 0 and M::validAmount(e.total) and M::positiveAmount(e.total))
 pure def alwaysFinalizedWasBroadcast(j: Journal): bool = j.entries.every(e => e.nonce < j.finalizedNonce implies e.delivered)
 pure def alwaysOneRootPerPeriod(j: Journal): bool =
   j.admissions.every(a => a.kind != Leaf and a.root != "" and a.count > 0
@@ -247,7 +256,7 @@ attempt, committed step and cursor of the snapshot it replaces.
 
 ```quint
 pure def wellFormed(j: Journal): bool = alwaysOneLiveAttemptPerKey(j) and alwaysNoncesIssued(j)
-  and alwaysFinalizedWasBroadcast(j) and alwaysOneRootPerPeriod(j) and alwaysLeavesUnderAdmittedRoot(j)
+  and alwaysAttemptsSignedAsSteps(j) and alwaysFinalizedWasBroadcast(j) and alwaysOneRootPerPeriod(j) and alwaysLeavesUnderAdmittedRoot(j)
   and alwaysSettledCommitted(j) and alwaysRetiredReverted(j) and alwaysOutcomeFinalized(j)
   and alwaysWinnerSucceeded(j) and alwaysCursorBacked(j)
 pure def follows(before: Journal, after: Journal): bool = stepAttemptsRetained(before, after)

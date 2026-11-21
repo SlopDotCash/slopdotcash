@@ -244,7 +244,10 @@ at a finalized view with no admitted root and a newer source sequence, and
 the contract admits a reserve only at its signed source sequence, which never
 decreases; so an older attempt cannot be admitted after a newer one is
 signed, and the only V1 signature of a frozen month is the retained one
-(`stepLegacyRetainedOnce`). A Solana row has no EVM journal.
+(`stepLegacyRetainedOnce`). A whole release leaves the month's remaining
+reserve at zero, so the contract refuses every later leaf
+(`ProjectEscrow.sol` `releaseMonthlyReserve`); a released row reads only a
+journal with no committed leaf. A Solana row has no EVM journal.
 
 ```quint
 pure def monthOnly(j: J::Journal, period: int): bool = j.entries.every(x => x.key.period == period)
@@ -259,6 +262,7 @@ pure def canObserveJournal(e: Execution, key: int, journal: J::Journal, by: str)
     and e.rows.every(r => r.key != key or (not(r.solana) and r.phase != Complete and r.phase != ClosedUnadmitted and journal != r.journal
       and monthOnly(journal, r.period) and admissionFits(r, journal)
       and (not(r.v2) implies journal.entries.every(x => x.key.kind == J::LegacyRoot))
+      and (r.phase == Released implies journal.leaves.length() == 0)
       and J::follows(r.journal, journal) and J::wellFormed(journal)))
 pure def observeJournal(e: Execution, key: int, journal: J::Journal, by: str): Execution =
   { ...e, touched: key, rows: e.rows.listMap(r => if (r.key == key) { ...r, journal: journal } else r) }
