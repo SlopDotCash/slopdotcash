@@ -12,6 +12,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import {
   REPORT_DEPOSIT_NOTICE,
   REPORT_DEPOSIT_SETTING_HINT,
+  REPORT_DEPOSIT_SPAM_INFO,
 } from "../../src/lib/report-deposit-page";
 import { REPORT_DEPOSIT_SWITCHED_ON } from "../../src/lib/security-report-deposit.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
@@ -536,4 +537,182 @@ test("how it works answers the report deposit question, and says so while it is 
     path: info.outputPath("faq-report-deposit.png"),
     fullPage: true,
   });
+});
+
+/**
+ * A received report as its program's security maintainer reads it, with the
+ * decision open. Every decision the form sends is kept in `sent`.
+ */
+async function ownerCase(page: Page) {
+  const caseId = "sc_0000000spam01";
+  const actor = { githubId: "77", githubLogin: "fixture-maintainer" };
+  const sent: Record<string, unknown>[] = [];
+  const record = {
+    id: caseId,
+    projectId: "report-fixture",
+    revision: 1,
+    view: "restricted",
+    viewerRoles: ["security-maintainer"],
+    allowedActions: ["decide"],
+    nextStep: "Decide this report",
+    nextStepDueAt: null,
+    submissionState: "verified",
+    receivedAt: "2026-12-01T10:00:00.000Z",
+    receivedAtSource: "slop-received",
+    receiptState: "received",
+    policyRevision: null,
+    terms: null,
+    awardState: "not-decided",
+    award: null,
+    relatedParty: "not-assessed",
+    relatedPartyReview: "not-applicable",
+    paymentState: "not-scheduled",
+    paymentRail: "unavailable",
+    paymentNetworks: [],
+    settlement: null,
+    paymentDeadline: null,
+    disclosureState: "embargoed",
+    remediationState: "investigating",
+    recognition: "private",
+    appealState: "none",
+    analysis: null,
+    events: [],
+  };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/projects")
+      return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
+    if (path === "/api/v1/project-session")
+      return route.fulfill({ json: { session: actor } });
+    if (path === "/api/v1/notifications")
+      return route.fulfill({
+        json: {
+          recipientGithubId: actor.githubId,
+          notifications: [],
+          unread: 0,
+        },
+      });
+    if (path === "/api/v1/security-submissions")
+      return route.fulfill({
+        json: {
+          recipientGithubId: actor.githubId,
+          automatic: false,
+          submissions: [],
+        },
+      });
+    if (path === "/api/v1/security-cases")
+      return route.fulfill({
+        json: { viewer: actor, programs: [], cases: [record] },
+      });
+    if (path === `/api/v1/security-cases/${caseId}`)
+      return route.fulfill({ json: { case: record } });
+    if (
+      path === `/api/v1/security-cases/${caseId}/actions` &&
+      request.method() === "POST"
+    ) {
+      sent.push(request.postDataJSON());
+      return route.fulfill({
+        json: {
+          case: {
+            ...record,
+            revision: 2,
+            allowedActions: [],
+            receiptState: "rejected",
+          },
+        },
+      });
+    }
+    return route.continue();
+  });
+  await page.goto(`/security?case=${caseId}`, { waitUntil: "networkidle" });
+  const form = page.locator('form[data-case-action="decide"]');
+  await expect(form).toBeVisible();
+  return { form, sent };
+}
+
+test("an owner can mark a rejected report as spam only while the deposit is switched on, and the mark is sent with the decision", async ({
+  page,
+  diagnostics,
+}, info) => {
+  diagnostics.allowPreviewApiMisses();
+  expect(REPORT_DEPOSIT_SPAM_INFO).toBe(
+    "a paid deposit is kept after 7 days with no open appeal",
+  );
+  await switchReportDeposit(page, true);
+  const { form, sent } = await ownerCase(page);
+  const spam = form.getByRole("checkbox", {
+    name: `Spam · ${REPORT_DEPOSIT_SPAM_INFO}`,
+    exact: true,
+  });
+  const outcome = form.getByRole("combobox", { name: "Outcome", exact: true });
+  // Only a rejection can be marked: the other closes keep or send back the
+  // deposit by their own rule.
+  await expect(spam).toHaveCount(0);
+  await outcome.selectOption("duplicate");
+  await expect(spam).toHaveCount(0);
+  await outcome.selectOption("rejected");
+  await expect(spam).toBeVisible();
+  await expect(spam).not.toBeChecked();
+  await spam.check();
+  await page.screenshot({
+    path: info.outputPath("decide-spam.png"),
+    fullPage: true,
+  });
+  await expectAccessibleReflow(page, "decide-spam");
+  await form
+    .getByRole("combobox", { name: "Severity", exact: true })
+    .selectOption("informational");
+  await form
+    .getByRole("textbox", { name: /^Reason\b/u })
+    .fill("Generated text with no finding in it.");
+  await form
+    .getByRole("button", { name: "Record decision", exact: true })
+    .click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toMatchObject({
+    action: "decide",
+    outcome: "rejected",
+    spam: true,
+  });
+});
+
+test("a decision that is not a rejection never carries the spam mark", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  await switchReportDeposit(page, true);
+  const { form, sent } = await ownerCase(page);
+  const outcome = form.getByRole("combobox", { name: "Outcome", exact: true });
+  await outcome.selectOption("rejected");
+  await form.getByRole("checkbox", { name: /^Spam\b/u }).check();
+  // Changing the outcome withdraws the mark with its control.
+  await outcome.selectOption("out-of-scope");
+  await form
+    .getByRole("combobox", { name: "Severity", exact: true })
+    .selectOption("informational");
+  await form
+    .getByRole("textbox", { name: /^Reason\b/u })
+    .fill("The program's list names this finding.");
+  await form
+    .getByRole("button", { name: "Record decision", exact: true })
+    .click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toMatchObject({ action: "decide", outcome: "out-of-scope" });
+  expect(sent[0]).not.toHaveProperty("spam");
+});
+
+test("the deployed decide form has no spam mark while the deposit is switched off", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  // The deployed switch itself; a change to it must change this test.
+  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(false);
+  const { form } = await ownerCase(page);
+  await form
+    .getByRole("combobox", { name: "Outcome", exact: true })
+    .selectOption("rejected");
+  await expect(form.getByRole("checkbox", { name: /^Spam\b/u })).toHaveCount(0);
 });
