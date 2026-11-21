@@ -28,7 +28,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "277905fdf5fc35ee878123cc43cac2eff54971712707b7a5794e8e9b48264fca",
+      "sha256": "b657c7e4ef7e79fa95721c93a75ba70a1707a3d2d7c6a9036f071b8ecad8bf09",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
