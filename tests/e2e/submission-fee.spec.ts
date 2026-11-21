@@ -72,13 +72,14 @@ test("the owner turns the submission fee on, sets its amount and turns it off", 
     await expect(fee).not.toBeChecked();
     await expect(amount).toHaveCount(0);
     expect((await api.stored()).project.slopbot?.submissionFee).toBeUndefined();
-    // One plain sentence says what it does, and that it is not active yet.
+    // One plain sentence says what it does. The fee is switched on, so the
+    // page no longer says the choice applies later.
     await expect(
       page.getByText(SUBMISSION_FEE_HINT, { exact: false }),
     ).toBeVisible();
     await expect(
       page.getByText("Slop has not switched the fee on yet", { exact: false }),
-    ).toBeVisible();
+    ).toHaveCount(0);
 
     await fee.check();
     await expect(amount).toHaveValue("2");
