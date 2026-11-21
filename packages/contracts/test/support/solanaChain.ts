@@ -435,14 +435,21 @@ export async function launch(): Promise<Chain> {
     };
   };
 
-  const confirmed = async (signature: string): Promise<boolean | undefined> => {
-    for (let attempt = 0; attempt < 600; attempt++) {
+  /**
+   * The transaction's outcome once confirmed, or undefined once it can no longer land: its blockhash has expired and
+   * not even a processed status exists. The blockhash is read before the status, so a transaction processed in the
+   * meantime is seen.
+   */
+  const confirmed = async (signature: string, recent: Blockhash): Promise<boolean | undefined> => {
+    for (let attempt = 0; attempt < 3000; attempt++) {
+      const valid = (await rpc("isBlockhashValid", [recent, { commitment: "processed" }])) as { value: boolean };
       const reply = (await rpc("getSignatureStatuses", [[signature], { searchTransactionHistory: true }])) as { value: ({ err: unknown; confirmationStatus: string } | null)[] };
       const status = reply.value[0];
       if (status !== null && status !== undefined && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) return status.err === null;
+      if ((status === null || status === undefined) && !valid.value) return undefined;
       await sleep(200);
     }
-    return undefined;
+    throw new Error("a transaction stayed unconfirmed for ten minutes while its blockhash was still valid");
   };
 
   const send = async (instructions: ReadonlyArray<Instruction>, signers: ReadonlyArray<Keypair>): Promise<boolean> => {
@@ -450,7 +457,8 @@ export async function launch(): Promise<Chain> {
     // A distinct compute limit makes each transaction unique, so a repeated event is never "already processed".
     const unique: Instruction = { program: COMPUTE_BUDGET, accounts: [], data: concat(Uint8Array.of(2), u32le(1_400_000 - (nonce++ % 200_000))) };
     for (let attempt = 0; attempt < 5; attempt++) {
-      const message = compile(keys.deployer.address, [unique, ...instructions], await blockhash());
+      const recent = await blockhash();
+      const message = compile(keys.deployer.address, [unique, ...instructions], recent);
       const bytes = encodeMessage(message);
       if (bytes === undefined) throw new Unrepresentable("the transaction cannot be encoded");
       const required = message.accountKeys.slice(0, message.header.requiredSignatures);
@@ -471,7 +479,7 @@ export async function launch(): Promise<Chain> {
         if (/Blockhash not found/u.test(error.failure.message)) continue;
         throw error;
       }
-      const outcome = await confirmed(base58Encode(signatures[0]));
+      const outcome = await confirmed(base58Encode(signatures[0]), recent);
       if (outcome !== undefined) return outcome;
     }
     throw new Error("a transaction was neither confirmed nor refused after five attempts");
@@ -490,8 +498,9 @@ export async function launch(): Promise<Chain> {
       "--faucet-pubkey", bootstrap.faucet.address, "--faucet-lamports", "500000000000000000",
       "--bootstrap-validator-lamports", "500000000000", "--bootstrap-validator-stake-lamports", "1000000000000000",
       "--creation-time", new Date(time * 1000).toISOString(), "--cluster-type", "development",
-      // The banking stage takes transactions only within a slot's nominal length, so a tick lasts 1 ms rather than 0.
-      "--target-tick-duration", "1", "--hashes-per-tick", "1000", "--ticks-per-slot", "8",
+      // The banking stage takes transactions only within a slot's nominal length, so a tick has a duration; 50 ms
+      // ticks give 400 ms slots, and a blockhash outlives a loaded host's delay between reading it and sending.
+      "--target-tick-duration", "50", "--hashes-per-tick", "1000", "--ticks-per-slot", "8",
       "--max-genesis-archive-unpacked-size", "1073741824", "--primordial-accounts-file", file,
     ], { timeout: 600_000, maxBuffer: 64 * 1024 * 1024 });
     await rm(file, { force: true });
