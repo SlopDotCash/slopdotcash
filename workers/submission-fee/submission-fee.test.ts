@@ -1902,7 +1902,7 @@ describe("report deposits", () => {
 
   test("a deposit for a report nobody asked a deposit for is refunded after the day", async () => {
     const t = reports();
-    t.payReport(1, "sc_unknown", 110);
+    t.payReport(1, "sc_no_row_for_this_report", 110);
     t.finalize();
     expect(await t.run()).toMatchObject({ judged: 0, send: "none" });
     t.clock.at += 24 * 60 * 60 * 1000;
@@ -1919,6 +1919,32 @@ describe("report deposits", () => {
     t.clock.at += 60 * 60 * 1000;
     expect(await t.run()).toMatchObject({ paid: 1 });
     expect(t.report(A).paid_deposit_id).toBe(1);
+  });
+
+  test("a row turned back to recorded while its deposit is being judged is not marked paid", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.finalize();
+    // The backend withdraws the request between the Worker's read of the
+    // row and its write.
+    const real = t.store.reportByHash.bind(t.store);
+    t.store.reportByHash = async (item) => {
+      const row = await real(item);
+      t.sqlite.exec(
+        `UPDATE security_report_deposits SET mode = 'recorded' WHERE case_id = '${A}'`,
+      );
+      return row;
+    };
+    expect(await t.run()).toMatchObject({ judged: 0, paid: 0, send: "none" });
+    t.store.reportByHash = real;
+    expect(t.report(A)).toMatchObject({ mode: "recorded", paid_at: null });
+    expect(t.deposit(1)?.accepted).toBe(null);
+    // From then on it is an unknown item: sent back after the day.
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, paid: 0, send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    expect(t.report(A).paid_at).toBe(null);
   });
 
   test("another token naming a report is refused at once and never resolved", async () => {

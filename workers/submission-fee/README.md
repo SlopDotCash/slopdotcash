@@ -136,7 +136,10 @@ report until the deposit is recorded. This Worker does the chain side only.
 request's. `mode` is `asked` or `recorded`. Only an `asked` row is a request
 for a deposit. A `recorded` row was written by the backend's record-only mode
 and asks for nothing: the Worker never reads it, never marks it paid, and a
-deposit that names it is an unknown item like any other.
+deposit that names it is an unknown item like any other. The backend can turn
+an unpaid `asked` row back into `recorded` when the deposit stops applying;
+the write that marks a row paid checks the mode again, so such a row is not
+marked paid even when the Worker read it a moment earlier.
 
 **When a deposit pays a report** (`reportDepositCounts` in `report.ts`). All
 of these:
