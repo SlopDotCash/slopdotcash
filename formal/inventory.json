@@ -10416,7 +10416,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "9665a8aceadeed3432dd54ea9b82fe2e5c08b0138bf3836d6f92b43de17c8bab",
+      "sha256": "c83a5f5cdae5c05983fcfe736a9b88aef812736bbf47eec623b44fa13130896e",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
@@ -10460,9 +10460,9 @@
     },
     {
       "path": "workers/vetting/local-install-helpers.ts",
-      "sha256": "ac017199c02fbc954e797b57f3fc9b4640c1220da21e7c163ab3c842c521146b",
+      "sha256": "7f19afa97bbf102f2522fc89f1b3637e14323c2796ed90ef9516b3847507922c",
       "models": ["formal/models/vetting/vetting_local_helpers.qnt"],
-      "candidateLines": [],
+      "candidateLines": [194],
       "review": "mapped-abstraction"
     },
     {
