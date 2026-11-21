@@ -219,15 +219,19 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
     );
     if (!proof || !earlier) throw Error("Reviewed earlier source is missing");
     const sha = /^[a-f0-9]{40}$/u;
+    const emptySquash = proof.emptySquash === true;
+    const sharedMerge = proof.earlierMergeSha === proof.mergeSha;
     if (
       !sha.test(proof.earlierMergeSha) ||
       !sha.test(proof.mergeSha) ||
-      proof.earlierMergeSha === proof.mergeSha ||
+      (sharedMerge &&
+        (emptySquash ||
+          earlier.sourceId === retirement.source.sourceId ||
+          earlier.headSha !== retirement.source.headSha)) ||
       !/^[a-f0-9]{64}$/u.test(proof.diffSha256) ||
       (proof.emptySquash !== undefined && proof.emptySquash !== true)
     )
       throw Error("Reviewed identical change identity is invalid");
-    const emptySquash = proof.emptySquash === true;
     const sources = [
       { source: earlier, mergeSha: proof.earlierMergeSha },
       { source: retirement.source, mergeSha: proof.mergeSha },
@@ -250,11 +254,11 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
         !pull.merged_at ||
         new Date(pull.merged_at).toISOString() !== source.occurredAt ||
         pull.commits !== source.commitCount ||
-        (emptySquash &&
+        ((emptySquash || sharedMerge) &&
           (pull.state !== "closed" ||
             pull.html_url !== source.sourceUrl ||
-            pull.user.node_id !== source.author?.id ||
-            pull.user.type !== source.author?.kind))
+            pull.user?.node_id !== source.author?.id ||
+            pull.user?.type !== source.author?.kind))
       )
         throw Error("Reviewed identical change source changed");
       return pull;
@@ -265,6 +269,8 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
         pull: await verifyPull(binding),
       })),
     );
+    if (sharedMerge && checked[0].pull.base.sha !== checked[1].pull.base.sha)
+      throw Error("Shared acceptance has differing submitted bases");
     await withObjects(
       repository,
       [
@@ -410,6 +416,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
             commit !== mergeSha ||
             !first ||
             !sha.test(first) ||
+            (sharedMerge && first !== pull.base.sha) ||
             (second !== undefined && second !== pull.head.sha) ||
             extra.length
           )
@@ -432,6 +439,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           );
           if (
             range.size !== source.commits.length ||
+            range.size !== new Set(source.commits.map(({ sha }) => sha)).size ||
             source.commits.some(
               (member) =>
                 !range.has(member.sha) ||
@@ -459,7 +467,9 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
               proof.diffSha256
           )
             throw Error("Complete accepted changes differ");
-          if (source === retirement.source) {
+          // A shared native object with the same complete range covers the
+          // entire earlier and later record, including submitted merges.
+          if (!sharedMerge && source === retirement.source) {
             const submitted = source.commits[0];
             if (
               source.commits.length !== 1 ||

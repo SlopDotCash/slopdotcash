@@ -662,6 +662,7 @@ export function reconstructHistoricalPoints(
     const identical = retirement.identicalAcceptedChange;
     if (identical) {
       const owner = earlier.get(identical.earlierSourceId);
+      const sharedMerge = identical.earlierMergeSha === identical.mergeSha;
       check(
         Object.keys(identical).sort().join() ===
           (identical.emptySquash === true
@@ -670,12 +671,13 @@ export function reconstructHistoricalPoints(
           /^[a-f0-9]{64}$/u.test(identical.diffSha256) &&
           /^[a-f0-9]{40}$/u.test(identical.earlierMergeSha) &&
           /^[a-f0-9]{40}$/u.test(identical.mergeSha) &&
-          identical.earlierMergeSha !== identical.mergeSha &&
           earlier.size === 1 &&
-          source.commits.length === 1 &&
-          source.commits[0].sha === source.headSha &&
-          source.commits[0].parentCount === 1 &&
           owner &&
+          (sharedMerge
+            ? identical.emptySquash !== true && owner.headSha === source.headSha
+            : source.commits.length === 1 &&
+              source.commits[0].sha === source.headSha &&
+              source.commits[0].parentCount === 1) &&
           owner.occurredAt !== null &&
           source.occurredAt !== null &&
           owner.occurredAt < source.occurredAt &&
@@ -694,7 +696,7 @@ export function reconstructHistoricalPoints(
               award.occurredAt === owner.occurredAt &&
               award.category === "merged-pull-request" &&
               award.amount > 0 &&
-              (identical.emptySquash !== true ||
+              ((!sharedMerge && identical.emptySquash !== true) ||
                 (latestBaseline.get(award.key)?.award.amount ?? 0) > 0) &&
               award.key ===
                 pointKey(

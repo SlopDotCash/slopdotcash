@@ -14,6 +14,7 @@ import { publicGitProcess } from "./value-merge-ingestion";
 for (const scenario of [
   "identical two-parent merges",
   "identical accepted squashes",
+  "one shared multicommit acceptance",
   "different squash with the same line counts",
 ] as const) {
   test(`reviewed identical accepted changes check ${scenario}`, async () => {
@@ -57,11 +58,19 @@ for (const scenario of [
       const old = "existing\n";
       const changed = `${old}accepted\n`;
       const base = commit("base", old, []);
-      const laterBase = commit("later base", old, [base]);
-      const laterParent = commit("advanced base", old, [laterBase], true);
-      const earlierHead = commit("earlier submission", changed, [base]);
-      const laterHead = commit("later submission", changed, [laterBase]);
-      const twoParent = scenario === "identical two-parent merges";
+      const shared = scenario === "one shared multicommit acceptance";
+      const laterBase = shared ? base : commit("later base", old, [base]);
+      const laterParent = shared
+        ? base
+        : commit("advanced base", old, [laterBase], true);
+      const earlierWork = commit("earlier submission", changed, [base]);
+      const earlierHead = shared
+        ? commit("submitter synchronization", changed, [earlierWork, base])
+        : earlierWork;
+      const laterHead = shared
+        ? earlierHead
+        : commit("later submission", changed, [laterBase]);
+      const twoParent = shared || scenario === "identical two-parent merges";
       const earlierParents = twoParent ? [base, earlierHead] : [base];
       const laterParents = twoParent ? [laterParent, laterHead] : [laterParent];
       const earlierMerge = commit(
@@ -69,14 +78,16 @@ for (const scenario of [
         changed,
         earlierParents,
       );
-      const laterMerge = commit(
-        "later acceptance",
-        scenario === "different squash with the same line counts"
-          ? `${old}different\n`
-          : changed,
-        laterParents,
-        true,
-      );
+      const laterMerge = shared
+        ? earlierMerge
+        : commit(
+            "later acceptance",
+            scenario === "different squash with the same line counts"
+              ? `${old}different\n`
+              : changed,
+            laterParents,
+            true,
+          );
       const repository = {
         id: 1,
         node_id: "R_feed",
@@ -91,7 +102,7 @@ for (const scenario of [
           base: { sha: base },
           head: { sha: earlierHead },
           merge_commit_sha: earlierMerge,
-          commits: 1,
+          commits: shared ? 2 : 1,
           changed_files: 1,
         },
         {
@@ -101,10 +112,15 @@ for (const scenario of [
           base: { sha: laterBase },
           head: { sha: laterHead },
           merge_commit_sha: laterMerge,
-          commits: 1,
+          commits: shared ? 2 : 1,
           changed_files: 1,
         },
-      ];
+      ].map((pull) => ({
+        ...pull,
+        state: "closed",
+        html_url: `https://github.com/${repository.full_name}/pull/${pull.number}`,
+        user: { node_id: `actor_${pull.number}`, type: "User" as const },
+      }));
       function correctionSource(pull: (typeof pulls)[number]) {
         return {
           repository: repository.full_name,
@@ -113,12 +129,16 @@ for (const scenario of [
           sourceUrl: `https://github.com/${repository.full_name}/pull/${pull.number}`,
           occurredAt: pull.merged_at,
           headSha: pull.head.sha,
-          author: null,
+          author: {
+            id: pull.user.node_id,
+            login: `fixture-${pull.number}`,
+            kind: pull.user.type,
+          },
           complete: true,
-          commitCount: 1,
+          commitCount: pull.commits,
           commits: [
             {
-              sha: pull.head.sha,
+              sha: shared ? earlierWork : pull.head.sha,
               parentCount: 1,
               parentShas: [pull.base.sha],
               author: null,
@@ -127,6 +147,20 @@ for (const scenario of [
               files: [{ path: "feature.txt", additions: 1, deletions: 0 }],
               firstAcceptedSourceId: pull.node_id,
             },
+            ...(shared
+              ? [
+                  {
+                    sha: earlierHead,
+                    parentCount: 2,
+                    parentShas: [earlierWork, base],
+                    author: null,
+                    additions: 0,
+                    deletions: 0,
+                    files: [],
+                    firstAcceptedSourceId: pulls[0].node_id,
+                  },
+                ]
+              : []),
           ],
         };
       }
@@ -185,6 +219,26 @@ for (const scenario of [
         expect(await proof).toEqual(
           new Set([sha256Hex(JSON.stringify(retirement))]),
         );
+      }
+      if (shared) {
+        const priorBase = pulls[1].base.sha;
+        pulls[1].base.sha = earlierWork;
+        await expect(
+          verifyHistoricalIdenticalAcceptedChanges(
+            packet,
+            github,
+            async (_repo, _objects, read) => read(directory),
+          ),
+        ).rejects.toThrow("differing submitted bases");
+        pulls[1].base.sha = priorBase;
+        retirement.source.commits[1] = retirement.source.commits[0];
+        await expect(
+          verifyHistoricalIdenticalAcceptedChanges(
+            packet,
+            github,
+            async (_repo, _objects, read) => read(directory),
+          ),
+        ).rejects.toThrow("incomplete submitted commits");
       }
       if (!twoParent)
         await expect(

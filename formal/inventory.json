@@ -5282,9 +5282,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "31cd79b23cd05b95b32e4a08bbcb7cb3779e2a0a8558313338465d96c937d544",
+      "sha256": "1809f5dae083d2de5316b248020252d3696637872776b683417e2ccac87177d3",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [52, 53, 490, 730, 965, 966, 967, 970, 1293],
+      "candidateLines": [52, 53, 490, 732, 967, 968, 969, 972, 1295],
       "review": "mapped-abstraction"
     },
     {
@@ -5362,12 +5362,12 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "eb27a0a9126f864da0ebfe371c600d1ed9e6c21a5439e8fe9c31910c010e8f0e",
+      "sha256": "85c760c51efe30444293ff7179104413822847b7297b863ce7dfa15ccafbf6c8",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
-      "candidateLines": [3, 254, 900, 920, 1128, 1146, 1153, 1280, 1375, 1507],
+      "candidateLines": [3, 258, 910, 930, 1138, 1156, 1163, 1290, 1385, 1517],
       "review": "mapped-abstraction"
     },
     {
@@ -15948,7 +15948,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "ce78737627aa0af9ce21757f1c1e53cb286f68204d1db152117371f9f1b2431b",
+      "sha256": "3e11fd4d8be81a2f753742c23addfc45f2a067acb7c6255cf9b740e2087c6daf",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -15981,10 +15981,13 @@
         "privateErrorIsNotAPhaseTest",
         "refusalReportsFixedPhaseWithoutGrantingPublicationTest",
         "relevantAppendRefusesQualifiedHistoricalPublicationTest",
+        "sharedAcceptanceRequiresEarlierAwardTest",
+        "sharedAcceptanceRequiresMatchedScopeTest",
         "unmatchedHistoricalReplayRefusesQualificationTest",
         "unrelatedAppendPreservesHistoricalQualificationTest",
         "unrelatedAssessmentAppendAllowsPublicationTest",
-        "validatedMixedEvidenceCannotChangeTest"
+        "validatedMixedEvidenceCannotChangeTest",
+        "verifiedSharedAcceptanceRetiresLaterPoolTest"
       ]
     },
     {

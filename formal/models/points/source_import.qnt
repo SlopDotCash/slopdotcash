@@ -7,6 +7,7 @@
 // @source scripts/private-packet-preview.ts
 // @evidence scripts/private-packet-preview.test.ts
 // @evidence scripts/reviewed-historical-points.test.ts
+// @evidence scripts/reviewed-identical-accepted-squash.test.ts
 // Ciphertext transport authenticates each exact object before the existing complete-input gate.
 // @source .github/workflows/private-payout-packet.yml
 // @source .github/workflows/reviewed-historical-points.yml
@@ -81,9 +82,9 @@ module source_import {
     p.pathCommit == p.squashOutput or p.submitted.contains(p.pathCommit),
   }
   pure def pathRole(p: MixedProof): int = if (p.pathCommit == p.squashOutput) 2 else 1
-  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str,assessmentCurrent:bool,baselineCurrent:bool,qualifiedReplay:bool,historicalPublished:bool}
+  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str,assessmentCurrent:bool,baselineCurrent:bool,qualifiedReplay:bool,historicalPublished:bool,sharedAcceptance:bool,sharedDuplicateRetired:bool}
   var s:S
-  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:"",assessmentCurrent:true,baselineCurrent:true,qualifiedReplay:false,historicalPublished:false}
+  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:"",assessmentCurrent:true,baselineCurrent:true,qualifiedReplay:false,historicalPublished:false,sharedAcceptance:false,sharedDuplicateRetired:false}
   action reportRefusal(phase: str): bool = all {
     publicationFailurePhases.contains(phase),
     s' = s.with("failurePhase", phase),
@@ -116,13 +117,31 @@ module source_import {
     exactTrustedReceipt,
     s' = s.with("qualifiedReplay", true),
   }
-  action publishHistorical = all {
+  val canPublishHistorical = all {
     s.valid,
     s.complete,
     s.qualifiedReplay,
     s.assessmentCurrent,
     s.baselineCurrent,
+  }
+  action publishHistorical = all {
+    canPublishHistorical,
     s' = s.with("published", true).with("historicalPublished", true),
+  }
+  // Both source records bind the same nonempty native output and complete
+  // submitted range. The earlier ordinary pool remains the retained award.
+  action bindSharedAcceptance(sameScope: bool, exactNative: bool, earlierPositive: bool): bool = all {
+    not(s.published),
+    sameScope,
+    exactNative,
+    earlierPositive,
+    s' = s.with("sharedAcceptance", true),
+  }
+  action retireSharedDuplicate = all {
+    canPublishHistorical,
+    s.sharedAcceptance,
+    s' = s.with("published", true).with("historicalPublished", true)
+      .with("sharedDuplicateRetired", true),
   }
   action disclose=all{s.published,s'=s.with("disclosed",true)}
   action appendSameIdentity(id:int):bool=all{id==s.identity,s'=s}
@@ -130,6 +149,7 @@ module source_import {
     part(1),part(2),validate,publish,disclose,appendSameIdentity(1),
     appendAssessment(true),appendAssessment(false),advanceBaseline,
     qualifyReplay(true),qualifyReplay(false),publishHistorical,
+    bindSharedAcceptance(true,true,true),retireSharedDuplicate,
     bindMixed(mixed),
     bindMixed(mixed.with("pathCommit",10)),
     bindMixed(mixed.with("squashIdentity",2)),
@@ -143,6 +163,7 @@ module source_import {
   val invariant=all {
     s.published implies(s.valid and s.complete and s.assessmentCurrent and s.baselineCurrent),
     s.historicalPublished implies(s.published and s.qualifiedReplay),
+    s.sharedDuplicateRetired implies(s.sharedAcceptance and s.historicalPublished),
     not(s.verifiedPaid),
     s.identity==1,
     s.role != 0 implies mixedBound(s.mixedProof),
@@ -183,4 +204,9 @@ module source_import {
     .then(publishHistorical).expect(s.historicalPublished and invariant)
   run relevantAppendRefusesQualifiedHistoricalPublicationTest = init.then(part(1)).then(part(2)).then(validate)
     .then(qualifyReplay(true)).then(appendAssessment(true)).then(publishHistorical.fail())
+  run sharedAcceptanceRequiresMatchedScopeTest = init.then(bindSharedAcceptance(false,true,true).fail())
+  run sharedAcceptanceRequiresEarlierAwardTest = init.then(bindSharedAcceptance(true,true,false).fail())
+  run verifiedSharedAcceptanceRetiresLaterPoolTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(bindSharedAcceptance(true,true,true)).then(qualifyReplay(true)).then(retireSharedDuplicate)
+    .expect(s.sharedDuplicateRetired and invariant)
 }
