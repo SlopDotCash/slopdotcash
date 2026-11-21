@@ -30,10 +30,19 @@ const never = () => {
   throw new Error("the secret inventory must not be read");
 };
 
-test("the checked-in Worker is record-only, on the private production database, and reads no secret names", () => {
-  expect(assertSubmissionFeeRelease(checkedIn(), production, never)).toBe(
-    "dry_run",
-  );
+test("the checked-in Worker is live on the private production database with the published contracts, and needs its key", () => {
+  // Live since 21 November 2026: the release reads the Worker's secret names
+  // and refuses when the resolver key is not among them.
+  expect(
+    assertSubmissionFeeRelease(checkedIn(), production, () => [
+      "SUBMISSION_FEE_RESOLVER_KEY",
+      "RPC_URL_SUBMISSION_FEE_BASE",
+      "RPC_URL_SUBMISSION_FEE_ROBINHOOD",
+    ]),
+  ).toBe("live");
+  expect(() =>
+    assertSubmissionFeeRelease(checkedIn(), production, () => []),
+  ).toThrow("resolver secret inventory is not ready");
   const off = checkedIn();
   off.vars.SUBMISSION_FEE_MODE = "off";
   expect(assertSubmissionFeeRelease(off, production, never)).toBe("off");
