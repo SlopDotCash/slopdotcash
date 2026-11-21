@@ -338,15 +338,16 @@ pure val decimalPlaces = List(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 
   21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36)
 pure def tenTo(power: int): int = decimalPlaces.foldl(1, (product, place) => if (place < power) product * 10 else product)
 pure def validDecimals(decimals: int): bool = decimals >= 0 and decimals <= 36
+pure def scaledDown(n: int, power: int): int = if (tenTo(power) > 0) n / tenTo(power) else 0
+pure def belowScale(n: int, power: int): int = if (tenTo(power) > 0) n % tenTo(power) else 0
 pure def trailingZeros(remainder: int, decimals: int): int =
   if (remainder == 0) decimals
   else decimalPlaces.foldl(0, (zeros, place) =>
-    if (place <= decimals and remainder % tenTo(place) == 0) place else zeros)
+    if (place <= decimals and belowScale(remainder, place) == 0) place else zeros)
 pure def showAmount(units: int, decimals: int): ShownAmount =
-  val scale = tenTo(decimals)
-  val remainder = units % scale
+  val remainder = belowScale(units, decimals)
   val zeros = trailingZeros(remainder, decimals)
-  { whole: units / scale, fraction: remainder / tenTo(zeros), fractionDigits: decimals - zeros }
+  { whole: scaledDown(units, decimals), fraction: scaledDown(remainder, zeros), fractionDigits: decimals - zeros }
 pure def lawShownAmountRoundTrips(units: int, decimals: int): bool =
   (units >= 0 and validDecimals(decimals)) implies
     showAmount(units, decimals).whole * tenTo(decimals) +
@@ -355,7 +356,7 @@ pure def lawNoTrailingFractionZero(units: int, decimals: int): bool =
   (units >= 0 and validDecimals(decimals) and showAmount(units, decimals).fractionDigits > 0)
     implies showAmount(units, decimals).fraction % 10 != 0
 pure def lawWholeAmountHasNoFraction(units: int, decimals: int): bool =
-  (units >= 0 and validDecimals(decimals) and units % tenTo(decimals) == 0)
+  (units >= 0 and validDecimals(decimals) and belowScale(units, decimals) == 0)
     implies showAmount(units, decimals).fractionDigits == 0
 pure val unitsValues = Set(0, 1, 10, 1500000, 1234567, 100000000)
 pure val decimalsValues = Set(0, 2, 6)
