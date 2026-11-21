@@ -162,7 +162,10 @@ export function sanitizeFeeTail(value: any) {
       }
       if (
         event.event === "fee_claim_error" ||
-        event.event === "fee_conversion_error"
+        event.event === "fee_conversion_error" ||
+        (event.event === "fee_buyback_error" &&
+          event.network === "solana" &&
+          event.leg === "bridge")
       ) {
         const failure = sanitizeProviderFailure(event.providerFailure);
         if (failure) row.providerFailure = failure;

@@ -379,9 +379,11 @@ const methods = {
   "solana-rpc": new Set([
     "getAccountInfo",
     "getBalance",
+    "getLatestBlockhash",
     "getMultipleAccounts",
     "getTokenAccountsByOwner",
     "getFeeForMessage",
+    "simulateTransaction",
   ]),
   jupiter: new Set(["quote", "swap"]),
   kyberswap: new Set(["routes", "route/build"]),
@@ -463,7 +465,7 @@ export function providerFailure(error: unknown): ProviderFailure | undefined {
   }
 }
 
-function providerErrorLog(error: unknown) {
+export function providerErrorLog(error: unknown) {
   const failure = providerFailure(error);
   if (!failure) return { error: message(error) };
   const label =
