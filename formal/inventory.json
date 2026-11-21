@@ -5223,9 +5223,9 @@
     },
     {
       "path": "scripts/run-asi-november-closeout.ts",
-      "sha256": "eb90d4641439f5023f718c92c58baeee9a1b345ff0d4230ca7e430f211149c39",
+      "sha256": "1ceccb3a448e8704841430c6829562b44a874f5e4b31a35276832a773a98a0fd",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
-      "candidateLines": [2, 200, 235, 293],
+      "candidateLines": [2, 201, 236, 294],
       "review": "mapped-abstraction"
     },
     {

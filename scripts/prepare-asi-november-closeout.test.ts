@@ -345,8 +345,11 @@ test("ASI owner finalizes the exact cutoff allocation early via the normal award
       assertProjectDefinition(JSON.parse(manifest)),
       packet.snapshotSha256,
     );
-    const query = async (sql: string) =>
-      sqlite.query<Record<string, unknown>, []>(sql).all();
+    const query = async (sql: string) => {
+      if ((sql.match(/\bUNION ALL\b/giu)?.length ?? 0) >= 5)
+        throw new Error("too many terms in compound SELECT");
+      return sqlite.query<Record<string, unknown>, []>(sql).all();
+    };
     await expect(readAsiPointsBatch(query, coverage)).rejects.toThrow(
       "Points do not cover the published ASI cutoff snapshot",
     );
