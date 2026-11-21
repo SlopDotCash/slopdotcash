@@ -77,7 +77,13 @@ deployment binding (supplied by the project registry) and never changes, and
 the qualification carries only the implementation the finalized read
 returned. The pin also records that binding's single vault network (PRD
 section 6, one network per project), so a record has no network until it is
-pinned and its network never changes. Binding the retained allocation to the escrow's own admitted month
+pinned and its network never changes. For an EVM binding the pinned
+implementation is the reviewed vault implementation of its EVM upgrade
+binding; for a Solana binding it is the escrow program id, which identifies
+the deployment but is no upgrade implementation. Upgrade qualification is
+therefore an EVM read only: `release.vibe` qualifies only
+`deployment.evmUpgrade.vaultImplementation`, so a record pinned to another
+network is never qualified. Binding the retained allocation to the escrow's own admitted month
 (root, admitted gross and remainder) is a composition obligation with
 [escrow accounting](./escrow.md). Evidence freshness means equality with the latest finalized height observed for this operation, whose freshness policy remains the chain adapter's explicit contract. A newer
 height invalidates a pre-signature review. After the owner signs, a newer
@@ -94,7 +100,7 @@ pure def canPinImplementation(r: ReserveRelease, pin: DeploymentPin): bool =
 pure def pinImplementation(r: ReserveRelease, pin: DeploymentPin): ReserveRelease =
   { ...r, pinRevision: pin.revision, reviewedImplementation: pin.implementation, network: pin.network }
 pure def canQualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): bool =
-  not(r.upgradeQualified) and r.phase != Released and qualification.implementation != ""
+  not(r.upgradeQualified) and r.phase != Released and r.network == Evm and qualification.implementation != ""
     and r.reviewedImplementation != "" and qualification.implementation == r.reviewedImplementation
     and qualification.height > 0 and qualification.height <= r.observedHeight
 pure def qualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): ReserveRelease = { ...r, upgradeQualified: true }
@@ -212,7 +218,13 @@ signs `monthlyReleaseDigest`. It has no Solana evidence adapter and produces no
 Ed25519 attestation. A record pinned to a Solana deployment binding is
 therefore never admitted, checked or approved. The attester records the named
 refusal `NetworkUnsupported` on it, and the request stays held; time never
-releases it (PRD section 6). A Solana approval path needs its own reviewed
+releases it (PRD section 6). The named refusal is retained in the release
+record. The owner receives the route's existing `release_held` answer, as for
+every other held release, because the route's refusal catalog follows the
+reference parity contract (`reference/parity/routes.json`). A stored record
+written before the network was recorded has no network field; the state
+decoder refuses it and the generated store never writes over it, so it stays
+held instead of being approved or reset. A Solana approval path needs its own reviewed
 implementation and model.
 
 ```quint
