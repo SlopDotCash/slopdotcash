@@ -62,7 +62,7 @@ Numeric growth, availability, latency, and response-time targets are not approve
 | Repository identity, permissions, work, and merge acceptance | GitHub, using permanent repository and actor IDs. |
 | Project inventory and published terms | D1 `projects`, `project_revisions`, and `project_applications`; each change appends an immutable revision. |
 | Sessions, preferences, wallet records, and private decisions | Authenticated account and case services. |
-| Points and corrections | Append-only journal with source identity, occurrence time, and recording time. |
+| Points and corrections | Append-only journal with source identity, occurrence time, and recording time. Operator decision, 20 November 2026: the Points of a project month with a recorded payment are frozen; the generator holds a candidate revision that would change them and publishes the rest, and the import still refuses a batch that changes one. |
 | Monthly proposals and final allocations | D1 allocation records; owner cuts and their reasons are public. |
 | Deposits, reservations, and completed payments | Exact finalized chain evidence, reconciled with the applicable obligation. |
 
@@ -207,6 +207,8 @@ Project contains the repository, integration branch, and contribution rules. Pro
 
 Verify permanent repository and actor IDs, current write or maintain authority, license facts, integration branch, and reward terms. Record the license URL, commit, and digest. Read Slopbot installation status before creation.
 
+A current GitHub administrator of the same registered repository can change its primary integration branch. Require the current registry revision and an exact GitHub head with a committed Slop authority declaration matching the project, repository, steward, branch, and policy revision. Append one immutable revision and preserve identity, restrictions, admission requirements, reward terms, prior revisions, and frozen allocations. Both generated skills use the new branch. The same revision can update its contribution instructions.
+
 Collect scope, contribution guidance, supported tasks, required tests, review expectations, security contact, closure policy, and maintainer notes. Preview both generated skills. Missing required skill fields prevent skill publication.
 
 Rewards offers a monthly pool or Private bounty. New monthly projects use one contribution pool, not a second review budget. Preserve historical review-budget commitments. Bounty-only projects have no monthly pool.
@@ -303,6 +305,10 @@ Automatic closure requires all of the following:
 - Required independent confirmation, caps, source checks, and production activation.
 
 A copied marker or footer proves none of these facts. Closure alone does not authorize a penalty.
+
+Operator decision, 18 November 2026: contributor skills must require evidence before submission. The target branch's contribution instructions govern project-specific checks. The PR body uses `## Evidence` with `Change types:`, `Test results:`, and `Proof of change:`, plus `UI video:`, `Runtime logs:`, `Benchmarks:`, and `On-device testing:` for applicable changes. Tests and artifacts must demonstrate the actual outcome. Unnecessary complexity on speculative paths is a violation when the repository's guidance prohibits it.
+
+For an eligible PR carrying the standalone `Made via @slopdotcash` footer, Slopbot may close for objectively missing required evidence when the published contribution guide defines this evidence format. A deterministic check identifies absent, empty or placeholder fields, and the final fresh GitHub read must independently reproduce the same finding. Judgments about the merits, omitted change types or the quality of supplied artifacts remain advisory under this category. This path has its own production activation, preserves project consent and category opt-outs, and applies a 10-Point debit once per confirmed close under the existing appeals and reversal rules.
 
 New project drafts start with closure selected. Keep the control editable and save an explicit opt-out. Missing saved consent means false. Registration and installation alone are not consent. Do not alter existing projects' consent. No separate `.github/slopbot.json` is required, but preserve existing file opt-outs and category restrictions.
 

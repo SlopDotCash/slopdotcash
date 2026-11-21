@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "55d0d3cc56b84f9c19e6ef70b9bbe7fa0cea4253fc7111ec63e4115ac5dd81be",
+  "inventorySha256": "545b6d800cd2317fc880491432d94a694aa2c8f6e9e0cbe865632667c4058c82",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -150,7 +150,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2714,
+      "line": 2879,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -187,7 +187,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2918,
+      "line": 3083,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -3184,6 +3184,32 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/ProjectProposalPage.tsx",
+      "line": 2639,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["idle", "loading"],
+      "models": [
+        "formal/models/api/api_intake_cap.qnt",
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_submission_fee_setting.qnt",
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/SecurityBounty.tsx",
       "line": 373,
       "name": "state",
@@ -4545,14 +4571,15 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "line": 36,
+      "line": 33,
       "name": "CategoryMode",
       "kind": "string-union",
       "values": ["close", "label", "off"],
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
-        "formal/models/slopbot/bot_review_admission.qnt"
+        "formal/models/slopbot/bot_review_admission.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt"
       ],
       "lexicallyUnmentionedValues": ["label", "off"],
       "review": "candidate-only"
@@ -4599,7 +4626,7 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "line": 227,
+      "line": 230,
       "name": "INSTALLATION_STATES",
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
@@ -4644,13 +4671,14 @@
     },
     {
       "path": "workers/slopbot/penalties.ts",
-      "line": 148,
+      "line": 152,
       "name": "reason",
       "kind": "string-union",
       "values": ["appeal_upheld", "maintainer_reopen"],
       "models": [
         "formal/models/slopbot/bot_appeal.qnt",
-        "formal/models/slopbot/bot_penalty_once.qnt"
+        "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -4728,7 +4756,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2919,
+      "line": 2995,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -4741,6 +4769,7 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
@@ -4750,7 +4779,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2993,
+      "line": 3069,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4763,6 +4792,7 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
@@ -4772,7 +4802,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3056,
+      "line": 3132,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4785,6 +4815,7 @@
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
         "formal/models/slopbot/bot_review_monthly_cap.qnt",
+        "formal/models/slopbot/bot_submission_evidence.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"

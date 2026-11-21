@@ -697,6 +697,85 @@ export async function readBranchHead(
   return commitSha;
 }
 
+const INTEGRATION_BRANCH_AUTHORITY_QUERY = `
+  query ProjectIntegrationBranchAuthority(
+    $id: ID!, $qualifiedName: String!, $expression: String!
+  ) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        ref(qualifiedName: $qualifiedName) {
+          name prefix target { __typename oid }
+        }
+        object(expression: $expression) {
+          __typename
+          ... on Blob { byteSize text }
+        }
+      }
+    }
+  }`;
+
+export async function readIntegrationBranchAuthority(
+  github: { fetch: GithubFetch; token?: string; apiOrigin?: string },
+  identity: RepositoryIdentity,
+  branch: string,
+  commit: string,
+): Promise<unknown> {
+  if (!github.token)
+    throw new GithubLookupError(
+      503,
+      "github_unavailable",
+      "GitHub repository verification is unavailable.",
+    );
+  const node = await repositoryNode(
+    github.fetch,
+    github.token,
+    identity,
+    INTEGRATION_BRANCH_AUTHORITY_QUERY,
+    {
+      qualifiedName: `refs/heads/${branch}`,
+      expression: `${commit}:.github/slop-project.json`,
+    },
+    github.apiOrigin ?? GITHUB_API,
+  );
+  const ref = node.ref as {
+    name?: unknown;
+    prefix?: unknown;
+    target?: { __typename?: unknown; oid?: unknown };
+  } | null;
+  if (
+    ref?.name !== branch ||
+    ref.prefix !== "refs/heads/" ||
+    ref.target?.__typename !== "Commit" ||
+    ref.target.oid !== commit
+  )
+    throw new GithubLookupError(
+      409,
+      "branch_head_changed",
+      "The GitHub branch moved. Reload and verify its current head.",
+    );
+  const blob = node.object as {
+    __typename?: unknown;
+    text?: unknown;
+    byteSize?: unknown;
+  } | null;
+  if (
+    blob?.__typename !== "Blob" ||
+    typeof blob.text !== "string" ||
+    typeof blob.byteSize !== "number" ||
+    blob.byteSize < 1 ||
+    blob.byteSize > 4096 ||
+    new TextEncoder().encode(blob.text).length !== blob.byteSize
+  )
+    return null;
+  try {
+    return JSON.parse(blob.text);
+  } catch {
+    return null;
+  }
+}
+
 /** The GitHub API origin: a loopback fixture in local browser tests only. */
 export function githubApiOrigin(value: string | undefined): string {
   return loopbackOrigin(value, GITHUB_API);
