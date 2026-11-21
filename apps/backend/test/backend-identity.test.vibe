@@ -8,9 +8,9 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { Miniflare, Request as WebRequest } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
 
-const identity = "https://identity.slop.test"
+const identity = "https://identity-staging.slop.cash"
 const internal = "https://identity.internal"
-const site = "https://slop.test"
+const site = "https://staging.slop.cash"
 const stateKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/u
 const pastCreated = "2026-01-01T00:00:00.000Z"
@@ -63,7 +63,7 @@ const Started = Layer.effect(Identity, effect {
     d1: { IDENTITY_DB: "slop-private" },
     ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
     vars: {
-      SLOP_ENVIRONMENT: "local",
+      SLOP_ENVIRONMENT: "staging",
       GITHUB_APP_CLIENT_ID: github.app.clientId,
       GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
       IDENTITY_STATE_KEY: stateKey,
@@ -304,7 +304,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       try call(`${identity}/v1/oauth/start`, { json: { audience: "nobody" }, headers: { "cf-connecting-ip": "198.51.100.4" } }),
       try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://slop.cash" } }),
       try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://evil.test" } }),
-      try call("http://identity.slop.test/v1/oauth/authorize?flow_id=x&state=y"),
+      try call("http://identity-staging.slop.cash/v1/oauth/authorize?flow_id=x&state=y"),
       try call(`${identity}/v1/no-such-route`),
     ].map((answer) => [answer.status, answer.body])
     const preflight = try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } })

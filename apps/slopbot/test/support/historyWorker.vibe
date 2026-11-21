@@ -24,7 +24,7 @@ export interface Env {
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
 }
 
-export const recordedHeadSha = "c".repeat(40)
+const recordedHeadSha = "c".repeat(40)
 
 const registered: ReadonlyArray<{ readonly projectId: string; readonly path: string; readonly repositoryId: string }> = [
   { projectId: "alpha", path: "ada/alpha", repositoryId: "7001" },

@@ -13,6 +13,7 @@ import { claimReview, finishReview } from "../../src/lease/store.vibe"
 import type { ReviewRow } from "../../src/lease/writes.vibe"
 import { Participation } from "../../src/routing/facts.vibe"
 import { routeItem } from "../../src/routing/route.vibe"
+import { installationId, leaseAuthor, leaseRepository, routingProject } from "./routingFixtures.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -21,11 +22,7 @@ export interface Env {
   readonly TEST_MEMBERS: string
 }
 
-export const installationId = 9100
-export const appUserId = "424242"
-export const leaseRepository = 7100
-export const leaseAuthor = 400
-export const routingProject = "routing-project"
+const appUserId = "424242"
 
 schema RouteAsk {
   readonly repositoryId: number

@@ -1,0 +1,6 @@
+// Identifiers the routing test worker and its test share. They live outside the worker module because the Workers
+// runtime accepts only handlers as named exports of a worker entry.
+export const installationId = 9100
+export const leaseRepository = 7100
+export const leaseAuthor = 400
+export const routingProject = "routing-project"

@@ -6,7 +6,7 @@ import type { Handler } from "@repo/platform/testing"
 import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
-import { testPrompt } from "./support/spendWorker.vibe"
+import { testPrompt } from "./support/spendPrompt.vibe"
 
 const providers = providerFake()
 const net = internet({ providers: providers.handler })

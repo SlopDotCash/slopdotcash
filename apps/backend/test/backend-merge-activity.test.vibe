@@ -90,6 +90,8 @@ const Shell = Layer.unwrap(effect {
 
 effect function project(id: string, status: string, paths: ReadonlyArray<string>) {
   const text = try orDie(Effect.try(() => manifest(id, status, paths)))
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, 1, ${text}, ${"a".repeat(64)}, 'Seeded', '1', 'member-1', ${t0})
+    ON CONFLICT DO NOTHING`)
   try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, ${status}, 1, ${text}, ${"a".repeat(64)}, ${t0}, ${t0})
     ON CONFLICT (id) DO UPDATE SET status = excluded.status, manifest = excluded.manifest`)
 }
