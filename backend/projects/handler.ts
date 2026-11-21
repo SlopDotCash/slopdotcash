@@ -1515,6 +1515,9 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
+  // A removed project stays off: no vault review or registration revision.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   const body = saved?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
@@ -1923,6 +1926,9 @@ async function publishOwnerRevision(
       contribution: body.contribution,
       note,
     });
+  // A removed project stays off: no edit, appended repository or new scan.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   // An appended repository's permanent GitHub id must be new to the registry.
   const submittedRepositories = (body.manifest as Record<string, unknown>)
     .repositories;
