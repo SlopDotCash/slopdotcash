@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
 import type { Chain } from "@repo/settlement/kernels/networks";
 import { cn, focusRing, ListItem, NetworkMark, Status, target, TransactionStatus } from "@repo/ui";
 import type { ReactNode } from "react";

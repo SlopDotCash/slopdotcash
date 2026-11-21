@@ -1,14 +1,14 @@
 import type { ComponentMeta } from "vibestack/stories";
-import { awardPresentation, paymentPresentation, readPresentation, setupPresentation } from "../../gen/ui__status.ts";
+import { readPresentation, setupPresentation, shown } from "../../gen/ui__status.ts";
 import type { StatusProps } from "./Status.tsx";
 
-// One example of each tone, from the presentations the spec decides.
+// One example of each tone.
 export const meta: ComponentMeta<StatusProps> = {
-  args: { presentation: paymentPresentation("PaidPayment") },
+  args: { presentation: shown("Positive", "Check", "Paid") },
   examples: {
-    Queued: { presentation: paymentPresentation("ReadyToPay") },
-    Held: { presentation: paymentPresentation("HeldPayment") },
-    "Under review": { presentation: awardPresentation("UnderReview") },
+    Queued: { presentation: shown("Neutral", "Clock", "Queued") },
+    Held: { presentation: shown("Caution", "Pause", "Held") },
+    "Under review": { presentation: shown("Notice", "Eye", "Under review") },
     Refused: { presentation: setupPresentation("SetupRefused") },
     Checking: { presentation: setupPresentation("SetupChecking") },
     "Not allowed": { presentation: readPresentation("Denied") },

@@ -15,6 +15,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Robinhood RPC rotation of the fee Worker](./robinhoodRpcRotation.md)
 - [Slop Identity App check after publication](./identityApp.md)
 - [Slopbot runtime metadata readback](./slopbotRuntime.md)
+- [Slopbot App quota witness](./slopbotQuotaWitness.md)
 - [Publication lock per environment](./publicationLock.md)
 - [Private-reporting intake health](./intakeHealth.md)
 - [Mainnet escrow qualification](./escrowQualification.md)

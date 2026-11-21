@@ -17,7 +17,6 @@
     "packages/contracts/solana/scripts/**",
     "packages/contracts/solana/package*.json",
     "packages/contracts/evm/integration/**",
-    "packages/contracts/evm/*.integration.ts",
     "apps/app/public/**"
   ],
   "files": {
@@ -193,12 +192,6 @@
     "migrations/0131_vetting_reinstatement_latest.sql": "e9e80b8cf0690457b84b9d4e1c7654743cdbf4f9862901ab84c7bc33e47b13d8",
     "migrations/0132_saved_vault_creations.sql": "095f0ea6651de1dd38da6fe3d8b8ee7bb35746b997d8cbecbfecf2a907bb2aa7",
     "migrations/0133_slopbot_failure_notice_suppressions.sql": "cccfefe22c0b0d964f6feee80044b910207a4be0a46e7d71e4681717654daa36",
-    "packages/contracts/evm/adapter.integration.ts": "e638b9c8cc86c0a43cc1962953760c9548ce0a40fac00a1fd7955eea7b95d8db",
-    "packages/contracts/evm/integration/mainnet-upgrade-rehearsal.ts": "7202ed69b58ab62d6b5e8fa24c5ebd69959a10e83568c94d30e1989f7a38bff3",
-    "packages/contracts/evm/integration/upgrade.ts": "68f2302a92c4697d1c45de534b3a5b54e8ffa2422d112a4719054fcdf5a41b7c",
-    "packages/contracts/evm/monthly-reserve.integration.ts": "2783397eaf1cdb3a880698a7cd777be145b3a8cea47f9154682ebff2e3bf0f9f",
-    "packages/contracts/evm/native.integration.ts": "0e7d50b862b551a4801b021ff25f2d160bb307b22a95ff3e88a2f8dee8c1fe2b",
-    "packages/contracts/evm/pledge.integration.ts": "a12a5518ed453c2625198550869b8b0ec7ae7ab94fdacb21035803412f6412c0",
     "packages/contracts/solana/integration/confirmation.mjs": "6a6e0a6e9d9e1dc762d9475e82b574264018899a7bb94f22f10e889662660926",
     "packages/contracts/solana/integration/deployment.mjs": "3e683488ee601247753273bbc93cab8b694ae79af11393269f64f86e232ef1ee",
     "packages/contracts/solana/integration/executor.e2e.mjs": "ec56d7fa34b880486a530b15478d3d7cbeba2adec23036788c6676bc2e638322",

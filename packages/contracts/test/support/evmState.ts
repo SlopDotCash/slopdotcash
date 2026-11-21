@@ -6,7 +6,7 @@ import { type Fixture, count, factoryAbi, implementationSlot, roles, vaultAbi, w
 
 export type ObservedBinding = Omit<Binding, "walletSigned">;
 export type ObservedMonth = Omit<Month, "leaves">;
-export type ObservedVault = Omit<Vault, "unsolicited" | "bindings" | "months"> & { bindings: ObservedBinding[]; months: ObservedMonth[] };
+export type ObservedVault = Omit<Vault, "unsolicited" | "origins" | "bindings" | "months"> & { bindings: ObservedBinding[]; months: ObservedMonth[] };
 export type Observed = Omit<Escrow, "now" | "vault"> & { vault: ObservedVault };
 
 export interface Walk {
@@ -23,7 +23,7 @@ export const freshWalk = (): Walk => ({ now: startOfWalk, factory: undefined, ro
 const byPeriod = (pledges: readonly Pledge[]): Pledge[] => [...pledges].sort((a, b) => a.period - b.period);
 
 export function view(escrow: Escrow): Observed {
-  const { now: _now, vault: { unsolicited: _unsolicited, bindings, months, pledges, ...vault }, ...factory } = escrow;
+  const { now: _now, vault: { unsolicited: _unsolicited, origins: _origins, bindings, months, pledges, ...vault }, ...factory } = escrow;
   return {
     ...factory,
     vault: {

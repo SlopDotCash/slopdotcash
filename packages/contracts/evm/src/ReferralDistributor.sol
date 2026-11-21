@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {ReferralClaims} from "./ReferralClaims.sol";
+
 interface IReferralToken {
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 value) external returns (bool);
@@ -174,10 +176,11 @@ contract ReferralDistributor {
     function claimable(address account, uint256 cumulative, bytes32[] calldata proof) external view returns (uint256) {
         (bytes32 root, uint256 total,) = liveRoot();
         if (root == bytes32(0) || !verify(proof, root, leaf(account, cumulative))) return 0;
-        uint256 already = claimed[account];
-        if (cumulative <= already) return 0;
-        uint256 amount = cumulative - already;
-        return totalClaimed + amount <= total ? amount : 0;
+        (ReferralClaims.Outcome outcome, uint256 amount) =
+            ReferralClaims.next(cumulative, claimed[account], totalClaimed, total);
+        if (outcome == ReferralClaims.Outcome.Payable) return amount;
+        if (outcome == ReferralClaims.Outcome.Overflow) return totalClaimed + amount;
+        return 0;
     }
 
     /// @dev The latest non-voided root is immediately eligible.
@@ -306,10 +309,10 @@ contract ReferralDistributor {
         activate();
         if (activeRoot == bytes32(0)) revert NoActiveRoot();
         if (!verify(proof, activeRoot, leaf(msg.sender, cumulative))) revert InvalidProof();
-        uint256 already = claimed[msg.sender];
-        if (cumulative <= already) revert NothingToClaim();
-        uint256 amount = cumulative - already;
-        if (totalClaimed + amount > activeTotal) revert TotalExceeded();
+        (ReferralClaims.Outcome outcome, uint256 amount) =
+            ReferralClaims.next(cumulative, claimed[msg.sender], totalClaimed, activeTotal);
+        if (outcome == ReferralClaims.Outcome.Nothing) revert NothingToClaim();
+        if (outcome == ReferralClaims.Outcome.Exceeded) revert TotalExceeded();
         claimed[msg.sender] = cumulative;
         totalClaimed += amount;
         latestRootClaimed = true;
