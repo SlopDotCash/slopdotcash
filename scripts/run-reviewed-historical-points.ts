@@ -218,7 +218,11 @@ export async function verifyHistoricalDuplicateAcceptanceOrder(
     (typeof retirements)[number]["source"],
     "sourceId" | "sourceUrl" | "headSha" | "occurredAt" | "repositoryNodeId"
   >;
-  async function readSource(source: Source, number: number | undefined) {
+  async function readSource(
+    source: Source,
+    number: number | undefined,
+    ...expectedMerges: (string | undefined)[]
+  ) {
     if (
       number === undefined ||
       !Number.isSafeInteger(number) ||
@@ -245,7 +249,10 @@ export async function verifyHistoricalDuplicateAcceptanceOrder(
       !pull.merged_at ||
       new Date(pull.merged_at).toISOString() !== source.occurredAt ||
       !pull.merge_commit_sha ||
-      !sha.test(pull.merge_commit_sha)
+      !sha.test(pull.merge_commit_sha) ||
+      expectedMerges.some(
+        (merge) => merge !== undefined && merge !== pull.merge_commit_sha,
+      )
     )
       throw Error("Duplicate acceptance source changed");
     return { head: pull.head.sha, merge: pull.merge_commit_sha };
@@ -254,49 +261,60 @@ export async function verifyHistoricalDuplicateAcceptanceOrder(
     const retired = await readSource(
       retirement.source,
       auditedSources.get(retirement.sourceId)?.number,
+      retirement.acceptedPromotion?.mergeSha,
+      retirement.unchangedPromotion?.merge.sha,
     );
     for (const source of [
       ...retirement.earlierSources,
       ...(retirement.acceptedSquashes ?? []),
     ]) {
+      const context = retirement.earlierAcceptanceProof?.contextSources.find(
+        (row) => row.id === source.sourceId,
+      );
+      const squash = retirement.acceptedSquashes?.find(
+        (row) => row.sourceId === source.sourceId,
+      );
       const earlier = await readSource(
         source,
-        auditedSources.get(source.sourceId)?.number ??
-          retirement.earlierAcceptanceProof?.contextSources.find(
-            (row) => row.id === source.sourceId,
-          )?.number,
+        auditedSources.get(source.sourceId)?.number ?? context?.number,
+        context?.mergeSha,
+        squash?.commit.sha,
       );
       if (retired.merge === earlier.merge) continue;
-      const pair = `${retired.merge}...${earlier.head}`;
-      if (checked.has(pair)) continue;
-      const comparison = await github.get<{
-        status: string;
-        behind_by: number;
-        base_commit: { sha: string };
-        merge_base_commit: { sha: string };
-      }>(`${root}/compare/${pair}?per_page=1&page=1`);
-      const common = comparison?.merge_base_commit?.sha;
-      if (
-        comparison?.base_commit?.sha !== retired.merge ||
-        !common ||
-        !sha.test(common) ||
-        !Number.isSafeInteger(comparison.behind_by) ||
-        comparison.behind_by < 0
-      )
-        throw Error("Duplicate acceptance ancestry is unavailable");
-      if (
-        (comparison.status === "ahead" || comparison.status === "identical") &&
-        comparison.behind_by === 0 &&
-        common === retired.merge
-      )
-        throw Error("Earlier source already carries the retiring PR's merge");
-      if (
-        (comparison.status !== "behind" && comparison.status !== "diverged") ||
-        comparison.behind_by === 0 ||
-        common === retired.merge
-      )
-        throw Error("Duplicate acceptance ancestry is inconsistent");
-      checked.add(pair);
+      for (const earlierRevision of new Set([earlier.head, earlier.merge])) {
+        const pair = `${retired.merge}...${earlierRevision}`;
+        if (checked.has(pair)) continue;
+        const comparison = await github.get<{
+          status: string;
+          behind_by: number;
+          base_commit: { sha: string };
+          merge_base_commit: { sha: string };
+        }>(`${root}/compare/${pair}?per_page=1&page=1`);
+        const common = comparison?.merge_base_commit?.sha;
+        if (
+          comparison?.base_commit?.sha !== retired.merge ||
+          !common ||
+          !sha.test(common) ||
+          !Number.isSafeInteger(comparison.behind_by) ||
+          comparison.behind_by < 0
+        )
+          throw Error("Duplicate acceptance ancestry is unavailable");
+        if (
+          (comparison.status === "ahead" ||
+            comparison.status === "identical") &&
+          comparison.behind_by === 0 &&
+          common === retired.merge
+        )
+          throw Error("Earlier source already carries the retiring PR's merge");
+        if (
+          (comparison.status !== "behind" &&
+            comparison.status !== "diverged") ||
+          comparison.behind_by === 0 ||
+          common === retired.merge
+        )
+          throw Error("Duplicate acceptance ancestry is inconsistent");
+        checked.add(pair);
+      }
     }
   }
 }
@@ -414,29 +432,32 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
             .stdout;
         };
         if (!sharedMerge) {
-          const earlierHead = checked[0].pull.head.sha;
-          let carriesRetiredMerge = false;
-          try {
-            await nativeGit(
-              "merge-base",
-              "--is-ancestor",
-              proof.mergeSha,
-              earlierHead,
-            );
-            carriesRetiredMerge = true;
-          } catch (error) {
-            if (
-              !error ||
-              typeof error !== "object" ||
-              !("code" in error) ||
-              error.code !== 1
-            )
+          const earlierRevisions = new Set([
+            checked[0].pull.head.sha,
+            proof.earlierMergeSha,
+          ]);
+          for (const revision of earlierRevisions) {
+            try {
+              await nativeGit(
+                "merge-base",
+                "--is-ancestor",
+                proof.mergeSha,
+                revision,
+              );
+            } catch (error) {
+              if (
+                error &&
+                typeof error === "object" &&
+                "code" in error &&
+                error.code === 1
+              )
+                continue;
               throw error;
-          }
-          if (carriesRetiredMerge)
+            }
             throw Error(
               "Earlier source already carries the retiring PR's merge",
             );
+          }
         }
         if (emptySquash) {
           const parents: string[] = [];

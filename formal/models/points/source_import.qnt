@@ -144,8 +144,8 @@ module source_import {
     s' = s.with("published", true).with("historicalPublished", true)
       .with("sharedDuplicateRetired", true),
   }
-  // The covering PR's submitted head must have an independently established
-  // relationship to the merge that would lose credit.
+  // Both the covering PR's submitted head and its accepted merge must have
+  // an independently established relationship to the merge losing credit.
   action retireDistinctDuplicate(verifiedOrder: bool, earlierCarriesMerge: bool): bool = all {
     canPublishHistorical,
     verifiedOrder,

@@ -472,6 +472,7 @@ test("duplicate retirement verifies native order even for ordinary coverage", as
   const later = retirement.source;
   const earlier = retirement.earlierSources[0];
   const comparePath = `${root}/compare/${retiredMerge}...${earlier.headSha}?per_page=1&page=1`;
+  const acceptedComparePath = `${root}/compare/${retiredMerge}...${earlierMerge}?per_page=1&page=1`;
   const replies = new Map<string, unknown>([
     [root, { node_id: audit.repositoryNodeId, full_name: audit.repository }],
   ]);
@@ -504,16 +505,24 @@ test("duplicate retirement verifies native order even for ordinary coverage", as
     merge_base_commit: { sha: commonParent },
   };
   replies.set(comparePath, completeComparison);
+  replies.set(acceptedComparePath, completeComparison);
   await verifyHistoricalDuplicateAcceptanceOrder(packet, github);
-  replies.set(comparePath, {
+  const reversedComparison = {
     ...completeComparison,
     status: "ahead",
     behind_by: 0,
     merge_base_commit: { sha: retiredMerge },
-  });
+  };
+  replies.set(comparePath, reversedComparison);
   await expect(
     verifyHistoricalDuplicateAcceptanceOrder(packet, github),
   ).rejects.toThrow("Earlier source already carries the retiring PR's merge");
+  replies.set(comparePath, completeComparison);
+  replies.set(acceptedComparePath, reversedComparison);
+  await expect(
+    verifyHistoricalDuplicateAcceptanceOrder(packet, github),
+  ).rejects.toThrow("Earlier source already carries the retiring PR's merge");
+  replies.set(acceptedComparePath, completeComparison);
   replies.set(comparePath, {
     ...completeComparison,
     base_commit: { sha: earlierMerge },
@@ -521,6 +530,15 @@ test("duplicate retirement verifies native order even for ordinary coverage", as
   await expect(
     verifyHistoricalDuplicateAcceptanceOrder(packet, github),
   ).rejects.toThrow("Duplicate acceptance ancestry is unavailable");
+  replies.set(comparePath, completeComparison);
+  retirement.acceptedPromotion = {
+    headCommit: "",
+    mergeCommit: "",
+    mergeSha: earlierMerge,
+  };
+  await expect(
+    verifyHistoricalDuplicateAcceptanceOrder(packet, github),
+  ).rejects.toThrow("Duplicate acceptance source changed");
 });
 
 test("duplicate coverage can bind a previously rewarded joint claim", async () => {
