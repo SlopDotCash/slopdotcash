@@ -103,7 +103,6 @@ import {
   ImplementationMemo,
   type PreviousImplementationObservation,
 } from "./accepted-implementation-memo";
-import { loadPublishedPoints } from "./generate-points";
 import type { HistoricalAssessmentCatalog } from "./historical-assessment-catalog";
 import { createHistoricalAssessmentTransport } from "./historical-assessment-transport";
 import { createMergedHistoricalReplaySnapshot } from "./historical-merged-replay";
@@ -6226,12 +6225,14 @@ if (import.meta.main) {
     localGitObjects,
     readAcceptedImplementation: loadAcceptedImplementationProofs,
     implementationMemo: collectionMemo?.implementation,
-    readPreviousImplementationJournal: () =>
-      loadPublishedPoints(
+    readPreviousImplementationJournal: async () => {
+      const { loadPublishedPoints } = await import("./generate-points");
+      return loadPublishedPoints(
         process.env.SLOP_POINTS_BOOTSTRAP === "1",
         undefined,
         site === "staging" ? "https://staging.slop.cash" : "https://slop.cash",
-      ),
+      );
+    },
     collectionMemo: collectionMemo?.session,
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
