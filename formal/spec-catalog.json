@@ -24472,7 +24472,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "c2f0286a59b6e0f169d62855673e579822d6e145c91102b069fe6ae0b07de9fc",
+      "sha256": "8612381370954901422cbc8e5aac3a948f69589c26a47bb99bd68e0158239981",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -24481,11 +24481,11 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state",
-          "line": 214
+          "line": 227
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 309
+          "line": 339
         }
       ],
       "rules": [
@@ -24558,7 +24558,7 @@
         },
         {
           "heading": "Story: Sign the frozen allocation without changing it / Solana signs one freeze time and refuses a month whose source is already consumed",
-          "line": 194,
+          "line": 207,
           "definitions": [
             "canSignSolana",
             "signSolana"
@@ -24566,12 +24566,12 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized admitted root that matches a signed attempt admits the month",
-          "line": 216,
+          "line": 229,
           "definitions": []
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / Only the latest authorization, the one with the highest source sequence, is admitted",
-          "line": 221,
+          "line": 234,
           "definitions": [
             "canAdmit",
             "supersededRoot",
@@ -24580,7 +24580,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 252,
+          "line": 276,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -24590,7 +24590,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 274,
+          "line": 298,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -24599,7 +24599,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 288,
+          "line": 318,
           "definitions": [
             "canComplete",
             "complete"
@@ -24607,7 +24607,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 299,
+          "line": 329,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -24615,7 +24615,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 311,
+          "line": 341,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -24628,7 +24628,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 332,
+          "line": 362,
           "definitions": [
             "alwaysAuthorizedMonthKept",
             "alwaysViewNamesAuthority",
@@ -24653,6 +24653,7 @@
             "sometimesSolanaAdmitted",
             "sometimesLegacyAdmitted",
             "sometimesUnknownRoot",
+            "sometimesSupersededRootHeld",
             "sometimesAutomaticOffRefused",
             "sometimesRestrictedRefused",
             "sometimesPledgedSignedWithAutomaticOff",
@@ -24663,7 +24664,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 393,
+          "line": 427,
           "definitions": [
             "familyValues",
             "monthSample",
@@ -24703,6 +24704,14 @@
         {
           "target": "./monthPledges.md",
           "line": 126
+        },
+        {
+          "target": "./escrow.md",
+          "line": 182
+        },
+        {
+          "target": "./monthlyExecution.md",
+          "line": 243
         }
       ]
     },

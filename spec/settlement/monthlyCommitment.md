@@ -47,7 +47,7 @@ type Attempt = { id: int, height: int, sourceSequence: int, root: str, remaining
   leafCount: int, frozenAt: int, signer: str, publishedAt: int }
 type CommitPhase = NoIntent | Authorized | Admitted | Completed | Refused | Investigating
 type RefusalReason = NoRefusal | CapExceeded | SourceConsumedBeforeSigning | SourceInOtherMonth | WindowClosedUnadmitted
-  | UnsignedRootObserved | WindowNotOpen | WindowClosed | ProjectRestricted | VaultNotServed | AutomaticOff
+  | UnsignedRootObserved | SupersededRootObserved | WindowNotOpen | WindowClosed | ProjectRestricted | VaultNotServed | AutomaticOff
   | SnapshotChanged | ChainCapExceeded | FactsStale
 type Commitment = { family: ChainFamily, phase: CommitPhase, refusal: RefusalReason, held: RefusalReason, month: FundedMonth,
   view: ChainView, facts: SigningFacts, legacy: LegacyAuthorization, attempts: List[Attempt], admittedRoot: str,
@@ -174,6 +174,19 @@ signed only when the view's source sequence is above the latest attempt's,
 and attempt sequences strictly increase. A rotated identity authority alone
 does not make a new attempt.
 
+An earlier version of this unit re-signed at an unchanged source sequence
+after a rotation. D1 could never publish that signature: its row conflicts
+with the stored attempt of the same sequence and publication is refused. The
+consequence of the stored rule is stated here rather than hidden.
+`reserveMonthly` checks the signature against the factory's current
+identity authority, and [escrow](./escrow.md) refuses a root signed by the
+former authority after a rotation. So a month signed before a rotation and
+not yet admitted cannot be admitted until a manual award raises the source
+sequence and a new attempt is signed by the authority in force. If that does
+not happen before the window closes, the month is refused with
+`WindowClosedUnadmitted`. Nothing moved on chain, so its funds stay free and
+the owner can still pay each funded obligation one award at a time.
+
 ```quint
 pure def remainingLeaves(c: Commitment): List[Leaf] = c.month.leaves.select(l => not(c.view.consumed.includes(l.source)))
 pure def latestAttempt(c: Commitment): Attempt = c.attempts.nthOr(c.attempts.length() - 1,
@@ -226,10 +239,21 @@ attempt with the highest source sequence, and keys its leaf cursor by that
 tree's root (development `apps/settlement/src/keeper/monthly.vibe`
 `submitReserve`, `${key}:${root}:finalized-cursor`). A finalized admitted
 root that differs from that tree is refused there ("Another monthly reserve
-is already admitted") and execution halts. The journal does the same: it
-admits a V2 or V3 root only when it is the latest attempt's root, and holds
-any other root of the journal for investigation, like a root it never
-signed.
+is already admitted") on every run, and execution makes no progress. That
+executor precondition belongs to [monthly execution](./monthlyExecution.md);
+this unit models only the journal's side.
+
+The journal admits a V2 or V3 root only when it is the latest attempt's root.
+For an older attempt's root it holds the month with its own reason,
+`SupersededRootObserved`, apart from a root it never signed. In source this
+hold is the signer's decision for one run: development
+`apps/settlement/src/signer/monthlyRoot.vibe` `decide` steps `investigate`
+and signs nothing, and each later run decides the same from the same rows.
+D1 stores no investigation row, and `stateOf` in
+`apps/settlement/src/monthlyCommitment/store.vibe` records only the latest
+attempt's root as admitted once execution is complete. The permanent
+`Investigating` phase is therefore a model-only, fail-closed summary of that
+repeated refusal.
 
 On a consistent finalized chain that hold is never reached. `reserveMonthly`
 in `packages/contracts/evm/src/ProjectEscrow.sol` accepts a reservation only
@@ -275,14 +299,20 @@ pure def admitLegacy(c: Commitment): Commitment = { ...c, phase: Admitted, admit
 
 A root admitted for the period that is neither a signed attempt nor the
 retained V1 authorization means the journal and the chain disagree. The
-journal stops signing and records the investigation; it never claims that
-root as its own admission.
+journal stops signing and records the investigation with
+`UnsignedRootObserved`; it never claims that root as its own admission. An
+admitted root of an older, superseded attempt is held the same way but
+records `SupersededRootObserved`, as the section on the latest authorization
+explains. Each recorded reason matches its root: an unsigned root is no
+attempt's root, and a superseded root is an older attempt's root, not the
+latest one's.
 
 ```quint
 pure def unknownRoot(c: Commitment): bool = c.view.admittedRoot != "" and not(c.attempts.some(a => a.root == c.view.admittedRoot))
   and not(c.view.legacyRoot and c.legacy.root != "" and c.view.admittedRoot == c.legacy.root)
 pure def canInvestigate(c: Commitment): bool = c.phase == Authorized and (unknownRoot(c) or supersededRoot(c))
-pure def investigate(c: Commitment): Commitment = { ...c, phase: Investigating, refusal: UnsignedRootObserved }
+pure def investigate(c: Commitment): Commitment =
+  { ...c, phase: Investigating, refusal: if (supersededRoot(c)) SupersededRootObserved else UnsignedRootObserved }
 ```
 
 ### An admitted month stays resumable after opt-out or the window closes
@@ -367,7 +397,10 @@ pure def alwaysAdmittedIsLatestAttempt(c: Commitment): bool =
 pure def alwaysWindowFromPeriod(c: Commitment): bool = c.phase != NoIntent implies
   c.opensAt == windowOpensAt(c.month.period) and c.closesAt == windowClosesAt(c.month.period) and c.opensAt < c.closesAt
 pure def alwaysAttemptsSignedInWindow(c: Commitment): bool = c.attempts.every(a => a.publishedAt >= c.opensAt and a.publishedAt < c.closesAt)
-pure def alwaysInvestigationHasUnknownRoot(c: Commitment): bool = c.phase == Investigating implies c.refusal == UnsignedRootObserved
+pure def alwaysInvestigationHasUnknownRoot(c: Commitment): bool = c.phase == Investigating implies c.view.admittedRoot != ""
+  and (if (c.refusal == SupersededRootObserved) c.attempts.some(a => a.root == c.view.admittedRoot)
+      and c.view.admittedRoot != latestAttempt(c).root
+    else c.refusal == UnsignedRootObserved and not(c.attempts.some(a => a.root == c.view.admittedRoot)))
 pure def alwaysSolanaSingleAttempt(c: Commitment): bool = c.family == SolanaV3 implies c.attempts.length() <= 1
   and c.attempts.every(a => a.frozenAt == c.frozenAt and a.frozenAt > 0)
 pure def alwaysNoIntentEmpty(c: Commitment): bool = c.phase == NoIntent implies c.attempts.length() == 0 and c.admittedRoot == ""
@@ -379,7 +412,8 @@ pure def sometimesSolanaRefused(c: Commitment): bool = c.refusal == SourceConsum
 pure def sometimesCapRefused(c: Commitment): bool = c.refusal == CapExceeded
 pure def sometimesSolanaAdmitted(c: Commitment): bool = c.family == SolanaV3 and c.phase == Completed
 pure def sometimesLegacyAdmitted(c: Commitment): bool = c.phase == Admitted and c.admittedLegacy
-pure def sometimesUnknownRoot(c: Commitment): bool = c.phase == Investigating
+pure def sometimesUnknownRoot(c: Commitment): bool = c.phase == Investigating and c.refusal == UnsignedRootObserved
+pure def sometimesSupersededRootHeld(c: Commitment): bool = c.phase == Investigating and c.refusal == SupersededRootObserved
 pure def sometimesAutomaticOffRefused(c: Commitment): bool = c.phase == Authorized and c.held == AutomaticOff
 pure def sometimesRestrictedRefused(c: Commitment): bool = c.phase == Authorized and c.held == ProjectRestricted
 pure def sometimesPledgedSignedWithAutomaticOff(c: Commitment): bool = c.attempts.length() > 0 and c.facts.pledged
@@ -399,17 +433,17 @@ root when r1 was signed first. Discovered by simulation: with the earlier
 weights the walk usually observed past every unadmitted view before it
 authorized and signed, so a second attempt at a newer source sequence was
 almost never signed and the search for a reattested
-admission did not finish in its time limit. Authorization is now chosen
-first, a newer view is observed rarely, signing and the facts it needs are
-chosen often, and an unadmitted view and an admitting view at the second
-source sequence give the walk a second chance to sign and admit.
+admission did not finish in its time limit. Authorization is now weighted
+well above observing a newer view, signing is weighted highest, and an
+unadmitted view and an admitting view at the second source sequence give
+the walk a second chance to sign and admit.
 Discovered by simulation: once only an attempt at a newer source sequence
 may be signed, a walk whose first attempt was signed at the second source
 sequence could never sign again, and repeated readings of unchanged facts
 used up most steps, so a reattested admission was still not found in the
 time limit. Views at a third source sequence, unadmitted and admitting
 either root, and facts at their height let such a walk sign again, and
-facts are now chosen less often than signing.
+reading facts is now weighted below authorizing and well below signing.
 
 ```quint
 pure val familyValues = Set(EvmV2, SolanaV3)
