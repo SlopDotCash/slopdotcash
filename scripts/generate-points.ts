@@ -613,25 +613,19 @@ type ReviewedMergeGroups = ReadonlyMap<string, readonly ReviewedMergeGroup[]>;
 
 export function reviewedMergeGroups(
   snapshots: ReadonlyArray<{
-    snapshot: Pick<LeaderboardSnapshot, "valueAssessmentCoverage">;
+    snapshot: Pick<LeaderboardSnapshot, "reviewedImplementationUnits">;
     digest: string;
   }>,
 ): ReviewedMergeGroups {
   const groups = new Map<string, ReviewedMergeGroup[]>();
   for (const { snapshot, digest } of snapshots) {
-    for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    for (const row of snapshot.reviewedImplementationUnits ?? []) {
       const projectId = findHistoricalRepository(row.repository)?.projectId;
-      if (!projectId || !row.reviewedImplementationUnits?.length) continue;
+      if (!projectId) continue;
       groups.set(
         mergeCoverageKey(digest, projectId, row.pullRequestId),
-        row.reviewedImplementationUnits.map(({ recordDigest, workUnitId }) => ({
-          key: JSON.stringify([
-            "coverage",
-            digest,
-            projectId,
-            recordDigest,
-            workUnitId,
-          ]),
+        row.units.map(({ recordDigest, workUnitId, groupId }) => ({
+          key: JSON.stringify(["coverage", digest, projectId, groupId]),
           valueSourceId: `value:${recordDigest}`,
           workUnitId,
         })),

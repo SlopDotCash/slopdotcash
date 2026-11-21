@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c5efb13c221d7c078a8860570800c7baebbb663e109370e27e59f6701c25fb65",
+  "inventorySha256": "85284557e81513c2dad88001c0e7c94df5811db257de628dc774ee1192c8b7ae",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3674,7 +3674,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 655,
+      "line": 662,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -3684,7 +3684,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 777,
+      "line": 790,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -3698,7 +3698,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4804,
+      "line": 4935,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -3707,6 +3707,7 @@
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",

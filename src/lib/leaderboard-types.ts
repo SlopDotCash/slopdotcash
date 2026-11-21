@@ -618,6 +618,7 @@ export interface HeldWorkUnit {
 export interface ReviewedImplementationUnit {
   recordDigest: string;
   workUnitId: string;
+  groupId: string;
 }
 
 export interface LeaderboardSourceMetadata {
@@ -691,8 +692,6 @@ export interface LeaderboardSnapshot {
     pullRequestNumber: number;
     status: string;
     recordDigest: string | null;
-    /** Claim membership from the verified current and predecessor joint records. */
-    reviewedImplementationUnits?: ReviewedImplementationUnit[];
     /** Complete current primary-commit attribution, independent of valuation. */
     verifiedImplementationActorNodeIds?: string[];
     /** Source-verified allocation; this never changes the PR's value tier. */
@@ -705,6 +704,12 @@ export interface LeaderboardSnapshot {
         changedLines: string;
       }[];
     };
+  }[];
+  /** Exact claim membership and overlap from verified joint assessment history. */
+  reviewedImplementationUnits?: {
+    repository: RepositoryId;
+    pullRequestId: string;
+    units: ReviewedImplementationUnit[];
   }[];
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */

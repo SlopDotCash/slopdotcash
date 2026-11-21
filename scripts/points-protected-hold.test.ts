@@ -188,17 +188,20 @@ test("reviewed membership holds a standalone replacement without holding an inde
     {
       digest: snapshotDigest,
       snapshot: {
-        valueAssessmentCoverage: [
+        reviewedImplementationUnits: [
           { pullRequestId: "completion", unit: workUnitId },
           { pullRequestId: "member", unit: workUnitId },
           { pullRequestId: "other", unit: otherUnitId },
-        ].map(({ pullRequestId, unit }, index) => ({
+        ].map(({ pullRequestId, unit }) => ({
           pullRequestId,
-          pullRequestNumber: index + 1,
           repository: "SlopDotCash/asi",
-          status: "stale",
-          recordDigest,
-          reviewedImplementationUnits: [{ recordDigest, workUnitId: unit }],
+          units: [
+            {
+              recordDigest,
+              workUnitId: unit,
+              groupId: unit.slice(3),
+            },
+          ],
         })),
       },
     },

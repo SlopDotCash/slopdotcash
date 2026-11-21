@@ -4358,7 +4358,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "ceec6792c3a59cdde679e43c49d79338d818ae9d2e1abe9400110890e67c84b9",
+      "sha256": "b1808e2cf95446f219846f21c326c5600b1d85aa937f3a24dcca5a8db5424484",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -4369,7 +4369,7 @@
       ],
       "candidateLines": [
         2, 40, 53, 89, 132, 154, 157, 170, 177, 186, 194, 202, 281, 313, 319,
-        322, 326, 327, 328, 329, 419, 958, 965, 966, 968, 973, 977, 981
+        322, 326, 327, 328, 329, 419, 952, 959, 960, 962, 967, 971, 975
       ],
       "review": "mapped-abstraction"
     },
@@ -6939,22 +6939,23 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "cc05500e2c3bca7f365eedd7825f7250d69bee74f858eaffc964b705607371ae",
+      "sha256": "c8ea15d91e4f973b2bb0c63b8f0f34e170320f1a00e46e77e32e1b8e62afb967",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 661, 692, 787, 814
+        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 662, 693, 792, 819
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "154ea8325b727102679bc8862baf399d34c8d1f332e6fea4be3fd43f460cff8c",
+      "sha256": "a99c960324b129152410ccc119ef0e22729e3c16c9b348bbbbd13980c2492755",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
@@ -6965,13 +6966,13 @@
         264, 265, 289, 295, 934, 997, 1023, 1234, 1295, 1305, 1311, 1313, 1315,
         1317, 1324, 1409, 1443, 1448, 1466, 1563, 2118, 2136, 2208, 2217, 2235,
         2244, 2252, 2274, 2289, 2298, 2306, 2352, 2402, 2452, 2507, 2524, 2525,
-        2528, 2529, 2633, 2635, 2636, 2640, 2643, 2651, 2653, 2671, 2984, 3056,
-        3075, 3130, 3306, 3501, 3526, 3614, 3633, 3756, 3835, 4230, 4241, 4275,
-        4338, 4352, 4675, 4888, 5089, 5202, 5227, 5362, 5370, 5378, 5445, 5459,
-        6210, 6212, 6235, 6239, 6243, 6248, 6394, 6403, 6413, 6414, 6472, 6507,
-        6513, 6533, 6538, 6545, 6553, 6555, 6581, 6584, 6598, 6600, 6621, 6623,
-        6627, 6630, 6635, 6827, 6829, 7088, 7132, 7195, 7196, 8017, 8018, 8019,
-        8020, 8042, 8052, 8063, 8104, 8193, 8259, 8260, 8287, 8494
+        2528, 2529, 2633, 2635, 2636, 2640, 2643, 2651, 2653, 2671, 3004, 3103,
+        3122, 3177, 3353, 3548, 3573, 3661, 3680, 3803, 3882, 4277, 4288, 4322,
+        4385, 4399, 4722, 4935, 5136, 5249, 5274, 5405, 5413, 5418, 5485, 5499,
+        6261, 6263, 6286, 6290, 6294, 6299, 6445, 6454, 6464, 6465, 6523, 6558,
+        6564, 6584, 6589, 6596, 6604, 6606, 6632, 6635, 6649, 6651, 6672, 6674,
+        6678, 6681, 6686, 6878, 6880, 7139, 7183, 7246, 7247, 8126, 8127, 8128,
+        8129, 8146, 8156, 8167, 8183, 8272, 8343, 8344, 8371, 8578
       ],
       "review": "mapped-abstraction"
     },
@@ -15579,13 +15580,17 @@
     },
     {
       "path": "formal/models/points/points_financial_preservation.qnt",
-      "sha256": "3da9371b88261f29e12399bbb5cc03b85f37b6183b818c8e72e412a5cd770496",
-      "sources": ["scripts/generate-points.ts"],
+      "sha256": "04d522b4e99d5efc9f2ffac480cc0578be273090c5d7eb278423a6092ab68bea",
+      "sources": ["scripts/generate-points.ts", "src/lib/leaderboard.ts"],
       "scenarios": [
         "concurrentFreezeRefusesChangeTest",
         "exactReplayAfterFreezeAllowedTest",
         "frozenChangeRefusedTest",
+        "frozenLinkedCorrectionHoldsBothLegsTest",
+        "frozenLinkedCorrectionRefusesUnfilteredImportTest",
         "oldImportNegativeControlTest",
+        "oldSingleRowHoldNegativeControlTest",
+        "openLinkedCorrectionPublishesBothLegsTest",
         "unprotectedCorrectionAllowedTest"
       ]
     },

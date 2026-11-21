@@ -2963,8 +2963,28 @@ const jointRecordDigestPattern = /^[a-f0-9]{64}$/u;
 const reviewedWorkUnitIdPattern = /^wu_[a-f0-9]{64}$/u;
 
 function reviewedImplementationUnitsBySource(input: LeaderboardInput) {
-  const memberships = new Map<string, ReviewedImplementationUnit[]>();
+  const memberships = new Map<
+    string,
+    (Omit<ReviewedImplementationUnit, "groupId"> & { unitKey: string })[]
+  >();
   const seenRecords = new Set<string>();
+  const parentUnits = new Map<string, string>();
+  const claimOwnerUnits = new Map<string, string>();
+  function findUnitGroup(unit: string) {
+    let root = unit;
+    for (;;) {
+      const parent = parentUnits.get(root);
+      if (parent === undefined || parent === root) break;
+      root = parent;
+    }
+    while (unit !== root) {
+      const parent = parentUnits.get(unit);
+      parentUnits.set(unit, root);
+      if (!parent) break;
+      unit = parent;
+    }
+    return root;
+  }
   for (const decision of new Set(input.jointValueDecisions?.values())) {
     for (const {
       record_digest: recordDigest,
@@ -3007,12 +3027,29 @@ function reviewedImplementationUnitsBySource(input: LeaderboardInput) {
         )
           throw new Error("Reviewed implementation unit identity is invalid");
         units.add(workUnitId);
+        const unitKey = JSON.stringify([
+          record.projectId,
+          recordDigest,
+          workUnitId,
+        ]);
         const memberIds = new Set<string>();
         for (const claimId of claimIds) {
           const claim = claims.get(claimId);
           if (!claim || assignedClaims.has(claimId))
             throw new Error("Reviewed implementation unit claim is invalid");
           assignedClaims.add(claimId);
+          // A reviewed record can contain independent units. Only the same
+          // immutable implementation claim can connect different units.
+          const claimKey = JSON.stringify([record.projectId, claimId]);
+          const owner = claimOwnerUnits.get(claimKey);
+          if (owner !== undefined) {
+            const left = findUnitGroup(unitKey);
+            const right = findUnitGroup(owner);
+            if (left < right) parentUnits.set(right, left);
+            else if (right < left) parentUnits.set(left, right);
+          } else {
+            claimOwnerUnits.set(claimKey, unitKey);
+          }
           for (const id of claim.carrierPullRequestIds) memberIds.add(id);
           memberIds.add(claim.creditPullRequestId);
           if (claim.retainedCopy)
@@ -3024,20 +3061,30 @@ function reviewedImplementationUnitsBySource(input: LeaderboardInput) {
             throw new Error("Reviewed implementation member is not a source");
           const key = JSON.stringify([repositoryNodeId, id]);
           const members = memberships.get(key) ?? [];
-          members.push({ recordDigest, workUnitId });
+          members.push({ recordDigest, workUnitId, unitKey });
           memberships.set(key, members);
         }
       }
     }
   }
-  for (const members of memberships.values()) {
-    members.sort(
-      (left, right) =>
-        compareCodeUnits(left.recordDigest, right.recordDigest) ||
-        compareCodeUnits(left.workUnitId, right.workUnitId),
-    );
-  }
-  return memberships;
+  const groupIds = new Map<string, string>();
+  return new Map(
+    [...memberships].map(([source, members]) => [
+      source,
+      members
+        .sort(
+          (left, right) =>
+            compareCodeUnits(left.recordDigest, right.recordDigest) ||
+            compareCodeUnits(left.workUnitId, right.workUnitId),
+        )
+        .map(({ recordDigest, workUnitId, unitKey }) => {
+          const root = findUnitGroup(unitKey);
+          const groupId = groupIds.get(root) ?? sha256Hex(root);
+          groupIds.set(root, groupId);
+          return { recordDigest, workUnitId, groupId };
+        }),
+    ]),
+  );
 }
 
 /** Reuse the complete eligibility pipeline; only ordinary review timing differs. */
@@ -5283,10 +5330,6 @@ function createSnapshotWithReviewCutoff(
 
   assignLeaderboardRanks(leaders);
 
-  const reviewedUnitsBySource = reviewedImplementationUnitsBySource(input);
-  const nodeIdByRepository = new Map(
-    input.source.repositories.map(({ id, repositoryId }) => [id, repositoryId]),
-  );
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
@@ -5369,9 +5412,6 @@ function createSnapshotWithReviewCutoff(
                     ? "legacy-policy"
                     : (decision?.status ?? "missing");
             const repository = repositoryIdFromUrl(pull.url);
-            const reviewedImplementationUnits = reviewedUnitsBySource.get(
-              JSON.stringify([nodeIdByRepository.get(repository), pull.id]),
-            );
             // Only complete primary-author evidence can correct a provisional
             // PR-carrier share while the source still awaits valuation.
             const completePrimaryAuthors =
@@ -5465,9 +5505,6 @@ function createSnapshotWithReviewCutoff(
                 !unavailableHeldSourceIds.has(pull.id)
                   ? null
                   : (decision?.latestDigest ?? null),
-              ...(reviewedImplementationUnits
-                ? { reviewedImplementationUnits }
-                : {}),
               ...(verifiedImplementationActorNodeIds
                 ? { verifiedImplementationActorNodeIds }
                 : {}),
@@ -5522,6 +5559,20 @@ function createSnapshotWithReviewCutoff(
         .sort(compareWorkItems),
     },
   };
+  const reviewedUnitsBySource = reviewedImplementationUnitsBySource(input);
+  const nodeIdByRepository = new Map(
+    input.source.repositories.map(({ id, repositoryId }) => [id, repositoryId]),
+  );
+  const reviewedImplementationUnits = (
+    snapshot.valueAssessmentCoverage ?? []
+  ).flatMap(({ repository, pullRequestId }) => {
+    const units = reviewedUnitsBySource.get(
+      JSON.stringify([nodeIdByRepository.get(repository), pullRequestId]),
+    );
+    return units ? [{ repository, pullRequestId, units }] : [];
+  });
+  if (reviewedImplementationUnits.length)
+    snapshot.reviewedImplementationUnits = reviewedImplementationUnits;
   assertPublishableLeaderboardSnapshot(snapshot);
   return snapshot;
 }
@@ -7200,6 +7251,57 @@ function assertAttributionValue(
 /** Validate immutable history using its collected order and known identities.
  * Use assertPublishableLeaderboardSnapshot for every fresh publication.
  */
+function assertReviewedImplementationUnits(
+  value: unknown,
+  coverage: ReadonlyMap<string, string>,
+) {
+  if (!Array.isArray(value) || !value.length)
+    throw new Error("Reviewed implementation membership must be nonempty");
+  const seenSources = new Set<string>();
+  const groupsByUnit = new Map<string, string>();
+  for (const entry of value) {
+    const source = assertObject(entry, "reviewed implementation source");
+    if (
+      Object.keys(source).sort().join(",") !==
+        "pullRequestId,repository,units" ||
+      typeof source.pullRequestId !== "string" ||
+      typeof source.repository !== "string" ||
+      coverage.get(source.pullRequestId) !== source.repository ||
+      seenSources.has(source.pullRequestId) ||
+      !Array.isArray(source.units) ||
+      !source.units.length
+    )
+      throw new Error("Reviewed implementation source binding is invalid");
+    seenSources.add(source.pullRequestId);
+    let previous = "";
+    for (const member of source.units) {
+      const unit = assertObject(member, "reviewed implementation unit");
+      if (
+        Object.keys(unit).sort().join(",") !==
+          "groupId,recordDigest,workUnitId" ||
+        typeof unit.groupId !== "string" ||
+        !jointRecordDigestPattern.test(unit.groupId) ||
+        typeof unit.recordDigest !== "string" ||
+        !jointRecordDigestPattern.test(unit.recordDigest) ||
+        typeof unit.workUnitId !== "string" ||
+        !reviewedWorkUnitIdPattern.test(unit.workUnitId)
+      )
+        throw new Error("Reviewed implementation unit binding is invalid");
+      const key = `${unit.recordDigest}:${unit.workUnitId}`;
+      const group = groupsByUnit.get(key);
+      if (
+        compareCodeUnits(previous, key) >= 0 ||
+        (group && group !== unit.groupId)
+      )
+        throw new Error(
+          "Reviewed implementation units must be unique and consistent",
+        );
+      previous = key;
+      groupsByUnit.set(key, unit.groupId);
+    }
+  }
+}
+
 export function assertLeaderboardSnapshot(
   value: unknown,
 ): asserts value is LeaderboardSnapshot {
@@ -8003,6 +8105,13 @@ export function assertLeaderboardSnapshot(
     throw new Error(
       "Review policy omissions require the selected policy boundary",
     );
+  if (
+    snapshot.reviewedImplementationUnits !== undefined &&
+    snapshot.valueAssessmentCoverage === undefined
+  )
+    throw new Error(
+      "Reviewed implementation membership requires assessment coverage",
+    );
   if (snapshot.valueAssessmentCoverage !== undefined) {
     if (!Array.isArray(snapshot.valueAssessmentCoverage))
       throw new Error("snapshot.valueAssessmentCoverage must be an array");
@@ -8018,12 +8127,7 @@ export function assertLeaderboardSnapshot(
           "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
-        ].includes(
-          Object.keys(row)
-            .filter((key) => key !== "reviewedImplementationUnits")
-            .sort()
-            .join(","),
-        )
+        ].includes(Object.keys(row).sort().join(","))
       )
         throw new Error("Value coverage has unexpected fields");
       assertString(row.pullRequestId, "value coverage pullRequestId");
@@ -8062,31 +8166,6 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
-      if (row.reviewedImplementationUnits !== undefined) {
-        if (
-          !Array.isArray(row.reviewedImplementationUnits) ||
-          row.reviewedImplementationUnits.length === 0
-        )
-          throw new Error("Reviewed implementation units must be nonempty");
-        let previous = "";
-        for (const member of row.reviewedImplementationUnits) {
-          const unit = assertObject(member, "reviewed implementation unit");
-          if (
-            Object.keys(unit).sort().join(",") !== "recordDigest,workUnitId" ||
-            typeof unit.recordDigest !== "string" ||
-            !jointRecordDigestPattern.test(unit.recordDigest) ||
-            typeof unit.workUnitId !== "string" ||
-            !reviewedWorkUnitIdPattern.test(unit.workUnitId)
-          )
-            throw new Error("Reviewed implementation unit binding is invalid");
-          const key = `${unit.recordDigest}:${unit.workUnitId}`;
-          if (compareCodeUnits(previous, key) >= 0)
-            throw new Error(
-              "Reviewed implementation units must be sorted and unique",
-            );
-          previous = key;
-        }
-      }
       if (row.implementationAllocation !== undefined) {
         const allocation = assertObject(
           row.implementationAllocation,
@@ -8224,6 +8303,11 @@ export function assertLeaderboardSnapshot(
         { row, index },
       ]),
     );
+    if (snapshot.reviewedImplementationUnits !== undefined)
+      assertReviewedImplementationUnits(
+        snapshot.reviewedImplementationUnits,
+        new Map([...coverageRows].map(([id, { row }]) => [id, row.repository])),
+      );
     const coverageFor = (eventId: string) => {
       let match: ReturnType<typeof coverageRows.get>;
       for (
