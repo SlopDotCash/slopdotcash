@@ -365,7 +365,7 @@ pure def observeReleased(e: Execution, key: int, receipt: R::ReleaseReceipt, by:
   { ...e, touched: key, rows: e.rows.listMap(r => if (r.key == key) { ...r, phase: Released, height: receipt.height } else r) }
 pure def alwaysHeldTotalWrong(e: Execution): bool = e.rows.every(r => (r.phase == WrongTotal or r.phase == Released)
   implies r.v2 and J::admittedV2(r.journal, r.period, r.root) and not(M::equalAmounts(r.heldTotal, r.total))
-    and M::equalAmounts(v2Total(r.journal, r.period, r.root), r.heldTotal))
+    and r.heldTotal == v2Total(r.journal, r.period, r.root))
 pure def alwaysReleasedUntouched(e: Execution): bool = e.rows.every(r => r.phase == Released
   implies r.height > 0 and r.journal.leaves.length() == 0)
 pure def stepWrongTotalNeverCompletes(before: Execution, after: Execution): bool =
