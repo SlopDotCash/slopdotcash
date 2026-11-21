@@ -1,6 +1,6 @@
 /**
- * What the pay page runs with: whether the fee is switched on, and the
- * address tables every way to pay is checked against.
+ * What the pay pages run with: whether the fee (or the report deposit) is
+ * switched on, and the address tables every way to pay is checked against.
  *
  * Every deployed bundle uses `SUBMISSION_FEE_SWITCHED_ON` and the published
  * tables in `submission-fee.mjs`, and nothing else. Only the browser-test
@@ -10,23 +10,53 @@
  * against a private local chain while the fee is switched off in production.
  */
 
+import { REPORT_DEPOSIT_SWITCHED_ON } from "./security-report-deposit.mjs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "./submission-fee.mjs";
 import { type FeeTables, PUBLISHED_FEE_TABLES } from "./submission-fee-page";
 
-type FeeFixture = { switchedOn?: boolean; tables?: Partial<FeeTables> };
+type FeeFixture = {
+  switchedOn?: boolean;
+  /** The report deposit's own switch (`REPORT_DEPOSIT_SWITCHED_ON`). */
+  reportDeposit?: boolean;
+  tables?: Partial<FeeTables>;
+};
+
+function fixture(): FeeFixture | undefined {
+  return import.meta.env.VITE_SLOP_FEE_FIXTURE === "1"
+    ? (globalThis as { __SLOP_FEE_FIXTURE__?: FeeFixture }).__SLOP_FEE_FIXTURE__
+    : undefined;
+}
 
 export function feePageSetup(): { switchedOn: boolean; tables: FeeTables } {
-  if (import.meta.env.VITE_SLOP_FEE_FIXTURE === "1") {
-    const fixture = (globalThis as { __SLOP_FEE_FIXTURE__?: FeeFixture })
-      .__SLOP_FEE_FIXTURE__;
-    if (fixture)
-      return {
-        switchedOn: fixture.switchedOn === true,
-        tables: { ...PUBLISHED_FEE_TABLES, ...fixture.tables },
-      };
-  }
+  const test = fixture();
+  if (test)
+    return {
+      switchedOn: test.switchedOn === true,
+      tables: { ...PUBLISHED_FEE_TABLES, ...test.tables },
+    };
   return {
     switchedOn: SUBMISSION_FEE_SWITCHED_ON,
+    tables: PUBLISHED_FEE_TABLES,
+  };
+}
+
+/**
+ * The same for the report deposit's pages (PRD section 8): the deployed
+ * bundle uses `REPORT_DEPOSIT_SWITCHED_ON` and the published tables; the
+ * browser-test build may set `reportDeposit` on the same fixture object.
+ */
+export function reportDepositSetup(): {
+  switchedOn: boolean;
+  tables: FeeTables;
+} {
+  const test = fixture();
+  if (test)
+    return {
+      switchedOn: test.reportDeposit === true,
+      tables: { ...PUBLISHED_FEE_TABLES, ...test.tables },
+    };
+  return {
+    switchedOn: REPORT_DEPOSIT_SWITCHED_ON,
     tables: PUBLISHED_FEE_TABLES,
   };
 }

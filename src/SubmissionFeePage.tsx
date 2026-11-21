@@ -109,7 +109,7 @@ async function loadFeeRates(signal?: AbortSignal): Promise<FeeRates | null> {
   }
 }
 
-function TransactionLink({
+export function TransactionLink({
   network,
   hash,
   label,
@@ -128,8 +128,11 @@ function TransactionLink({
   );
 }
 
+/** A recorded deposit and what became of it, as either pay page reads it. */
+type RecordedDeposit = Pick<FeeItem, "paid" | "outcome" | "resolveTransaction">;
+
 /** What a recorded deposit is waiting for, or what became of it. */
-function outcomeText(item: FeeItem): string {
+function outcomeText(item: RecordedDeposit, held: string): string {
   const kind = item.paid?.kind ?? "stable";
   if (item.outcome === "refunded")
     return "The deposit was sent back to the wallet that paid it.";
@@ -143,10 +146,17 @@ function outcomeText(item: FeeItem): string {
     return kind === "slop"
       ? "The deposit is to be kept: the SLOP will be sent to the burn address once the deposit's block is final."
       : "The deposit is to be kept: it will be sent to Slop's fee wallet once the deposit's block is final.";
-  return "The deposit is held by the deposit contract until this pull request is decided.";
+  return held;
 }
 
-function PaidRecord({ item }: { item: FeeItem }) {
+export function PaidRecord({
+  item,
+  held = "The deposit is held by the deposit contract until this pull request is decided.",
+}: {
+  item: RecordedDeposit;
+  /** What an undecided deposit waits for. */
+  held?: string;
+}) {
   const paid = item.paid;
   if (!paid) return null;
   return (
@@ -166,7 +176,7 @@ function PaidRecord({ item }: { item: FeeItem }) {
           label="Deposit transaction"
         />
       </p>
-      <p>{outcomeText(item)}</p>
+      <p>{outcomeText(item, held)}</p>
       {item.resolveTransaction ? (
         <p>
           <TransactionLink
