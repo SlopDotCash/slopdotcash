@@ -809,8 +809,17 @@ delay, half of these also with a rotation delay; the all-zero project ID and
 the other network appear among them. Discovered by simulation: the attested monthly
 commitment, the token payment and the wallet binding, each refused in most
 states and each tried over about a thousand or more value combinations, at
-weights 25, 30 and 25 took most of the remaining simulation; they now weigh
-12, 15 and 12, which still reaches every goal.
+weights 25, 30 and 25 took most of the remaining simulation. Discovered by
+simulation: the simulator tries every value combination of a refused event
+for each of its weight's entries, and with the signer among the
+combinations even where the event ignores it, the commitment, the token payment and the wallet binding each
+still cost about three times as much per refusal as any other event, the
+one-time `initialize` about one and a half; at about 230 seconds of
+evaluator time per 2,500 traces the invariant simulation outlasted its hour
+on the loaded machine. The commitment, the token payment and the wallet
+binding now weigh 6, 8 and 6, both openings 5, the native payment 15 and
+the reserve release 12; an enabled event is still chosen in proportion to
+its weight among the enabled ones, and every goal is still reached.
 
 ```quint
 pure val byValues = Set("owner", "upgrader", "attester", "rotator", "other")
@@ -883,19 +892,19 @@ pure val timestampValues = Set(1796342400, 1796342401, 1799020800, 1801699200)
 pure val nowValues = Set(1793491200, 1796342400)
 pure val weight_upgradeProgram = 20
 pure val weight_initializeConfig = 20
-pure val weight_initialize = 20
-pure val weight_initializeNative = 20
+pure val weight_initialize = 5
+pure val weight_initializeNative = 5
 pure val weight_deposit = 25
 pure val weight_depositNative = 25
 pure val weight_commit = 20
 pure val weight_commitBounty = 15
-pure val weight_bindWallet = 12
-pure val weight_pay = 15
-pure val weight_payNative = 30
-pure val weight_commitMonthly = 12
+pure val weight_bindWallet = 6
+pure val weight_pay = 8
+pure val weight_payNative = 15
+pure val weight_commitMonthly = 6
 pure val weight_commitMonthlyAward = 30
 pure val weight_releaseMonthlyAward = 30
-pure val weight_releaseMonthlyReserve = 25
+pure val weight_releaseMonthlyReserve = 12
 pure val weight_vetoBinding = 15
 pure val weight_tick = 10
 ```
