@@ -90,6 +90,16 @@ export type SecurityApiDependencies = {
     adminGithubIds: ReadonlySet<string>;
   };
   /**
+   * The refundable SLOP deposit on a private report (PRD section 8, "Report
+   * deposit"; `report-deposit.ts`). Absent or `off` asks nobody and records
+   * nothing; `dry_run` records which reports would have been asked and holds
+   * nothing; `live` asks. Platform admins are never asked.
+   */
+  reportDeposit?: {
+    mode: "off" | "dry_run" | "live";
+    adminGithubIds: ReadonlySet<string>;
+  };
+  /**
    * Per-request memo of `currentReportingProject`. A list read sets it so
    * the viewer's cases share one project read instead of one per case; a
    * project's manifest does not change inside one request.

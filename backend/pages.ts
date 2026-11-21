@@ -111,6 +111,13 @@ export type PagesEnv = {
    * `wrangler.staging.toml` sets staging.
    */
   SECURITY_ROUTINE_DECISIONS?: string;
+  /**
+   * The refundable SLOP deposit on a private report (PRD section 8, "Report
+   * deposit"; operator decision of 21 November 2026): exactly `dry_run` or
+   * `live`; anything else, including unset, is off. `wrangler.toml` sets
+   * production and `wrangler.staging.toml` sets staging.
+   */
+  SECURITY_REPORT_DEPOSIT?: string;
   /** Notification Worker; absent where no notifier is deployed. */
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
   /**
