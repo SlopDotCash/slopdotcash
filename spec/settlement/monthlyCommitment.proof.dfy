@@ -37,6 +37,99 @@ lemma WindowOpensPositive(period: int)
   MonthStartPositive(nextPeriod(period));
 }
 
+ghost function CivilYear(period: int): int
+{
+  period / 100 - (if period % 100 <= 2 then 1 else 0)
+}
+
+ghost function MarchMonth(period: int): int
+{
+  if period % 100 > 2 then period % 100 - 3 else period % 100 + 9
+}
+
+ghost function YearDays(year: int): int
+  requires year >= 0
+{
+  var era := year / 400;
+  var yearOfEra := year - era * 400;
+  era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100
+}
+
+lemma MonthStartSplit(period: int)
+  requires period >= 202611 && 1 <= period % 100 <= 12
+  ensures monthStart(period) == (YearDays(CivilYear(period)) + (153 * MarchMonth(period) + 2) / 5 - 719468) * 86400
+{
+  MonthlyCommitmentDivision(period, 100);
+  var year := CivilYear(period);
+  assert year >= 2025;
+  MonthlyCommitmentDivision(year, 400);
+  var yearOfEra := year - (year / 400) * 400;
+  assert 0 <= yearOfEra < 400;
+  MonthlyCommitmentDivision(yearOfEra, 4);
+  MonthlyCommitmentDivision(yearOfEra, 100);
+  assert 0 <= MarchMonth(period) <= 11;
+  MonthlyCommitmentDivision(153 * MarchMonth(period) + 2, 5);
+}
+
+lemma YearDaysStep(year: int)
+  requires year >= 0
+  ensures YearDays(year + 1) >= YearDays(year) + 364
+{
+  var era := year / 400;
+  var yearOfEra := year - era * 400;
+  assert 0 <= yearOfEra < 400;
+  if yearOfEra < 399 {
+    assert (year + 1) / 400 == era;
+    assert (yearOfEra + 1) / 4 >= yearOfEra / 4;
+    assert (yearOfEra + 1) / 100 <= yearOfEra / 100 + 1;
+  } else {
+    assert (year + 1) / 400 == era + 1;
+    assert YearDays(year) == era * 146097 + 399 * 365 + 99 - 3;
+  }
+}
+
+lemma NextPeriodValid(period: int)
+  requires period >= 202611 && 1 <= period % 100 <= 12
+  ensures nextPeriod(period) >= 202611 && 1 <= nextPeriod(period) % 100 <= 12
+  ensures MarchMonth(period) < 11 ==> CivilYear(nextPeriod(period)) == CivilYear(period) && MarchMonth(nextPeriod(period)) == MarchMonth(period) + 1
+  ensures MarchMonth(period) == 11 ==> CivilYear(nextPeriod(period)) == CivilYear(period) + 1 && MarchMonth(nextPeriod(period)) == 0
+{
+  MonthlyCommitmentDivision(period, 100);
+  var next := nextPeriod(period);
+  if period % 100 == 12 {
+    assert next == (period / 100 + 1) * 100 + 1;
+    assert next / 100 == period / 100 + 1 && next % 100 == 1;
+  } else {
+    assert next == period + 1;
+    assert next / 100 == period / 100 && next % 100 == period % 100 + 1;
+  }
+}
+
+lemma MonthStartIncreases(period: int)
+  requires period >= 202611 && 1 <= period % 100 <= 12
+  ensures monthStart(period) < monthStart(nextPeriod(period))
+{
+  NextPeriodValid(period);
+  var next := nextPeriod(period);
+  MonthStartSplit(period);
+  MonthStartSplit(next);
+  var s := MarchMonth(period);
+  if s < 11 {
+    assert (153 * (s + 1) + 2) / 5 > (153 * s + 2) / 5;
+  } else {
+    YearDaysStep(CivilYear(period));
+    assert (153 * 11 + 2) / 5 == 337;
+  }
+}
+
+lemma WindowOrdered(period: int)
+  requires period >= 202611 && 1 <= period % 100 <= 12
+  ensures windowOpensAt(period) < windowClosesAt(period)
+{
+  NextPeriodValid(period);
+  MonthStartIncreases(nextPeriod(period));
+}
+
 lemma AttemptSequenceFold(xs: seq<Attempt>)
   ensures Std.Collections.Seq.FoldLeft((highest: int, a: Attempt) => (if ((highest >= -1) && (a.sourceSequence > highest)) then a.sourceSequence else -2), -1, xs) == -2
     || (|xs| == 0 && Std.Collections.Seq.FoldLeft((highest: int, a: Attempt) => (if ((highest >= -1) && (a.sourceSequence > highest)) then a.sourceSequence else -2), -1, xs) == -1)
@@ -191,6 +284,34 @@ lemma SignEvmBounded(c: Commitment, attemptId: int, root: string, by_: string)
   {
   }
   AppendKeepsIdsUnique(c.attempts, added);
+}
+
+lemma authorize_ensures(c: Commitment, family: ChainFamily, month: FundedMonth)
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAuthorizedMonthKept(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysViewNamesAuthority(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysFrozenOnlyWhenSigned(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysLegacyOnlyWhenAdmitted(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAttemptsBounded(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAuthorizedWithinCap(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAdmittedRootSigned(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAttemptSequencesIncrease(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAttemptsSignedInWindow(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysSolanaSingleAttempt(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysNoIntentEmpty(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysAdmittedIsLatestAttempt(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysInvestigationHasUnknownRoot(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> alwaysWindowFromPeriod(authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepFirstAuthorizationImmutable(c, authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepNoSignatureAfterAdmission(c, authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepFrozenAtFixed(c, authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepAdmissionPermanent(c, authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepViewSequenceMonotone(c, authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepLegacyRetainedOnce(c, authorize(c, family, month)))
+  ensures (inv(c) ==> canAuthorize(c, family, month) ==> stepAttemptsAppendOnly(c, authorize(c, family, month)))
+{
+  if inv(c) && canAuthorize(c, family, month) {
+    WindowOrdered(month.period);
+  }
 }
 
 lemma signEvm_ensures(c: Commitment, attemptId: int, root: string, by_: string)
