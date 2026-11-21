@@ -3,10 +3,14 @@ import { stagingAcceptanceRequest as request } from "./staging-acceptance-reques
 
 const site = "https://staging.slop.cash";
 const identity = "https://identity-staging.slop.cash";
-const post = (origin, path, body, browserOrigin = site) =>
+const post = (origin, path, body, browserOrigin = site, cookie = "") =>
   request(`${origin}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Origin: browserOrigin },
+    headers: {
+      "Content-Type": "application/json",
+      Origin: browserOrigin,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     body: JSON.stringify(body),
   });
 const audience = "slop-points-web";
@@ -17,13 +21,35 @@ if (
 )
   throw new Error(`Staging identity start failed: ${start.status}`);
 const flow = await start.json();
+// A website flow is bound to the browser that started it by a cookie; this
+// probe is that browser, so it presents the cookie on authorize and poll.
+const binding =
+  start.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .find((pair) =>
+      pair.startsWith(`__Host-slop_oauth_bind_${flow.flowId}=`),
+    ) ?? "";
+if (
+  !binding ||
+  start.headers.get("access-control-allow-credentials") !== "true"
+)
+  throw new Error("Staging identity did not bind the flow to its browser");
 const authorization = new URL(flow.authorizationUrl);
 if (
   authorization.origin !== identity ||
   authorization.pathname !== "/v1/oauth/authorize"
 )
   throw new Error("Staging identity returned a different authority");
-const authorize = await request(authorization.href);
+const unbound = await request(authorization.href);
+if (unbound.status !== 403)
+  throw new Error(
+    "Staging authorized a flow in a browser that did not start it",
+  );
+await unbound.body?.cancel();
+const authorize = await request(authorization.href, {
+  headers: { Cookie: binding },
+});
 if (authorize.status !== 302)
   throw new Error("Staging authorization redirect failed");
 const github = new URL(authorize.headers.get("location"));
@@ -34,11 +60,13 @@ if (
   github.searchParams.get("client_id") !== process.env.GITHUB_APP_CLIENT_ID
 )
   throw new Error("Staging OAuth application or callback mismatch");
-const poll = await post(identity, "/v1/oauth/poll", {
-  audience,
-  flowId: flow.flowId,
-  pollCapability: flow.pollCapability,
-});
+const poll = await post(
+  identity,
+  "/v1/oauth/poll",
+  { audience, flowId: flow.flowId, pollCapability: flow.pollCapability },
+  site,
+  binding,
+);
 if (poll.status !== 202 || (await poll.json()).status !== "pending")
   throw new Error("Staging did not persist and read its OAuth flow");
 const forbidden = await post(
@@ -64,5 +92,5 @@ const write = await post(site, "/api/v1/points/visibility", { public: true });
 if (write.status !== 401)
   throw new Error("Staging accepted an unauthenticated account write");
 console.log(
-  "Staging OAuth persistence, callback routing, browser isolation, anonymous account, and write authentication verified. Interactive login acceptance is separate.",
+  "Staging OAuth persistence, browser binding, callback routing, browser isolation, anonymous account, and write authentication verified. Interactive login acceptance is separate.",
 );

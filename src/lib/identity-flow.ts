@@ -65,10 +65,13 @@ export async function requestIdentityAssertion(options: {
   );
   const now = options.now ?? Date.now;
   const signal = options.signal;
+  // Website sign-in is bound to this browser by an HttpOnly cookie that the
+  // identity service sets at start and requires at authorization and poll.
   const post = (body: unknown): RequestInit => ({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   const started = options.resume
     ? record(options.resume)
