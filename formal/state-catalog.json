@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "58871718e677c1d74665113b1cc86e179804cfc3747afd95939f2f6e319a0f88",
+  "inventorySha256": "a5db85fb5662a5c15365b22b67be632578bcf245a8f72b4202bc2d4b86530cb1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 631,
+      "line": 684,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -50,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1044,
+      "line": 1052,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -69,7 +69,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1663,
+      "line": 1699,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -2766,7 +2766,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 506,
+      "line": 522,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2794,7 +2794,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1243,
+      "line": 1271,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -3548,7 +3548,7 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 390,
+      "line": 392,
       "name": "status",
       "kind": "string-union",
       "values": [
@@ -3564,6 +3564,7 @@
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
@@ -4834,7 +4835,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 801,
+      "line": 832,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],

@@ -328,6 +328,7 @@ export async function sendVaultBatch(
       "Your wallet cannot send this as one request. Approve, then deposit.",
     );
   const config = walletVaultConfig(deployment, wallet, payoutPolicy);
+  const native = deployment.asset.toLowerCase() === EVM_NATIVE_ASSET;
   const calls = [
     ...(review.resetAllowance ? [approveCall(deployment, 0n)] : []),
     ...(review.approvalNeeded
@@ -336,7 +337,8 @@ export async function sendVaultBatch(
     {
       to: deployment.vault,
       data: buildDepositCalldata(review.gross),
-      value: "0x0",
+      // A native vault's deposit must carry exactly the deposited ETH.
+      value: native ? hexQuantity(BigInt(review.gross)) : "0x0",
     },
     ...extraCalls,
   ];
