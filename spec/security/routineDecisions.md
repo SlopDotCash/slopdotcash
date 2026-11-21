@@ -137,6 +137,8 @@ acknowledged. Otherwise the two calls decide. `dry_run` runs every rule,
 model calls included, and stores the decision unapplied: no case change, no
 event and no notice. `live` applies it to the case, whose reporter reads the
 fixed reason and any published line, never model text or another report.
+The case it holds keeps the [case rules](./cases.md) on routine closes,
+appeals and committed awards.
 
 ```quint
 type Observation = NoCallNeeded | NotStored | SameDigest({ earlier: int }) | Calls({ first: Reading, second: Reading })
@@ -173,7 +175,8 @@ pure def failCalls(r: Routine): Routine =
 pure def closedNow(c: C::PrivateCase): bool = c.routine.closed
 pure def alwaysCaseRoutineMarks(r: Routine): bool = C::alwaysRoutineCloseIsUnappealedRefusal(r.privateCase)
   and C::alwaysRoutineClockOnItsRequest(r.privateCase) and C::alwaysRoutineReturnRecorded(r.privateCase)
-  and C::alwaysAppealState(r.privateCase) and C::alwaysAppealSource(r.privateCase) and r.privateCase.submission == C::Verified and r.privateCase.reportVersion > 0
+  and C::alwaysAppealState(r.privateCase) and C::alwaysAppealSource(r.privateCase)
+  and C::alwaysCommittedFindingStands(r.privateCase) and r.privateCase.submission == C::Verified and r.privateCase.reportVersion > 0
 pure def alwaysOnlyLiveApplies(r: Routine): bool = r.records.every(d => d.applied == (d.mode == Live))
 pure def stepOnlyLiveChangesTheCase(before: Routine, via: str, after: Routine): bool =
   (via == "failCalls" or (via == "decideReport" and before.mode != Live)) implies after.privateCase == before.privateCase
