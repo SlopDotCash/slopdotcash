@@ -9212,13 +9212,13 @@
     },
     {
       "path": "workers/slopbot/appeals.ts",
-      "sha256": "b8bef0793164e55c213bbefef8d383b65e652ae7003aab8ebda14f5bd8c8541c",
+      "sha256": "d1bcc01c03a1071fa00646e49d3a1ed623593bed20546cba53ab07dcfd942f17",
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/points_dispute_lease.qnt",
         "formal/models/slopbot/bot_appeal.qnt"
       ],
-      "candidateLines": [1, 84, 118, 157, 171, 203, 237],
+      "candidateLines": [1, 84, 118, 172, 186, 218, 252],
       "review": "mapped-abstraction"
     },
     {
@@ -9480,7 +9480,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "cece4377bf18a76bfa693babbd912d44ec7089c7a6c7e3a476ac63dfefdd82c6",
+      "sha256": "b7e9765eacce480d4bfb9c0b17b77ad2c5c79e66edaa4579bf80ac06673a22f2",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9502,7 +9502,7 @@
         1461, 1619, 1741, 1754, 1755, 1792, 1809, 1812, 1813, 1976, 1981, 2043,
         2056, 2061, 2068, 2069, 2073, 2074, 2082, 2098, 2155, 2308, 2368, 2374,
         2385, 2411, 2441, 2466, 2474, 2497, 2502, 2578, 2579, 2629, 2664, 2715,
-        2860, 3128, 3203, 3369, 3380, 3388, 3486, 3487, 3527, 3577, 3591, 3607
+        2860, 3131, 3206, 3393, 3404, 3412, 3510, 3511, 3551, 3601, 3615, 3631
       ],
       "review": "mapped-abstraction"
     },
@@ -16948,7 +16948,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_appeal.qnt",
-      "sha256": "a7183b9260fd3e01d292b59a305dd254400c9d0772405d74fda3ae51783b5bb4",
+      "sha256": "ac1b3f80da38e29b83b5e0516bd7fc90b6efa88be3e047f6c88c948262fa62b6",
       "sources": [
         "migrations/0064_slopbot_penalties_appeals.sql",
         "migrations/0091_slopbot_appeal_publications.sql",
@@ -16960,7 +16960,9 @@
         "appealReversalTest",
         "escalatedCommandNeedsModeratorTest",
         "escalatedReviewTest",
-        "independentMaintainerReopenTest"
+        "independentMaintainerReopenTest",
+        "siblingHoldModeratorUpholdTest",
+        "siblingHoldNeedsModeratorTest"
       ]
     },
     {
