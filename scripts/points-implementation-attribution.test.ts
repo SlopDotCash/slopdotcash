@@ -5,6 +5,7 @@ import { createGlobalLeaders } from "../src/lib/global-leaderboard";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
+  repositoryIdFromUrl,
 } from "../src/lib/leaderboard";
 import {
   appendPointAwards,
@@ -17,6 +18,11 @@ import {
   pointKey,
   VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "../src/lib/points";
+import {
+  applyPointsImplementationCorrections,
+  createPointsCorrectionBaseline,
+  type PointsImplementationCorrectionManifest,
+} from "../src/lib/points-implementation-corrections";
 import { createPaymentProjectView } from "../src/lib/project-view";
 import { allocateReviewBudgetMinor } from "../src/lib/reward-cycle";
 import { penaltyDeductions } from "../src/lib/score-penalties";
@@ -484,6 +490,165 @@ test("a rolling fallback preserves an October first-acceptance allocation", () =
     REFRESHED_AT,
   );
   expect(repeated.revisions).toEqual(journal.revisions);
+});
+
+test("an unassessed rolling census retains a verified November first-acceptance allocation", () => {
+  const next = input(true, REFRESHED_AT);
+  const pull = next.mergedPullRequestOutcomes[0];
+  const [carried, own] = pull.commits ?? [];
+  assert(carried && own);
+  pull.headRefOid = own.oid;
+  carried.additions = 90;
+  carried.deletions = 0;
+  own.additions = 10;
+  own.deletions = 0;
+
+  const { empty } = setup();
+  const current = createLeaderboardSnapshot(next);
+  const currentAwards = current.ledger
+    .filter((event) => event.category === "merged-pull-request")
+    .map(awardForScore);
+  const baseline = appendPointAwards(
+    empty,
+    currentAwards,
+    hash(currentAwards),
+    current.ruleVersion,
+    GENERATED_AT,
+  );
+  const before = amounts(baseline);
+  expect(before.get(PENALIZED_AUTHOR.id)).toBe(9);
+  expect(before.get(PROJECT_OWNER.id)).toBe(1);
+
+  const manifest: PointsImplementationCorrectionManifest = {
+    schemaVersion: "1",
+    rule: "historical-implementation-allocation-v1",
+    generatedAt: GENERATED_AT,
+    baseline: createPointsCorrectionBaseline(baseline),
+    candidates: [
+      {
+        id: "correction_november",
+        kind: "pull-request",
+        projectId: "asi",
+        sourceId: pull.id,
+        sourceUrl: pull.url,
+        occurredAt: pull.mergedAt,
+        workUnitId: currentAwards[0].workUnitId,
+        sourceIds: [pull.id],
+        expectedPredecessors: baseline.revisions.map((revision) => ({
+          key: revision.award.key,
+          revisionId: revision.id,
+        })),
+        proof: {
+          status: "complete",
+          censusDigest: "c".repeat(64),
+          sources: [
+            {
+              repository: "SlopDotCash/asi",
+              repositoryNodeId: "R_kgDOT23CXA",
+              sourceId: pull.id,
+              sourceUrl: pull.url,
+              occurredAt: pull.mergedAt,
+              headSha: own.oid,
+              author: PROJECT_OWNER,
+              complete: true,
+              commitCount: 2,
+              commits: [carried, own].map((commit, index) => ({
+                sha: commit.oid,
+                parentCount: 1,
+                author: index === 0 ? PENALIZED_AUTHOR : PROJECT_OWNER,
+                additions: commit.additions ?? null,
+                deletions: commit.deletions ?? null,
+                // The complete historical census sees an earlier acceptance
+                // that is outside the rolling snapshot's window.
+                firstAcceptedSourceId:
+                  index === 0 ? "PR_earlier_accepted" : pull.id,
+              })),
+            },
+          ],
+        },
+      },
+    ],
+  };
+  const recordedAt = "2026-11-20T00:30:00.000Z";
+  const reviewed = applyPointsImplementationCorrections(
+    baseline,
+    manifest,
+    [{ candidateId: "correction_november", eligible: true }],
+    recordedAt,
+    new Map(),
+  );
+  expect(reviewed.dispositions[0].status).toBe("applied");
+  const corrected = amounts(reviewed.journal);
+  expect(corrected.get(PENALIZED_AUTHOR.id)).toBe(0);
+  expect(corrected.get(PROJECT_OWNER.id)).toBe(10);
+  expect(current.valueAssessmentCoverage?.[0]).toMatchObject({
+    status: "missing",
+    recordDigest: null,
+    implementationAllocation: { rule: "changed-lines-v1" },
+  });
+  const retained = applyPointsSnapshot(
+    reviewed.journal,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(retained.revisions).toEqual(reviewed.journal.revisions);
+  expect(amounts(retained)).toEqual(corrected);
+
+  const detail = penaltyScoreInput([], REFRESHED_AT).mergedPullRequests.find(
+    (source) => source.id === pull.id,
+  );
+  assert(detail);
+  next.mergedPullRequests = [
+    { ...detail, headRefOid: own.oid, author: PROJECT_OWNER },
+  ];
+  next.source.counts.detailedMergedPullRequests = 1;
+  next.detailEligibleMergedPullRequestIds = [pull.id];
+  const assessmentDigest = "d".repeat(64);
+  next.valueDecisions = new Map([
+    [
+      pull.id,
+      {
+        status: "assessed",
+        latestDigest: assessmentDigest,
+        history: [{ recorded_at: REFRESHED_AT }],
+        implementationActorNodeIds: [PENALIZED_AUTHOR.id, PROJECT_OWNER.id],
+        record: {
+          pullRequestNodeId: pull.id,
+          repository: repositoryIdFromUrl(pull.url),
+          headSha: own.oid,
+          occurredAt: pull.mergedAt,
+          assessment: {
+            tier: "small",
+            rationale: "Source-bound accepted value.",
+            reviews: [],
+          },
+        },
+      } as never,
+    ],
+  ]);
+  const assessed = createLeaderboardSnapshot(next);
+  expect(assessed.valueAssessmentCoverage?.[0]).toMatchObject({
+    status: "assessed",
+    recordDigest: assessmentDigest,
+  });
+  const advanced = applyPointsSnapshot(
+    retained,
+    assessed,
+    hash(assessed),
+    REFRESHED_AT,
+  );
+  expect(
+    [...amounts(advanced).values()].reduce((sum, amount) => sum + amount, 0),
+  ).toBe(30);
+  expect(
+    advanced.revisions
+      .slice(retained.revisions.length)
+      .every(
+        (revision) =>
+          revision.decision?.sourceId === `value:${assessmentDigest}`,
+      ),
+  ).toBe(true);
 });
 
 test("rolling scores preserve an owner-retired duplicate October pool", () => {

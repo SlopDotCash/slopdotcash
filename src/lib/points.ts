@@ -961,14 +961,13 @@ export function applyPointsSnapshot(
     // A missing value assessment cannot replace a recorded PR pool with the
     // fallback minimum, or add a second pool under a different recipient.
     heldUnassessedSources.add(sourceKey);
-    // A rolling window cannot supersede verified October first acceptance
-    // when its score has no source-bound valuation.
+    // The rolling window can omit an earlier acceptance verified by the
+    // complete historical census. Retain that allocation without an assessment.
     if (
       prior.some(
-        ({ award, decision }) =>
-          award.occurredAt.startsWith("2026-10-") &&
+        ({ decision }) =>
           decision?.reason ===
-            VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+          VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
       )
     )
       continue;

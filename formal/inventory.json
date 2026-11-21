@@ -7224,7 +7224,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "2799dec152cffb600b5ffd02fb70f16b2284a9edd3a558c3b3c2072c59c53ceb",
+      "sha256": "2221fefdf8f92b31a30e88692d34f5e97602d8049bcb8563a33940ccfec8f81c",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -7235,7 +7235,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [384, 868, 947, 1205, 1217, 1224, 1233],
+      "candidateLines": [384, 868, 947, 1204, 1216, 1223, 1232],
       "review": "mapped-abstraction"
     },
     {
