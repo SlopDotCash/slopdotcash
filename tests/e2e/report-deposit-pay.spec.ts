@@ -42,8 +42,8 @@ test("a bundle with the deposit switched off says so and offers no way to pay", 
   page,
 }) => {
   // The deployed switch itself; a change to it must change this test.
-  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(false);
-  // No fixture: this is the bundle as deployed.
+  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(true);
+  await switchReportDeposit(page, false);
   await serveReportDeposit(page, CASE, () => reportDepositRecord(CASE));
   await installWallet(page, scriptedWallet(PAYER).answer);
   await page.goto(PAGE, { waitUntil: "networkidle" });
