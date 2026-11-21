@@ -149,6 +149,7 @@ const SecurityProgramPage = lazy(() =>
   })),
 );
 const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
+const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -212,7 +213,8 @@ type Route =
   | { kind: ProjectRouteKind; projectId: string }
   | { kind: "cycle"; projectId: string; cycleId: string }
   | { kind: "profile"; login: string }
-  | { kind: "fee"; owner: string; repo: string; number: string };
+  | { kind: "fee"; owner: string; repo: string; number: string }
+  | { kind: "report-deposit"; caseId: string };
 
 /**
  * Each page's data needs. `snapshot` loads the public snapshot. `registry`
@@ -265,6 +267,8 @@ const ROUTES: Record<
   profile: { snapshot: true, registry: "cached" },
   // The registry names the repository; its numeric id never changes.
   fee: { snapshot: false, registry: "cached" },
+  // The record names no project, so the page needs no registry.
+  "report-deposit": { snapshot: false, registry: "independent" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -320,6 +324,9 @@ function internalRoute(pathname: string): Route {
     return { kind: "profile", login: second };
   if (first === "cycles" && segments.length === 3)
     return { kind: "cycle", projectId: second, cycleId: third };
+  // The Inbox links a report's deposit at /fee/report/<caseId>.
+  if (first === "fee" && second === "report" && segments.length === 3)
+    return { kind: "report-deposit", caseId: third };
   // Slopbot's fee comment links /fee/<owner>/<repo>/<number>.
   if (first === "fee" && segments.length === 4)
     return { kind: "fee", owner: second, repo: third, number: segments[3] };
@@ -401,6 +408,9 @@ function routeHead(route: Route): { title: string; path: string | null } {
   // One page per pull request: titled, never indexed.
   if (route.kind === "fee")
     return { title: pageTitle("Submission fee"), path: null };
+  // One page per report: titled, never indexed.
+  if (route.kind === "report-deposit")
+    return { title: pageTitle("Report deposit"), path: null };
   if (route.kind === "profile") {
     return {
       title: pageTitle(route.login),
@@ -1944,6 +1954,8 @@ function AppContent({ route }: { route: Route }) {
         number={route.number}
       />
     );
+  else if (route.kind === "report-deposit")
+    content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
   else content = <NotFound />;
   return (
     <>

@@ -118,21 +118,46 @@ function readDeposited(item: string): Deposited | null {
   }
 }
 
+/** What a deposit pays: a pull request's fee, or the deposit on a private report. */
+export type FeeSubject = "pull request" | "report";
+const WORDS: Record<
+  FeeSubject,
+  { label: string; recorded: string; kept: string; uncounted: string }
+> = {
+  "pull request": {
+    label: "Pay the fee",
+    recorded: "Slop records the pull request as paid",
+    kept: "a kept fee",
+    uncounted: "it did not pay this pull request",
+  },
+  report: {
+    label: "Pay the deposit",
+    recorded: "Slop records the deposit",
+    kept: "a kept deposit",
+    uncounted: "it did not count for this report",
+  },
+};
+
 /** "Deposit received" wording: paid is recorded early, settlement waits for finality. */
-function receivedNotice(way: FeeWay, hash: string): string {
+function receivedNotice(
+  way: FeeWay,
+  hash: string,
+  subject: FeeSubject,
+): string {
   const network = networkLabel(way.network);
   const blocks =
     SUBMISSION_FEE_CONFIRMATIONS[
       way.network as keyof typeof SUBMISSION_FEE_CONFIRMATIONS
     ];
-  return `Deposit received in a ${network} block. Slop records the pull request as paid once that block is ${blocks} blocks deep, usually within a few minutes. A refund or a kept fee is sent only after ${network} finalizes the block. You can leave this page. ${hash}`;
+  return `Deposit received in a ${network} block. ${WORDS[subject].recorded} once that block is ${blocks} blocks deep, usually within a few minutes. A refund or ${WORDS[subject].kept} is sent only after ${network} finalizes the block. You can leave this page. ${hash}`;
 }
 
 /**
- * Wallet-confirmed payment of one pull request's submission fee. Any wallet
- * may pay; the refund goes to the wallet that paid. No key or signing
- * authority enters Slop, and every address comes from `ways`, which the page
- * already checked against the published tables.
+ * Wallet-confirmed payment of one pull request's submission fee, or of the
+ * deposit on one private report. Any wallet may pay; the refund goes to the
+ * wallet that paid. No key or signing authority enters Slop, and every
+ * address comes from `ways`, which the page already checked against the
+ * published tables.
  */
 export function SubmissionFeePay({
   item,
@@ -140,8 +165,11 @@ export function SubmissionFeePay({
   tables,
   confirmDue,
   onDeposit,
+  subject = "pull request",
 }: {
   item: string;
+  /** Names what the deposit pays in the few sentences that mention it. */
+  subject?: FeeSubject;
   /** What is due now; empty once the pull request is recorded as paid. */
   ways: readonly FeeWay[];
   tables: FeeTables;
@@ -228,7 +256,7 @@ export function SubmissionFeePay({
       const earlier = readDeposited(item);
       if (earlier && Date.now() - earlier.at < RECORD_WAIT_MS)
         throw new Error(
-          "A deposit from this browser tab is already on chain for this pull request. Nothing was sent.",
+          `A deposit from this browser tab is already on chain for this ${subject}. Nothing was sent.`,
         );
       const reviewed = review.way;
       // Someone else may have paid, or the SLOP amount may have changed.
@@ -382,7 +410,7 @@ export function SubmissionFeePay({
           autoErrored.current = false;
           if (result === "received") {
             receivedShown.current = true;
-            setNotice(receivedNotice(pending.way, hash));
+            setNotice(receivedNotice(pending.way, hash, subject));
           } else if (receivedShown.current) {
             // The block that carried it was replaced; it is pending again.
             receivedShown.current = false;
@@ -414,7 +442,7 @@ export function SubmissionFeePay({
         receivedShown.current = result === "received";
         setNotice(
           result === "received"
-            ? receivedNotice(pending.way, hash)
+            ? receivedNotice(pending.way, hash, subject)
             : waitingNotice,
         );
         return;
@@ -517,7 +545,10 @@ export function SubmissionFeePay({
     : null;
   const facts = review?.facts;
   return (
-    <section className="admin-card vault-actions" aria-label="Pay the fee">
+    <section
+      className="admin-card vault-actions"
+      aria-label={WORDS[subject].label}
+    >
       <h2>Pay from a wallet</h2>
       {error && (
         <p role="alert" className="form-error">
@@ -536,9 +567,9 @@ export function SubmissionFeePay({
       ) : null}
       {deposited && ways.length > 0 && !awaitingRecord ? (
         <p>
-          Slop did not record this tab's earlier deposit within an hour, so it
-          did not pay this pull request. A deposit that does not count is sent
-          back to the wallet that paid it.
+          Slop did not record this tab's earlier deposit within an hour, so{" "}
+          {WORDS[subject].uncounted}. A deposit that does not count is sent back
+          to the wallet that paid it.
         </p>
       ) : null}
       {pending || (ways.length > 0 && !awaitingRecord) ? (

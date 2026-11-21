@@ -191,10 +191,10 @@ export function feeItemPath(repositoryId: string, pullNumber: number): string {
 
 /** The record did not match the published tables; nothing from it is used. */
 export class FeeRecordError extends Error {
-  constructor() {
-    super(
-      "The fee record for this pull request could not be checked against Slop's published addresses. Do not pay from this page.",
-    );
+  constructor(
+    message = "The fee record for this pull request could not be checked against Slop's published addresses. Do not pay from this page.",
+  ) {
+    super(message);
   }
 }
 
@@ -410,6 +410,36 @@ export function readFeeItem(
       throw new FeeRecordError();
     return true;
   });
+  const settled = readFeeSettlement(body, due.length, tables);
+  return {
+    repositoryId,
+    pullNumber,
+    item,
+    stableMinor,
+    askedAt: settled.askedAt,
+    due,
+    slopWithheld: due.length !== listed.length,
+    paid: settled.paid,
+    outcome: settled.outcome,
+    outcomeAt: settled.outcomeAt,
+    resolveTransaction: settled.resolveTransaction,
+  };
+}
+
+/**
+ * The part of a deposit record that both pay pages share: when it was asked,
+ * the recorded deposit and what became of it. `dueCount` is the number of
+ * ways to pay the record still lists: nothing is due once a deposit is
+ * recorded, and nothing is decided before one.
+ */
+export function readFeeSettlement(
+  body: Record<string, unknown>,
+  dueCount: number,
+  tables: FeeTables,
+): Pick<
+  FeeItem,
+  "askedAt" | "paid" | "outcome" | "outcomeAt" | "resolveTransaction"
+> {
   let paid: FeePayment | null = null;
   if (body.paid !== null && body.paid !== undefined) {
     const payment = record(body.paid);
@@ -437,16 +467,9 @@ export function readFeeItem(
   const outcome = body.outcome ?? null;
   if (outcome !== null && !OUTCOMES.includes(outcome as string))
     throw new FeeRecordError();
-  // Nothing is due once a deposit is recorded, and nothing is decided before one.
-  if (paid ? due.length > 0 : outcome !== null) throw new FeeRecordError();
+  if (paid ? dueCount > 0 : outcome !== null) throw new FeeRecordError();
   return {
-    repositoryId,
-    pullNumber,
-    item,
-    stableMinor,
     askedAt: instant(body.askedAt),
-    due,
-    slopWithheld: due.length !== listed.length,
     paid,
     outcome: outcome as FeeOutcome | null,
     outcomeAt:
