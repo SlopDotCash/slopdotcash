@@ -1,0 +1,27 @@
+name: Propose monthly allocations
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Closed UTC month to propose (YYYY-MM); blank means previous month"
+        required: false
+        type: string
+      full_collection:
+        description: "Recompute every commit attribution live instead of reusing the newest trusted collection's fenced answers"
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  refuse-registration-ref:
+    name: Require the main or development workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Refuse dispatch on the registration ref
+        run: |
+          echo 'Select main or development to propose monthly allocations.' >&2
+          exit 1
