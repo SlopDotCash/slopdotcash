@@ -26086,7 +26086,7 @@
     },
     {
       "path": "spec/settlement/reserveRelease.md",
-      "sha256": "794c2246b87805a845ba35aa4659193a36119247822a7c6c34d58d028855dce7",
+      "sha256": "93c4793b607e4435abb648a0aa3d1e21e68a428eaf6e01a58fb79a6d1eac83f3",
       "module": "settlement__reserveRelease",
       "stories": [
         {
@@ -26100,6 +26100,8 @@
           "line": 7,
           "definitions": [
             "ReleasePhase",
+            "Network",
+            "ReleaseRefusal",
             "RetainedAllocation",
             "UpgradeQualification",
             "DeploymentPin",
@@ -26120,7 +26122,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Only complete, untouched, finalized retained evidence admits an allocation",
-          "line": 41,
+          "line": 45,
           "definitions": [
             "canAdmitRetained",
             "admitRetained",
@@ -26129,7 +26131,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Current authority and fresh complete wrong-total evidence permit approval",
-          "line": 65,
+          "line": 69,
           "definitions": [
             "canObserve",
             "observe",
@@ -26147,7 +26149,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Finalized release returns the whole untouched reserve",
-          "line": 112,
+          "line": 118,
           "definitions": [
             "canFinalize",
             "finalize",
@@ -26172,8 +26174,22 @@
           ]
         },
         {
+          "heading": "Story: Recover an allocation with the wrong total / Only an EVM vault's release reaches service approval",
+          "line": 199,
+          "definitions": [
+            "canRefuseNetwork",
+            "refuseNetwork",
+            "alwaysApprovedEvm",
+            "alwaysRefusalNamed",
+            "alwaysNetworkPinned",
+            "stepNetworkFixed",
+            "stepRefusalRetained",
+            "sometimesNetworkRefused"
+          ]
+        },
+        {
           "heading": "Story: Recover an allocation with the wrong total / The original balances and allocation survive every recovery step",
-          "line": 193,
+          "line": 234,
           "definitions": [
             "alwaysUntouchedBalances",
             "alwaysSettlementHistory",
@@ -26188,7 +26204,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 228,
+          "line": 269,
           "definitions": [
             "heightValues",
             "attemptValues",
@@ -26203,6 +26219,7 @@
             "weight_ownerSign",
             "weight_finalize",
             "weight_retireFailedAttempt",
+            "weight_refuseNetwork",
             "requestRevisionValues",
             "revisionValues"
           ]
@@ -26214,7 +26231,7 @@
       "references": [
         {
           "target": "./escrow.md",
-          "line": 76
+          "line": 82
         }
       ]
     },
