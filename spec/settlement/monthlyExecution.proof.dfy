@@ -162,19 +162,8 @@ lemma submit_ensures(e: Execution, key: int, sendResult: SendResult, admit: bool
     assert !r0.invalidated;
     if sendResult.Sent? {
       assert !((exists o :: o in e.rows && reorderedBy(e, r0, o)));
-      SubmitShape(e, key, sendResult, admit, consent, by_, t);
       assert !admit ==> (r0.solana || settlement__executorJournal_admitted(r0.journal, r0.period));
-      KeysFrame(e, after);
-      OthersFrame(e, after);
-      JournalsFrame(e, after);
-      SubmissionsFrame(e, after);
-      PhasesFrame(e, after);
-      forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
-        var i :| 0 <= i < |after.rows| && after.rows[i] == r;
-        if i != t { assert e.rows[i] in e.rows; }
-      }
-      RowsLocal(e, after, after.rows[t]);
-      AttemptsFrame(e, after);
+      SubmitSent(e, key, sendResult, admit, consent, by_, t);
     } else {
       assert after.rows == e.rows;
       KeysFrame(e, after);
@@ -910,6 +899,44 @@ lemma PhasesFrame(e: Execution, after: Execution)
   }
 }
 
+// A send changes its own pending row only, with the facts its guard gives.
+lemma SubmitSent(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by_: string, t: int)
+  requires inv(e) && sendResult.Sent?
+  requires 0 <= t < |e.rows| && e.rows[t].key == key && e.rows[t].phase.Pending? && e.rows[t].lastAttempt == e.now
+  requires attemptedThisRun(e, key) && !(key in e.processed)
+  requires forall i :: 0 <= i < |e.rows| && i != t ==> e.rows[i].key != key
+  requires !(exists o :: o in e.rows && reorderedBy(e, e.rows[t], o)) && !e.rows[t].invalidated
+  requires admit ==> (fresh_(e.rows[t]) && e.rows[t].root == e.rows[t].latest.root)
+  requires !admit ==> (e.rows[t].solana || settlement__executorJournal_admitted(e.rows[t].journal, e.rows[t].period))
+  ensures inv(submit(e, key, sendResult, admit, consent, by_))
+  ensures stepCompletionPermanent(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepOtherRowsUnchanged(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepNoAdmissionWithoutAdmit(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepAdmissionUsesLatestAttempt(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepJournalFollows(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepSequenceMonotone(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepAdmittedRootFixed(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepWrongTotalNeverCompletes(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepReleasedPermanent(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures stepRefusalPermanent(e, submit(e, key, sendResult, admit, consent, by_))
+{
+  var after := submit(e, key, sendResult, admit, consent, by_);
+  var r0 := e.rows[t];
+  assert r0 in e.rows;
+  SubmitShape(e, key, sendResult, admit, consent, by_, t);
+  KeysFrame(e, after);
+  OthersFrame(e, after);
+  JournalsFrame(e, after);
+  SubmissionsFrame(e, after);
+  PhasesFrame(e, after);
+  forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
+    var i :| 0 <= i < |after.rows| && after.rows[i] == r;
+    if i != t { assert e.rows[i] in e.rows; }
+  }
+  RowsLocal(e, after, after.rows[t]);
+  AttemptsFrame(e, after);
+}
+
 // A send changes only its own row: no other row was sent at a later nonce.
 lemma SubmitShape(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by_: string, t: int)
   requires alwaysSentNoncesIssued(e) && sendResult.Sent?
@@ -934,7 +961,7 @@ lemma RowsLocal(e: Execution, after: Execution, x: Row)
   requires alwaysLatestAttemptKnown(e)
   requires forall r :: r in after.rows ==> (r in e.rows || r == x)
   requires x.sequence >= 1 && x.sequence <= x.latestSequence && validTree(x.latest) && x.latest.legacyRoot == x.legacyRoot
-    && settlement__money_equalAmounts(x.latest.whole, x.wholeGross) && x.latest.digest == x.digest
+    && x.latest.whole == x.wholeGross && x.latest.digest == x.digest
     && (!(fresh_(x)) || (x.root == x.latest.root && x.total == x.latest.total && x.leafCount == x.latest.count))
   requires after.reverts == e.reverts && after.sends >= e.sends
   requires (!(x.phase.Complete?) || (x.height > 0)) && !(x.invalidated)

@@ -388,7 +388,7 @@ sequence.
 
 ```quint
 pure def laterAttempt(row: Row, tree: Tree): bool = validTree(tree) and tree.legacyRoot == row.legacyRoot
-  and M::equalAmounts(tree.whole, row.wholeGross) and tree.digest == row.digest
+  and tree.whole == row.wholeGross and tree.digest == row.digest
 pure def canSignAttempt(e: Execution, key: int, sequence: int, tree: Tree, by: str): bool =
   by == "attester" and e.rows.some(r => r.key == key and r.v2 and (r.phase == Pending or r.phase == Submitted))
     and e.rows.every(r => r.key != key or (sequence > r.latestSequence and laterAttempt(r, tree)
@@ -403,7 +403,7 @@ pure def reauthorize(e: Execution, key: int, sequence: int, tree: Tree, by: str)
   { ...e, touched: key, rows: e.rows.listMap(r => if (r.key == key)
     { ...r, sequence: sequence, root: tree.root, total: tree.total, leafCount: tree.count } else r) }
 pure def alwaysLatestAttemptKnown(e: Execution): bool = e.rows.every(r => r.sequence >= 1 and r.sequence <= r.latestSequence
-  and validTree(r.latest) and r.latest.legacyRoot == r.legacyRoot and M::equalAmounts(r.latest.whole, r.wholeGross)
+  and validTree(r.latest) and r.latest.legacyRoot == r.legacyRoot and r.latest.whole == r.wholeGross
   and r.latest.digest == r.digest
   and (fresh(r) implies r.root == r.latest.root and r.total == r.latest.total and r.leafCount == r.latest.count))
 pure def stepSequenceMonotone(before: Execution, after: Execution): bool =
