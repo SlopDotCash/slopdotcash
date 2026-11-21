@@ -25,7 +25,10 @@ import { sha256Hex } from "../src/lib/sha256";
 import { VALUE_TIERS } from "../src/lib/value-assessment";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
-import { projectHistoricalValueChanges } from "./historical-value-replay";
+import {
+  projectHistoricalValueChanges,
+  type VerifiedClosedReviews,
+} from "./historical-value-replay";
 import { pointProtectionQuery } from "./points-protection-sql";
 
 /** An earlier PR's accepted squash is kept separately from its submitted history. */
@@ -341,6 +344,7 @@ export function reconstructHistoricalPoints(
   now: string,
   bans: ReadonlyMap<string, string>,
   verifiedIdenticalAcceptedChanges: ReadonlySet<string> = new Set(),
+  closedReviews?: VerifiedClosedReviews,
 ): PointsJournal {
   assertPointsJournal(baseline);
   check(
@@ -358,6 +362,7 @@ export function reconstructHistoricalPoints(
       packet,
       baseline,
       packet.valueSnapshot,
+      closedReviews,
     );
     const byKey = new Map(rows.map((row) => [row.award.key, row]));
     check(

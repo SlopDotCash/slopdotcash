@@ -2,6 +2,7 @@
 import { canonicalJson } from "../src/lib/canonical-json";
 import { validRepositoryPath } from "../src/lib/project-contracts";
 import { sha256Hex } from "../src/lib/sha256";
+import type { GitHubClient } from "../workers/slopbot/github";
 import { validValueContextSelections } from "../workers/slopbot/value-context";
 import type { ValueJournalRecord } from "../workers/slopbot/value-journal";
 import { validMergeRecipe } from "../workers/slopbot/value-merge-profile";
@@ -27,6 +28,7 @@ type StoredRow =
 type SourceFinding =
   | "audited-head"
   | "stale-head"
+  | "verified-closed-context"
   | "conflicting-audit-binding"
   | "missing-from-merged-audit"
   | "outside-audit";
@@ -374,6 +376,121 @@ async function jointHistory(
   return { sources, active: records.filter((_, index) => !used[index]) };
 }
 
+export type HistoricalContextGitHub = Pick<GitHubClient, "graphql" | "get">;
+
+type ClosedLifecycle = {
+  __typename: string;
+  id: string;
+  number: number;
+  state: string;
+  closed: boolean;
+  merged: boolean;
+  mergedAt: string | null;
+  mergeCommit: { oid: string } | null;
+  closedAt: string | null;
+  headRefOid: string;
+  repository: {
+    id: string;
+    databaseId: number;
+    isPrivate: boolean;
+    nameWithOwner: string;
+  };
+};
+
+type RestLifecycle = {
+  number: number;
+  node_id: string;
+  state: string;
+  merged: boolean;
+  merged_at: string | null;
+  merge_commit_sha: string | null;
+  closed_at: string | null;
+  head: { sha: string };
+  base: { repo: { node_id: string; id: number; private: boolean } };
+};
+
+const CLOSED_CONTEXT_QUERY =
+  "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid repository{id databaseId isPrivate nameWithOwner}}}}";
+
+async function verifyClosedContexts(
+  candidates: readonly WorkUnitRecord["sources"][number][],
+  github: HistoricalContextGitHub,
+) {
+  const verified = new Set<string>();
+  for (let offset = 0; offset < candidates.length; offset += 30) {
+    const batch = candidates.slice(offset, offset + 30);
+    const result = await github.graphql<{ nodes: (ClosedLifecycle | null)[] }>(
+      CLOSED_CONTEXT_QUERY,
+      { ids: batch.map((source) => source.pullRequestNodeId) },
+    );
+    ensure(
+      Array.isArray(result?.nodes) && result.nodes.length === batch.length,
+    );
+    for (const [index, source] of batch.entries()) {
+      const observed = result.nodes[index];
+      if (
+        observed?.__typename !== "PullRequest" ||
+        observed.id !== source.pullRequestNodeId ||
+        observed.number !== source.pullRequestNumber ||
+        observed.state !== "CLOSED" ||
+        observed.closed !== true ||
+        observed.merged !== false ||
+        observed.mergedAt !== null ||
+        observed.mergeCommit !== null ||
+        !time(observed.closedAt) ||
+        Date.parse(observed.closedAt) !== Date.parse(source.occurredAt) ||
+        observed.headRefOid !== source.headSha ||
+        observed.repository?.id !== source.repositoryNodeId ||
+        observed.repository.databaseId !== source.repositoryDatabaseId ||
+        observed.repository.isPrivate !== false ||
+        observed.repository.nameWithOwner?.toLowerCase() !==
+          source.repository.toLowerCase()
+      )
+        continue;
+      // REST can retain GitHub's test-merge identifier on an unmerged PR.
+      // Keep the stored identifier and require the same immutable REST source
+      // and explicit non-acceptance, alongside GraphQL's null actual merge.
+      if (source.mergeSha !== null) {
+        const rest = await github.get<RestLifecycle>(
+          `/repos/${source.repository}/pulls/${source.pullRequestNumber}`,
+        );
+        if (
+          rest?.number !== source.pullRequestNumber ||
+          rest.node_id !== source.pullRequestNodeId ||
+          rest.state !== "closed" ||
+          rest.merged !== false ||
+          rest.merged_at !== null ||
+          rest.merge_commit_sha !== source.mergeSha ||
+          !time(rest.closed_at) ||
+          Date.parse(rest.closed_at) !== Date.parse(source.occurredAt) ||
+          rest.head?.sha !== source.headSha ||
+          rest.base?.repo?.node_id !== source.repositoryNodeId ||
+          rest.base.repo.id !== source.repositoryDatabaseId ||
+          rest.base.repo.private !== false
+        )
+          continue;
+      }
+      verified.add(source.pullRequestNodeId);
+    }
+  }
+  return verified;
+}
+
+export function historicalClosedContextBindings(
+  receipt: Pick<HistoricalAssessmentReceipt, "records">,
+) {
+  return new Map(
+    receipt.records.flatMap(({ digest, sources }) =>
+      sources
+        .filter(({ finding }) => finding === "verified-closed-context")
+        .map(
+          ({ id, number, headSha, occurredAt }) =>
+            [id, { digest, number, headSha, occurredAt }] as const,
+        ),
+    ),
+  );
+}
+
 function scopedRecord(
   journal: ScopedRecord["journal"],
   row: StoredRow,
@@ -381,6 +498,7 @@ function scopedRecord(
   audit: SourceAudit,
   byId: ReadonlyMap<string, SourceAudit["sources"][number]>,
   byNumber: ReadonlyMap<number, SourceAudit["sources"][number]>,
+  verifiedClosed?: ReadonlySet<string>,
 ): ScopedRecord {
   return {
     journal,
@@ -401,7 +519,9 @@ function scopedRecord(
               ? "audited-head"
               : "stale-head"
           : occurredAt >= audit.from && occurredAt < audit.through
-            ? "missing-from-merged-audit"
+            ? verifiedClosed?.has(source.pullRequestNodeId)
+              ? "verified-closed-context"
+              : "missing-from-merged-audit"
             : "outside-audit";
         return {
           id: source.pullRequestNodeId,
@@ -421,6 +541,7 @@ export async function classifyHistoricalAssessmentScope(
   catalog: HistoricalAssessmentCatalog,
   audit: SourceAudit,
   projectId: string,
+  github?: HistoricalContextGitHub,
 ) {
   ensure(
     matches(projectId, PROJECT) &&
@@ -548,12 +669,51 @@ export async function classifyHistoricalAssessmentScope(
   const activeLegacy = [...legacy.entries()]
     .filter(([key]) => !joint.sources.has(key))
     .map(([, value]) => value);
+  const jointSources = joint.active.map(({ row, record }) => ({
+    row,
+    record,
+    initial: scopedRecord("joint", row, record.sources, audit, byId, byNumber),
+  }));
+  const verifiedClosed = github
+    ? await verifyClosedContexts(
+        jointSources.flatMap(({ initial, record }) => {
+          if (
+            !initial.sources.some(
+              ({ finding }) =>
+                finding === "audited-head" || finding === "stale-head",
+            )
+          )
+            return [];
+          const missing = new Set(
+            initial.sources
+              .filter(({ finding }) => finding === "missing-from-merged-audit")
+              .map(({ id }) => id),
+          );
+          return record.sources.filter(
+            (source) =>
+              missing.has(source.pullRequestNodeId) &&
+              source.indirectAcceptance === undefined,
+          );
+        }),
+        github,
+      )
+    : undefined;
   const relevant = [
     ...activeLegacy.map(({ row, record }) =>
       scopedRecord("legacy", row, [record], audit, byId, byNumber),
     ),
-    ...joint.active.map(({ row, record }) =>
-      scopedRecord("joint", row, record.sources, audit, byId, byNumber),
+    ...jointSources.map(({ row, record, initial }) =>
+      verifiedClosed?.size
+        ? scopedRecord(
+            "joint",
+            row,
+            record.sources,
+            audit,
+            byId,
+            byNumber,
+            verifiedClosed,
+          )
+        : initial,
     ),
   ].filter(({ sources }) =>
     sources.some(({ finding }) => finding !== "outside-audit"),

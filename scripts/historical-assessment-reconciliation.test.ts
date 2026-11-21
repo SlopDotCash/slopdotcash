@@ -7,7 +7,10 @@ import type {
   JointAssessmentCatalogRow,
   LegacyAssessmentCatalogRow,
 } from "./historical-assessment-catalog";
-import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
+import {
+  classifyHistoricalAssessmentScope,
+  type HistoricalContextGitHub,
+} from "./historical-assessment-reconciliation";
 import type { HistoricalPointsPacket } from "./reviewed-historical-points";
 
 const projectId = "eliza";
@@ -257,6 +260,106 @@ test("an active in-period record without exact audited identity never says empty
     expect(receipt.records[0].sources[0].finding).toBe(finding);
     expect(JSON.stringify(receipt)).not.toContain("PRIVATE");
   }
+});
+
+test("closed joint context requires an audited merge anchor and matching GitHub lifecycle proofs", async () => {
+  const context = {
+    ...member,
+    pullRequestNodeId: "PR_context",
+    pullRequestNumber: 10,
+  };
+  const observed = {
+    __typename: "PullRequest",
+    id: context.pullRequestNodeId,
+    number: context.pullRequestNumber,
+    state: "CLOSED",
+    closed: true,
+    merged: false,
+    mergedAt: null,
+    mergeCommit: null,
+    closedAt: sourceTime,
+    headRefOid: context.headSha,
+    repository: {
+      id: audit.repositoryNodeId,
+      databaseId: context.repositoryDatabaseId,
+      isPrivate: false,
+      nameWithOwner: audit.repository,
+    },
+  };
+  const rest = {
+    number: context.pullRequestNumber,
+    node_id: context.pullRequestNodeId,
+    state: "closed",
+    merged: false,
+    merged_at: null,
+    merge_commit_sha: context.mergeSha,
+    closed_at: sourceTime,
+    head: { sha: context.headSha },
+    base: {
+      repo: {
+        node_id: audit.repositoryNodeId,
+        id: context.repositoryDatabaseId,
+        private: false,
+      },
+    },
+  };
+  const github = (
+    node: unknown = observed,
+    pull: unknown = rest,
+  ): HistoricalContextGitHub => ({
+    async graphql<T>(_query: string, variables: Record<string, unknown>) {
+      expect(variables.ids).toEqual([context.pullRequestNodeId]);
+      return { nodes: [node] } as T;
+    },
+    async get<T>(path: string) {
+      expect(path).toBe("/repos/elizaOS/eliza/pulls/10");
+      return pull as T;
+    },
+  });
+  const combined = catalog([], [joint(1, [member, context])]);
+  const receipt = await classifyHistoricalAssessmentScope(
+    combined,
+    audit,
+    projectId,
+    github(),
+  );
+  expect(receipt.status).toBe("requires-value-replay");
+  expect(receipt.counts.auditedSources).toBe(1);
+  expect(receipt.records[0].sources.map(({ finding }) => finding)).toEqual([
+    "audited-head",
+    "verified-closed-context",
+  ]);
+  for (const check of [
+    github(null),
+    github({ ...observed, state: "MERGED", merged: true }),
+    github({ ...observed, closedAt: "2026-10-19T15:00:00.000Z" }),
+    github(observed, null),
+    github(observed, { ...rest, merge_commit_sha: "0".repeat(40) }),
+    github(observed, { ...rest, merged: true }),
+  ]) {
+    expect(
+      await classifyHistoricalAssessmentScope(
+        combined,
+        audit,
+        projectId,
+        check,
+      ),
+    ).toMatchObject({
+      status: "incomplete",
+      blockers: ["missing-from-merged-audit"],
+    });
+  }
+  expect(
+    await classifyHistoricalAssessmentScope(
+      catalog([], [joint(1, [context])]),
+      audit,
+      projectId,
+      github(),
+    ),
+  ).toMatchObject({
+    status: "incomplete",
+    blockers: ["missing-from-merged-audit"],
+  });
 });
 
 test("a broken raw or indexed predecessor chain never produces a ready receipt", async () => {

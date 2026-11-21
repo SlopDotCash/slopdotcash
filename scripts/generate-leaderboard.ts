@@ -105,7 +105,10 @@ import {
 } from "./accepted-implementation-memo";
 import type { HistoricalAssessmentCatalog } from "./historical-assessment-catalog";
 import { createHistoricalAssessmentTransport } from "./historical-assessment-transport";
-import { createMergedHistoricalReplaySnapshot } from "./historical-merged-replay";
+import {
+  createMergedHistoricalReplaySnapshot,
+  type HistoricalClosedContextBindings,
+} from "./historical-merged-replay";
 import {
   type LocalGitObjects,
   localGitObjectsFromDirectory,
@@ -5123,6 +5126,7 @@ interface HistoricalLeaderboardCollection {
   audit: HistoricalPointsPacket["sourceAudit"];
   baseline: PointsJournal;
   history: typeof fetch;
+  closedContexts?: HistoricalClosedContextBindings;
 }
 
 /** Replay the canonical collector against the verified census and frozen histories. */
@@ -5133,6 +5137,7 @@ export async function generateHistoricalLeaderboardFromGitHub(
     audit: HistoricalPointsPacket["sourceAudit"];
     catalog: HistoricalAssessmentCatalog;
     baseline: PointsJournal;
+    closedContexts?: HistoricalClosedContextBindings;
   },
   options: GenerateOptions = {},
 ): Promise<LeaderboardSnapshot> {
@@ -5166,7 +5171,13 @@ export async function generateHistoricalLeaderboardFromGitHub(
         effectiveAt: VALUE_SCORING_APPROVED_HISTORY_FROM,
       },
     },
-    { scope, audit, baseline, history },
+    {
+      scope,
+      audit,
+      baseline,
+      history,
+      closedContexts: approved.closedContexts,
+    },
   );
 }
 
@@ -6002,6 +6013,7 @@ async function collectLeaderboardFromGitHub(
         input,
         historical.scope,
         historical.baseline,
+        historical.closedContexts,
       )
     : createLeaderboardSnapshot(input);
 }

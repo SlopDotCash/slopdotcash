@@ -4392,7 +4392,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "0d3a9965b0a04703fa6ead999163226f5d4aeca77536000423f39de93403753c",
+      "sha256": "7a6c97a82e9caf74cdd6f8e7ab91728604ecd1a8b7efd166051431fc1e947140",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4406,16 +4406,16 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        43, 223, 234, 243, 334, 346, 348, 351, 580, 668, 689, 725, 756, 821,
-        868, 896, 987, 1020, 1029, 1041, 1077, 1174, 1370, 1605, 1667, 1675,
-        1733, 1786, 1789, 1982, 1991, 1996, 2003, 2086, 2087, 2253, 2254, 2337,
-        2370, 2398, 2400, 2404, 2414, 2416, 2428, 2438, 2448, 2473, 2476, 2477,
-        2480, 2482, 2507, 2559, 2856, 2859, 3159, 3279, 3400, 3413, 3424, 3425,
-        3612, 3613, 3804, 3820, 3832, 3839, 3865, 3875, 3879, 3883, 3887, 3942,
-        3961, 3988, 4005, 4039, 4040, 4042, 4058, 4075, 4076, 4077, 4086, 4091,
-        4271, 4629, 4651, 4660, 4710, 4745, 4751, 4758, 4827, 4897, 5027, 5146,
-        5338, 5497, 5832, 5842, 5844, 5857, 5890, 5892, 5893, 5897, 5901, 5957,
-        6020, 6073, 6076, 6165, 6213, 6293, 6303, 6310
+        43, 226, 237, 246, 337, 349, 351, 354, 583, 671, 692, 728, 759, 824,
+        871, 899, 990, 1023, 1032, 1044, 1080, 1177, 1373, 1608, 1670, 1678,
+        1736, 1789, 1792, 1985, 1994, 1999, 2006, 2089, 2090, 2256, 2257, 2340,
+        2373, 2401, 2403, 2407, 2417, 2419, 2431, 2441, 2451, 2476, 2479, 2480,
+        2483, 2485, 2510, 2562, 2859, 2862, 3162, 3282, 3403, 3416, 3427, 3428,
+        3615, 3616, 3807, 3823, 3835, 3842, 3868, 3878, 3882, 3886, 3890, 3945,
+        3964, 3991, 4008, 4042, 4043, 4045, 4061, 4078, 4079, 4080, 4089, 4094,
+        4274, 4632, 4654, 4663, 4713, 4748, 4754, 4761, 4830, 4900, 5030, 5151,
+        5349, 5508, 5843, 5853, 5855, 5868, 5901, 5903, 5904, 5908, 5912, 5968,
+        6032, 6085, 6088, 6177, 6225, 6305, 6315, 6322
       ],
       "review": "mapped-abstraction"
     },
@@ -4512,9 +4512,9 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "sha256": "252fe291f46c25472faed569abcb8d3c14e55e61c2e331e877a5f7b731848718",
+      "sha256": "8efab3403458a3e8830e2636a2ce2da3809f845c95ec686c04725c106faa00ce",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [55, 178, 366, 507, 515],
+      "candidateLines": [57, 180, 368, 385, 403, 413, 435, 460, 628, 636],
       "review": "mapped-abstraction"
     },
     {
@@ -4536,16 +4536,16 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "bd2ebf7bc93cf887250831e933e3ec02d91401a7a0fbc56863e0ad0d9310115b",
+      "sha256": "0d82910c09f0ba3c1ce2307e014dcecb6179331f88a11f6d5b2f9e8c8c842cf9",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [47, 91],
+      "candidateLines": [57, 118, 119, 122, 123, 195],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/historical-replay-qualification.ts",
-      "sha256": "ea23241c267301b3c13df32ee4ca01d9d87c79a3612d5dfd4350f87ea5946c10",
+      "sha256": "776f63e081cd59ef4422a2a7d2c04530f433b44051b14cef679e882306a7e61e",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [15, 112],
+      "candidateLines": [21, 120],
       "review": "mapped-abstraction"
     },
     {
@@ -4557,9 +4557,9 @@
     },
     {
       "path": "scripts/historical-value-replay.ts",
-      "sha256": "000a3844b27008fbf22d61018ba0e8fa4ec8be1c544a8debeb3855df88bd116b",
+      "sha256": "93e129e31102d4044fa5d7ec8a466d4f5e7b47449e3781b35abf34f9a357b322",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [136, 144, 146, 147, 150, 348, 359],
+      "candidateLines": [129, 198, 270, 353, 361, 363, 364, 367, 581, 593],
       "review": "mapped-abstraction"
     },
     {
@@ -5309,9 +5309,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "1809f5dae083d2de5316b248020252d3696637872776b683417e2ccac87177d3",
+      "sha256": "d1070d1fdc1b7306977eb175a0f6946652faac2449a69335f694d40d010cf14a",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [52, 53, 490, 732, 967, 968, 969, 972, 1295],
+      "candidateLines": [55, 56, 495, 737, 972, 973, 974, 977, 1300],
       "review": "mapped-abstraction"
     },
     {
@@ -5389,14 +5389,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "2bc881718a4eadebbd35a83ff720e0c184f88d7cb83820c3b084e3549881050c",
+      "sha256": "a4a55388c66e2fe9da3e3d4a1e0a388eceee63e1e5e7bd41b2185b75506dfa98",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 235, 236, 237, 238, 240, 245, 288, 303, 304, 310, 311, 389, 1090,
-        1110, 1319, 1337, 1344, 1471, 1566, 1700
+        3, 240, 241, 242, 243, 245, 250, 293, 308, 309, 315, 316, 394, 1095,
+        1115, 1325, 1343, 1350, 1477, 1572, 1710
       ],
       "review": "mapped-abstraction"
     },
@@ -15726,7 +15726,7 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "b04b50bf7b967bc109312ad294e1d949d62a3f1e76e1c1b5e8c8727c78922fc7",
+      "sha256": "21f276ff6d77210a0b73b826aaf5f8f0ad3e7f9cdc36047a526efa89d0082b30",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
@@ -15741,14 +15741,19 @@
         "applyCannotEnterAuditTest",
         "bothCatalogsRequiredTest",
         "changedCheckpointRefusesReceiptTest",
+        "changedReviewIdentityRefusesClosureReviewTest",
         "changedScopeCannotEnterAuditTest",
+        "closureImplementationCannotBeStagedTest",
         "invalidRecordRemainsIncompleteTest",
         "matchedActiveRecordRequiresReplayTest",
+        "missingAnchorRefusesClosureReviewTest",
+        "postCloseReviewCannotBeStagedTest",
         "privateReviewNeedsExactReadbackTest",
         "privateReviewNeedsOptInTest",
         "qualifiedPrivateReviewCanBeRetrievedTest",
         "scopeChangeAfterPrivateStagingRefusesReceiptTest",
         "unrelatedAppendAllowsReceiptTest",
+        "verifiedClosureReviewCanBeStagedTest",
         "verifiedEmptyCutTest"
       ]
     },

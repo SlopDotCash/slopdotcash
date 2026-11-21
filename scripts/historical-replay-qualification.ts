@@ -3,8 +3,14 @@ import {
   assertHistoricalAssessmentFreshness,
   readHistoricalAssessmentCatalog,
 } from "./historical-assessment-catalog";
-import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
-import { verifyHistoricalValueReplay } from "./historical-value-replay";
+import {
+  classifyHistoricalAssessmentScope,
+  type HistoricalContextGitHub,
+} from "./historical-assessment-reconciliation";
+import {
+  verifyHistoricalClosedReviews,
+  verifyHistoricalValueReplay,
+} from "./historical-value-replay";
 import type { HistoricalPointsPacket } from "./reviewed-historical-points";
 
 /** Sanitized receipt from an authenticated, successful replay workflow run. */
@@ -62,6 +68,7 @@ export async function verifyHistoricalReplayQualification(
   sourceCommit: string,
   enforcementGeneration: number,
   query: Query,
+  github?: HistoricalContextGitHub,
 ) {
   const { sourceAudit: audit } = packet;
   const qualification = packet.replayQualification?.qualificationSha256;
@@ -102,6 +109,7 @@ export async function verifyHistoricalReplayQualification(
     catalog,
     audit,
     scope.projectId,
+    github,
   );
   if (
     heads.enforcementGeneration !== donor.enforcementGeneration ||
@@ -122,7 +130,8 @@ export async function verifyHistoricalReplayQualification(
       row.scoreDecisionSourceId?.startsWith("value:"),
     ).length ?? 0;
   if (
-    donor.replay.closedUnmergedCoverageCount !== 0 ||
+    donor.replay.closedUnmergedCoverageCount !==
+      (snapshot?.source.counts.closedUnmergedPullRequests ?? 0) ||
     donor.replay.valueCoverageCount !== coverageCount ||
     donor.replay.valueEventCount !== eventCount ||
     (snapshot
@@ -131,15 +140,26 @@ export async function verifyHistoricalReplayQualification(
       : donor.replay.snapshotSha256 !== null)
   )
     throw new Error("Trusted replay output differs from the reviewed scope");
+  const closedReviews = await verifyHistoricalClosedReviews(
+    snapshot,
+    receipt,
+    catalog,
+    github,
+  );
   // The packet's own projection is accepted only if it matches the
   // independent qualification digest from the authenticated donor run.
   if (
-    verifyHistoricalValueReplay(packet, baseline, receipt, snapshot) !==
-    qualification
+    verifyHistoricalValueReplay(
+      packet,
+      baseline,
+      receipt,
+      snapshot,
+      closedReviews,
+    ) !== qualification
   )
     throw new Error(
       "Reviewed value projection differs from the trusted qualification",
     );
   await assertHistoricalAssessmentFreshness(scope, heads, query);
-  return heads;
+  return { heads, closedReviews };
 }

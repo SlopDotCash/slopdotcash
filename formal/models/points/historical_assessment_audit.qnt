@@ -4,6 +4,7 @@
 // @source scripts/historical-merged-replay.ts
 // @source scripts/historical-replay-review.ts
 // @source scripts/historical-value-replay.ts
+// @evidence scripts/historical-assessment-reconciliation.test.ts
 // @evidence scripts/historical-assessment-transport.test.ts
 // @evidence scripts/historical-leaderboard-scope.test.ts
 // @evidence scripts/historical-merged-replay.test.ts
@@ -26,6 +27,8 @@ module historical_assessment_audit {
     current: bool,
     status: str,
     reviewAvailable: bool,
+    boundClosureReview: bool,
+    rejectedClosureReview: bool,
   }
   var s: State
 
@@ -40,6 +43,8 @@ module historical_assessment_audit {
     current: true,
     status: "unsealed",
     reviewAvailable: false,
+    boundClosureReview: false,
+    rejectedClosureReview: false,
   }
 
   action capture(trusted: bool, scoped: bool, apply: bool, joint: int, legacy: int): bool = all {
@@ -62,10 +67,28 @@ module historical_assessment_audit {
     s.phase == "reading" or s.phase == "staged",
     s' = s.with("current", s.current and not(affectsScope)),
   }
+  action bindClosureReview(
+    matchingLifecycle: bool,
+    auditedMergedAnchor: bool,
+    sameAssessedReviewAndActor: bool,
+    beforeClose: bool,
+    reviewOnly: bool,
+  ): bool = {
+    val matches = matchingLifecycle and auditedMergedAnchor
+      and sameAssessedReviewAndActor and beforeClose and reviewOnly
+    all {
+      s.phase == "reading",
+      complete,
+      s.relevant,
+      s' = s.with("boundClosureReview", s.boundClosureReview or matches)
+        .with("rejectedClosureReview", s.rejectedClosureReview or not(matches)),
+    }
+  }
   action stageReview(explicit: bool, qualified: bool, verifiedReadback: bool): bool = all {
     s.phase == "reading",
     s.current,
     complete,
+    not(s.rejectedClosureReview),
     explicit,
     qualified,
     verifiedReadback,
@@ -76,7 +99,8 @@ module historical_assessment_audit {
     s.current,
     s' = s.with("phase", "sealed").with("reviewAvailable", s.phase == "staged").with(
       "status",
-      if (complete) (if (s.relevant) "requires-value-replay" else "no-scoped-active-assessments")
+      if (complete and not(s.rejectedClosureReview))
+        (if (s.relevant) "requires-value-replay" else "no-scoped-active-assessments")
       else "incomplete"
     ),
   }
@@ -92,6 +116,12 @@ module historical_assessment_audit {
     observe(false, false, false),
     changeCheckpoint(true),
     changeCheckpoint(false),
+    bindClosureReview(true, true, true, true, true),
+    bindClosureReview(false, true, true, true, true),
+    bindClosureReview(true, false, true, true, true),
+    bindClosureReview(true, true, false, true, true),
+    bindClosureReview(true, true, true, false, true),
+    bindClosureReview(true, true, true, true, false),
     stageReview(true, true, true),
     seal,
     s' = s,
@@ -101,7 +131,9 @@ module historical_assessment_audit {
     s.status == "no-scoped-active-assessments" implies (complete and not(s.relevant)),
     s.status == "requires-value-replay" implies (complete and s.relevant),
     s.phase == "sealed" implies (s.status != "unsealed" and s.current),
-    s.reviewAvailable implies (s.phase == "sealed" and complete and s.current),
+    s.reviewAvailable implies (s.phase == "sealed" and complete and s.current and not(s.rejectedClosureReview)),
+    s.boundClosureReview implies (complete and s.relevant),
+    s.rejectedClosureReview implies (not(s.reviewAvailable) and s.status != "requires-value-replay"),
   }
 
   run verifiedEmptyCutTest = init.then(capture(true, true, false, 0, 0))
@@ -131,4 +163,21 @@ module historical_assessment_audit {
   run qualifiedPrivateReviewCanBeRetrievedTest = init
     .then(capture(true, true, false, 0, 0)).then(stageReview(true, true, true))
     .then(seal).expect(s.reviewAvailable and invariant)
+  action relevantCut = capture(true, true, false, 1, 0).then(observe(true, true, true))
+  run verifiedClosureReviewCanBeStagedTest = init.then(relevantCut)
+    .then(bindClosureReview(true, true, true, true, true))
+    .then(stageReview(true, true, true)).then(seal)
+    .expect(s.reviewAvailable and s.boundClosureReview and invariant)
+  run missingAnchorRefusesClosureReviewTest = init.then(relevantCut)
+    .then(bindClosureReview(true, false, true, true, true))
+    .then(stageReview(true, true, true).fail())
+  run changedReviewIdentityRefusesClosureReviewTest = init.then(relevantCut)
+    .then(bindClosureReview(true, true, false, true, true))
+    .then(stageReview(true, true, true).fail())
+  run closureImplementationCannotBeStagedTest = init.then(relevantCut)
+    .then(bindClosureReview(true, true, true, true, false))
+    .then(stageReview(true, true, true).fail())
+  run postCloseReviewCannotBeStagedTest = init.then(relevantCut)
+    .then(bindClosureReview(true, true, true, false, true))
+    .then(stageReview(true, true, true).fail())
 }
