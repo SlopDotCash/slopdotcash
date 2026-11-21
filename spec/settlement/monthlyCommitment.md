@@ -403,6 +403,13 @@ admission did not finish in its time limit. Authorization is now chosen
 first, a newer view is observed rarely, signing and the facts it needs are
 chosen often, and an unadmitted view and an admitting view at the second
 source sequence give the walk a second chance to sign and admit.
+Discovered by simulation: once only an attempt at a newer source sequence
+may be signed, a walk whose first attempt was signed at the second source
+sequence could never sign again, and repeated readings of unchanged facts
+used up most steps, so a reattested admission was still not found in the
+time limit. Views at a third source sequence, unadmitted and admitting
+either root, and facts at their height let such a walk sign again, and
+facts are now chosen less often than signing.
 
 ```quint
 pure val familyValues = Set(EvmV2, SolanaV3)
@@ -411,6 +418,10 @@ pure val monthSample: FundedMonth = { project: "p", period: 202611, snapshotDige
 pure val monthValues = Set(monthSample, { ...monthSample, cap: List(4) }, { ...monthSample, wholeGross: List(6) },
   { ...monthSample, period: 202612 })
 pure val viewValues = Set(
+  { ...emptyView, height: 3, time: 1796342600, sourceSequence: 2, cap: List(8), consumed: List("s1") },
+  { ...emptyView, height: 4, time: 1796342700, sourceSequence: 2, cap: List(8), consumed: List("s1") },
+  { ...emptyView, height: 5, time: 1796342800, sourceSequence: 2, cap: List(8), consumed: List("s1"), admittedRoot: "r1", remaining: List(4) },
+  { ...emptyView, height: 5, time: 1796342800, sourceSequence: 2, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(4) },
   { ...emptyView, height: 1, time: 1796342400, cap: List(8), remaining: List(0) },
   { ...emptyView, height: 2, time: 1796342500, sourceSequence: 1, cap: List(8), consumed: List("s1") },
   { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(4) },
@@ -428,7 +439,7 @@ pure val viewValues = Set(
 pure def factsAt(height: int): SigningFacts =
   { height: height, projectActive: true, restricted: false, vaultServed: true, automaticOn: true, snapshotDigest: "d1",
     pledged: false, retired: false }
-pure val factsValues = Set(factsAt(1), factsAt(2), factsAt(3), factsAt(4)).union(Set({ ...factsAt(1), automaticOn: false },
+pure val factsValues = Set(factsAt(1), factsAt(2), factsAt(3), factsAt(4), factsAt(5)).union(Set({ ...factsAt(1), automaticOn: false },
   { ...factsAt(1), restricted: true }, { ...factsAt(2), snapshotDigest: "d2" }, { ...factsAt(2), vaultServed: false },
   { ...factsAt(1), automaticOn: false, restricted: true, pledged: true },
   { ...factsAt(1), automaticOn: false, pledged: true, retired: true }))
@@ -439,7 +450,7 @@ pure val rootValues = Set("r1", "r2")
 pure val byValues = Set("attester", "next", "anyone")
 pure val weight_authorize = 10
 pure val weight_observe = 1
-pure val weight_observeFacts = 30
+pure val weight_observeFacts = 6
 pure val weight_signEvm = 30
 pure val weight_signSolana = 4
 ```

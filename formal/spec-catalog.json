@@ -24472,7 +24472,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "f907e40e121b8e0660b67a6acb19c1a20a7eceeef372b36dcbe999dd0944b967",
+      "sha256": "c2f0286a59b6e0f169d62855673e579822d6e145c91102b069fe6ae0b07de9fc",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
