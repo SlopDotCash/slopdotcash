@@ -346,7 +346,7 @@
     },
     {
       "path": "backend/notifications/handler.ts",
-      "sha256": "b90f2c777b23c14c9f26d298348f134170e1c19d05890816988c6f9e3ec5c56e",
+      "sha256": "4afe07b85a248bcbb0191594e6b01b0f6a7041eaeb5fbe058a3f277b1a230ef7",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -354,7 +354,7 @@
         "formal/models/api/inbox_queries.qnt",
         "formal/models/api/incomplete_assessment_queries.qnt"
       ],
-      "candidateLines": [65, 72, 73, 144, 177, 211, 215, 280, 313, 334, 335],
+      "candidateLines": [66, 73, 74, 145, 178, 214, 218, 287, 320, 341, 342],
       "review": "mapped-abstraction"
     },
     {
@@ -7014,14 +7014,14 @@
     },
     {
       "path": "src/lib/notifications.ts",
-      "sha256": "b746754ee55f8f134c052c4dcf3a81d76eb774a403b60866ce1f6e42c2976ca1",
+      "sha256": "382f76cea67fc8aea02908cf9778575b03f39f125ab1890f286c6a741b64e356",
       "models": [
         "formal/models/api/inbox_mark_read.qnt",
         "formal/models/api/inbox_queries.qnt",
         "formal/models/ui/ui_inbox_reads.qnt",
         "formal/models/ui/ui_incomplete_assessments.qnt"
       ],
-      "candidateLines": [73, 278, 279],
+      "candidateLines": [73, 288, 289],
       "review": "mapped-abstraction",
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
     },
