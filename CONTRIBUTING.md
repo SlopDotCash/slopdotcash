@@ -25,6 +25,35 @@ Every contributor, person or agent, reads [AGENTS.md](AGENTS.md) in full before 
 Starting a project from the template is [the Vibestack guide, "Set up a new project"](vibestack/README.md#set-up-a-new-project).
 Everything is built on [the stack](AGENTS.md#the-stack): Node 26, pnpm, VibeLang on Effect for the shell, React for every interface.
 
+## Pull requests
+
+Open every pull request against `vibestack`, Slop's default
+branch. The proposed merge must fully implement and integrate the top-level
+stories and models in [spec/index.md](spec/index.md) and its linked specs.
+Match each change to the exact behavior defined by its owning stories, rules
+and models. Cite those headings in the pull request and verify the behavior
+through the real application entry points and any affected subsystem
+boundaries. Follow [SPEC.md](SPEC.md) when changing a requirement and obtain the
+required owner review.
+
+- **Code changes.** Demonstrate the before-and-after results on the base and
+  proposed revisions using the same scenario and inputs. Include reproduction
+  steps or commands and the observable results in the pull request.
+- **UI changes.** Attach before-and-after screenshots of the same affected
+  flow in a running build, along with any video and browser evidence required
+  for that flow.
+- **Every pull request.** Run the full `pnpm verify --continue` suite, including
+  for documentation changes. The suite covers Quint checks and replay, Dafny
+  proofs, Bombadil exploration, unit, integration and browser tests,
+  conformance, type checks, lint and analysis.
+  Record the commands and results for the proposed revision. Merge only when
+  100% of required checks pass. Resolve any failed, skipped or incomplete
+  required checks before merging.
+- **Review the diff.** Remove dead or duplicate code, unnecessary files and
+  temporary artifacts. Satisfy all [Vibestack requirements](SPEC.md), the
+  [repository rules](AGENTS.md#hard-rules) and the
+  [TypeScript conventions](AGENTS.md#typescript-best-practices) before merging.
+
 ## The monorepo
 
 | Path | Holds |
@@ -45,7 +74,7 @@ does not import React, and a UI package holds no business rules. A shared type l
 |---|---|
 | `pnpm dev` | Studio, and every package's `dev` script beside it |
 | `pnpm quick` | the fast local check: types, tests, ESLint and Stylelint, in every package |
-| `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, `pnpm analyze` over this project's packages |
+| `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, `pnpm analyze` over this project's packages, and `pnpm formal:check` |
 | `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
 | `pnpm test:browser` | the browser tests |
 | `pnpm test:models` | every workspace `check`: the root's, which is its owners' too, and Studio's |
@@ -67,9 +96,6 @@ files and the `vibestack/fixtures/` they read, besides the tools every task is k
 `check` rewrites its owners' `gen/` too, so it waits for their tasks: name each owner's in `//#check` of `turbo.json`,
 as `@repo/app`'s are. `pnpm lint:js` on its own needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`);
 `pnpm lint` runs them first.
-
-Tooling pull requests target `vibestack`; production releases remain `development` to `main`. What this branch's CI runs is in
-[CI](#ci).
 
 ## Changing the tools
 
@@ -321,8 +347,8 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 
 | When | Runs |
 |---|---|
-| Pull request or push to `vibestack`, `development` or `main` | `pnpm verify --continue`: build, types, tests, browser tests, all checks, ESLint, Stylelint, Knip, Madge, and jscpd |
-| Nightly | Every check fresh under the fixed nightly profile; saved counterexamples become a pull request into `vibestack` |
+| Configured pull request and push triggers for `vibestack`, `development` and `main` | `pnpm verify --continue --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
+| Nightly | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
 
 Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
 run keeps `test/counterexamples/` and `test/__traces__/`, where a broken

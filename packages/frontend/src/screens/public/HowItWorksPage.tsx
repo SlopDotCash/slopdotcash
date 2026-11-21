@@ -1,4 +1,4 @@
-// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
 import { ExternalLink, PageHeader } from "@repo/ui";
 import { Ban, BookOpen, CalendarCheck, CircleSlash, GitPullRequest, HandCoins, ListChecks, type LucideIcon, Search, ShieldCheck, Wallet } from "lucide-react";
 import type { ReactNode } from "react";

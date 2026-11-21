@@ -5,6 +5,8 @@ It owns one submission's current screening revision and report version.
 `backend/security/report-intake.ts` owns claim, recovery and routing.
 `backend/security/analysis.ts` owns the Surplus adapter and separate advisory
 assessment. The report bytes and private reasons stay outside public state.
+Screening closes nothing; the [routine pass](./routineDecisions.md) reads a
+saved version once its screening settles, or 15 minutes after the save.
 
 ## Story: Screen the exact saved version privately before owner routing
 
