@@ -1,3 +1,4 @@
+import type { WorkUnitRecord } from "../../workers/slopbot/value-work-unit-journal";
 import {
   implementationCreditActors,
   implementationLineWeights,
@@ -44,6 +45,7 @@ import type {
   PullRequestReview,
   ReviewExclusion,
   ReviewExclusionReason,
+  ReviewedImplementationUnit,
   ScoreCategory,
   ScoreEvent,
   ScoreOpportunity,
@@ -80,6 +82,7 @@ import {
   VALUE_SCORING_APPROVED_HISTORY_FROM,
   type ValueScoringPolicy,
 } from "./scoring-policy";
+import { sha256Hex } from "./sha256";
 import { REVIEW_VALUE_THIRDS, VALUE_TIERS } from "./value-assessment";
 
 export type {
@@ -2956,6 +2959,87 @@ function inputHasFormalReviewBefore(
   return false;
 }
 
+const jointRecordDigestPattern = /^[a-f0-9]{64}$/u;
+const reviewedWorkUnitIdPattern = /^wu_[a-f0-9]{64}$/u;
+
+function reviewedImplementationUnitsBySource(input: LeaderboardInput) {
+  const memberships = new Map<string, ReviewedImplementationUnit[]>();
+  const seenRecords = new Set<string>();
+  for (const decision of new Set(input.jointValueDecisions?.values())) {
+    for (const {
+      record_digest: recordDigest,
+      record_json: recordJson,
+    } of decision.history) {
+      // Only retained record bytes can establish membership.
+      if (typeof recordJson !== "string" || seenRecords.has(recordDigest))
+        continue;
+      if (
+        !jointRecordDigestPattern.test(recordDigest) ||
+        sha256Hex(recordJson) !== recordDigest
+      )
+        throw new Error("Reviewed implementation record digest does not match");
+      seenRecords.add(recordDigest);
+      const record = JSON.parse(recordJson) as WorkUnitRecord;
+      // The rolling scorer accepts joint decisions only when every unit was assessed.
+      if (record.units.some((unit) => unit.assessment?.status !== "assessed"))
+        continue;
+      const sources = new Map<string, string>();
+      for (const source of record.sources) {
+        const repository = findRegisteredRepositoryById(source.repository);
+        if (
+          !repository ||
+          repository.projectId !== record.projectId ||
+          (repository.expectedNodeId !== null &&
+            repository.expectedNodeId !== source.repositoryNodeId) ||
+          sources.has(source.pullRequestNodeId)
+        )
+          throw new Error("Reviewed implementation source binding is invalid");
+        sources.set(source.pullRequestNodeId, source.repositoryNodeId);
+      }
+      const claims = new Map(record.claims.map((claim) => [claim.id, claim]));
+      const units = new Set<string>();
+      const assignedClaims = new Set<string>();
+      for (const { workUnitId, claimIds } of record.units) {
+        if (!claimIds.length) continue;
+        if (
+          !reviewedWorkUnitIdPattern.test(workUnitId) ||
+          units.has(workUnitId)
+        )
+          throw new Error("Reviewed implementation unit identity is invalid");
+        units.add(workUnitId);
+        const memberIds = new Set<string>();
+        for (const claimId of claimIds) {
+          const claim = claims.get(claimId);
+          if (!claim || assignedClaims.has(claimId))
+            throw new Error("Reviewed implementation unit claim is invalid");
+          assignedClaims.add(claimId);
+          for (const id of claim.carrierPullRequestIds) memberIds.add(id);
+          memberIds.add(claim.creditPullRequestId);
+          if (claim.retainedCopy)
+            memberIds.add(claim.retainedCopy.acceptancePullRequestId);
+        }
+        for (const id of memberIds) {
+          const repositoryNodeId = sources.get(id);
+          if (repositoryNodeId === undefined)
+            throw new Error("Reviewed implementation member is not a source");
+          const key = JSON.stringify([repositoryNodeId, id]);
+          const members = memberships.get(key) ?? [];
+          members.push({ recordDigest, workUnitId });
+          memberships.set(key, members);
+        }
+      }
+    }
+  }
+  for (const members of memberships.values()) {
+    members.sort(
+      (left, right) =>
+        compareCodeUnits(left.recordDigest, right.recordDigest) ||
+        compareCodeUnits(left.workUnitId, right.workUnitId),
+    );
+  }
+  return memberships;
+}
+
 /** Reuse the complete eligibility pipeline; only ordinary review timing differs. */
 function createSnapshotWithReviewCutoff(
   input: LeaderboardInput,
@@ -5199,6 +5283,10 @@ function createSnapshotWithReviewCutoff(
 
   assignLeaderboardRanks(leaders);
 
+  const reviewedUnitsBySource = reviewedImplementationUnitsBySource(input);
+  const nodeIdByRepository = new Map(
+    input.source.repositories.map(({ id, repositoryId }) => [id, repositoryId]),
+  );
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
@@ -5281,6 +5369,9 @@ function createSnapshotWithReviewCutoff(
                     ? "legacy-policy"
                     : (decision?.status ?? "missing");
             const repository = repositoryIdFromUrl(pull.url);
+            const reviewedImplementationUnits = reviewedUnitsBySource.get(
+              JSON.stringify([nodeIdByRepository.get(repository), pull.id]),
+            );
             // Only complete primary-author evidence can correct a provisional
             // PR-carrier share while the source still awaits valuation.
             const completePrimaryAuthors =
@@ -5374,6 +5465,9 @@ function createSnapshotWithReviewCutoff(
                 !unavailableHeldSourceIds.has(pull.id)
                   ? null
                   : (decision?.latestDigest ?? null),
+              ...(reviewedImplementationUnits
+                ? { reviewedImplementationUnits }
+                : {}),
               ...(verifiedImplementationActorNodeIds
                 ? { verifiedImplementationActorNodeIds }
                 : {}),
@@ -7924,7 +8018,12 @@ export function assertLeaderboardSnapshot(
           "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
-        ].includes(Object.keys(row).sort().join(","))
+        ].includes(
+          Object.keys(row)
+            .filter((key) => key !== "reviewedImplementationUnits")
+            .sort()
+            .join(","),
+        )
       )
         throw new Error("Value coverage has unexpected fields");
       assertString(row.pullRequestId, "value coverage pullRequestId");
@@ -7963,6 +8062,31 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
+      if (row.reviewedImplementationUnits !== undefined) {
+        if (
+          !Array.isArray(row.reviewedImplementationUnits) ||
+          row.reviewedImplementationUnits.length === 0
+        )
+          throw new Error("Reviewed implementation units must be nonempty");
+        let previous = "";
+        for (const member of row.reviewedImplementationUnits) {
+          const unit = assertObject(member, "reviewed implementation unit");
+          if (
+            Object.keys(unit).sort().join(",") !== "recordDigest,workUnitId" ||
+            typeof unit.recordDigest !== "string" ||
+            !jointRecordDigestPattern.test(unit.recordDigest) ||
+            typeof unit.workUnitId !== "string" ||
+            !reviewedWorkUnitIdPattern.test(unit.workUnitId)
+          )
+            throw new Error("Reviewed implementation unit binding is invalid");
+          const key = `${unit.recordDigest}:${unit.workUnitId}`;
+          if (compareCodeUnits(previous, key) >= 0)
+            throw new Error(
+              "Reviewed implementation units must be sorted and unique",
+            );
+          previous = key;
+        }
+      }
       if (row.implementationAllocation !== undefined) {
         const allocation = assertObject(
           row.implementationAllocation,
