@@ -224,7 +224,8 @@ export function word(name: string): Hex {
   return stringToHex(name, { size: 32 });
 }
 
-export const wordName = (value: Hex): string => hexToString(value, { size: 32 });
+// The inverse of word: the zero word names nothing, as word("") is the zero word (viem leaves one NUL byte of it).
+export const wordName = (value: Hex): string => (value === zeroHash ? "" : hexToString(value, { size: 32 }));
 
 export const digestOf = (source: number): Hex => pad(toHex(uint(source, 256)), { size: 32 });
 

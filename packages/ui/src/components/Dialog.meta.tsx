@@ -25,7 +25,7 @@ export const meta: ComponentMeta<DialogProps> = {
   args: { children },
   examples: { Open: { defaultOpen: true } },
   play: {
-    // Opened from the keyboard, it takes focus and is described by its description; Escape and the close button dismiss it, and focus goes back to the trigger.
+    // spec/ui/controls.md, "A dialog takes focus when it opens, keeps it inside, and gives it back to its trigger when dismissed"
     Default: async () => {
       // Focus goes back a moment after the dialog closes.
       const trigger = screen.getByRole("button", { name: "Delete" });
@@ -33,6 +33,8 @@ export const meta: ComponentMeta<DialogProps> = {
       await userEvent.keyboard("{Enter}");
       const dialog = await screen.findByRole("dialog", { name: "Delete the order?" });
       await expect([dialog.contains(document.activeElement), dialog.getAttribute("aria-describedby") === screen.getByText("Order 1042 and its history go for good.").id]).toEqual([true, true]);
+      for (let press = 0; press < 4; press++) await userEvent.tab();
+      await expect(dialog.contains(document.activeElement)).toBe(true);
       await userEvent.keyboard("{Escape}");
       await waitFor(() => expect([screen.queryByRole("dialog"), document.activeElement]).toEqual([null, trigger]));
       await userEvent.click(trigger);

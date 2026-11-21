@@ -14,6 +14,7 @@ interface Vm {
     function expectEmit(bool, bool, bool, bool) external;
     function addr(uint256) external pure returns (address);
     function assume(bool) external;
+    function store(address, bytes32, bytes32) external;
 }
 
 /// @dev Minimal harness: no forge-std is vendored in this project. Trees are built by hand for two and three
@@ -639,5 +640,94 @@ contract ReferralDistributorTest is ReferralBase {
         require(token.balanceOf(ALICE) == second && token.balanceOf(BOB) == bob, "exact");
         require(distributor.totalClaimed() == uint256(second) + uint256(bob), "total");
         require(distributor.totalClaimed() <= distributor.activeTotal(), "never over the posted total");
+    }
+
+    // ------------------------------------------------------------------
+    // ReferralClaims answers every claim exactly as development's inline arithmetic did.
+    // ------------------------------------------------------------------
+    DevelopmentClaims internal development = new DevelopmentClaims();
+
+    function claimState(uint256 cumulative, uint256 already, uint256 claimedTotal, uint256 total) internal {
+        post(0, leafOf(ALICE, cumulative), 1);
+        vm.store(address(distributor), bytes32(uint256(keccak256(abi.encode(uint256(3)))) + 1), bytes32(total));
+        vm.store(address(distributor), bytes32(uint256(8)), bytes32(claimedTotal));
+        vm.store(address(distributor), keccak256(abi.encode(ALICE, uint256(9))), bytes32(already));
+    }
+
+    function testFuzz_claimableIsTheDevelopmentAmount(
+        uint256 cumulative,
+        uint256 already,
+        uint256 claimedTotal,
+        uint256 total
+    ) public {
+        claimState(cumulative, already, claimedTotal, total);
+        (bool ok, bytes memory answer) = address(distributor)
+            .staticcall(abi.encodeCall(ReferralDistributor.claimable, (ALICE, cumulative, new bytes32[](0))));
+        (bool developmentOk, bytes memory developmentAnswer) = address(development)
+            .staticcall(abi.encodeCall(DevelopmentClaims.claimable, (cumulative, already, claimedTotal, total)));
+        require(ok == developmentOk && keccak256(answer) == keccak256(developmentAnswer), "as on development");
+    }
+
+    function claimMatchesDevelopment(uint256 cumulative, uint256 already, uint256 claimedTotal, uint256 total)
+        internal
+    {
+        claimState(cumulative, already, claimedTotal, total);
+        (bool developmentOk, bytes memory developmentAnswer) = address(development)
+            .staticcall(abi.encodeCall(DevelopmentClaims.claim, (cumulative, already, claimedTotal, total)));
+        uint256 paid = developmentOk ? abi.decode(developmentAnswer, (uint256)) : 0;
+        token.mint(address(distributor), paid);
+        uint256 balance = token.balanceOf(ALICE);
+        vm.prank(ALICE);
+        (bool ok, bytes memory answer) =
+            address(distributor).call(abi.encodeCall(ReferralDistributor.claim, (cumulative, new bytes32[](0))));
+        require(ok == developmentOk, "as on development");
+        if (ok) {
+            require(token.balanceOf(ALICE) == balance + paid, "pays the difference");
+            require(
+                distributor.claimed(ALICE) == cumulative && distributor.totalClaimed() == claimedTotal + paid,
+                "records it"
+            );
+        } else {
+            require(keccak256(answer) == keccak256(developmentAnswer), "refuses as on development");
+        }
+    }
+
+    function testFuzz_claimIsTheDevelopmentClaim(
+        uint128 cumulative,
+        uint128 already,
+        uint128 claimedTotal,
+        uint128 total
+    ) public {
+        claimMatchesDevelopment(cumulative, already, claimedTotal, total);
+    }
+
+    function test_claimOverflowingTheClaimedTotalPanicsAsOnDevelopment() public {
+        claimMatchesDevelopment(type(uint256).max, 0, 1, type(uint256).max);
+    }
+}
+
+/// @dev ReferralDistributor's claim arithmetic on development (5268ca066), before ReferralClaims.
+contract DevelopmentClaims {
+    error NothingToClaim();
+    error TotalExceeded();
+
+    function claimable(uint256 cumulative, uint256 already, uint256 totalClaimed, uint256 total)
+        external
+        pure
+        returns (uint256)
+    {
+        if (cumulative <= already) return 0;
+        uint256 amount = cumulative - already;
+        return totalClaimed + amount <= total ? amount : 0;
+    }
+
+    function claim(uint256 cumulative, uint256 already, uint256 totalClaimed, uint256 total)
+        external
+        pure
+        returns (uint256 amount)
+    {
+        if (cumulative <= already) revert NothingToClaim();
+        amount = cumulative - already;
+        if (totalClaimed + amount > total) revert TotalExceeded();
     }
 }
