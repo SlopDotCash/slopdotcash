@@ -232,6 +232,43 @@ null. A Solana binding that a contributor prepared but never co-signed leaves
 the same record as a completed one, so that contributor is not listed. The
 feed reads D1 only and changes no payment state.
 
+### Protected point months for the points generator
+
+`GET /api/v1/operator/protected-point-months` (`protected-point-months.ts`;
+PRD section 7, operator decision, 21 November 2026) tells the release's points
+generator which project months have a recorded payment, so it can hold the
+candidate revisions the atomic Points import would refuse
+(`scripts/points-protection-read.ts`, `scripts/generate-points.ts`). It
+answers only a request with `Authorization: Bearer <POINTS_PROTECTION_TOKEN>`,
+by the same constant-time check as the reserved-awards feed and with its own
+secret. `POINTS_PROTECTION_TOKEN` is an optional Pages secret of at least 32
+characters; while it is unset, shorter, or the token is missing or wrong, the
+handler declines the request and the API returns its ordinary not-found
+answer. The release workflow lists the secret as optional, and passes the same
+value from the repository Actions secret of that name to the production build
+step of a trusted `main` run only.
+
+The answer is
+`{"schema":"slop-protected-point-months-v1","generatedAt":...,"months":[...],"everyMonthProjects":[...]}`
+with `cache-control: no-store`. `months` holds one `{projectId, period}` per
+project month (`period` is `YYYY-MM`) that has a monthly payment run, an
+allocation change or a direct transfer. `everyMonthProjects` holds the id of
+each project with a payment obligation that no monthly allocation accounts
+for, other than the reviewed Base qualification payment; such a project is
+protected in every month. Both statements come from
+`scripts/points-protection-sql.ts` and are built from the same table list and
+the same clause as the import's predicate, and
+`protected-point-months.test.ts` compares the answer with that predicate for
+every kind of record. The answer never carries an amount, a recipient, a
+wallet, a vault, a transaction or which kind of record protects a month. A
+record whose month is not written `YYYY-MM` is left out: no award's month can
+match it, so the import's predicate does not protect anything by it either.
+
+The generator holds the union of this answer and the committed
+`data/points/protected-months.json`. Without the secret it uses the committed
+list alone; a refused, failed or invalid read is one warning and the committed
+list alone. The import guard is unchanged and remains the backstop.
+
 Migration `0021` changes `payment_obligations` to `asset_address`,
 `asset_decimals`, `gross_base` and `fee_base`. It copies each earlier row as
 the reviewed asset of its network (all 6 decimals). A row on a network with

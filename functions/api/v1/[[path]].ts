@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { handleProtectedPointMonths } from "../../../backend/payments/protected-point-months";
 import { handleReservedAwardsFeed } from "../../../backend/payments/reserved-awards-feed";
 import { FundingVaultNotFoundError } from "../../../backend/payments/solana-funding";
 import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
@@ -510,6 +511,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (reservedAwards !== null) return reservedAwards;
+  // The same rule, with its own secret, for the points generator's read.
+  const protectedPointMonths = await handleProtectedPointMonths(request, {
+    db,
+    token: env.POINTS_PROTECTION_TOKEN,
+    now,
+  });
+  if (protectedPointMonths !== null) return protectedPointMonths;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
