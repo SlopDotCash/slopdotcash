@@ -142,7 +142,7 @@ installed the tools has `README.md` in `node_modules/vibestack/`.
 | [`prove` skill](.agents/skills/prove/SKILL.md) | a `proof` stage `✗`, writing a `.proof.dfy`, or a `//@` file |
 | [`design` skill](.agents/skills/design/SKILL.md) | anything a person looks at: layout, components, stories and tokens |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | generated files, tests, caching and CI; adding a package or task, or changing the tools under `vibestack/` |
-| [README.md](README.md#commands) | the commands, Studio, and [using the tools from another package](README.md#using-it-from-another-package) |
+| [README.md](README.md#commands) | the commands, Studio, and [using the tools from another package](vibestack/README.md#using-it-from-another-package) |
 
 ## Hard rules
 
@@ -404,10 +404,24 @@ How `pnpm check` runs them, in its `tests` stage:
 
 ## Definition of done
 
-- `pnpm check` is where step 3 of the sync skill's loop stops: what is
-  left waits on the user.
+- Open every Slop pull request against `vibestack`, the default
+  branch. Follow the [pull request requirements](CONTRIBUTING.md#pull-requests).
+- Verify that the proposed merge fully implements and integrates the top-level
+  stories and models in [spec/index.md](spec/index.md) and its linked specs.
+  Every change follows its owning stories, rules and models exactly. Cite them
+  and verify the affected behavior through the real application entry points.
+- Show before-and-after results for every code change using the same scenario
+  on the base and proposed revisions. For UI changes, attach before-and-after
+  screenshots of the affected flow and include its required browser evidence.
+- Run `pnpm verify --continue` for every pull request. Record the results for
+  the proposed revision, including Quint, Dafny, Bombadil and all other
+  required checks and tests. Merge only when 100% of required checks pass and
+  the change satisfies the [Vibestack requirements](SPEC.md) and
+  [TypeScript conventions](#typescript-best-practices).
+- Remove dead and duplicate code, unnecessary files and temporary artifacts
+  from the change. Review the diff against [Writing code](#writing-code).
 - In the vibestack repository, if you changed `vibestack/`, `pnpm selftest`
   passes, with a new case for each new kind of mistake the change catches,
   and each new kind of `✗` has its row in the sync skill.
-- What you wrote has had its passes under "Writing code".
-- Your summary follows "When you stop" in the sync skill.
+- For spec or source changes, use the sync skill's stop conditions and report
+  any required owner review.
