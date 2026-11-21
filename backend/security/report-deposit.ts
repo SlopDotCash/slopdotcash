@@ -71,8 +71,6 @@ type DepositDependencies = Pick<
 >;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** A recorded row's unstarted work is picked up only after this long. */
-const RECORDED_RECOVERY_MS = 2 * 60 * 1000;
 /**
  * Reports whose held work one sweep starts. A sweep runs after a response,
  * where the platform stops work after about 30 seconds, and each start is a
@@ -426,25 +424,29 @@ async function decideOutcomes(
 /**
  * Turns unpaid asks back into `recorded` rows, which hold nothing: every one
  * of them when the server mode is not `live`, and otherwise those of a
- * project whose owner turned the deposit off. A row the Worker marked paid
- * in the same moment keeps `asked` and is sent back by the outcome rule.
+ * project whose owner turned the deposit off. The row keeps the reason
+ * `turned-off` and the time, with no outcome, so a released ask stays
+ * distinguishable from a row that record-only mode wrote. A row the Worker
+ * marked paid in the same moment keeps `asked` and is sent back by the
+ * outcome rule.
  */
 async function releaseUnpaid(
   deps: DepositDependencies,
   mode: ReportDepositMode,
-): Promise<string[]> {
+  now: Date,
+): Promise<number> {
   const released = await deps.db
     .prepare(
-      `UPDATE security_report_deposits SET mode = 'recorded'
+      `UPDATE security_report_deposits
+          SET mode = 'recorded', outcome_reason = 'turned-off', outcome_at = ?2
         WHERE mode = 'asked' AND paid_at IS NULL AND outcome IS NULL
           AND (?1 <> 'live' OR project_id IN (
             SELECT p.id FROM projects p
-             WHERE json_extract(p.manifest, '$.security.reportDeposit') = 0))
-       RETURNING case_id`,
+             WHERE json_extract(p.manifest, '$.security.reportDeposit') = 0))`,
     )
-    .bind(mode)
-    .all<{ case_id: string }>();
-  return released.results.map((row) => row.case_id);
+    .bind(mode, now.toISOString())
+    .run();
+  return released.meta?.changes ?? 0;
 }
 
 export type ReportDepositWork = {
@@ -461,31 +463,25 @@ export type ReportDepositWork = {
  * is safe to repeat: screening claims its intake revision, the analysis
  * claims its attempt, and the notice is keyed by the case event.
  *
- * A paid report and one this sweep just released start at once. Any other
- * `recorded` row is looked at only after two minutes, so the sweep recovers
- * a start that was lost without racing a record-only report's own.
+ * Only a paid ask and a released ask are looked at. A row that record-only
+ * mode wrote is never touched: that report proceeds exactly as it would
+ * without a deposit.
  */
 async function startReleasedWork(
   deps: DepositDependencies,
   work: ReportDepositWork,
-  now: Date,
-  released: readonly string[],
 ): Promise<number> {
-  const recordedBefore = new Date(
-    now.getTime() - RECORDED_RECOVERY_MS,
-  ).toISOString();
   const ready =
-    "(d.paid_at IS NOT NULL OR (d.mode = 'recorded' AND (d.asked_at <= ?1 OR d.case_id IN (SELECT value FROM json_each(?3)))))";
-  const justReleased = JSON.stringify(released);
+    "(d.paid_at IS NOT NULL OR (d.mode = 'recorded' AND d.outcome_reason = 'turned-off'))";
   const saved = await deps.db
     .prepare(
       `SELECT i.submission_id FROM security_report_deposits d
          JOIN security_submission_intake i ON i.case_id = d.case_id
         WHERE ${ready} AND NOT ${depositHeldSql("d.case_id")}
           AND i.screening_state = 'queued' AND i.review_decision IS NULL
-        ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?2`,
+        ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?1`,
     )
-    .bind(recordedBefore, RELEASE_LIMIT, justReleased)
+    .bind(RELEASE_LIMIT)
     .all<{ submission_id: string }>();
   const linked = await deps.db
     .prepare(
@@ -495,9 +491,9 @@ async function startReleasedWork(
           AND c.submission_state = 'verified' AND c.receipt_state = 'received'
           AND NOT EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.case_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM security_case_analyses a WHERE a.case_id = c.id)
-        ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?2`,
+        ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?1`,
     )
-    .bind(recordedBefore, RELEASE_LIMIT, justReleased)
+    .bind(RELEASE_LIMIT)
     .all<{ id: string; project_id: string; reporter_github_id: string }>();
   let started = 0;
   for (const row of saved.results) {
@@ -559,10 +555,10 @@ export async function runReportDepositSweep(
 ): Promise<ReportDepositSweep> {
   const mode = deps.reportDeposit?.mode ?? "off";
   const now = deps.now();
-  const released = await releaseUnpaid(deps, mode);
+  const released = await releaseUnpaid(deps, mode, now);
   const decided = await decideOutcomes(deps, mode, now);
-  const started = await startReleasedWork(deps, work, now, released);
-  return { released: released.length, decided, started };
+  const started = await startReleasedWork(deps, work);
+  return { released, decided, started };
 }
 
 /** When this isolate next runs a sweep. Tests reset it. */

@@ -385,10 +385,13 @@ without this condition.
 **Release.** `runReportDepositSweep` runs behind security API requests, at
 most once every 30 seconds per isolate. It turns unpaid `asked` rows back
 into `recorded` when the server mode is not `live` (every one of them) or the
-project turned the deposit off, then starts the work that waited: the
-screening of a saved report still `queued`, or the owner's notice and the
-analysis of a linked GitHub report that has neither. A paid report and one
-just released start at once. Each start is safe to repeat.
+project turned the deposit off; a released row keeps `outcome_reason =
+'turned-off'` and the time in `outcome_at`, with no outcome. It then starts
+the work that waited, three reports per sweep: the screening of a saved
+report still `queued`, or the owner's notice and the analysis of a linked
+GitHub report that has neither. Only a paid ask and a released ask are looked
+at; a row that record-only mode wrote is never touched. Each start is safe to
+repeat.
 
 **Outcome.** The same sweep sets `refund_due` or `kept_due` on a paid row
 with no outcome (`reportDepositOutcome`), with one fixed reason:

@@ -8,7 +8,8 @@
 -- A `recorded` row asks nobody and holds nothing. The same code later sets
 -- `refund_due` or `kept_due` on a paid row from the report's own state, and
 -- turns an unpaid `asked` row back into `recorded` when the deposit stops
--- applying. The submission-fee Worker sets `paid_*` when it sees an accepted
+-- applying (that row keeps the reason 'turned-off' and the time, with no
+-- outcome). The submission-fee Worker sets `paid_*` when it sees an accepted
 -- deposit and writes the final `refunded` or `kept` after its transaction.
 -- The Worker sends what is due and never decides it.
 CREATE TABLE security_report_deposits (

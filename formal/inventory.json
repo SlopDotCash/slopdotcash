@@ -1201,10 +1201,10 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "sha256": "a6fb5a85be9b2820bc371f8add8fef1373c97f813b8419d554d2b9f30aa69069",
+      "sha256": "ee55d453a4dc51b4ef349c1e921781b1bcdb566262144457f645d1e722450fdd",
       "models": ["formal/models/api/api_security_report_deposit.qnt"],
       "candidateLines": [
-        15, 28, 150, 197, 361, 405, 438, 553, 597, 611, 621, 627
+        15, 28, 148, 195, 359, 403, 440, 549, 593, 607, 617, 623
       ],
       "review": "mapped-abstraction"
     },
@@ -3807,7 +3807,7 @@
     },
     {
       "path": "migrations/0145_security_report_deposits.sql",
-      "sha256": "94038a526c362f8ac580c7a805f40de3ae86585388af4a759bbb1c606120be89",
+      "sha256": "f1dbc9e9b6bb5ba2dfdd3d0b896107534b8f90605c2398ee4a1d665954df29d9",
       "models": ["formal/models/api/api_security_report_deposit.qnt"],
       "candidateLines": [9],
       "review": "mapped-abstraction"

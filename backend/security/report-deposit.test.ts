@@ -811,8 +811,22 @@ describe("the report deposit through the security API", () => {
     expect((await t.publicRead(filed.caseId)).status).toBe(404);
     // A recorded row can never be marked paid or get an outcome.
     expect(t.pay(filed.caseId)).toBe(0);
+    // The sweep never touches a record-only report, even one whose
+    // screening has not started: it proceeds exactly as without a deposit.
+    t.sqlite
+      .query(
+        "UPDATE security_submission_intake SET screening_state='queued', routed_at=NULL, revision=revision+1 WHERE case_id=?",
+      )
+      .run(filed.caseId);
     t.advance(30 * DAY);
     expect(await t.sweep()).toEqual({ released: 0, decided: 0, started: 0 });
+    expect(t.screened).toHaveLength(1);
+    t.sqlite
+      .query(
+        "UPDATE security_submission_intake SET screening_state='legitimate', revision=revision+1 WHERE case_id=?",
+      )
+      .run(filed.caseId);
+    expect(t.row(filed.caseId)?.outcome_reason).toBeNull();
     expect(t.row(filed.caseId)).toMatchObject({
       mode: "recorded",
       outcome: null,
@@ -911,9 +925,12 @@ describe("the report deposit through the security API", () => {
       expect(await t.sweep()).toEqual({ released: 3, decided: 1, started: 3 });
       expect(await t.sweep()).toEqual({ released: 0, decided: 0, started: 1 });
       for (const entry of held) {
+        // A released ask keeps why and when, with no outcome.
         expect(t.row(entry.caseId)).toMatchObject({
           mode: "recorded",
           outcome: null,
+          outcome_reason: "turned-off",
+          paid_at: null,
         });
         expect(t.intake(entry.caseId).screening_state).toBe("legitimate");
       }
