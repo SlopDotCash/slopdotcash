@@ -177,7 +177,15 @@ export async function resolvePointProtection(
     );
     return fileOnly;
   }
-  if (read === null) return fileOnly;
+  if (read === null) {
+    // A trusted production build always has the address. Saying that its
+    // token is unset makes the release log show which list was used.
+    if (environment.POINTS_PROTECTION_URL)
+      (options.log ?? console.log)(
+        "[points] private protected-months read is not configured (no token); holding by data/points/protected-months.json only",
+      );
+    return fileOnly;
+  }
   (options.log ?? console.log)(
     "[points] holding by data/points/protected-months.json and the private protected-months record",
   );

@@ -97,7 +97,37 @@ test("without both environment values the committed list is used alone and nothi
     expect(result.protection).toEqual(FILE_ONLY);
     expect(result.calls).toEqual([]);
     expect(result.warnings).toEqual([]);
-    expect(result.logs).toEqual([]);
+    // A build that was given the address but no token (a trusted production
+    // build before the secret exists) says so once; any other build is silent.
+    expect(result.logs).toEqual(
+      environment.POINTS_PROTECTION_URL
+        ? [
+            "[points] private protected-months read is not configured (no token); holding by data/points/protected-months.json only",
+          ]
+        : [],
+    );
+  }
+});
+
+test("an empty or shorter answer never drops a committed month", async () => {
+  for (const months of [[], [{ projectId: "feed", period: "2026-10" }]]) {
+    const result = await resolve(ENVIRONMENT, () =>
+      json({ ...ANSWER, months, everyMonthProjects: [] }),
+    );
+    expect(result.protection.months).toEqual(
+      expect.arrayContaining([...COMMITTED]),
+    );
+    expect(result.protection.months).toHaveLength(
+      COMMITTED.length +
+        months.filter(
+          (m) =>
+            !COMMITTED.some(
+              (c) => c.projectId === m.projectId && c.period === m.period,
+            ),
+        ).length,
+    );
+    expect(result.protection.projects).toEqual([]);
+    expect(result.warnings).toEqual([]);
   }
 });
 
