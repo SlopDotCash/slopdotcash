@@ -75,6 +75,7 @@ import type {
   SendReplacement,
   SendStatus,
 } from "./core";
+import { noteProviderFailure } from "./core";
 import {
   checkedDlnOrder,
   DLN_DESTINATION_ABI,
@@ -385,7 +386,15 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     try {
       body = JSON.parse(text);
     } catch {
-      throw new Error(`KyberSwap returned HTTP ${response.status}`);
+      throw noteProviderFailure(
+        new Error(`KyberSwap returned HTTP ${response.status}`),
+        {
+          provider: "kyberswap",
+          stage: "response-json",
+          method: path.split("?")[0],
+          httpStatus: response.status,
+        },
+      );
     }
     if (!response.ok || body.code !== 0 || body.data === undefined) {
       const error = new Error(
