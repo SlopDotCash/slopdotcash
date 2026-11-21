@@ -69,7 +69,8 @@ renamed repository never becomes a second project. Every action must serve
 the requested task: a review or CI request is not a full audit, unrelated
 maintenance or a new registration. The user (sender `user`) states the task;
 the agent (sender `agent`) acts; current GitHub and Slop answers come only
-from the authority service (sender `authorityService`).
+from the authority service (sender `authorityService`). Nothing is applied
+before the task has its matched repository.
 
 ```quint
 type Permission = RepoWrite | Steward | CaseAccess | Applicant
@@ -119,6 +120,8 @@ pure def lawEntryFlowServesNoPolicyChange(task: MaintainerTask, act: SiteAction)
   policyAction(act) implies not(siteServes(task, act))
 pure def alwaysWorkHasOneMatchedRepository(s: MaintainerSession): bool =
   (s.phase == Working or s.phase == Finished) implies (s.repositoryId > 0 and s.task != NoTask)
+pure def alwaysNothingAppliedBeforeTheRepository(s: MaintainerSession): bool =
+  (s.phase == Idle or s.phase == Resolving) implies (s.applied.length() == 0 and (s.phase == Resolving implies s.task != NoTask))
 pure def sometimesAmbiguousTargetAsked(s: MaintainerSession): bool = s.phase == Idle and s.browser
 ```
 
@@ -179,7 +182,8 @@ makes one from a model recommendation. A setup check may queue a scan or
 activate the project, so it is a write like any other. An action whose
 outcome is unknown blocks every further website action until the agent reads
 the resulting record, so a missing response never repeats a create, decision
-or payment. Without browser tools the agent prepares the exact remaining
+or payment. The attempt it reads back is one the website action was allowed
+to make. Without browser tools the agent prepares the exact remaining
 step and never reports it as published. Signing, transfers, restriction
 removal, closure consent, funding requirements, payment policy and
 production activation are never actions of this flow.
@@ -211,6 +215,8 @@ pure def alwaysNoPolicyActionApplied(s: MaintainerSession): bool =
   s.applied.every(a => not(policyAction(a)))
 pure def alwaysAppliedServesTheTask(s: MaintainerSession): bool = s.applied.every(a => siteServes(s.task, a))
 pure def alwaysWithoutBrowserNothingApplied(s: MaintainerSession): bool = not(s.browser) implies s.applied.length() == 0
+pure def alwaysUncertainAttemptWasAllowed(s: MaintainerSession): bool = s.uncertain implies
+  (s.phase == Working and s.browser and siteServes(s.task, s.pending) and (s.pending == RecordDecision implies s.decisions.length() > 0))
 pure def stepDecisionRecordedOnlyWhenGiven(before: MaintainerSession, after: MaintainerSession): bool =
   (after.applied.length() > before.applied.length() and after.applied.nthOr(after.applied.length() - 1, ReadCase) == RecordDecision)
     implies before.decisions.length() > 0

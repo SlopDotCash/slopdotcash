@@ -77,8 +77,13 @@ pure def finishRun(d: SolanaDeposits, slot: int, by: str): SolanaDeposits =
 ### Rules
 
 Everything at or below the covered position has been read, an open interval
-has read every transaction from `resume` to `pending`, and a deposit is on
-record exactly when its transaction has been read.
+has read every transaction from `resume` to `pending`, no interval is open
+while `pending` is zero, and a deposit is on
+record exactly when its transaction has been read. A run never starts above
+the covered position; while the position is still the one it started from,
+it has read every transaction above its cursor up to its top, its top is
+above the position and not above the newest transaction, and its remaining
+reads stay above the position, reaching it exactly on a short page.
 
 ```quint
 pure def alwaysPositionCovered(d: SolanaDeposits): bool = d.position >= 0 and d.position <= d.newest
@@ -86,9 +91,15 @@ pure def alwaysPositionCovered(d: SolanaDeposits): bool = d.position >= 0 and d.
 pure def alwaysIntervalRead(d: SolanaDeposits): bool =
   (d.pending > 0 implies (d.resume > d.position and d.resume <= d.pending and d.pending <= d.newest
     and chainTransactions.filter(t => t >= d.resume and t <= d.pending).subseteq(d.seen)))
-  and (d.pending == 0 implies d.resume == 0)
+  and (d.pending == 0 implies d.resume == 0) and d.pending >= 0
 pure def alwaysRecordedExactlyRead(d: SolanaDeposits): bool =
   d.recorded.subseteq(depositTransactions.intersect(d.seen)) and depositTransactions.intersect(d.seen).subseteq(d.recorded)
+pure def runKeepsItsPlace(d: SolanaDeposits, r: SolanaRun): bool = r.active implies (r.startPosition <= d.position
+  and (r.startPosition == d.position implies (r.cursorAt >= d.position and r.remaining >= 0
+    and r.remaining <= r.cursorAt - d.position and (r.shortPage implies r.remaining == r.cursorAt - d.position)
+    and r.top <= d.newest and (r.top == 0 or r.top > d.position) and (r.remaining > 0 implies r.cursorAt <= r.top)
+    and chainTransactions.filter(t => t > r.cursorAt and t <= r.top).subseteq(d.seen))))
+pure def alwaysRunsKeepTheirPlace(d: SolanaDeposits): bool = runKeepsItsPlace(d, d.first) and runKeepsItsPlace(d, d.second)
 pure def stepPositionNeverGoesBack(before: SolanaDeposits, after: SolanaDeposits): bool = after.position >= before.position
 pure def stepRecordPermanent(before: SolanaDeposits, after: SolanaDeposits): bool = before.recorded.subseteq(after.recorded)
 pure def sometimesAllCovered(d: SolanaDeposits): bool = d.position == 4 and d.pending == 0 and d.recorded.size() == 2
