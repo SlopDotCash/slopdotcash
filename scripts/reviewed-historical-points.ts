@@ -137,6 +137,15 @@ export interface HistoricalPointsPacket {
       }[];
     };
     earlierSources: CorrectionSource[];
+    /** The later PR repeats the complete earlier accepted first-parent diff. */
+    identicalAcceptedChange?: {
+      earlierSourceId: string;
+      earlierMergeSha: string;
+      mergeSha: string;
+      diffSha256: string;
+      /** The later squash is empty and its parent already contains the change. */
+      emptySquash?: true;
+    };
     /** Complete native commit membership already accepted before this promotion. */
     earlierAcceptanceProof?: {
       commits: { sha: string; sourceId: string }[];
@@ -303,6 +312,7 @@ export function reconstructHistoricalPoints(
   baseline: PointsJournal,
   now: string,
   bans: ReadonlyMap<string, string>,
+  verifiedIdenticalAcceptedChanges: ReadonlySet<string> = new Set(),
 ): PointsJournal {
   assertPointsJournal(baseline);
   check(
@@ -661,6 +671,54 @@ export function reconstructHistoricalPoints(
             item.occurredAt <= source.occurredAt,
           "Duplicate coverage is not an earlier accepted source",
         );
+    }
+    const identical = retirement.identicalAcceptedChange;
+    if (identical) {
+      const owner = earlier.get(identical.earlierSourceId);
+      check(
+        Object.keys(identical).sort().join() ===
+          (identical.emptySquash === true
+            ? "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha"
+            : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
+          /^[a-f0-9]{64}$/u.test(identical.diffSha256) &&
+          /^[a-f0-9]{40}$/u.test(identical.earlierMergeSha) &&
+          /^[a-f0-9]{40}$/u.test(identical.mergeSha) &&
+          identical.earlierMergeSha !== identical.mergeSha &&
+          earlier.size === 1 &&
+          source.commits.length === 1 &&
+          source.commits[0].sha === source.headSha &&
+          source.commits[0].parentCount === 1 &&
+          owner &&
+          owner.occurredAt !== null &&
+          source.occurredAt !== null &&
+          owner.occurredAt < source.occurredAt &&
+          !retiringSources.has(owner.sourceId) &&
+          !retirement.unchangedPromotion &&
+          !retirement.earlierAcceptanceProof &&
+          !retirement.acceptedPromotion &&
+          !retirement.acceptedSquashes &&
+          retirement.coverage.length === 0 &&
+          verifiedIdenticalAcceptedChanges.has(hash(retirement)) &&
+          rewardedAwards.some(
+            (award) =>
+              award.projectId === packet.projectId &&
+              award.sourceId === owner.sourceId &&
+              award.sourceUrl === owner.sourceUrl &&
+              award.occurredAt === owner.occurredAt &&
+              award.category === "merged-pull-request" &&
+              award.amount > 0 &&
+              (identical.emptySquash !== true ||
+                (latestBaseline.get(award.key)?.award.amount ?? 0) > 0) &&
+              award.key ===
+                pointKey(
+                  award.projectId,
+                  award.actor.id,
+                  award.category,
+                  award.sourceId,
+                ),
+          ),
+        "Identical accepted change lacks a verified earlier ordinary pool",
+      );
     }
     const unchanged = retirement.unchangedPromotion;
     const treeCommits = new Map(
@@ -1076,7 +1134,7 @@ export function reconstructHistoricalPoints(
     }
     const usedSquashes = new Set<string>();
     const expected: string[] = [];
-    for (const commit of source.commits) {
+    for (const commit of identical ? [] : source.commits) {
       check(
         /^[a-f0-9]{40}$/u.test(commit.sha) &&
           Number.isSafeInteger(commit.parentCount) &&
@@ -1273,7 +1331,7 @@ export function reconstructHistoricalPoints(
       }
     }
     check(
-      (expected.length > 0 || acceptedCommits.size > 0) &&
+      (identical || expected.length > 0 || acceptedCommits.size > 0) &&
         usedSquashes.size === squashes.size &&
         retirement.coverage.length === expected.length &&
         retirement.coverage.every((row) =>
@@ -1289,6 +1347,8 @@ export function reconstructHistoricalPoints(
         evidence.sourceSha256 === hash(source) &&
         evidence.coverageSha256 === hash(retirement.coverage) &&
         evidence.earlierSourcesSha256 === hash(retirement.earlierSources) &&
+        (identical === undefined ||
+          evidence.identicalAcceptedChangeSha256 === hash(identical)) &&
         (acceptedProof === undefined ||
           (evidence.earlierAcceptanceProofSha256 === hash(acceptedProof) &&
             (!acceptedProof.contextSources.some(
@@ -1326,6 +1386,18 @@ export function reconstructHistoricalPoints(
             award.occurredAt.startsWith("2026-10-") &&
             award.sourceUrl === source.sourceUrl,
         ) &&
+        (!identical ||
+          (rows.some(({ award }) => award.amount > 0) &&
+            rows.every(
+              ({ award }) =>
+                award.key ===
+                pointKey(
+                  award.projectId,
+                  award.actor.id,
+                  award.category,
+                  award.sourceId,
+                ),
+            ))) &&
         rows.length === retirement.expectedPredecessors.length &&
         new Set(retirement.expectedPredecessors.map((row) => row.key)).size ===
           rows.length &&

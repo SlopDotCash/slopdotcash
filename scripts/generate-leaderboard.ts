@@ -17,6 +17,13 @@ import {
  */
 
 import {
+  attributionCodeDigest,
+  type CollectionMemoSession,
+  type CommitLineMemo,
+  openCollectionMemo,
+  parseCollectionMemo,
+} from "./collection-memo";
+import {
   GitHubIngestionCheckpointError,
   githubIngestionReadTransport,
   githubPrimaryRateLimitDelay,
@@ -32,7 +39,7 @@ import {
 export { resolveGitHubToken } from "./github-token";
 
 import { readFileSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type DeploymentTier, deploymentTier } from "../src/lib/deployment";
@@ -78,6 +85,10 @@ import {
   type ValueScoringPolicy,
   valueScoringPolicy,
 } from "../src/lib/scoring-policy";
+import {
+  type LocalGitObjects,
+  localGitObjectsFromDirectory,
+} from "./local-git-objects";
 import {
   isTransientArtifactFailure,
   planReferencedArtifacts,
@@ -256,6 +267,14 @@ export class SourceNodeUnavailableError extends Error {
     );
   }
 }
+
+/**
+ * A joint value-record member outside the live census that GitHub cannot
+ * resolve is probed this many more times, this far apart, before the first
+ * attempt holds its work unit (operator decision, 20 November 2026).
+ */
+export const JOINT_SOURCE_CONFIRMATION_PROBES = 2;
+export const JOINT_SOURCE_CONFIRMATION_DELAY_MS = 5_000;
 
 /** Retries only a concurrent mutation of evidence-bound open work. */
 export async function retrySlopSnapshot<T>(
@@ -516,6 +535,18 @@ export interface GenerateOptions {
   deploymentTier?: DeploymentTier;
   /** Trusted production collection can retain public GitHub discussion reads. */
   discussionCheckpoint?: { directory: string; deadlineMs: number };
+  /** Local bare clones that answer exact Git tree and commit reads. */
+  localGitObjects?: LocalGitObjects;
+  /**
+   * Incremental collection (PRD section 9): immutable commit statistics and
+   * fenced commit attributions from the previous trusted collection.
+   */
+  collectionMemo?: CollectionMemoSession;
+  /**
+   * Waits between the confirming probes of an unavailable joint member outside
+   * the census. Tests inject a wait that does not sleep.
+   */
+  jointSourceConfirmationDelay?: (milliseconds: number) => Promise<void>;
   /** Shared only across the one complete-census retry in runGenerator. */
   sourceRecovery?: {
     unavailableSources: UnavailableSource[];
@@ -784,6 +815,17 @@ const SEARCH_REFERENCES_QUERY = `
   ${ACTOR_FRAGMENT}
 `;
 
+// Frozen historical campaigns key raw responses by the exact query bytes.
+const ROLLING_MERGE_REFERENCES_QUERY = SEARCH_REFERENCES_QUERY.replace(
+  "          commits(first: 100)",
+  `          mergeCommit @include(if: $withMergeCommits) {
+            oid
+            tree { oid }
+            parents(first: 1) { totalCount nodes { oid tree { oid } } }
+          }
+          commits(first: 100)`,
+);
+
 const MORE_OUTCOME_COMMITS_QUERY = `
   query LeaderboardOutcomeCommits($id: ID!, $after: String!) {
     node(id: $id) {
@@ -872,6 +914,7 @@ export class OutcomeCommitLineLoader {
       deletions: number;
       author: GitHubActor | null;
     }>,
+    private readonly memo?: CommitLineMemo,
   ) {}
 
   async hydrate(
@@ -930,7 +973,27 @@ export class OutcomeCommitLineLoader {
     }
     const staged = new Map<string, CachedCommitLines>();
     const recoveredAuthors = new Map<string, GitHubActor | null>();
-    for (const batch of chunks([...pending.values()], GRAPHQL_PAGE_SIZE)) {
+    // A git commit never changes: statistics a trusted earlier collection
+    // read for this repository node, commit node and object ID are exact.
+    const unknown: OutcomeCommitIdentity[] = [];
+    for (const commit of pending.values()) {
+      const known = this.memo?.lookup(repositoryNodeId, commit.id, commit.oid);
+      if (!known) {
+        unknown.push(commit);
+        continue;
+      }
+      staged.set(commit.id, {
+        repositoryNodeId,
+        outcome: {
+          oid: commit.oid,
+          parentCount: commit.parentCount,
+          author: commit.author,
+          additions: known.additions,
+          deletions: known.deletions,
+        },
+      });
+    }
+    for (const batch of chunks(unknown, GRAPHQL_PAGE_SIZE)) {
       const statisticsClient = {
         execute: async (document: string, variables: GraphqlVariables = {}) => {
           try {
@@ -1019,6 +1082,13 @@ export class OutcomeCommitLineLoader {
             deletions,
           },
         });
+        this.memo?.record([
+          repositoryNodeId,
+          expected.id,
+          expected.oid,
+          additions,
+          deletions,
+        ]);
       }
     }
     // Publish author evidence only after the entire load validates. Returned
@@ -2574,32 +2644,78 @@ export function parseSearchReference(
   if (kind !== expectedKind) {
     throw new Error(`${path} must be a ${expectedKind}`);
   }
-  return {
+  const reference: NodeReference = {
     id: asString(node.id, `${path}.id`),
     kind,
-    outcome:
-      kind === "PullRequest" && merged
-        ? parsePullRequestOutcome(node, path)
-        : null,
+    outcome: null,
     openVersion: null,
-    ...(kind === "PullRequest" && merged
-      ? {
-          commitPage: {
-            baseRefOid: asFullCommitSha(node.baseRefOid, `${path}.baseRefOid`),
-            headRefOid: asFullCommitSha(node.headRefOid, `${path}.headRefOid`),
-            totalCount: asNumber(
-              child(node, "commits", path).totalCount,
-              `${path}.commits.totalCount`,
-            ),
-            pageInfo: parsePageInfo(
-              child(node, "commits", path).pageInfo,
-              `${path}.commits.pageInfo`,
-            ),
-            commits: parseOutcomeCommits(node.commits, `${path}.commits`),
-          },
-        }
-      : {}),
   };
+  if (kind !== "PullRequest" || !merged) return reference;
+
+  const outcome = parsePullRequestOutcome(node, path);
+  const commitPage = {
+    baseRefOid: asFullCommitSha(node.baseRefOid, `${path}.baseRefOid`),
+    headRefOid: asFullCommitSha(node.headRefOid, `${path}.headRefOid`),
+    totalCount: asNumber(
+      child(node, "commits", path).totalCount,
+      `${path}.commits.totalCount`,
+    ),
+    pageInfo: parsePageInfo(
+      child(node, "commits", path).pageInfo,
+      `${path}.commits.pageInfo`,
+    ),
+    commits: parseOutcomeCommits(node.commits, `${path}.commits`),
+  };
+  if (
+    outcome.additions + outcome.deletions > 0 &&
+    commitPage.totalCount === 1 &&
+    !commitPage.pageInfo.hasNextPage &&
+    commitPage.commits.length === 1 &&
+    commitPage.commits[0].oid === commitPage.headRefOid &&
+    commitPage.commits[0].parentCount === 1 &&
+    node.mergeCommit != null &&
+    hasEmptyAcceptanceMarker(node.mergeCommit, commitPage.headRefOid, path)
+  ) {
+    outcome.emptyAcceptanceMarker = true;
+  }
+  return { ...reference, outcome, commitPage };
+}
+
+function hasEmptyAcceptanceMarker(
+  value: unknown,
+  submittedHead: string,
+  path: string,
+): boolean {
+  const mergePath = `${path}.mergeCommit`;
+  const merge = asRecord(value, mergePath);
+  const accepted = asFullCommitSha(merge.oid, `${mergePath}.oid`);
+  // Historical metadata and saved search responses can carry only the SHA.
+  if (accepted === submittedHead || merge.parents == null || merge.tree == null)
+    return false;
+  const parents = child(merge, "parents", mergePath);
+  if (
+    parents.totalCount !== 1 ||
+    !Array.isArray(parents.nodes) ||
+    parents.nodes.length !== 1 ||
+    parents.nodes[0] == null
+  )
+    return false;
+  const parentPath = `${mergePath}.parents.nodes[0]`;
+  const parent = asRecord(parents.nodes[0], parentPath);
+  if (parent.tree == null) return false;
+  const parentSha = asFullCommitSha(parent.oid, `${parentPath}.oid`);
+  return (
+    parentSha !== accepted &&
+    parentSha !== submittedHead &&
+    asFullCommitSha(
+      child(merge, "tree", mergePath).oid,
+      `${mergePath}.tree.oid`,
+    ) ===
+      asFullCommitSha(
+        child(parent, "tree", parentPath).oid,
+        `${parentPath}.tree.oid`,
+      )
+  );
 }
 
 function parseOpenReference(
@@ -2760,7 +2876,11 @@ export async function collectSearchReferences(
   commitLines = new OutcomeCommitLineLoader(client),
   repositoryNodeId = repository.expectedNodeId,
   initialSearchPageSize = GRAPHQL_PAGE_SIZE,
+  includeAcceptanceMarker = false,
 ): Promise<NodeReference[]> {
+  const document = includeAcceptanceMarker
+    ? ROLLING_MERGE_REFERENCES_QUERY
+    : SEARCH_REFERENCES_QUERY;
   const collectRange = () =>
     collectSearchReferenceRange(
       client,
@@ -2774,6 +2894,7 @@ export async function collectSearchReferences(
       commitLines,
       repositoryNodeId,
       initialSearchPageSize,
+      document,
     );
   try {
     return await collectRange();
@@ -2801,6 +2922,7 @@ async function collectSearchReferenceRange(
   commitLines: OutcomeCommitLineLoader,
   repositoryNodeId: string | null,
   initialSearchPageSize: number,
+  document: string,
 ): Promise<NodeReference[]> {
   if (
     !Number.isInteger(initialSearchPageSize) ||
@@ -2812,7 +2934,7 @@ async function collectSearchReferenceRange(
     );
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
-  const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
+  const firstData = await client.execute(document, {
     searchQuery,
     after: null,
     pageSize: initialSearchPageSize,
@@ -2840,6 +2962,7 @@ async function collectSearchReferenceRange(
       commitLines,
       repositoryNodeId,
       initialSearchPageSize,
+      document,
     );
     const right = await collectSearchReferenceRange(
       client,
@@ -2853,6 +2976,7 @@ async function collectSearchReferenceRange(
       commitLines,
       repositoryNodeId,
       initialSearchPageSize,
+      document,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2878,7 +3002,7 @@ async function collectSearchReferenceRange(
       throw new Error("GitHub Search cursor did not advance");
     }
     visitedCursors.add(pageInfo.endCursor);
-    const data = await client.execute(SEARCH_REFERENCES_QUERY, {
+    const data = await client.execute(document, {
       searchQuery,
       after: pageInfo.endCursor,
       pageSize: initialSearchPageSize,
@@ -4618,33 +4742,79 @@ export async function generateLeaderboardFromGitHub(
   );
   const onProgress = options.onProgress ?? (() => undefined);
   const stats = { searchSliceCount: 0 };
-  const commitLines = new OutcomeCommitLineLoader(client);
-  const probeUnavailableSources = async (ids: readonly string[]) => {
+  options.collectionMemo?.beginPass();
+  const commitLines = new OutcomeCommitLineLoader(
+    client,
+    undefined,
+    options.collectionMemo?.commitLines,
+  );
+  const probeSourceBatch = async (batch: readonly string[]) => {
+    const data = await executeNodeBatch(
+      client,
+      "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
+      batch,
+    );
+    const nodes = asArray(data.nodes, "source availability.nodes");
+    if (
+      nodes.length !== batch.length ||
+      nodes.some((node, index) => {
+        const value = asRecord(node, `source availability.nodes[${index}]`);
+        return value.__typename !== "PullRequest" || value.id !== batch[index];
+      })
+    )
+      throw new Error(
+        "Joint source availability did not match the requested identities",
+      );
+  };
+  const unavailableKey = (error: SourceNodeUnavailableError) =>
+    error.sources
+      .map((source) => `${source.nodeId}\u0000${source.reason}`)
+      .sort()
+      .join("\n");
+  // Operator decision, 20 November 2026: a joint member outside the census
+  // that every probe reports unavailable is held on the first attempt. One
+  // differing answer keeps the complete recollection.
+  const confirmedUnavailable = async (
+    batch: readonly string[],
+    first: SourceNodeUnavailableError,
+  ) => {
+    const expected = unavailableKey(first);
+    for (let probe = 0; probe < JOINT_SOURCE_CONFIRMATION_PROBES; probe++) {
+      await (options.jointSourceConfirmationDelay ?? retryDelay)(
+        JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+      );
+      try {
+        await probeSourceBatch(batch);
+        return false;
+      } catch (error) {
+        // error-policy:J2 an unconfirmed probe is never a hold: the caller
+        // rethrows the first classified error and the run recollects once.
+        if (
+          !(error instanceof SourceNodeUnavailableError) ||
+          unavailableKey(error) !== expected
+        )
+          return false;
+      }
+    }
+    return true;
+  };
+  const probeUnavailableSources = async (
+    ids: readonly string[],
+    outsideCensus = false,
+  ) => {
     const unavailable: string[] = [];
     for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
       try {
-        const data = await executeNodeBatch(
-          client,
-          "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
-          batch,
-        );
-        const nodes = asArray(data.nodes, "source availability.nodes");
-        if (
-          nodes.length !== batch.length ||
-          nodes.some((node, index) => {
-            const value = asRecord(node, `source availability.nodes[${index}]`);
-            return (
-              value.__typename !== "PullRequest" || value.id !== batch[index]
-            );
-          })
-        )
-          throw new Error(
-            "Joint source availability did not match the requested identities",
-          );
+        await probeSourceBatch(batch);
       } catch (error) {
         if (
           !(error instanceof SourceNodeUnavailableError) ||
-          !options.sourceRecovery?.allowJointHolds
+          !options.sourceRecovery
+        )
+          throw error;
+        if (
+          !options.sourceRecovery.allowJointHolds &&
+          !(outsideCensus && (await confirmedUnavailable(batch, error)))
         )
           throw error;
         options.sourceRecovery.unavailableSources.push(...error.sources);
@@ -4709,6 +4879,8 @@ export async function generateLeaderboardFromGitHub(
       stats,
       commitLines,
       preflight.id,
+      GRAPHQL_PAGE_SIZE,
+      true,
     );
     if (closedCensusFrom.getTime() < now.getTime()) {
       const closedReferences = await collectSearchReferences(
@@ -5047,6 +5219,7 @@ export async function generateLeaderboardFromGitHub(
         })),
       },
       quotaDeadlineMs: discussionCheckpoint?.deadlineMs,
+      localGitObjects: options.localGitObjects,
     },
   );
   const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
@@ -5083,9 +5256,14 @@ export async function generateLeaderboardFromGitHub(
       ),
     ),
     undefined,
-    probeUnavailableSources,
+    // Only this caller's identities are outside the complete live census.
+    (ids) => probeUnavailableSources(ids, true),
     dedupedOutcomes,
     onProgress,
+    options.collectionMemo && {
+      session: options.collectionMemo,
+      cutoffAt: now.toISOString(),
+    },
   );
   // Some evidence lookups can record individual gaps. A collector deadline
   // invalidates the entire attempt even if a helper caught its exception.
@@ -5313,6 +5491,8 @@ export async function runGenerator(
     // error-policy:J2 recover only classified census churn or unavailable
     // enumerated nodes, once, with no budget reset. NOT_FOUND does not prove
     // deletion: fresh enumeration and all ordinary checks must still succeed.
+    // A joint member outside the census that every confirming probe reports
+    // unavailable never reaches here; its work unit is held in the attempt.
     if (
       !(error instanceof ReviewCensusChangedError) &&
       !(error instanceof SourceNodeUnavailableError)
@@ -5338,6 +5518,13 @@ function progressLine(progress: GenerationProgress): string {
   return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
+/** Off unless the workflow made local bare clones (operator decision,
+ * 20 November 2026). Any read they cannot answer exactly goes to GitHub. */
+function localGitObjectsFromEnv() {
+  const directory = process.env.SLOP_LOCAL_GIT_DIR;
+  return directory ? localGitObjectsFromDirectory(directory) : undefined;
+}
+
 function discussionCheckpointFromEnv() {
   const directory = process.env.SLOP_DISCUSSION_CHECKPOINT;
   const deadline = process.env.SLOP_DISCUSSION_DEADLINE_MS;
@@ -5359,9 +5546,60 @@ function discussionCheckpointFromEnv() {
   return { directory, deadlineMs };
 }
 
+/**
+ * Incremental collection settings (PRD section 9). SLOP_COLLECTION_MEMO names
+ * the previous trusted collection's memo, SLOP_COLLECTION_MEMO_OUT where this
+ * collection writes its own, and SLOP_COLLECTION_FULL=true recomputes every
+ * fenced answer live. In GitHub Actions only trusted main collections may use
+ * a memo; the workflow restores it from a digest-checked artifact.
+ */
+async function collectionMemoFromEnv(): Promise<{
+  session: CollectionMemoSession;
+  output: string | null;
+} | null> {
+  const input = process.env.SLOP_COLLECTION_MEMO || "";
+  const output = process.env.SLOP_COLLECTION_MEMO_OUT || "";
+  const full = process.env.SLOP_COLLECTION_FULL || "false";
+  if (!input && !output) return null;
+  if (!["true", "false"].includes(full))
+    throw new Error("SLOP_COLLECTION_FULL must be true or false");
+  if (
+    process.env.GITHUB_ACTIONS === "true" &&
+    (process.env.GITHUB_REF !== "refs/heads/main" ||
+      !["push", "workflow_dispatch", "schedule"].includes(
+        process.env.GITHUB_EVENT_NAME ?? "",
+      ))
+  )
+    throw new Error("Only a trusted main collection may use a collection memo");
+  let memo: ReturnType<typeof parseCollectionMemo> | null = null;
+  if (input) {
+    try {
+      memo = parseCollectionMemo(await readFile(input, "utf8"));
+    } catch (error) {
+      // error-policy:J2 an unreadable memo means a full collection, never a
+      // partial reuse; the run then writes a fresh memo.
+      process.stderr.write(
+        `[slop.cash] collection memo unusable (${error instanceof Error ? error.message : String(error)}); collecting in full\n`,
+      );
+    }
+  }
+  const session = openCollectionMemo({
+    memo,
+    forceFull: full === "true",
+    now: new Date(),
+    codeDigest: attributionCodeDigest(),
+  });
+  process.stderr.write(
+    `[slop.cash] collection mode: ${session.mode} (${session.reason})\n`,
+  );
+  return { session, output: output || null };
+}
+
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
+  const collectionMemo = await collectionMemoFromEnv();
   const acceptedReviewHistory = loadAcceptedReviewHistory();
+  const localGitObjects = localGitObjectsFromEnv();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   let latestProgress: GenerationProgress | null = null;
   const heartbeat = setInterval(() => {
@@ -5376,6 +5614,8 @@ if (import.meta.main) {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
     discussionCheckpoint: discussionCheckpointFromEnv(),
+    localGitObjects,
+    collectionMemo: collectionMemo?.session,
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
@@ -5392,7 +5632,10 @@ if (import.meta.main) {
       }
     },
   })
-    .finally(() => clearInterval(heartbeat))
+    .finally(() => {
+      clearInterval(heartbeat);
+      localGitObjects?.close();
+    })
     .catch((error: unknown) => {
       // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
       if (!(error instanceof ValueFeedUnavailableError)) throw error;
@@ -5401,6 +5644,46 @@ if (import.meta.main) {
       );
       process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
     });
+  if (localGitObjects) {
+    localGitObjects.close();
+    const { served, declined } = localGitObjects.stats;
+    process.stderr.write(
+      `[slop.cash] local git objects: ${served} served from local clones, ${declined} read from GitHub instead\n`,
+    );
+  }
+  if (collectionMemo) {
+    const { session, output } = collectionMemo;
+    const lines = session.commitLines;
+    process.stderr.write(
+      `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.stats.audited} audited, ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`,
+    );
+    if (session.notReusable.size)
+      process.stderr.write(
+        `[slop.cash] attributions not recorded for reuse: ${[
+          ...session.notReusable,
+        ]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([reason, count]) => `${count} x ${reason}`)
+          .join("; ")}\n`,
+      );
+    if (output) {
+      // Written only after the snapshot itself was written successfully. The
+      // memo only saves reads, so failing to keep it never fails the release.
+      try {
+        await mkdir(dirname(output), { recursive: true });
+        await writeFile(
+          output,
+          session.serialize(snapshot.source.cutoffAt, new Date().toISOString()),
+        );
+      } catch (error) {
+        // error-policy:J6 the next collection then simply runs in full.
+        process.stderr.write(
+          `[slop.cash] collection memo not written: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
+  }
   process.stdout.write(
     `[slop.cash] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GitHub requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} GraphQL points remaining)\n`,
   );

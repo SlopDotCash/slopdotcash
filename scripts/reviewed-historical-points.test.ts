@@ -22,6 +22,7 @@ import {
 import { sha256Hex } from "../src/lib/sha256";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { pointsSql } from "./generate-points";
+import { changeDigest } from "./pull-request-git-files";
 import {
   decodeHistoricalPacket,
   type HistoricalPointsPacket,
@@ -31,6 +32,7 @@ import {
   historicalPointsSql,
   verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
+  verifyHistoricalIdenticalAcceptedChanges,
   verifyHistoricalProtection,
   verifyHistoricalValueRecords,
 } from "./run-reviewed-historical-points";
@@ -3082,3 +3084,278 @@ test("historical publication installs the canonical merge runtime before verific
   expect(source).toContain('["fetch", "fsck"].includes(args[0])');
   expect(source).toContain(": command.options.timeout");
 });
+
+test("an independently verified identical accepted change retires only its later ordinary award", () => {
+  const f = duplicateRetirementFixture();
+  const { retirement } = f;
+  const earlier = retirement.earlierSources[0];
+  earlier.headSha = "e".repeat(40);
+  earlier.commits[0].sha = earlier.headSha;
+  f.packet.sourceAudit.sources[1].headSha = earlier.headSha;
+  retirement.coverage = [];
+  retirement.identicalAcceptedChange = {
+    earlierSourceId: earlier.sourceId,
+    earlierMergeSha: "1".repeat(40),
+    mergeSha: "2".repeat(40),
+    diffSha256: "3".repeat(64),
+  };
+  retirement.evidence = JSON.stringify({
+    sourceId: retirement.sourceId,
+    workUnitId: retirement.workUnitId,
+    sourceSha256: hash(retirement.source),
+    earlierSourcesSha256: hash(retirement.earlierSources),
+    coverageSha256: hash(retirement.coverage),
+    identicalAcceptedChangeSha256: hash(retirement.identicalAcceptedChange),
+  });
+  retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+  const target = f.baseline.revisions[0].award;
+  const expected = appendPointAwards(
+    f.baseline,
+    [{ ...target, amount: 0 }],
+    hash(retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        target.key,
+        {
+          sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(expected);
+  const verified = new Set([hash(retirement)]);
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+  const result = reconstructHistoricalPoints(
+    f.packet,
+    f.baseline,
+    time,
+    new Map(),
+    verified,
+  );
+  expect(result).toEqual(expected);
+  expect(result.revisions.slice(0, 2)).toEqual(f.baseline.revisions);
+  expect(latestPoints(result).get(target.key)?.award.amount).toBe(0);
+  expect(latestPoints(result).get(f.baseline.revisions[1].award.key)).toEqual(
+    f.baseline.revisions[1],
+  );
+
+  retirement.identicalAcceptedChange.diffSha256 = "4".repeat(64);
+  expect(() =>
+    reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      time,
+      new Map(),
+      verified,
+    ),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+});
+
+test("an empty accepted squash retires a duplicate only when the earlier rewarded change is already in its parent", async () => {
+  const f = duplicateRetirementFixture();
+  const { retirement } = f;
+  const earlier = retirement.earlierSources[0];
+  const directory = await mkdtemp(join(tmpdir(), "historical-empty-squash-"));
+  try {
+    const git = (...args: string[]) => {
+      const result = Bun.spawnSync([
+        "git",
+        "-C",
+        directory,
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Historical Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        ...args,
+      ]);
+      if (result.exitCode !== 0) throw Error("Fixture Git command failed");
+      return result.stdout.toString().trim();
+    };
+    const commit = (message: string) => {
+      git("add", ".");
+      git("commit", "--allow-empty", "-m", message);
+      return git("rev-parse", "HEAD");
+    };
+    git("init", "--template=");
+    const base = commit("Initial tree");
+    const workPath = ":(exclude)literal[1].ts";
+    const work = join(directory, workPath);
+    await writeFile(work, "accepted work\n");
+    const earlierHead = commit("Earlier submitted change");
+    git("checkout", "--detach", base);
+    await writeFile(work, "accepted work\n");
+    const earlierMerged = commit("Earlier accepted squash");
+    git("checkout", "--detach", base);
+    await writeFile(work, "accepted work\n");
+    const laterHead = commit("Later submitted copy");
+    const unrelated = commit("Empty squash without accepted ancestry");
+    git("checkout", "--detach", earlierMerged);
+    await writeFile(join(directory, "other.ts"), "unrelated work\n");
+    const laterParent = commit("Unrelated change after earlier acceptance");
+    const emptySquash = commit("Empty squash");
+    await writeFile(work, "new accepted change\n");
+    const nonempty = commit("Nonempty squash");
+    git("checkout", "--detach", laterParent);
+    await rm(work);
+    commit("Earlier accepted change reverted");
+    const reverted = commit("Empty squash after reverting the earlier change");
+
+    for (const [source, head] of [
+      [retirement.source, laterHead],
+      [earlier, earlierHead],
+    ] as const) {
+      source.headSha = head;
+      source.commits[0].sha = head;
+      source.commits[0].parentShas = [base];
+      source.commits[0].files = [
+        { path: workPath, additions: 1, deletions: 0 },
+      ];
+      const census = f.packet.sourceAudit.sources.find(
+        (entry) => entry.id === source.sourceId,
+      );
+      if (!census) throw Error("Missing fixture census source");
+      census.headSha = head;
+    }
+    retirement.coverage = [];
+    retirement.identicalAcceptedChange = {
+      earlierSourceId: earlier.sourceId,
+      earlierMergeSha: earlierMerged,
+      mergeSha: emptySquash,
+      diffSha256: await changeDigest(directory, base, earlierMerged),
+      emptySquash: true,
+    };
+    const proof = retirement.identicalAcceptedChange;
+    let reviewedMerge = emptySquash;
+    const github = {
+      async get<T>(path: string): Promise<T | null> {
+        if (path === "/repos/feedforagents/feed")
+          return {
+            private: false,
+            id: 1,
+            node_id: f.packet.sourceAudit.repositoryNodeId,
+            full_name: f.packet.sourceAudit.repository,
+          } as T;
+        const census = f.packet.sourceAudit.sources.find(
+          (entry) => path === `/repos/feedforagents/feed/pulls/${entry.number}`,
+        );
+        if (!census) return null;
+        const original = census.id === earlier.sourceId;
+        const source = original ? earlier : retirement.source;
+        return {
+          node_id: source.sourceId,
+          number: census.number,
+          html_url: source.sourceUrl,
+          state: "closed",
+          merged_at: source.occurredAt,
+          merge_commit_sha: original ? earlierMerged : reviewedMerge,
+          head: { sha: census.headSha },
+          base: { sha: base },
+          user: { node_id: source.author?.id, type: source.author?.kind },
+          commits: 1,
+          changed_files: 1,
+        } as T;
+      },
+    };
+    const verify = () =>
+      verifyHistoricalIdenticalAcceptedChanges(
+        f.packet,
+        github,
+        async (_repository, _objects, read) => read(directory),
+      );
+    retirement.evidence = JSON.stringify({
+      sourceId: retirement.sourceId,
+      workUnitId: retirement.workUnitId,
+      sourceSha256: hash(retirement.source),
+      earlierSourcesSha256: hash(retirement.earlierSources),
+      coverageSha256: hash(retirement.coverage),
+      identicalAcceptedChangeSha256: hash(proof),
+    });
+    retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    const target = f.baseline.revisions[0].award;
+    const expected = appendPointAwards(
+      f.baseline,
+      [{ ...target, amount: 0 }],
+      hash(retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          target.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(expected);
+    const verified = await verify();
+    const result = reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      time,
+      new Map(),
+      verified,
+    );
+    expect(result).toEqual(expected);
+    expect(latestPoints(result).get(f.baseline.revisions[1].award.key)).toEqual(
+      f.baseline.revisions[1],
+    );
+    const uncredited = appendPointAwards(
+      f.baseline,
+      [{ ...f.baseline.revisions[1].award, amount: 0 }],
+      "f".repeat(64),
+      "slop-score-v2",
+      time,
+    );
+    const uncreditedPacket = structuredClone(f.packet);
+    uncreditedPacket.baselineDigest = hash(uncredited);
+    uncreditedPacket.baselineRevisionCount = uncredited.revisions.length;
+    uncreditedPacket.corrections.baseline =
+      createPointsCorrectionBaseline(uncredited);
+    uncreditedPacket.corrections.candidates =
+      uncreditedPacket.corrections.candidates.filter(
+        (candidate) => candidate.sourceId !== earlier.sourceId,
+      );
+    expect(() =>
+      reconstructHistoricalPoints(
+        uncreditedPacket,
+        uncredited,
+        time,
+        new Map(),
+        verified,
+      ),
+    ).toThrow("lacks a verified earlier ordinary pool");
+    for (const [merge, reason] of [
+      [nonempty, "changes its first-parent tree"],
+      [unrelated, "absent from the later base"],
+      [reverted, "does not retain all earlier accepted paths"],
+    ] as const) {
+      reviewedMerge = merge;
+      proof.mergeSha = merge;
+      await expect(verify()).rejects.toThrow(reason);
+    }
+    expect(() =>
+      reconstructHistoricalPoints(
+        f.packet,
+        f.baseline,
+        time,
+        new Map(),
+        verified,
+      ),
+    ).toThrow("lacks a verified earlier ordinary pool");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 20_000);

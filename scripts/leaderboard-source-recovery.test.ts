@@ -32,10 +32,13 @@ import {
   collectSearchReferences,
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
+  JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+  JOINT_SOURCE_CONFIRMATION_PROBES,
   MAX_GRAPHQL_REQUEST_ATTEMPTS,
   MAX_TRANSIENT_ATTEMPTS,
   type OutcomeCommitIdentity,
   OutcomeCommitLineLoader,
+  parseSearchReference,
   runGenerator,
   SourceNodeUnavailableError,
   writeLeaderboardAtomically,
@@ -327,6 +330,10 @@ test("ordinary commit pagination and PR search pages share one flat statistics c
     async execute(document: string, variables: Record<string, unknown> = {}) {
       if (document.includes("query LeaderboardSearchReferences")) {
         expect(variables.withMergeCommits).toBe(true);
+        // The saved historical query is part of the raw evidence cache key.
+        expect(sha256(document)).toBe(
+          "a680f6ddd1260f268b3135f7d1ffd448590ae4412f66728320f45941ffb35701",
+        );
         expect(document).not.toContain("oid additions deletions");
         return {
           search: {
@@ -439,6 +446,70 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
     },
   ]),
 });
+test("only a complete changed single-commit submission can have an empty acceptance marker", () => {
+  const tree = { oid: "1".repeat(40) };
+  const parent = { oid: "2".repeat(40), tree };
+  const mergeCommit = {
+    oid: "3".repeat(40),
+    tree,
+    parents: { totalCount: 1, nodes: [parent] },
+  };
+  const node = { ...nodeFor(retained), mergeCommit };
+  const marker = (value: unknown) =>
+    parseSearchReference(value, "merged source", "PullRequest").outcome
+      ?.emptyAcceptanceMarker;
+  expect(marker(node)).toBe(true);
+  for (const other of [
+    { ...node, mergeCommit: null },
+    { ...node, mergeCommit: { oid: mergeCommit.oid } },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { totalCount: 1 },
+      },
+    },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { totalCount: 1, nodes: [{ oid: parent.oid }] },
+      },
+    },
+    { ...node, additions: 0, deletions: 0 },
+    { ...node, mergeCommit: { ...mergeCommit, oid: node.headRefOid } },
+    { ...node, mergeCommit: { ...mergeCommit, tree: { oid: "4".repeat(40) } } },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { ...mergeCommit.parents, totalCount: 2 },
+      },
+    },
+    {
+      ...node,
+      commits: {
+        ...node.commits,
+        totalCount: 2,
+        pageInfo: { hasNextPage: true, endCursor: "more-commits" },
+      },
+    },
+    {
+      ...node,
+      commits: connection([
+        {
+          commit: {
+            ...node.commits.nodes[0].commit,
+            parents: { totalCount: 2 },
+          },
+        },
+      ]),
+    },
+  ]) {
+    expect(marker(other)).toBeUndefined();
+  }
+});
+
 // Open work listed before detail hydration. One PR and one issue close
 // between the open listing and their detail reads.
 const openPull = (id: string, number: number) => ({
@@ -668,8 +739,14 @@ async function fixture(
   productionProjects?: readonly string[],
   comparison?: Comparison,
   nativeFiles?: NativeFileFixture,
+  // The answer to each successive joint availability probe; the last repeats.
+  availability: ReadonlyArray<"missing" | "present" | "forbidden"> = [
+    "missing",
+  ],
 ) {
   let missingSeen = false;
+  let availabilityProbes = 0;
+  const confirmationDelays: number[] = [];
   let requests = 0;
   let attempts = 0;
   let repositoryReads = 0;
@@ -763,6 +840,7 @@ async function fixture(
             owner: string;
             name: string;
             searchQuery: string;
+            withMergeCommits?: boolean;
             ids: string[];
             id: string;
             after: string | null;
@@ -857,6 +935,9 @@ async function fixture(
             },
           };
         } else if (query.includes("query LeaderboardSearchReferences")) {
+          expect(query.includes("mergeCommit @include")).toBe(
+            v.withMergeCommits === true,
+          );
           const isOurs = v.searchQuery.startsWith(
             `repo:${repository.owner}/${repository.name} `,
           );
@@ -980,11 +1061,16 @@ async function fixture(
             missingSeen = true;
           }
         } else if (query.includes("query LeaderboardSourceAvailability")) {
+          const answer =
+            availability[Math.min(availabilityProbes, availability.length - 1)];
+          availabilityProbes++;
+          const gone = (id: string) =>
+            answer !== "present" && id === removed.id;
           data.nodes = v.ids.map((id: string) =>
-            id === removed.id ? null : { __typename: "PullRequest", id },
+            gone(id) ? null : { __typename: "PullRequest", id },
           );
           errors = v.ids.flatMap((id: string, index: number) =>
-            id === removed.id
+            gone(id)
               ? [
                   {
                     type: "NOT_FOUND",
@@ -994,6 +1080,8 @@ async function fixture(
                 ]
               : [],
           );
+          if (answer === "forbidden")
+            errors = [{ type: "FORBIDDEN", path: ["nodes", 0] }];
           if (failure === "forbidden")
             errors = [{ type: "FORBIDDEN", path: ["nodes", 0] }];
           if (failure === "mixed")
@@ -1215,6 +1303,8 @@ async function fixture(
       commitLineBatches,
       recoveredFiles,
       recoveryInputs,
+      availabilityProbes,
+      confirmationDelays,
     }),
     generate: () =>
       runGenerator(
@@ -1229,6 +1319,9 @@ async function fixture(
           now: new Date(GENERATED_AT),
           actualNow: new Date(GENERATED_AT),
           ...(productionProjects ? { deploymentTier: "staging" as const } : {}),
+          jointSourceConfirmationDelay: async (milliseconds) => {
+            confirmationDelays.push(milliseconds);
+          },
         },
       ),
     close: async () => {
@@ -1520,9 +1613,90 @@ test("unavailable joint context keeps the verified merge minimum without replaci
           .map((row) => row.award),
       ).toEqual([previousActorAward]);
     }
-    expect(f.stats().attempts).toBe(2);
+    // Operator decision, 20 November 2026: the member is outside the census
+    // and every probe agrees, so the first attempt holds it and publishes.
+    expect(f.stats().attempts).toBe(1);
+    expect(f.stats().availabilityProbes).toBe(
+      1 + JOINT_SOURCE_CONFIRMATION_PROBES,
+    );
+    expect(f.stats().confirmationDelays).toEqual(
+      Array.from(
+        { length: JOINT_SOURCE_CONFIRMATION_PROBES },
+        () => JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+      ),
+    );
+    expect(snapshot.source.rateLimit.consumedDuringRun).toBe(
+      f.stats().requests,
+    );
     expect(f.stats().forbiddenSourceReads).toBe(0);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
+
+// A joint member outside the census is held on the first attempt only when
+// every confirming probe repeats the first answer. Any other answer keeps the
+// complete recollection, whose own probe then decides.
+for (const [name, availability, probes] of [
+  [
+    "resolves on the first confirming probe",
+    ["missing", "present", "missing"],
+    3,
+  ],
+  [
+    "resolves on the last confirming probe",
+    ["missing", "missing", "present", "missing"],
+    4,
+  ],
+  ["is refused on a confirming probe", ["missing", "forbidden", "missing"], 3],
+] as const) {
+  test(`a joint member outside the census that ${name} still forces one complete recollection`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(
+      "joint",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      availability,
+    );
+    try {
+      const snapshot = await f.generate();
+      expect(f.stats().attempts).toBe(2);
+      expect(f.stats().availabilityProbes).toBe(probes);
+      expect(snapshot.source.unavailableSources).toEqual([
+        { nodeId: removed.id, reason: "NOT_FOUND" },
+      ]);
+      expect(snapshot.source.heldWorkUnits).toEqual([
+        {
+          recordDigest,
+          sourceNodeIds: [retained.id, removed.id].sort(),
+          unavailableNodeIds: [removed.id],
+        },
+      ]);
+      expect(f.stats().forbiddenSourceReads).toBe(0);
+      assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("a joint member outside the census is never held on the first attempt without the recollection record", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("joint");
+  try {
+    // A direct collection has nowhere to record the unavailable source.
+    await expect(
+      generateLeaderboardFromGitHub(f.client, {
+        now: new Date(GENERATED_AT),
+        actualNow: new Date(GENERATED_AT),
+        evidenceToken: "fixture-token",
+        jointSourceConfirmationDelay: async () => {},
+      }),
+    ).rejects.toBeInstanceOf(SourceNodeUnavailableError);
+    expect(f.stats().availabilityProbes).toBe(1);
   } finally {
     await f.close();
   }

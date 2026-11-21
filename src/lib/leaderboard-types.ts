@@ -162,6 +162,8 @@ export type MergedPullRequestReviewRecord = Pick<
 export interface MergedPullRequestOutcome {
   /** Exact source head; older saved inputs can omit it but cannot use valuations. */
   headRefOid?: string;
+  /** A changed single-commit submission whose separate acceptance marker has no tree delta. */
+  emptyAcceptanceMarker?: true;
   id: string;
   number: number;
   title: string;
@@ -614,6 +616,13 @@ export interface HeldWorkUnit {
   unavailableNodeIds: string[];
 }
 
+/** A verified implementation unit that includes this pull request's claims. */
+export interface ReviewedImplementationUnit {
+  recordDigest: string;
+  workUnitId: string;
+  groupId: string;
+}
+
 export interface LeaderboardSourceMetadata {
   provider: "github-graphql";
   fetchedAt: string;
@@ -697,6 +706,12 @@ export interface LeaderboardSnapshot {
         changedLines: string;
       }[];
     };
+  }[];
+  /** Exact claim membership and overlap from verified joint assessment history. */
+  reviewedImplementationUnits?: {
+    repository: RepositoryId;
+    pullRequestId: string;
+    units: ReviewedImplementationUnit[];
   }[];
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */

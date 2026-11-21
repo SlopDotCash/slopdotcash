@@ -533,6 +533,14 @@ score metric. Preserve the append-only journal,
 source coverage, original contribution dates, and distinct recording dates.
 Generated points projections are build outputs; do not edit them by hand.
 
+Operator decision, 20 November 2026: the Points of a project month that has a
+recorded payment are frozen. The points generator holds any candidate revision
+that would add or change an award in such a month, or move one out of it, and
+publishes the rest; `data/points/protected-months.json` lists those months and
+mirrors the private settlement tables. The atomic import still refuses a batch
+that changes a protected award, so a month missing from the list fails closed.
+Add a month to the list when its first payment is recorded.
+
 ## Rewards, funding, and settlement
 
 Monthly allocations are D1 records. The trusted `monthly-rewards.yml`
@@ -723,7 +731,12 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). Every production release requires current main equivalence. Every
+decision, 19 November 2026). A source GitHub cannot resolve still forces one
+complete recollection, except a joint value-record member outside the live
+census: when three availability probes a few seconds apart all report it
+unavailable, the first attempt records it and holds its work unit; any
+differing or failed probe keeps the recollection (operator decision,
+20 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

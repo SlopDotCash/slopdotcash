@@ -5,6 +5,7 @@ import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertLeaderboardSnapshot,
+  type LeaderboardSnapshot,
   ledgerWorkUnitId,
   SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
@@ -18,9 +19,11 @@ import {
   awardForScore,
   latestPoints,
   type PointAward,
+  type PointRevision,
   type PointsIndex,
   type PointsJournal,
   type PointsMember,
+  pointKey,
   pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
@@ -88,20 +91,24 @@ async function loadPublishedProjection(
     if (identity === previousIndex) throw mismatch;
     if (!Array.isArray(index.shards) || index.shards.length !== 16)
       throw new Error("Invalid published points index");
-    const parts = await Promise.all(
-      index.shards.map(async (shard, i) => {
-        if (shard.path !== `/data/points/${i.toString(16)}.json`)
-          throw new Error("Invalid published points shard path");
-        return retryPointsTransport(async () => {
-          const response = await fetch(`${origin}${shard.path}`, {
-            signal: AbortSignal.timeout(30000),
-            cache: "no-store",
-          });
-          if (!response.ok)
-            throw new Error("Published points history unavailable");
-          return readBoundedText(response, 8 * 1024 * 1024, "points shard");
-        }, wait);
-      }),
+    const pendingShards = index.shards.map(async (shard, i) => {
+      if (shard.path !== `/data/points/${i.toString(16)}.json`)
+        throw new Error("Invalid published points shard path");
+      return retryPointsTransport(async () => {
+        const response = await fetch(`${origin}${shard.path}`, {
+          signal: AbortSignal.timeout(30000),
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error("Published points history unavailable");
+        return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+      }, wait);
+    });
+    const parts = await Promise.all(pendingShards).catch(
+      async (error: unknown) => {
+        await Promise.allSettled(pendingShards);
+        throw error;
+      },
     );
     try {
       return assemblePoints(index, parts);
@@ -583,6 +590,224 @@ export function pointsSummary(
   };
 }
 
+export interface ProtectedPointMonth {
+  projectId: string;
+  period: string;
+}
+
+function mergeCoverageKey(
+  snapshotDigest: string,
+  projectId: string,
+  sourceId: string,
+) {
+  return JSON.stringify([snapshotDigest, projectId, sourceId]);
+}
+
+interface ReviewedMergeGroup {
+  key: string;
+  valueSourceId: string;
+  workUnitId: string;
+}
+
+type ReviewedMergeGroups = ReadonlyMap<string, readonly ReviewedMergeGroup[]>;
+
+export function reviewedMergeGroups(
+  snapshots: ReadonlyArray<{
+    snapshot: Pick<LeaderboardSnapshot, "reviewedImplementationUnits">;
+    digest: string;
+  }>,
+): ReviewedMergeGroups {
+  const groups = new Map<string, ReviewedMergeGroup[]>();
+  for (const { snapshot, digest } of snapshots) {
+    for (const row of snapshot.reviewedImplementationUnits ?? []) {
+      const projectId = findHistoricalRepository(row.repository)?.projectId;
+      if (!projectId) continue;
+      groups.set(
+        mergeCoverageKey(digest, projectId, row.pullRequestId),
+        row.units.map(({ recordDigest, workUnitId, groupId }) => ({
+          key: JSON.stringify(["coverage", digest, projectId, groupId]),
+          valueSourceId: `value:${recordDigest}`,
+          workUnitId,
+        })),
+      );
+    }
+  }
+  return groups;
+}
+
+function protectedMergePoolKeys(
+  revision: PointRevision,
+  snapshotDigest: string,
+  reviewedGroups: ReviewedMergeGroups,
+): string[] {
+  const { award, decision } = revision;
+  if (award.category !== "merged-pull-request") return [];
+  const keys: string[] = [];
+  if (award.sourceId)
+    keys.push(JSON.stringify([award.projectId, "pull", award.sourceId]));
+  if (award.workUnitId)
+    keys.push(JSON.stringify([award.projectId, "work-unit", award.workUnitId]));
+  const memberships = reviewedGroups.get(
+    mergeCoverageKey(snapshotDigest, award.projectId, award.sourceId),
+  );
+  // Older snapshots lack exact work-unit membership. Keep the decision bound
+  // to this snapshot and use precise membership when it is available.
+  if (
+    !memberships &&
+    decision &&
+    /^value:[a-f0-9]{64}$/u.test(decision.sourceId)
+  )
+    keys.push(
+      JSON.stringify([
+        award.projectId,
+        "decision",
+        snapshotDigest,
+        decision.sourceId,
+      ]),
+    );
+  if (memberships) {
+    const standalone =
+      award.key ===
+      pointKey(award.projectId, award.actor.id, award.category, award.sourceId);
+    for (const member of memberships) {
+      if (
+        standalone ||
+        (award.workUnitId === member.workUnitId &&
+          decision?.sourceId === member.valueSourceId)
+      ) {
+        keys.push(member.key);
+      }
+    }
+  }
+  return keys;
+}
+/**
+ * Operator decision, 20 November 2026 (PRD section 7): the Points of a project
+ * month that has a recorded payment are frozen. The atomic import in
+ * pointsSql refuses a whole batch that changes one of them, which stopped
+ * every fresh collection after the first monthly payments. Keep the complete
+ * correction on hold if it would change a protected award.
+ * `data/points/protected-months.json` mirrors the private
+ * settlement tables; a month missing from it still fails closed at import.
+ */
+export function holdProtectedPointAwards(
+  journal: PointsJournal,
+  known: ReadonlySet<string>,
+  months: readonly ProtectedPointMonth[],
+  reviewedGroups: ReviewedMergeGroups = new Map(),
+): { journal: PointsJournal; held: number } {
+  if (months.length === 0) return { journal, held: 0 };
+  const scopes = new Set(months.map((m) => `${m.projectId}\0${m.period}`));
+  const scope = (award: PointAward) =>
+    `${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+  // The same identity pointsSql freezes: economic and source fields, never
+  // GitHub presentation.
+  const economic = (award: PointAward) =>
+    JSON.stringify([
+      award.key,
+      award.actor.id,
+      award.projectId,
+      award.category,
+      award.amount,
+      award.occurredAt,
+      award.sourceId,
+      award.workUnitId,
+      award.category === "substantive-review" ? award.provisional : null,
+      award.category === "substantive-review" ||
+      award.category === "evaluated-contribution"
+        ? award.sourceUrl
+        : null,
+    ]);
+  const byId = new Map(journal.revisions.map((r) => [r.id, r]));
+  const successors = new Map<string, string>();
+  const poolKeysByRevision = new Map<string, string[]>();
+  const revisionsByPool = new Map<string, string[]>();
+  const blocked: string[] = [];
+  for (const revision of journal.revisions) {
+    if (known.has(revision.id)) continue;
+    const previous = revision.previous
+      ? byId.get(revision.previous)
+      : undefined;
+    if (previous) successors.set(previous.id, revision.id);
+    if (revision.award.category === "payout-received") continue;
+    const prior = previous && known.has(previous.id) ? previous : undefined;
+    if (prior && economic(prior.award) === economic(revision.award)) continue;
+
+    const keys = [
+      ...protectedMergePoolKeys(
+        revision,
+        revision.sourceDigest,
+        reviewedGroups,
+      ),
+      ...(previous
+        ? protectedMergePoolKeys(
+            previous,
+            revision.sourceDigest,
+            reviewedGroups,
+          )
+        : []),
+    ];
+    poolKeysByRevision.set(revision.id, keys);
+    for (const key of keys) {
+      const members = revisionsByPool.get(key);
+      if (members) members.push(revision.id);
+      else revisionsByPool.set(key, [revision.id]);
+    }
+    if (
+      scopes.has(scope(revision.award)) ||
+      (prior !== undefined && scopes.has(scope(prior.award)))
+    ) {
+      blocked.push(revision.id);
+    }
+  }
+
+  // A replacement and its retirement must stay together even when the
+  // accepted work spans months or its source or work-unit identity changes.
+  const held = new Set<string>();
+  const visitedPools = new Set<string>();
+  for (let i = 0; i < blocked.length; i++) {
+    const id = blocked[i];
+    if (held.has(id)) continue;
+    held.add(id);
+    const successor = successors.get(id);
+    if (successor) blocked.push(successor);
+    for (const key of poolKeysByRevision.get(id) ?? []) {
+      if (visitedPools.has(key)) continue;
+      visitedPools.add(key);
+      const members = revisionsByPool.get(key);
+      if (members) for (const member of members) blocked.push(member);
+    }
+  }
+  if (held.size === 0) return { journal, held: 0 };
+  return {
+    journal: {
+      ...journal,
+      revisions: journal.revisions.filter((r) => !held.has(r.id)),
+    },
+    held: held.size,
+  };
+}
+
+async function loadProtectedPointMonths(): Promise<ProtectedPointMonth[]> {
+  const months: unknown = JSON.parse(
+    await readFile("data/points/protected-months.json", "utf8"),
+  );
+  if (
+    !Array.isArray(months) ||
+    months.some(
+      (m) =>
+        typeof m !== "object" ||
+        m === null ||
+        typeof m.projectId !== "string" ||
+        !m.projectId ||
+        typeof m.period !== "string" ||
+        !/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(m.period) ||
+        Object.keys(m).length !== 2,
+    )
+  )
+    throw new Error("Invalid protected Points months");
+  return months as ProtectedPointMonth[];
+}
 export async function generatePoints(
   options: {
     online?: boolean;
@@ -624,11 +849,35 @@ export async function generatePoints(
     a.snapshot.generatedAt.localeCompare(b.snapshot.generatedAt),
   );
   // Replaying an older archive after a newer batch must not roll back corrections.
+  // Only a release that loaded the published history can tell a candidate
+  // revision from a known one.
+  const knownRevisions = published
+    ? new Set(published.revisions.map((r) => r.id))
+    : null;
+  const protectedMonths = knownRevisions
+    ? await loadProtectedPointMonths()
+    : [];
+  const reviewedGroups = protectedMonths.length
+    ? reviewedMergeGroups(snapshots)
+    : new Map();
+  let heldRevisions = 0;
+  const holdProtected = () => {
+    if (!knownRevisions) return;
+    const result = holdProtectedPointAwards(
+      journal,
+      knownRevisions,
+      protectedMonths,
+      reviewedGroups,
+    );
+    journal = result.journal;
+    heldRevisions += result.held;
+  };
   const applied = new Set(journal.coverage.map((c) => c.digest));
   for (const { snapshot, digest } of snapshots) {
     if (!applied.has(digest))
       journal = applyPointsSnapshot(journal, snapshot, digest, now);
   }
+  holdProtected();
   const cycles = await syncCycleIndex({
     checkOnly: true,
     generatedAt: now,
@@ -676,6 +925,11 @@ export async function generatePoints(
     hash(JSON.stringify(reviewed)),
     now,
   );
+  holdProtected();
+  if (heldRevisions > 0)
+    console.log(
+      `[points] held ${heldRevisions} candidate revisions in months with a recorded payment`,
+    );
   journal.generatedAt = now;
   assertPointsJournal(journal);
   await mkdir("public/data", { recursive: true });
