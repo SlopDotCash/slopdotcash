@@ -519,9 +519,13 @@ leaves, every sampled authority fact was stale, so no change, cut or owner
 finalization could follow; an owner fact under revision 2 is sampled too.
 Discovered by simulation: a withdrawal needs a cut and then a change of that
 contributor back to the proposed amount before the month freezes, so changes
-and cuts are tried far more often and owner finalization less often than
-other events; a month allows only as many changes as there are sampled
-expected sequences, so this cannot crowd out later events.
+and cuts are tried more often and owner finalization less often than other
+events; a month allows only as many changes as there are sampled expected
+sequences, so this cannot crowd out later events. Discovered by simulation:
+every copy of an event picks all its parameters on every step, so a run
+costs in proportion to the weights times the parameters picked; higher
+weights reached a withdrawn cut no sooner for the same cost and made each
+fixed-size run of the whole check about thirteen times as long.
 
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
@@ -584,12 +588,12 @@ pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, 
   .union(Set(awardFact(3, List(2), true))).union(Set(awardFact(1, List(3), true))).union(Set(awardFact(1, List(3), false)))
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
 pure val weight_observeClock = 1
-pure val weight_propose = 60
+pure val weight_propose = 20
 pure val weight_observeRevision = 2
-pure val weight_adjust = 90
-pure val weight_cut = 40
+pure val weight_adjust = 30
+pure val weight_cut = 12
 pure val weight_observeSettings = 2
-pure val weight_finalize = 4
+pure val weight_finalize = 3
 pure val weight_autoFreeze = 3
 pure val weight_noteUnderfunded = 4
 pure val weight_createObligations = 6
