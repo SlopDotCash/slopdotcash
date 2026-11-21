@@ -309,7 +309,7 @@ function leafArgs(period: number, leaf: Leaf) {
   return [numberWord(leaf.source), u64le(uint(leaf.actor, 64)), u64le(uint(leaf.gross, 64)), u32le(index), u32le(Math.max(1, leaves.length)), encodeProof(proof)];
 }
 
-async function commitMonthly(event: Extract<Event, { type: "commitMonthly" }>): Promise<boolean> {
+async function commitMonthly({ monthlyCommit: event }: Extract<Event, { type: "commitMonthly" }>): Promise<boolean> {
   const project = await live();
   if (project === undefined) return false;
   const period = Number(uint(event.period, 32));
@@ -376,7 +376,7 @@ async function releaseMonthlyReserve(event: Extract<Event, { type: "releaseMonth
   ], [by]);
 }
 
-async function bindWallet(event: Extract<Event, { type: "bindWallet" }>, by: Keypair): Promise<boolean> {
+async function bindWallet({ bindingRequest: event }: Extract<Event, { type: "bindWallet" }>, by: Keypair): Promise<boolean> {
   const project = projectKey();
   walk.actors.add(event.actor);
   const destination = party(event.destination);
@@ -417,30 +417,32 @@ async function recordPayment(source: number, binding: Address): Promise<void> {
   walk.paid.set(source, { paidTo: namer(ready(), walk)(keyAt(bound.data, 112)), paidVersion: Number(readU64(bound.data, 160)) });
 }
 
-async function pay(event: Extract<Event, { type: "pay" | "payNative" }>): Promise<boolean> {
+async function pay(paid: Extract<Event, { type: "pay" | "payNative" }>): Promise<boolean> {
   const project = await live();
   if (project === undefined) return false;
+  const event = paid.type === "pay" ? paid.payRequest : paid;
   const { award, principal, binding, veto } = await obligationOf(project.address, event.source);
   const destination = party(event.destination);
   const version = u64le(uint(event.expectedVersion, 64));
   let accepted: boolean;
-  if (event.type === "payNative") {
+  if (paid.type === "payNative") {
     accepted = await send([escrow("pay_native", [meta(project.address, true), meta(award, true), meta(binding, true), meta(project.vault, true), meta(destination, true), meta(veto, false)], version)]);
   } else {
     const mint = project.mint;
     if (mint === undefined) return false;
     const ata = associated(destination, mint);
     const key = `${destination}:${mintAddress(mint)}`;
-    if (factsKey(walk.ata.get(key) ?? associatedFacts(mint.kind)) !== factsKey(event.account)) {
+    const { account, transferOk } = paid.payRequest;
+    if (factsKey(walk.ata.get(key) ?? associatedFacts(mint.kind)) !== factsKey(account)) {
       // Only a new genesis can give the associated address another shape; it keeps the balance it had.
-      walk.ata.set(key, event.account);
-      await restart(walk.now, [tokenAccount(ata, event.account, mintAddress(mint), destination, await tokenAmount(ata))]);
+      walk.ata.set(key, account);
+      await restart(walk.now, [tokenAccount(ata, account, mintAddress(mint), destination, await tokenAmount(ata))]);
     }
     const run = () => send([escrow("pay", [
       meta(project.address, true), meta(award, true), meta(binding, true), meta(mintAddress(mint), false), meta(project.vault, true), meta(ata, true),
       meta(programOf(mint.kind), false), meta(veto, false),
     ], version)]);
-    accepted = event.transferOk ? await run() : await failing(mint, ata, principal, run);
+    accepted = transferOk ? await run() : await failing(mint, ata, principal, run);
   }
   if (accepted) await recordPayment(event.source, binding);
   return accepted;

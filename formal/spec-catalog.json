@@ -3635,7 +3635,7 @@
     },
     {
       "path": "spec/contracts/solanaEscrow.md",
-      "sha256": "b313bb26b0c311cb1294bf5ffd2b820c3110895b4b357e57fe7f486d20c34621",
+      "sha256": "fbb50d9f60341e24ed29af9d27851c5c21f8f6eb31831004babfde8bdb30c0b5",
       "module": "contracts__solanaEscrow",
       "stories": [
         {
@@ -3644,39 +3644,39 @@
         },
         {
           "heading": "Story: Admit only the supported asset behavior",
-          "line": 98
+          "line": 103
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose",
-          "line": 124
+          "line": 129
         },
         {
           "heading": "Story: Rotate the identity authority with the owner and the rotation authority",
-          "line": 236
+          "line": 241
         },
         {
           "heading": "Story: Hold funds in one vault",
-          "line": 280
+          "line": 285
         },
         {
           "heading": "Story: Commit awards from free funds",
-          "line": 323
+          "line": 328
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap",
-          "line": 371
+          "line": 376
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably",
-          "line": 527
+          "line": 538
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet",
-          "line": 648
+          "line": 659
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly",
-          "line": 713
+          "line": 726
         }
       ],
       "rules": [
@@ -3693,6 +3693,9 @@
             "Veto",
             "Pledge",
             "Opening",
+            "MonthlyCommit",
+            "BindingRequest",
+            "PayRequest",
             "SolMonth",
             "Program",
             "maxDelay",
@@ -3713,14 +3716,14 @@
         },
         {
           "heading": "Story: Pin the program's authorities / Block time is positive",
-          "line": 88,
+          "line": 93,
           "definitions": [
             "alwaysClockStarted"
           ]
         },
         {
           "heading": "Story: Admit only the supported asset behavior / A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner",
-          "line": 100,
+          "line": 105,
           "definitions": [
             "admittedMint",
             "admittedAccount",
@@ -3730,7 +3733,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The owner creates a token or native project with the Config's identity authority and fee recipient",
-          "line": 126,
+          "line": 131,
           "definitions": [
             "projectKeysValid",
             "opened",
@@ -3744,7 +3747,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The earlier build's project grows to the current layout with new counters at zero",
-          "line": 164,
+          "line": 169,
           "definitions": [
             "canCreateLegacyProject",
             "createLegacyProject",
@@ -3757,7 +3760,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The pre-pledge build's 332-byte project grows to the current layout with no open pledges",
-          "line": 212,
+          "line": 217,
           "definitions": [
             "canCreatePrePledgeProject",
             "createPrePledgeProject",
@@ -3767,7 +3770,7 @@
         },
         {
           "heading": "Story: Rotate the identity authority with the owner and the rotation authority / The owner proposes, the rotation authority confirms and anyone executes after the delay",
-          "line": 238,
+          "line": 243,
           "definitions": [
             "live",
             "canProposeAuthorityRotation",
@@ -3785,7 +3788,7 @@
         },
         {
           "heading": "Story: Hold funds in one vault / Anyone deposits the exact amount, and only credited deposits enter the free balance",
-          "line": 282,
+          "line": 287,
           "definitions": [
             "free",
             "held",
@@ -3799,7 +3802,7 @@
         },
         {
           "heading": "Story: Hold funds in one vault / The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve",
-          "line": 305,
+          "line": 310,
           "definitions": [
             "alwaysVaultCovers",
             "alwaysFeesAccounted",
@@ -3809,7 +3812,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split",
-          "line": 325,
+          "line": 330,
           "definitions": [
             "recordable",
             "fundable",
@@ -3821,7 +3824,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / Reserves are exactly the unpaid awards plus outstanding monthly gross, and paid totals are exactly the paid awards",
-          "line": 353,
+          "line": 358,
           "definitions": [
             "alwaysReservedMatches",
             "alwaysPaidMatches",
@@ -3832,7 +3835,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / The owner sets the cap and turns monthly commitments on or off",
-          "line": 373,
+          "line": 378,
           "definitions": [
             "canSetMonthlyCommitment",
             "setMonthlyCommitment"
@@ -3840,7 +3843,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone records a signed, fully funded allocation once per period inside its window",
-          "line": 385,
+          "line": 390,
           "definitions": [
             "noSolMonth",
             "hasMonth",
@@ -3856,7 +3859,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone commits a proved leaf from its month's reserve",
-          "line": 433,
+          "line": 444,
           "definitions": [
             "leafProves",
             "settleable",
@@ -3868,7 +3871,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone returns a leaf that can never commit, and never a selective refund",
-          "line": 462,
+          "line": 473,
           "definitions": [
             "neverCommits",
             "canReleaseMonthlyAward",
@@ -3878,7 +3881,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / The owner releases the whole untouched reserve of a wrong-total month once, with the attester's signature",
-          "line": 483,
+          "line": 494,
           "definitions": [
             "canReleaseMonthlyReserve",
             "releaseMonthlyReserve",
@@ -3887,7 +3890,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Each period has one month within the cap at admission, and outstanding gross is the sum of unsettled totals",
-          "line": 504,
+          "line": 515,
           "definitions": [
             "alwaysMonthsWellFormed",
             "alwaysOutstandingMatchesMonths",
@@ -3897,7 +3900,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering",
-          "line": 532,
+          "line": 543,
           "definitions": [
             "noPledge",
             "pledgeOf",
@@ -3913,7 +3916,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / Anyone closes an open pledge once its period is committed or the period's window has closed",
-          "line": 574,
+          "line": 585,
           "definitions": [
             "closePledge",
             "canExpirePledge",
@@ -3923,7 +3926,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / The owner deletes a closed pledge account for its rent, and its ended period is never pledged again",
-          "line": 594,
+          "line": 605,
           "definitions": [
             "canCloseMonthPledge",
             "closeMonthPledge",
@@ -3932,7 +3935,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / Open pledges never exceed the free balance, and a closed pledge's period was committed or its window closed",
-          "line": 608,
+          "line": 619,
           "definitions": [
             "alwaysPledgesCovered",
             "alwaysClosedPledgeEnded",
@@ -3944,7 +3947,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / A pledge's open amount never falls, and only a commit, a lapse or the owner's deletion ends it",
-          "line": 633,
+          "line": 644,
           "definitions": [
             "stepPledgeIrrevocable",
             "stepPledgeRecordKept"
@@ -3952,7 +3955,7 @@
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet / The identity authority and the destination both sign a binding for the project's network",
-          "line": 650,
+          "line": 661,
           "definitions": [
             "noSolBinding",
             "hasBinding",
@@ -3965,7 +3968,7 @@
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet / The owner vetoes the latest unpaid binding version once, inside a review window and within the cap",
-          "line": 681,
+          "line": 694,
           "definitions": [
             "vetoed",
             "canVetoBinding",
@@ -3976,7 +3979,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone pays a matured obligation to its actor's latest unvetoed binding",
-          "line": 715,
+          "line": 728,
           "definitions": [
             "payable",
             "paidOut",
@@ -3993,7 +3996,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / The owner withdraws free funds to its own account less the 2% fee",
-          "line": 756,
+          "line": 769,
           "definitions": [
             "refundable",
             "refunded",
@@ -4006,7 +4009,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone moves all accrued fees to the fee recipient",
-          "line": 780,
+          "line": 795,
           "definitions": [
             "feesClaimed",
             "canClaimFees",
@@ -4018,7 +4021,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Simulation samples cover admitted and refused assets, windows, allocations and signers",
-          "line": 797,
+          "line": 812,
           "definitions": [
             "byValues",
             "successorValues",
@@ -4039,19 +4042,16 @@
             "grossValues",
             "capValues",
             "periodValues",
-            "rootValues",
-            "totalValues",
-            "frozenAtValues",
-            "leavesValues",
             "leafValues",
+            "monthlyCommitValues",
+            "bindingRequestValues",
+            "payRequestValues",
             "expectedUnsettledValues",
             "releasedAmountValues",
             "destinationValues",
             "expectedVersionValues",
             "versionValues",
             "obligationValues",
-            "claimValues",
-            "expiresAtValues",
             "timestampValues",
             "nowValues",
             "weight_upgradeProgram",

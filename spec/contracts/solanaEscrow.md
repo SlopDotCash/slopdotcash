@@ -40,6 +40,11 @@ type Veto = { actor: int, version: int }
 type Pledge = { period: int, amount: int, open: bool }
 type Opening = { project: str, network: str, identity: str, feeRecipient: str, delay: int, rotationDelay: int,
   purpose: L::Purpose }
+type MonthlyCommit = { period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
+  pledgeAccount: bool }
+type BindingRequest = { actor: int, network: str, expectedVersion: int, claim: int, expiresAt: int, destination: str,
+  walletSigned: bool }
+type PayRequest = { source: int, expectedVersion: int, destination: str, account: AccountFacts, transferOk: bool }
 type SolMonth = { period: int, root: str, committed: int, total: int, released: int, frozenAt: int, cap: int,
   wholeReleased: bool, leaves: List[L::Leaf], settled: List[int] }
 type Program = { build: Build, upgradeAuthority: str, now: int,
@@ -398,7 +403,8 @@ success. The total never takes free funds that another period's open
 pledge holds (`PledgedFunds`). Unlike the EVM vault, a commit that does not
 name the pledge counts the period's own open pledge as another's and leaves
 it open, for `expire_pledge` to close at once. The month records the cap it
-was admitted under.
+was admitted under. The model passes the period, root, total, freeze time,
+leaves, signature and pledge account together as one commitment record.
 
 ```quint
 pure val noSolMonth: SolMonth = { period: 0, root: "", committed: 0, total: 0, released: 0, frozenAt: 0, cap: 0,
@@ -415,19 +421,24 @@ pure def capFor(p: Program, period: int, pledgeAccount: bool): int =
   if (x.open and x.amount > cap) x.amount else cap
 pure def closeNamed(period: int, p: Program, pledgeAccount: bool): Program =
   if (pledgeAccount) closePledge(period, p) else p
-pure def canCommitMonthly(p: Program, period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
-  pledgeAccount: bool): bool =
+pure def canCommitMonthly(p: Program, monthlyCommit: MonthlyCommit): bool =
+  val period = monthlyCommit.period
+  val total = monthlyCommit.total
+  val frozenAt = monthlyCommit.frozenAt
+  val pledgeAccount = monthlyCommit.pledgeAccount
   live(p) and p.purpose == L::Ordinary and (p.monthlyEnabled or namedPledge(p, period, pledgeAccount).open)
     and L::inWindow(period, p.now) and frozenAt >= L::opensAt(period) and frozenAt <= p.now
     and total > 0 and total <= capFor(p, period, pledgeAccount)
     and free(p) >= total and p.vaultAmount >= held(p) + total and total <= unpledged(closeNamed(period, p, pledgeAccount))
-    and attested and not(hasMonth(p.months, period)) and (pledgeAccount implies p.pledges.some(x => x.period == period))
-pure def commitMonthly(p: Program, period: int, root: str, total: int, frozenAt: int, leaves: List[L::Leaf], attested: bool,
-  pledgeAccount: bool): Program =
+    and monthlyCommit.attested and not(hasMonth(p.months, period)) and (pledgeAccount implies p.pledges.some(x => x.period == period))
+pure def commitMonthly(p: Program, monthlyCommit: MonthlyCommit): Program =
+  val period = monthlyCommit.period
+  val total = monthlyCommit.total
+  val pledgeAccount = monthlyCommit.pledgeAccount
   val c = closeNamed(period, p, pledgeAccount)
   { ...c, reserved: c.reserved + total, monthlyOutstanding: c.monthlyOutstanding + total,
-    months: c.months.append({ ...noSolMonth, period: period, root: root, total: total, frozenAt: frozenAt,
-      cap: capFor(p, period, pledgeAccount), leaves: leaves }) }
+    months: c.months.append({ ...noSolMonth, period: period, root: monthlyCommit.root, total: total,
+      frozenAt: monthlyCommit.frozenAt, cap: capFor(p, period, pledgeAccount), leaves: monthlyCommit.leaves }) }
 ```
 
 ### Anyone commits a proved leaf from its month's reserve
@@ -653,7 +664,9 @@ pure def stepPledgeRecordKept(before: Program, via: str, after: Program): bool =
 as signers. It refuses a zero actor, a destination equal to the authority,
 the project or the vault, a zero claim, an expired submission, another
 network and a stale predecessor. The new version is the only one that can
-pay; earlier payment and veto counts stay with the actor.
+pay; earlier payment and veto counts stay with the actor. The model passes
+the actor, network, expected version, claim, expiry, destination and the
+wallet's signature together as one binding request, beside the signer.
 
 ```quint
 pure val noSolBinding: SolBinding = { actor: 0, network: "", authority: "", destination: "", claim: 0, version: 0,
@@ -663,16 +676,16 @@ pure def bindingFor(bs: List[SolBinding], actor: int): SolBinding =
   bs.foldl(noSolBinding, (found, b) => if (b.actor == actor) b else found)
 pure def withBinding(bs: List[SolBinding], b: SolBinding): List[SolBinding] =
   if (hasBinding(bs, b.actor)) bs.listMap(x => if (x.actor == b.actor) b else x) else bs.append(b)
-pure def canBindWallet(p: Program, actor: int, network: str, expectedVersion: int, claim: int, expiresAt: int,
-  destination: str, walletSigned: bool, by: str): bool =
-  live(p) and by == p.identityAuthority and walletSigned and actor > 0 and destination != ""
-    and destination != by and destination != "project" and destination != "vault" and claim != 0
-    and p.now < expiresAt and network == p.network and bindingFor(p.bindings, actor).version == expectedVersion
-pure def bindWallet(p: Program, actor: int, network: str, expectedVersion: int, claim: int, expiresAt: int,
-  destination: str, walletSigned: bool, by: str): Program =
-  val old = bindingFor(p.bindings, actor)
-  { ...p, bindings: withBinding(p.bindings, { ...old, actor: actor, network: network, authority: by,
-    destination: destination, claim: claim, version: expectedVersion + 1, boundAt: p.now, walletSigned: true }) }
+pure def canBindWallet(p: Program, bindingRequest: BindingRequest, by: str): bool =
+  val r = bindingRequest
+  live(p) and by == p.identityAuthority and r.walletSigned and r.actor > 0 and r.destination != ""
+    and r.destination != by and r.destination != "project" and r.destination != "vault" and r.claim != 0
+    and p.now < r.expiresAt and r.network == p.network and bindingFor(p.bindings, r.actor).version == r.expectedVersion
+pure def bindWallet(p: Program, bindingRequest: BindingRequest, by: str): Program =
+  val r = bindingRequest
+  val old = bindingFor(p.bindings, r.actor)
+  { ...p, bindings: withBinding(p.bindings, { ...old, actor: r.actor, network: r.network, authority: by,
+    destination: r.destination, claim: r.claim, version: r.expectedVersion + 1, boundAt: p.now, walletSigned: true }) }
 pure def stepNewBindingAttested(before: Program, after: Program): bool = after.bindings.every(b =>
   before.bindings.some(o => o.actor == b.actor and o.version == b.version)
     or (b.authority == before.identityAuthority and b.walletSigned))
@@ -734,12 +747,12 @@ pure def paidOut(source: int, p: Program): Program =
     bindings: withBinding(p.bindings, { ...b, paidVersion: b.version, vetoes: 0 }),
     reserved: p.reserved - a.gross, paid: p.paid + a.gross - a.fee, payoutFees: p.payoutFees + a.fee,
     accruedFees: p.accruedFees + a.fee, vaultAmount: p.vaultAmount - (a.gross - a.fee) }
-pure def canPay(p: Program, source: int, expectedVersion: int, destination: str, account: AccountFacts, transferOk: bool): bool =
-  val a = L::awardFor(p.awards, source)
-  payable(p, source, expectedVersion, destination) and not(p.native) and admittedMint(p.mint)
-    and admittedAccount(account, p.mint.kind) and (transferOk or a.gross - a.fee == 0)
-pure def pay(p: Program, source: int, expectedVersion: int, destination: str, account: AccountFacts, transferOk: bool): Program =
-  paidOut(source, p)
+pure def canPay(p: Program, payRequest: PayRequest): bool =
+  val r = payRequest
+  val a = L::awardFor(p.awards, r.source)
+  payable(p, r.source, r.expectedVersion, r.destination) and not(p.native) and admittedMint(p.mint)
+    and admittedAccount(r.account, p.mint.kind) and (r.transferOk or a.gross - a.fee == 0)
+pure def pay(p: Program, payRequest: PayRequest): Program = paidOut(payRequest.source, p)
 pure def canPayNative(p: Program, source: int, expectedVersion: int, destination: str): bool =
   payable(p, source, expectedVersion, destination) and p.native
 pure def payNative(p: Program, source: int, expectedVersion: int, destination: str): Program = paidOut(source, p)
@@ -759,7 +772,9 @@ pure def sometimesBountyPaid(p: Program): bool = p.purpose == L::Bounty and p.pa
 to the owner's key. Both refuse a zero gross and a gross that the free
 balance or the vault above its holdings cannot cover, and one that exceeds
 the unpledged free funds (`PledgedFunds`). The fee stays in the
-vault as accrued fees.
+vault as accrued fees. The model passes a token payment's obligation,
+expected version, destination and destination account, and whether the
+transfer succeeds, together as one payment request.
 
 ```quint
 pure def refundable(p: Program, gross: int, transferOk: bool): bool = live(p) and gross > 0
@@ -820,6 +835,18 @@ on the loaded machine. The commitment, the token payment and the wallet
 binding now weigh 6, 8 and 6, both openings 5, the native payment 15 and
 the reserve release 12; an enabled event is still chosen in proportion to
 its weight among the enabled ones, and every goal is still reached.
+Discovered by simulation: even at those weights the three events' 960 to
+1,080 combinations each (with the signer) kept the invariant simulation
+near its hour on the loaded machine. The commitment, binding and payment
+records pair their values instead: every total, leaf list and pledge account
+choice for the one period and freeze time the window admits, and each
+refusal (no signature, a freeze time before the window opens, a later or
+invalid period) once or twice; each actor, network and expected version
+with a wallet or the attester as destination, and each refusal (expired,
+zero claim, the vault as destination, no wallet signature) on both actors
+and networks; each obligation source to a wallet through a classic and a
+Token-2022 account, some to the attester, and each refusal (stale version,
+wrong destination, uninitialized or extended account, failed transfer).
 
 ```quint
 pure val byValues = Set("owner", "upgrader", "attester", "rotator", "other")
@@ -871,23 +898,93 @@ pure val actorValues = Set(1, 2)
 pure val grossValues = Set(0, 4, 50, 51)
 pure val capValues = Set(0, 54, 100)
 pure val periodValues = Set(202611, 202612, 202613)
-pure val rootValues = Set("r")
-pure val totalValues = Set(54, 60)
-pure val frozenAtValues = Set(1796342399, 1796342400, 1799020800)
-pure val leavesValues = Set(
-  List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
-  List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
-  List({ actor: 0, gross: 54, source: 12 }))
 pure val leafValues = Set({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 },
   { actor: 1, gross: 50, source: 1 }, { actor: 0, gross: 54, source: 12 })
+pure val monthlyCommitValues = Set(
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: false, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: false, pledgeAccount: true },
+  { period: 202611, root: "r", total: 54, frozenAt: 1796342400, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202611, root: "r", total: 60, frozenAt: 1796342399, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: true },
+  { period: 202612, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: false },
+  { period: 202612, root: "r", total: 60, frozenAt: 1799020800, leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }),
+    attested: true, pledgeAccount: true },
+  { period: 202613, root: "r", total: 54, frozenAt: 1799020800, leaves: List({ actor: 0, gross: 54, source: 12 }),
+    attested: true, pledgeAccount: false })
+pure val bindingRequestValues = Set(
+  { actor: 1, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 1, network: "solana", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 1, network: "solana", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
+  { actor: 2, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
+  { actor: 2, network: "solana", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 1, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 1, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
+  { actor: 1, network: "other", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "attester", walletSigned: true },
+  { actor: 2, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 2, network: "other", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 1, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1796342399, destination: "wallet", walletSigned: true },
+  { actor: 2, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1796342399, destination: "attester", walletSigned: true },
+  { actor: 1, network: "solana", expectedVersion: 0, claim: 0, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 2, network: "other", expectedVersion: 1, claim: 0, expiresAt: 1799020801, destination: "wallet", walletSigned: true },
+  { actor: 1, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "vault", walletSigned: true },
+  { actor: 2, network: "other", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "vault", walletSigned: true },
+  { actor: 1, network: "solana", expectedVersion: 0, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: false },
+  { actor: 2, network: "other", expectedVersion: 1, claim: 7, expiresAt: 1799020801, destination: "wallet", walletSigned: false })
+pure val payRequestValues = Set(
+  { source: 0, expectedVersion: 1, destination: "wallet", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 0, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 1, expectedVersion: 1, destination: "wallet", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 1, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 2, expectedVersion: 1, destination: "wallet", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 2, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 10, expectedVersion: 1, destination: "wallet", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 10, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 0, expectedVersion: 1, destination: "attester", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 1, expectedVersion: 1, destination: "attester", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 2, expectedVersion: 1, destination: "attester", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 10, expectedVersion: 1, destination: "attester", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 1, expectedVersion: 0, destination: "wallet", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 10, expectedVersion: 0, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: true },
+  { source: 2, expectedVersion: 1, destination: "vault", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: true },
+  { source: 0, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: false, extensions: List() }, transferOk: true },
+  { source: 10, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("MemoTransfer") }, transferOk: true },
+  { source: 1, expectedVersion: 1, destination: "wallet", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: false },
+  { source: 10, expectedVersion: 1, destination: "wallet", account: { kind: Token2022, initialized: true, extensions: List("ImmutableOwner") }, transferOk: false },
+  { source: 2, expectedVersion: 1, destination: "attester", account: { kind: ClassicSpl, initialized: true, extensions: List() }, transferOk: false })
 pure val expectedUnsettledValues = Set(54, 60)
 pure val releasedAmountValues = Set(4, 54, 60)
 pure val destinationValues = Set("wallet", "attester", "vault")
 pure val expectedVersionValues = Set(0, 1)
 pure val versionValues = Set(1, 2)
 pure val obligationValues = Set(0, 1, 10)
-pure val claimValues = Set(0, 7)
-pure val expiresAtValues = Set(1796342399, 1799020801)
 pure val timestampValues = Set(1796342400, 1796342401, 1799020800, 1801699200)
 pure val nowValues = Set(1793491200, 1796342400)
 pure val weight_upgradeProgram = 20
