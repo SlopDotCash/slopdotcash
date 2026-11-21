@@ -259,7 +259,7 @@ export effect function recorded(actor: Actor, body: Body) {
   const id = `sc_${(try randomId()).replaceAll("-", "")}`
   const at = try isoNow()
   const notices = try caseNotices({ caseId: id, revision: 1, kind: "record", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: reporterId, detail: {}, program, relatedReview: false, at })
-  const verified = { receivedAt, verifiedBy: actor.githubId, policyRevision: atReceipt.revision, terms: atReceipt.terms, award: after.award }
+  const verified = { receivedAt, verifiedBy: actor.githubId, policyRevision: atReceipt.revision, terms: atReceipt.terms, award: after.award, source: "maintainer-attested" as const }
   const written = (try D1).batch([
     caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: reporterId, login: reporterLogin }, verified, ownerGithubId: actor.githubId, at }),
     caseEvent({ caseId: id, revision: 1, kind: "record", actorGithubId: actor.githubId, role: "security-maintainer", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory, receivedAt, receivedAtSource: "maintainer-attested" }, at, guard: false }),

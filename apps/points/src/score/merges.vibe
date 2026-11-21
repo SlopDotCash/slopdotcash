@@ -81,24 +81,19 @@ effect function elsewhere(owner: MergedPull) {
   return units
 }
 
-function resolutionsOf(commit: Commit) {
-  return commit.mergeResolutions ?? []
-}
-
 effect function attributed(key: string, pull: Source, commit: Commit, owner: MergedPull | undefined, actors: ActorIndex) {
   const book = try Commits
   if (commit.author !== null) try book.send(key, { type: "observePrimary", actor: actors.of(commit.author), kind: commitActorKind(commit.author), linked: true })
   if (pull.author !== null) try book.send(key, { type: "observeSource", actor: actors.of(pull.author), kind: commitActorKind(pull.author) })
   if (commit.retained !== null) try book.send(key, { type: "observeCopy", copy: { tag: "VerifiedCopy", actor: actors.of(commit.retained.actor), kind: commitActorKind(commit.retained.actor) }, discussion: commit.retained.discussion })
-  // A merge commit's acceptance records the number of reviewed merge resolutions recorded for it, and its line
-  // evidence is its one resolution's own work. A reviewed resolution is recorded only through a reviewed correction
-  // manifest (corrections/apply/derive.vibe); collected GitHub facts record none, so a collected merge commit is a
-  // synchronization merge that contributes nothing, never an assumed count.
+  // A merge commit's acceptance records the number of reviewed merge resolutions collected for it, and its line
+  // evidence is its one resolution's own work. Without collected resolutions its acceptance stays unobserved, which
+  // claimOf turns into an unknown actor set that holds the unit, never an assumed count.
   const merge = commit.parentCount > 1
-  const resolutions = resolutionsOf(commit)
+  const resolutions = commit.mergeResolutions
   const elsewhereUnits = owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial
-  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge, resolutions: merge ? resolutions.length : 0, units: elsewhereUnits })
-  const resolved = merge && resolutions.length === 1 ? resolutions[0] : undefined
+  if (commit.parentCount >= 0 && (!merge || resolutions !== undefined)) try book.send(key, { type: "observeAcceptance", merge, resolutions: merge ? resolutions?.length ?? 0 : 0, units: elsewhereUnits })
+  const resolved = merge && resolutions?.length === 1 ? resolutions[0] : undefined
   const lines = merge ? resolved : { additions: commit.additions, deletions: commit.deletions }
   if (lines !== undefined && lines.additions >= 0 && lines.deletions >= 0) try book.send(key, { type: "recordLines", additions: lines.additions, deletions: lines.deletions })
   if (canAttribute(try book.get(key))) try book.send(key, { type: "attribute" })
@@ -130,21 +125,24 @@ effect function observed(scope: string, pulls: ReadonlyArray<Source>, only: Read
 // (claimUsable: "A claim with no credited actor adds nothing"). Every other non-merge commit claims its lines for its
 // attributed actor; missing acceptance, attribution or line evidence makes the unit's weights incomplete. A merge
 // commit with exactly one recorded merge resolution claims that resolution's lines for its attributed actor; one with
-// none or several is a synchronization merge with no credited actor, which adds nothing (its acceptance is observed
-// with the recorded count, so the claim stays usable).
+// none recorded is a synchronization merge with no credited actor. A merge commit whose resolutions were not collected,
+// or that has several, has an unknown actor set, which holds the unit (spec/points/authorship.md: "a merge commit
+// without exactly one resolution ... make[s] the unit's weights incomplete"; development's workUnitLineWeights
+// returns null for such a claim). The collected GitHub totals are the commit's complete GraphQL additions and
+// deletions, so the one claim per commit is never limited and a renamed file inside it is counted once.
 function claimOf(observation: Observation, position: number): PathClaim {
   const { state, commit } = observation
   const lines = state.lines.tag === "CompleteLines" ? state.lines : undefined
   const acceptance = state.acceptance.tag === "AcceptedCommit" ? state.acceptance : undefined
   const merge = commit.parentCount > 1
-  const resolutions = merge ? resolutionsOf(commit).length : 0
+  const resolutions = merge ? commit.mergeResolutions?.length ?? 0 : 0
   const earlier = acceptance?.earlierSource === true
   const credited = merge ? !earlier && resolutions === 1 : !earlier
   return {
     claim: position + 1,
     actor: state.recipient,
     creditedActors: credited ? 1 : 0,
-    actorsKnown: true,
+    actorsKnown: !merge || (commit.mergeResolutions !== undefined && resolutions <= 1),
     file: position + 1,
     merge,
     resolutions,

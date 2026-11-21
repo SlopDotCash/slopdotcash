@@ -13,7 +13,7 @@ import type { Authority, Award, Event, PrivateCase, ProjectClearance } from "../
 import { privateRoute } from "../../src/analysis/route.vibe";
 import { AwardClearances } from "../../src/cases/clearance.vibe";
 import { caseRecord } from "../../src/cases/rows.vibe";
-import { claimed, performed } from "../../src/cases/routes.vibe";
+import { claimed, performed, recorded } from "../../src/cases/routes.vibe";
 import { type Starter, triageFinished, triageStarted } from "../../src/cases/triage.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
 import { ReportingPrograms } from "../../src/receipt/program.vibe";
@@ -236,6 +236,22 @@ async function claim(caseKey: string, by: unknown): Promise<Outcome> {
   return result;
 }
 
+// A current security maintainer records a GitHub advisory's case directly (case mode "record") at an attested past
+// receipt time, under the terms in force then.
+async function record(caseKey: string, event: Extract<Event, { type: "recordAttested" }>, by: unknown): Promise<Outcome> {
+  terms = storedTerms(event.terms);
+  const projectId = await seeded(terms);
+  clock.set(Math.max(clock.now(), base() + event.terms.receivedAt + 1));
+  const advisory = `GHSA-${"2345"}-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "rvwx" : "hjmp"}`;
+  const result = await outcome(recorded(actorOf(by), {
+    mode: "record", projectId, advisory, idempotencyKey: key(), reporterGithubId: githubId(1), reporterGithubLogin: `member-${githubId(1)}`,
+    receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: event.confirmed,
+  }));
+  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(projectId, advisory, githubId(1)).all()).results;
+  if (result === "accepted" && typeof found?.id === "string") cases.set(caseKey, found.id);
+  return result;
+}
+
 async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome> {
   if (event.type === "observeAuthority") {
     if (event.snapshot.epoch <= snapshot.epoch) return "refused";
@@ -245,9 +261,10 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   if ("checkedEpoch" in event && event.checkedEpoch !== snapshot.epoch) return "refused";
   if (event.type === "receive") return cases.has(caseKey) ? "refused" : receive(caseKey, event);
   if (event.type === "claim") return cases.has(caseKey) ? "refused" : claim(caseKey, by);
-  // The application has no route yet that records a maintainer-attested receipt without a claim (the "record"
-  // case mode) or that settles a claim from the program's complete GitHub private-report list (check-receipt).
-  if (event.type === "recordAttested" || event.type === "settleClaim") return "refused";
+  if (event.type === "recordAttested") return cases.has(caseKey) ? "refused" : record(caseKey, event, by);
+  // The application has no route yet that settles a claim from the program's complete GitHub private-report list
+  // (check-receipt).
+  if (event.type === "settleClaim") return "refused";
   const caseId = cases.get(caseKey);
   if (caseId === undefined) return "refused";
   switch (event.type) {

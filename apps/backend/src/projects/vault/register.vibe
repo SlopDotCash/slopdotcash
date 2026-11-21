@@ -67,21 +67,25 @@ function samePolicy(reviewed: Json, current: Json, ordinary: boolean): boolean {
   return left?.kind === right?.kind && left?.chain === right?.chain && same(reviewed.escrow, current.escrow) && same(reviewed.rewardAsset, current.rewardAsset)
 }
 
+// Whether the creation's reviewed revision has the current asset and vault policy. The model guard decides with it
+// (canRegisterVault: the current revision, or an earlier one whose policy matches); a revision outside the stored
+// history matches nothing.
 effect function policyMatches(projectId: string, expectedRevision: number, current: Json, currentRevision: number, ordinary: boolean) {
   if (expectedRevision === currentRevision) return true
-  if (expectedRevision < 1 || expectedRevision > currentRevision) throw refused("stale_revision")
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || expectedRevision > currentRevision) return false
   const [read] = try (try D1).batch([revisionRead(projectId)])
   const revisions = try revisionsOf(projectId, read?.rows ?? [])
   const reviewed = revisions.find((entry) => entry.row.revision === expectedRevision)
-  if (reviewed === undefined) throw refused("stale_revision")
+  if (reviewed === undefined) return false
   const parsed = objectOf(try Effect.try({ try: () => JSON.parse(reviewed.row.manifest) as unknown, catch: () => refused("stale_revision") }))
-  if (parsed === undefined || !samePolicy(parsed, current, ordinary)) throw refused("vault_policy_changed")
-  return true
+  return parsed !== undefined && samePolicy(parsed, current, ordinary)
 }
 
 function rejection(event: Event, state: Registry): VaultRegistrationRefused {
   if (state.security.restriction !== "Clear" || state.project.retirement === "RestrictionRetired") return refused("project_restricted")
   if (event.type !== "registerVault") return refused("stale_revision")
+  const { expectedRevision, policyMatches: matches } = event.registration
+  if (expectedRevision > 0 && expectedRevision < state.project.revision && !matches) return refused("vault_policy_changed")
   if (event.account.actorBan === "BanUnavailable" || event.account.stewardBan === "BanUnavailable") return refused("github_unavailable")
   if (event.account.actorBan === "AccountBanned" || event.account.stewardBan === "AccountBanned") return refused("maintainer_banned")
   return refused("stale_revision")
@@ -118,7 +122,7 @@ export effect function registerOwnerVault(registration: VaultRegistration) {
     : "Owner registered a finalized vault verified against the reviewed factory and project policy."
   send({
     projectId: registration.projectId,
-    event: { type: "registerVault", registration: { authority, repositoryAdmin: admin, expectedRevision: current.row.revision, purpose: ordinary ? "OrdinaryVault" : "BountyVault", finalized: registration.evidence === "finalized", policyMatches: matches }, account: unread },
+    event: { type: "registerVault", registration: { authority, repositoryAdmin: admin, expectedRevision: registration.expectedRevision, purpose: ordinary ? "OrdinaryVault" : "BountyVault", finalized: registration.evidence === "finalized", policyMatches: matches }, account: unread },
     by: vaultSetup,
     revision: { manifestText: JSON.stringify(next), reason, actor: { githubId: registration.actor.githubId, login: registration.actor.login } },
   }) catch effect (error) => {

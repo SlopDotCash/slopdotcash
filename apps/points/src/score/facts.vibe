@@ -24,8 +24,8 @@ export interface Retained {
 }
 
 // spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge
-// resolution": the line counts of each reviewed merge resolution recorded for a merge commit. Only a reviewed correction
-// manifest records one; absent means none is recorded, so the merge contributes nothing.
+// resolution": the line counts of each reviewed merge resolution recorded for a merge commit. Absent when they were
+// not collected, which leaves the commit's credited actor set unknown.
 export interface ResolutionLines {
   readonly additions: number
   readonly deletions: number

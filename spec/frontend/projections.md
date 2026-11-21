@@ -527,6 +527,10 @@ address registered (on Solana for a Solana deposit, on any EVM network for
 an EVM deposit); otherwise the address alone is shown. Private bounty vaults
 are not listed. The list is display evidence only: balances, funded months,
 listing and payment come from the finalized vault counters.
+Discovered by generation: the depositor laws' sample sets were named for the
+parameters `a` and `b`, which the presentation laws above also use for
+payment, award and funding states, so the depositor laws name their own
+parameters and sample sets.
 
 ```quint
 type Registration = { login: str, publicAccount: bool, closed: bool }
@@ -542,14 +546,15 @@ pure def fundersView(countersOnRecord: bool, status: R::ReadStatus): FundersView
   else if (status == R::Current or status == R::Stale) FundersListed
   else if (status == R::Empty) NoFunders
   else FundersError
-pure def lawTwoAccountsNameNobody(a: Registration, b: Registration): bool =
-  (a.publicAccount and not(a.closed) and b.publicAccount and not(b.closed)) implies depositorLogin(List(a, b)) == ""
-pure def lawPrivateOrClosedAccountNamesNobody(a: Registration): bool =
-  (not(a.publicAccount) or a.closed) implies depositorLogin(List(a)) == ""
+pure def lawTwoAccountsNameNobody(depositor: Registration, secondDepositor: Registration): bool =
+  (depositor.publicAccount and not(depositor.closed) and secondDepositor.publicAccount and not(secondDepositor.closed)) implies
+    depositorLogin(List(depositor, secondDepositor)) == ""
+pure def lawPrivateOrClosedAccountNamesNobody(depositor: Registration): bool =
+  (not(depositor.publicAccount) or depositor.closed) implies depositorLogin(List(depositor)) == ""
 pure def lawFundersNeedCounters(status: R::ReadStatus): bool = fundersView(false, status) == FundersHidden
 pure def lawFailedFundersReadOffersRetry(status: R::ReadStatus): bool =
   (status == R::Failed or status == R::Invalid or status == R::Unavailable) implies fundersView(true, status) == FundersError
-pure val aValues = Set({ login: "alice", publicAccount: true, closed: false }, { login: "bob", publicAccount: false, closed: false },
+pure val depositorValues = Set({ login: "alice", publicAccount: true, closed: false }, { login: "bob", publicAccount: false, closed: false },
   { login: "carol", publicAccount: true, closed: true })
-pure val bValues = aValues
+pure val secondDepositorValues = depositorValues
 ```

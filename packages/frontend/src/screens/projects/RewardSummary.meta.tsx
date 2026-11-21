@@ -1,6 +1,7 @@
 import { expect, screen } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
 import { notListedText } from "../../../gen/frontend__poolListing.ts";
+import { promiseNoticeText } from "../../../gen/frontend__projections.ts";
 import { bountyProject, funded, prizeProject, project, unfunded, unread, withdrawn } from "./fixtures.ts";
 import type { RewardSummaryProps } from "./RewardSummary.tsx";
 
@@ -12,6 +13,7 @@ export const meta: ComponentMeta<RewardSummaryProps> = {
     Bounty: { project: bountyProject },
     Prize: { project: prizeProject, funding: unread },
     NotListed: { funding: unfunded },
+    Promised: { project: { ...project, reward: { ...project.reward, honorSystem: true } }, funding: unfunded },
   },
   play: {
     // spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"
@@ -29,6 +31,10 @@ export const meta: ComponentMeta<RewardSummaryProps> = {
     // spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"
     NotListed: async () => {
       await expect([screen.getByText(notListedText).textContent, screen.getByText("Points only · no cash rewards").textContent]).toEqual([notListedText, "Points only · no cash rewards"]);
+    },
+    // spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
+    Promised: async () => {
+      await expect([screen.getByText(promiseNoticeText).textContent, screen.queryByText(notListedText)]).toEqual([promiseNoticeText, null]);
     },
   },
 };

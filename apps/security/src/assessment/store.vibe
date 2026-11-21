@@ -6,7 +6,7 @@ import { Refused } from "@repo/platform/http"
 import { StorageFailure } from "@repo/platform/r2"
 import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
 import type { Assessment, Attempt, AttemptState, Event, Mode } from "../../gen/security__assessment.ts"
-import { type NotAState, apply, canObserveReceiptQualified, decodeState, initial } from "../../gen/security__assessment.effect.vibe"
+import { NotAState, Rejected, apply, canObserveReceiptQualified, decodeState, initial } from "../../gen/security__assessment.effect.vibe"
 import type { Authority, ReceiptSource } from "../../gen/security__cases.ts"
 import { qualified } from "../../gen/security__screening.effect.vibe"
 import type { ExclusionContext } from "../../gen/security__terms.ts"
@@ -127,7 +127,12 @@ effect function receiptAssessment(row: CaseRow, found: ReadonlyArray<AttemptRow>
     shown: shownOf(found, 1),
   })
   const source = receiptSourceOf(row)
-  return canObserveReceiptQualified(received, source) ? try apply(received, { type: "observeReceiptQualified", source }, 0) : received
+  if (!canObserveReceiptQualified(received, source)) return received
+  // The guard was checked above; a refusal here means the stored rows are not a state the observation applies to.
+  return apply(received, { type: "observeReceiptQualified", source }, 0) catch effect (error) => match (error) {
+    when Rejected: throw new NotAState({ input: received });
+    default: throw error;
+  }
 }
 
 function aggregate(caseId: string, authority: Authority): Aggregate<CaseAssessment, NotAssessable | RowMismatch | NotAState, never> {
