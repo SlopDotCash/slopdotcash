@@ -77,6 +77,7 @@ import { SolanaBountyRecovery } from "./SolanaBountyRecovery";
 import "./operations-design.css";
 import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
+import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import {
@@ -90,6 +91,7 @@ import {
   saveDraft,
   TERMINAL_FAILURES,
 } from "./lib/intake-drafts";
+import { transactionUrl } from "./lib/payments/contracts";
 import {
   currentProjectSession,
   ProjectApiError,
@@ -99,6 +101,16 @@ import {
 } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import {
+  REPORT_DEPOSIT_NOTICE,
+  REPORT_DEPOSIT_SPAM_INFO,
+  type ReportDepositStatus,
+  readReportDeposit,
+  reportDepositPath,
+  reportDepositPathCase,
+  reportDepositStatus,
+  reportDepositStatusText,
+} from "./lib/report-deposit-page";
 import { formatAssetSymbol, type RewardAsset } from "./lib/reward-asset.mjs";
 import {
   formatSecurityAmount,
@@ -109,7 +121,10 @@ import {
   type SecurityBountyTerms,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
+import { reportDepositOn } from "./lib/security-report-deposit.mjs";
+import { reportDepositSetup } from "./lib/submission-fee-setup";
 import { useAction } from "./lib/use-action";
+import { usePublicResource } from "./lib/use-public-resource";
 import { useTimeBoundary } from "./lib/use-time-boundary";
 import { securityBountyShares } from "./lib/verified-security-split";
 import { CopyButton, CopyIdentifier } from "./Operations";
@@ -400,6 +415,90 @@ const BLOCKED_INTAKE: Record<Exclude<Readiness["state"], "ready">, string> = {
 };
 
 /**
+ * One sentence before a reporter files: the refundable deposit (PRD section
+ * 8). Shown only while Slop asks for it and the program has it on.
+ */
+function ReportDepositNotice({ project }: { project: ProjectDefinition }) {
+  const [{ switchedOn }] = useState(reportDepositSetup);
+  return switchedOn && reportDepositOn(project) ? (
+    <p className="field-hint">{REPORT_DEPOSIT_NOTICE}</p>
+  ) : null;
+}
+
+/** The transaction that ended one deposit, from its public record. */
+async function loadDepositEnd(
+  caseId: string,
+  signal: AbortSignal,
+): Promise<{ href: string | null }> {
+  const response = await fetchWithDeadline(reportDepositPath(caseId), {
+    signal,
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("The deposit record is unavailable.");
+  const record = readReportDeposit(
+    await readBoundedJson(response, 16_384, "report deposit record"),
+    caseId,
+  );
+  return {
+    href:
+      record.paid && record.resolveTransaction
+        ? transactionUrl(record.paid.network, record.resolveTransaction)
+        : null,
+  };
+}
+
+/**
+ * The reporter's deposit line on a report card: needed with a link to the pay
+ * page, then recorded, then how it ended with the transaction that did it.
+ */
+function ReportDepositLine({ status }: { status: ReportDepositStatus }) {
+  const ended = status.state === "refunded" || status.state === "kept";
+  const caseId = status.payPath ? reportDepositPathCase(status.payPath) : null;
+  const load = useCallback(
+    (signal: AbortSignal) => {
+      if (caseId === null) throw new Error("No report.");
+      return loadDepositEnd(caseId, signal);
+    },
+    [caseId],
+  );
+  const [end] = usePublicResource(
+    ended && caseId !== null,
+    load,
+    "The deposit record is unavailable.",
+  );
+  const text = reportDepositStatusText(status);
+  if (status.state === "needed")
+    return (
+      <p className="field-hint">
+        {status.payPath ? <Link href={status.payPath}>{text}</Link> : text}
+      </p>
+    );
+  if (!ended) return <p className="field-hint">{text}</p>;
+  const href = end.status === "ready" ? end.href : null;
+  return (
+    <p className="field-hint">
+      {text}
+      {href ? (
+        <>
+          {" · "}
+          <ExternalLinkAnchor href={href}>
+            {status.state === "kept"
+              ? "Kept transaction"
+              : "Refund transaction"}
+          </ExternalLinkAnchor>
+        </>
+      ) : end.status !== "loading" && status.payPath ? (
+        // The pay page shows the same record and its transactions.
+        <>
+          {" · "}
+          <Link href={status.payPath}>Deposit record</Link>
+        </>
+      ) : null}
+    </p>
+  );
+}
+
+/**
  * Accepts a report in Slop independently of GitHub availability. The optional
  * GitHub delivery link is shown only while the cached observation is fresh.
  */
@@ -480,6 +579,9 @@ function IntakeHandoff({
           </>
         ) : null}
       </p>
+      {state.status === "checked" && state.value.storedIntake === true ? (
+        <ReportDepositNotice project={project} />
+      ) : null}
       {state.status === "checked" && state.value.storedIntake === true ? (
         <AutomaticReportForm session={session} project={project} />
       ) : state.status === "checking" ? (
@@ -1207,6 +1309,8 @@ type SecurityCase = {
   evidenceDigest?: string | null;
   triagers?: (GithubActor & { revokedAt: string | null })[];
   events?: CaseEvent[];
+  /** The reporter's own view of the report's refundable deposit, if asked. */
+  deposit?: unknown;
 };
 
 type ReportFilter = "all" | "review" | "waiting" | "award" | "resolved";
@@ -1642,6 +1746,8 @@ function DirectVerifyForm({
   const { busy, error, run } = useAction();
   if (programProjects.length === 0)
     return <p className="admin-status">No programs yet</p>;
+  // Linking creates a Slop case, so the same deposit is asked for it.
+  const chosen = programProjects.find((project) => project.id === projectId);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
@@ -1674,6 +1780,7 @@ function DirectVerifyForm({
         projects={programProjects}
         value={projectId}
       />
+      {chosen ? <ReportDepositNotice project={chosen} /> : null}
       <AdvisoryIdField onChange={setAdvisory} value={advisory} />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
@@ -1966,6 +2073,10 @@ function SubmissionCard({
         advisory: caseRecord?.advisory ?? submission.advisory,
       })
     : (submission.advisory?.ghsa ?? null);
+  // The reporter's read carries the deposit on the report or on its case.
+  const deposit =
+    reportDepositStatus(caseRecord?.deposit) ??
+    reportDepositStatus(submission.deposit);
   return (
     <article
       aria-labelledby={`submission-${submission.id}`}
@@ -2013,6 +2124,7 @@ function SubmissionCard({
       {submission.intake && submission.state !== "draft" ? (
         <p className="field-hint">{githubSubmissionStatus(submission)}</p>
       ) : null}
+      {deposit ? <ReportDepositLine status={deposit} /> : null}
       <details
         open={expanded}
         onToggle={(event) => setExpanded(event.currentTarget.open)}
@@ -2643,6 +2755,20 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
               ["rejected", "Rejected"],
             ],
           },
+          // A person's spam mark is the only record that closes a report as
+          // spam, which keeps the reporter's deposit (PRD section 8). Offered
+          // only while Slop asks reporters for the deposit.
+          ...(reportDepositSetup().switchedOn
+            ? [
+                {
+                  name: "spam",
+                  label: "Spam",
+                  info: REPORT_DEPOSIT_SPAM_INFO,
+                  kind: "checkbox",
+                  when: { field: "outcome", values: ["rejected"] },
+                } satisfies FieldSpec,
+              ]
+            : []),
           {
             name: "severity",
             label: "Severity",
@@ -4575,7 +4701,9 @@ export function SecurityInbox({
   onIdentityChange?: (actorId: string | null) => void;
 }) {
   const [sessionEpoch, setSessionEpoch] = useState(0);
-  const session = useProjectSession(sessionEpoch);
+  // A tab return rechecks the account behind the shown reports; only a
+  // changed or ended session closes them.
+  const session = useProjectSession(sessionEpoch, true, true);
   usePrivateDraftSession(session);
   const [problem, setProblem] = useState<string | null>(null);
   const mounted = useRef(true);

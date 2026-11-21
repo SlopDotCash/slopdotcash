@@ -125,7 +125,10 @@ alias only.
     paid a pull request whose row says kept, records each signed transaction
     before broadcasting it, and stays inside its native-fee ceilings.
     `SUBMISSION_FEE_MODE` is `live` since 21 November 2026 (operator
-    decision); `dry_run` loads no key.
+    decision); `dry_run` loads no key. Operator decision of 21 November 2026:
+    the same key resolves the deposit on a private security report (PRD
+    section 8, "Report deposit") with the same two outcomes, a refund to the
+    payer or "kept" to the burn address, for the row the security API marked.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -463,6 +466,30 @@ unavailable or disagreeing reading, an open appeal or correction, or a report
 on GitHub. `SECURITY_ROUTINE_DECISIONS` is `off`, `dry_run` or `live`, set in
 `wrangler.toml` (production, `live` since 20 November 2026) and
 `wrangler.staging.toml` (`off`); `dry_run` records decisions only.
+Operator decision, 21 November 2026 (PRD section 8, "Report deposit"): a
+private report filed through Slop needs a refundable deposit of SLOP on
+Robinhood Chain worth 5 US dollars at Slop's SLOP rate, rounded up to a whole
+SLOP, held in the existing `SubmissionDeposits` contract. The report is
+accepted and stored at once. Until the deposit is recorded it is not screened,
+the owner is not notified, the routine pass and the owner's lists leave it
+out, nobody can decide it and GitHub forwarding refuses; it is never closed or
+deleted for an unpaid deposit. Every such path checks the one condition in
+`backend/security/report-deposit-hold.ts`; never add a path around it. The
+deposit is sent back on a first response that is not a keeping close, after 14
+silent days, or when the owner turns it off. It is kept, and burned, only when
+the report is closed as a duplicate, as out of scope, or rejected by a person
+who marked it spam, and that close stood 7 days with no open appeal. A model's
+screening verdict never keeps a deposit. A report closed for missing proof is
+sent back. The setting `project.security.reportDeposit` is on unless the owner
+turns it off. The project's owner, its maintainers, Slop moderators and admins
+are not asked, nobody is asked while no SLOP rate is in force, and a report
+that existed before the switch-on is never asked. `SECURITY_REPORT_DEPOSIT` is
+`off`, `dry_run` or `live`, set in `wrangler.toml` (production, `live` since
+21 November 2026, operator decision) and `wrangler.staging.toml` (`off`);
+`dry_run` records which reports would have been asked and holds nothing.
+Change the mode only together with `REPORT_DEPOSIT_SWITCHED_ON` in
+`src/lib/security-report-deposit.mjs`. Say "sent back" and "kept"; never say a
+deposit buys a faster or better review.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report

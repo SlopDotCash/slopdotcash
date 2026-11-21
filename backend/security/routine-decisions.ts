@@ -49,6 +49,7 @@ import {
   json,
   type SecurityApiDependencies,
 } from "./case-store";
+import { depositHeldSql } from "./report-deposit-hold";
 
 export type RoutineMode = "off" | "dry_run" | "live";
 
@@ -328,6 +329,7 @@ async function candidates(
           AND appeal_state = 'none'
           AND award_state NOT IN ('reserved', 'approved')
           AND related_party_review <> 'pending'
+          AND NOT ${depositHeldSql("security_cases.id")}
           AND NOT EXISTS (
             SELECT 1 FROM security_case_events e
              WHERE e.case_id = security_cases.id
@@ -402,6 +404,7 @@ async function earlierSameDigest(
       `SELECT c.id FROM security_cases c
         WHERE c.project_id = ?1 AND c.id <> ?2
           AND c.submission_state = 'verified'
+          AND NOT ${depositHeldSql("c.id")}
           AND (c.received_at < ?3 OR (c.received_at = ?3 AND c.rowid <
             (SELECT rowid FROM security_cases WHERE id = ?2)))
           AND (c.receipt_evidence_digest = ?4 OR EXISTS (
@@ -832,7 +835,7 @@ async function record(
             .map((column) => `${column} = ?`)
             .join(
               ", ",
-            )}, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND receipt_state = ? AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved')`,
+            )}, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND receipt_state = ? AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved') AND NOT ${depositHeldSql("security_cases.id")}`,
         )
         .bind(
           ...columns.map((column) => change.set[column]),
@@ -1062,7 +1065,7 @@ async function routineSummary(deps: Pick<SecurityApiDependencies, "db">) {
   ]);
   const waiting = await deps.db
     .prepare(
-      "SELECT COUNT(*) AS cases FROM security_cases WHERE submission_state = 'verified' AND receipt_state = 'received'",
+      `SELECT COUNT(*) AS cases FROM security_cases WHERE submission_state = 'verified' AND receipt_state = 'received' AND NOT ${depositHeldSql("security_cases.id")}`,
     )
     .first<{ cases: number }>();
   return {

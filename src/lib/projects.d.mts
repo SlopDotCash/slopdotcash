@@ -245,6 +245,12 @@ export interface ProjectDefinition {
      */
     readonly wantedIssues?: boolean;
   };
+  /**
+   * Private report settings (PRD section 8). `reportDeposit` is the
+   * refundable SLOP deposit on a private report: absent or true is on, false
+   * is off.
+   */
+  readonly security?: { readonly reportDeposit?: boolean };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {

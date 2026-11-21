@@ -61,6 +61,7 @@ import {
 } from "./intake-grant";
 import { reportingAuthorityUnavailable } from "./project-access";
 import { checkedAnalysis } from "./report-analysis";
+import { reportDepositAsk } from "./report-deposit";
 import {
   acceptStoredReport,
   actStoredIntake,
@@ -626,6 +627,17 @@ async function writeVerifiedCase(
     githubLogin: row.reporter_github_login,
   };
   const idempotencyKey = `intake-${row.id}`;
+  // Linking a report already on GitHub creates a Slop case, so it is asked
+  // the deposit like a new report (PRD section 8, "Report deposit"). The row
+  // commits with the case; while it is unpaid the owner's notice and the
+  // analysis below wait for the release sweep.
+  const ask = await reportDepositAsk(deps, {
+    caseId,
+    projectId: row.project_id,
+    reporter,
+    at,
+  });
+  const held = ask.length > 0 && deps.reportDeposit?.mode === "live";
   // Every case write commits only if this submission is still where it was.
   const guard = {
     sql: "(SELECT revision FROM security_submissions WHERE id = ?) = ? AND (SELECT state FROM security_submissions WHERE id = ?) = ?",
@@ -684,6 +696,7 @@ async function writeVerifiedCase(
       .bind(caseId, reporter.githubId, at, caseId),
     // The reporter's receipt: generic, and it asks for no acknowledgment.
     notifySecurityReportReceived(deps.db, caseId),
+    ...ask,
     ...inboxStatements(deps, {
       caseId,
       revision: 1,
@@ -691,7 +704,7 @@ async function writeVerifiedCase(
       idempotencyKey,
       reporterGithubId: reporter.githubId,
       detail: {},
-      terms,
+      terms: held ? undefined : terms,
     }),
     ...transitionStatements(
       deps,
@@ -729,7 +742,8 @@ async function writeVerifiedCase(
   )
     fail(409, "stale_revision", "The submission changed since you loaded it");
   // The owner's private AI analysis reads the content GitHub returned to this
-  // request, in memory; no second credential or read is needed.
+  // request, in memory; no second credential or read is needed. A report
+  // that waits for its deposit starts none (`scheduleAnalysis` refuses).
   if (updated.case_id)
     await scheduleAnalysis(deps, updated.case_id, {
       summary: facts.analysisInput.summary,

@@ -157,6 +157,8 @@ Include this evidence in the body, outside a code fence:
   video link for UI changes, `Benchmarks:` for performance work with matched
   base/head runs and workload details, and `On-device testing:` for hardware
   work with the physical device, software build and observed result.
+- For UI changes, include `UI screenshots:` with before-and-after images when
+  the target repository's contribution guide requires screenshots.
 - Use one line per field, with inspectable HTTPS artifacts or concrete inline
   results. Remove credentials, private data and customer information. Resolve
   missing required evidence before opening the PR.
