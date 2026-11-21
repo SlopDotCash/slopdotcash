@@ -7773,7 +7773,7 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "6fdccd92b2118eec14abce4f3da1f0f6fccd66f2d393c877b6c04de78faa6a3c",
+      "sha256": "0daa31260e05cae5405818d262baedff0fc34c0bda479d9c19807aa8805be60f",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
@@ -10050,7 +10050,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "eec0717c0df576808e1efbd9c9d205690ede9818c47d1e1c4d92bbd42d9de68b",
+      "sha256": "89851886dd38633c569ec2b14cbbc7d6e031c5eb36264a5d3dd6424728313e35",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -10128,7 +10128,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "e991e7ec5b3c6859187872efc507384c3251622af59be8596a763d5469992d6d",
+      "sha256": "ad023f4334644a7e2871eae575702d60c8746a9730b61394f48e343a1fb0dfa9",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"

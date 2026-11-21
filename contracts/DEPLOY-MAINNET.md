@@ -139,12 +139,16 @@ owner, no deposits, deposits not paused. The resolver address holds a little
 ETH for gas on each chain and has sent no transaction.
 
 A deployment collects no fee. Both addresses and start blocks are in
-`src/lib/submission-fee.mjs`. Since 19 November 2026 `SUBMISSION_FEE_MODE` is
-`dry_run` in Slopbot, which records what it would ask and writes nothing to
-GitHub, and in the submission-fee Worker, which reads the contracts and
-records what it would send, loads no key and signs nothing
-(`workers/submission-fee/README.md`). No contributor is asked for a fee. Live is its
-own reviewed change (PRD section 6, FEE-06).
+`src/lib/submission-fee.mjs`. From 19 November 2026 `SUBMISSION_FEE_MODE` was
+`dry_run` in Slopbot, which recorded what it would ask and wrote nothing to
+GitHub, and in the submission-fee Worker, which read the contracts and
+recorded what it would send, loaded no key and signed nothing
+(`workers/submission-fee/README.md`). Since 21 November 2026 both are `live`
+(operator decision; PRD section 6, FEE-06): Slopbot asks for the fee on a
+project whose owner turned it on, and the Worker signs the resolver's refunds
+and kept fees. On that day no project had the setting on, the record-only
+period had recorded no deposit and no fee row, and the first SLOP rate had
+been published (effective 20 November 2026 23:00 UTC).
 
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
