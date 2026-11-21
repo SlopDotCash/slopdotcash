@@ -74,6 +74,12 @@ export interface Notification {
   acknowledgedAt?: string | null;
   /** Present only when an email delivery for this notice exists. */
   emailDelivery?: EmailDelivery;
+  /**
+   * Present only on the appellant's own Points dispute intake receipt.
+   * The receipt shares its event key and kind with the moderator queue
+   * row, so the title cannot tell them apart from those fields alone.
+   */
+  pointsDisputeReceipt?: boolean;
 }
 
 export interface NotificationsResponse {
@@ -120,7 +126,9 @@ function isNotification(value: unknown): value is Notification {
       n.acknowledgedAt === null ||
       isTimestamp(n.acknowledgedAt)) &&
     (n.emailDelivery === undefined ||
-      EMAIL_DELIVERY_STATES.includes(n.emailDelivery as EmailDelivery))
+      EMAIL_DELIVERY_STATES.includes(n.emailDelivery as EmailDelivery)) &&
+    (n.pointsDisputeReceipt === undefined ||
+      typeof n.pointsDisputeReceipt === "boolean")
   );
 }
 
@@ -213,7 +221,9 @@ export function notificationTitle(n: Notification): string {
           : `${n.subject} payout held`;
     case "slopbot_appeal_review":
       return n.eventKey.startsWith("slopbot-points-dispute:")
-        ? "Points dispute to review"
+        ? n.pointsDisputeReceipt
+          ? "Points dispute filed"
+          : "Points dispute to review"
         : "Appeal to decide";
     case "slopbot_appeal_resolved":
       return n.eventKey.startsWith("slopbot-points-dispute:")
