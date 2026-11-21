@@ -23929,7 +23929,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "81df7e416b31e1f258e567423524cf2e4e44a3a02ba19dd2dbf4b62bbde0ce0e",
+      "sha256": "2b23ba873217913a3f649d15b2cef47efa1f0427e150736c5cccfdad88763709",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -24051,7 +24051,7 @@
             "leafMatches",
             "leafConflicts",
             "cursorAt",
-            "passLeaf",
+            "passedCursor",
             "canAdvanceCursor",
             "advanceCursor",
             "canAdvanceZeroRemaining",
@@ -24175,6 +24175,7 @@
             "weight_advanceZeroRemaining",
             "weight_deploy",
             "weight_openMonth",
+            "weight_observeEligibility",
             "weight_observeHead",
             "weight_observeRevision",
             "weight_commitManualAward",

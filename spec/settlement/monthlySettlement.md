@@ -281,18 +281,18 @@ pure def cursorAt(s: MonthlySettlement, proof: E::LeafProof): bool =
     and (s.cursor.root == "" or (s.cursor.root == month.root and s.cursor.period == month.period))
     and proof.index == s.cursor.position and proof.index >= 0 and proof.index < month.leafCount
     and proof.source == sourceOf(s, proof.actor)
-pure def passLeaf(s: MonthlySettlement, proof: E::LeafProof, onAward: bool): MonthlySettlement =
+pure def passedCursor(s: MonthlySettlement, proof: E::LeafProof, onAward: bool): LeafCursor =
   val month = admittedMonth(s)
-  { ...s, cursor: { period: month.period, root: month.root, leafCount: month.leafCount, position: proof.index + 1,
-    passed: if (onAward) s.cursor.passed.append(proof.actor) else s.cursor.passed } }
+  { period: month.period, root: month.root, leafCount: month.leafCount, position: proof.index + 1,
+    passed: if (onAward) s.cursor.passed.append(proof.actor) else s.cursor.passed }
 pure def canAdvanceCursor(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): bool =
   cursorAt(s, proof) and M::positiveAmount(admittedMonth(s).remaining) and leafMatches(s, proof) and nonceSettled
 pure def advanceCursor(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): MonthlySettlement =
-  passLeaf(s, proof, true)
+  { ...s, cursor: passedCursor(s, proof, true) }
 pure def canAdvanceZeroRemaining(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): bool =
   cursorAt(s, proof) and not(M::positiveAmount(admittedMonth(s).remaining)) and nonceSettled
 pure def advanceZeroRemaining(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): MonthlySettlement =
-  passLeaf(s, proof, false)
+  { ...s, cursor: passedCursor(s, proof, false) }
 pure def lawConflictHaltsCursor(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): bool =
   (leafConflicts(s, proof) and M::positiveAmount(admittedMonth(s).remaining)) implies
     not(canAdvanceCursor(s, proof, nonceSettled)) and not(canAdvanceZeroRemaining(s, proof, nonceSettled))
@@ -457,8 +457,8 @@ times inside the proposal window, since the clock never goes back. The
 
 Discovered by simulation: two deposits, the root admission, its leaves, a
 release and payments all need later finalized events, and eight sampled
-blocks ran out before the root. The sampled finalized events are now 16
-blocks 40 seconds apart, inside the admission window and no later than the
+blocks ran out before the root. The sampled finalized events are now 64
+blocks 10 seconds apart, inside the admission window and no later than the
 last head sample, and a single deposit of 12 base units covers the month.
 
 Discovered by simulation: half the months ban actor 2, and no signed root
@@ -501,8 +501,8 @@ pure val otherOpenPledgesValues = Set(List(0), List(3))
 pure val fundsValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
   { vault: "vault", network: E::Base, token: "usdc", amount: List(8) },
   { vault: "vault", network: E::Base, token: "usdc", amount: List(12) })
-pure def blockEvent(b: int): E::ChainEvent = { block: b, index: 0, time: 1796342360 + 40 * b, transaction: "t" }
-pure val evValues = 1.to(16).map(b => blockEvent(b))
+pure def blockEvent(b: int): E::ChainEvent = { block: b, index: 0, time: 1796342390 + 10 * b, transaction: "t" }
+pure val evValues = 1.to(64).map(b => blockEvent(b))
 pure val actorValues = Set(1, 2, 3)
 pure val byValues = Set("owner")
 pure def monthKey(actor: int): E::SourceKey = { origin: "eliza", period: 202611, actor: actor }
@@ -552,12 +552,13 @@ pure val weight_commitObligation = 6
 pure val weight_admitRoot = 24
 pure val weight_observeClock = 4
 pure val weight_withdraw = 1
-pure val weight_releaseReserve = 12
-pure val weight_upgradeToRelease = 4
+pure val weight_releaseReserve = 16
+pure val weight_upgradeToRelease = 8
 pure val weight_advanceCursor = 12
 pure val weight_advanceZeroRemaining = 12
 pure val weight_deploy = 6
 pure val weight_openMonth = 6
+pure val weight_observeEligibility = 2
 pure val weight_observeHead = 6
 pure val weight_observeRevision = 6
 pure val weight_commitManualAward = 6
