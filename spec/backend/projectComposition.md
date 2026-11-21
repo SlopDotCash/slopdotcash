@@ -301,7 +301,13 @@ revision and sequence its preview confirmed. An account appeal, an account
 denial and an account reinstatement are journaled on the project's
 enforcement record, in the same write as the decision of
 [account bans across participation](./accessComposition.md); they change
-no registry revision.
+no registry revision. Discovered by simulation: an account denial needs a
+malicious result, a moderator's malice decision naming the account, the
+account's appeal and a second moderator's denial, each under its exact fence,
+and at equal weight no trace or 200000-sample search reached it within the
+run cap, so the malice decision and the account appeal and denial are tried
+more often (`weight_decideMalice`, `weight_journalAccountAppeal`,
+`weight_journalAccountDenial`).
 
 ```quint
 pure def canFlag(c: Registry, by: int, receipt: int, standing: E::FlagStanding): bool =
@@ -611,4 +617,7 @@ pure val weight_ban = 3
 pure val weight_grantExemption = 4
 pure val weight_adminRevise = 3
 pure val weight_remove = 3
+pure val weight_decideMalice = 6
+pure val weight_journalAccountAppeal = 6
+pure val weight_journalAccountDenial = 8
 ```
