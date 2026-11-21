@@ -334,6 +334,13 @@ can never be admitted as a direct award, since no later snapshot restores a
 financial approver, so correlating these observations costs that search
 nothing.
 
+Discovered by simulation: a direct award reaches its recording state only
+near the end of a 20-event trace, and there a receipt pair, weighted 20,
+records both legs before a single transfer, weighted 8, usually could, so
+no kept trace showed the transfer guard allow its event and the deeper
+probe ran past its time limit. A single transfer is weighted as the pair
+is.
+
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
 pure val idValues = Set(1, 2)
@@ -398,5 +405,5 @@ pure val weight_observeWallets = 15
 pure val weight_consent = 15
 pure val weight_prepareDirect = 25
 pure val weight_recordPair = 20
-pure val weight_recordTransfer = 8
+pure val weight_recordTransfer = 20
 ```
