@@ -7398,7 +7398,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "81680c446a5e2b003dba7c104c3ca3e192e860b12ee7e08cbdb7cd51cf2ede4b",
+      "sha256": "912fd6ddcb90cec01b23d5a073243c65c8d1e497e8c0370dfd684318e4cf9d49",
       "module": "fees__conversion",
       "stories": [
         {
@@ -7766,6 +7766,7 @@
             "weight_settleExpired",
             "weight_recordScan",
             "weight_expireSolana",
+            "weight_chooseInstance",
             "weight_claim",
             "weight_accrue",
             "weight_registerVault"

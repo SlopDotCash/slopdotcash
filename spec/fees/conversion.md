@@ -832,6 +832,14 @@ pure def alwaysRowIdentity(f: Fee): bool = f.rows.every(r => r.id > 0 and f.rows
 pure def alwaysDryRowsNeverSign(f: Fee): bool = f.rows.every(r => not(r.live) implies r.attempts.length() == 0 and r.state != Submitted and r.state != Unknown)
 ```
 
+Discovered by simulation: a Solana expiry proof needs the instance chosen as
+Solana before the first token or run, a live publication that lasts through
+signing, and two complete matching scans, so random traces of 20 events
+almost never reached it. The samples therefore include a later live
+publication after the dry-run one, a second-revision rescan by the second
+operator after an incomplete or mismatched scan, and heavier weights for
+choosing the instance, recording scans and expiring a Solana send.
+
 ```quint
 pure val elapsedValues = Set(180000, 3600001, 86400000)
 pure val runIdValues = Set(1, 2)
@@ -851,7 +859,8 @@ pure val variableValues = Set(true)
 pure val networkValues = Set(R::Base, R::Solana, R::Robinhood)
 pure val assetValues = Set(ProjectToken, NativeAsset, TargetStable)
 pure val byValues = Set(R::ReleaseWorkflow, R::Owner, R::Worker)
-pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::Off })
+pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::Off },
+  { ...R::liveAll, source: 3 })
 pure val reviewedValues = Set({ vault: 7, deployment: 70, token: 1 })
 pure val accrualValues = Set({ vault: 7, recipient: 1, accrued: 1000000000, height: 5, finalized: true, roleFree: true },
   { vault: 7, recipient: 9, accrued: 1000000000, height: 5, finalized: true, roleFree: true },
@@ -895,7 +904,8 @@ pure val scanValues = Set(
   { tx: 11, operator: 1, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
   { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
   { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 8, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
-  { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: false, blockhashSlot: 40, runId: 1 })
+  { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: false, blockhashSlot: 40, runId: 1 },
+  { tx: 11, operator: 2, revision: 2, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 })
 pure val proofValues = Set(
   { tx: 11, a: { operator: 1, invalidBlockhash: true, signatureFound: false, transactionFound: false },
     b: { operator: 2, invalidBlockhash: true, signatureFound: false, transactionFound: false }, blockhashSlot: 40,
@@ -929,8 +939,9 @@ pure val weight_replace = 6
 pure val weight_broadcastFail = 4
 pure val weight_expireEvm = 4
 pure val weight_settleExpired = 4
-pure val weight_recordScan = 4
-pure val weight_expireSolana = 4
+pure val weight_recordScan = 24
+pure val weight_expireSolana = 24
+pure val weight_chooseInstance = 20
 pure val weight_claim = 4
 pure val weight_accrue = 3
 pure val weight_registerVault = 3
