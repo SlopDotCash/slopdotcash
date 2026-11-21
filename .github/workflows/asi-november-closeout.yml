@@ -16,15 +16,38 @@ on:
           - preview
           - apply
         default: inspect
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+      reviewed_packet_sha256:
+        type: string
+      preview_sha256:
+        type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      SLOPBOT_APP_ID:
+        required: true
+      SLOPBOT_APP_PRIVATE_KEY:
+        required: true
+      ASI_CLOSEOUT_REVIEWED_PACKET:
+        required: false
 permissions:
   contents: read
-concurrency:
-  group: slop-production
-  cancel-in-progress: false
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'SlopDotCash/slopdotcash' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
     environment: slop-production
+    concurrency:
+      group: slop-production
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
