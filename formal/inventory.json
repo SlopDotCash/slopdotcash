@@ -28,7 +28,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "0261aa2dd70ac300bf6a61cc755accfe3ee3e68460d3d752a843529f2e2e1529",
+      "sha256": "2a2900333edf42aba77861bd2f2575a9db016181150325fa891831bb346c38e5",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/release/ci_browser_evidence.qnt",
@@ -40,10 +40,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        40, 50, 164, 304, 374, 375, 451, 504, 561, 641, 646, 761, 767, 835, 838,
-        864, 865, 886, 898, 930, 968, 1198, 1226, 1318, 1331, 1422, 1530, 1532,
-        1533, 1737, 1820, 1973, 1975, 2005, 2120, 2142, 2213, 2224, 2249, 2320,
-        2333, 2346, 2355, 2356, 2357, 2374
+        40, 50, 164, 304, 374, 375, 451, 504, 568, 648, 653, 768, 774, 842, 845,
+        871, 872, 893, 905, 937, 975, 1205, 1233, 1325, 1338, 1429, 1539, 1541,
+        1542, 1746, 1829, 1982, 1984, 2014, 2129, 2151, 2222, 2233, 2258, 2329,
+        2342, 2355, 2364, 2365, 2366, 2383
       ],
       "review": "mapped-abstraction"
     },
@@ -369,13 +369,13 @@
     },
     {
       "path": "backend/pages.ts",
-      "sha256": "93c6474b8f720f3fd19214790b13f291ea06a0c40566a847389e3001d0f0a63e",
+      "sha256": "efdbf530a5e17e2f8c09489f90cb9c76370263aee204d580ae7949e154072ada",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/project_skill_publication.qnt"
       ],
-      "candidateLines": [114],
+      "candidateLines": [119],
       "review": "mapped-abstraction"
     },
     {
@@ -539,6 +539,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/payments/protected-point-months.ts",
+      "sha256": "41707047184060b71acb4a292e4096a0573b4b60001d33134a88e108c3590eea",
+      "models": ["formal/models/api/api_protected_point_months.qnt"],
+      "candidateLines": [19],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/payments/public-records.ts",
       "sha256": "3d295b846ad6027a168236827c68a8c791695dc4d8aa820d03e493ec92697773",
       "models": [
@@ -550,7 +557,7 @@
     },
     {
       "path": "backend/payments/reserved-awards-feed.ts",
-      "sha256": "9357de84172d12ba73e318be4498e93b77410c452f8e71ff087ab277ab632cce",
+      "sha256": "8ad39ccbf04d4e00ad40b05d3795c27b0583bba5526b3ba848486b62129f0bb0",
       "models": ["formal/models/api/api_reserved_awards_feed.qnt"],
       "candidateLines": [18, 84, 96],
       "review": "mapped-abstraction"
@@ -2329,9 +2336,10 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "8e3e1b1cffceb0706d48efc0cf6a83f1029d4e19c26d35a79467b3d4c28c50e3",
+      "sha256": "46dcfd55c51cbcf8d7fd91dbd90090df1e1baffdfafa0b3a712cd08d235b9ddb",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
+        "formal/models/api/api_protected_point_months.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/api_reserved_awards_feed.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2339,7 +2347,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [553, 554, 590, 603],
+      "candidateLines": [561, 562, 598, 611],
       "review": "mapped-abstraction"
     },
     {
@@ -4328,8 +4336,9 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "9e42a969553af04c9dbfa4db9828d5bf77cc8fb5047f63766bf47b1599d25720",
+      "sha256": "a834d0c162d8a5fa6ddc5a9a974cbada6d4972918139d396b1552365744f7e05",
       "models": [
+        "formal/models/api/api_protected_point_months.qnt",
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_financial_preservation.qnt",
@@ -4338,8 +4347,8 @@
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 37, 50, 86, 125, 147, 150, 163, 170, 179, 187, 195, 274, 306, 312,
-        315, 319, 320, 321, 322, 412, 698, 705, 706, 708, 713, 717, 721
+        2, 42, 55, 91, 130, 152, 155, 168, 175, 184, 192, 200, 279, 311, 317,
+        320, 324, 325, 326, 327, 417, 831, 838, 839, 841, 846, 850, 854
       ],
       "review": "mapped-abstraction"
     },
@@ -4625,13 +4634,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/points-protection-read.ts",
+      "sha256": "47ed37e4780b866cc4aec69c61882963fbe6fb257f5c4e0a17e6f5d5cfdbd4c7",
+      "models": ["formal/models/api/api_protected_point_months.qnt"],
+      "candidateLines": [47, 124, 126],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/points-protection-sql.ts",
-      "sha256": "fbbc01cce4c4f9c6c8a14c0e990d3d6b48c9cf97361f46728c64a5ad88ec9fec",
+      "sha256": "d584dd981d4da08760f5bc5dd5552d8277c30e5f571136d85443b8b78f98e7c5",
       "models": [
+        "formal/models/api/api_protected_point_months.qnt",
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
       ],
-      "candidateLines": [3, 11, 44],
+      "candidateLines": [3, 11, 70],
       "review": "mapped-abstraction"
     },
     {
@@ -11229,6 +11246,30 @@
         "unavailableInstallationTest",
         "unfundedActivationTest",
         "unscannedQueuesTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_protected_point_months.qnt",
+      "sha256": "6c773b1eca54cc4221773baac752d166864539d8e0e4e74b6d1c152663f64def",
+      "sources": [
+        "backend/payments/protected-point-months.ts",
+        "functions/api/v1/[[path]].ts",
+        "scripts/generate-points.ts",
+        "scripts/points-protection-read.ts",
+        "scripts/points-protection-sql.ts"
+      ],
+      "scenarios": [
+        "askingChangesNoSettlementRecordTest",
+        "failedReadFallsBackToTheCommittedListTest",
+        "fileOnlyWithoutConfigurationTest",
+        "paymentRecordedAfterTheReadIsRefusedByTheImportTest",
+        "removedSecretClosesTheRouteTest",
+        "routeNamesAWholeProjectTest",
+        "routeNamesAnUncommittedMonthTest",
+        "unguardedImportNegativeControlTest",
+        "unprotectedMonthPublishesTest",
+        "unsetSecretIsNotFoundAndOneWarningTest",
+        "wrongTokenIsNotFoundTest"
       ]
     },
     {
