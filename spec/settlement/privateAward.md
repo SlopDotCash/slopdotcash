@@ -322,10 +322,10 @@ Actors follow the case samples: 1 is the reporter, 2 and 3 are technical, 4
 and 7 moderators and 5 the financial approver. The later snapshots revoke
 or ban the financial approver.
 
-Discovered by simulation: with no related decision and no moderator among
+Discovered by simulation: with no related reporter and no moderator among
 the deciding actors, no related-party proposal ever reached a moderator's
-review, so the samples include a confirmed decision that declares the
-reporter related and moderator 4 among the actors.
+review, so a later snapshot names the reporter a related party and
+moderator 4 is among the actors.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
@@ -335,11 +335,11 @@ pure val sourceValues = Set(C::SlopReceived)
 pure val termsValues = Set(awardTerms, { ...awardTerms, receivedAt: 5 })
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
-pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List() }, { ...C::staff, epoch: 2, banned: List(5) })
+pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List() }, { ...C::staff, epoch: 2, banned: List(5) },
+  { ...C::staff, epoch: 2, relatedParties: List(1) })
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false },
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: true })
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
 pure val byValues = Set(1, 2, 4, 5)
 pure val checkedEpochValues = Set(1, 2)
 pure val amountValues = Set(List(4))

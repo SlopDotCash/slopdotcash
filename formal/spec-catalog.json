@@ -24913,7 +24913,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "4f0fe57d942e68ada122af719f2c207cc4c672c49b5fa5aad4d64767846bc45d",
+      "sha256": "134b5312e6710b22173db556a13c2e1ddd0e08e6c0d0e8d11b8b82154d7d6332",
       "module": "settlement__privateAward",
       "stories": [
         {
