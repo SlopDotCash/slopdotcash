@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
+import type { AsiHeldWorkUnitRecord } from "../src/lib/payments/asi-november-closeout";
 import { ASI_NOVEMBER_CLOSEOUT as approved } from "../src/lib/payments/asi-november-closeout";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
 import { periodBounds } from "../src/lib/payments/monthly-allocation";
@@ -62,6 +63,7 @@ export function buildAsiCloseoutCycle(
   snapshot: Uint8Array,
   manifest: string,
   generatedAt: string,
+  heldWorkUnitRecords: readonly AsiHeldWorkUnitRecord[] = [],
 ) {
   return buildEscrowCycle(
     {
@@ -69,6 +71,7 @@ export function buildAsiCloseoutCycle(
       cycleId: approved.period,
       generatedAt,
       earlyCloseAt: approved.cutoff,
+      asiHeldWorkUnitRecords: heldWorkUnitRecords,
     },
     snapshot,
     null,
@@ -81,6 +84,7 @@ export function prepareAsiNovemberCloseout(input: {
   reviewedPacketSha256: string;
   currentRegistry: Uint8Array;
   snapshot: Uint8Array;
+  heldWorkUnitRecords?: readonly AsiHeldWorkUnitRecord[];
   now?: Date;
 }) {
   const reviewedPacketSha256 = digest(input.reviewedPacketSha256);
@@ -206,7 +210,12 @@ export function prepareAsiNovemberCloseout(input: {
       "The registered ASI pool, asset, or vault differs from the approved closeout.",
     );
 
-  const proposal = buildAsiCloseoutCycle(input.snapshot, manifest, reviewedAt);
+  const proposal = buildAsiCloseoutCycle(
+    input.snapshot,
+    manifest,
+    reviewedAt,
+    input.heldWorkUnitRecords,
+  );
   if (proposal.grossCapMicro !== approved.grossBase)
     throw new Error("The proposal does not use the approved cap.");
   const monthlyBase = {

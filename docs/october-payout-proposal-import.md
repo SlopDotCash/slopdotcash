@@ -45,6 +45,12 @@ The inspect job validates the published source against the cutoff and the
 exact matching coverage in the current canonical Points batch. Its output
 gives the source and batch digests, verified registry manifest digest, revision
 and enforcement generation. It does not require the packet or write to D1.
+For held work, the protected runner reads the exact immutable D1 journal rows
+named by the original snapshot. Every held member and unavailable source must
+be accounted for against the journal's source index and immutable repository
+identities outside ASI's counted repositories. Unresolved ASI sources, mixed
+work, missing provenance and unbound unavailable sources stop the closeout.
+Use the protected preview when the source has held work.
 Verify the corrected accepted work and
 protected settlement history before recording the producer and independent
 reviewer's numeric GitHub IDs and reviewed packet digest. Preserve the packet

@@ -7,7 +7,7 @@
   "sources": [
     {
       "path": ".github/workflows/asi-november-closeout.yml",
-      "sha256": "2cc16ef1c527262dfe46b3446507e7a36cf8b9a1412029ca0e1ab69016dc536b",
+      "sha256": "b11fd75d45e1fb03307f594c54dcaad76ea8a58ca7e714f44b7ce2725a8038f8",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2803,6 +2803,7 @@
       "path": "migrations/0046_slopbot_work_unit_journal.sql",
       "sha256": "a42b188353d07f4b5eab7449b5415be3988b0dad80c2038e1b9c0f96cb21dbaa",
       "models": [
+        "formal/models/rewards/asi_november_closeout.qnt",
         "formal/models/slopbot/bot_joint_journal.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -4695,9 +4696,9 @@
     },
     {
       "path": "scripts/prepare-asi-november-closeout.ts",
-      "sha256": "a98b9c083ee51bb48b3ecf351e2bbff8a1452ee5123432929a6a4ae26ec0b74e",
+      "sha256": "c8f5d6d6db1fd19ca8d7033ba352c8e2defc176e061032bbd6887033ab135933",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
-      "candidateLines": [1, 189, 190, 191, 272],
+      "candidateLines": [1, 193, 194, 195, 281],
       "review": "mapped-abstraction"
     },
     {
@@ -5198,9 +5199,9 @@
     },
     {
       "path": "scripts/run-asi-november-closeout.ts",
-      "sha256": "3de3486a16f62feeae7ee43ef77311292a818c177112b2d70d89232f0ee8a1a8",
+      "sha256": "eb90d4641439f5023f718c92c58baeee9a1b345ff0d4230ca7e430f211149c39",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
-      "candidateLines": [2, 160, 185, 242],
+      "candidateLines": [2, 200, 235, 293],
       "review": "mapped-abstraction"
     },
     {
@@ -7098,7 +7099,7 @@
     },
     {
       "path": "src/lib/payments/asi-november-closeout.ts",
-      "sha256": "e9db0593a7976a456a81e8cf11e702e50e8ad0ad941d747335ca7388b3197974",
+      "sha256": "9b560cc2dfde886b01d83ce10c15f4868703b829ba9f8d5bff77f5ecd625e4ea",
       "models": ["formal/models/rewards/asi_november_closeout.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -7116,12 +7117,12 @@
     },
     {
       "path": "src/lib/payments/escrow-cycle.ts",
-      "sha256": "ff8f0b31f31f53e737176b8019ca98daf13855feb72bb0716b98caf4691e4884",
+      "sha256": "4bbb13d6655f9efdf3d0e7e7aa516a89efded7bdd016d91ecdceed919f4a3345",
       "models": [
         "formal/models/points/source_import.qnt",
         "formal/models/rewards/asi_november_closeout.qnt"
       ],
-      "candidateLines": [95, 289],
+      "candidateLines": [100, 297],
       "review": "mapped-abstraction"
     },
     {
@@ -16346,11 +16347,12 @@
     },
     {
       "path": "formal/models/rewards/asi_november_closeout.qnt",
-      "sha256": "61342811b622622c0df21dd40731a0494bee4394cd3fe05be5aa0c6fcef7a14f",
+      "sha256": "c0b8e9d16567d562c1fc88410dce5e5aad6880dbb4e7ec3a86bc8c3b163ef62a",
       "sources": [
         ".github/workflows/asi-november-closeout.yml",
         ".github/workflows/operator.yml",
         "backend/payments/monthly.ts",
+        "migrations/0046_slopbot_work_unit_journal.sql",
         "migrations/0143_asi_november_closeout.sql",
         "scripts/guarded-monthly-import.ts",
         "scripts/prepare-asi-november-closeout.ts",
@@ -16362,8 +16364,10 @@
       ],
       "scenarios": [
         "dispatchAuthorityTest",
+        "heldOutsideAsiTest",
         "ordinaryCalendarTest",
-        "ownerEarlyCloseTest"
+        "ownerEarlyCloseTest",
+        "unprovedHeldSourceTest"
       ]
     },
     {

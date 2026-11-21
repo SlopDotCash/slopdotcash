@@ -1,6 +1,7 @@
 // @source .github/workflows/asi-november-closeout.yml
 // @source .github/workflows/operator.yml
 // @source backend/payments/monthly.ts
+// @source migrations/0046_slopbot_work_unit_journal.sql
 // @source migrations/0143_asi_november_closeout.sql
 // @source scripts/guarded-monthly-import.ts
 // @source scripts/prepare-asi-november-closeout.ts
@@ -14,7 +15,7 @@
 // after calendar close, or after the ordinary automatic admission window.
 // Bytes, amounts, identity and DB atomicity are checked in the source test.
 module asi_november_closeout {
-  type S = { scope: bool, verified: bool, trustedDispatch: bool, phase: int,
+  type S = { scope: bool, verified: bool, trustedDispatch: bool, heldSources: str, phase: int,
     base: int, previewed: bool, frozen: bool, ownerSigned: bool, admitted: bool }
   var s: S
 
@@ -22,19 +23,23 @@ module asi_november_closeout {
     repository == "SlopDotCash/slopdotcash" and ref == "refs/heads/main" and
       event == "workflow_dispatch"
 
-  pure def initial(scope: bool, verified: bool, dispatch: bool): S =
+  pure def initial(scope: bool, verified: bool, dispatch: bool, heldSources: str): S =
     { scope: scope, verified: verified, trustedDispatch: dispatch, phase: 0,
+      heldSources: heldSources,
       base: 0, previewed: false, frozen: false, ownerSigned: false, admitted: false }
   action init = all {
     nondet scope = Bool.oneOf()
     nondet verified = Bool.oneOf()
     nondet dispatch = Bool.oneOf()
-    s' = initial(scope, verified, dispatch)
+    nondet held = Set("clean", "outside", "unproved").oneOf()
+    s' = initial(scope, verified, dispatch, held)
   }
   action initApproved = s' = initial(true, true,
-    trustedDispatch("SlopDotCash/slopdotcash", "refs/heads/main", "workflow_dispatch"))
+    trustedDispatch("SlopDotCash/slopdotcash", "refs/heads/main", "workflow_dispatch"), "clean")
+  action initHeld(heldSources) = s' = initial(true, true, true, heldSources)
   action advance = all { s.phase < 3, s' = s.with("phase", s.phase + 1) }
-  val closeoutAuthorized = s.trustedDispatch and s.scope and s.verified and s.phase >= 1
+  val closeoutAuthorized = s.trustedDispatch and s.scope and s.verified and
+    s.phase >= 1 and Set("clean", "outside").contains(s.heldSources)
   action previewCloseout = all {
     closeoutAuthorized, s.base == 0,
     s' = s.with("previewed", true)
@@ -78,6 +83,11 @@ module asi_november_closeout {
   run ownerEarlyCloseTest = initApproved.then(advance)
     .then(previewCloseout).then(importCloseout).then(ownerFinalize).then(ownerReserve)
     .expect(s.ownerSigned and s.phase == 1 and closeoutMonthVisible and invariant)
+  run heldOutsideAsiTest = initHeld("outside").then(advance)
+    .then(previewCloseout).then(importCloseout)
+    .expect(s.base == 1 and invariant)
+  run unprovedHeldSourceTest = initHeld("unproved").then(advance)
+    .expect(not(closeoutAuthorized) and not(s.previewed) and s.base == 0 and invariant)
   run dispatchAuthorityTest = initApproved.expect(all {
     s.trustedDispatch,
     not(trustedDispatch("SlopDotCash/slopdotcash", "refs/pull/1/merge", "pull_request")),
