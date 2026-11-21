@@ -1211,11 +1211,11 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "sha256": "a61440ece70b5a0f244c06e640232ae20cbdb993e9fe3a23319aa73f62ff35a1",
+      "sha256": "3b0dc9d8b46f835c361b7695c775426030f2b685a436326ee4cd8a3b536fe71c",
       "models": ["formal/models/api/api_security_routine_decisions.qnt"],
       "candidateLines": [
-        162, 330, 380, 413, 430, 577, 581, 626, 642, 644, 677, 690, 777, 831,
-        923, 925, 934, 982, 1085
+        162, 330, 380, 413, 430, 588, 592, 637, 653, 655, 688, 701, 788, 842,
+        934, 936, 945, 993, 1096
       ],
       "review": "mapped-abstraction"
     },
@@ -11336,7 +11336,7 @@
     },
     {
       "path": "formal/models/api/api_security_routine_decisions.qnt",
-      "sha256": "13e2a44b8c6964aa6efde0d4fb7bddaeddc1a5d2c8ce9955da1e0ff2bff61039",
+      "sha256": "60af7574a52a1511e1471634a56b0ed66faf7c367a574cbdb8a349e586fc5894",
       "sources": [
         "backend/security/case-store.ts",
         "backend/security/handler.ts",
@@ -11364,8 +11364,12 @@
         "proofFileIsProofTest",
         "proofFileRevisionGoesToOwnerTest",
         "proofFileStopsTheClockTest",
+        "refusedEarlierIsNoCallTargetTest",
+        "refusedEarlierLeavesReportOpenTest",
         "routineAppealIsOnceTest",
-        "routineAppealReturnsToOwnerTest"
+        "routineAppealReturnsToOwnerTest",
+        "sameBytesStillCloseTest",
+        "waitingEarlierIsNoCallTargetTest"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "55aea7d2da4ae9b5642786a4822696bac4578ee9ca2ebea1a92ef20025cc586f",
+  "inventorySha256": "0df0915085c4e7e44eea08b29bae3db2627712b95ce32411650d91d9dab6cdcd",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -538,7 +538,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 476,
+      "line": 487,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -548,7 +548,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 577,
+      "line": 588,
       "name": "state",
       "kind": "string-union",
       "values": ["answered", "failed"],
@@ -558,7 +558,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 672,
+      "line": 683,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -568,7 +568,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 805,
+      "line": 816,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -578,7 +578,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 902,
+      "line": 913,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -588,7 +588,7 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "line": 915,
+      "line": 926,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],

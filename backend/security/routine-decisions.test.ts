@@ -590,6 +590,130 @@ describe("routine decisions on private reports", () => {
     ]);
   });
 
+  test("a later report with proof is not closed as a duplicate of an earlier report that was refused or still waits for proof", async () => {
+    const t = fixture();
+    const vague = await t.report(ALICE, "The vault withdraw may be drainable");
+    t.answers.set("The vault withdraw may be drainable", () => [
+      answer({ proof: "missing", missing: ["runnable-proof"] }),
+      answer({ proof: "missing", missing: ["runnable-proof"] }),
+    ]);
+    const appealed = await t.report(
+      BOB,
+      "Withdraw rounding leaves dust in the vault",
+    );
+    const original = await t.report(CAROL, "Deposit skips the cap check");
+    const asked = await t.report(BOB, "Anyone can flip the fee switch");
+    await t.pass();
+    await t.pass();
+    expect(t.caseRow(vague.caseId).receipt_state).toBe("needs-information");
+    const copy = await t.report(REPORTERS[3], "Deposits can exceed the cap");
+    t.answers.set("Deposits can exceed the cap", () => [
+      answer({ duplicateOfCaseId: original.caseId }),
+      answer({ duplicateOfCaseId: original.caseId }),
+    ]);
+    await t.pass();
+    expect(t.caseRow(copy.caseId)).toMatchObject({
+      receipt_state: "duplicate",
+      duplicate_of: original.caseId,
+    });
+    for (const [caseId, outcome] of [
+      [appealed.caseId, "out-of-scope"],
+      [original.caseId, "rejected"],
+    ] as const) {
+      const decided = await t.act(OWNER, caseId, {
+        action: "decide",
+        outcome,
+        severity: "low",
+        loss: "not-verified",
+        inScope: false,
+        relatedParty: false,
+        reason: "Reviewed by the owner: this report does not qualify.",
+      });
+      expect(decided.status).toBe(200);
+    }
+    const question = await t.act(OWNER, asked.caseId, {
+      action: "request-information",
+      reason: "Which deployment did you test the fee switch on?",
+    });
+    expect(question.status).toBe(200);
+    expect(t.caseRow(asked.caseId)).toMatchObject({
+      receipt_state: "needs-information",
+      next_action_due_at: null,
+    });
+    const appeal = await t.act(BOB, appealed.caseId, {
+      action: "appeal",
+      reason: "The dust is a real loss of covered funds for each user.",
+    });
+    expect(appeal.status).toBe(200);
+    expect(t.caseRow(appealed.caseId).receipt_state).toBe("disputed");
+
+    const later = [
+      {
+        reporter: REPORTERS[4],
+        summary: "Withdraw drains the vault: runnable test attached",
+        earlier: [vague.caseId],
+      },
+      {
+        reporter: REPORTERS[5],
+        summary: "Withdraw rounding steals dust: runnable test attached",
+        earlier: [appealed.caseId],
+      },
+      {
+        reporter: ALICE,
+        summary: "Deposit cap bypass: runnable test attached",
+        earlier: [original.caseId, copy.caseId],
+      },
+      {
+        reporter: CAROL,
+        summary: "Fee switch has no access check: runnable test attached",
+        earlier: [asked.caseId],
+      },
+    ];
+    for (const entry of later)
+      t.answers.set(entry.summary, (input) => {
+        const named =
+          entry.earlier.find((id) =>
+            input.earlierReports.some((earlier) => earlier.id === id),
+          ) ?? null;
+        return [
+          answer({ duplicateOfCaseId: named }),
+          answer({ duplicateOfCaseId: named }),
+        ];
+      });
+    const readBefore = t.routineInputs.length;
+    const filed = [];
+    for (const entry of later)
+      filed.push(await t.report(entry.reporter, entry.summary));
+    await t.pass();
+    t.advance(ROUTINE_PROOF_WINDOW_MS + MINUTE);
+    await t.pass();
+    expect(t.caseRow(vague.caseId).receipt_state).toBe("rejected");
+
+    const [askedLater, ...unqualified] = [filed[3], ...filed.slice(0, 3)];
+    expect(t.caseRow(askedLater.caseId)).toMatchObject({
+      receipt_state: "duplicate",
+      duplicate_of: asked.caseId,
+    });
+    for (const entry of unqualified) {
+      expect(t.caseRow(entry.caseId)).toMatchObject({
+        receipt_state: "triaging",
+        duplicate_of: null,
+        award_state: "pending",
+      });
+      expect(t.decisions(entry.caseId)).toMatchObject([
+        { outcome: "acknowledged", hold_reason: null, applied: 1 },
+      ]);
+    }
+    const laterInputs = t.routineInputs.slice(readBefore);
+    expect(laterInputs).toHaveLength(8);
+    const excluded = [vague, appealed, original, copy].map(
+      (entry) => entry.caseId,
+    );
+    for (const input of laterInputs)
+      for (const earlier of input.earlierReports)
+        expect(excluded).not.toContain(earlier.id);
+  });
+
   test("a report without proof waits 14 days for a new version and closes only when none arrives", async () => {
     const t = fixture();
     const silent = await t.report(

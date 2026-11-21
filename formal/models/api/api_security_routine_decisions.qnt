@@ -35,7 +35,8 @@ module api_security_routine_decisions {
   type Report = { mode: str, receipt: str, appeal: str, from: str, version: int,
     asked: int, now: int, due: int, github: bool, appealed: bool, person: bool,
     routineClosed: bool, closedOnLoss: bool, closedEarly: bool, dryChanged: bool,
-    proofRequests: int, failed: int, recorded: bool, file: bool, askedWithFile: bool }
+    proofRequests: int, failed: int, recorded: bool, file: bool, askedWithFile: bool,
+    earlier: str, dupOfUnqualified: bool }
   var s: Report
   pure val WINDOW = 2
   pure val refusals = Set("duplicate", "out-of-scope", "rejected")
@@ -44,7 +45,8 @@ module api_security_routine_decisions {
   action init = s' = { mode: "dry_run", receipt: "received", appeal: "none", from: "none",
     version: 1, asked: 0, now: 0, due: -1, github: false, appealed: false, person: false,
     routineClosed: false, closedOnLoss: false, closedEarly: false, dryChanged: false,
-    proofRequests: 0, failed: 0, recorded: false, file: false, askedWithFile: false }
+    proofRequests: 0, failed: 0, recorded: false, file: false, askedWithFile: false,
+    earlier: "open", dupOfUnqualified: false }
 
   // candidates(): what a pass may read. A person's request for information
   // has no clock (due < 0), so the pass never reads it.
@@ -54,6 +56,7 @@ module api_security_routine_decisions {
     (s.receipt == "received" or clockDue or revised) and
     (s.mode == "live" or not(s.recorded))
   val live = s.mode == "live"
+  val duplicateTarget = s.earlier == "open"
 
   // A reviewed configuration change; production starts in dry_run.
   action goLive = all { s.mode == "dry_run", s' = s.with("mode", "live").with("recorded", false) }
@@ -87,6 +90,7 @@ module api_security_routine_decisions {
   // `closedOnLoss` is computed from the raw answers, not from the branch.
   action twoCalls(la: bool, lb: bool, da: bool, db: bool, xa: bool, xb: bool, pa: bool, pb: bool): bool = all {
     readable, not(clockDue), not(s.github), s.failed < 3,
+    (da or db) implies duplicateTarget,
     val after = if (la or lb) acknowledge
       else if (da or db) (if (da and db) close("duplicate") else acknowledge)
       else if (xa or xb) (if (xa and xb) close("out-of-scope") else acknowledge)
@@ -94,7 +98,9 @@ module api_security_routine_decisions {
       else if (not(pa or s.file)) (if (s.asked > 0) acknowledge else askForProof)
       else acknowledge
     s' = after.with("closedOnLoss", s.closedOnLoss or
-      ((la or lb) and (refusals.contains(after.receipt) or after.proofRequests > s.proofRequests))) }
+      ((la or lb) and (refusals.contains(after.receipt) or after.proofRequests > s.proofRequests)))
+      .with("dupOfUnqualified", s.dupOfUnqualified or
+        (after.receipt == "duplicate" and s.receipt != "duplicate" and s.earlier != "open")) }
 
   action tick = all { s.now < 4, s' = s.with("now", s.now + 1) }
   // The reporter adds a report version while the report is undecided.
@@ -104,6 +110,9 @@ module api_security_routine_decisions {
   // The first version arrives with a proof file, before any pass reads it.
   action receivedWithFile = all { s.version == 1, s.receipt == "received", not(s.recorded),
     s.proofRequests == 0, not(s.file), s' = s.with("file", true) }
+  action earlierWaits = all { s.earlier == "open", s' = s.with("earlier", "waiting") }
+  action earlierRevised = all { s.earlier == "waiting", s' = s.with("earlier", "open") }
+  action refuseEarlier = all { s.earlier != "refused", s' = s.with("earlier", "refused") }
   action forward = all { openReceipt.contains(s.receipt), s' = s.with("github", true) }
   // People: a request without a clock, and a technical decision.
   action requestInformation = all { openReceipt.contains(s.receipt),
@@ -122,7 +131,8 @@ module api_security_routine_decisions {
       else s.with("appeal", "returned").with("receipt", "triaging") }
 
   action step = any {
-    goLive, clockEnds, sameDigest, held, unavailable, tick, revise, reviseWith(true), receivedWithFile,
+    goLive, clockEnds, sameDigest, held, unavailable, tick, revise,
+    earlierWaits, earlierRevised, refuseEarlier, reviseWith(true), receivedWithFile,
     forward, requestInformation, appeal,
     { nondet o = Set("confirmed", "duplicate", "out-of-scope", "rejected").oneOf() decide(o) },
     { nondet u = Set(true, false).oneOf() decideAppeal(u) },
@@ -138,6 +148,7 @@ module api_security_routine_decisions {
     // No close while a call found loss of funds plausible, and no close as
     // no proof received before the clock ended or after a new version.
     not(s.closedOnLoss), not(s.closedEarly),
+    not(s.dupOfUnqualified),
     // A routine close is a refusal that no person decided and nobody appealed.
     s.routineClosed implies (refusals.contains(s.receipt) and not(s.appealed)),
     // The pass never confirms a finding.
@@ -210,6 +221,15 @@ module api_security_routine_decisions {
     .expect(s.receipt == "triaging" and not(s.routineClosed) and invariant)
   run failedCallsStopAtThreeTest = init.then(goLive).then(unavailable).then(unavailable).then(unavailable)
     .expect(s.receipt == "received").then(unavailable.fail())
+  run refusedEarlierIsNoCallTargetTest = init.then(goLive).then(refuseEarlier)
+    .then(twoCalls(false, false, true, true, false, false, true, true).fail())
+  run refusedEarlierLeavesReportOpenTest = init.then(goLive).then(refuseEarlier)
+    .then(twoCalls(false, false, false, false, false, false, true, true))
+    .expect(s.receipt == "triaging" and not(s.routineClosed) and invariant)
+  run waitingEarlierIsNoCallTargetTest = init.then(goLive).then(earlierWaits)
+    .then(twoCalls(false, false, true, true, false, false, true, true).fail())
+  run sameBytesStillCloseTest = init.then(goLive).then(refuseEarlier).then(sameDigest)
+    .expect(s.receipt == "duplicate" and s.routineClosed and invariant)
   run failedCallsGoToOwnerTest = init.then(goLive).then(unavailable).then(unavailable).then(unavailable)
     .then(held).expect(s.receipt == "triaging" and invariant)
 }

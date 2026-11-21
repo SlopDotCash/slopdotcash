@@ -433,11 +433,22 @@ async function earlierReports(
          FROM security_cases c
         WHERE c.project_id = ?1 AND c.id <> ?2
           AND c.submission_state = 'verified'
+          AND c.receipt_state NOT IN ('rejected', 'out-of-scope', 'duplicate')
+          AND NOT (c.receipt_state = 'disputed' AND c.appeal_from_state IN
+            ('rejected', 'out-of-scope', 'duplicate'))
+          AND NOT (c.receipt_state = 'needs-information'
+            AND c.next_action IS ?5)
           AND (c.received_at < ?3 OR (c.received_at = ?3 AND c.rowid <
             (SELECT rowid FROM security_cases WHERE id = ?2)))
         ORDER BY c.received_at DESC, c.rowid DESC LIMIT ?4`,
     )
-    .bind(row.project_id, row.id, row.received_at, EARLIER_REPORT_LIMIT)
+    .bind(
+      row.project_id,
+      row.id,
+      row.received_at,
+      EARLIER_REPORT_LIMIT,
+      ROUTINE_PROOF_NEXT_ACTION,
+    )
     .all<{ id: string; summary: string | null }>();
   return (result.results ?? [])
     .filter((entry): entry is { id: string; summary: string } =>
