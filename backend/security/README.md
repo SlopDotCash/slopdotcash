@@ -411,7 +411,9 @@ with no outcome (`reportDepositOutcome`), with one fixed reason:
 | `needs-information` from the routine pass, `disputed`, `triaging` after a returned appeal | waits | |
 
 A person marks spam with the optional boolean `spam` on the `decide` action,
-allowed only with outcome `rejected`. Screening's `spam` verdict
+allowed only with outcome `rejected`. The decide form offers it as a "Spam"
+checkbox beside a rejection while the deposit is switched on
+(`src/SecurityBounty.tsx`). Screening's `spam` verdict
 (`screening_state`) never changes a receipt state, so a model's verdict alone
 never keeps a deposit. A kept outcome is written only while the case is still
 at the revision that was read, so a concurrent appeal wins. The Worker writes
