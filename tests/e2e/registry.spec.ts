@@ -510,6 +510,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   expect(listed.slopbot).toEqual({
     automaticClosure: false,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   await owner
     .getByRole("link", { name: "Manage project", exact: true })
@@ -683,6 +684,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   expect(revoked.project.slopbot).toEqual({
     automaticClosure: false,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   expect(revoked.project.reward).not.toHaveProperty("honorSystem");
   const consentHistory = await (
@@ -693,6 +695,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   expect(JSON.parse(consentHistory.manifestText).slopbot).toEqual({
     automaticClosure: true,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   expect(JSON.parse(consentHistory.manifestText).reward.honorSystem).toBe(true);
   await returningOwner.reload({ waitUntil: "networkidle" });

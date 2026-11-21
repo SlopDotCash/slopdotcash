@@ -736,12 +736,13 @@ export function githubAppAdvisoryToken(
 
 /**
  * A short-lived installation token of the slopdotcash App, narrowed to one
- * repository and to the given read permissions. Null when the App is not
- * installed or GitHub refuses.
+ * repository and to the given permissions. Callers ask for read access only,
+ * except the wanted-label creation (`issues: "write"`). Null when the App is
+ * not installed or GitHub refuses.
  */
 export function githubAppRepositoryToken(
   options: AppCredentials,
-  permissions: Record<string, "read">,
+  permissions: Record<string, "read" | "write">,
 ): (repository: string) => Promise<string | null> {
   return async (repository) => {
     const installation = await repositoryInstallation(options, repository);

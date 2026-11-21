@@ -891,6 +891,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   expect(posted?.slopbot).toEqual({
     automaticClosure: false,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   expect(posted?.image).toBeUndefined();
 
@@ -1092,6 +1093,7 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({
   expect((manifest as { slopbot?: unknown } | null)?.slopbot).toEqual({
     automaticClosure: true,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   // USDG remains the default Robinhood Chain asset.
   expect(manifest).toMatchObject({
