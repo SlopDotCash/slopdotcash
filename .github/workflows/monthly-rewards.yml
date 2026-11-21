@@ -1,0 +1,258 @@
+name: Propose monthly allocations
+
+# GitHub runs a schedule only on the default branch, so the scheduled run
+# dispatches this workflow on main and development. Each
+# dispatched run freezes the complete ledger of the last closed UTC month and
+# writes the proposed private allocation of every funded monthly project to
+# its branch's D1 database: main to slop-private, development to
+# slop-staging. Nothing is committed, published or opened as a pull request.
+# Owners change amounts privately; the payments coordinator finalizes the
+# current allocations at the owner-decided cutoff, 72 hours after the month
+# ends (decision D1, backend/payments/README.md). Writing a month's proposal is
+# idempotent, so the run repeats on the first three days of the month, before
+# that cutoff, to recover from a failed run.
+on:
+  schedule:
+    - cron: "11 0 1-3 * *"
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Closed UTC month to propose (YYYY-MM); blank means previous month"
+        required: false
+        type: string
+      full_collection:
+        description: "Recompute every commit attribution live instead of reusing the newest trusted collection's fenced answers"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: slop-monthly-allocations-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  BUN_VERSION: "1.3.14"
+  NODE_VERSION: "24.15.0"
+
+jobs:
+  dispatch:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch on main and development
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A dispatch from GITHUB_TOKEN starts a run. Dispatch both branches
+          # before failing on either.
+          status=0
+          for ref in main development; do
+            if gh workflow run monthly-rewards.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"; then
+              echo "Dispatched monthly allocations on $ref."
+            else
+              echo "::error::Could not dispatch monthly allocations on $ref."
+              status=1
+            fi
+          done
+          exit "$status"
+
+  propose:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
+    runs-on: ubuntu-24.04
+    # A complete ledger collection now takes about three hours (18 Nov 2026:
+    # 2h48m reached 86% of commit attributions). Use the hosted maximum so
+    # the first-of-month close is not cut short by its own limit.
+    timeout-minutes: 360
+    env:
+      # Ledger generation must use the same registry tier as this proposal.
+      VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    permissions:
+      # Reads the newest trusted collection memo (an Actions artifact).
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    environment:
+      # Production writes only from main; staging only from development.
+      name: ${{ github.ref == 'refs/heads/main' && 'slop-production' || 'slop-staging' }}
+    steps:
+      - name: Checkout trusted branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted checkout
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Monthly allocation checkout $checked_out_sha does not match event SHA $GITHUB_SHA."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Reject known production dependency vulnerabilities
+        run: bun run audit:dependencies
+
+      - name: Validate requested cycle
+        id: cycle
+        env:
+          REQUESTED_CYCLE: ${{ inputs.cycle }}
+        run: |
+          set -euo pipefail
+          cycle="$REQUESTED_CYCLE"
+          if [ -z "$cycle" ]; then
+            # shellcheck disable=SC2016
+            cycle="$(node -e 'const now=new Date(); const prior=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-1,1)); process.stdout.write(`${prior.getUTCFullYear()}-${String(prior.getUTCMonth()+1).padStart(2,"0")}`)')"
+          fi
+          if ! [[ "$cycle" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
+            echo "::error::Cycle must be YYYY-MM."
+            exit 1
+          fi
+          printf 'cycle=%s\n' "$cycle" >> "$GITHUB_OUTPUT"
+          cutoff="$(CYCLE="$cycle" node -e 'const [year,month]=process.env.CYCLE.split("-").map(Number); process.stdout.write(new Date(Date.UTC(year,month,1)).toISOString())')"
+          if [ "$(node -e 'process.stdout.write(String(Date.parse(process.argv[1]) <= Date.now()))' "$cutoff")" != "true" ]; then
+            echo "::error::Cycle $cycle has not closed."
+            exit 1
+          fi
+          printf 'cutoff=%s\n' "$cutoff" >> "$GITHUB_OUTPUT"
+
+      - name: Snapshot the D1 project registry
+        # Projects live only in the D1 registry of each environment. Each
+        # proposal stores the exact bytes of the project's newest revision.
+        env:
+          SLOP_API_ORIGIN: ${{ github.ref == 'refs/heads/main' && 'https://slop.cash' || 'https://staging.slop.cash' }}
+        run: bun run projects:sync
+
+      - name: Validate registry and evaluator awards
+        run: |
+          bun run projects:check
+          bun run evaluations:check
+
+      - name: Install the pinned merge collector
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+
+      # The repository's GITHUB_TOKEN quota is shared by every workflow and
+      # a full collection needs more than it allows, so a dedicated read-only
+      # GitHub App collects when it is configured, on main only. Without the
+      # App, or if minting fails, the steps below use GITHUB_TOKEN as before.
+      - name: Mint collector token
+        id: collector-token
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
+      # Incremental collection (PRD section 9): reuse the newest trusted main
+      # collection's immutable commit statistics and fenced commit
+      # attributions. Without a verified memo the close collects in full.
+      - name: Restore the newest trusted collection memo
+        if: github.ref == 'refs/heads/main'
+        # The memo only saves reads; failing to restore it means a full
+        # collection, never a failed release.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESTORE_OUTPUT: ${{ runner.temp }}/restored-collection
+          RESTORE_DISCUSSIONS: "false"
+        run: python3 scripts/restore-collection-memo.py
+
+      - name: Generate complete cycle ledger
+        env:
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
+          # Retry one value-feed read after a temporary outage instead of
+          # restarting the whole collection (19 November 2026).
+          SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
+          # Read the first value-history pages six at a time before the
+          # sequential history loop (operator decision, 21 November 2026).
+          SLOP_VALUE_FEED_CONCURRENCY: "6"
+          CUTOFF: ${{ steps.cycle.outputs.cutoff }}
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/restored-collection/collection-memo.json" ]; then
+            export SLOP_COLLECTION_MEMO="$RUNNER_TEMP/restored-collection/collection-memo.json"
+          fi
+          bun run leaderboard:generate -- --cutoff "$CUTOFF"
+
+      - name: Propose private allocations
+        id: propose
+        env:
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          # A project with a maintainer share needs one public GitHub read of
+          # who merged or closed each outside pull request in the month.
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+        run: bun run rewards:propose-month -- --cycle "${{ steps.cycle.outputs.cycle }}" --sql "$RUNNER_TEMP/monthly-allocations.sql"
+
+      - name: Store proposals in D1
+        # When that read fails for one project, the step above writes the
+        # other projects' proposals and then fails. They are still stored;
+        # the failed run reports the project, and a later run of the same
+        # month proposes it. A run that wrote no file stores nothing.
+        if: ${{ !cancelled() && (steps.propose.outcome == 'success' || steps.propose.outcome == 'failure') }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/monthly-allocations.sql" ]; then
+            echo "No funded monthly project for ${{ steps.cycle.outputs.cycle }}."
+            exit 0
+          fi
+          # An existing month keeps its stored proposal; the import is one
+          # transaction and rolls back on failure.
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            ./node_modules/.bin/wrangler d1 execute slop-private \
+              --remote --config workers/identity/wrangler.toml \
+              --file "$RUNNER_TEMP/monthly-allocations.sql"
+          else
+            ./node_modules/.bin/wrangler d1 execute slop-staging \
+              --remote --config wrangler.staging.toml \
+              --file "$RUNNER_TEMP/monthly-allocations.sql"
+          fi
