@@ -221,7 +221,8 @@ the monthly amount, 1 to 3000, or omitted for none (PRD section 6, operator
 decision of 18 November 2026). It changes through the same owner revision as
 the monthly amount and starts with the next UTC month: the server appends the
 previous share to `reward.maintainerShareHistory` as the share of every month
-through the open one. An owner revision that edits the history is refused.
+through the open one. An owner revision that edits the history is refused,
+and so is a new project that submits one.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub
