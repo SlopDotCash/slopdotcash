@@ -4794,9 +4794,9 @@
     },
     {
       "path": "scripts/prepare-pr-ledger.ts",
-      "sha256": "18b69cea56616fa54092dde87c17b9c4724a436694fcb9c2f05f8457093dd48d",
+      "sha256": "cc229f5fa58483574273fcb7f0b4f6bc22dc635b8cc49b34a4688095dfbfe428",
       "models": ["formal/models/points/journal_publication.qnt"],
-      "candidateLines": [7, 118, 229, 441, 529, 532],
+      "candidateLines": [8, 211, 322, 534, 625, 628],
       "review": "mapped-abstraction"
     },
     {
