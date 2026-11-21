@@ -507,7 +507,8 @@ pure def stepPeriodFixed(before: Monthly, after: Monthly): bool = before.phase !
 ### Proposals, changes, cuts, freezes, exclusions and payments are reachable
 
 In the samples November 2026 ends at 1796083200, its cuts close at
-1796256000 while the default is on, and its cutoff is 1796342400.
+1796256000 while the default is on, and its cutoff is 1796342400; October
+2026 ends at 1793491200 and its cutoff is 1793750400.
 
 Discovered by simulation: a cut withdrawn by a later change was not reached
 in 50,000 sampled runs of 20 events, and only about one run in a
@@ -523,9 +524,28 @@ and cuts are tried more often and owner finalization less often than other
 events; a month allows only as many changes as there are sampled expected
 sequences, so this cannot crowd out later events. Discovered by simulation:
 every copy of an event picks all its parameters on every step, so a run
-costs in proportion to the weights times the parameters picked; higher
+costs in proportion to the weights times the parameters picked; much higher
 weights reached a withdrawn cut no sooner for the same cost and made each
 fixed-size run of the whole check about thirteen times as long.
+
+Discovered by simulation: the search for a withdrawn cut still needed about
+a thousand runs of 20 events, so one search could outlast its hour on a
+loaded machine. A change back up can withdraw a cut only to the proposed
+amount, and a sole contributor is proposed the whole pool, which no sampled
+amount reached, so a sole contributor's cut could never be withdrawn; a
+change to the whole pool is sampled too. Discovered by
+simulation: after the first event of a November month most clock samples
+already closed its proposal window, and every clock sample after the first
+closed an October month's cut window; a second day of each month is sampled.
+Discovered by simulation: a month that observed eligibility revision 2 had
+only one authority fact that could change it, so a steward under revision 2
+is sampled too; no sampled eligibility was restricted, so a restricted
+project, which can still be proposed and changed but is frozen only by its
+pledge, is sampled too. Discovered by simulation: churn of the observed
+revision before the proposal left the proposal's revision stale, so it is
+tried no more often than other observations; with these samples, proposals,
+changes and cuts tried a third more often reach a withdrawn cut about four
+times as often as before, for about a quarter more cost per run.
 
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
@@ -552,11 +572,11 @@ pure def sometimesCutThenOwnerFinalized(m: Monthly): bool = m.trigger == OwnerTr
 pure def sometimesOptedOutFrozenByOwner(m: Monthly): bool = m.trigger == OwnerTrigger and not(m.automatic)
 pure def sometimesLateCutHoldsDefaultOff(m: Monthly): bool = m.phase == Proposed and not(m.automatic) and cutNoticeOutlastsCutoff(m)
 pure val periodValues = Set(202611, 202610)
-pure val nowValues = Set(1793491300, 1796083300, 1796256100, 1796342400, 1796342600, 1796343000)
+pure val nowValues = Set(1793491300, 1793577600, 1796083300, 1796169600, 1796256100, 1796342400, 1796342600, 1796343000)
 pure val reasonLengthValues = Set(19, 20, 500)
 pure val eligible: Eligibility = { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false,
   retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true }
-pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 })
+pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 }, { ...eligible, restricted: true })
 pure val revisionSample: RevisionFact = { number: 1, effectivePeriod: 202609, monthlyAmount: List(10), maximum: M::maxU128,
   rewardStartAt: 1790000000, vault: "vault", asset: "usdc", feePolicy: "v2", exclusions: List() }
 pure val revisionValues = Set(revisionSample, { ...revisionSample, monthlyAmount: List(0) }, { ...revisionSample, effectivePeriod: 202612 },
@@ -569,11 +589,11 @@ pure val snapshotValues = Set(snapshotSample, { ...snapshotSample, rows: List() 
   { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) })
 pure val exclusionsValues = Set(List(), List({ actor: 3, relationship: X::RelatedParty, fromPeriod: 202610, untilPeriod: 0 }))
 pure val actorValues = Set(1, 2, 3)
-pure val amountValues = Set(List(0), List(2), List(5), List(6))
+pure val amountValues = Set(List(0), List(2), List(5), List(6), List(10))
 pure val expectedSequenceValues = Set(0, 1, 2)
 pure val factValues = Set({ actor: 9, role: ProjectOwner, banned: false, revision: 1 }, { actor: 2, role: Steward, banned: false, revision: 1 },
   { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 },
-  { actor: 9, role: ProjectOwner, banned: false, revision: 2 })
+  { actor: 9, role: ProjectOwner, banned: false, revision: 2 }, { actor: 2, role: Steward, banned: false, revision: 2 })
 pure val automaticValues = Set(true, false)
 pure val settingsSequenceValues = Set(1, 2)
 pure val observationValues = Set({ observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
@@ -588,10 +608,10 @@ pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, 
   .union(Set(awardFact(3, List(2), true))).union(Set(awardFact(1, List(3), true))).union(Set(awardFact(1, List(3), false)))
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
 pure val weight_observeClock = 1
-pure val weight_propose = 20
-pure val weight_observeRevision = 2
-pure val weight_adjust = 30
-pure val weight_cut = 12
+pure val weight_propose = 40
+pure val weight_observeRevision = 1
+pure val weight_adjust = 40
+pure val weight_cut = 16
 pure val weight_observeSettings = 2
 pure val weight_finalize = 3
 pure val weight_autoFreeze = 3
