@@ -4924,10 +4924,10 @@
     },
     {
       "path": "scripts/pull-request-git-files.ts",
-      "sha256": "1634b9807d734dd92c4a0405b77ee3a194321aaffd4033355550e0e61efda93d",
+      "sha256": "42e0c12a470855bcba8dcd1a5352f66c4faf0624ac56d088da69969addcd1e9a",
       "models": ["formal/models/tooling/git_file_recovery.qnt"],
       "candidateLines": [
-        6, 110, 152, 153, 178, 179, 180, 182, 183, 200, 217, 225, 228, 250
+        6, 114, 156, 157, 182, 183, 184, 186, 187, 204, 221, 229, 232, 254
       ],
       "review": "mapped-abstraction"
     },
@@ -5182,9 +5182,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "9a0795eb0d9c483e411fd0c0386aae49a84f891fe86f7104c618f1d6b0ca4b36",
+      "sha256": "aba57c764d92b4ab7f62d432927b93680deaef37c73bce130c2a094b051d194d",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 493, 685, 920, 921, 922, 925, 1248],
+      "candidateLines": [55, 56, 501, 737, 972, 973, 974, 977, 1300],
       "review": "mapped-abstraction"
     },
     {
@@ -5262,9 +5262,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "e56a362b6ebbbb62df6d7e84f59c5269c606c35687a343704aaa1d35ab78848c",
+      "sha256": "c0651c1b16d20b56fa5e90868940dca2812d819e98f645f8f97200adfa51c7e3",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 545, 565, 668, 769],
+      "candidateLines": [3, 727, 747, 850, 954],
       "review": "mapped-abstraction"
     },
     {
@@ -7203,14 +7203,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "1e3d63012cb8071fa5fd87a945c533c388eeaf02747f4c6a5d1c0115cb9501d6",
+      "sha256": "94ebba2944be1c975cc5b29545831af33c3dcc34fada5bebad85dae209269503",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        234, 299, 313, 324, 338, 345, 480, 537, 538, 539, 543, 763, 765, 769,
-        864, 916, 922, 949, 950, 1037, 1042, 1247, 1440, 1515, 1614, 1630, 1829,
-        1836, 1841, 1949, 2030, 2065, 2093, 2195, 2196, 2197
+        235, 300, 314, 325, 339, 346, 481, 538, 539, 540, 544, 764, 766, 770,
+        865, 917, 923, 950, 951, 1038, 1043, 1248, 1441, 1516, 1615, 1631, 1830,
+        1837, 1842, 1950, 2031, 2066, 2094, 2196, 2197, 2198
       ],
       "review": "mapped-abstraction"
     },
@@ -7224,7 +7224,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "0823dc2dcd68f86eba221b43fd285d980c6ff9ee4ef25a0192285df4394f8515",
+      "sha256": "2799dec152cffb600b5ffd02fb70f16b2284a9edd3a558c3b3c2072c59c53ceb",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -7235,7 +7235,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [382, 849, 1096, 1108, 1115, 1124],
+      "candidateLines": [384, 868, 947, 1205, 1217, 1224, 1233],
       "review": "mapped-abstraction"
     },
     {

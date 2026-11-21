@@ -21,6 +21,10 @@ import {
 } from "./prepare-implementation-corrections";
 import { reviewedPacketStorage } from "./private-payout-packet";
 import {
+  changeDigest,
+  readPullRequestGitFiles,
+} from "./pull-request-git-files";
+import {
   decodeHistoricalPacket,
   decodeHistoricalPacketBytes,
   type HistoricalAcceptedSquash,
@@ -138,6 +142,184 @@ export async function verifyHistoricalCensus(
     JSON.stringify(ordered(packet.sourceAudit.sources))
   )
     throw Error("Reviewed historical census changed");
+}
+
+/** Verify the complete accepted changes, including paths and both object IDs. */
+export async function verifyHistoricalIdenticalAcceptedChanges(
+  packet: HistoricalPointsPacket,
+  github: Pick<GitHubClient, "get">,
+  withObjects = withPublicGitObjects,
+): Promise<ReadonlySet<string>> {
+  const candidates = (packet.duplicateRetirements ?? []).filter(
+    (retirement) => retirement.identicalAcceptedChange !== undefined,
+  );
+  const verified = new Set<string>();
+  if (!candidates.length) return verified;
+  const root = `/repos/${packet.sourceAudit.repository}`;
+  const repository = await github.get<PublicMergeRepository>(root);
+  if (
+    repository?.node_id !== packet.sourceAudit.repositoryNodeId ||
+    repository.full_name?.toLowerCase() !==
+      packet.sourceAudit.repository.toLowerCase()
+  )
+    throw Error("Reviewed identical change repository changed");
+  for (const retirement of candidates) {
+    const proof = retirement.identicalAcceptedChange;
+    const earlier = retirement.earlierSources.find(
+      (source) => source.sourceId === proof?.earlierSourceId,
+    );
+    if (!proof || !earlier) throw Error("Reviewed earlier source is missing");
+    const sha = /^[a-f0-9]{40}$/u;
+    if (
+      !sha.test(proof.earlierMergeSha) ||
+      !sha.test(proof.mergeSha) ||
+      proof.earlierMergeSha === proof.mergeSha ||
+      !/^[a-f0-9]{64}$/u.test(proof.diffSha256)
+    )
+      throw Error("Reviewed identical change identity is invalid");
+    const sources = [
+      { source: earlier, mergeSha: proof.earlierMergeSha },
+      { source: retirement.source, mergeSha: proof.mergeSha },
+    ];
+    async function verifyPull({ source, mergeSha }: (typeof sources)[number]) {
+      const audit = packet.sourceAudit.sources.find(
+        (row) => row.id === source.sourceId,
+      );
+      if (!audit)
+        throw Error("Identical change is outside the reviewed census");
+      const pull = await github.get<Pull>(`${root}/pulls/${audit.number}`);
+      if (
+        !pull ||
+        pull.node_id !== source.sourceId ||
+        pull.number !== audit.number ||
+        pull.head.sha !== source.headSha ||
+        !sha.test(pull.head.sha) ||
+        !sha.test(pull.base.sha) ||
+        pull.merge_commit_sha !== mergeSha ||
+        !pull.merged_at ||
+        new Date(pull.merged_at).toISOString() !== source.occurredAt ||
+        pull.commits !== source.commitCount
+      )
+        throw Error("Reviewed identical change source changed");
+      return pull;
+    }
+    const checked = await Promise.all(
+      sources.map(async (binding) => ({
+        ...binding,
+        pull: await verifyPull(binding),
+      })),
+    );
+    await withObjects(
+      repository,
+      [
+        ...sources.map(({ mergeSha }) => mergeSha),
+        ...checked.flatMap(({ pull }) => [pull.head.sha, pull.base.sha]),
+      ],
+      async (directory) => {
+        const nativeGit = async (...args: string[]) => {
+          const command = publicGitProcess(directory, args);
+          return (await execute(command.file, command.args, command.options))
+            .stdout;
+        };
+        const fileCounts = (
+          files: readonly {
+            path: string;
+            additions: number;
+            deletions: number;
+          }[],
+        ) =>
+          hash(
+            files
+              .map(
+                (file) => [file.path, file.additions, file.deletions] as const,
+              )
+              .sort((a, b) => a[0].localeCompare(b[0])),
+          );
+        for (const { pull, mergeSha, source } of checked) {
+          const [commit, first, second, ...extra] = (
+            await nativeGit("rev-list", "--parents", "-n", "1", mergeSha)
+          )
+            .trim()
+            .split(" ");
+          if (
+            commit !== mergeSha ||
+            !first ||
+            !sha.test(first) ||
+            second !== pull.head.sha ||
+            extra.length
+          )
+            throw Error("Identical change needs the complete accepted merge");
+          const range = new Map(
+            (
+              await nativeGit(
+                "rev-list",
+                "--parents",
+                pull.head.sha,
+                `^${pull.base.sha}`,
+              )
+            )
+              .trim()
+              .split("\n")
+              .map((line) => {
+                const [id, ...parents] = line.split(" ");
+                return [id, parents] as const;
+              }),
+          );
+          if (
+            range.size !== source.commits.length ||
+            source.commits.some(
+              (member) =>
+                !range.has(member.sha) ||
+                hash(range.get(member.sha)) !== hash(member.parentShas),
+            )
+          )
+            throw Error("Identical change has incomplete submitted commits");
+          // This existing reader compares the full submitted and accepted
+          // raw diffs before computing complete native file line counts.
+          const changed = await readPullRequestGitFiles(directory, {
+            repository,
+            head: pull.head.sha,
+            merge: {
+              sha: mergeSha,
+              parents: [{ sha: first }, { sha: second }],
+            },
+          });
+          if (
+            !changed.changedFiles ||
+            changed.changedFiles !== pull.changed_files ||
+            (await changeDigest(directory, first, mergeSha)) !==
+              proof.diffSha256
+          )
+            throw Error("Complete accepted changes differ");
+          if (source === retirement.source) {
+            const submitted = source.commits[0];
+            if (
+              source.commits.length !== 1 ||
+              submitted.sha !== source.headSha ||
+              submitted.parentCount !== 1 ||
+              submitted.parentShas?.length !== 1 ||
+              !submitted.files ||
+              submitted.files.length !== changed.changedFiles ||
+              submitted.additions !== changed.additions ||
+              submitted.deletions !== changed.deletions ||
+              fileCounts(submitted.files) !== fileCounts(changed.files) ||
+              (await changeDigest(
+                directory,
+                submitted.parentShas[0],
+                submitted.sha,
+              )) !== proof.diffSha256
+            )
+              throw Error(
+                "Duplicate submitted commit differs from its accepted change",
+              );
+          }
+        }
+      },
+    );
+    await Promise.all(sources.map(verifyPull));
+    verified.add(hash(retirement));
+  }
+  return verified;
 }
 
 /** Recheck GitHub's exact accepted squash relation before using retained bytes. */
@@ -699,6 +881,8 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   await verifyHistoricalCensus(packet, github);
   setPhase("accepted squash verification");
   await verifyHistoricalAcceptedSquashes(packet, github);
+  const verifiedIdenticalAcceptedChanges =
+    await verifyHistoricalIdenticalAcceptedChanges(packet, github);
   setPhase("financial protection verification");
   await verifyHistoricalProtection(packet, query);
   setPhase("value record verification");
@@ -758,6 +942,7 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     baseline,
     new Date().toISOString(),
     bans,
+    verifiedIdenticalAcceptedChanges,
   );
   setPhase("import preparation");
   const directory = join(

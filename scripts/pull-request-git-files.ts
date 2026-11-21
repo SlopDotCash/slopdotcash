@@ -101,7 +101,11 @@ function checkInput(input: PullRequestGitFilesInput) {
 
 const DIFF = ["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
 
-async function changeDigest(directory: string, base: string, head: string) {
+export async function changeDigest(
+  directory: string,
+  base: string,
+  head: string,
+) {
   const hash = createHash("sha256");
   await streamGit(
     directory,

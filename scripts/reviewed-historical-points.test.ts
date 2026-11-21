@@ -3082,3 +3082,76 @@ test("historical publication installs the canonical merge runtime before verific
   expect(source).toContain('["fetch", "fsck"].includes(args[0])');
   expect(source).toContain(": command.options.timeout");
 });
+
+test("an independently verified identical accepted change retires only its later ordinary award", () => {
+  const f = duplicateRetirementFixture();
+  const { retirement } = f;
+  const earlier = retirement.earlierSources[0];
+  earlier.headSha = "e".repeat(40);
+  earlier.commits[0].sha = earlier.headSha;
+  f.packet.sourceAudit.sources[1].headSha = earlier.headSha;
+  retirement.coverage = [];
+  retirement.identicalAcceptedChange = {
+    earlierSourceId: earlier.sourceId,
+    earlierMergeSha: "1".repeat(40),
+    mergeSha: "2".repeat(40),
+    diffSha256: "3".repeat(64),
+  };
+  retirement.evidence = JSON.stringify({
+    sourceId: retirement.sourceId,
+    workUnitId: retirement.workUnitId,
+    sourceSha256: hash(retirement.source),
+    earlierSourcesSha256: hash(retirement.earlierSources),
+    coverageSha256: hash(retirement.coverage),
+    identicalAcceptedChangeSha256: hash(retirement.identicalAcceptedChange),
+  });
+  retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+  const target = f.baseline.revisions[0].award;
+  const expected = appendPointAwards(
+    f.baseline,
+    [{ ...target, amount: 0 }],
+    hash(retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        target.key,
+        {
+          sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(expected);
+  const verified = new Set([hash(retirement)]);
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+  const result = reconstructHistoricalPoints(
+    f.packet,
+    f.baseline,
+    time,
+    new Map(),
+    verified,
+  );
+  expect(result).toEqual(expected);
+  expect(result.revisions.slice(0, 2)).toEqual(f.baseline.revisions);
+  expect(latestPoints(result).get(target.key)?.award.amount).toBe(0);
+  expect(latestPoints(result).get(f.baseline.revisions[1].award.key)).toEqual(
+    f.baseline.revisions[1],
+  );
+
+  retirement.identicalAcceptedChange.diffSha256 = "4".repeat(64);
+  expect(() =>
+    reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      time,
+      new Map(),
+      verified,
+    ),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+});
