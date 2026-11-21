@@ -1,4 +1,4 @@
-// spec/ui/status.md, "Payment states keep award, funding and settlement apart"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"
+// spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"
 import { Alert, Button, Status, type TransactionStatusProps } from "@repo/ui";
 import { RotateCcw } from "lucide-react";
 import type { Presentation } from "../cases/labels.ts";

@@ -47,8 +47,10 @@ the award or accrued fee unpaid; they do not consume it.
 
 In the source repository, `contracts/evm/native.integration.ts` runs the
 local Anvil lifecycle, including sender gas, monthly awards and receiver failure.
-The ordinary adapter integration also runs this test. No deployment or reviewed
-production implementation binding changes with this source update.
+Here `apps/settlement/test/support/evm/escrowBytes.test.vibe` deposits,
+withdraws and claims fees in a native vault through the settlement codecs, and
+the `contracts__evmEscrow` conformance driver walks native vaults. No deployment
+or reviewed production implementation binding changes with this source update.
 
 ## Networks
 
@@ -391,11 +393,10 @@ address with no code, or an `openPledgedGross()` that reverts empty (including
 a revert reported with no `data` field, as `mainnet.base.org` answers), means
 no support; any other failure is an error. The source repository's adapter
 does this with `buildPledgeMonthsCalldata`, `buildExpirePledgeCalldata` and
-`readEvmMonthPledges`, and `pledge.test.ts` covers those answers. Its
-`pledge.integration.ts`, carried here unchanged, runs them on Anvil; with
-`SLOP_PLEDGE_LEGACY_ROOT` set to a pre-pledge `contracts/evm` tree it first
-deploys that code, then upgrades the funded vault and checks every existing
-storage slot and counter is unchanged.
+`readEvmMonthPledges`, and `pledge.test.ts` covers those answers. Here the
+settlement codecs (`apps/settlement/src/chain/evm`) build and read them
+against this package's vault on Anvil, in
+`apps/settlement/test/support/evm/escrowBytes.test.vibe`.
 
 `ProjectEscrow` is close to the 24,576-byte limit (see
 [the package README](../README.md#money-invariants)); run

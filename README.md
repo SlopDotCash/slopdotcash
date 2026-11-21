@@ -56,6 +56,24 @@ The tools own `gen/`, `.spec-cache/`, `.studio/` and `spec/lock.json`.
 The user signs off the specification with `pnpm accept` after reviewing its
 prose, Quint, proofs and validation results.
 
+## Contributing
+
+Open every pull request against `vibestack`, Slop's default
+branch. Follow [CONTRIBUTING.md](CONTRIBUTING.md) and
+[AGENTS.md](AGENTS.md), including the
+[TypeScript conventions](AGENTS.md#typescript-best-practices).
+
+- Verify that the proposed merge fully implements and integrates the stories
+  and models in the [top-level spec](spec/index.md) and its linked specs. Every
+  change must match the owning stories, rules and models exactly.
+- Show before-and-after results for every code change. For UI changes, attach
+  before-and-after screenshots of the affected flow. Remove unused code,
+  unnecessary files and temporary artifacts from the diff.
+- Run the complete `pnpm verify --continue` suite for every pull request,
+  including Quint, Dafny, Bombadil and all other required checks. Record the
+  results and verify that every required check passes and all Vibestack
+  requirements are met before merging.
+
 ## Structure
 
 | Path | Contents |

@@ -72,7 +72,9 @@ type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSourc
   receipt: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int,
   award: Award, grossChosen: M::Amount, commitment: Commitment, payment: PaymentState,
   related: Related, relatedReview: RelatedReview, deciders: List[int],
-  appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage }
+  appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage, routine: RoutineMark }
+type RoutineMark = { closed: bool, returned: bool, proofAsked: int, proofDueAt: int }
+pure val noRoutine: RoutineMark = { closed: false, returned: false, proofAsked: 0, proofDueAt: 0 }
 pure val noAuthority: Authority = { epoch: 0, technical: List(), financial: List(), moderators: List(), banned: List(),
   relatedParties: List(), programRestricted: false }
 pure val noAppealRecord: AppealRecord = { from: Received, resolution: NoAppeal, by: 0 }
@@ -83,7 +85,7 @@ pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: 
   receipt: Received, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0,
   award: NotApplicable, grossChosen: M::zero, commitment: NoCommitment, payment: PaymentNotApplicable,
   related: NotAssessed, relatedReview: ReviewNotApplicable, deciders: List(),
-  appeal: NoAppeal, appealFrom: Received, appealHistory: List(), triage: noTriage }
+  appeal: NoAppeal, appealFrom: Received, appealHistory: List(), triage: noTriage, routine: noRoutine }
 pure def historicalAllowed(terms: T::ReceiptTerms, history: Historical, gross: M::Amount): bool =
   history == NewReceipt or (terms.paidTerms and terms.fundingPolicy == T::Prefunded
     and (history == ImportedCapacityWait or T::amountAllowed(terms, gross)))
@@ -118,7 +120,8 @@ pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Ver
   and (c.submission != Verified implies c.award == NotApplicable)
 pure def alwaysUnreceivedBlank(c: PrivateCase): bool = c.revision >= 0 and (c.submission != Verified implies
   c.receipt == Received and c.appeal == NoAppeal and c.commitment == NoCommitment and c.payment == PaymentNotApplicable
-  and c.related == NotAssessed and c.relatedReview == ReviewNotApplicable and c.triage.state == NoTriage)
+  and c.related == NotAssessed and c.relatedReview == ReviewNotApplicable and c.triage.state == NoTriage
+  and c.triagers.length() == 0)
   and (c.submission == NotReceived implies c.revision == 0)
 pure def stepReceiptFrozen(before: PrivateCase, after: PrivateCase): bool = after.reporter == before.reporter and
   (before.submission == Verified implies after.submission == Verified and after.terms == before.terms and after.source == before.source)
@@ -206,12 +209,16 @@ pure def sometimesTriagerReassignedAfterSnapshot(c: PrivateCase): bool = c.triag
   and c.revokedTriagers.includes(c.triagers.nthOr(0, 0))
 ```
 
-## Story: Obtain a human decision without automatic rejection
+## Story: Obtain a human decision on every report the routine pass leaves open
 
 ### Current technical approvers and triagers request information on the current report version
 
-Screening is advisory and never sets these states. A current technical
-approver or assigned triager asks for information. The reporter may save a
+Screening is advisory and never sets these states; only the
+[routine pass](./routineDecisions.md) decides a report itself (below). A
+current technical approver or assigned triager asks for information; a
+person's request or decision replaces a routine request for proof and its
+clock (`planChange` in `backend/security/handler.ts`, development commit
+`e836c892c`). The reporter may save a
 new immutable report version while the finding is open, including after a
 returned appeal; it keeps the receipt state (needs information stays needs
 information, `backend/security/report-intake.ts` changes only the case
@@ -224,7 +231,8 @@ pure def receiptOpen(c: PrivateCase): bool = c.receipt == Received or c.receipt 
 pure def committed(c: PrivateCase): bool = c.award == Approved or c.award == Reserved
 pure def canRequestInformation(c: PrivateCase, by: int, checkedEpoch: int): bool = c.submission == Verified and receiptOpen(c)
   and (technicalNow(c, by, checkedEpoch) or triagerNow(c, by, checkedEpoch))
-pure def requestInformation(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase = { ...c, receipt: NeedsInformation, revision: c.revision + 1 }
+pure def requestInformation(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase =
+  { ...c, receipt: NeedsInformation, revision: c.revision + 1, routine: { ...c.routine, proofDueAt: 0 } }
 pure def canReviseReport(c: PrivateCase, by: int, version: int): bool = c.submission == Verified and by == c.reporter
   and receiptOpen(c) and not(committed(c)) and version == c.reportVersion + 1
 pure def reviseReport(c: PrivateCase, by: int, version: int): PrivateCase =
@@ -249,13 +257,70 @@ pure def decide(c: PrivateCase, by: int, checkedEpoch: int, version: int, decisi
   { ...c, receipt: decision.finding, severity: decision.severity, loss: decision.loss, inScope: decision.inScope,
     rootCause: decision.rootCause, duplicateOf: decision.duplicateOf,
     related: if (decision.declareRelated or reporterRelated(c)) RelatedParty else Unrelated,
-    deciders: c.deciders.append(by), revision: c.revision + 1 }
+    deciders: c.deciders.append(by), revision: c.revision + 1, routine: { ...c.routine, proofDueAt: 0 } }
 pure def alwaysDecidersExcludeReporter(c: PrivateCase): bool = not(c.deciders.includes(c.reporter))
 pure def alwaysConfirmedHasRootCause(c: PrivateCase): bool =
   (c.receipt == Confirmed or (c.appeal == AppealOpen and c.appealFrom == Confirmed)) implies c.rootCause > 0
 pure def stepRelatedPermanent(before: PrivateCase, after: PrivateCase): bool = before.related == RelatedParty implies after.related == RelatedParty
 pure def stepDecidersRetained(before: PrivateCase, after: PrivateCase): bool = before.deciders.every(d => after.deciders.includes(d))
 pure def sometimesDuplicate(c: PrivateCase): bool = c.receipt == Duplicate
+```
+
+### A routine decision changes only an unappealed undecided report and its close is appealed to the owner once
+
+PRD section 8 (operator decision of 17 November 2026; `caseChange` and
+`routineClosed` in `backend/security/routine-decisions.ts`, development commit
+`e836c892c`). The routine pass acts as the fixed actor `slop`, which no
+GitHub account can hold, and is no decider. It reads a verified report with no
+appeal in its history, no committed award and no pending related-party
+review, while it is received, or while its own request for proof is due or
+has a newer report version. A duplicate, a matching published line and an
+ended clock close the report as duplicate, out of scope or rejected and
+withhold a paid award; a request for proof starts one 14-day clock on the
+current version; anything else is acknowledged as triaging. The pass never
+confirms a finding or commits an award. The reporter's appeal of a routine
+close that no person reviewed needs no moderator: the report returns to the
+program owner as triaging, a withheld award reopens, and the history records
+the return. A later appeal of the owner's decision follows the moderator path.
+[Routine decisions](./routineDecisions.md) supplies these changes.
+
+```quint
+type RoutineOutcome = RoutineDuplicate | RoutineOutOfScope | RoutineNeedsProof | RoutineNoProof | RoutineAcknowledged
+pure val routineService = -2
+pure val routineProofWindowMs = 1209600000
+pure def routineClockPending(c: PrivateCase): bool = c.receipt == NeedsInformation and c.routine.proofDueAt > 0
+  and c.reportVersion <= c.routine.proofAsked
+pure def routineReadable(c: PrivateCase, nowMs: int): bool = c.submission == Verified and c.appeal == NoAppeal
+  and c.appealHistory.length() == 0 and not(committed(c)) and c.relatedReview != ReviewPending
+  and (c.receipt == Received or (c.receipt == NeedsInformation and c.routine.proofDueAt > 0
+    and (nowMs >= c.routine.proofDueAt or c.reportVersion > c.routine.proofAsked)))
+pure def routineOutcomeAllowed(c: PrivateCase, ruling: RoutineOutcome, duplicateOf: int, nowMs: int): bool =
+  routineReadable(c, nowMs) and nowMs > 0 and (if (ruling == RoutineNoProof) routineClockPending(c)
+    else if (ruling == RoutineAcknowledged) true
+    else not(routineClockPending(c)) and (ruling != RoutineDuplicate or duplicateOf > 0)
+      and (ruling != RoutineNeedsProof or c.routine.proofAsked == 0))
+pure def routineDecided(ruling: RoutineOutcome, c: PrivateCase, duplicateOf: int, nowMs: int): PrivateCase =
+  val closed = { ...c, award: if (c.terms.paidTerms) Ineligible else NotApplicable, revision: c.revision + 1,
+    routine: { ...c.routine, closed: true, proofDueAt: 0 } }
+  if (ruling == RoutineDuplicate) { ...closed, receipt: Duplicate, duplicateOf: duplicateOf }
+  else if (ruling == RoutineOutOfScope) { ...closed, receipt: OutOfScope, inScope: false }
+  else if (ruling == RoutineNoProof) { ...closed, receipt: Rejected }
+  else if (ruling == RoutineNeedsProof) { ...c, receipt: NeedsInformation, revision: c.revision + 1,
+    routine: { ...c.routine, proofAsked: c.reportVersion, proofDueAt: nowMs + routineProofWindowMs } }
+  else { ...c, receipt: Triaging, revision: c.revision + 1, routine: { ...c.routine, proofDueAt: 0 } }
+pure def routineAppealable(c: PrivateCase, by: int): bool = c.submission == Verified and by == c.reporter and c.routine.closed
+pure def routineReturned(by: int, c: PrivateCase): PrivateCase =
+  { ...c, appeal: Returned, appealFrom: c.receipt, receipt: Triaging, award: if (c.award == Ineligible) Pending else c.award,
+    appealHistory: c.appealHistory.append({ from: c.receipt, resolution: Returned, by: routineService }),
+    routine: { ...c.routine, closed: false, returned: true }, revision: c.revision + 1 }
+pure def alwaysRoutineCloseIsUnappealedRefusal(c: PrivateCase): bool = c.routine.closed implies
+  (c.receipt == Duplicate or c.receipt == OutOfScope or c.receipt == Rejected) and c.appeal == NoAppeal
+  and c.appealHistory.length() == 0 and not(committed(c)) and c.submission == Verified
+pure def alwaysRoutineClockOnItsRequest(c: PrivateCase): bool = c.routine.proofAsked >= 0 and c.routine.proofDueAt >= 0
+  and (c.routine.proofDueAt > 0 implies c.receipt == NeedsInformation and c.routine.proofAsked > 0
+    and c.routine.proofAsked <= c.reportVersion)
+pure def alwaysRoutineReturnRecorded(c: PrivateCase): bool = c.routine.returned implies
+  not(c.routine.closed) and c.appealHistory.length() > 0
 ```
 
 ### An award commits only under paid terms, eligibility and project clearance
@@ -340,7 +405,8 @@ pure def sometimesLegacyApproved(c: PrivateCase): bool = c.award == Approved and
 ### Slopbot drafts advice for each appeal and always escalates a private case
 
 A reporter appeals a duplicate, out-of-scope or rejected finding, or a
-confirmed finding without an award. The appeal queues one Slopbot triage of
+confirmed finding without an award. An appeal of a routine close returns to
+the owner untriaged (above); any other appeal queues one Slopbot triage of
 that appeal revision (`security_appeal_triages`, prompt
 `slop-security-appeal-triage-1`, Surplus `claude-sonnet-5.5`). A draft is
 advice only and records the escalation reason `private-security-case`, and
@@ -359,6 +425,7 @@ type TriageOutcome = Drafted({ returnCase: bool, confidencePercent: int, exclusi
 pure def appealable(c: PrivateCase): bool = c.receipt == Duplicate or c.receipt == OutOfScope or c.receipt == Rejected
   or (c.receipt == Confirmed and (c.award == Ineligible or c.award == CapacityExhausted))
 pure def canAppeal(c: PrivateCase, by: int): bool = c.submission == Verified and by == c.reporter and c.appeal != AppealOpen and appealable(c)
+  and not(c.routine.closed)
 pure def appeal(c: PrivateCase, by: int): PrivateCase =
   { ...c, appeal: AppealOpen, appealFrom: c.receipt, receipt: Disputed, revision: c.revision + 1,
     triage: { ...noTriage, state: TriageQueued, appealRevision: c.revision + 1, attempt: c.triage.attempt } }
