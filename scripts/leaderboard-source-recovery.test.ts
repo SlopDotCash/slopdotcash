@@ -32,6 +32,8 @@ import {
   collectSearchReferences,
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
+  JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+  JOINT_SOURCE_CONFIRMATION_PROBES,
   MAX_GRAPHQL_REQUEST_ATTEMPTS,
   MAX_TRANSIENT_ATTEMPTS,
   type OutcomeCommitIdentity,
@@ -668,8 +670,14 @@ async function fixture(
   productionProjects?: readonly string[],
   comparison?: Comparison,
   nativeFiles?: NativeFileFixture,
+  // The answer to each successive joint availability probe; the last repeats.
+  availability: ReadonlyArray<"missing" | "present" | "forbidden"> = [
+    "missing",
+  ],
 ) {
   let missingSeen = false;
+  let availabilityProbes = 0;
+  const confirmationDelays: number[] = [];
   let requests = 0;
   let attempts = 0;
   let repositoryReads = 0;
@@ -980,11 +988,16 @@ async function fixture(
             missingSeen = true;
           }
         } else if (query.includes("query LeaderboardSourceAvailability")) {
+          const answer =
+            availability[Math.min(availabilityProbes, availability.length - 1)];
+          availabilityProbes++;
+          const gone = (id: string) =>
+            answer !== "present" && id === removed.id;
           data.nodes = v.ids.map((id: string) =>
-            id === removed.id ? null : { __typename: "PullRequest", id },
+            gone(id) ? null : { __typename: "PullRequest", id },
           );
           errors = v.ids.flatMap((id: string, index: number) =>
-            id === removed.id
+            gone(id)
               ? [
                   {
                     type: "NOT_FOUND",
@@ -994,6 +1007,8 @@ async function fixture(
                 ]
               : [],
           );
+          if (answer === "forbidden")
+            errors = [{ type: "FORBIDDEN", path: ["nodes", 0] }];
           if (failure === "forbidden")
             errors = [{ type: "FORBIDDEN", path: ["nodes", 0] }];
           if (failure === "mixed")
@@ -1215,6 +1230,8 @@ async function fixture(
       commitLineBatches,
       recoveredFiles,
       recoveryInputs,
+      availabilityProbes,
+      confirmationDelays,
     }),
     generate: () =>
       runGenerator(
@@ -1229,6 +1246,9 @@ async function fixture(
           now: new Date(GENERATED_AT),
           actualNow: new Date(GENERATED_AT),
           ...(productionProjects ? { deploymentTier: "staging" as const } : {}),
+          jointSourceConfirmationDelay: async (milliseconds) => {
+            confirmationDelays.push(milliseconds);
+          },
         },
       ),
     close: async () => {
@@ -1520,9 +1540,90 @@ test("unavailable joint context keeps the verified merge minimum without replaci
           .map((row) => row.award),
       ).toEqual([previousActorAward]);
     }
-    expect(f.stats().attempts).toBe(2);
+    // Operator decision, 20 November 2026: the member is outside the census
+    // and every probe agrees, so the first attempt holds it and publishes.
+    expect(f.stats().attempts).toBe(1);
+    expect(f.stats().availabilityProbes).toBe(
+      1 + JOINT_SOURCE_CONFIRMATION_PROBES,
+    );
+    expect(f.stats().confirmationDelays).toEqual(
+      Array.from(
+        { length: JOINT_SOURCE_CONFIRMATION_PROBES },
+        () => JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+      ),
+    );
+    expect(snapshot.source.rateLimit.consumedDuringRun).toBe(
+      f.stats().requests,
+    );
     expect(f.stats().forbiddenSourceReads).toBe(0);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
+
+// A joint member outside the census is held on the first attempt only when
+// every confirming probe repeats the first answer. Any other answer keeps the
+// complete recollection, whose own probe then decides.
+for (const [name, availability, probes] of [
+  [
+    "resolves on the first confirming probe",
+    ["missing", "present", "missing"],
+    3,
+  ],
+  [
+    "resolves on the last confirming probe",
+    ["missing", "missing", "present", "missing"],
+    4,
+  ],
+  ["is refused on a confirming probe", ["missing", "forbidden", "missing"], 3],
+] as const) {
+  test(`a joint member outside the census that ${name} still forces one complete recollection`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(
+      "joint",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      availability,
+    );
+    try {
+      const snapshot = await f.generate();
+      expect(f.stats().attempts).toBe(2);
+      expect(f.stats().availabilityProbes).toBe(probes);
+      expect(snapshot.source.unavailableSources).toEqual([
+        { nodeId: removed.id, reason: "NOT_FOUND" },
+      ]);
+      expect(snapshot.source.heldWorkUnits).toEqual([
+        {
+          recordDigest,
+          sourceNodeIds: [retained.id, removed.id].sort(),
+          unavailableNodeIds: [removed.id],
+        },
+      ]);
+      expect(f.stats().forbiddenSourceReads).toBe(0);
+      assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("a joint member outside the census is never held on the first attempt without the recollection record", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("joint");
+  try {
+    // A direct collection has nowhere to record the unavailable source.
+    await expect(
+      generateLeaderboardFromGitHub(f.client, {
+        now: new Date(GENERATED_AT),
+        actualNow: new Date(GENERATED_AT),
+        evidenceToken: "fixture-token",
+        jointSourceConfirmationDelay: async () => {},
+      }),
+    ).rejects.toBeInstanceOf(SourceNodeUnavailableError);
+    expect(f.stats().availabilityProbes).toBe(1);
   } finally {
     await f.close();
   }

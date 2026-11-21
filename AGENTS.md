@@ -731,7 +731,12 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). Every production release requires current main equivalence. Every
+decision, 19 November 2026). A source GitHub cannot resolve still forces one
+complete recollection, except a joint value-record member outside the live
+census: when three availability probes a few seconds apart all report it
+unavailable, the first attempt records it and holds its work unit; any
+differing or failed probe keeps the recollection (operator decision,
+20 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
