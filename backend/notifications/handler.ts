@@ -59,6 +59,7 @@ interface Row {
   acknowledged_at: string | null;
   security_notice_id: string | null;
   delivery_state: string | null;
+  points_dispute_receipt: number;
 }
 
 /**
@@ -217,7 +218,8 @@ export async function handleNotificationsApi(
                       (SELECT CASE WHEN a.state = 'exhausted' AND a.destination_digest IS NULL THEN 'suppressed' ELSE a.state END
                         FROM activity_notification_outbox a
                         WHERE a.event_key = notifications.event_key AND a.recipient_github_id = notifications.recipient_github_id
-                          AND a.template_version = 'activity-inbox-v1')) AS delivery_state
+                          AND a.template_version = 'activity-inbox-v1')) AS delivery_state,
+                    EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key = 'slopbot-' || p.appeal_key AND p.appellant_github_id = notifications.recipient_github_id) AS points_dispute_receipt
                FROM notifications WHERE recipient_github_id = ?
                 AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
                   OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
@@ -272,6 +274,9 @@ export async function handleNotificationsApi(
             readAt: row.read_at,
             ...(row.kind === "security_case" && row.security_notice_id !== null
               ? { acknowledgedAt: row.acknowledged_at }
+              : {}),
+            ...(row.points_dispute_receipt
+              ? { pointsDisputeReceipt: true }
               : {}),
             ...(delivery ? { emailDelivery: delivery } : {}),
           };
