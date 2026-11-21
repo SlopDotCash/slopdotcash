@@ -1970,6 +1970,42 @@ test("removing a registered project in setup stops later clearance from activati
   expect(t.state.scans).toHaveLength(1);
 });
 
+test("an owner revision cannot change a removed project or queue its scan", async () => {
+  const t = registry();
+  await t.create("remove-edit", "example/remove-edit");
+  expect(
+    (
+      await t.call("POST", "projects/remove-edit/remove", OWNER, {
+        expectedRevision: 1,
+      })
+    ).status,
+  ).toBe(200);
+  const removed = await t.persistence.getProject("remove-edit");
+  if (!removed) throw new Error("Project missing");
+  const edit = await t.call("PUT", "projects/remove-edit", OWNER, {
+    expectedRevision: removed.revision,
+    manifest: {
+      ...removed.manifest,
+      name: "Edited after removal",
+      contribution: {
+        ...removed.manifest.contribution,
+        approvedScope:
+          "Bug fixes and documented features, edited after the project was removed.",
+      },
+    },
+  });
+  expect(edit.status).toBe(409);
+  expect(edit.body).toMatchObject({ error: "project_restricted" });
+  expect(await t.persistence.getProject("remove-edit")).toMatchObject({
+    revision: removed.revision,
+    manifestSha256: removed.manifestSha256,
+  });
+  // Only the first setup scan; a removed project is never scanned again.
+  expect(t.state.scans).toEqual([
+    "remove-edit@1: First scan after self-service setup",
+  ]);
+});
+
 test("an intervening revision refuses removal without overwriting the newer project", async () => {
   const t = registry();
   await t.create("remove-race", "example/remove-race");
