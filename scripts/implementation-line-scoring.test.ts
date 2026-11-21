@@ -199,6 +199,31 @@ test("missing multi-author line evidence holds the source instead of guessing sh
   ).toMatchObject({ status: "incomplete", recordDigest: null });
 });
 
+test("a current assessment resolves an otherwise held empty acceptance", () => {
+  const source = sharedOutcome({ tiny: true });
+  const { pull, input } = source;
+  pull.commits = pull.commits?.slice(0, 1) ?? null;
+  pull.emptyAcceptanceMarker = true;
+  const held = createLeaderboardSnapshot(input);
+  expect(held.ledger.some((event) => event.source.id === pull.id)).toBe(false);
+
+  retainCarrierValuation(source);
+  const assessed = createLeaderboardSnapshot(input);
+  expect(
+    assessed.ledger.filter((event) => event.source.id === pull.id),
+  ).toEqual([
+    expect.objectContaining({
+      actor: PENALIZED_AUTHOR,
+      category: "merged-pull-request",
+    }),
+  ]);
+  expect(
+    assessed.valueAssessmentCoverage?.find(
+      (row) => row.pullRequestId === pull.id,
+    ),
+  ).toMatchObject({ status: "assessed", recordDigest: "d".repeat(64) });
+});
+
 test("a retained carrier-only valuation cannot hide missing multi-author line evidence", () => {
   const source = sharedOutcome({ tiny: true });
   retainCarrierValuation(source);

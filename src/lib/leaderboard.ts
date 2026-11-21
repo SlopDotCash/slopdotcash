@@ -3619,6 +3619,7 @@ function createSnapshotWithReviewCutoff(
       actors: ReadonlyMap<string, GitHubActor>;
     }
   >();
+  const emptyAcceptanceSourceIds = new Set<string>();
   for (const pullRequest of mergedPullRequestOutcomes) {
     // A missing joint member withholds that assessment, not this separately
     // verified merge's existing minimum or a current human ratification.
@@ -3676,6 +3677,20 @@ function createSnapshotWithReviewCutoff(
       valuePolicyApplies && joint === undefined
         ? input.valueDecisions?.get(pullRequest.id)
         : undefined;
+    // An empty marker can belong to an indirect merge. Hold the fallback
+    // until reviewed evidence resolves the source. Keep SHA ownership reserved
+    // because an earlier award may still cover that commit.
+    if (
+      v2 &&
+      input.valueDecisions !== undefined &&
+      pullRequest.emptyAcceptanceMarker &&
+      !ratification &&
+      joint === undefined &&
+      (valueDecision === undefined || valueDecision.status === "missing")
+    ) {
+      emptyAcceptanceSourceIds.add(pullRequest.id);
+      continue;
+    }
     const valueRecord =
       !ratification && valueDecision?.status === "assessed"
         ? valueDecision.record
@@ -5404,7 +5419,8 @@ function createSnapshotWithReviewCutoff(
                 input.valueDecisions?.get(pull.id));
             const status = unavailableHeldSourceIds.has(pull.id)
               ? "unresolved"
-              : attributionHeldSourceIds.has(pull.id)
+              : attributionHeldSourceIds.has(pull.id) ||
+                  (!legacy && emptyAcceptanceSourceIds.has(pull.id))
                 ? "incomplete"
                 : scoreRatifications.has(pull.id)
                   ? "human-ratified"

@@ -38,6 +38,7 @@ import {
   MAX_TRANSIENT_ATTEMPTS,
   type OutcomeCommitIdentity,
   OutcomeCommitLineLoader,
+  parseSearchReference,
   runGenerator,
   SourceNodeUnavailableError,
   writeLeaderboardAtomically,
@@ -441,6 +442,55 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
     },
   ]),
 });
+test("only a complete changed single-commit submission can have an empty acceptance marker", () => {
+  const tree = { oid: "1".repeat(40) };
+  const parent = { oid: "2".repeat(40), tree };
+  const mergeCommit = {
+    oid: "3".repeat(40),
+    tree,
+    parents: { totalCount: 1, nodes: [parent] },
+  };
+  const node = { ...nodeFor(retained), mergeCommit };
+  const marker = (value: unknown) =>
+    parseSearchReference(value, "merged source", "PullRequest").outcome
+      ?.emptyAcceptanceMarker;
+  expect(marker(node)).toBe(true);
+  for (const other of [
+    { ...node, mergeCommit: null },
+    { ...node, additions: 0, deletions: 0 },
+    { ...node, mergeCommit: { ...mergeCommit, oid: node.headRefOid } },
+    { ...node, mergeCommit: { ...mergeCommit, tree: { oid: "4".repeat(40) } } },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { ...mergeCommit.parents, totalCount: 2 },
+      },
+    },
+    {
+      ...node,
+      commits: {
+        ...node.commits,
+        totalCount: 2,
+        pageInfo: { hasNextPage: true, endCursor: "more-commits" },
+      },
+    },
+    {
+      ...node,
+      commits: connection([
+        {
+          commit: {
+            ...node.commits.nodes[0].commit,
+            parents: { totalCount: 2 },
+          },
+        },
+      ]),
+    },
+  ]) {
+    expect(marker(other)).toBeUndefined();
+  }
+});
+
 // Open work listed before detail hydration. One PR and one issue close
 // between the open listing and their detail reads.
 const openPull = (id: string, number: number) => ({

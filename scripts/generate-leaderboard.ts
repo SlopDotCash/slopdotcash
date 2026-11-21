@@ -802,6 +802,11 @@ const SEARCH_REFERENCES_QUERY = `
           baseRefName
           baseRefOid
           headRefOid
+          mergeCommit @include(if: $withMergeCommits) {
+            oid
+            tree { oid }
+            parents(first: 1) { totalCount nodes { oid tree { oid } } }
+          }
           commits(first: 100) @include(if: $withMergeCommits) {
             totalCount
             pageInfo { hasNextPage endCursor }
@@ -2633,32 +2638,70 @@ export function parseSearchReference(
   if (kind !== expectedKind) {
     throw new Error(`${path} must be a ${expectedKind}`);
   }
-  return {
+  const reference: NodeReference = {
     id: asString(node.id, `${path}.id`),
     kind,
-    outcome:
-      kind === "PullRequest" && merged
-        ? parsePullRequestOutcome(node, path)
-        : null,
+    outcome: null,
     openVersion: null,
-    ...(kind === "PullRequest" && merged
-      ? {
-          commitPage: {
-            baseRefOid: asFullCommitSha(node.baseRefOid, `${path}.baseRefOid`),
-            headRefOid: asFullCommitSha(node.headRefOid, `${path}.headRefOid`),
-            totalCount: asNumber(
-              child(node, "commits", path).totalCount,
-              `${path}.commits.totalCount`,
-            ),
-            pageInfo: parsePageInfo(
-              child(node, "commits", path).pageInfo,
-              `${path}.commits.pageInfo`,
-            ),
-            commits: parseOutcomeCommits(node.commits, `${path}.commits`),
-          },
-        }
-      : {}),
   };
+  if (kind !== "PullRequest" || !merged) return reference;
+
+  const outcome = parsePullRequestOutcome(node, path);
+  const commitPage = {
+    baseRefOid: asFullCommitSha(node.baseRefOid, `${path}.baseRefOid`),
+    headRefOid: asFullCommitSha(node.headRefOid, `${path}.headRefOid`),
+    totalCount: asNumber(
+      child(node, "commits", path).totalCount,
+      `${path}.commits.totalCount`,
+    ),
+    pageInfo: parsePageInfo(
+      child(node, "commits", path).pageInfo,
+      `${path}.commits.pageInfo`,
+    ),
+    commits: parseOutcomeCommits(node.commits, `${path}.commits`),
+  };
+  if (
+    outcome.additions + outcome.deletions > 0 &&
+    commitPage.totalCount === 1 &&
+    !commitPage.pageInfo.hasNextPage &&
+    commitPage.commits.length === 1 &&
+    commitPage.commits[0].oid === commitPage.headRefOid &&
+    commitPage.commits[0].parentCount === 1 &&
+    node.mergeCommit != null &&
+    hasEmptyAcceptanceMarker(node.mergeCommit, commitPage.headRefOid, path)
+  ) {
+    outcome.emptyAcceptanceMarker = true;
+  }
+  return { ...reference, outcome, commitPage };
+}
+
+function hasEmptyAcceptanceMarker(
+  value: unknown,
+  submittedHead: string,
+  path: string,
+): boolean {
+  const mergePath = `${path}.mergeCommit`;
+  const merge = asRecord(value, mergePath);
+  const accepted = asFullCommitSha(merge.oid, `${mergePath}.oid`);
+  const parents = child(merge, "parents", mergePath);
+  if (accepted === submittedHead || parents.totalCount !== 1) return false;
+  const nodes = asArray(parents.nodes, `${mergePath}.parents.nodes`);
+  if (nodes.length !== 1) return false;
+  const parentPath = `${mergePath}.parents.nodes[0]`;
+  const parent = asRecord(nodes[0], parentPath);
+  const parentSha = asFullCommitSha(parent.oid, `${parentPath}.oid`);
+  return (
+    parentSha !== accepted &&
+    parentSha !== submittedHead &&
+    asFullCommitSha(
+      child(merge, "tree", mergePath).oid,
+      `${mergePath}.tree.oid`,
+    ) ===
+      asFullCommitSha(
+        child(parent, "tree", parentPath).oid,
+        `${parentPath}.tree.oid`,
+      )
+  );
 }
 
 function parseOpenReference(

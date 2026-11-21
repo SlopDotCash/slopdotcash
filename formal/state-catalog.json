@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "dec65d178629ffe7106bab36479b149dbe307055cb331bfb1fbcf3afe8f787e2",
+  "inventorySha256": "31816a1834b1c884634cdbc3e39933a34d52f056eba2f2d36ab4cfa49a3d968f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2441,7 +2441,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3889,
+      "line": 3932,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2461,7 +2461,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4493,
+      "line": 4536,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -3626,7 +3626,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 199,
+      "line": 201,
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
@@ -3636,7 +3636,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 347,
+      "line": 349,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -3646,7 +3646,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 498,
+      "line": 500,
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
@@ -3656,7 +3656,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 506,
+      "line": 508,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
@@ -3666,7 +3666,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 553,
+      "line": 555,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
@@ -3676,7 +3676,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 662,
+      "line": 664,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -3686,7 +3686,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 790,
+      "line": 792,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -3700,7 +3700,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4935,
+      "line": 4950,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],

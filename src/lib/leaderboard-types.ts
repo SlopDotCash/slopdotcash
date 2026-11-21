@@ -162,6 +162,8 @@ export type MergedPullRequestReviewRecord = Pick<
 export interface MergedPullRequestOutcome {
   /** Exact source head; older saved inputs can omit it but cannot use valuations. */
   headRefOid?: string;
+  /** A changed single-commit submission whose separate acceptance marker has no tree delta. */
+  emptyAcceptanceMarker?: true;
   id: string;
   number: number;
   title: string;

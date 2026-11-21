@@ -13,6 +13,7 @@ import {
   appendPointAwards,
   applyPointsSnapshot,
   awardForScore,
+  emptyPointsJournal,
   latestPoints,
   type PointsJournal,
   pointKey,
@@ -98,6 +99,110 @@ test("a second accepted PR containing only previously credited implementation co
   expect(snapshot.source.counts.mergedPullRequests).toBe(
     input.mergedPullRequestOutcomes.length,
   );
+});
+
+test("an unresolved empty acceptance marker holds only new provisional implementation", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  for (const pull of input.mergedPullRequestOutcomes.slice(0, 2)) {
+    const before = createLeaderboardSnapshot(input);
+    const journal = applyPointsSnapshot(
+      emptyPointsJournal(GENERATED_AT),
+      before,
+      "a".repeat(64),
+      before.generatedAt,
+    );
+    const prior = [...latestPoints(journal).values()].find(
+      ({ award }) => award.sourceId === pull.id,
+    );
+    expect(prior?.award.amount).toBeGreaterThan(0);
+
+    pull.emptyAcceptanceMarker = true;
+    input.valueDecisions = new Map([
+      [
+        pull.id,
+        {
+          status: "missing",
+          history: [],
+          latestDigest: null,
+          implementationActorNodeIds: [],
+        },
+      ],
+    ]);
+    const current = createLeaderboardSnapshot(input);
+    assertLeaderboardSnapshot(current);
+    expect(current.source.counts).toEqual(before.source.counts);
+    expect(current.ledger).toEqual(
+      before.ledger.filter((event) => event.source.id !== pull.id),
+    );
+    expect(
+      current.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === pull.id,
+      ),
+    ).toMatchObject({
+      status: pull.id === "PR_october" ? "legacy-policy" : "incomplete",
+      recordDigest: null,
+    });
+    const refreshed = applyPointsSnapshot(
+      journal,
+      current,
+      "b".repeat(64),
+      current.generatedAt,
+    );
+    expect(refreshed.revisions).toEqual(journal.revisions);
+    delete pull.emptyAcceptanceMarker;
+  }
+});
+
+test("legacy scoring without value coverage keeps its previous empty-marker behavior", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  delete input.valueDecisions;
+  delete input.valuePolicy;
+  input.closedUnmergedPullRequests = [];
+  const before = createLeaderboardSnapshot(input);
+  input.mergedPullRequestOutcomes[1].emptyAcceptanceMarker = true;
+  expect(createLeaderboardSnapshot(input)).toEqual(before);
+});
+
+test("a held empty acceptance reserves the submitted SHA until a reviewed decision resolves it", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const [empty, actual] = input.mergedPullRequestOutcomes;
+  empty.commits = [
+    {
+      oid: "f".repeat(40),
+      parentCount: 1,
+      author: PENALIZED_AUTHOR,
+      additions: 4,
+      deletions: 1,
+    },
+  ];
+  actual.commits = empty.commits;
+  const before = createLeaderboardSnapshot(input);
+  const prior = applyPointsSnapshot(
+    emptyPointsJournal(GENERATED_AT),
+    before,
+    "a".repeat(64),
+    before.generatedAt,
+  );
+  expect(prior.revisions.some(({ award }) => award.sourceId === empty.id)).toBe(
+    true,
+  );
+  empty.emptyAcceptanceMarker = true;
+  const snapshot = createLeaderboardSnapshot(input);
+  const awards = snapshot.ledger.filter(
+    (event) => event.category === "merged-pull-request",
+  );
+  expect(awards.find((event) => event.source.id === empty.id)).toBeUndefined();
+  expect(awards.find((event) => event.source.id === actual.id)).toBeUndefined();
+  const current = applyPointsSnapshot(
+    prior,
+    snapshot,
+    "b".repeat(64),
+    snapshot.generatedAt,
+  );
+  expect(current.revisions).toEqual(prior.revisions);
 });
 
 test("incomplete historical parent evidence does not establish duplicate implementation", () => {
