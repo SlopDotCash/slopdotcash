@@ -2148,7 +2148,7 @@
     },
     {
       "path": "spec/backend/projects.md",
-      "sha256": "9d805fb2ec03c15829f70ffe4cb4a6a90e33e4b462a2f17f4460bddb59296ca6",
+      "sha256": "6938209e46f3e3694ea74a3fe16a0aaf5f96839ae3d54aeb3e69e4e0ca4dad81",
       "module": "backend__projects",
       "stories": [
         {
@@ -2157,11 +2157,11 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority",
-          "line": 238
+          "line": 242
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval",
-          "line": 536
+          "line": 540
         }
       ],
       "rules": [
@@ -2199,7 +2199,7 @@
         },
         {
           "heading": "Story: Create or publish a project without routine approval / Authority is one read bound to the acting account and the stored repository",
-          "line": 110,
+          "line": 114,
           "definitions": [
             "Permission",
             "Installation",
@@ -2213,7 +2213,7 @@
         },
         {
           "heading": "Story: Create or publish a project without routine approval / Creation and stored-application publication record a paused revision 1",
-          "line": 128,
+          "line": 132,
           "definitions": [
             "RepositoryFacts",
             "Creation",
@@ -2237,7 +2237,7 @@
         },
         {
           "heading": "Story: Create or publish a project without routine approval / An applicant cancels a pending application or update without GitHub access",
-          "line": 187,
+          "line": 191,
           "definitions": [
             "canCancelApplication",
             "cancelApplication",
@@ -2249,7 +2249,7 @@
         },
         {
           "heading": "Story: Create or publish a project without routine approval / The setup check activates a paused project that passes every check",
-          "line": 208,
+          "line": 212,
           "definitions": [
             "InstallationRead",
             "SetupCheck",
@@ -2262,7 +2262,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Owner revisions publish at once against the expected revision",
-          "line": 240,
+          "line": 244,
           "definitions": [
             "Clearance",
             "ConsentChoice",
@@ -2290,7 +2290,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment",
-          "line": 351,
+          "line": 355,
           "definitions": [
             "HonorField",
             "RewardPromise",
@@ -2304,7 +2304,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Appending a repository pauses the project and its work counts from next month",
-          "line": 384,
+          "line": 388,
           "definitions": [
             "appendable",
             "facts2",
@@ -2319,7 +2319,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Automatic-closure consent changes only by an owner revision",
-          "line": 421,
+          "line": 425,
           "definitions": [
             "lawConsentOnlySaveRecordsConsentChange",
             "stepConsentChangesOnlyByOwnerRevision"
@@ -2327,7 +2327,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A current maintainer removes a project and a lost reply can be retried",
-          "line": 440,
+          "line": 444,
           "definitions": [
             "Removal",
             "canRemove",
@@ -2341,7 +2341,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A finalized owner vault registration appends one revision for the current maintainer",
-          "line": 479,
+          "line": 483,
           "definitions": [
             "VaultPurpose",
             "VaultRegistration",
@@ -2358,7 +2358,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Administrators hold, delist, change the steward or place a project",
-          "line": 538,
+          "line": 542,
           "definitions": [
             "Exception",
             "exceptionChanges",
@@ -2376,7 +2376,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / A restriction retires the listing and reinstatement restores only a paused Community listing",
-          "line": 633,
+          "line": 637,
           "definitions": [
             "retirableForRestriction",
             "withRestrictionRetirement",
@@ -2389,7 +2389,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Funding is a fact of the current revision and the clock only advances",
-          "line": 662,
+          "line": 666,
           "definitions": [
             "canAdvanceMonth",
             "advanceMonth",
@@ -2400,7 +2400,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Reachable registry outcomes",
-          "line": 688,
+          "line": 692,
           "definitions": [
             "listed",
             "sometimesCreatedPaused",
@@ -2456,23 +2456,23 @@
         },
         {
           "target": "../frontend/projectLinks.md",
-          "line": 251
+          "line": 255
         },
         {
           "target": "./closureConsent.md",
-          "line": 253
+          "line": 257
         },
         {
           "target": "./projectComposition.md",
-          "line": 277
+          "line": 281
         },
         {
           "target": "./projectComposition.md",
-          "line": 447
+          "line": 451
         },
         {
           "target": "../settlement/vaultSnapshots.md",
-          "line": 501
+          "line": 505
         }
       ]
     },
@@ -18671,7 +18671,7 @@
     },
     {
       "path": "spec/security/assessment.md",
-      "sha256": "713c138e1506540b79fe5b3445d0424ba750a4b07dae7843041463d18a7e02d6",
+      "sha256": "669d10d60efff1f45a1a2e14c1a607fb7fab35e4fbdc8e6673557938cbb5db97",
       "module": "security__assessment",
       "stories": [
         {
@@ -18733,7 +18733,7 @@
         },
         {
           "heading": "Story: Assess the current qualified report version once at a time / Simulation samples",
-          "line": 109,
+          "line": 113,
           "definitions": [
             "nowMsValues",
             "sourceValues",
