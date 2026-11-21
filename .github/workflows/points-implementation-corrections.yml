@@ -142,13 +142,14 @@ jobs:
           if ! git diff --quiet "$RESUME_SHA" "$GITHUB_SHA" -- "${config[@]}"; then
             exit 0
           fi
-          # Resolve both graphs from their own trees. A file present only on
-          # the donor can otherwise shadow the same unchanged import.
+          # Resolve the commands that actually produce the archive in both
+          # trees. The current preview validator independently checks it below.
+          # A file present only on the donor can shadow an unchanged import.
           build_input_list() (
             cd "$1" || exit 1
             bun --no-env-file build --target=bun --packages=external --outdir="$temp/$2-build" --metafile="$temp/$2.json" \
-              scripts/collect-implementation-corrections.ts scripts/prepare-implementation-corrections.ts \
-              scripts/install-value-merge-git.ts scripts/sync-project-registry.mjs >/dev/null \
+              scripts/collect-implementation-corrections.ts scripts/install-value-merge-git.ts \
+              scripts/sync-project-registry.mjs >/dev/null \
               && jq -er '.inputs | keys[]' "$temp/$2.json" > "$temp/$2.txt"
           )
           mkdir "$temp/donor"
@@ -164,6 +165,8 @@ jobs:
             || ! git diff --quiet "$RESUME_SHA" "$GITHUB_SHA" -- "${modules[@]}"; then
             exit 0
           fi
+          # Reconciliation output declarations and the label on the same
+          # upload step do not change the producer or the uploaded bytes.
           producer_recipe() {
             git show "$1:.github/workflows/points-implementation-corrections.yml" \
               | sed -n \
@@ -172,7 +175,8 @@ jobs:
                 -e '/^      - name: Snapshot authoritative project registry$/,/^      - name:/p' \
                 -e '/^      - name: Install the pinned merge evidence collector$/,/^      - name:/p' \
                 -e '/^      - name: Collect and verify complete historical attribution$/,/^      - name:/p' \
-              | sed '/^      - name: /d; /^        if: steps.complete-preview.outputs.reused/d'
+                -e '/^      - name: Retain public source evidence and collection dispositions$/,/^  reconcile:$/p' \
+              | sed -E '/^      - name: /d; /^        if: steps.complete-preview.outputs.reused/d; /^    outputs:$/d; /^      (artifact_id|producer_sha): /d; /^        id: retain-campaign$/d'
           }
           donor_recipe="$(producer_recipe "$RESUME_SHA")"
           current_recipe="$(producer_recipe "$GITHUB_SHA")"

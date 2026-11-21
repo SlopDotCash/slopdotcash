@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -166,4 +173,110 @@ test("preview requires its pin to remain current and apply rejects any preview b
       mode: "apply",
     }),
   ).not.toThrow();
+});
+
+test("collector archive reuse ignores receiver transport changes and compares producer and upload commands", async () => {
+  const workflow = await readFile(join(import.meta.dir, "..", propose), "utf8");
+  const recipe = workflow.match(
+    /^ {10}producer_recipe\(\) \{\n[\s\S]*?^ {10}\}/mu,
+  )?.[0];
+  expect(recipe).toBeDefined();
+  const old = workflow
+    .replace(
+      /^ {4}outputs:\n {6}artifact_id: [^\n]+\n {6}producer_sha: [^\n]+\n/mu,
+      "",
+    )
+    .replace(/^ {8}id: retain-campaign\n/mu, "");
+  expect(old).not.toBe(workflow);
+  const dir = await mkdtemp(join(tmpdir(), "historical-producer-recipe-"));
+  try {
+    const normalize = async (body: string) => {
+      const fixture = join(dir, "workflow.yml");
+      await writeFile(fixture, body);
+      return execFileSync(
+        "bash",
+        [
+          "-c",
+          `
+        set -euo pipefail
+        git() { cat -- "$1"; }
+        ${recipe?.replace('git show "$1:.github/workflows/points-implementation-corrections.yml"', 'git "$1"')}
+        producer_recipe "$1"
+      `,
+          "bash",
+          fixture,
+        ],
+        { encoding: "utf8" },
+      );
+    };
+    const current = await normalize(workflow);
+    expect(current).not.toBe("");
+    expect(await normalize(old)).toBe(current);
+    for (const [previous, changed] of [
+      ["--request-budget 50000", "--request-budget 60000"],
+      ["if-no-files-found: error", "if-no-files-found: warn"],
+    ] as const) {
+      const altered = old.replace(previous, changed);
+      expect(altered).not.toBe(old);
+      expect(await normalize(altered)).not.toBe(current);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("archive compatibility resolves only the modules the collection executes", async () => {
+  const workflow = await readFile(join(import.meta.dir, "..", propose), "utf8");
+  const buildInputs = workflow.match(
+    /^ {10}build_input_list\(\) \(\n[\s\S]*?^ {10}\)/mu,
+  )?.[0];
+  expect(buildInputs).toBeDefined();
+  const dir = await mkdtemp(join(tmpdir(), "historical-producer-inputs-"));
+  try {
+    for (const [path, content] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, path)), { recursive: true });
+      await writeFile(join(dir, path), content);
+    }
+    const inputList = (label: string) =>
+      execFileSync(
+        "bash",
+        [
+          "-c",
+          `
+      set -euo pipefail
+      temp="$1"
+      ${buildInputs}
+      build_input_list "$1" "$2"
+      cat -- "$temp/$2.txt"
+    `,
+          "bash",
+          dir,
+          label,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+          },
+        },
+      );
+    const original = inputList("original");
+    expect(original).toContain(schema);
+    expect(original).not.toContain(
+      "scripts/prepare-implementation-corrections.ts",
+    );
+    await writeFile(
+      join(dir, "scripts/prepare-implementation-corrections.ts"),
+      `import "./verify-reused-implementation-preview";\n`,
+    );
+    expect(inputList("receiver-change")).toBe(original);
+    await writeFile(
+      join(dir, collect),
+      'import "./prepare-implementation-corrections";\n',
+    );
+    expect(inputList("producer-change")).not.toBe(original);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
