@@ -18,13 +18,6 @@
 // A report version that carries a proof-of-concept file (`file`) has proof
 // present by rule (operator decision, 20 November 2026), whatever the calls
 // answer, so it is never asked for proof.
-// earlierReports supplies only an earlier report that may still be the first
-// qualifying report of its finding ("Duplicates: only the first qualifying
-// reporter is considered"): not one closed as rejected, out of scope or a
-// duplicate, not one disputed on appeal from such a close, and not one
-// waiting on the pass's own request for proof. The check is at read time: an
-// earlier report a person refuses after the later report closed is not
-// modelled. Same bytes (earlierSameDigest) need no call and are not limited.
 // `dry_run` records the decision and changes nothing; `live` applies it only
 // to the revision it read, so a person's action (requestInformation, decide)
 // that lands first makes the pass see the new state. An appeal of a routine
@@ -33,8 +26,7 @@
 // report again; an appeal of a person's close opens the moderator path of
 // api_private_case. The pass never confirms a finding and has no award or
 // payment action.
-// Abstracted: one report and one earlier report of the same finding, which
-// is open, waiting for proof or refused; the two calls are eight booleans; the 14-day clock
+// Abstracted: one report; the two calls are eight booleans; the 14-day clock
 // is two ticks; the lease, per-pass and per-day limits bound work and are
 // covered by the `security_routine_runs` insert and the tests; awards follow
 // api_private_case. Bounds: three report versions, four ticks, three failed
@@ -64,7 +56,6 @@ module api_security_routine_decisions {
     (s.receipt == "received" or clockDue or revised) and
     (s.mode == "live" or not(s.recorded))
   val live = s.mode == "live"
-  // earlierReports: only an earlier report that may still qualify is supplied.
   val duplicateTarget = s.earlier == "open"
 
   // A reviewed configuration change; production starts in dry_run.
@@ -97,7 +88,6 @@ module api_security_routine_decisions {
     s' = s.with("failed", s.failed + 1) }
   // Two independent calls: loss, duplicate named, line named, proof present.
   // `closedOnLoss` is computed from the raw answers, not from the branch.
-  // A call can name only a supplied earlier report (parseRoutineProposal).
   action twoCalls(la: bool, lb: bool, da: bool, db: bool, xa: bool, xb: bool, pa: bool, pb: bool): bool = all {
     readable, not(clockDue), not(s.github), s.failed < 3,
     (da or db) implies duplicateTarget,
@@ -120,9 +110,6 @@ module api_security_routine_decisions {
   // The first version arrives with a proof file, before any pass reads it.
   action receivedWithFile = all { s.version == 1, s.receipt == "received", not(s.recorded),
     s.proofRequests == 0, not(s.file), s' = s.with("file", true) }
-  // The earlier report: the pass asks it for proof, its reporter adds a new
-  // version, or it is refused (rejected, out of scope, a duplicate, or
-  // disputed on appeal from one of those).
   action earlierWaits = all { s.earlier == "open", s' = s.with("earlier", "waiting") }
   action earlierRevised = all { s.earlier == "waiting", s' = s.with("earlier", "open") }
   action refuseEarlier = all { s.earlier != "refused", s' = s.with("earlier", "refused") }
@@ -161,8 +148,6 @@ module api_security_routine_decisions {
     // No close while a call found loss of funds plausible, and no close as
     // no proof received before the clock ended or after a new version.
     not(s.closedOnLoss), not(s.closedEarly),
-    // The calls never close a report as a duplicate of an earlier report
-    // that was refused or waited for proof when the pass read it.
     not(s.dupOfUnqualified),
     // A routine close is a refusal that no person decided and nobody appealed.
     s.routineClosed implies (refusals.contains(s.receipt) and not(s.appealed)),

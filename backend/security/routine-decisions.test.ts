@@ -592,22 +592,16 @@ describe("routine decisions on private reports", () => {
 
   test("a later report with proof is not closed as a duplicate of an earlier report that was refused or still waits for proof", async () => {
     const t = fixture();
-    // An earlier report without proof: the pass asks for proof (clock).
     const vague = await t.report(ALICE, "The vault withdraw may be drainable");
     t.answers.set("The vault withdraw may be drainable", () => [
       answer({ proof: "missing", missing: ["runnable-proof"] }),
       answer({ proof: "missing", missing: ["runnable-proof"] }),
     ]);
-    // An earlier report the owner closes as out of scope, then appealed.
     const appealed = await t.report(
       BOB,
       "Withdraw rounding leaves dust in the vault",
     );
-    // An earlier report the owner rejects after a later report was closed
-    // as its duplicate.
     const original = await t.report(CAROL, "Deposit skips the cap check");
-    // An earlier report the owner asks a question about: still open, so a
-    // later report of the same finding is its duplicate.
     const asked = await t.report(BOB, "Anyone can flip the fee switch");
     await t.pass();
     await t.pass();
@@ -653,9 +647,6 @@ describe("routine decisions on private reports", () => {
     expect(appeal.status).toBe(200);
     expect(t.caseRow(appealed.caseId).receipt_state).toBe("disputed");
 
-    // Later reports of the same findings, with proof. Both calls name the
-    // earlier report (or, for the cap, its closed duplicate) whenever it is
-    // supplied.
     const later = [
       {
         reporter: REPORTERS[4],
@@ -694,13 +685,10 @@ describe("routine decisions on private reports", () => {
     for (const entry of later)
       filed.push(await t.report(entry.reporter, entry.summary));
     await t.pass();
-    // The earlier report's clock runs out with no new version.
     t.advance(ROUTINE_PROOF_WINDOW_MS + MINUTE);
     await t.pass();
     expect(t.caseRow(vague.caseId).receipt_state).toBe("rejected");
 
-    // Each later report is the first qualifying report of its finding, so
-    // it goes to the owner instead of closing as a duplicate.
     const [askedLater, ...unqualified] = [filed[3], ...filed.slice(0, 3)];
     expect(t.caseRow(askedLater.caseId)).toMatchObject({
       receipt_state: "duplicate",
@@ -716,7 +704,6 @@ describe("routine decisions on private reports", () => {
         { outcome: "acknowledged", hold_reason: null, applied: 1 },
       ]);
     }
-    // None of those earlier reports reached a later report's calls.
     const laterInputs = t.routineInputs.slice(readBefore);
     expect(laterInputs).toHaveLength(8);
     const excluded = [vague, appealed, original, copy].map(

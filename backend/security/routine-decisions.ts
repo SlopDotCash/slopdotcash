@@ -6,9 +6,7 @@
  * records one of four results for each:
  *
  * 1. Duplicate: the same bytes as an earlier report in the program, or two
- *    independent model calls name the same earlier report. The calls see
- *    only earlier reports that may still be the first qualifying report of
- *    their finding.
+ *    independent model calls name the same earlier report.
  * 2. Does not qualify: two independent model calls name the same published
  *    line and neither finds a plausible theft or permanent freeze of funds.
  * 3. Needs proof: no reproduction steps or runnable proof. The reporter is
@@ -420,15 +418,7 @@ async function earlierSameDigest(
   return match?.id ?? null;
 }
 
-/**
- * Slopbot's own summaries of earlier reports that may still be the first
- * qualifying report of their finding; never another report's text. A call
- * can name only these as the same finding. The published line is
- * "Duplicates: only the first qualifying reporter is considered", so these
- * are left out: a report closed as rejected, out of scope or a duplicate
- * (its original is supplied on its own), one disputed on appeal from such a
- * close, and one waiting on this pass's own request for proof.
- */
+/** Slopbot's own summaries of earlier reports; never another report's text. */
 async function earlierReports(
   deps: RoutineDependencies,
   row: CaseRow,
