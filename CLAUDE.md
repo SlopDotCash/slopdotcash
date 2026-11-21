@@ -124,8 +124,8 @@ alias only.
     sends only for finalized deposits, keeps a fee only for the deposit that
     paid a pull request whose row says kept, records each signed transaction
     before broadcasting it, and stays inside its native-fee ceilings.
-    `SUBMISSION_FEE_MODE` ships off; `dry_run` loads no key. Going live needs
-    its own reviewed change after the contracts are deployed.
+    `SUBMISSION_FEE_MODE` is `live` since 21 November 2026 (operator
+    decision); `dry_run` loads no key.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -349,8 +349,9 @@ record's contract, chain, token and kept-to address equal the tables in
 `src/lib/submission-fee.mjs`; it takes none of them from the address bar or
 from input, and offers nothing while `SUBMISSION_FEE_SWITCHED_ON` is false.
 `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `off`, `dry_run`
-or `live`. It is `dry_run` since 19 November 2026: Slopbot records what it
-would ask and writes nothing to GitHub. `live` needs its own reviewed change. Automatic closure is limited to verified
+or `live`. It is `live` since 21 November 2026 (operator decision; record-only
+from 19 November): Slopbot asks for the fee on a project whose owner turned
+it on, and on no other project. Automatic closure is limited to verified
 Slop-skill participants, excluding maintainers: a slop.cash member whose own
 authenticated Slop run records a `pull_request_opened` event for that exact PR
 (PRD section 11). A copied marker is never proof. An uncertain finding goes to
