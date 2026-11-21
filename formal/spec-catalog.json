@@ -2148,7 +2148,7 @@
     },
     {
       "path": "spec/backend/projects.md",
-      "sha256": "e7a4f2f234cc48b32d3b403e3dc9a30e566ff6170b61c7c7f2643d415b648986",
+      "sha256": "8896559aadd06dfeaf2648d678bd0b6a0b45258b88f9fa61ea15c1338eeb2da9",
       "module": "backend__projects",
       "stories": [
         {
@@ -2161,7 +2161,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval",
-          "line": 526
+          "line": 529
         }
       ],
       "rules": [
@@ -2327,7 +2327,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A current maintainer removes a project and a lost reply can be retried",
-          "line": 435,
+          "line": 438,
           "definitions": [
             "Removal",
             "canRemove",
@@ -2341,7 +2341,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A finalized owner vault registration appends one revision for the current maintainer",
-          "line": 469,
+          "line": 472,
           "definitions": [
             "VaultPurpose",
             "VaultRegistration",
@@ -2358,7 +2358,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Administrators hold, delist, change the steward or place a project",
-          "line": 528,
+          "line": 531,
           "definitions": [
             "Exception",
             "exceptionChanges",
@@ -2376,7 +2376,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / A restriction retires the listing and reinstatement restores only a paused Community listing",
-          "line": 623,
+          "line": 626,
           "definitions": [
             "retirableForRestriction",
             "withRestrictionRetirement",
@@ -2389,7 +2389,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Funding is a fact of the current revision and the clock only advances",
-          "line": 652,
+          "line": 658,
           "definitions": [
             "canAdvanceMonth",
             "advanceMonth",
@@ -2400,7 +2400,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Reachable registry outcomes",
-          "line": 678,
+          "line": 684,
           "definitions": [
             "listed",
             "sometimesCreatedPaused",
@@ -2468,11 +2468,11 @@
         },
         {
           "target": "./projectComposition.md",
-          "line": 442
+          "line": 445
         },
         {
           "target": "../settlement/vaultSnapshots.md",
-          "line": 491
+          "line": 494
         }
       ]
     },
