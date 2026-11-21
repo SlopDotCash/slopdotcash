@@ -147,7 +147,8 @@ admission too. Administrator investigations and flag recovery work on any
 registered project. A malicious result bans at once and, in the same batch,
 appends the restriction's paused, retired revision, or records it as pending
 when the manifest cannot take it, or needs none when the project is already
-retired.
+retired. A result is recorded only for a registered project, as every scan
+request needs one.
 
 ```quint
 type ManifestPolicy = PolicyAccepts | PolicyRefuses
@@ -163,7 +164,7 @@ pure def canRequestAssessment(c: Registry, by: int, repository: int, requestOrig
 pure def requestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, authority: P::AuthorityRead): Registry =
   { ...c, security: E::requestAssessment(c.security, by, repository, requestOrigin, assessmentId) }
 pure def canRecordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): bool =
-  policyCurrent(c.project, policy) and
+  c.project.revision > 0 and policyCurrent(c.project, policy) and
   E::canRecordResult(c.security, by, scanOutcome, if (scanOutcome.disposition == A::DMalicious) restrictionPlan(c.project, policy) else E::RevisionNotNeeded)
 pure def recordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): Registry =
   val malicious = scanOutcome.disposition == A::DMalicious

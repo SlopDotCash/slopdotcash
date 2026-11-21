@@ -25,3 +25,66 @@ lemma reinstate_ensures(c: Registry, by_: int, fence: security__enforcement_Fenc
   ensures (inv(c) ==> canReinstate(c, by_, fence) ==> stepExclusionsProspective(c, reinstate(c, by_, fence)))
 {
 }
+
+lemma publishOwnerRevision_ensures(c: Registry, by_: int, change: backend__projects_OwnerChange, account: AccountStanding, exclusions: seq<settlement__payoutExclusions_Exclusion>, appendReads: seq<RegistryRead>)
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysRepositoriesAgree(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysRevisionMirrored(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysChildFactsHold(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysAdministratorsAgree(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysExclusionsValid(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysRestrictionRetiresRegistry(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysRestrictionRetirementHasRestriction(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> alwaysRestrictedProjectRegistered(publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> stepOnlyReinstatementUnretires(c, "publishOwnerRevision", publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) ==> stepExclusionsProspective(c, publishOwnerRevision(c, by_, change, account, exclusions, appendReads)))
+{
+  if inv(c) && canPublishOwnerRevision(c, by_, change, account, exclusions, appendReads) {
+    OwnerRevisionShape(c, by_, change, backend__projects_publishOwnerRevision(c.project, by_, change));
+  }
+}
+
+lemma publishUpdate_ensures(c: Registry, by_: int, change: backend__projects_OwnerChange, account: AccountStanding, exclusions: seq<settlement__payoutExclusions_Exclusion>, appendReads: seq<RegistryRead>)
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysRepositoriesAgree(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysRevisionMirrored(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysChildFactsHold(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysAdministratorsAgree(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysExclusionsValid(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysRestrictionRetiresRegistry(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysRestrictionRetirementHasRestriction(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> alwaysRestrictedProjectRegistered(publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> stepOnlyReinstatementUnretires(c, "publishUpdate", publishUpdate(c, by_, change, account, exclusions, appendReads)))
+  ensures (inv(c) ==> canPublishUpdate(c, by_, change, account, exclusions, appendReads) ==> stepExclusionsProspective(c, publishUpdate(c, by_, change, account, exclusions, appendReads)))
+{
+  if inv(c) && canPublishUpdate(c, by_, change, account, exclusions, appendReads) {
+    OwnerRevisionShape(c, by_, change, backend__projects_publishUpdate(c.project, by_, change));
+  }
+}
+
+lemma WithAppendsShape(change: backend__projects_OwnerChange, e: security__enforcement_Enforcement)
+  ensures withAppends(change, e).repositories == e.repositories + seq(|change.appends|, i requires 0 <= i < |change.appends| => change.appends[i].facts.repository)
+  ensures withAppends(change, e) == e.(repositories := withAppends(change, e).repositories, latest := withAppends(change, e).latest)
+  decreases |change.appends|
+{
+  if |change.appends| > 0 {
+    var rest := change.(appends := change.appends[1..]);
+    var e1 := security__enforcement_appendRepository(e, change.appends[0].facts.repository);
+    WithAppendsShape(rest, e1);
+    assert withAppends(change, e) == withAppends(rest, e1);
+    assert [change.appends[0].facts.repository] + seq(|rest.appends|, i requires 0 <= i < |rest.appends| => rest.appends[i].facts.repository)
+      == seq(|change.appends|, i requires 0 <= i < |change.appends| => change.appends[i].facts.repository);
+  }
+}
+
+lemma OwnerRevisionShape(c: Registry, by_: int, change: backend__projects_OwnerChange, p: backend__projects_Project)
+  requires inv(c) && c.security.restriction.Clear? && backend__projects_changeValid(c.project, by_, change)
+  requires p == backend__projects_changed(by_, change, c.project) || p == backend__projects_changed(by_, change, c.project).(update := backend__projects_UpdatePhase.UpdatePublished)
+  ensures inv(c.(project := p, security := sync(p, withAppends(change, c.security))))
+{
+  WithAppendsShape(change, c.security);
+  var w := withAppends(change, c.security);
+  assert p.repositories == c.project.repositories + seq(|change.appends|, i requires 0 <= i < |change.appends| => change.appends[i].facts.repository);
+  assert p.revision == c.project.revision + 1 && p.creator == c.project.creator && p.steward == c.project.steward;
+  assert p.administrators == c.project.administrators;
+  var s := sync(p, w);
+  assert s == w.(revision := p.revision, steward := p.steward, creator := p.creator);
+}
