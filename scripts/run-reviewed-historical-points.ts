@@ -202,8 +202,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
   const candidates = (packet.duplicateRetirements ?? []).filter(
     (retirement) => retirement.identicalAcceptedChange !== undefined,
   );
-  const verified = new Set<string>();
-  if (!candidates.length) return verified;
+  if (!candidates.length) return new Set();
   const root = `/repos/${packet.sourceAudit.repository}`;
   const repository = await github.get<PublicMergeRepository>(root);
   if (
@@ -212,6 +211,12 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       packet.sourceAudit.repository.toLowerCase()
   )
     throw Error("Reviewed identical change repository changed");
+  const objects = new Set<string>();
+  const checks: {
+    verifyNative: (directory: string) => Promise<void>;
+    recheck: () => Promise<void>;
+    digest: string;
+  }[] = [];
   for (const retirement of candidates) {
     const proof = retirement.identicalAcceptedChange;
     const earlier = retirement.earlierSources.find(
@@ -271,13 +276,30 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
     );
     if (sharedMerge && checked[0].pull.base.sha !== checked[1].pull.base.sha)
       throw Error("Shared acceptance has differing submitted bases");
-    await withObjects(
-      repository,
-      [
-        ...sources.map(({ mergeSha }) => mergeSha),
-        ...checked.flatMap(({ pull }) => [pull.head.sha, pull.base.sha]),
-      ],
-      async (directory) => {
+    for (const { mergeSha, pull } of checked) {
+      objects.add(mergeSha);
+      objects.add(pull.head.sha);
+      objects.add(pull.base.sha);
+    }
+    checks.push({
+      digest: hash(retirement),
+      async recheck() {
+        await Promise.all(
+          checked.map(async (binding) => {
+            const before = binding.pull;
+            const after = await verifyPull(binding);
+            if (
+              after.base.sha !== before.base.sha ||
+              after.base.ref !== before.base.ref ||
+              after.changed_files !== before.changed_files
+            )
+              throw Error(
+                "Reviewed identical change source changed during verification",
+              );
+          }),
+        );
+      },
+      async verifyNative(directory) {
         const nativeGit = async (...args: string[]) => {
           const command = publicGitProcess(directory, args);
           return (await execute(command.file, command.args, command.options))
@@ -493,11 +515,15 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           }
         }
       },
-    );
-    await Promise.all(sources.map(verifyPull));
-    verified.add(hash(retirement));
+    });
   }
-  return verified;
+  // Every proof is for the same verified repository. Fetch and check its full
+  // object graph once, then independently re-read every PR after native checks.
+  await withObjects(repository, [...objects], async (directory) => {
+    for (const check of checks) await check.verifyNative(directory);
+  });
+  for (const check of checks) await check.recheck();
+  return new Set(checks.map(({ digest }) => digest));
 }
 
 /** Recheck GitHub's exact accepted squash relation before using retained bytes. */

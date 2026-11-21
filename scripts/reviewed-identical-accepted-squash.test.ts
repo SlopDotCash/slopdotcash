@@ -203,7 +203,7 @@ for (const scenario of [
             (candidate) => path === `${root}/pulls/${candidate.number}`,
           );
           if (!pull) throw new Error("Unexpected GitHub route");
-          return pull as T;
+          return structuredClone(pull) as T;
         },
       };
       const proof = verifyHistoricalIdenticalAcceptedChanges(
@@ -221,6 +221,65 @@ for (const scenario of [
         );
       }
       if (shared) {
+        const thirdPull = {
+          ...structuredClone(pulls[1]),
+          number: 3,
+          node_id: "PR_third",
+          html_url: `https://github.com/${repository.full_name}/pull/3`,
+          merged_at: "2026-10-04T02:00:00.000Z",
+        };
+        pulls.push(thirdPull);
+        const third = {
+          ...retirement,
+          sourceId: thirdPull.node_id,
+          source: correctionSource(thirdPull),
+        };
+        const batch = {
+          sourceAudit: {
+            ...packet.sourceAudit,
+            sources: [
+              ...packet.sourceAudit.sources,
+              {
+                id: thirdPull.node_id,
+                number: thirdPull.number,
+                headSha: thirdPull.head.sha,
+                mergedAt: thirdPull.merged_at,
+              },
+            ],
+          },
+          duplicateRetirements: [retirement, third],
+        };
+        let acquisitions = 0;
+        expect(
+          await verifyHistoricalIdenticalAcceptedChanges(
+            batch,
+            github,
+            async (_repo, objects, read) => {
+              acquisitions++;
+              expect(objects.toSorted()).toEqual(
+                [earlierMerge, earlierHead, base].toSorted(),
+              );
+              return read(directory);
+            },
+          ),
+        ).toEqual(
+          new Set(
+            [retirement, third].map((item) => sha256Hex(JSON.stringify(item))),
+          ),
+        );
+        expect(acquisitions).toBe(1);
+        await expect(
+          verifyHistoricalIdenticalAcceptedChanges(
+            batch,
+            github,
+            async (_repo, _objects, read) => {
+              const valid = await read(directory);
+              thirdPull.base.sha = earlierWork;
+              return valid;
+            },
+          ),
+        ).rejects.toThrow("changed during verification");
+        thirdPull.base.sha = base;
         const priorBase = pulls[1].base.sha;
         pulls[1].base.sha = earlierWork;
         await expect(
@@ -256,5 +315,5 @@ for (const scenario of [
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 45_000);
 }
