@@ -122,6 +122,15 @@ export async function switchFeeOn(page: Page, tables?: SubmissionFeeTerms) {
   );
 }
 
+/** The same seam, switched off: what a bundle built with the switch off shows. */
+export async function switchFeeOff(page: Page) {
+  await page.addInitScript(() => {
+    (
+      window as unknown as { __SLOP_FEE_FIXTURE__: unknown }
+    ).__SLOP_FEE_FIXTURE__ = { switchedOn: false };
+  });
+}
+
 /**
  * Installs `window.ethereum` and answers each request in the test process.
  * A returned `{ walletError: code }` is thrown in the page with that code.

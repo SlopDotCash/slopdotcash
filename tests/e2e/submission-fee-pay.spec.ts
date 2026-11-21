@@ -1,10 +1,9 @@
 /**
  * The contributor pay page of the refundable submission fee,
  * `/fee/<owner>/<repo>/<number>` (operator decision, 19 November 2026; PRD
- * section 5). The fee is switched off in every deployed bundle, so the first
- * test runs the page exactly as it ships. The others switch it on through the
- * browser-test build's seam and pay with a wallet whose every request the
- * test reads. `submission-fee-pay-chain.spec.ts` pays the real contract on a
+ * section 5). The fee is switched on in every deployed bundle since
+ * 21 November 2026. The tests set the switch through the browser-test build's
+ * seam, on or off, and pay with a wallet whose every request the test reads. `submission-fee-pay-chain.spec.ts` pays the real contract on a
  * local chain.
  */
 import {
@@ -23,6 +22,7 @@ import {
   installWallet,
   scriptedWallet,
   serveFeeRecord,
+  switchFeeOff,
   switchFeeOn,
 } from "./submission-fee-pay-fixture";
 
@@ -36,11 +36,12 @@ test.beforeEach(async ({ diagnostics }) => {
   diagnostics.allowPreviewApiMisses();
 });
 
-test("the page as it ships says the fee is not switched on and offers no way to pay", async ({
+test("a bundle with the fee switched off says so and offers no way to pay", async ({
   page,
 }) => {
   // The deployed switch itself; a change to it must change this test.
-  expect(SUBMISSION_FEE_SWITCHED_ON).toBe(false);
+  expect(SUBMISSION_FEE_SWITCHED_ON).toBe(true);
+  await switchFeeOff(page);
   await serveFeeRecord(page, REPOSITORY, 7, () => feeRecord(REPOSITORY, 7));
   await installWallet(page, scriptedWallet(PAYER).answer);
   await page.goto(PAGE, { waitUntil: "networkidle" });
@@ -80,11 +81,12 @@ test("Pages rewrites the pay address to the app and serves the stored fee read",
     await expect(
       page.getByRole("heading", { level: 1, name: "Submission fee" }),
     ).toBeVisible();
+    // As deployed: switched on, and nothing was asked for this pull request.
     await expect(
       page.getByText("The submission fee is not switched on.", {
         exact: false,
       }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       page.getByText(
         "Slop has not asked a submission fee for this pull request. No fee is due.",
@@ -581,7 +583,8 @@ test("a recorded payment and its outcome are shown, also while the fee is switch
     resolveTransaction: resolve,
   };
   await serveFeeRecord(page, REPOSITORY, 7, () => record);
-  // As deployed: switched off. The record of a payment already made still reads.
+  // Switched off: the record of a payment already made still reads.
+  await switchFeeOff(page);
   await page.goto(PAGE, { waitUntil: "networkidle" });
   await expect(
     page.getByText("The submission fee is not switched on.", { exact: false }),
