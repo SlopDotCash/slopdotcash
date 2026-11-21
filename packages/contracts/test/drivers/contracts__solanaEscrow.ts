@@ -236,9 +236,10 @@ const feeOf = (gross: bigint) => (gross + 49n) / 50n;
 async function initialize(event: Extract<Event, { type: "initialize" | "initializeNative" }>, by: Keypair): Promise<boolean> {
   // The spec holds one project; a second one, for another key, is outside it.
   if (walk.project !== undefined) return false;
-  const project = projectAddress(by.address, event.project, event.purpose);
+  const { opening } = event;
+  const project = projectAddress(by.address, opening.project, opening.purpose);
   const vault = vaultAddress(project);
-  const args = [word(event.project), word(event.network), keyBytes(party(event.identity)), keyBytes(party(event.feeRecipient)), i64le(int64(event.delay)), i64le(int64(event.rotationDelay)), Uint8Array.of(purposeByte[event.purpose])];
+  const args = [word(opening.project), word(opening.network), keyBytes(party(opening.identity)), keyBytes(party(opening.feeRecipient)), i64le(int64(opening.delay)), i64le(int64(opening.rotationDelay)), Uint8Array.of(purposeByte[opening.purpose])];
   let instruction: Instruction;
   if (event.type === "initialize") {
     const mint = await knownMint(event.mint);
