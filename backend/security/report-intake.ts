@@ -40,6 +40,18 @@ import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
+import {
+  type ReportDepositView,
+  type ReportDepositWork,
+  reportDepositAsk,
+  reportDepositView,
+  reportDepositViews,
+} from "./report-deposit";
+import {
+  DEPOSIT_REQUIRED_MESSAGE,
+  depositHeld,
+  depositHeldSql,
+} from "./report-deposit-hold";
 import { routineOwnerRanking } from "./routine-decisions";
 import {
   COLUMNS,
@@ -101,6 +113,7 @@ async function matchingEvidenceDigest(
         WHERE project_id = ?
           AND (receipt_evidence_digest = ? OR evidence_digest = ?)
           AND submission_state <> 'link-rejected'
+          AND NOT ${depositHeldSql("security_cases.id")}
           AND NOT EXISTS (
             SELECT 1 FROM security_submissions s
              WHERE s.case_id = security_cases.id
@@ -131,7 +144,8 @@ async function matchingEvidenceDigest(
          JOIN security_submissions s ON s.id = r.submission_id
         WHERE s.project_id = ?
           AND r.content_sha256 = ?
-          AND s.state NOT IN ('failed', 'abandoned', 'draft')${reportEarlier}
+          AND s.state NOT IN ('failed', 'abandoned', 'draft')
+          AND NOT ${depositHeldSql("s.case_id")}${reportEarlier}
         LIMIT 1`,
     )
     .bind(...reportValues)
@@ -197,6 +211,8 @@ function intakeView(
   roles: Set<Role>,
   submission: SubmissionRow,
   now: Date,
+  /** The report waits for its deposit (`report-deposit-hold.ts`). */
+  held = false,
 ) {
   const reporter = roles.has("reporter");
   return {
@@ -212,14 +228,19 @@ function intakeView(
     reviewedAt: row.reviewed_at,
     canReview: roles.has("security-maintainer"),
     canForward: intakeQualified(row),
-    canRetryScreening: intakeQualified(row)
-      ? row.routed_at === null
-      : row.review_decision === null && screeningRecoverable(row, now),
+    // A report that waits for its deposit is not screened, so nothing can
+    // be retried; its reporter may still add a version.
+    canRetryScreening: held
+      ? false
+      : intakeQualified(row)
+        ? row.routed_at === null
+        : row.review_decision === null && screeningRecoverable(row, now),
     canAuthorize:
       reporter && intakeQualified(row) && submission.advisory_ghsa === null,
     canRevise:
       reporter &&
-      (row.review_decision === "request-information" ||
+      (held ||
+        row.review_decision === "request-information" ||
         (row.review_decision === null &&
           ["needs-information", "spam", "unavailable"].includes(
             row.screening_state,
@@ -242,8 +263,9 @@ function decorateStoredSubmission(
   record: CaseRow,
   roles: Set<Role>,
   now: Date,
+  deposit: ReportDepositView | null,
 ) {
-  const view = intakeView(stored, roles, row, now);
+  const view = intakeView(stored, roles, row, now, deposit?.state === "needed");
   view.canRevise =
     (view.canRevise || record.receipt_state === "needs-information") &&
     roles.has("reporter") &&
@@ -253,7 +275,12 @@ function decorateStoredSubmission(
       record.receipt_state,
     ) &&
     !["approved", "reserved"].includes(record.award_state);
-  return { ...submissionView(row), intake: view };
+  return {
+    ...submissionView(row),
+    intake: view,
+    // Only the reporter sees the deposit on their own report.
+    ...(roles.has("reporter") ? { deposit } : {}),
+  };
 }
 export async function decorateSubmission(
   deps: SecurityApiDependencies,
@@ -263,7 +290,14 @@ export async function decorateSubmission(
   const stored = await storedIntake(deps, row.id);
   if (!stored) return { ...submissionView(row), intake: null };
   const { record, roles } = await accessFor(deps, stored, actor);
-  return decorateStoredSubmission(row, stored, record, roles, deps.now());
+  return decorateStoredSubmission(
+    row,
+    stored,
+    record,
+    roles,
+    deps.now(),
+    await reportDepositView(deps, record.id),
+  );
 }
 export async function storedIntakeViewForCase(
   deps: SecurityApiDependencies,
@@ -279,7 +313,13 @@ export async function storedIntakeViewForCase(
   if (!row) return null;
   return {
     submissionId: row.id,
-    ...intakeView(stored, roles, row, deps.now()),
+    ...intakeView(
+      stored,
+      roles,
+      row,
+      deps.now(),
+      await depositHeld(deps, caseId),
+    ),
   };
 }
 
@@ -324,12 +364,19 @@ export async function storedIntakeViewsForCases(
     for (const row of rows.results ?? []) submissions.set(row.id, row);
   }
   const now = deps.now();
+  const deposits = await reportDepositViews(deps, [...stored.keys()]);
   for (const [caseId, row] of stored) {
     const submission = submissions.get(row.submission_id);
     if (!submission) continue;
     views.set(caseId, {
       submissionId: submission.id,
-      ...intakeView(row, rolesByCase.get(caseId) ?? new Set(), submission, now),
+      ...intakeView(
+        row,
+        rolesByCase.get(caseId) ?? new Set(),
+        submission,
+        now,
+        deposits.get(caseId)?.state === "needed",
+      ),
     });
   }
   return views;
@@ -484,6 +531,8 @@ async function routedNotice(
   actorId: string | null,
 ): Promise<void> {
   if (!intakeQualified(row) || row.routed_at) return;
+  // The owner hears nothing about a report that waits for its deposit.
+  if (await depositHeld(deps, row.case_id)) return;
   const submission = await loadSubmission(deps, row.submission_id);
   if (!submission) return;
   const context = await reportingContext(
@@ -563,6 +612,10 @@ async function screenStoredReport(
   };
   let row = await storedIntake(deps, id);
   if (!row) return;
+  // A report that waits for its deposit is not screened (PRD section 8,
+  // "Report deposit"). Every caller passes through here, so no route can
+  // start the screen, its assessment or the owner's notice early.
+  if (await depositHeld(deps, row.case_id)) return;
   if (intakeQualified(row)) {
     // A public screening retry may recover routing, but assessment retries
     // belong to the authorized maintainer action, not an unmetered report route.
@@ -912,6 +965,13 @@ export async function acceptStoredReport(
       guard: true,
     }),
     notifySecurityReportReceived(deps.db, caseId),
+    // The deposit row commits with the case or not at all.
+    ...(await reportDepositAsk(deps, {
+      caseId,
+      projectId,
+      reporter: actor,
+      at,
+    })),
   ];
   try {
     await deps.db.batch(statements);
@@ -963,6 +1023,7 @@ export async function acceptStoredReport(
       "The private receipt could not be saved. Retry later.",
     );
   }
+  // A held report is saved and waits: `screenStoredReport` refuses it.
   await scheduleScreen(deps, id);
   return json(201, {
     submission: await decorateSubmission(deps, saved, actor),
@@ -1046,7 +1107,7 @@ export async function listStoredSubmissions(
   const candidates = (
     await deps.db
       .prepare(
-        `SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.reporter_github_id<>? AND (c.id IN (SELECT case_id FROM security_case_members WHERE github_id=? AND revoked_at IS NULL)${projects.length ? " OR c.project_id IN (SELECT value FROM json_each(?))" : ""}${deps.moderatorGithubIds?.has(actor.githubId) ? " OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'" : ""}) ORDER BY s.created_at DESC LIMIT 100`,
+        `SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.reporter_github_id<>? AND NOT ${depositHeldSql("c.id")} AND (c.id IN (SELECT case_id FROM security_case_members WHERE github_id=? AND revoked_at IS NULL)${projects.length ? " OR c.project_id IN (SELECT value FROM json_each(?))" : ""}${deps.moderatorGithubIds?.has(actor.githubId) ? " OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'" : ""}) ORDER BY s.created_at DESC LIMIT 100`,
       )
       .bind(
         actor.githubId,
@@ -1106,6 +1167,7 @@ export async function listStoredSubmissions(
       .all<{ case_id: string }>();
     for (const row of members.results) triagers.add(row.case_id);
   }
+  const deposits = await reportDepositViews(deps, caseIds);
   const access = async (stored: StoredIntake) => {
     const record = records.get(stored.case_id);
     if (!record) fail(404, "not_found", "Report not found");
@@ -1142,6 +1204,7 @@ export async function listStoredSubmissions(
           record,
           roles,
           deps.now(),
+          deposits.get(record.id) ?? null,
         ),
       };
     }),
@@ -1174,6 +1237,7 @@ export async function listStoredSubmissions(
             record,
             roles,
             deps.now(),
+            deposits.get(record.id) ?? null,
           ),
         });
     } catch (error) {
@@ -1213,7 +1277,11 @@ async function authorizedStored(
     )
   )
     fail(404, "not_found", "Report not found");
-  return { actor, stored, row, roles };
+  // Only its reporter reads or acts on a report that waits for its deposit.
+  const held = await depositHeld(deps, stored.case_id);
+  if (held && !roles.has("reporter"))
+    fail(404, "not_found", "Report not found");
+  return { actor, stored, row, roles, held };
 }
 export async function readStoredIntake(
   request: Request,
@@ -1251,7 +1319,7 @@ export async function actStoredIntake(
   id: string,
   action: string,
 ): Promise<Response> {
-  const { actor, stored, row, roles } = await authorizedStored(
+  const { actor, stored, row, roles, held } = await authorizedStored(
     request,
     deps,
     id,
@@ -1269,6 +1337,7 @@ export async function actStoredIntake(
   const at = deps.now().toISOString();
   if (action === "screen") {
     exactKeys(body, ["expectedRevision"]);
+    if (held) fail(409, "deposit_required", DEPOSIT_REQUIRED_MESSAGE);
     if (
       !intakeQualified(stored) &&
       (!["queued", "unavailable", "running"].includes(stored.screening_state) ||
@@ -1359,13 +1428,17 @@ export async function actStoredIntake(
       !(["draft", "failed"] as string[]).includes(row.state) ||
       row.advisory_ghsa !== null ||
       !(
-        stored.review_decision === "request-information" ||
-        (stored.review_decision === null &&
-          ["needs-information", "spam", "unavailable"].includes(
-            stored.screening_state,
-          )) ||
-        (await loadCase(deps, stored.case_id))?.receipt_state ===
-          "needs-information"
+        // A report that waits for its deposit can still take a version.
+        (
+          held ||
+          stored.review_decision === "request-information" ||
+          (stored.review_decision === null &&
+            ["needs-information", "spam", "unavailable"].includes(
+              stored.screening_state,
+            )) ||
+          (await loadCase(deps, stored.case_id))?.receipt_state ===
+            "needs-information"
+        )
       )
     )
       fail(409, "report_not_editable", "This report cannot be revised now.");
@@ -1460,6 +1533,9 @@ export async function approvedReportForForward(
 ): Promise<ReportInput | null> {
   const stored = await storedIntake(deps, id);
   if (!stored) return null;
+  // GitHub forwarding waits for the deposit, with a plain reason.
+  if (await depositHeld(deps, stored.case_id))
+    fail(409, "deposit_required", DEPOSIT_REQUIRED_MESSAGE);
   if (!intakeQualified(stored))
     fail(
       409,
@@ -1483,6 +1559,8 @@ export async function scheduleAnalysis(
   timeoutMs?: number,
   expectedReportVersion?: number,
 ): Promise<void> {
+  // No analysis starts while the report waits for its deposit.
+  if (await depositHeld(deps, caseId)) return;
   const run = (timeoutMs: number) =>
     runCaseAnalysis(
       analysisDependencies(deps),
@@ -1518,5 +1596,19 @@ export function analysisDependencies(deps: SecurityApiDependencies) {
     analyzer: deps.analyzer ?? null,
     storedReport: (caseId: string, reportVersion?: number) =>
       readStoredReportByCase(deps, caseId, reportVersion),
+  };
+}
+
+/**
+ * The work a deposit held back, for the release sweep
+ * (`report-deposit.ts`): the screening of a saved report, or the analysis of
+ * a report linked from GitHub, which reads the advisory again.
+ */
+export function reportDepositWork(
+  deps: SecurityApiDependencies,
+): ReportDepositWork {
+  return {
+    screen: (submissionId) => scheduleScreen(deps, submissionId),
+    analyze: (caseId) => scheduleAnalysis(deps, caseId, null),
   };
 }

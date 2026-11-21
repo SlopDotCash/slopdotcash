@@ -100,8 +100,18 @@ import {
   repositoryReportingAuthority,
 } from "./project-access";
 import {
+  depositAmountText,
+  type ReportDepositView,
+  reportDepositAsk,
+  reportDepositView,
+  reportDepositViews,
+  sweepReportDeposits,
+} from "./report-deposit";
+import { depositHeld, depositHeldSql } from "./report-deposit-hold";
+import {
   analysisDependencies,
   readStoredReportByCase,
+  reportDepositWork,
   scheduleAnalysis,
   scheduleAppealTriage,
   storedIntakeViewForCase,
@@ -534,6 +544,8 @@ type CaseContext = {
   reservation: ReservationRow | null;
   intake: Awaited<ReturnType<typeof storedIntakeViewForCase>>;
   forwarded: { repository: string; advisory_ghsa: string } | null;
+  /** The report's deposit, shown to its reporter only. */
+  deposit: ReportDepositView | null;
 };
 
 /**
@@ -555,13 +567,17 @@ async function caseContexts(
       reservation: null,
       intake: null,
       forwarded: null,
+      deposit: null,
     });
   const ids = rows.map((row) => row.id);
-  const [settlements, intakes, directSettlements] = await Promise.all([
-    securitySettlementViews(deps.db, ids),
-    storedIntakeViewsForCases(deps, rolesByCase),
-    directSettlementViews(deps.db, ids),
-  ]);
+  const [settlements, intakes, directSettlements, deposits] = await Promise.all(
+    [
+      securitySettlementViews(deps.db, ids),
+      storedIntakeViewsForCases(deps, rolesByCase),
+      directSettlementViews(deps.db, ids),
+      reportDepositViews(deps, ids),
+    ],
+  );
   for (const part of chunked(ids)) {
     const placeholders = part.map(() => "?").join(",");
     const [reservations, forwarded] = await Promise.all([
@@ -591,6 +607,7 @@ async function caseContexts(
     context.settlement = settlements.get(caseId) ?? null;
     context.directSettlement = directSettlements.get(caseId) ?? null;
     context.intake = intakes.get(caseId) ?? null;
+    context.deposit = deposits.get(caseId) ?? null;
   }
   return contexts;
 }
@@ -645,6 +662,12 @@ async function caseView(
     railAvailable,
   );
   const payer = roles.has("security-maintainer") || roles.has("financial");
+  // The deposit belongs to the reporter's view alone (PRD section 8).
+  const deposit = roles.has("reporter")
+    ? preloaded
+      ? preloaded.deposit
+      : await reportDepositView(deps, row.id)
+    : null;
   const recovery =
     directSettlement?.state === "awaiting-external-payment"
       ? await directRecoveryView(deps.db, row.id, deps.directPayments)
@@ -682,7 +705,9 @@ async function caseView(
         ? payer
           ? "Send the remaining transfers with your external wallet, then verify the transaction IDs."
           : "Waiting for the payer to send and verify your payment."
-        : step.text,
+        : deposit?.state === "needed"
+          ? `Deposit needed: ${depositAmountText(deposit.amount)}. Your report is saved and waits for its deposit.`
+          : step.text,
     nextStepDueAt: step.dueAt,
     submissionState: row.submission_state,
     receivedAt: row.received_at,
@@ -807,6 +832,7 @@ async function caseView(
     return {
       ...shared,
       view: "reporter",
+      deposit,
       events: events
         .filter((event) => REPORTER_EVENT_KINDS.has(event.kind))
         .map((event) => ({
@@ -961,16 +987,19 @@ async function listCases(
   const projectIds = [...currentRoles.keys()];
   const result = await deps.db
     .prepare(
-      `SELECT ${CASE_COLUMNS} FROM security_cases WHERE reporter_github_id = ? OR id IN (SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL)${
+      `SELECT ${CASE_COLUMNS} FROM security_cases WHERE (reporter_github_id = ? OR id IN (SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL)${
         projectIds.length > 0
           ? " OR project_id IN (SELECT value FROM json_each(?))"
           : ""
-      }${deps.moderatorGithubIds?.has(actor.githubId) ? " OR appeal_state <> 'none' OR related_party_review <> 'not-applicable'" : ""} ORDER BY created_at DESC LIMIT 500`,
+      }${deps.moderatorGithubIds?.has(actor.githubId) ? " OR appeal_state <> 'none' OR related_party_review <> 'not-applicable'" : ""}) AND (reporter_github_id = ? OR NOT ${depositHeldSql("security_cases.id")}) ORDER BY created_at DESC LIMIT 500`,
     )
     .bind(
       actor.githubId,
       actor.githubId,
       ...(projectIds.length > 0 ? [JSON.stringify(projectIds)] : []),
+      // A report that waits for its deposit is in nobody's queue but its
+      // reporter's own list.
+      actor.githubId,
     )
     .all<CaseRow>();
   const rows = result.results ?? [];
@@ -1067,6 +1096,8 @@ async function readCase(
   if (row === null) notFound();
   const roles = await caseRoles(deps, row, actor);
   if (roles.size === 0) notFound();
+  // Only its reporter reads a report that waits for its deposit.
+  if (!roles.has("reporter") && (await depositHeld(deps, row.id))) notFound();
   await accessLog(deps, row.id, actor, roles, "read").run();
   return json(200, { case: await caseView(deps, row, roles, true) });
 }
@@ -1138,6 +1169,23 @@ async function recordPrivateReports(
       frozen.terms ? JSON.stringify(frozen.terms) : null,
       frozen.terms ? "pending" : "not-applicable",
     ];
+    // A reporter who links their own GitHub report creates a Slop case, so
+    // it is asked like a new report (PRD section 8, "Report deposit"). A
+    // maintainer's import asks nobody. An older link keeps the row, or the
+    // absence of one, from when it was made.
+    const ask =
+      claim === null && role === "reporter"
+        ? await reportDepositAsk(deps, {
+            caseId,
+            projectId: input.projectId,
+            reporter: report.author,
+            at,
+          })
+        : [];
+    const held =
+      claim === null
+        ? ask.length > 0 && deps.reportDeposit?.mode === "live"
+        : await depositHeld(deps, claim.id);
     const write =
       claim === null
         ? deps.db
@@ -1189,6 +1237,7 @@ async function recordPrivateReports(
           guard: claim !== null,
         }),
         accessLog(deps, caseId, input.actor, new Set([role]), "write"),
+        ...ask,
         ...inboxStatements(deps, {
           caseId,
           revision,
@@ -1196,7 +1245,9 @@ async function recordPrivateReports(
           idempotencyKey,
           reporterGithubId: report.author.githubId,
           detail: {},
-          terms: input.terms,
+          // The owner's notice waits for the deposit; the release sweep
+          // sends it once the deposit is recorded.
+          terms: held ? undefined : input.terms,
         }),
       ]);
     } catch (error) {
@@ -1480,6 +1531,13 @@ async function createCase(
       "This advisory already has a verified case.",
     );
   }
+  // A reporter's link of a GitHub report is asked like a new report; a
+  // maintainer's record is not.
+  const ask =
+    mode === "claim"
+      ? await reportDepositAsk(deps, { caseId: id, projectId, reporter, at })
+      : [];
+  const held = ask.length > 0 && deps.reportDeposit?.mode === "live";
   const insert = caseInsertStatement(deps, {
     id,
     projectId,
@@ -1520,6 +1578,7 @@ async function createCase(
         guard: false,
       }),
       accessLog(deps, id, actor, new Set([role]), "write"),
+      ...ask,
       ...inboxStatements(deps, {
         caseId: id,
         revision: 1,
@@ -1527,7 +1586,8 @@ async function createCase(
         idempotencyKey,
         reporterGithubId: reporter.githubId,
         detail: {},
-        terms,
+        // No owner notice while the link waits for its deposit.
+        terms: held ? undefined : terms,
       }),
     ]);
   } catch (error) {
@@ -2458,6 +2518,7 @@ async function planDecision(
       "evidenceReference",
       "evidenceDigest",
       "award",
+      "spam",
     ],
   );
   requireRole(roles, "security-maintainer", "Security maintainers decide");
@@ -2492,6 +2553,13 @@ async function planDecision(
   if (typeof body.inScope !== "boolean")
     fail(400, "invalid_request", "Invalid inScope");
   const inScope = body.inScope;
+  // A person may mark a rejected report as spam. It is the only record that
+  // closes a report "as spam" (PRD section 8, "Report deposit"): a model's
+  // screening verdict never does.
+  if (body.spam !== undefined && typeof body.spam !== "boolean")
+    fail(400, "invalid_request", "Invalid spam");
+  if (body.spam === true && outcome !== "rejected")
+    fail(400, "invalid_request", "Only a rejected report can be marked spam");
   // The decider declares a related party; program approvers and the sponsor
   // account always are one (SEC-04, SEC-12). Once related, a case stays
   // related, so a redecision after an appeal cannot skip the review.
@@ -2568,6 +2636,7 @@ async function planDecision(
     loss,
     inScope,
     relatedParty,
+    ...(body.spam === true ? { spam: true } : {}),
     // Priority guidance for the owner, not eligibility (PRD section 8).
     priority:
       severity === "critical" ||
@@ -3229,6 +3298,9 @@ async function actOnCase(
   const program = await currentReportingProject(deps, row.project_id);
   const roles = await caseRoles(deps, row, actor);
   if (roles.size === 0) notFound();
+  // Nobody but its reporter acts on a report that waits for its deposit, so
+  // no owner, triager or reviewer can verify, decide or analyse it.
+  if (!roles.has("reporter") && (await depositHeld(deps, row.id))) notFound();
   const action = typeof body.action === "string" ? body.action : "";
   const idempotencyKey = stringField(body, "idempotencyKey", IDEMPOTENCY_KEY);
   const replay = await deps.db
@@ -3507,6 +3579,9 @@ export async function handleSecurityApi(
   // admin's own pass must not find the lease taken by its own request.
   if (parts[0] !== "security-routine")
     sweepRoutineDecisions(routine, deps.routineDecisions);
+  // The deposit sweep releases, decides and starts held work behind the
+  // same requests (PRD section 8, "Report deposit").
+  sweepReportDeposits(deps, reportDepositWork(deps));
   try {
     if (request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");

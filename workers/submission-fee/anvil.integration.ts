@@ -2,7 +2,11 @@
  * The submission-fee Worker against a real local chain and the compiled
  * SubmissionDeposits contract. On Anvil it deposits fees, lets the Worker
  * read and judge them, and lets it send what is due: a refund for a short
- * deposit, a refund for a merge, a kept fee for a close. It then blocks one
+ * deposit, a refund for a merge, a kept fee for a close. On Robinhood Chain
+ * it also pays the SLOP deposits of two private security reports beside a
+ * pull request's fee: one report's deposit is sent back, the other is kept
+ * and reaches the burn address, in the same transaction that keeps the pull
+ * request's fee. It then blocks one
  * payer in the token, as a stablecoin blacklist would, and checks that the
  * deposit that can no longer be refunded is parked while the one behind it is
  * refunded, and that a deposit of a token outside the table is never resolved
@@ -24,6 +28,11 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  REPORT_DEPOSIT_NETWORK,
+  reportDepositAmount,
+  reportDepositItem,
+} from "../../src/lib/security-report-deposit.mjs";
 import {
   SUBMISSION_FEE_BURN,
   SUBMISSION_FEE_KEPT_TO,
@@ -381,8 +390,8 @@ async function rehearse(target: Target) {
       )
       .run(outcome, REPOSITORY, pull(index));
   let deposits = 0;
-  const pay = async (
-    index: number,
+  const payItem = async (
+    item: string,
     token: string,
     amount: bigint,
     keptTo: string,
@@ -393,7 +402,7 @@ async function rehearse(target: Target) {
       amount.toString(),
     ]);
     await send(from, contract, "deposit(bytes32,address,uint128,address)", [
-      submissionFeeItem(REPOSITORY, pull(index)),
+      item,
       token,
       amount.toString(),
       keptTo,
@@ -401,6 +410,49 @@ async function rehearse(target: Target) {
     deposits += 1;
     return deposits;
   };
+  const pay = (
+    index: number,
+    token: string,
+    amount: bigint,
+    keptTo: string,
+    from = payer,
+  ) =>
+    payItem(
+      submissionFeeItem(REPOSITORY, pull(index)),
+      token,
+      amount,
+      keptTo,
+      from,
+    );
+  // A private report's deposit row, as the backend writes it. Case ids are
+  // distinct per network, so both share one database.
+  const caseId = (name: string) => `sc_rehearsal_${target.chainId}_${name}`;
+  const askReport = (
+    name: string,
+    amount: bigint,
+    rate: string,
+    mode: string,
+  ) =>
+    sqlite
+      .query(
+        "INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at) VALUES (?, 'rehearsal', ?, ?, ?, ?, ?)",
+      )
+      .run(
+        caseId(name),
+        reportDepositItem(caseId(name)),
+        mode,
+        amount.toString(),
+        rate,
+        new Date().toISOString(),
+      );
+  const decideReport = (name: string, outcome: string, reason: string) =>
+    sqlite
+      .query(
+        "UPDATE security_report_deposits SET outcome = ?, outcome_reason = ?, outcome_at = ? WHERE case_id = ?",
+      )
+      .run(outcome, reason, new Date().toISOString(), caseId(name));
+  const reportRow = (name: string) =>
+    row("security_report_deposits", `case_id = '${caseId(name)}'`);
   const finalize = () => mine(20);
 
   // Three pull requests: one will be merged, one closed, one paid short.
@@ -575,6 +627,166 @@ async function rehearse(target: Target) {
     say(
       `${due} SLOP base units burned; a misdirected SLOP deposit refunded; no SLOP income`,
     );
+
+    if (target.network === REPORT_DEPOSIT_NETWORK) {
+      // Private security reports beside a pull request. Two reports were
+      // asked for a deposit, a third row was written by record-only mode and
+      // asks for nothing, and a fourth is paid in the stablecoin.
+      const reportDue = BigInt(reportDepositAmount(rate) as string);
+      askReport("answered", reportDue, rate, "asked");
+      askReport("spam", reportDue, rate, "asked");
+      askReport("recorded", reportDue, rate, "recorded");
+      askReport("stable", reportDue, rate, "asked");
+      ask(9);
+      const burnBefore = balance(slop, SUBMISSION_FEE_BURN);
+      const slopBefore = balance(slop, payer);
+      const stableBefore = balance(stable, payer);
+      const feeWalletBefore = balance(stable, feeWallet);
+      const item = (name: string) => reportDepositItem(caseId(name));
+      const answered = await payItem(
+        item("answered"),
+        slop,
+        reportDue,
+        SUBMISSION_FEE_BURN,
+      );
+      const recorded = await payItem(
+        item("recorded"),
+        slop,
+        reportDue,
+        SUBMISSION_FEE_BURN,
+      );
+      const inStable = await payItem(item("stable"), stable, FEE, feeWallet);
+      const pullFee = await pay(9, stable, FEE, feeWallet);
+      // Paid last, so it is still unfinalized when the Worker first sees it.
+      const spam = await payItem(
+        item("spam"),
+        slop,
+        reportDue,
+        SUBMISSION_FEE_BURN,
+      );
+      assert.equal(balance(slop, contract), 3n * reportDue);
+
+      // Seen before finality: the two asked reports and the pull request
+      // are marked paid, each on its own row.
+      await mine(2);
+      outcome = await run("live");
+      assert.equal(outcome.paid, 3);
+      assert.equal(outcome.send, "none");
+      assert.equal(reportRow("answered")?.paid_deposit_id, answered);
+      assert.equal(reportRow("answered")?.paid_network, target.network);
+      assert.equal(reportRow("spam")?.paid_deposit_id, spam);
+      assert.equal(itemRow(pull(9))?.paid_deposit_id, pullFee);
+      // A report's deposit names no pull request.
+      assert.equal(depositRow(answered)?.accepted, 1);
+      assert.equal(depositRow(answered)?.repository_id, null);
+      assert.equal(depositRow(spam)?.accepted, 1);
+      assert.equal(depositRow(spam)?.finalized_at, null);
+      assert.equal(depositRow(pullFee)?.repository_id, REPOSITORY);
+      // The stablecoin does not pay a report; the recorded row is no ask.
+      assert.equal(
+        depositRow(inStable)?.reject_reason,
+        "report_token_not_slop",
+      );
+      assert.equal(reportRow("stable")?.paid_at, null);
+      assert.equal(depositRow(recorded)?.accepted, null);
+      assert.equal(reportRow("recorded")?.paid_at, null);
+      say(
+        "two report deposits and a pull request fee marked paid before finality",
+      );
+
+      // Undecided and finalized: only the refused stablecoin deposit is due.
+      await finalize();
+      decideReport("answered", "refund_due", "responded");
+      decideReport("spam", "kept_due", "spam");
+      decide(9, "kept_due");
+      const signedBefore = signedSends;
+      outcome = await run("live");
+      assert.equal(outcome.send, "sent");
+      assert.equal(signedSends, signedBefore + 1);
+      // One transaction: a report sent back, the stablecoin deposit sent
+      // back, the pull request's fee kept, a report kept.
+      assert.equal(
+        journal().at(-1)?.deposits,
+        JSON.stringify([
+          { id: answered, refund: true },
+          { id: inStable, refund: true },
+          { id: pullFee, refund: false },
+          { id: spam, refund: false },
+        ]),
+      );
+      // Nothing is final before the chain's own finalized events.
+      assert.equal(reportRow("spam")?.outcome, "kept_due");
+      await mine(1);
+      await finalize();
+      outcome = await run("live");
+      assert.equal(outcome.resolved, 4);
+      assert.equal(depositRow(answered)?.state, "refunded");
+      assert.equal(depositRow(spam)?.state, "kept");
+      assert.equal(depositRow(inStable)?.state, "refunded");
+      assert.equal(depositRow(pullFee)?.state, "kept");
+      assert.equal(reportRow("answered")?.outcome, "refunded");
+      assert.equal(reportRow("answered")?.outcome_reason, "responded");
+      assert.equal(
+        reportRow("answered")?.outcome_at,
+        depositRow(answered)?.resolved_at,
+      );
+      assert.equal(reportRow("spam")?.outcome, "kept");
+      assert.equal(reportRow("spam")?.outcome_reason, "spam");
+      assert.equal(reportRow("stable")?.outcome, null);
+      assert.equal(itemRow(pull(9))?.outcome, "kept");
+      // The chain: one report's SLOP is at the burn address, the other's is
+      // back with its payer, the third is still in the contract, and the fee
+      // wallet holds the pull request's fee and nothing of a report.
+      assert.equal(balance(slop, SUBMISSION_FEE_BURN), burnBefore + reportDue);
+      assert.equal(balance(slop, payer), slopBefore - 2n * reportDue);
+      assert.equal(balance(slop, contract), reportDue);
+      assert.equal(balance(stable, feeWallet), feeWalletBefore + FEE);
+      assert.equal(balance(stable, payer), stableBefore - FEE);
+      say(
+        `one report deposit of ${reportDue} sent back, one burned, beside a kept pull request fee, in one transaction`,
+      );
+
+      // The deposit that names the recorded row is an unknown item: after a
+      // day it is sent back, and the row is never marked paid.
+      outcome = await run("live");
+      assert.equal(outcome.send, "none");
+      ahead += 25 * 60 * 60 * 1000;
+      outcome = await run("live");
+      assert.equal(outcome.send, "sent");
+      assert.equal(depositRow(recorded)?.reject_reason, "unknown_item");
+      await mine(1);
+      await finalize();
+      outcome = await run("live");
+      assert.equal(depositRow(recorded)?.state, "refunded");
+      assert.equal(reportRow("recorded")?.paid_at, null);
+      assert.equal(reportRow("recorded")?.outcome, null);
+      assert.equal(balance(slop, payer), slopBefore - reportDue);
+      assert.equal(balance(slop, contract), 0n);
+      assert.equal(balance(slop, SUBMISSION_FEE_BURN), burnBefore + reportDue);
+      // A kept report deposit is not fee income; the pull request's fee is.
+      const feeStore = new D1BuybackStore(db as never);
+      assert.equal(
+        await feeStore.feeIncome(
+          converter,
+          slop,
+          feeWallet,
+          "2026-11-12T00:00:00.000Z",
+        ),
+        0n,
+      );
+      assert.equal(
+        await feeStore.feeIncome(
+          converter,
+          stable,
+          feeWallet,
+          "2026-11-12T00:00:00.000Z",
+        ),
+        2n * FEE,
+      );
+      say(
+        "a deposit naming a record-only row was sent back after a day; no report deposit is fee income",
+      );
+    }
   }
 
   // A payer the token will not pay, and a token outside the table. On a
