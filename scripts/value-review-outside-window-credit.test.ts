@@ -36,6 +36,7 @@ import {
   type PointsJournal,
 } from "../src/lib/points";
 import { penaltyScoreInput } from "../tests/penalty-score-fixture";
+import { holdProtectedPointAwards } from "./generate-points";
 
 beforeAll(() => setSystemTime(new Date("2026-12-10T00:00:00.000Z")));
 afterAll(() => setSystemTime());
@@ -55,7 +56,11 @@ const late: GitHubActor = {
   kind: "User",
 };
 
-function build(generatedAt: string, earlyTier = "standard") {
+function build(
+  generatedAt: string,
+  earlyTier = "standard",
+  withDecision = true,
+) {
   const census = penaltyScoreInput([], generatedAt);
   // Mirror the real collector: the census for a generation only contains
   // merged outcomes inside its own 35-day window.
@@ -139,16 +144,18 @@ function build(generatedAt: string, earlyTier = "standard") {
     ],
     latestDigest: "d".repeat(64),
   };
-  census.valueDecisions = new Map([
-    [
-      pull.id,
-      decision as unknown as NonNullable<
-        LeaderboardInput["valueDecisions"]
-      > extends ReadonlyMap<string, infer V>
-        ? V
-        : never,
-    ],
-  ]);
+  census.valueDecisions = withDecision
+    ? new Map([
+        [
+          pull.id,
+          decision as unknown as NonNullable<
+            LeaderboardInput["valueDecisions"]
+          > extends ReadonlyMap<string, infer V>
+            ? V
+            : never,
+        ],
+      ])
+    : new Map();
   return createLeaderboardSnapshot(census);
 }
 
@@ -454,4 +461,57 @@ test("a later reassessment that raises the share does not reissue a recorded awa
   );
   expect(after?.amount).toBe(recorded.amount);
   expect(revisionsFor(journal, "PRR_early")).toHaveLength(1);
+});
+
+test("an omitted-credit award created for a paid month is held and the batch still publishes", () => {
+  // The first generation ran after the merge but before the value
+  // assessment was recorded, so it published the merged-PR awards and no
+  // review award. The late generation adds both review awards as new
+  // revisions: the late reviewer's through the ledger, the early
+  // reviewer's through the omitted credit this PR records.
+  const unassessed = build("2026-11-13T00:00:00.000Z", "standard", false);
+  let journal = applyPointsSnapshot(
+    emptyPointsJournal("2026-11-13T00:00:00.000Z"),
+    unassessed,
+    "b".repeat(64),
+    "2026-11-13T00:00:00.000Z",
+  );
+  const known = new Set(journal.revisions.map((r) => r.id));
+  const late = build("2026-12-08T00:00:00.000Z");
+  journal = applyPointsSnapshot(
+    journal,
+    late,
+    "a".repeat(64),
+    "2026-12-08T00:00:00.000Z",
+  );
+  const added = journal.revisions.filter((r) => !known.has(r.id));
+  // The assessment landing also changes the merged-PR award for
+  // PR_november, so its revision is new too; PR_owner's award is unchanged.
+  expect(added.map((r) => r.award.sourceId).sort()).toEqual([
+    "PRR_early",
+    "PRR_late",
+    "PR_november",
+  ]);
+  const earlyRevision = added.find((r) => r.award.sourceId === "PRR_early");
+  if (!earlyRevision) throw new Error("missing early award");
+  expect(earlyRevision.award.occurredAt).toBe("2026-11-02T00:00:00.000Z");
+  expect(earlyRevision.award.projectId).toBe("asi");
+  // asi 2026-11 is a paid month: all three new revisions in it are held —
+  // both review awards, including the omitted-credit award, and the
+  // changed merged-PR award — and the already-published awards still
+  // publish, so the batch is not refused at import: it carries no new
+  // revision in the paid month.
+  const { journal: published, held } = holdProtectedPointAwards(
+    journal,
+    known,
+    [{ projectId: "asi", period: "2026-11" }],
+  );
+  expect(held).toBe(3);
+  expect(published.revisions.map((r) => r.id).sort()).toEqual(
+    [...known].sort(),
+  );
+  expect(published.revisions.filter((r) => !known.has(r.id))).toEqual([]);
+  // With no paid month, the same journal publishes in full.
+  expect(holdProtectedPointAwards(journal, known, []).held).toBe(0);
+  expect(holdProtectedPointAwards(journal, known, []).journal).toEqual(journal);
 });
