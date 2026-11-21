@@ -71,6 +71,11 @@ function retainedCommit(raw: string, sha: string) {
   return { tree, parents };
 }
 
+export const HISTORICAL_POINTS_AUDIT_WINDOW = {
+  from: "2026-09-27T00:00:00.000Z",
+  through: "2026-11-01T00:00:00.000Z",
+} as const;
+
 export interface HistoricalPointsPacket {
   schemaVersion: "1";
   projectId: string;
@@ -259,8 +264,8 @@ export function decodeHistoricalPacketBytes(
     "Invalid audit repository",
   );
   check(
-    audit.from === "2026-09-27T00:00:00.000Z" &&
-      audit.through === "2026-11-01T00:00:00.000Z",
+    audit.from === HISTORICAL_POINTS_AUDIT_WINDOW.from &&
+      audit.through === HISTORICAL_POINTS_AUDIT_WINDOW.through,
     "Incomplete historical window",
   );
   check(

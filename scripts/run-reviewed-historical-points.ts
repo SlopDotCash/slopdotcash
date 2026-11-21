@@ -15,6 +15,8 @@ import { pullCommits } from "../workers/slopbot/value-evidence";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
 import { resolveGitHubToken } from "./github-token";
+import { readHistoricalAssessmentCatalog } from "./historical-assessment-catalog";
+import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
 import {
   correctionBatchRecorded,
   recordCorrection,
@@ -23,6 +25,7 @@ import { reviewedPacketStorage } from "./private-payout-packet";
 import {
   decodeHistoricalPacket,
   decodeHistoricalPacketBytes,
+  HISTORICAL_POINTS_AUDIT_WINDOW,
   type HistoricalAcceptedSquash,
   type HistoricalPointsPacket,
   historicalProtectionQuery,
@@ -42,12 +45,13 @@ const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
 const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 type Query = (sql: string) => Promise<Record<string, unknown>[]>;
 
+type HistoricalSourceAudit = HistoricalPointsPacket["sourceAudit"];
+
 /** Re-read the exact closed window by immutable PR and repository identity. */
-export async function verifyHistoricalCensus(
-  packet: HistoricalPointsPacket,
+export async function collectHistoricalSourceAudit(
+  scope: Omit<HistoricalSourceAudit, "sources">,
   github: Pick<GitHubClient, "graphql">,
-): Promise<void> {
-  const sources: HistoricalPointsPacket["sourceAudit"]["sources"] = [];
+): Promise<HistoricalSourceAudit> {
   const collect = async (
     from: string,
     through: string,
@@ -71,7 +75,7 @@ export async function verifyHistoricalCensus(
       } = await github.graphql(
         "query HistoricalPointsCensus($query:String!,$after:String){search(query:$query,type:ISSUE,first:100,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{...on PullRequest{id number headRefOid mergedAt repository{id}}}}}",
         {
-          query: `repo:${packet.sourceAudit.repository} is:pr is:merged ${mergedTimeRangeQualifier(Date.parse(from), Date.parse(through) - 1000)}`,
+          query: `repo:${scope.repository} is:pr is:merged ${mergedTimeRangeQualifier(Date.parse(from), Date.parse(through) - 1000)}`,
           after: cursor,
         },
       );
@@ -103,13 +107,24 @@ export async function verifyHistoricalCensus(
         return combined;
       }
       for (const row of page.nodes) {
-        if (row.repository?.id !== packet.sourceAudit.repositoryNodeId)
+        if (row.repository?.id !== scope.repositoryNodeId)
           throw Error("Historical census repository changed");
+        const mergedAt = new Date(row.mergedAt).toISOString();
+        if (
+          typeof row.id !== "string" ||
+          !row.id ||
+          !Number.isSafeInteger(row.number) ||
+          row.number <= 0 ||
+          !/^[a-f0-9]{40}$/u.test(row.headRefOid) ||
+          mergedAt < from ||
+          mergedAt >= through
+        )
+          throw Error("Historical census source is invalid");
         rows.push({
           id: row.id,
           number: row.number,
           headSha: row.headRefOid,
-          mergedAt: new Date(row.mergedAt).toISOString(),
+          mergedAt,
         });
       }
       const next = page.pageInfo;
@@ -128,14 +143,32 @@ export async function verifyHistoricalCensus(
       throw Error("Historical census incomplete");
     return rows;
   };
-  sources.push(
-    ...(await collect(packet.sourceAudit.from, packet.sourceAudit.through)),
-  );
-  const ordered = (rows: typeof sources) =>
+  const sources = await collect(scope.from, scope.through);
+  if (
+    !sources.length ||
+    new Set(sources.map(({ number }) => number)).size !== sources.length
+  )
+    throw Error("Historical census pull request numbers are invalid");
+  return {
+    repository: scope.repository,
+    repositoryNodeId: scope.repositoryNodeId,
+    from: scope.from,
+    through: scope.through,
+    sources: sources.sort((a, b) => a.number - b.number),
+  };
+}
+
+export async function verifyHistoricalCensus(
+  packet: HistoricalPointsPacket,
+  github: Pick<GitHubClient, "graphql">,
+): Promise<void> {
+  const { sources, ...scope } = packet.sourceAudit;
+  const current = await collectHistoricalSourceAudit(scope, github);
+  const ordered = (rows: HistoricalSourceAudit["sources"]) =>
     [...rows].sort((a, b) => a.id.localeCompare(b.id));
   if (
-    JSON.stringify(ordered(sources)) !==
-    JSON.stringify(ordered(packet.sourceAudit.sources))
+    JSON.stringify(ordered(current.sources)) !==
+    JSON.stringify(ordered(sources))
   )
     throw Error("Reviewed historical census changed");
 }
@@ -568,6 +601,36 @@ export function historicalPointsSql(
   return `${guards}\n${pointsSql(candidate)}`;
 }
 
+const query: Query = async (sql) => {
+  try {
+    const { stdout } = await execute(
+      resolve("node_modules/.bin/wrangler"),
+      [
+        "d1",
+        "execute",
+        "slop-private",
+        "--remote",
+        "--config",
+        "workers/identity/wrangler.toml",
+        "--json",
+        "--command",
+        sql,
+      ],
+      {
+        env: {
+          ...process.env,
+          WRANGLER_LOG: "log",
+          WRANGLER_WRITE_LOGS: "false",
+        },
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+    return octoberQueryRows(stdout);
+  } catch {
+    throw Error("Private historical read failed");
+  }
+};
+
 type PublicationPhase =
   | "trusted invocation"
   | "main source verification"
@@ -580,6 +643,9 @@ type PublicationPhase =
   | "accepted squash verification"
   | "financial protection verification"
   | "value record verification"
+  | "complete assessment catalog read"
+  | "assessment source reconciliation"
+  | "assessment receipt"
   | "public Points read"
   | "recipient and account restriction verification"
   | "published checkpoint verification"
@@ -587,6 +653,152 @@ type PublicationPhase =
   | "import preparation"
   | "apply authority recheck"
   | "protected import and readback";
+
+export function historicalAssessmentAuditInputs(
+  env: Readonly<Record<string, string | undefined>>,
+) {
+  if (
+    (env.HISTORICAL_POINTS_APPLY ?? "false") !== "false" ||
+    env.REVIEWED_PACKET_SHA256
+  )
+    throw Error(
+      "Assessment audit requires a read-only invocation without a packet",
+    );
+  const projectId = env.HISTORICAL_ASSESSMENT_PROJECT ?? "";
+  const sourceDigest = env.HISTORICAL_SOURCE_AUDIT_SHA256 ?? "";
+  const expectedPointsDigest = env.HISTORICAL_POINTS_BASELINE_SHA256 ?? "";
+  if (
+    !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(projectId) ||
+    ![sourceDigest, expectedPointsDigest].every((digest) =>
+      /^[a-f0-9]{64}$/u.test(digest),
+    )
+  )
+    throw Error("Assessment audit requires exact scope and baseline digests");
+  return { projectId, sourceDigest, expectedPointsDigest };
+}
+
+async function auditHistoricalAssessments(
+  setPhase: (phase: PublicationPhase) => void,
+  verifyMain: () => Promise<void>,
+): Promise<void> {
+  const { projectId, sourceDigest, expectedPointsDigest } =
+    historicalAssessmentAuditInputs(process.env);
+
+  setPhase("project and repository verification");
+  const registry = await fetchProjectRegistry();
+  const project = registry.projects
+    .map(assertProjectDefinition)
+    .find((row) => row.id === projectId);
+  const revisions = registry.revisions as {
+    projectId: string;
+    revision: number;
+    manifestSha256: string;
+    manifest: unknown;
+  }[];
+  const revision = revisions
+    .filter((row) => row.projectId === projectId)
+    .sort((a, b) => b.revision - a.revision)[0];
+  if (
+    !project ||
+    !revision ||
+    registry.withheld.includes(projectId) ||
+    project.repositories.length !== 1 ||
+    hash(project) !== revision.manifestSha256 ||
+    hash(revision.manifest) !== revision.manifestSha256 ||
+    JSON.stringify(project) !== JSON.stringify(revision.manifest)
+  )
+    throw Error("Assessment audit requires the complete current project scope");
+  const repository = project.repositories[0].id;
+  const identity = repositoryIdentity(project, repository);
+  if (!identity) throw Error("Historical repository identity unavailable");
+  const github = GitHubClient.forToken(await resolveGitHubToken());
+  const liveRepository = await github.get<PublicMergeRepository>(
+    `/repos/${repository}`,
+  );
+  if (
+    liveRepository?.node_id !== identity.nodeId ||
+    String(liveRepository.id) !== String(identity.githubId) ||
+    liveRepository.full_name?.toLowerCase() !== repository.toLowerCase() ||
+    liveRepository.private !== false
+  )
+    throw Error("Historical repository identity changed");
+  setPhase("historical census verification");
+  const sourceAudit = await collectHistoricalSourceAudit(
+    {
+      repository,
+      repositoryNodeId: identity.nodeId,
+      ...HISTORICAL_POINTS_AUDIT_WINDOW,
+    },
+    github,
+  );
+  if (hash(sourceAudit) !== sourceDigest)
+    throw Error("Assessment audit source digest changed");
+
+  setPhase("complete assessment catalog read");
+  const catalog = await readHistoricalAssessmentCatalog(
+    {
+      projectId,
+      repositoryNodeId: identity.nodeId,
+      revision: revision.revision,
+      manifestSha256: revision.manifestSha256,
+      expectedPointsDigest,
+    },
+    query,
+  );
+  setPhase("public Points read");
+  const baseline = await loadPublishedPoints();
+  if (
+    !baseline ||
+    hash(baseline) !== expectedPointsDigest ||
+    baseline.revisions.length !== catalog.heads.d1PointsCount
+  )
+    throw Error(
+      "Assessment audit Points baseline differs from the public journal",
+    );
+
+  setPhase("assessment source reconciliation");
+  const receipt = await classifyHistoricalAssessmentScope(
+    catalog,
+    sourceAudit,
+    projectId,
+  );
+  await verifyMain();
+  setPhase("assessment receipt");
+  const summary = {
+    projectId,
+    mode: "assessment-audit",
+    status: receipt.status,
+    sourceDigest,
+    sourceCount: sourceAudit.sources.length,
+    expectedPointsDigest,
+    baselineRevisionCount: baseline.revisions.length,
+    registryRevision: catalog.heads.registryRevision,
+    registryManifestSha256: catalog.heads.registryManifestSha256,
+    jointThrough: catalog.heads.jointThrough,
+    legacyThrough: catalog.heads.legacyThrough,
+    jointRecords: catalog.heads.jointScopedCount,
+    legacyRecords: catalog.heads.legacyRepoCount,
+    receiptDigest: receipt.receiptSha256,
+  };
+  if (receipt.status === "incomplete") {
+    console.log(JSON.stringify(summary));
+    throw Error("Assessment catalog could not be reconciled");
+  }
+  const directory = join(
+    process.env.RUNNER_TEMP ?? "",
+    "historical-assessment-audit",
+  );
+  await mkdir(directory, { mode: 0o700, recursive: true });
+  await writeFile(
+    join(directory, "receipt.json"),
+    `${JSON.stringify(summary)}\n`,
+    {
+      mode: 0o600,
+      flag: "wx",
+    },
+  );
+  console.log(JSON.stringify(summary));
+}
 
 async function main(setPhase: (phase: PublicationPhase) => void) {
   if (
@@ -607,6 +819,10 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
       throw Error("Historical publication source changed");
   };
   await verifyMain();
+  const flags = process.argv.slice(2);
+  if (flags.length === 1 && flags[0] === "--audit-assessments")
+    return auditHistoricalAssessments(setPhase, verifyMain);
+  if (flags.length !== 0) throw Error("Unknown historical Points operation");
   const encoded = [1, 2, 3, 4]
     .map((n) => process.env[`HISTORICAL_POINTS_PACKET_${n}`] ?? "")
     .join("");
@@ -626,35 +842,6 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     bytes === null
       ? decodeHistoricalPacket(encoded, digest)
       : decodeHistoricalPacketBytes(bytes, digest);
-  const query: Query = async (sql) => {
-    try {
-      const { stdout } = await execute(
-        resolve("node_modules/.bin/wrangler"),
-        [
-          "d1",
-          "execute",
-          "slop-private",
-          "--remote",
-          "--config",
-          "workers/identity/wrangler.toml",
-          "--json",
-          "--command",
-          sql,
-        ],
-        {
-          env: {
-            ...process.env,
-            WRANGLER_LOG: "log",
-            WRANGLER_WRITE_LOGS: "false",
-          },
-          maxBuffer: 16 * 1024 * 1024,
-        },
-      );
-      return octoberQueryRows(stdout);
-    } catch {
-      throw Error("Private historical read failed");
-    }
-  };
   setPhase("enforcement checkpoint read");
   const enforcement = await query(
     "SELECT COALESCE(MAX(rowid),0) AS generation FROM project_enforcements",

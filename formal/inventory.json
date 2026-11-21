@@ -157,9 +157,12 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "bd8d55d53012265d39e44a35ee1803c14a0ffbc03a595e1a4651c88d8d4b26c4",
-      "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [39],
+      "sha256": "def8b19d1c2a36f3d11d2cb15fdc0f221347f4bae8b3a6ee85472ea1169ed22e",
+      "models": [
+        "formal/models/points/historical_assessment_audit.qnt",
+        "formal/models/points/source_import.qnt"
+      ],
+      "candidateLines": [79],
       "review": "mapped-abstraction"
     },
     {
@@ -4407,6 +4410,20 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/historical-assessment-catalog.ts",
+      "sha256": "edbdcea24e21371e4bb7a610efaaf7ba94dea3ed90ed0c76ca2c82e874f16782",
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "candidateLines": [73, 361],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/historical-assessment-reconciliation.ts",
+      "sha256": "252fe291f46c25472faed569abcb8d3c14e55e61c2e331e877a5f7b731848718",
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "candidateLines": [55, 178, 366, 507, 515],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/historical-discussion-evidence.ts",
       "sha256": "775b0fecfa0ec23199522eca53b257000ff59e67653037706e598ad72e84c4be",
       "models": [
@@ -5134,9 +5151,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "9a0795eb0d9c483e411fd0c0386aae49a84f891fe86f7104c618f1d6b0ca4b36",
+      "sha256": "729d80708ef5c4055ba3ef4e959399965ca1a8ae77bab8b036d3f20f7c3fab48",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 493, 685, 920, 921, 922, 925, 1248],
+      "candidateLines": [55, 56, 498, 690, 925, 926, 927, 930, 1253],
       "review": "mapped-abstraction"
     },
     {
@@ -5214,9 +5231,12 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "e56a362b6ebbbb62df6d7e84f59c5269c606c35687a343704aaa1d35ab78848c",
-      "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 545, 565, 668, 769],
+      "sha256": "534b4d97fb8c9c9655ec2a418ffeb0becd56fa42a7f85897c59b7a0680e08111",
+      "models": [
+        "formal/models/points/historical_assessment_audit.qnt",
+        "formal/models/points/source_import.qnt"
+      ],
+      "candidateLines": [3, 578, 598, 770, 783, 792, 855, 956],
       "review": "mapped-abstraction"
     },
     {
@@ -15326,6 +15346,24 @@
         "unrelatedServerErrorNeverRetriesTest",
         "unrelatedValidationErrorNeverRetriesTest",
         "writeDoesNotRetryTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/historical_assessment_audit.qnt",
+      "sha256": "5e2d7a0c1595e417c6cdbac6223a9771b33dd09bdc29f4acad103847782a7063",
+      "sources": [
+        ".github/workflows/reviewed-historical-points.yml",
+        "scripts/historical-assessment-catalog.ts",
+        "scripts/historical-assessment-reconciliation.ts",
+        "scripts/run-reviewed-historical-points.ts"
+      ],
+      "scenarios": [
+        "applyCannotEnterAuditTest",
+        "bothCatalogsRequiredTest",
+        "changedScopeCannotEnterAuditTest",
+        "invalidRecordRemainsIncompleteTest",
+        "matchedActiveRecordRequiresReplayTest",
+        "verifiedEmptyCutTest"
       ]
     },
     {
