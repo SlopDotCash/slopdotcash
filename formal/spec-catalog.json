@@ -25822,7 +25822,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "134b5312e6710b22173db556a13c2e1ddd0e08e6c0d0e8d11b8b82154d7d6332",
+      "sha256": "eb56ff62680adad5894bda312fe9125b03d504349a9b60d483a2598baa062925",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -26020,7 +26020,6 @@
             "weight_decide",
             "weight_showAmounts",
             "weight_decideAward",
-            "weight_reviewRelated",
             "weight_reconcile",
             "weight_admitDirect",
             "weight_observeWallets",

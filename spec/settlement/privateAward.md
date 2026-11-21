@@ -323,9 +323,15 @@ and 7 moderators and 5 the financial approver. The later snapshots revoke
 or ban the financial approver.
 
 Discovered by simulation: with no related reporter and no moderator among
-the deciding actors, no related-party proposal ever reached a moderator's
-review, so a later snapshot names the reporter a related party and
-moderator 4 is among the actors.
+the deciding actors, the guard probe for a related-party review found no
+reachable state in which a moderator could review a proposal, so the
+snapshot that revokes the financial approver also names the reporter a
+related party, and moderator 4 is among the actors. A separate fourth
+related-party snapshot diluted the revoke and ban observations until the
+search for a direct award paid after its payer lost the role found no
+witness; a case decided after the revoke snapshot cannot be admitted as a
+direct award anyway, so correlating the two observations costs that search
+nothing.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
@@ -335,8 +341,8 @@ pure val sourceValues = Set(C::SlopReceived)
 pure val termsValues = Set(awardTerms, { ...awardTerms, receivedAt: 5 })
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
-pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List() }, { ...C::staff, epoch: 2, banned: List(5) },
-  { ...C::staff, epoch: 2, relatedParties: List(1) })
+pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List(), relatedParties: List(1) },
+  { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
@@ -384,7 +390,6 @@ pure val weight_observeAuthority = 3
 pure val weight_decide = 10
 pure val weight_showAmounts = 15
 pure val weight_decideAward = 15
-pure val weight_reviewRelated = 15
 pure val weight_reconcile = 10
 pure val weight_admitDirect = 25
 pure val weight_observeWallets = 15
