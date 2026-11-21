@@ -110,6 +110,23 @@ function feedRetryDelays(): number[] {
   return delays;
 }
 
+/**
+ * How many first history pages are read at once before the sequential
+ * history loop of loadValueInputs, from SLOP_VALUE_FEED_CONCURRENCY (an
+ * integer from 1 to 16). Unset, empty or 1 means no read-ahead: every page is
+ * read in order, one at a time. The release collector sets it: about 9,000
+ * outcomes each cost two small feed reads, which took 80 to 100 minutes of
+ * pure waiting when read one after another (operator decision, 21 November
+ * 2026).
+ */
+function valueFeedConcurrency(): number {
+  const raw = process.env.SLOP_VALUE_FEED_CONCURRENCY?.trim();
+  if (!raw) return 1;
+  if (!/^[0-9]{1,2}$/u.test(raw))
+    throw new Error("SLOP_VALUE_FEED_CONCURRENCY is invalid");
+  return Number(raw);
+}
+
 async function withFeedRetry<T>(read: () => Promise<T>): Promise<T> {
   const delays = feedRetryDelays();
   for (let attempt = 0; ; attempt++) {
@@ -560,7 +577,14 @@ export async function loadValueInputs(
   attributionOutcomes: readonly AttributionOutcome[] = outcomes,
   onProgress: (progress: ValueInputProgress) => void = () => {},
   memo?: AttributionMemoContext,
+  feedConcurrency: number = valueFeedConcurrency(),
 ) {
+  if (
+    !Number.isSafeInteger(feedConcurrency) ||
+    feedConcurrency < 1 ||
+    feedConcurrency > 16
+  )
+    throw new Error("SLOP_VALUE_FEED_CONCURRENCY is invalid");
   // While an attribution is computed live, every read passes through its
   // recorder so the next collection can tell whether the answer still holds.
   let recorder: AttributionRecorder | null = null;
@@ -1200,6 +1224,118 @@ export async function loadValueInputs(
     });
   }
 
+  // First history pages read ahead of the loop below, keyed by the outcome's
+  // position and the exact arguments of its first read. The loop takes each
+  // page at most once and reads every other page itself.
+  const warmedJointPages = new Map<string, JointPage>();
+  const warmedSinglePages = new Map<string, Page>();
+  const firstPageKey = (
+    index: number,
+    repositoryId: string,
+    pull: number,
+    repositoryNodeId: string,
+  ) => JSON.stringify([index, repositoryId, pull, repositoryNodeId]);
+  function takeWarmed<T>(pages: Map<string, T>, key: string): T | undefined {
+    const page = pages.get(key);
+    pages.delete(key);
+    return page;
+  }
+
+  /**
+   * Reads the first joint page of every outcome, and the first single page
+   * where that joint history is empty, a bounded number at a time. It only
+   * saves waiting: it calls the same readers with the arguments the loop
+   * uses, decides nothing and reports nothing. A read that fails here is
+   * dropped and ends the read-ahead, so the loop repeats that read in its
+   * own turn and its failure surfaces there, in order, as without it.
+   */
+  async function warmFirstHistoryPages() {
+    const targets: ({ repositoryId: string; nodeId: string } | null)[] = [];
+    const unresolved = new Set<string>();
+    // Resolve each repository once, in outcome order, before any feed read.
+    for (const outcome of outcomes) {
+      let target: (typeof targets)[number] = null;
+      try {
+        const [owner, repo] = new URL(outcome.url).pathname
+          .split("/")
+          .filter(Boolean);
+        const route = `${owner}/${repo}`;
+        if (!unresolved.has(route))
+          try {
+            const { repository, identity } = await repositoryIdentity(route);
+            target = { repositoryId: repository.id, nodeId: identity.node_id };
+          } catch {
+            unresolved.add(route);
+          }
+      } catch {
+        // The loop reports an outcome URL it cannot read.
+      }
+      targets.push(target);
+    }
+    let next = 0;
+    let stopped = false;
+    const worker = async () => {
+      while (!stopped && next < outcomes.length) {
+        const index = next++;
+        const target = targets[index];
+        if (!target) continue;
+        const pull = outcomes[index].number;
+        const key = firstPageKey(
+          index,
+          target.repositoryId,
+          pull,
+          target.nodeId,
+        );
+        try {
+          const joint = await fetchWorkUnitHistoryPage(
+            target.repositoryId,
+            pull,
+            0,
+            null,
+            transport,
+            target.nodeId,
+          );
+          warmedJointPages.set(key, joint);
+          // The loop reads the single history only after an empty joint one.
+          if (
+            stopped ||
+            joint.records.length !== 0 ||
+            joint.nextAfter !== null ||
+            joint.totalRecords !== 0
+          )
+            continue;
+          warmedSinglePages.set(
+            key,
+            await fetchValueHistoryPage(
+              target.repositoryId,
+              pull,
+              0,
+              transport,
+              target.nodeId,
+            ),
+          );
+        } catch {
+          stopped = true;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(feedConcurrency, outcomes.length) },
+        worker,
+      ),
+    );
+    console.warn(
+      JSON.stringify({
+        event: "value_history_first_pages_warmed",
+        concurrency: feedConcurrency,
+        outcomes: outcomes.length,
+        pages: warmedJointPages.size + warmedSinglePages.size,
+      }),
+    );
+  }
+  if (feedConcurrency > 1 && outcomes.length > 0) await warmFirstHistoryPages();
+
   for (const [index, outcome] of outcomes.entries()) {
     onProgress({
       phase: "value-histories",
@@ -1212,16 +1348,29 @@ export async function loadValueInputs(
     const { repository, identity } = await repositoryIdentity(
       `${owner}/${repo}`,
     );
+    const firstPage = firstPageKey(
+      index,
+      repository.id,
+      outcome.number,
+      identity.node_id,
+    );
     const graph = await readWorkUnitHistory(
-      (after, through) =>
-        fetchWorkUnitHistoryPage(
-          repository.id,
-          outcome.number,
-          after,
-          through,
-          transport,
-          identity.node_id,
-        ),
+      (after, through) => {
+        const warmed =
+          after === 0 && through === null
+            ? takeWarmed(warmedJointPages, firstPage)
+            : undefined;
+        return warmed
+          ? Promise.resolve(warmed)
+          : fetchWorkUnitHistoryPage(
+              repository.id,
+              outcome.number,
+              after,
+              through,
+              transport,
+              identity.node_id,
+            );
+      },
       { repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id },
     );
     const groupDigest = graph.current?.row.record_digest ?? null;
@@ -1324,13 +1473,15 @@ export async function loadValueInputs(
         jointValueDecisions.set(member.pullRequestNodeId, decision);
       continue;
     }
-    const first = await fetchValueHistoryPage(
-      repository.id,
-      outcome.number,
-      0,
-      transport,
-      identity.node_id,
-    );
+    const first =
+      takeWarmed(warmedSinglePages, firstPage) ??
+      (await fetchValueHistoryPage(
+        repository.id,
+        outcome.number,
+        0,
+        transport,
+        identity.node_id,
+      ));
     if (first.records.length === 0 && first.nextAfter === null) {
       valueDecisions.set(outcome.id, {
         status: "missing",

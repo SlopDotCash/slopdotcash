@@ -503,6 +503,9 @@ jobs:
           # Retry one value-feed read after a temporary outage instead of
           # restarting the whole collection (19 November 2026).
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
+          # Read the first value-history pages six at a time before the
+          # sequential history loop (operator decision, 21 November 2026).
+          SLOP_VALUE_FEED_CONCURRENCY: "6"
           # Empty unless the clone step above made at least one clone.
           SLOP_LOCAL_GIT_DIR: ${{ steps.local_git.outputs.directory }}
           SLOP_DEFER_RETAINED_ATTRIBUTION: ${{ inputs.defer_retained_attribution == true && '1' || '' }}

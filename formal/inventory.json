@@ -28,7 +28,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "39bfa1c36878fc3d2d05e037a7108395af20ba353a4daf8a95f4af3d7a3c5583",
+      "sha256": "277905fdf5fc35ee878123cc43cac2eff54971712707b7a5794e8e9b48264fca",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -39,10 +39,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 62, 258, 393, 503, 532, 533, 607, 660, 717, 797, 802, 917, 923, 991,
-        994, 1020, 1021, 1042, 1054, 1086, 1124, 1354, 1382, 1474, 1487, 1578,
-        1686, 1688, 1689, 1893, 1976, 2129, 2131, 2161, 2276, 2298, 2369, 2380,
-        2405, 2476, 2489, 2502, 2511, 2512, 2513, 2530
+        44, 62, 258, 393, 503, 535, 536, 610, 663, 720, 800, 805, 920, 926, 994,
+        997, 1023, 1024, 1045, 1057, 1089, 1127, 1357, 1385, 1477, 1490, 1581,
+        1689, 1691, 1692, 1896, 1979, 2132, 2134, 2164, 2279, 2301, 2372, 2383,
+        2408, 2479, 2492, 2505, 2514, 2515, 2516, 2533
       ],
       "review": "mapped-abstraction"
     },
@@ -87,7 +87,7 @@
     },
     {
       "path": ".github/workflows/monthly-rewards.yml",
-      "sha256": "d264c7c90a5db1e595d10d2becc773a4ccd0b6762c88ca0771170faa3643b937",
+      "sha256": "77d12b9708d2e5de7beab1b01271cda8e01be52cb9eab5c9d97f0a77cfd8fde9",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [57, 63, 66, 160, 207],
       "review": "mapped-abstraction"
@@ -5428,18 +5428,19 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "6b9b6154772e6b7c374eeaaba39068a3894a44d662a22f9a4502f5f88a2ead5c",
+      "sha256": "84979cf0a08df4c027dd84546c50360833da5ad9b1ca3e51a90f7f5ff9148415",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/slopbot/value_history_warmup.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        80, 91, 131, 190, 191, 192, 193, 195, 196, 285, 286, 287, 289, 290, 942,
-        971, 1261, 1297, 1336, 1360
+        80, 91, 148, 207, 208, 209, 210, 212, 213, 302, 303, 304, 306, 307, 966,
+        995, 1240, 1410, 1446, 1487, 1511
       ],
       "review": "mapped-abstraction"
     },
@@ -17838,6 +17839,22 @@
         "resetKeepsSnapshotTest",
         "timeoutBeforeHeadersTest",
         "verifiedFeedPublishesTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/value_history_warmup.qnt",
+      "sha256": "ab1cc7368a364109ff2e0694757ee38aeb0f1abbe82fad1a13d273a1ab99e019",
+      "sources": ["scripts/value-ingestion.ts"],
+      "scenarios": [
+        "droppedReadEndsReadAheadTest",
+        "droppedReadIsRepeatedByLoopTest",
+        "failureSurfacesFromLoopInOrderTest",
+        "loopWaitsForReadAheadTest",
+        "readAheadStaysWithinLimitTest",
+        "sequentialOnlyTest",
+        "sequentialReadsEveryPageTest",
+        "warmedPageIsNotReadAgainTest",
+        "warmedPagesAreTakenOnceTest"
       ]
     },
     {
