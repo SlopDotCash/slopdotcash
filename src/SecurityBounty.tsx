@@ -3733,6 +3733,13 @@ function CaseDetail({
     [replaceData],
   );
   const [note, setNote] = useState<string | null>(null);
+  // The case renders below every report and the case list. Bring it to the
+  // reader when it first loads after a notification link or "Open case".
+  const article = useRef<HTMLElement>(null);
+  const loaded = state.status === "ready";
+  useEffect(() => {
+    if (loaded) article.current?.scrollIntoView({ block: "start" });
+  }, [loaded]);
   if (state.status === "loading") return <Spinner label="Loading case…" />;
   if (state.status === "signed-out")
     return (
@@ -3873,6 +3880,7 @@ function CaseDetail({
     <article
       aria-labelledby={`case-${record.id}`}
       className="admin-card security-case"
+      ref={article}
     >
       <header>
         <h3 id={`case-${record.id}`}>
