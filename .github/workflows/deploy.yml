@@ -170,16 +170,9 @@ jobs:
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
+    # The three-hour window expired before the complete census was written.
     timeout-minutes: 360
     steps:
-      - name: Reserve checked bundle preparation time
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && inputs.use_published_data != true
-        run: |
-          set -euo pipefail
-          # Stop collection at minute 347 or earlier. The outer termination
-          # allowance leaves the remaining job time for checks and uploads.
-          echo "SLOP_PREPARE_COLLECT_UNTIL_SECONDS=$(( $(date +%s) + 20820 ))" >> "$GITHUB_ENV"
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -360,14 +353,10 @@ jobs:
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
             mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
-            collector_started=$(date +%s)
-            collection_seconds=20700
-            preparation_seconds=$(( SLOP_PREPARE_COLLECT_UNTIL_SECONDS - collector_started ))
-            if [ "$preparation_seconds" -lt "$collection_seconds" ]; then
-              collection_seconds=$preparation_seconds
-            fi
-            collection_deadline=$(( collector_started + collection_seconds ))
-            export SLOP_DISCUSSION_DEADLINE_MS="$(( collection_deadline * 1000 ))"
+            export SLOP_DISCUSSION_DEADLINE_MS="$(( $(date +%s) * 1000 + 18000000 ))"
+            # Reserve time to retain the latest journal of public reads before
+            # the job limit, even when an unrelated live endpoint stalls.
+            collect=(timeout --signal=TERM --kill-after=10s 18100 "${collect[@]}")
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
@@ -376,27 +365,12 @@ jobs:
           # legacy fallback. Every other failure stops the release.
           feed_status=0
           for attempt in 1 2; do
-            attempt_command=("${collect[@]}")
-            if [ "$GITHUB_REF" = refs/heads/main ]; then
-              remaining_seconds=$(( collection_deadline - $(date +%s) ))
-              if [ "$remaining_seconds" -le 0 ]; then
-                if [ "$feed_status" -eq 75 ]; then
-                  break
-                fi
-                echo "::error::No time remains for live collection before checked bundle preparation."
-                exit 1
-              fi
-              attempt_command=(timeout --signal=TERM --kill-after=10s "$((remaining_seconds + 100))" "${collect[@]}")
-            fi
             feed_status=0
-            "${attempt_command[@]}" || feed_status=$?
+            "${collect[@]}" || feed_status=$?
             if [ "$feed_status" -ne 75 ]; then
               break
             fi
             if [ "$attempt" -eq 1 ]; then
-              if [ "$GITHUB_REF" = refs/heads/main ] && [ "$(( $(date +%s) + 60 ))" -ge "$collection_deadline" ]; then
-                break
-              fi
               echo "::warning::Hosted value feed unavailable; retrying in 60 seconds."
               sleep 60
             fi
