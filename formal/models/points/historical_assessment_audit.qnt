@@ -1,5 +1,12 @@
 // @source scripts/historical-assessment-catalog.ts
 // @source scripts/historical-assessment-reconciliation.ts
+// @source scripts/historical-assessment-transport.ts
+// @source scripts/historical-merged-replay.ts
+// @source scripts/historical-value-replay.ts
+// @evidence scripts/historical-assessment-transport.test.ts
+// @evidence scripts/historical-leaderboard-scope.test.ts
+// @evidence scripts/historical-merged-replay.test.ts
+// @evidence scripts/historical-value-replay.test.ts
 // @source scripts/run-reviewed-historical-points.ts
 // @source .github/workflows/reviewed-historical-points.yml
 // The read-only path reports a conclusion at a fixed journal cut. Completeness
@@ -14,6 +21,7 @@ module historical_assessment_audit {
     legacyRead: int,
     invalid: bool,
     relevant: bool,
+    current: bool,
     status: str,
   }
   var s: State
@@ -26,6 +34,7 @@ module historical_assessment_audit {
     legacyRead: 0,
     invalid: false,
     relevant: false,
+    current: true,
     status: "unsealed",
   }
 
@@ -45,8 +54,13 @@ module historical_assessment_audit {
   }
 
   val complete = not(s.invalid) and s.jointRead == s.jointExpected and s.legacyRead == s.legacyExpected
+  action changeCheckpoint(affectsScope: bool): bool = all {
+    s.phase == "reading",
+    s' = s.with("current", s.current and not(affectsScope)),
+  }
   action seal = all {
     s.phase == "reading",
+    s.current,
     s' = s.with("phase", "sealed").with(
       "status",
       if (complete) (if (s.relevant) "requires-value-replay" else "no-scoped-active-assessments")
@@ -63,6 +77,8 @@ module historical_assessment_audit {
     observe(false, true, true),
     observe(false, true, false),
     observe(false, false, false),
+    changeCheckpoint(true),
+    changeCheckpoint(false),
     seal,
     s' = s,
   }
@@ -70,7 +86,7 @@ module historical_assessment_audit {
   val invariant = all {
     s.status == "no-scoped-active-assessments" implies (complete and not(s.relevant)),
     s.status == "requires-value-replay" implies (complete and s.relevant),
-    s.phase == "sealed" implies s.status != "unsealed",
+    s.phase == "sealed" implies (s.status != "unsealed" and s.current),
   }
 
   run verifiedEmptyCutTest = init.then(capture(true, true, false, 0, 0))
@@ -85,4 +101,9 @@ module historical_assessment_audit {
     .then(seal).expect(s.status == "incomplete" and invariant)
   run applyCannotEnterAuditTest = init.then(capture(true, true, true, 1, 1).fail())
   run changedScopeCannotEnterAuditTest = init.then(capture(true, false, false, 1, 1).fail())
+  run changedCheckpointRefusesReceiptTest = init
+    .then(capture(true, true, false, 0, 0)).then(changeCheckpoint(true)).then(seal.fail())
+  run unrelatedAppendAllowsReceiptTest = init
+    .then(capture(true, true, false, 0, 0)).then(changeCheckpoint(false))
+    .then(seal).expect(s.status == "no-scoped-active-assessments" and invariant)
 }

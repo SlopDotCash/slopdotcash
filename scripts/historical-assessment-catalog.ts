@@ -8,9 +8,13 @@ export interface HistoricalAssessmentScope {
   expectedPointsDigest: string;
 }
 
-export interface HistoricalAssessmentHeads {
+export interface HistoricalAssessmentJournalHeads {
   jointThrough: number;
   legacyThrough: number;
+}
+
+export interface HistoricalAssessmentHeads
+  extends HistoricalAssessmentJournalHeads {
   jointScopedCount: number;
   legacyRepoCount: number;
   d1PointsDigest: string;
@@ -71,6 +75,9 @@ const PROJECT = /^[a-z0-9][a-z0-9-]{0,47}$/u;
 
 const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 const hash = (raw: string) => createHash("sha256").update(raw).digest("hex");
+const JOURNAL_HEADS_SQL = `SELECT
+  COALESCE((SELECT MAX(sequence) FROM slopbot_work_unit_journal), 0) AS joint_through,
+  COALESCE((SELECT MAX(sequence) FROM slopbot_value_journal), 0) AS legacy_through`;
 
 function requireCatalog(value: unknown, reason: string): asserts value {
   if (!value) throw new Error(`Historical assessment catalog: ${reason}`);
@@ -319,14 +326,85 @@ const JOINT_INDEX_COLUMNS = `r.project_id, r.source_digest,
     )
   ) AS source_index_matches`;
 
+function assessmentJournalScopes(
+  scope: Pick<HistoricalAssessmentScope, "projectId" | "repositoryNodeId">,
+) {
+  const projectId = quote(validatedText(scope.projectId, PROJECT));
+  const repositoryNodeId = quote(validatedText(scope.repositoryNodeId, NODE));
+  return {
+    projectId,
+    repositoryNodeId,
+    jointScope: `r.project_id = ${projectId} OR EXISTS (SELECT 1 FROM slopbot_work_unit_sources s WHERE s.record_digest = r.record_digest AND s.repository_node_id = ${repositoryNodeId})`,
+    legacyScope: `r.repository_node_id = ${repositoryNodeId}`,
+  };
+}
+
+export async function readHistoricalAssessmentJournalHeads(
+  query: Query,
+): Promise<HistoricalAssessmentJournalHeads> {
+  const rows = await query(JOURNAL_HEADS_SQL);
+  requireCatalog(
+    Array.isArray(rows) && rows.length === 1,
+    "journal heads unavailable",
+  );
+  const row = record(rows[0]);
+  return {
+    jointThrough: integer(row.joint_through),
+    legacyThrough: integer(row.legacy_through),
+  };
+}
+
+/** Use in the final batch insert, where an intervening append can no longer race it. */
+export function historicalAssessmentRecordingConditions(
+  scope: Pick<HistoricalAssessmentScope, "projectId" | "repositoryNodeId">,
+  heads: HistoricalAssessmentJournalHeads,
+): string[] {
+  const { jointScope, legacyScope } = assessmentJournalScopes(scope);
+  return [
+    `NOT EXISTS (SELECT 1 FROM slopbot_work_unit_journal r WHERE r.sequence > ${integer(heads.jointThrough)} AND (${jointScope}))`,
+    `NOT EXISTS (SELECT 1 FROM slopbot_value_journal r WHERE r.sequence > ${integer(heads.legacyThrough)} AND (${legacyScope}))`,
+  ];
+}
+
+export function historicalPointsBaselineCondition(
+  digest: string,
+  revisionCount: number,
+): string {
+  return `EXISTS (SELECT 1 FROM (SELECT digest, revision_count FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1) baseline WHERE baseline.digest = ${quote(validatedText(digest, DIGEST))} AND baseline.revision_count = ${integer(revisionCount)})`;
+}
+
+/** Recheck a read-only qualification after its public source collection. */
+export async function assertHistoricalAssessmentFreshness(
+  scope: HistoricalAssessmentScope,
+  heads: HistoricalAssessmentHeads,
+  query: Query,
+): Promise<void> {
+  const { projectId, repositoryNodeId } = assessmentJournalScopes(scope);
+  const current = [
+    ...historicalAssessmentRecordingConditions(scope, heads),
+    historicalPointsBaselineCondition(
+      scope.expectedPointsDigest,
+      heads.d1PointsCount,
+    ),
+    `EXISTS (SELECT 1 FROM projects p WHERE p.id = ${projectId} AND p.revision = ${integer(scope.revision)} AND p.manifest_sha256 = ${quote(validatedText(scope.manifestSha256, DIGEST))} AND p.status = 'active' AND json_extract(p.manifest, '$.authority.repositoryNodeId') = ${repositoryNodeId} AND json_array_length(p.manifest, '$.repositories') = 1)`,
+    `(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ${integer(heads.enforcementGeneration)}`,
+  ];
+  const rows = await query(`SELECT (${current.join(" AND ")}) AS fresh`);
+  requireCatalog(
+    rows.length === 1 && rows[0].fresh === 1,
+    "assessment qualification changed during collection",
+  );
+}
+
 /** The protected query connection is the authority for the frozen journal. */
 export async function readHistoricalAssessmentCatalog(
   requested: HistoricalAssessmentScope,
   query: Query,
+  through?: HistoricalAssessmentJournalHeads,
 ): Promise<HistoricalAssessmentCatalog> {
   const scope = { ...requested };
-  const projectId = quote(validatedText(scope.projectId, PROJECT));
-  const repositoryNodeId = quote(validatedText(scope.repositoryNodeId, NODE));
+  const { projectId, repositoryNodeId, jointScope, legacyScope } =
+    assessmentJournalScopes(scope);
   const revision = integer(scope.revision);
   requireCatalog(revision > 0, "registry revision is missing");
   const manifestSha256 = validatedText(scope.manifestSha256, DIGEST);
@@ -334,11 +412,14 @@ export async function readHistoricalAssessmentCatalog(
     scope.expectedPointsDigest,
     DIGEST,
   );
-  const jointScope = `r.project_id = ${projectId} OR EXISTS (
-    SELECT 1 FROM slopbot_work_unit_sources s
-    WHERE s.record_digest = r.record_digest
-      AND s.repository_node_id = ${repositoryNodeId})`;
-  const legacyScope = `r.repository_node_id = ${repositoryNodeId}`;
+  let headsSql = JOURNAL_HEADS_SQL;
+  if (through) {
+    const joint = integer(through.jointThrough);
+    const legacy = integer(through.legacyThrough);
+    headsSql = `SELECT ${joint} AS joint_through, ${legacy} AS legacy_through
+      FROM (${JOURNAL_HEADS_SQL}) current_heads
+      WHERE current_heads.joint_through >= ${joint} AND current_heads.legacy_through >= ${legacy}`;
+  }
   const output = await query(`SELECT h.joint_through, h.legacy_through,
     (SELECT COUNT(*) FROM slopbot_work_unit_journal r
       WHERE r.sequence <= h.joint_through AND (${jointScope})) AS joint_scoped_count,
@@ -348,10 +429,7 @@ export async function readHistoricalAssessmentCatalog(
     checkpoint.revision_count AS d1_points_count,
     (SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) AS enforcement_generation,
     p.revision AS registry_revision, p.manifest_sha256 AS registry_manifest_sha256
-  FROM (
-    SELECT COALESCE((SELECT MAX(sequence) FROM slopbot_work_unit_journal), 0) AS joint_through,
-      COALESCE((SELECT MAX(sequence) FROM slopbot_value_journal), 0) AS legacy_through
-  ) h CROSS JOIN (
+  FROM (${headsSql}) h CROSS JOIN (
     SELECT digest, revision_count FROM points_batches
     ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1
   ) checkpoint CROSS JOIN projects p

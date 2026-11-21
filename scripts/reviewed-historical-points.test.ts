@@ -22,6 +22,7 @@ import {
 import { sha256Hex } from "../src/lib/sha256";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { pointsSql } from "./generate-points";
+import { changeDigest } from "./pull-request-git-files";
 import {
   decodeHistoricalPacket,
   type HistoricalPointsPacket,
@@ -33,6 +34,7 @@ import {
   historicalPointsSql,
   verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
+  verifyHistoricalIdenticalAcceptedChanges,
   verifyHistoricalProtection,
   verifyHistoricalValueRecords,
 } from "./run-reviewed-historical-points";
@@ -624,6 +626,34 @@ test("reviewed packet reproduces canonical one-project candidate and rejects alt
     decodeHistoricalPacket(gzipSync(bytes).toString("base64"), "0".repeat(64)),
   ).toThrow();
 });
+test("the reviewed packet digest binds one exact historical replay reference", () => {
+  const { packet } = fixture();
+  const replay = {
+    runId: 12,
+    attempt: 2,
+    artifactId: 34,
+    qualificationSha256: "a".repeat(64),
+  };
+  function decode(reference: unknown) {
+    const bytes = Buffer.from(
+      JSON.stringify({ ...packet, replayQualification: reference }),
+    );
+    return decodeHistoricalPacket(
+      gzipSync(bytes).toString("base64"),
+      sha256Hex(bytes),
+    );
+  }
+  expect(decode(replay).replayQualification).toEqual(replay);
+  for (const bad of [
+    null,
+    { ...replay, attempt: 0 },
+    { ...replay, runId: "12" },
+    { ...replay, artifactId: Number.MAX_SAFE_INTEGER + 1 },
+    { ...replay, qualificationSha256: "b".repeat(63) },
+    { ...replay, downloadUrl: "https://example.invalid" },
+  ])
+    expect(() => decode(bad)).toThrow("Invalid reviewed replay qualification");
+});
 for (const fault of [
   "baseline",
   "project",
@@ -652,6 +682,8 @@ for (const fault of [
         reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
       ).toThrow();
   });
+const initialAssessmentHeads = { jointThrough: 0, legacyThrough: 0 };
+
 test("canonical historical writer replays and refuses a registry race", () => {
   const f = fixture(),
     { sqlite } = sqliteD1();
@@ -667,7 +699,12 @@ test("canonical historical writer replays and refuses a registry race", () => {
         "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('feed','active',1,'{}',?,?,?)",
       )
       .run(f.packet.manifestSha256, time, time);
-    const sql = historicalPointsSql(f.packet, f.candidate, 0);
+    const sql = historicalPointsSql(
+      f.packet,
+      f.candidate,
+      0,
+      initialAssessmentHeads,
+    );
     const apply = () =>
       sqlite
         .transaction(() => {
@@ -694,6 +731,92 @@ test("canonical historical writer replays and refuses a registry race", () => {
     sqlite.close();
   }
 });
+
+test.each([
+  "new assessment",
+  "new Points checkpoint",
+  "unrelated assessment",
+] as const)(
+  "final historical Points insert handles %s after staging",
+  (race) => {
+    const f = fixture();
+    using sqlite = sqliteD1().sqlite;
+    sqlite.exec(pointsSql(f.baseline));
+    sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('feed',1,'{}',?,'fixture',?)",
+      )
+      .run(f.packet.manifestSha256, time);
+    sqlite
+      .query(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('feed','active',1,'{}',?,?,?)",
+      )
+      .run(f.packet.manifestSha256, time, time);
+    const changed = appendPointAwards(
+      f.baseline,
+      [{ ...f.baseline.revisions[0].award, amount: 40 }],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-11-15T01:00:02.000Z",
+    );
+    const statements = historicalPointsSql(
+      f.packet,
+      changed,
+      0,
+      initialAssessmentHeads,
+    )
+      .trimEnd()
+      .split("\n");
+    const publish = statements.findIndex((sql) =>
+      sql.startsWith("INSERT INTO points_batches"),
+    );
+    expect(publish).toBeGreaterThan(0);
+    for (const sql of statements.slice(0, publish)) sqlite.exec(sql);
+    if (race === "new Points checkpoint") {
+      const newer = { ...f.baseline, generatedAt: "2026-11-15T01:00:01.000Z" };
+      sqlite.exec(pointsSql(newer));
+    } else {
+      const record = {
+        repositoryNodeId:
+          race === "unrelated assessment" ? "R_other" : "R_feed",
+        pullRequestNodeId: "PR_source",
+        headSha: "a".repeat(40),
+        sourceDigest: "b".repeat(64),
+      };
+      sqlite
+        .query(`INSERT INTO slopbot_value_journal (
+          record_digest, assessment_key, repository_node_id, pull_request_node_id,
+          head_sha, source_digest, record_json, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(
+          hash(record),
+          "c".repeat(64),
+          record.repositoryNodeId,
+          record.pullRequestNodeId,
+          record.headSha,
+          record.sourceDigest,
+          JSON.stringify(record),
+          time,
+        );
+    }
+    const lookup = sqlite.query(
+      "SELECT digest FROM points_batches WHERE digest=?",
+    );
+    if (race === "unrelated assessment") {
+      sqlite.exec(statements[publish]);
+      expect(lookup.get(hash(changed))).toEqual({ digest: hash(changed) });
+      expect(
+        sqlite.query("SELECT COUNT(*) n FROM points_revisions").get(),
+      ).toEqual({ n: 2 });
+    } else {
+      expect(() => sqlite.exec(statements[publish])).toThrow();
+      expect(lookup.get(hash(changed))).toBeNull();
+      expect(
+        sqlite.query("SELECT COUNT(*) n FROM points_revisions").get(),
+      ).toEqual({ n: 1 });
+    }
+  },
+);
 test("protected assessment audit accepts exact read-only scope inputs", () => {
   const inputs = {
     HISTORICAL_POINTS_APPLY: "false",
@@ -821,7 +944,12 @@ test("canonical writer refuses a protected economic correction atomically", () =
       "slop-score-v2",
       "2026-11-15T01:00:01.000Z",
     );
-    const sql = historicalPointsSql(f.packet, changed, 0);
+    const sql = historicalPointsSql(
+      f.packet,
+      changed,
+      0,
+      initialAssessmentHeads,
+    );
     sqlite
       .query(
         "INSERT INTO payment_direct_transfers VALUES('solana-mainnet','synthetic','feed','2026-10','42',?,'origin','solana','synthetic','1',?,'synthetic','synthetic',?)",
@@ -3123,15 +3251,38 @@ test("historical publication installs the canonical merge runtime before verific
       import.meta.url,
     ),
   ).text();
-  expect(workflow).toContain("timeout-minutes: 90");
+  expect(workflow).toContain(
+    "inputs.operation == 'replay-assessments' && 360 || 90",
+  );
   const install = workflow.indexOf(
     'scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"',
   );
   const verify = workflow.indexOf("scripts/run-reviewed-historical-points.ts");
   expect(install).toBeGreaterThan(0);
   expect(verify).toBeGreaterThan(install);
+  expect(workflow.indexOf("bun run projects:sync")).toBeGreaterThan(0);
+  expect(workflow.indexOf("bun run projects:sync")).toBeLessThan(verify);
   expect(workflow).toContain(
     '"$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"',
+  );
+  expect(workflow).toContain(
+    "inputs.operation == 'replay-assessments' && 'slop-quality-refs/heads/main-collect' || 'slop-production'",
+  );
+  const preflight = workflow.slice(
+    workflow.indexOf("audit-assessments|replay-assessments)"),
+    workflow.indexOf("publish-reviewed)", workflow.indexOf("case")),
+  );
+  expect(preflight).toContain('test "$APPLY" = false');
+  expect(preflight).toContain('test -z "$PACKET_SHA"');
+  const reading = workflow.slice(
+    workflow.indexOf(
+      "name: Read and verify the complete historical assessment catalog",
+    ),
+    workflow.indexOf("name: Preserve the assessment audit receipt"),
+  );
+  expect(reading).toContain('"--$OPERATION"');
+  expect(reading).not.toMatch(
+    /PRIVATE_PACKET|HISTORICAL_POINTS_OBJECT_MANIFEST|HISTORICAL_POINTS_PACKET_[1-4]|SLOPBOT_APP|HISTORICAL_REPLAY_ACTIONS_TOKEN/u,
   );
   const source = await Bun.file(
     new URL("./value-merge-ingestion.ts", import.meta.url),
@@ -3139,3 +3290,278 @@ test("historical publication installs the canonical merge runtime before verific
   expect(source).toContain('["fetch", "fsck"].includes(args[0])');
   expect(source).toContain(": command.options.timeout");
 });
+
+test("an independently verified identical accepted change retires only its later ordinary award", () => {
+  const f = duplicateRetirementFixture();
+  const { retirement } = f;
+  const earlier = retirement.earlierSources[0];
+  earlier.headSha = "e".repeat(40);
+  earlier.commits[0].sha = earlier.headSha;
+  f.packet.sourceAudit.sources[1].headSha = earlier.headSha;
+  retirement.coverage = [];
+  retirement.identicalAcceptedChange = {
+    earlierSourceId: earlier.sourceId,
+    earlierMergeSha: "1".repeat(40),
+    mergeSha: "2".repeat(40),
+    diffSha256: "3".repeat(64),
+  };
+  retirement.evidence = JSON.stringify({
+    sourceId: retirement.sourceId,
+    workUnitId: retirement.workUnitId,
+    sourceSha256: hash(retirement.source),
+    earlierSourcesSha256: hash(retirement.earlierSources),
+    coverageSha256: hash(retirement.coverage),
+    identicalAcceptedChangeSha256: hash(retirement.identicalAcceptedChange),
+  });
+  retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+  const target = f.baseline.revisions[0].award;
+  const expected = appendPointAwards(
+    f.baseline,
+    [{ ...target, amount: 0 }],
+    hash(retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        target.key,
+        {
+          sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(expected);
+  const verified = new Set([hash(retirement)]);
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+  const result = reconstructHistoricalPoints(
+    f.packet,
+    f.baseline,
+    time,
+    new Map(),
+    verified,
+  );
+  expect(result).toEqual(expected);
+  expect(result.revisions.slice(0, 2)).toEqual(f.baseline.revisions);
+  expect(latestPoints(result).get(target.key)?.award.amount).toBe(0);
+  expect(latestPoints(result).get(f.baseline.revisions[1].award.key)).toEqual(
+    f.baseline.revisions[1],
+  );
+
+  retirement.identicalAcceptedChange.diffSha256 = "4".repeat(64);
+  expect(() =>
+    reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      time,
+      new Map(),
+      verified,
+    ),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+});
+
+test("an empty accepted squash retires a duplicate only when the earlier rewarded change is already in its parent", async () => {
+  const f = duplicateRetirementFixture();
+  const { retirement } = f;
+  const earlier = retirement.earlierSources[0];
+  const directory = await mkdtemp(join(tmpdir(), "historical-empty-squash-"));
+  try {
+    const git = (...args: string[]) => {
+      const result = Bun.spawnSync([
+        "git",
+        "-C",
+        directory,
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Historical Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        ...args,
+      ]);
+      if (result.exitCode !== 0) throw Error("Fixture Git command failed");
+      return result.stdout.toString().trim();
+    };
+    const commit = (message: string) => {
+      git("add", ".");
+      git("commit", "--allow-empty", "-m", message);
+      return git("rev-parse", "HEAD");
+    };
+    git("init", "--template=");
+    const base = commit("Initial tree");
+    const workPath = ":(exclude)literal[1].ts";
+    const work = join(directory, workPath);
+    await writeFile(work, "accepted work\n");
+    const earlierHead = commit("Earlier submitted change");
+    git("checkout", "--detach", base);
+    await writeFile(work, "accepted work\n");
+    const earlierMerged = commit("Earlier accepted squash");
+    git("checkout", "--detach", base);
+    await writeFile(work, "accepted work\n");
+    const laterHead = commit("Later submitted copy");
+    const unrelated = commit("Empty squash without accepted ancestry");
+    git("checkout", "--detach", earlierMerged);
+    await writeFile(join(directory, "other.ts"), "unrelated work\n");
+    const laterParent = commit("Unrelated change after earlier acceptance");
+    const emptySquash = commit("Empty squash");
+    await writeFile(work, "new accepted change\n");
+    const nonempty = commit("Nonempty squash");
+    git("checkout", "--detach", laterParent);
+    await rm(work);
+    commit("Earlier accepted change reverted");
+    const reverted = commit("Empty squash after reverting the earlier change");
+
+    for (const [source, head] of [
+      [retirement.source, laterHead],
+      [earlier, earlierHead],
+    ] as const) {
+      source.headSha = head;
+      source.commits[0].sha = head;
+      source.commits[0].parentShas = [base];
+      source.commits[0].files = [
+        { path: workPath, additions: 1, deletions: 0 },
+      ];
+      const census = f.packet.sourceAudit.sources.find(
+        (entry) => entry.id === source.sourceId,
+      );
+      if (!census) throw Error("Missing fixture census source");
+      census.headSha = head;
+    }
+    retirement.coverage = [];
+    retirement.identicalAcceptedChange = {
+      earlierSourceId: earlier.sourceId,
+      earlierMergeSha: earlierMerged,
+      mergeSha: emptySquash,
+      diffSha256: await changeDigest(directory, base, earlierMerged),
+      emptySquash: true,
+    };
+    const proof = retirement.identicalAcceptedChange;
+    let reviewedMerge = emptySquash;
+    const github = {
+      async get<T>(path: string): Promise<T | null> {
+        if (path === "/repos/feedforagents/feed")
+          return {
+            private: false,
+            id: 1,
+            node_id: f.packet.sourceAudit.repositoryNodeId,
+            full_name: f.packet.sourceAudit.repository,
+          } as T;
+        const census = f.packet.sourceAudit.sources.find(
+          (entry) => path === `/repos/feedforagents/feed/pulls/${entry.number}`,
+        );
+        if (!census) return null;
+        const original = census.id === earlier.sourceId;
+        const source = original ? earlier : retirement.source;
+        return {
+          node_id: source.sourceId,
+          number: census.number,
+          html_url: source.sourceUrl,
+          state: "closed",
+          merged_at: source.occurredAt,
+          merge_commit_sha: original ? earlierMerged : reviewedMerge,
+          head: { sha: census.headSha },
+          base: { sha: base },
+          user: { node_id: source.author?.id, type: source.author?.kind },
+          commits: 1,
+          changed_files: 1,
+        } as T;
+      },
+    };
+    const verify = () =>
+      verifyHistoricalIdenticalAcceptedChanges(
+        f.packet,
+        github,
+        async (_repository, _objects, read) => read(directory),
+      );
+    retirement.evidence = JSON.stringify({
+      sourceId: retirement.sourceId,
+      workUnitId: retirement.workUnitId,
+      sourceSha256: hash(retirement.source),
+      earlierSourcesSha256: hash(retirement.earlierSources),
+      coverageSha256: hash(retirement.coverage),
+      identicalAcceptedChangeSha256: hash(proof),
+    });
+    retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    const target = f.baseline.revisions[0].award;
+    const expected = appendPointAwards(
+      f.baseline,
+      [{ ...target, amount: 0 }],
+      hash(retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          target.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(expected);
+    const verified = await verify();
+    const result = reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      time,
+      new Map(),
+      verified,
+    );
+    expect(result).toEqual(expected);
+    expect(latestPoints(result).get(f.baseline.revisions[1].award.key)).toEqual(
+      f.baseline.revisions[1],
+    );
+    const uncredited = appendPointAwards(
+      f.baseline,
+      [{ ...f.baseline.revisions[1].award, amount: 0 }],
+      "f".repeat(64),
+      "slop-score-v2",
+      time,
+    );
+    const uncreditedPacket = structuredClone(f.packet);
+    uncreditedPacket.baselineDigest = hash(uncredited);
+    uncreditedPacket.baselineRevisionCount = uncredited.revisions.length;
+    uncreditedPacket.corrections.baseline =
+      createPointsCorrectionBaseline(uncredited);
+    uncreditedPacket.corrections.candidates =
+      uncreditedPacket.corrections.candidates.filter(
+        (candidate) => candidate.sourceId !== earlier.sourceId,
+      );
+    expect(() =>
+      reconstructHistoricalPoints(
+        uncreditedPacket,
+        uncredited,
+        time,
+        new Map(),
+        verified,
+      ),
+    ).toThrow("lacks a verified earlier ordinary pool");
+    for (const [merge, reason] of [
+      [nonempty, "changes its first-parent tree"],
+      [unrelated, "absent from the later base"],
+      [reverted, "does not retain all earlier accepted paths"],
+    ] as const) {
+      reviewedMerge = merge;
+      proof.mergeSha = merge;
+      await expect(verify()).rejects.toThrow(reason);
+    }
+    expect(() =>
+      reconstructHistoricalPoints(
+        f.packet,
+        f.baseline,
+        time,
+        new Map(),
+        verified,
+      ),
+    ).toThrow("lacks a verified earlier ordinary pool");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 20_000);

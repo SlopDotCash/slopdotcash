@@ -15,13 +15,33 @@ import { pullCommits } from "../workers/slopbot/value-evidence";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
 import { resolveGitHubToken } from "./github-token";
-import { readHistoricalAssessmentCatalog } from "./historical-assessment-catalog";
+import {
+  assertHistoricalAssessmentFreshness,
+  type HistoricalAssessmentJournalHeads,
+  historicalAssessmentRecordingConditions,
+  historicalPointsBaselineCondition,
+  readHistoricalAssessmentCatalog,
+  readHistoricalAssessmentJournalHeads,
+} from "./historical-assessment-catalog";
 import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
+import {
+  type HistoricalReplayReceipt,
+  verifyHistoricalReplayQualification,
+} from "./historical-replay-qualification";
+import {
+  projectHistoricalValueChanges,
+  verifyHistoricalValueReplay,
+} from "./historical-value-replay";
 import {
   correctionBatchRecorded,
   recordCorrection,
 } from "./prepare-implementation-corrections";
 import { reviewedPacketStorage } from "./private-payout-packet";
+import {
+  changeDigest,
+  readPullRequestGitFiles,
+  readReviewedSquashGitFiles,
+} from "./pull-request-git-files";
 import {
   decodeHistoricalPacket,
   decodeHistoricalPacketBytes,
@@ -171,6 +191,303 @@ export async function verifyHistoricalCensus(
     JSON.stringify(ordered(sources))
   )
     throw Error("Reviewed historical census changed");
+}
+
+/** Verify the complete duplicate changes, including paths and both object IDs. */
+export async function verifyHistoricalIdenticalAcceptedChanges(
+  packet: Pick<HistoricalPointsPacket, "sourceAudit" | "duplicateRetirements">,
+  github: Pick<GitHubClient, "get">,
+  withObjects = withPublicGitObjects,
+): Promise<ReadonlySet<string>> {
+  const candidates = (packet.duplicateRetirements ?? []).filter(
+    (retirement) => retirement.identicalAcceptedChange !== undefined,
+  );
+  const verified = new Set<string>();
+  if (!candidates.length) return verified;
+  const root = `/repos/${packet.sourceAudit.repository}`;
+  const repository = await github.get<PublicMergeRepository>(root);
+  if (
+    repository?.node_id !== packet.sourceAudit.repositoryNodeId ||
+    repository.full_name?.toLowerCase() !==
+      packet.sourceAudit.repository.toLowerCase()
+  )
+    throw Error("Reviewed identical change repository changed");
+  for (const retirement of candidates) {
+    const proof = retirement.identicalAcceptedChange;
+    const earlier = retirement.earlierSources.find(
+      (source) => source.sourceId === proof?.earlierSourceId,
+    );
+    if (!proof || !earlier) throw Error("Reviewed earlier source is missing");
+    const sha = /^[a-f0-9]{40}$/u;
+    if (
+      !sha.test(proof.earlierMergeSha) ||
+      !sha.test(proof.mergeSha) ||
+      proof.earlierMergeSha === proof.mergeSha ||
+      !/^[a-f0-9]{64}$/u.test(proof.diffSha256) ||
+      (proof.emptySquash !== undefined && proof.emptySquash !== true)
+    )
+      throw Error("Reviewed identical change identity is invalid");
+    const emptySquash = proof.emptySquash === true;
+    const sources = [
+      { source: earlier, mergeSha: proof.earlierMergeSha },
+      { source: retirement.source, mergeSha: proof.mergeSha },
+    ];
+    async function verifyPull({ source, mergeSha }: (typeof sources)[number]) {
+      const audit = packet.sourceAudit.sources.find(
+        (row) => row.id === source.sourceId,
+      );
+      if (!audit)
+        throw Error("Identical change is outside the reviewed census");
+      const pull = await github.get<Pull>(`${root}/pulls/${audit.number}`);
+      if (
+        !pull ||
+        pull.node_id !== source.sourceId ||
+        pull.number !== audit.number ||
+        pull.head.sha !== source.headSha ||
+        !sha.test(pull.head.sha) ||
+        !sha.test(pull.base.sha) ||
+        pull.merge_commit_sha !== mergeSha ||
+        !pull.merged_at ||
+        new Date(pull.merged_at).toISOString() !== source.occurredAt ||
+        pull.commits !== source.commitCount ||
+        (emptySquash &&
+          (pull.state !== "closed" ||
+            pull.html_url !== source.sourceUrl ||
+            pull.user.node_id !== source.author?.id ||
+            pull.user.type !== source.author?.kind))
+      )
+        throw Error("Reviewed identical change source changed");
+      return pull;
+    }
+    const checked = await Promise.all(
+      sources.map(async (binding) => ({
+        ...binding,
+        pull: await verifyPull(binding),
+      })),
+    );
+    await withObjects(
+      repository,
+      [
+        ...sources.map(({ mergeSha }) => mergeSha),
+        ...checked.flatMap(({ pull }) => [pull.head.sha, pull.base.sha]),
+      ],
+      async (directory) => {
+        const nativeGit = async (...args: string[]) => {
+          const command = publicGitProcess(directory, args);
+          return (await execute(command.file, command.args, command.options))
+            .stdout;
+        };
+        if (emptySquash) {
+          const parents: string[] = [];
+          for (const { pull, mergeSha, source } of checked) {
+            const [accepted, parent, ...extra] = (
+              await nativeGit("rev-list", "--parents", "-n", "1", mergeSha)
+            )
+              .trim()
+              .split(" ");
+            const submitted = source.commits[0];
+            const submittedRange = await nativeGit(
+              "rev-list",
+              "--parents",
+              pull.head.sha,
+              `^${pull.base.sha}`,
+            );
+            if (
+              accepted !== mergeSha ||
+              !parent ||
+              !sha.test(parent) ||
+              extra.length ||
+              source.commits.length !== 1 ||
+              submitted.sha !== pull.head.sha ||
+              submitted.parentCount !== 1 ||
+              submitted.parentShas?.length !== 1 ||
+              submittedRange.trim() !==
+                `${pull.head.sha} ${submitted.parentShas[0]}` ||
+              (await changeDigest(
+                directory,
+                submitted.parentShas[0],
+                submitted.sha,
+              )) !== proof.diffSha256
+            )
+              throw Error(
+                "Empty squash needs complete matching submitted changes",
+              );
+            parents.push(parent);
+          }
+          const [earlierParent, laterParent] = parents;
+          const empty = sha256Hex("");
+          const [acceptedTree, parentTree] = (
+            await nativeGit(
+              "rev-parse",
+              `${proof.mergeSha}^{tree}`,
+              `${laterParent}^{tree}`,
+            )
+          )
+            .trim()
+            .split("\n");
+          if (
+            !acceptedTree ||
+            !sha.test(acceptedTree) ||
+            acceptedTree !== parentTree
+          )
+            throw Error("Accepted squash changes its first-parent tree");
+          if (
+            proof.diffSha256 === empty ||
+            (await changeDigest(
+              directory,
+              earlierParent,
+              proof.earlierMergeSha,
+            )) !== proof.diffSha256
+          )
+            throw Error(
+              "Earlier squash does not match the complete submitted change",
+            );
+
+          try {
+            await nativeGit(
+              "merge-base",
+              "--is-ancestor",
+              proof.earlierMergeSha,
+              laterParent,
+            );
+          } catch {
+            throw Error(
+              "Earlier accepted squash is absent from the later base",
+            );
+          }
+          const paths = (
+            await nativeGit(
+              "diff",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--no-renames",
+              "--name-only",
+              "-z",
+              earlierParent,
+              proof.earlierMergeSha,
+              "--",
+            )
+          ).split("\0");
+          if (
+            paths.pop() !== "" ||
+            !paths.length ||
+            paths.some((path) => !path || path.includes("\uFFFD")) ||
+            new Set(paths).size !== paths.length ||
+            checked.some(({ pull }) => pull.changed_files !== paths.length) ||
+            (await changeDigest(
+              directory,
+              proof.earlierMergeSha,
+              laterParent,
+              paths,
+            )) !== empty
+          )
+            throw Error(
+              "Later squash base does not retain all earlier accepted paths",
+            );
+          return;
+        }
+        const fileCounts = (
+          files: readonly {
+            path: string;
+            additions: number;
+            deletions: number;
+          }[],
+        ) =>
+          hash(
+            files
+              .map(
+                (file) => [file.path, file.additions, file.deletions] as const,
+              )
+              .sort((a, b) => a[0].localeCompare(b[0])),
+          );
+        for (const { pull, mergeSha, source } of checked) {
+          const [commit, first, second, ...extra] = (
+            await nativeGit("rev-list", "--parents", "-n", "1", mergeSha)
+          )
+            .trim()
+            .split(" ");
+          if (
+            commit !== mergeSha ||
+            !first ||
+            !sha.test(first) ||
+            (second !== undefined && second !== pull.head.sha) ||
+            extra.length
+          )
+            throw Error("Identical change needs the complete accepted merge");
+          const range = new Map(
+            (
+              await nativeGit(
+                "rev-list",
+                "--parents",
+                pull.head.sha,
+                `^${pull.base.sha}`,
+              )
+            )
+              .trim()
+              .split("\n")
+              .map((line) => {
+                const [id, ...parents] = line.split(" ");
+                return [id, parents] as const;
+              }),
+          );
+          if (
+            range.size !== source.commits.length ||
+            source.commits.some(
+              (member) =>
+                !range.has(member.sha) ||
+                hash(range.get(member.sha)) !== hash(member.parentShas),
+            )
+          )
+            throw Error("Identical change has incomplete submitted commits");
+          // This existing reader compares the full submitted and accepted
+          // raw diffs before computing complete native file line counts.
+          const readFiles = second
+            ? readPullRequestGitFiles
+            : readReviewedSquashGitFiles;
+          const changed = await readFiles(directory, {
+            repository,
+            head: pull.head.sha,
+            merge: {
+              sha: mergeSha,
+              parents: [{ sha: first }, ...(second ? [{ sha: second }] : [])],
+            },
+          });
+          if (
+            !changed.changedFiles ||
+            changed.changedFiles !== pull.changed_files ||
+            (await changeDigest(directory, first, mergeSha)) !==
+              proof.diffSha256
+          )
+            throw Error("Complete accepted changes differ");
+          if (source === retirement.source) {
+            const submitted = source.commits[0];
+            if (
+              source.commits.length !== 1 ||
+              submitted.sha !== source.headSha ||
+              submitted.parentCount !== 1 ||
+              submitted.parentShas?.length !== 1 ||
+              !submitted.files ||
+              submitted.files.length !== changed.changedFiles ||
+              submitted.additions !== changed.additions ||
+              submitted.deletions !== changed.deletions ||
+              fileCounts(submitted.files) !== fileCounts(changed.files) ||
+              (await changeDigest(
+                directory,
+                submitted.parentShas[0],
+                submitted.sha,
+              )) !== proof.diffSha256
+            )
+              throw Error(
+                "Duplicate submitted commit differs from its accepted change",
+              );
+          }
+        }
+      },
+    );
+    await Promise.all(sources.map(verifyPull));
+    verified.add(hash(retirement));
+  }
+  return verified;
 }
 
 /** Recheck GitHub's exact accepted squash relation before using retained bytes. */
@@ -476,6 +793,7 @@ export async function verifyHistoricalProtection(
 export async function verifyHistoricalValueRecords(
   packet: HistoricalPointsPacket,
   query: Query,
+  options: { qualifiedReplay?: true } = {},
 ): Promise<void> {
   const verifiedDuplicateRecords = new Map<string, string>();
   for (const retirement of packet.duplicateRetirements ?? []) {
@@ -505,6 +823,9 @@ export async function verifyHistoricalValueRecords(
       );
     }
   }
+  // An authenticated replay qualification already verified the canonical
+  // snapshot at its captured heads, including stale or unresolved records.
+  if (options.qualifiedReplay) return;
   const expected = new Set(
     packet.valueSnapshot?.valueAssessmentCoverage?.flatMap((row) =>
       row.recordDigest ? [row.recordDigest] : [],
@@ -566,11 +887,12 @@ export async function verifyHistoricalValueRecords(
   }
 }
 
-/** Canonical writer with same-transaction registry and account-restriction guards. */
+/** Canonical writer with registry, account-restriction and assessment guards. */
 export function historicalPointsSql(
   packet: HistoricalPointsPacket,
   candidate: PointsJournal,
   enforcementGeneration: number,
+  assessmentHeads: HistoricalAssessmentJournalHeads,
 ): string {
   if (!Number.isSafeInteger(enforcementGeneration) || enforcementGeneration < 0)
     throw Error("Invalid enforcement generation");
@@ -598,7 +920,20 @@ export function historicalPointsSql(
         `INSERT INTO points_staging(batch_id,sequence,payload) SELECT NULL,0,NULL WHERE NOT (${condition});`,
     )
     .join("\n");
-  return `${guards}\n${pointsSql(candidate)}`;
+  const assessmentConditions = historicalAssessmentRecordingConditions(
+    {
+      projectId: packet.projectId,
+      repositoryNodeId: packet.sourceAudit.repositoryNodeId,
+    },
+    assessmentHeads,
+  );
+  assessmentConditions.push(
+    historicalPointsBaselineCondition(
+      packet.baselineDigest,
+      packet.baselineRevisionCount,
+    ),
+  );
+  return `${guards}\n${pointsSql(candidate, assessmentConditions)}`;
 }
 
 const query: Query = async (sql) => {
@@ -642,9 +977,14 @@ type PublicationPhase =
   | "historical census verification"
   | "accepted squash verification"
   | "financial protection verification"
+  | "assessment journal checkpoint read"
+  | "trusted replay receipt read"
+  | "assessment qualification match"
   | "value record verification"
   | "complete assessment catalog read"
   | "assessment source reconciliation"
+  | "historical assessment replay"
+  | "assessment qualification recheck"
   | "assessment receipt"
   | "public Points read"
   | "recipient and account restriction verification"
@@ -680,6 +1020,7 @@ export function historicalAssessmentAuditInputs(
 async function auditHistoricalAssessments(
   setPhase: (phase: PublicationPhase) => void,
   verifyMain: () => Promise<void>,
+  replay: boolean,
 ): Promise<void> {
   const { projectId, sourceDigest, expectedPointsDigest } =
     historicalAssessmentAuditInputs(process.env);
@@ -711,7 +1052,8 @@ async function auditHistoricalAssessments(
   const repository = project.repositories[0].id;
   const identity = repositoryIdentity(project, repository);
   if (!identity) throw Error("Historical repository identity unavailable");
-  const github = GitHubClient.forToken(await resolveGitHubToken());
+  const token = await resolveGitHubToken();
+  const github = GitHubClient.forToken(token);
   const liveRepository = await github.get<PublicMergeRepository>(
     `/repos/${repository}`,
   );
@@ -735,16 +1077,14 @@ async function auditHistoricalAssessments(
     throw Error("Assessment audit source digest changed");
 
   setPhase("complete assessment catalog read");
-  const catalog = await readHistoricalAssessmentCatalog(
-    {
-      projectId,
-      repositoryNodeId: identity.nodeId,
-      revision: revision.revision,
-      manifestSha256: revision.manifestSha256,
-      expectedPointsDigest,
-    },
-    query,
-  );
+  const scope = {
+    projectId,
+    repositoryNodeId: identity.nodeId,
+    revision: revision.revision,
+    manifestSha256: revision.manifestSha256,
+    expectedPointsDigest,
+  };
+  const catalog = await readHistoricalAssessmentCatalog(scope, query);
   setPhase("public Points read");
   const baseline = await loadPublishedPoints();
   if (
@@ -762,18 +1102,22 @@ async function auditHistoricalAssessments(
     sourceAudit,
     projectId,
   );
-  await verifyMain();
-  setPhase("assessment receipt");
-  const summary = {
+  const report = {
+    schemaVersion: "1",
     projectId,
-    mode: "assessment-audit",
+    mode: replay ? "assessment-replay" : "assessment-audit",
     status: receipt.status,
     sourceDigest,
     sourceCount: sourceAudit.sources.length,
+    sourceRepositoryNodeId: scope.repositoryNodeId,
+    sourceFrom: sourceAudit.from,
+    sourceThrough: sourceAudit.through,
+    sourceCommit: process.env.GITHUB_SHA,
     expectedPointsDigest,
     baselineRevisionCount: baseline.revisions.length,
     registryRevision: catalog.heads.registryRevision,
     registryManifestSha256: catalog.heads.registryManifestSha256,
+    enforcementGeneration: catalog.heads.enforcementGeneration,
     jointThrough: catalog.heads.jointThrough,
     legacyThrough: catalog.heads.legacyThrough,
     jointRecords: catalog.heads.jointScopedCount,
@@ -781,9 +1125,111 @@ async function auditHistoricalAssessments(
     receiptDigest: receipt.receiptSha256,
   };
   if (receipt.status === "incomplete") {
-    console.log(JSON.stringify(summary));
+    console.log(JSON.stringify(report));
     throw Error("Assessment catalog could not be reconciled");
   }
+  let replayResult:
+    | {
+        snapshotSha256: string | null;
+        valueCoverageCount: number;
+        closedUnmergedCoverageCount: number;
+        valueEventCount: number;
+        qualificationSha256: string | null;
+      }
+    | undefined;
+  if (replay && receipt.status === "requires-value-replay") {
+    setPhase("historical assessment replay");
+    const { generateHistoricalLeaderboardFromGitHub, GitHubGraphqlClient } =
+      await import("./generate-leaderboard");
+    let lastPhase = "";
+    const snapshot = await generateHistoricalLeaderboardFromGitHub(
+      new GitHubGraphqlClient(token),
+      {
+        scope: { ...scope, repository },
+        audit: sourceAudit,
+        catalog,
+        baseline,
+      },
+      {
+        evidenceToken: token,
+        onProgress: ({ phase, completed, total }) => {
+          if (phase !== lastPhase || completed === total) {
+            console.log(JSON.stringify({ phase, completed, total }));
+            lastPhase = phase;
+          }
+        },
+      },
+    );
+    const closedUnmergedCoverageCount =
+      snapshot.source.counts.closedUnmergedPullRequests ?? 0;
+    const binding = {
+      projectId,
+      sourceAudit,
+      revision: scope.revision,
+      manifestSha256: scope.manifestSha256,
+      baselineDigest: expectedPointsDigest,
+      baselineRevisionCount: baseline.revisions.length,
+    };
+    // The read-only replay can report additional closed rows. The current
+    // reviewed packet admits an exact merged-source scope only.
+    let qualificationSha256: string | null = null;
+    if (closedUnmergedCoverageCount === 0) {
+      const allocation = projectHistoricalValueChanges(
+        binding,
+        baseline,
+        snapshot,
+      );
+      qualificationSha256 = verifyHistoricalValueReplay(
+        {
+          ...binding,
+          valueSnapshot: snapshot,
+          valueKeys: allocation.rows.map((row) => row.award.key),
+        },
+        baseline,
+        receipt,
+        snapshot,
+      );
+    }
+    replayResult = {
+      snapshotSha256: hash(snapshot),
+      valueCoverageCount: snapshot.valueAssessmentCoverage?.length ?? 0,
+      closedUnmergedCoverageCount,
+      valueEventCount: snapshot.ledger.filter((row) =>
+        row.scoreDecisionSourceId?.startsWith("value:"),
+      ).length,
+      qualificationSha256,
+    };
+  } else if (replay) {
+    replayResult = {
+      snapshotSha256: null,
+      valueCoverageCount: 0,
+      closedUnmergedCoverageCount: 0,
+      valueEventCount: 0,
+      qualificationSha256: verifyHistoricalValueReplay(
+        {
+          projectId,
+          sourceAudit,
+          revision: scope.revision,
+          manifestSha256: scope.manifestSha256,
+          baselineDigest: expectedPointsDigest,
+          baselineRevisionCount: baseline.revisions.length,
+          valueSnapshot: null,
+          valueKeys: [],
+        },
+        baseline,
+        receipt,
+        null,
+      ),
+    };
+  }
+  setPhase("assessment qualification recheck");
+  await verifyMain();
+  await assertHistoricalAssessmentFreshness(scope, catalog.heads, query);
+  setPhase("assessment receipt");
+  const summary = {
+    ...report,
+    ...(replayResult ? { replay: replayResult } : {}),
+  };
   const directory = join(
     process.env.RUNNER_TEMP ?? "",
     "historical-assessment-audit",
@@ -798,6 +1244,31 @@ async function auditHistoricalAssessments(
     },
   );
   console.log(JSON.stringify(summary));
+}
+
+async function readTrustedHistoricalReplay(
+  reference: NonNullable<HistoricalPointsPacket["replayQualification"]>,
+  sourceCommit: string,
+): Promise<HistoricalReplayReceipt> {
+  const token = process.env.HISTORICAL_REPLAY_ACTIONS_TOKEN;
+  if (!token?.trim()) throw new Error("Trusted replay read token unavailable");
+  const { stdout } = await execute(
+    "python3",
+    [
+      "-I",
+      "scripts/restore-historical-assessment-replay.py",
+      String(reference.runId),
+      String(reference.attempt),
+      String(reference.artifactId),
+      sourceCommit,
+    ],
+    {
+      env: { ...process.env, GH_TOKEN: token },
+      timeout: 120_000,
+      maxBuffer: 256 * 1024,
+    },
+  );
+  return JSON.parse(stdout) as HistoricalReplayReceipt;
 }
 
 async function main(setPhase: (phase: PublicationPhase) => void) {
@@ -820,8 +1291,15 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   };
   await verifyMain();
   const flags = process.argv.slice(2);
-  if (flags.length === 1 && flags[0] === "--audit-assessments")
-    return auditHistoricalAssessments(setPhase, verifyMain);
+  if (
+    flags.length === 1 &&
+    (flags[0] === "--audit-assessments" || flags[0] === "--replay-assessments")
+  )
+    return auditHistoricalAssessments(
+      setPhase,
+      verifyMain,
+      flags[0] === "--replay-assessments",
+    );
   if (flags.length !== 0) throw Error("Unknown historical Points operation");
   const encoded = [1, 2, 3, 4]
     .map((n) => process.env[`HISTORICAL_POINTS_PACKET_${n}`] ?? "")
@@ -886,10 +1364,10 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   await verifyHistoricalCensus(packet, github);
   setPhase("accepted squash verification");
   await verifyHistoricalAcceptedSquashes(packet, github);
+  const verifiedIdenticalAcceptedChanges =
+    await verifyHistoricalIdenticalAcceptedChanges(packet, github);
   setPhase("financial protection verification");
   await verifyHistoricalProtection(packet, query);
-  setPhase("value record verification");
-  await verifyHistoricalValueRecords(packet, query);
   setPhase("public Points read");
   const baseline = await loadPublishedPoints();
   if (!baseline) throw Error("Public Points baseline unavailable");
@@ -939,12 +1417,43 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     );
     return;
   }
+  let assessmentHeads: HistoricalAssessmentJournalHeads;
+  if (packet.replayQualification) {
+    setPhase("trusted replay receipt read");
+    const donor = await readTrustedHistoricalReplay(
+      packet.replayQualification,
+      checkout,
+    );
+    setPhase("assessment qualification match");
+    assessmentHeads = await verifyHistoricalReplayQualification(
+      packet,
+      baseline,
+      donor,
+      checkout,
+      generation,
+      query,
+    );
+  } else {
+    setPhase("assessment journal checkpoint read");
+    if (process.env.HISTORICAL_POINTS_APPLY === "true")
+      throw new Error(
+        "Applying historical Points requires a reviewed replay qualification",
+      );
+    assessmentHeads = await readHistoricalAssessmentJournalHeads(query);
+  }
+  setPhase("value record verification");
+  await verifyHistoricalValueRecords(
+    packet,
+    query,
+    packet.replayQualification ? { qualifiedReplay: true } : {},
+  );
   setPhase("historical Points reconstruction");
   const candidate = reconstructHistoricalPoints(
     packet,
     baseline,
     new Date().toISOString(),
     bans,
+    verifiedIdenticalAcceptedChanges,
   );
   setPhase("import preparation");
   const directory = join(
@@ -953,10 +1462,14 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   );
   await mkdir(directory, { mode: 0o700, recursive: true });
   const sqlPath = join(directory, "points.sql");
-  await writeFile(sqlPath, historicalPointsSql(packet, candidate, generation), {
-    mode: 0o600,
-    flag: "wx",
-  });
+  await writeFile(
+    sqlPath,
+    historicalPointsSql(packet, candidate, generation, assessmentHeads),
+    {
+      mode: 0o600,
+      flag: "wx",
+    },
+  );
   if (process.env.HISTORICAL_POINTS_APPLY === "true") {
     setPhase("protected import and readback");
     await recordCorrection(candidate, {

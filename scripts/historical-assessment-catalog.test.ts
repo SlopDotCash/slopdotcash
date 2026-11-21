@@ -2,10 +2,21 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { emptyPointsJournal, type PointsJournal } from "../src/lib/points";
 import {
+  assertHistoricalAssessmentFreshness,
   type HistoricalAssessmentScope,
+  historicalAssessmentRecordingConditions,
   readHistoricalAssessmentCatalog,
+  readHistoricalAssessmentJournalHeads,
 } from "./historical-assessment-catalog";
+import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
+import {
+  type HistoricalReplayReceipt,
+  verifyHistoricalReplayQualification,
+} from "./historical-replay-qualification";
+import { verifyHistoricalValueReplay } from "./historical-value-replay";
+import { HISTORICAL_POINTS_AUDIT_WINDOW } from "./reviewed-historical-points";
 
 const scope: HistoricalAssessmentScope = {
   projectId: "fixture",
@@ -19,7 +30,10 @@ const headSha = "c".repeat(40);
 const sourceDigest = "d".repeat(64);
 const sha = (raw: string) => createHash("sha256").update(raw).digest("hex");
 
-function database(repositories = [{ id: "fixture/repo" }]) {
+function database(
+  repositories = [{ id: "fixture/repo" }],
+  baseline?: PointsJournal,
+) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   for (const filename of [
@@ -69,15 +83,58 @@ function database(repositories = [{ id: "fixture/repo" }]) {
     recordedAt,
   );
   db.query("INSERT INTO points_batches VALUES (?, ?, '[]', ?)").run(
-    scope.expectedPointsDigest,
+    baseline ? sha(JSON.stringify(baseline)) : scope.expectedPointsDigest,
     recordedAt,
-    120,
+    baseline?.revisions.length ?? 120,
   );
   return db;
 }
 
 const query = (db: Database, sql: string) =>
   db.query<Record<string, unknown>, []>(sql).all();
+
+test.each(["assessment", "baseline", "registry", "enforcement"] as const)(
+  "read-only historical replay rechecks its %s checkpoint",
+  async (change) => {
+    using db = database();
+    const read = async (sql: string) => {
+      expect(sql).toMatch(/^SELECT\b/u);
+      return query(db, sql);
+    };
+    const { heads } = await readHistoricalAssessmentCatalog(scope, read);
+    legacy(db, "PR_unrelated", { project: "outside", repo: "R_other" });
+    await expect(
+      assertHistoricalAssessmentFreshness(scope, heads, read),
+    ).resolves.toBeUndefined();
+
+    switch (change) {
+      case "assessment":
+        joint(db, ["PR_new"]);
+        break;
+      case "baseline":
+        db.query("INSERT INTO points_batches VALUES (?, ?, '[]', ?)").run(
+          "d".repeat(64),
+          "2026-11-19T12:01:00.000Z",
+          heads.d1PointsCount,
+        );
+        break;
+      case "registry":
+        db.exec(`
+          INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at)
+          SELECT id, revision + 1, json_set(manifest, '$.status', 'paused'), 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'fixture pause', updated_at FROM projects;
+          UPDATE projects SET revision = revision + 1, status = 'paused',
+            manifest = json_set(manifest, '$.status', 'paused'), manifest_sha256 = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+        `);
+        break;
+      case "enforcement":
+        db.exec("INSERT INTO project_enforcements VALUES ('new')");
+        break;
+    }
+    await expect(
+      assertHistoricalAssessmentFreshness(scope, heads, read),
+    ).rejects.toThrow("qualification changed during collection");
+  },
+);
 
 function legacy(
   db: Database,
@@ -159,6 +216,126 @@ function joint(
   return { digest, raw };
 }
 
+test("a reviewed replay reopens the exact donor heads and refuses relevant appends", async () => {
+  const baseline = emptyPointsJournal(recordedAt);
+  using db = database(undefined, baseline);
+  const expectedPointsDigest = sha(JSON.stringify(baseline));
+  const exactScope = { ...scope, expectedPointsDigest };
+  const read = async (sql: string) => {
+    expect(sql).toMatch(/^SELECT\b/u);
+    return query(db, sql);
+  };
+  const catalog = await readHistoricalAssessmentCatalog(exactScope, read);
+  const audit = {
+    repository: "fixture/repo",
+    repositoryNodeId: scope.repositoryNodeId,
+    ...HISTORICAL_POINTS_AUDIT_WINDOW,
+    sources: [
+      {
+        id: "PR_reviewed",
+        number: 1,
+        headSha,
+        mergedAt: "2026-10-20T18:00:00.000Z",
+      },
+    ],
+  };
+  const packet = {
+    projectId: scope.projectId,
+    sourceAudit: audit,
+    revision: scope.revision,
+    manifestSha256: scope.manifestSha256,
+    baselineDigest: expectedPointsDigest,
+    baselineRevisionCount: baseline.revisions.length,
+    valueSnapshot: null,
+    valueKeys: [],
+  };
+  const receipt = await classifyHistoricalAssessmentScope(
+    catalog,
+    audit,
+    packet.projectId,
+  );
+  const qualificationSha256 = verifyHistoricalValueReplay(
+    packet,
+    baseline,
+    receipt,
+    null,
+  );
+  const reviewed = {
+    ...packet,
+    replayQualification: {
+      runId: 10,
+      attempt: 2,
+      artifactId: 20,
+      qualificationSha256,
+    },
+  };
+  const sourceCommit = "1".repeat(40);
+  const donor: HistoricalReplayReceipt = {
+    schemaVersion: "1",
+    projectId: packet.projectId,
+    mode: "assessment-replay",
+    status: "no-scoped-active-assessments",
+    sourceCommit,
+    sourceDigest: receipt.scope.sourceAuditSha256,
+    sourceCount: audit.sources.length,
+    sourceRepositoryNodeId: audit.repositoryNodeId,
+    sourceFrom: audit.from,
+    sourceThrough: audit.through,
+    expectedPointsDigest,
+    baselineRevisionCount: baseline.revisions.length,
+    registryRevision: scope.revision,
+    registryManifestSha256: scope.manifestSha256,
+    enforcementGeneration: 1,
+    jointThrough: 0,
+    legacyThrough: 0,
+    jointRecords: 0,
+    legacyRecords: 0,
+    receiptDigest: receipt.receiptSha256,
+    replay: {
+      snapshotSha256: null,
+      valueCoverageCount: 0,
+      closedUnmergedCoverageCount: 0,
+      valueEventCount: 0,
+      qualificationSha256,
+    },
+  };
+  joint(db, ["PR_unrelated"], { project: "other", repo: "R_other" });
+  legacy(db, "PR_unrelated_legacy", { project: "other", repo: "R_other" });
+  const verify = (input = reviewed, recorded = donor) =>
+    verifyHistoricalReplayQualification(
+      input,
+      baseline,
+      recorded,
+      sourceCommit,
+      1,
+      read,
+    );
+  await expect(verify()).resolves.toEqual(catalog.heads);
+  await expect(
+    verify(reviewed, { ...donor, sourceCommit: "3".repeat(40) }),
+  ).rejects.toThrow("differs from the reviewed packet");
+  await expect(verify(reviewed, { ...donor, jointThrough: 2 })).rejects.toThrow(
+    "scope head unavailable",
+  );
+  const altered = "0".repeat(64);
+  await expect(
+    verify(
+      {
+        ...reviewed,
+        replayQualification: {
+          ...reviewed.replayQualification,
+          qualificationSha256: altered,
+        },
+      },
+      { ...donor, replay: { ...donor.replay, qualificationSha256: altered } },
+    ),
+  ).rejects.toThrow("differs from the trusted qualification");
+  joint(db, [audit.sources[0].id]);
+  await expect(verify()).rejects.toThrow(
+    "qualification changed during collection",
+  );
+});
+
 test("the captured dual head alone proves an empty scoped catalog", async () => {
   using db = database();
   let reads = 0;
@@ -183,6 +360,30 @@ test("the captured dual head alone proves an empty scoped catalog", async () => 
     joint: [],
     legacy: [],
   });
+});
+
+test("recording conditions reject applicable assessment appends only", async () => {
+  using db = database();
+  joint(db, ["PR_known"]);
+  legacy(db, "PR_known_legacy");
+  const heads = await readHistoricalAssessmentJournalHeads(async (sql) =>
+    query(db, sql),
+  );
+  expect(heads).toEqual({ jointThrough: 1, legacyThrough: 1 });
+  const [jointCondition, legacyCondition] =
+    historicalAssessmentRecordingConditions(scope, heads);
+  const check = () =>
+    query(
+      db,
+      `SELECT ${jointCondition} AS joint_ok, ${legacyCondition} AS legacy_ok`,
+    );
+  joint(db, ["PR_outside"], { project: "other", repo: "R_other" });
+  legacy(db, "PR_outside_legacy", { project: "other", repo: "R_other" });
+  expect(check()).toEqual([{ joint_ok: 1, legacy_ok: 1 }]);
+  joint(db, ["PR_cross_project_index"], { project: "other" });
+  expect(check()).toEqual([{ joint_ok: 0, legacy_ok: 1 }]);
+  legacy(db, "PR_late_legacy");
+  expect(check()).toEqual([{ joint_ok: 0, legacy_ok: 0 }]);
 });
 
 test("fixed keyset pages include predecessors and ignore concurrent appends", async () => {

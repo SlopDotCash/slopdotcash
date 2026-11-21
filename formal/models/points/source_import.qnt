@@ -1,5 +1,8 @@
 // @source scripts/reviewed-historical-points.ts
 // @source scripts/run-reviewed-historical-points.ts
+// @source scripts/historical-replay-qualification.ts
+// @source scripts/restore-historical-assessment-replay.py
+// @evidence scripts/restore-historical-assessment-replay.test.ts
 // @source scripts/private-payout-packet.ts
 // @source scripts/private-packet-preview.ts
 // @evidence scripts/private-packet-preview.test.ts
@@ -27,6 +30,9 @@ module source_import {
     "historical census verification",
     "accepted squash verification",
     "financial protection verification",
+    "assessment journal checkpoint read",
+    "trusted replay receipt read",
+    "assessment qualification match",
     "value record verification",
     "public Points read",
     "recipient and account restriction verification",
@@ -74,9 +80,9 @@ module source_import {
     p.pathCommit == p.squashOutput or p.submitted.contains(p.pathCommit),
   }
   pure def pathRole(p: MixedProof): int = if (p.pathCommit == p.squashOutput) 2 else 1
-  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str}
+  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str,assessmentCurrent:bool,baselineCurrent:bool,qualifiedReplay:bool,historicalPublished:bool}
   var s:S
-  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:""}
+  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:"",assessmentCurrent:true,baselineCurrent:true,qualifiedReplay:false,historicalPublished:false}
   action reportRefusal(phase: str): bool = all {
     publicationFailurePhases.contains(phase),
     s' = s.with("failurePhase", phase),
@@ -88,11 +94,41 @@ module source_import {
   }
   action part(id:int):bool=all{not(s.published),s'=s.with("parts",s.parts.union(Set(id)))}
   action validate=all{s.parts==Set(1,2),s'=s.with("valid",true).with("complete",true)}
-  action publish=all{s.valid,s.complete,s'=s.with("published",true)}
+  action appendAssessment(inScope: bool): bool = all {
+    not(s.published),
+    s' = s.with("assessmentCurrent", s.assessmentCurrent and not(inScope)),
+  }
+  action advanceBaseline = all {
+    not(s.published),
+    s' = s.with("baselineCurrent", false),
+  }
+  action publish = all {
+    s.valid,
+    s.complete,
+    s.assessmentCurrent,
+    s.baselineCurrent,
+    s' = s.with("published", true),
+  }
+  action qualifyReplay(exactTrustedReceipt: bool): bool = all {
+    s.valid,
+    s.complete,
+    exactTrustedReceipt,
+    s' = s.with("qualifiedReplay", true),
+  }
+  action publishHistorical = all {
+    s.valid,
+    s.complete,
+    s.qualifiedReplay,
+    s.assessmentCurrent,
+    s.baselineCurrent,
+    s' = s.with("published", true).with("historicalPublished", true),
+  }
   action disclose=all{s.published,s'=s.with("disclosed",true)}
   action appendSameIdentity(id:int):bool=all{id==s.identity,s'=s}
   action step=any {
     part(1),part(2),validate,publish,disclose,appendSameIdentity(1),
+    appendAssessment(true),appendAssessment(false),advanceBaseline,
+    qualifyReplay(true),qualifyReplay(false),publishHistorical,
     bindMixed(mixed),
     bindMixed(mixed.with("pathCommit",10)),
     bindMixed(mixed.with("squashIdentity",2)),
@@ -104,7 +140,8 @@ module source_import {
     s'=s,
   }
   val invariant=all {
-    s.published implies(s.valid and s.complete),
+    s.published implies(s.valid and s.complete and s.assessmentCurrent and s.baselineCurrent),
+    s.historicalPublished implies(s.published and s.qualifiedReplay),
     not(s.verifiedPaid),
     s.identity==1,
     s.role != 0 implies mixedBound(s.mixedProof),
@@ -130,4 +167,19 @@ module source_import {
     .then(bindMixed(mixed.with("pathCommit",10)).fail())
   run mixedImportPreservesAcceptedRoleTest = init.then(bindMixed(mixed)).then(part(1)).then(part(2)).then(validate)
     .then(publish).expect(s.role == 2 and invariant)
+  run applicableAssessmentAppendRefusesPublicationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(appendAssessment(true)).then(publish.fail())
+  run unrelatedAssessmentAppendAllowsPublicationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(appendAssessment(false)).then(publish).expect(s.published and invariant)
+  run changedPointsCheckpointRefusesPublicationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(advanceBaseline).then(publish.fail())
+  run unmatchedHistoricalReplayRefusesQualificationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(false).fail())
+  run exactReplayRequiredForHistoricalPublicationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(publishHistorical.fail())
+  run unrelatedAppendPreservesHistoricalQualificationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(appendAssessment(false))
+    .then(publishHistorical).expect(s.historicalPublished and invariant)
+  run relevantAppendRefusesQualifiedHistoricalPublicationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(appendAssessment(true)).then(publishHistorical.fail())
 }

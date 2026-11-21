@@ -38,6 +38,7 @@ import {
   type PointsJournal,
   pointKey,
   pointMembers,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "./points";
 import { findHistoricalRepository } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
@@ -1890,6 +1891,37 @@ export function applyPointsImplementationCorrections(
           baseline.get(award.key)?.decision?.reason !==
             OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION),
     );
+    // An unchanged split can depend on an earlier acceptance or a verified
+    // copy outside the rolling window. Persist that proof on one existing
+    // award so an unassessed refresh cannot guess the recipients again.
+    if (
+      changed.length === 0 &&
+      proof &&
+      !usesOctoberDecision &&
+      candidate.kind === "pull-request" &&
+      candidate.proof.status === "complete" &&
+      !previous.some(
+        ({ decision }) =>
+          decision?.reason ===
+          VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+      ) &&
+      candidate.proof.sources.some(
+        (source) =>
+          source.sourceId === candidate.sourceId &&
+          source.commits.some(
+            (commit) =>
+              commit.parentCount <= 1 &&
+              commit.firstAcceptedSourceId !== null &&
+              (commit.firstAcceptedSourceId !== source.sourceId ||
+                commit.retainedCopy !== undefined),
+          ),
+      )
+    ) {
+      const confirmation = replacements
+        .filter(({ amount }) => amount > 0)
+        .sort((left, right) => left.key.localeCompare(right.key))[0];
+      if (confirmation) changed.push(confirmation);
+    }
     const participationHeld = replacements.some((award) => {
       const at = bannedAt.get(award.actor.id);
       return (
@@ -2142,7 +2174,7 @@ export function applyPointsImplementationCorrections(
           effectiveAt: recordedAt,
           reason: plan.usesOctoberDecision
             ? OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION
-            : "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.",
+            : VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
         });
     }
     return appendPointAwards(
