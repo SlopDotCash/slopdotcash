@@ -2,10 +2,25 @@ name: Publish reviewed historical project Points
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: "Choose read-only assessment audit or reviewed Points publication"
+        type: choice
+        options:
+          - publish-reviewed
+          - audit-assessments
+        default: publish-reviewed
+      audit_project:
+        description: "Registered project ID for the assessment audit"
+        type: string
+      audit_source_sha256:
+        description: "SHA-256 of the complete canonical GitHub source census"
+        type: string
+      audit_baseline_sha256:
+        description: "SHA-256 of the current canonical Points checkpoint"
+        type: string
       reviewed_packet_sha256:
         description: "Owner-reviewed SHA-256 of the private canonical project packet"
         type: string
-        required: true
       apply:
         description: "Publish the reviewed historical Points extension"
         type: boolean
@@ -26,6 +41,30 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Check which protected operation was requested
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPLY: ${{ inputs.apply }}
+          PACKET_SHA: ${{ inputs.reviewed_packet_sha256 }}
+          AUDIT_PROJECT: ${{ inputs.audit_project }}
+          AUDIT_SOURCE_SHA: ${{ inputs.audit_source_sha256 }}
+          AUDIT_BASELINE_SHA: ${{ inputs.audit_baseline_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in
+            audit-assessments)
+              test "$APPLY" = false
+              test -z "$PACKET_SHA"
+              [[ "$AUDIT_PROJECT" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
+              [[ "$AUDIT_SOURCE_SHA" =~ ^[a-f0-9]{64}$ ]]
+              [[ "$AUDIT_BASELINE_SHA" =~ ^[a-f0-9]{64}$ ]]
+              ;;
+            publish-reviewed)
+              test -z "$AUDIT_PROJECT$AUDIT_SOURCE_SHA$AUDIT_BASELINE_SHA"
+              [[ "$PACKET_SHA" =~ ^[a-f0-9]{64}$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24.15.0"
@@ -35,14 +74,38 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run audit:dependencies
       - name: Install canonical Git build dependencies
+        if: inputs.operation == 'publish-reviewed'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
       - name: Install canonical merge Git
+        if: inputs.operation == 'publish-reviewed'
         run: |
           bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
-      - run: bun --no-env-file scripts/run-reviewed-historical-points.ts
+      - name: Read and verify the complete historical assessment catalog
+        if: inputs.operation == 'audit-assessments'
+        run: bun --no-env-file scripts/run-reviewed-historical-points.ts --audit-assessments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          HISTORICAL_POINTS_APPLY: ${{ inputs.apply }}
+          REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
+          HISTORICAL_ASSESSMENT_PROJECT: ${{ inputs.audit_project }}
+          HISTORICAL_SOURCE_AUDIT_SHA256: ${{ inputs.audit_source_sha256 }}
+          HISTORICAL_POINTS_BASELINE_SHA256: ${{ inputs.audit_baseline_sha256 }}
+      - name: Preserve the assessment audit receipt
+        if: inputs.operation == 'audit-assessments'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: historical-assessment-audit-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/historical-assessment-audit/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Rebuild and verify owner-reviewed historical Points
+        if: inputs.operation == 'publish-reviewed'
+        run: bun --no-env-file scripts/run-reviewed-historical-points.ts
         env:
           GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

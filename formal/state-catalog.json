@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "58871718e677c1d74665113b1cc86e179804cfc3747afd95939f2f6e319a0f88",
+  "inventorySha256": "186f04cfdb9a6e520e0b344058214421432d4c44f1c206396bcfb0ed65313541",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2460,6 +2460,20 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/historical-assessment-reconciliation.ts",
+      "line": 56,
+      "name": "Status",
+      "kind": "string-union",
+      "values": [
+        "incomplete",
+        "no-scoped-active-assessments",
+        "requires-value-replay"
+      ],
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/inspect-slopbot-runtime.ts",
       "line": 33,
       "name": "Stage",
@@ -2642,12 +2656,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "line": 572,
+      "line": 635,
       "name": "PublicationPhase",
       "kind": "string-union",
       "values": [
         "accepted squash verification",
         "apply authority recheck",
+        "assessment receipt",
+        "assessment source reconciliation",
+        "complete assessment catalog read",
         "enforcement checkpoint read",
         "financial protection verification",
         "historical Points reconstruction",
@@ -2665,8 +2682,15 @@
         "trusted invocation",
         "value record verification"
       ],
-      "models": ["formal/models/points/source_import.qnt"],
-      "lexicallyUnmentionedValues": [],
+      "models": [
+        "formal/models/points/historical_assessment_audit.qnt",
+        "formal/models/points/source_import.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "assessment receipt",
+        "assessment source reconciliation",
+        "complete assessment catalog read"
+      ],
       "review": "candidate-only"
     },
     {

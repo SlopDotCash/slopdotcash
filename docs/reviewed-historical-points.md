@@ -4,6 +4,17 @@ PRD section 7 permits September–October corrections after the selected project
 
 The manual `reviewed-historical-points.yml` workflow publishes one owner-reviewed project packet. Keep the gzip/base64 packet private in `HISTORICAL_POINTS_PACKET_1` through `_4`, split in order at 48,000 characters. Supply the SHA-256 of the decompressed exact UTF-8 JSON as the workflow input. The initial run uses `apply=false`. The trusted main workflow checks the current project revision, current owner permission, complete immutable GitHub census, published assessment record digests, and private financial protection.
 
+The same trusted workflow supports a read-only `audit-assessments` operation.
+Supply the registered project ID, the current canonical Points SHA-256, and
+the SHA-256 of the independently verified source audit. The canonical audit
+uses compact JSON with source rows in pull request number order. The runner
+reconstructs that census on GitHub and captures both protected assessment
+journal heads in one read. Its receipt contains only the verification status,
+scope digests, and counts. A scope with relevant assessments requires value
+replay before the owner reviews a correction packet. The audit receipt binds
+the captured journal heads. Publication uses a current owner-reviewed packet
+and the trusted financial and source checks.
+
 The packet contains the complete reviewed source audit, the exact optional value snapshot and every selected value-award key, and the complete canonical implementation-correction manifest. It also pins the full public baseline and expected candidate digests. The packet is an explicit owner-approved historical award correction. Public assessment records establish its provenance. The runner does not perform a new valuation or infer amounts from a record ID. It reconstructs the candidate with `applyPointsSnapshot`, `appendPointAwards`, and `applyPointsImplementationCorrections`. The full immutable prefix remains intact. Changes are limited to that project and the closed September 27–November 1 window. Every newly assessed snapshot change must be selected. Source-backed correction validation retains held components.
 
 The normal rolling scoring boundary stays unchanged. This workflow uses the existing Points SQL writer and D1 batch triggers. It adds in-transaction current-registry and enforcement guards. Existing SQL financial guards reject protected award changes. A lost import response is reconciled through the existing batch and public-checkpoint readback. A repeat of the same published candidate reports success without rebuilding it.

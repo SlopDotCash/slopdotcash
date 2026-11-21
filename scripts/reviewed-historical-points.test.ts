@@ -28,6 +28,8 @@ import {
   reconstructHistoricalPoints,
 } from "./reviewed-historical-points";
 import {
+  collectHistoricalSourceAudit,
+  historicalAssessmentAuditInputs,
   historicalPointsSql,
   verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
@@ -692,6 +694,61 @@ test("canonical historical writer replays and refuses a registry race", () => {
     sqlite.close();
   }
 });
+test("protected assessment audit accepts exact read-only scope inputs", () => {
+  const inputs = {
+    HISTORICAL_POINTS_APPLY: "false",
+    HISTORICAL_ASSESSMENT_PROJECT: "eliza",
+    HISTORICAL_SOURCE_AUDIT_SHA256: "a".repeat(64),
+    HISTORICAL_POINTS_BASELINE_SHA256: "b".repeat(64),
+  };
+  expect(historicalAssessmentAuditInputs(inputs)).toEqual({
+    projectId: "eliza",
+    sourceDigest: "a".repeat(64),
+    expectedPointsDigest: "b".repeat(64),
+  });
+  for (const change of [
+    { HISTORICAL_POINTS_APPLY: "true" },
+    { REVIEWED_PACKET_SHA256: "c".repeat(64) },
+    { HISTORICAL_ASSESSMENT_PROJECT: "eliza;SELECT" },
+    { HISTORICAL_SOURCE_AUDIT_SHA256: "" },
+    { HISTORICAL_POINTS_BASELINE_SHA256: "x".repeat(64) },
+  ])
+    expect(() =>
+      historicalAssessmentAuditInputs({ ...inputs, ...change }),
+    ).toThrow();
+});
+
+test("assessment census yields stable digest ordering and refuses duplicate PR numbers", async () => {
+  const f = fixture();
+  const { sources, ...scope } = f.packet.sourceAudit;
+  const first = sources[0];
+  const second = { ...first, id: "PR_later", number: first.number + 2 };
+  let rows = [second, first];
+  const github = {
+    async graphql<T>(): Promise<T> {
+      return {
+        search: {
+          issueCount: rows.length,
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: rows.map((row) => ({
+            id: row.id,
+            number: row.number,
+            headRefOid: row.headSha,
+            mergedAt: row.mergedAt,
+            repository: { id: scope.repositoryNodeId },
+          })),
+        },
+      } as T;
+    },
+  };
+  expect(await collectHistoricalSourceAudit(scope, github)).toEqual({
+    ...scope,
+    sources: [first, second],
+  });
+  rows = [{ ...second, number: first.number }, first];
+  await expect(collectHistoricalSourceAudit(scope, github)).rejects.toThrow();
+});
+
 test("historical census requires the complete immutable source identity", async () => {
   const f = fixture();
   const source = f.packet.sourceAudit.sources[0];
