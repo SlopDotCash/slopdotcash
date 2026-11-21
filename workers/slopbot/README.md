@@ -132,8 +132,9 @@ only after their line counts match the accepted file metadata.
    page). `scripts/generate-leaderboard.ts` binds them into the score census.
 9. **Appeals.** `/slopbot appeal` from the author, or any reopen, blocks
    re-closing that revision (`appeals.ts`). Escalation to a moderator (label
-   `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A maintainer
-   reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
+   `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A repeat
+   appeal of a finding on an item whose earlier appeal was denied is always
+   escalated (value disputes excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
    binding and late-close races.
 
 For an ordinary PR value assessment, an affected author, implementation actor,
