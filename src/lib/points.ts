@@ -1133,7 +1133,9 @@ export function applyPointsSnapshot(
       a.amount &&
       !batchOwned.has(a.key) &&
       !keys.has(a.key) &&
-      project?.repositories.every((r) => repositoryIds.has(r.id))
+      (project === null ||
+        project === undefined ||
+        projectActivityCollected(snapshot, project, a.occurredAt.slice(0, 7)))
     ) {
       awards.push({ ...a, amount: 0 });
       decisions.set(a.key, {
