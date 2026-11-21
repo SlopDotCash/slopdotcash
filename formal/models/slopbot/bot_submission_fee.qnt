@@ -117,8 +117,10 @@ module bot_submission_fee {
 
   // --- Slopbot. One review delivery for an open pull request that has no
   // completed review at its head. `monthOpen` is the monthly cap peek.
-  val recordedOnly = (if (applies and not(s.row))
-      s.with("row", true).with("gate", if (s.gate == "none") "recorded" else s.gate)
+  // Record-only writes Slopbot's own gate and no row: nobody was asked, so
+  // the Worker has nothing to mark paid.
+  val recordedOnly = (if (applies and not(s.row) and s.gate == "none")
+      s.with("gate", "recorded")
     else s).with("reviewed", true)
   action review(monthOpen: bool): bool = all { s.opened, s.pr == "open",
     not(s.reviewed),
@@ -192,7 +194,9 @@ module bot_submission_fee {
     // Off and record-only write nothing to GitHub and decide nothing.
     not(s.everLive) implies all { s.label == "none", s.comments == 0,
       s.gate == "none" or s.gate == "recorded", s.outcome == "none" },
-    s.gate == "recorded" implies s.row,
+    // A pull request that was only recorded has no row for the Worker to
+    // mark paid.
+    s.gate == "recorded" implies not(s.row),
     // While the switch stays live, an ask taken back leaves no row for the
     // Worker to mark paid.
     (s.mode == "live" and not(s.leftLive) and s.gate == "released")
@@ -254,7 +258,7 @@ module bot_submission_fee {
     .expect(s.reviewed and s.gate == "none" and not(s.row) and s.label == "none")
   run dryRunRecordsAndReviewsTest = init.then(ownerTurnsOn).then(setMode("dry"))
     .then(opens(true)).then(review(true))
-    .expect(s.gate == "recorded" and s.row and s.reviewed and s.label == "none"
+    .expect(s.gate == "recorded" and not(s.row) and s.reviewed and s.label == "none"
       and s.comments == 0)
   run settingTurnedOffReleasesTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
