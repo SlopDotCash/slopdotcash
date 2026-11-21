@@ -5590,6 +5590,16 @@ if (import.meta.main) {
     process.stderr.write(
       `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.stats.audited} audited, ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`,
     );
+    if (session.notReusable.size)
+      process.stderr.write(
+        `[slop.cash] attributions not recorded for reuse: ${[
+          ...session.notReusable,
+        ]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([reason, count]) => `${count} x ${reason}`)
+          .join("; ")}\n`,
+      );
     if (output) {
       // Written only after the snapshot itself was written successfully. The
       // memo only saves reads, so failing to keep it never fails the release.
