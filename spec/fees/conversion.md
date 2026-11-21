@@ -851,6 +851,14 @@ and the fee and balance observations are therefore weighted above adding
 tokens and choosing the instance, and about one trace in a hundred now
 reaches the proof.
 
+Discovered by simulation: with the setup weighted that way, the search for a
+fallen accrual took 36 of its 60 minutes, and none of 900 traces reached it,
+because registering a vault, accruing, claiming and finalizing the claim
+were outweighed by the conversion events. Registering vaults, accruals,
+claims, finalizing sends, and expiring and settling expired EVM sends are
+weighted up with them; 9 of 1200 traces then reach a fallen accrual, and 5
+of 1200 still reach the Solana expiry proof.
+
 ```quint
 pure val elapsedValues = Set(180000, 3600001, 86400000)
 pure val runIdValues = Set(1, 2)
@@ -938,7 +946,7 @@ pure val vaultClaimValues = Set(
 pure val weight_evaluate = 30
 pure val weight_reserveGas = 40
 pure val weight_sign = 80
-pure val weight_finalizeSend = 8
+pure val weight_finalizeSend = 12
 pure val weight_acquireLease = 30
 pure val weight_publishWorker = 30
 pure val weight_setReleaseVariable = 20
@@ -948,13 +956,13 @@ pure val weight_addToken = 2
 pure val weight_setReplacement = 3
 pure val weight_replace = 6
 pure val weight_broadcastFail = 4
-pure val weight_expireEvm = 4
-pure val weight_settleExpired = 4
+pure val weight_expireEvm = 12
+pure val weight_settleExpired = 12
 pure val weight_recordScan = 40
 pure val weight_expireSolana = 40
 pure val weight_chooseInstance = 10
-pure val weight_claim = 4
-pure val weight_accrue = 3
-pure val weight_registerVault = 3
+pure val weight_claim = 20
+pure val weight_accrue = 10
+pure val weight_registerVault = 8
 pure val weight_observeBalance = 10
 ```
