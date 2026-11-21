@@ -21,7 +21,9 @@
 // REFUND_AFTER and KEPT_AFTER abstract 14 and 7 days. A switch that is live
 // with no published deposit contract behaves as "off" and is modelled so.
 // The first ask is two writes (GitHub, then D1) under a lease, so a job can
-// die between them; `holder` is a job that holds the lease. The Worker may
+// die between them; `holder` is a job that holds the lease. A job whose
+// GitHub write fails gives the lease back, so `holderDies` is also that
+// failure and the queue's retry is the next review delivery. The Worker may
 // withdraw a payment whose deposit a chain reorganisation removed, while no
 // outcome is set; the next check then asks again. Taking an unpaid ask back
 // removes its row, so a deposit sent afterwards pays for nothing.

@@ -191,6 +191,8 @@ function world(options: WorldOptions = {}) {
     onLabelRemoved: null as (() => void) | null,
     comments: [] as Comment[],
     permission: options.permission ?? ("read" as "read" | "write"),
+    /** How many of the next comment or label additions answer 502. */
+    failures: { comment: 0, label: 0 },
   };
   const writes: string[] = [];
   const prompts: string[] = [];
@@ -318,6 +320,10 @@ function world(options: WorldOptions = {}) {
       if (path.endsWith("/issues/5/comments") && method === "GET")
         return Response.json(github.comments);
       if (path.endsWith("/issues/5/comments") && method === "POST") {
+        if (github.failures.comment > 0) {
+          github.failures.comment -= 1;
+          return new Response(null, { status: 502 });
+        }
         const comment = {
           id: nextCommentId++,
           body: ((await request.json()) as { body: string }).body,
@@ -337,6 +343,10 @@ function world(options: WorldOptions = {}) {
         return Response.json(comment);
       }
       if (path.endsWith("/issues/5/labels") && method === "POST") {
+        if (github.failures.label > 0) {
+          github.failures.label -= 1;
+          return new Response(null, { status: 502 });
+        }
         const { labels } = (await request.json()) as { labels: string[] };
         for (const label of labels)
           if (!github.labels.includes(label)) github.labels.push(label);
@@ -467,10 +477,15 @@ function world(options: WorldOptions = {}) {
         [at, repositoryId],
       );
     },
-    /** Run queued jobs through the Worker's own consumer, oldest first. */
-    async drain() {
+    /**
+     * Run queued jobs through the Worker's own consumer, oldest first. With
+     * `redeliver`, a job the consumer retries is delivered again, as the
+     * queue does a minute later.
+     */
+    async drain(redeliver = false) {
       const kinds: string[] = [];
       while (queued.length > 0) {
+        if (kinds.length > 20) throw new Error("the queue never settles");
         const body = queued.shift() as Job;
         kinds.push(body.kind);
         let retried = false;
@@ -488,7 +503,12 @@ function world(options: WorldOptions = {}) {
           },
           env as never,
         );
-        if (retried) throw new Error(`job ${body.kind} was retried`);
+        if (retried && !redeliver)
+          throw new Error(`job ${body.kind} was retried`);
+        if (retried) {
+          kinds.push("retry");
+          queued.push(body);
+        }
       }
       return kinds;
     },
@@ -1213,6 +1233,26 @@ test("a comment Slopbot posted before a crash is reused, not duplicated", async 
     w.close();
   }
 });
+
+test.each(["comment", "label"] as const)(
+  "a first ask whose %s GitHub refuses once is made by the queue's retry",
+  async (write) => {
+    const w = world();
+    try {
+      w.github.failures[write] = 1;
+      expect(await w.webhook("opened", 42)).toBe(202);
+      // The retry comes a minute later in production, well inside the
+      // ten-minute lease the failed job took.
+      expect(await w.drain(true)).toEqual(["review", "retry", "review"]);
+      expect(w.feeComments()).toHaveLength(1);
+      expect(w.github.labels).toEqual([FEE_NEEDED_LABEL]);
+      expect(w.gate()).toMatchObject({ state: "asked", comment_id: 900 });
+      expect(w.reviewRow()).toEqual(SKIPPED);
+    } finally {
+      w.close();
+    }
+  },
+);
 
 test("nobody is asked for a review the monthly cap would refuse", async () => {
   const w = world();

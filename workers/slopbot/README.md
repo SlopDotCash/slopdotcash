@@ -269,7 +269,9 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
   `slopbot:fee-needed`, and the review is recorded as skipped with the reason
   `fee-needed`. No model call. Slopbot's own state is in `slopbot_fee_gates`
   (`recorded`, `asking`, `asked`, `paid`, `released`); the first ask holds a
-  ten-minute lease so two jobs never post two comments.
+  ten-minute lease so two jobs never post two comments. A job whose comment
+  or label write fails gives the lease back, so the queue's retry a minute
+  later asks again instead of recording `fee-needed` with nothing posted.
 - **Paid.** The submission-fee Worker sets `paid_at`. The five-minute schedule
   (`dispatchFeeChecks`), or the review job that notices it first, queues a
   `submission_fee` job. `refreshSubmissionFee` swaps the label for
