@@ -1282,6 +1282,28 @@ test("nobody is asked for a review the monthly cap would refuse", async () => {
   }
 });
 
+test("a dry run records no ask for a review the monthly cap would refuse", async () => {
+  const w = world({ mode: "dry_run" });
+  try {
+    const month = reviewMonth(new Date());
+    const insert = w.sqlite.prepare(
+      "INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) VALUES (?, ?, 'issue', ?, ?)",
+    );
+    w.sqlite.transaction(() => {
+      for (let n = 1; n <= FREE_REVIEWS_PER_REPO_PER_MONTH; n++)
+        insert.run(w.repositoryId, month, 10_000 + n, SETTING_ON_AT);
+    })();
+    // Live asks nothing here, so the record of what it would ask is empty.
+    expect(await w.review()).toBe("monthly-review-cap");
+    expect(w.item()).toBeNull();
+    expect(w.gate()).toBeNull();
+    expect(w.github.labels).toEqual([]);
+    expect(w.feeComments()).toEqual([]);
+  } finally {
+    w.close();
+  }
+});
+
 test("an unpaid pull request never gets the ready label", async () => {
   const w = world({ readyLabel: true });
   try {

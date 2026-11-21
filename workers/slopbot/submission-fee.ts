@@ -658,9 +658,9 @@ export async function gateSubmissionFee(
     opened > Date.parse(since);
 
   if (mode === "dry_run") {
-    // Record what would be asked. Nothing is written to GitHub and the
-    // review runs as it does today.
-    if (applies && fee !== null && row === null) {
+    // Record what live would ask, so nothing past the monthly cap. Nothing
+    // is written to GitHub and the review runs as it does today.
+    if (applies && fee !== null && row === null && input.mayAsk) {
       await db
         .prepare(
           `INSERT OR IGNORE INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at)
