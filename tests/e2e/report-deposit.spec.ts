@@ -321,13 +321,14 @@ test("the report form states the deposit before a report is filed, only while it
   await expect(notice).toHaveCount(0);
 });
 
-test("the deployed report form says nothing about a deposit while the deposit is switched off", async ({
+test("the report form says nothing about a deposit while the deposit is switched off", async ({
   page,
   diagnostics,
 }) => {
   diagnostics.allowPreviewApiMisses();
   // The deployed switch itself; a change to it must change this test.
-  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(false);
+  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(true);
+  await switchReportDeposit(page, false);
   await programPage(page);
   await expect(
     page.getByText(/refundable deposit/iu, { exact: false }),
@@ -438,18 +439,17 @@ test("the owner sees the report deposit on, turns it off and on again, and nothi
     await expect(depositBox).toBeChecked();
     expect((await api.stored()).project.security).toBeUndefined();
     await expect(changes).toHaveCount(0);
-    // One plain sentence says what it does. Slop has not switched the
-    // deposit on, so the page also says the choice applies later.
+    // One plain sentence says what it does. The deposit is switched on, so
+    // the page no longer says the choice applies later.
     await expect(
       page.getByText(REPORT_DEPOSIT_SETTING_HINT, { exact: false }),
     ).toBeVisible();
-    expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(false);
+    expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(true);
     await expect(
-      page.getByText(
-        "Slop has not switched the deposit on yet; this choice applies once it does.",
-        { exact: false },
-      ),
-    ).toBeVisible();
+      page.getByText("Slop has not switched the deposit on yet", {
+        exact: false,
+      }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: info.outputPath("manage-report-deposit-on.png"),
       fullPage: true,
@@ -507,16 +507,9 @@ test("how it works answers the report deposit question, and says so while it is 
       name: "Is there a deposit to file a security report?",
     }),
   });
-  // As deployed: built, not asked yet.
-  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(false);
+  // As deployed: asked.
+  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(true);
   await page.goto("/how-it-works#faq");
-  await expect(answer).toContainText(
-    "Not yet. Slop has not switched the deposit on.",
-  );
-  await expect(answer).toContainText("about 5 US dollars of SLOP");
-
-  await switchReportDeposit(page, true);
-  await page.reload();
   await expect(answer).toContainText(
     "Yes, unless the project's owner turned it off.",
   );
@@ -537,6 +530,14 @@ test("how it works answers the report deposit question, and says so while it is 
     path: info.outputPath("faq-report-deposit.png"),
     fullPage: true,
   });
+
+  // A bundle with the deposit switched off says it is not asked yet.
+  await switchReportDeposit(page, false);
+  await page.reload();
+  await expect(answer).toContainText(
+    "Not yet. Slop has not switched the deposit on.",
+  );
+  await expect(answer).toContainText("about 5 US dollars of SLOP");
 });
 
 /**
@@ -703,13 +704,14 @@ test("a decision that is not a rejection never carries the spam mark", async ({
   expect(sent[0]).not.toHaveProperty("spam");
 });
 
-test("the deployed decide form has no spam mark while the deposit is switched off", async ({
+test("the decide form has no spam mark while the deposit is switched off", async ({
   page,
   diagnostics,
 }) => {
   diagnostics.allowPreviewApiMisses();
   // The deployed switch itself; a change to it must change this test.
-  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(false);
+  expect(REPORT_DEPOSIT_SWITCHED_ON).toBe(true);
+  await switchReportDeposit(page, false);
   const { form } = await ownerCase(page);
   await form
     .getByRole("combobox", { name: "Outcome", exact: true })
