@@ -263,3 +263,69 @@ test("the financial filter keeps remediation distinct from payment", async ({
   await filter.selectOption({ label: "All" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toBeVisible();
 });
+
+test("a tab return keeps the Inbox reports on screen without reloading them", async ({
+  page,
+}) => {
+  const requests = { cases: 0, submissions: 0, sessions: 0 };
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/projects")
+      return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
+    if (path === "/api/v1/notifications")
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          unread: 0,
+          nextCursor: null,
+          notifications: [],
+        },
+      });
+    if (path === "/api/v1/project-session") {
+      requests.sessions++;
+      return route.fulfill({
+        json: { session: { githubId: "42", githubLogin: "viewer-42" } },
+      });
+    }
+    if (path === "/api/v1/security-cases") {
+      requests.cases++;
+      return route.fulfill({
+        json: {
+          viewer: { githubId: "42", githubLogin: "viewer-42" },
+          programs: [],
+          cases: [record("42")],
+        },
+      });
+    }
+    if (path === "/api/v1/security-submissions") {
+      requests.submissions++;
+      return route.fulfill({
+        json: { recipientGithubId: "42", automatic: false, submissions: [] },
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await page.goto("/inbox", { waitUntil: "networkidle" });
+  const report = page.getByText("Private account 42 finding", { exact: true });
+  await expect(report).toBeVisible();
+  const loaded = { ...requests };
+  for (let round = 0; round < 3; round++) {
+    const rechecked = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === "/api/v1/project-session",
+    );
+    // A synthetic return signal is deterministic in headless Chromium.
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await rechecked;
+    await expect(report).toBeVisible();
+    await expect(page.getByText("Checking private session…")).toHaveCount(0);
+  }
+  await page.waitForLoadState("networkidle");
+  await expect(report).toBeVisible();
+  expect(requests.sessions).toBeGreaterThan(loaded.sessions);
+  expect(requests.cases).toBe(loaded.cases);
+  expect(requests.submissions).toBe(loaded.submissions);
+});
