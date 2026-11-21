@@ -64,6 +64,7 @@ import {
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
+import { reportDepositMode } from "../../../backend/security/report-deposit";
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
@@ -408,6 +409,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     repositoryAccess,
     routineDecisions: {
       mode: routineMode(env.SECURITY_ROUTINE_DECISIONS),
+      adminGithubIds,
+    },
+    reportDeposit: {
+      mode: reportDepositMode(env.SECURITY_REPORT_DEPOSIT),
       adminGithubIds,
     },
   });

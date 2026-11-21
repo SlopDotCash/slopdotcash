@@ -145,6 +145,7 @@ const OPTIONAL_PROJECT_KEYS = [
   "participation",
   "rewardAsset",
   "contribution",
+  "security",
   "securityBounty",
   "slopbot",
 ];
@@ -1332,6 +1333,20 @@ function validateProjectDefinition(
       );
     if (slopbot.wantedIssues !== undefined)
       assertWantedIssues(slopbot.wantedIssues, "project.slopbot.wantedIssues");
+  }
+  if (project.security !== undefined) {
+    // The report deposit setting (PRD section 8): absent or true is on.
+    const security = record(project.security, "project.security");
+    exactKeys(
+      security,
+      security.reportDeposit === undefined ? [] : ["reportDeposit"],
+      "project.security",
+    );
+    if (
+      security.reportDeposit !== undefined &&
+      typeof security.reportDeposit !== "boolean"
+    )
+      throw new TypeError("project.security.reportDeposit must be a boolean");
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&
