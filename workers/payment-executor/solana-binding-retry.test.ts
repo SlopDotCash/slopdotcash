@@ -27,7 +27,7 @@ import {
 } from "../../contracts/solana/adapter";
 import { bytes, encoder, le, pda } from "../../contracts/solana/transactions";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
-import type { JournalStore } from "./core";
+import type { JournalStore } from "./binding-shared";
 import {
   completeSolanaBinding,
   createSolanaAttester,

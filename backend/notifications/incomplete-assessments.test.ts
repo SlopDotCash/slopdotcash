@@ -261,33 +261,31 @@ test("a later completed assessment resolves an exhausted sibling's retained sour
 
 test("an exhausted assessment with no earlier source gap still appears until a later assessment completes", async () => {
   const f = fixture();
+  // Times follow the fixture clock: a finish is refused once the lease has
+  // passed real time.
+  const at = f.at(1);
+  const received = f.at().toISOString();
   // The delivery's evidence was always complete, so no finish ever records a
   // source gap before the digest's paid attempts run out: the run that finds
   // them exhausted ends attempts-exhausted, terminal but not an assessment.
   f.sqlite.run(
     "INSERT INTO slopbot_deliveries(delivery_id,event,received_at) VALUES('delivery-one','pull_request',?)",
-    [AT],
+    [received],
   );
   f.sqlite.run(
     "INSERT INTO slopbot_value_requests(delivery_id,installation_id,repository_id,owner,repo,pull_request_number,received_at) VALUES('delivery-one',1,123456789,'example','repo',7,?)",
-    [AT],
+    [received],
   );
-  const claim = await claimValueRequest(f.db, "delivery-one", new Date(AT));
+  const claim = await claimValueRequest(f.db, "delivery-one", at);
   if (!claim) throw new Error("Fixture claim refused");
-  await finishValueRequest(
-    f.db,
-    claim,
-    "attempts-exhausted",
-    null,
-    new Date(AT),
-  );
+  await finishValueRequest(f.db, claim, "attempts-exhausted", null, at);
   expect(
     f.sqlite
       .query(
         "SELECT incomplete_since FROM slopbot_value_processing WHERE delivery_id='delivery-one'",
       )
       .get(),
-  ).toEqual({ incomplete_since: AT });
+  ).toEqual({ incomplete_since: at.toISOString() });
   const value = await f.list();
   expect(value.items).toEqual([
     {
@@ -295,15 +293,15 @@ test("an exhausted assessment with no earlier source gap still appears until a l
       projectName: "Project incomplete",
       repository: "example/repo",
       pullRequest: 7,
-      since: AT,
+      since: at.toISOString(),
       retryAt: null,
       running: false,
     },
   ]);
   expect((await f.list(ADMIN)).items).toEqual(value.items);
   // A later delivery that completes a real assessment resolves the entry.
-  await f.seed("new-source", 7, "2026-10-30T02:00:00.000Z");
-  const resolvedAt = new Date("2026-10-30T03:00:00.000Z");
+  await f.seed("new-source", 7, f.at(2).toISOString());
+  const resolvedAt = f.at(3);
   const completed = await claimValueRequest(f.db, "new-source", resolvedAt);
   if (!completed) throw new Error("Completed claim refused");
   await finishValueRequest(f.db, completed, "published", null, resolvedAt);
