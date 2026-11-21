@@ -542,14 +542,15 @@ pure def fundersView(countersOnRecord: bool, status: R::ReadStatus): FundersView
   else if (status == R::Current or status == R::Stale) FundersListed
   else if (status == R::Empty) NoFunders
   else FundersError
-pure def lawTwoAccountsNameNobody(a: Registration, b: Registration): bool =
-  (a.publicAccount and not(a.closed) and b.publicAccount and not(b.closed)) implies depositorLogin(List(a, b)) == ""
-pure def lawPrivateOrClosedAccountNamesNobody(a: Registration): bool =
-  (not(a.publicAccount) or a.closed) implies depositorLogin(List(a)) == ""
+pure def lawTwoAccountsNameNobody(account: Registration, otherAccount: Registration): bool =
+  (account.publicAccount and not(account.closed) and otherAccount.publicAccount and not(otherAccount.closed))
+    implies depositorLogin(List(account, otherAccount)) == ""
+pure def lawPrivateOrClosedAccountNamesNobody(account: Registration): bool =
+  (not(account.publicAccount) or account.closed) implies depositorLogin(List(account)) == ""
 pure def lawFundersNeedCounters(status: R::ReadStatus): bool = fundersView(false, status) == FundersHidden
 pure def lawFailedFundersReadOffersRetry(status: R::ReadStatus): bool =
   (status == R::Failed or status == R::Invalid or status == R::Unavailable) implies fundersView(true, status) == FundersError
-pure val aValues = Set({ login: "alice", publicAccount: true, closed: false }, { login: "bob", publicAccount: false, closed: false },
+pure val accountValues = Set({ login: "alice", publicAccount: true, closed: false }, { login: "bob", publicAccount: false, closed: false },
   { login: "carol", publicAccount: true, closed: true })
-pure val bValues = aValues
+pure val otherAccountValues = accountValues
 ```
