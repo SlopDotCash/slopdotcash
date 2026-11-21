@@ -10,7 +10,8 @@
  * a failed quote, route or price left behind.
  */
 
-import { FeeCapTooLowError } from "viem";
+import { FeeCapTooLowError, HttpRequestError } from "viem";
+import { EvmRpcUnavailable } from "../../contracts/evm/adapter";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type {
   BuybackChainClient,
@@ -358,6 +359,120 @@ export function message(error: unknown): string {
       .trim()
       .slice(0, 400) || "unknown error"
   );
+}
+
+const methods = {
+  "evm-rpc": new Set([
+    "eth_blockNumber",
+    "eth_call",
+    "eth_estimateGas",
+    "eth_feeHistory",
+    "eth_getBlockByNumber",
+    "eth_getCode",
+    "eth_getStorageAt",
+    "eth_getTransactionCount",
+    "eth_sendRawTransaction",
+    "eth_getTransactionReceipt",
+    "eth_maxPriorityFeePerGas",
+    "eth_gasPrice",
+  ]),
+  "solana-rpc": new Set([
+    "getAccountInfo",
+    "getBalance",
+    "getMultipleAccounts",
+    "getTokenAccountsByOwner",
+    "getFeeForMessage",
+  ]),
+  jupiter: new Set(["quote", "swap"]),
+  kyberswap: new Set(["routes", "route/build"]),
+};
+type Provider = keyof typeof methods;
+const stages = new Set(["deployment-check", "rpc-response", "response-json"]);
+interface ProviderFailure {
+  provider: Provider;
+  stage: string;
+  method?: string;
+  httpStatus?: number;
+}
+
+/** Only fixed fields survive either the worker log or the diagnostic read. */
+export function sanitizeProviderFailure(
+  value: unknown,
+): ProviderFailure | undefined {
+  if (!value || typeof value !== "object") return;
+  const { provider, stage, method, httpStatus } =
+    value as Partial<ProviderFailure>;
+  if (
+    typeof provider !== "string" ||
+    !Object.hasOwn(methods, provider) ||
+    typeof stage !== "string" ||
+    !stages.has(stage)
+  )
+    return;
+  const failure: ProviderFailure = { provider, stage };
+  if (typeof method === "string" && methods[provider].has(method))
+    failure.method = method;
+  if (
+    typeof httpStatus === "number" &&
+    Number.isInteger(httpStatus) &&
+    httpStatus >= 100 &&
+    httpStatus <= 599
+  )
+    failure.httpStatus = httpStatus;
+  return failure;
+}
+
+const noted = new WeakMap<Error, ProviderFailure>();
+
+/** Keep the original exception and its retry/status semantics. */
+export function noteProviderFailure<T>(error: T, input: ProviderFailure): T {
+  const failure = sanitizeProviderFailure(input);
+  if (failure && error instanceof Error) noted.set(error, failure);
+  return error;
+}
+
+export function providerFailure(error: unknown): ProviderFailure | undefined {
+  for (
+    let depth = 0;
+    depth < 8 && error instanceof Error;
+    depth++, error = error.cause
+  ) {
+    const failure = noted.get(error);
+    if (failure) return failure;
+    if (
+      error instanceof HttpRequestError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      const body = error.body;
+      return sanitizeProviderFailure({
+        provider: "evm-rpc",
+        stage: "rpc-response",
+        method: body && !Array.isArray(body) ? body.method : undefined,
+        httpStatus: error.status,
+      });
+    }
+    if (error instanceof EvmRpcUnavailable) {
+      const status = /^RPC HTTP failure: (\d{3})$/u.exec(error.message)?.[1];
+      if (status)
+        return sanitizeProviderFailure({
+          provider: "evm-rpc",
+          stage: "deployment-check",
+          httpStatus: Number(status),
+        });
+    }
+  }
+}
+
+function providerErrorLog(error: unknown) {
+  const failure = providerFailure(error);
+  if (!failure) return { error: message(error) };
+  const label =
+    failure.stage === "response-json" && failure.provider !== "kyberswap"
+      ? "unparseable response"
+      : failure.httpStatus === undefined
+        ? "provider request failed"
+        : `HTTP ${failure.httpStatus}`;
+  return { error: label, providerFailure: failure };
 }
 
 export function impactWithin(quote: Quote, limits: Limits): boolean {
@@ -845,7 +960,7 @@ export async function runNetwork(
           event: "fee_conversion_error",
           network: config.network,
           token,
-          error: message(error),
+          ...providerErrorLog(error),
         });
       }
     }
@@ -986,7 +1101,7 @@ async function claimVaultFees(
           reason: `claim: ${message(error)}`,
           updatedAt: deps.now().toISOString(),
         });
-      report("fee_claim_error", { error: message(error) });
+      report("fee_claim_error", providerErrorLog(error));
     }
   }
   return claimed;

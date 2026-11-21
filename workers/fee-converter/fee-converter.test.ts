@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { FeeCapTooLowError } from "viem";
+import { FeeCapTooLowError, HttpRequestError } from "viem";
 import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import {
   PROJECT_DISCRIMINATOR,
@@ -11,14 +11,17 @@ import {
   solanaVaultAddress,
 } from "../../contracts/solana/adapter";
 import { ata } from "../../contracts/solana/transactions";
+import { sanitizeFeeTail } from "../../scripts/inspect-fee-worker-operations";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { sqliteD1 } from "../../tests/sqlite-d1";
+import { parseBuybackConfig } from "./buyback-config";
 import { parseConfig } from "./config";
 import {
   type ChainClient,
   type ConversionRow,
   type FeeVault,
   type PreparedSend,
+  providerFailure,
   type Quote,
   type QuoteResult,
   type RunDependencies,
@@ -176,6 +179,136 @@ function harness(
     events,
   };
 }
+
+test("provider diagnostics distinguish response parsing from authentication without retaining inputs", async () => {
+  const token = "So11111111111111111111111111111111111111112";
+  const sensitive = "fixture-provider-body-must-not-appear";
+  const h = harness({
+    mode: "dry_run",
+    env: {
+      FEE_CONVERTER_MODE: "dry_run",
+      FEE_CONVERTER_NETWORKS: "solana",
+      FEE_WALLET_SOLANA: solanaBase58(new Uint8Array(32).fill(9)),
+      FEE_CONVERTER_ALLOWLIST: JSON.stringify({ solana: [token] }),
+    },
+  });
+  try {
+    let status = 403;
+    const refusal = (async () =>
+      new Response(sensitive, { status })) as unknown as typeof fetch;
+    const solana = createSolanaClient({
+      config: h.network,
+      limits: h.deps.limits,
+      jupiterApiUrl: "https://jupiter.invalid",
+      jupiterApiKey: null,
+      fetch: refusal,
+    });
+    expect(await solana.quote(token, 1n)).toEqual({
+      noRoute: "Jupiter quote: 403",
+    });
+    status = 200;
+    const jupiter = await solana.quote(token, 1n).catch(providerFailure);
+    expect(jupiter).toEqual({
+      provider: "jupiter",
+      stage: "response-json",
+      method: "quote",
+      httpStatus: 200,
+    });
+
+    status = 403;
+    h.chain.balance = solana.balance;
+    await runNetwork(h.network, h.deps);
+    expect(h.rows()).toEqual([]);
+    expect(h.chain.sent).toEqual([]);
+    const [observed] = h.events.filter(
+      (e) => e.event === "fee_conversion_error",
+    );
+    expect(observed).toEqual({
+      event: "fee_conversion_error",
+      network: "solana",
+      token,
+      error: "unparseable response",
+      providerFailure: {
+        provider: "solana-rpc",
+        stage: "response-json",
+        method: "getAccountInfo",
+        httpStatus: 403,
+      },
+    });
+
+    const robin = config({
+      FEE_CONVERTER_MODE: "dry_run",
+      FEE_CONVERTER_NETWORKS: "robinhood",
+      FEE_WALLET_ROBINHOOD: WALLET,
+    });
+    const { vars } = Bun.TOML.parse(
+      await Bun.file(new URL("./wrangler.toml", import.meta.url)).text(),
+    ) as { vars: Record<string, string> };
+    const { limits } = parseBuybackConfig(
+      { ...vars, BUYBACK_MODE: "dry_run" },
+      robin.mode,
+    );
+    if (!limits) throw new Error("buyback fixture requires configured limits");
+    const evm = createEvmClient({
+      config: robin.networks[0],
+      limits: robin.limits,
+      kyberClientId: "fixture",
+      buyback: { limits, receiver: WALLET },
+      fetch: refusal,
+    });
+    expect(await evm.quote(TOKEN, 1n).catch(providerFailure)).toEqual({
+      provider: "kyberswap",
+      stage: "response-json",
+      method: "routes",
+      httpStatus: 403,
+    });
+    expect(
+      providerFailure(
+        new Error("wrapped", {
+          cause: new HttpRequestError({
+            body: { method: "eth_call", params: [sensitive] },
+            status: 403,
+            url: `https://endpoint.invalid/${sensitive}`,
+          }),
+        }),
+      ),
+    ).toEqual({
+      provider: "evm-rpc",
+      stage: "rpc-response",
+      method: "eth_call",
+      httpStatus: 403,
+    });
+
+    const safe = sanitizeFeeTail({
+      scriptName: "slop-fee-converter",
+      logs: [
+        {
+          message: [
+            observed,
+            {
+              ...observed,
+              providerFailure: {
+                provider: "solana-rpc",
+                stage: "response-json",
+                method: sensitive,
+                httpStatus: 403,
+                body: sensitive,
+                url: sensitive,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(safe?.records.map((row) => row.providerFailure)).toEqual([
+      observed?.providerFailure,
+      { provider: "solana-rpc", stage: "response-json", httpStatus: 403 },
+    ]);
+    expect(JSON.stringify({ observed, safe })).not.toContain(sensitive);
+  } finally {
+    h.sqlite.close();
+  }
+});
 
 describe("release gates", () => {
   test("a scheduled startup failure preserves completed network work, and off leaves its records unchanged", async () => {
