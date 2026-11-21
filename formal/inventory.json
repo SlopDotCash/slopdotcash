@@ -28,8 +28,9 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "b657c7e4ef7e79fa95721c93a75ba70a1707a3d2d7c6a9036f071b8ecad8bf09",
+      "sha256": "dbd735f2e5b5d42f8b85c17fa9f19de2762ff995ceb5cb8eb8d06df502024a91",
       "models": [
+        "formal/models/points/github_ingestion_read.qnt",
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt",
@@ -39,10 +40,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 62, 258, 393, 503, 535, 536, 610, 663, 720, 800, 805, 920, 926, 994,
-        997, 1023, 1024, 1045, 1057, 1089, 1127, 1357, 1385, 1477, 1490, 1581,
-        1689, 1691, 1692, 1896, 1979, 2132, 2134, 2164, 2279, 2301, 2372, 2383,
-        2408, 2479, 2492, 2505, 2514, 2515, 2516, 2533
+        44, 62, 258, 400, 510, 550, 551, 640, 693, 750, 830, 835, 950, 956,
+        1024, 1027, 1053, 1054, 1075, 1087, 1119, 1157, 1387, 1415, 1507, 1520,
+        1611, 1719, 1721, 1722, 1926, 2009, 2162, 2164, 2194, 2309, 2331, 2402,
+        2413, 2438, 2509, 2522, 2535, 2544, 2545, 2546, 2563
       ],
       "review": "mapped-abstraction"
     },
@@ -15336,14 +15337,16 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "048daf119ad7458ed921fbbc56bd70d0bf6df4fea952352b24eed45ef02d1bd0",
+      "sha256": "ef243707858a1788f75af0c4647ebd1e26d937c22a3fd8d1abe775248777d2d5",
       "sources": [
+        ".github/workflows/deploy.yml",
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
         "scripts/restore-leaderboard-discussions.py",
         "workers/slopbot/github.ts"
       ],
       "scenarios": [
+        "additionalQuotaResetLeavesBundleTimeTest",
         "authorizationDoesNotRetryTest",
         "commitFileErrorRecoversTest",
         "commitFileErrorRetriesOnceTest",
@@ -15355,10 +15358,13 @@
         "commitPullServerRetryRespectsCheckpointTest",
         "commitPullValidationErrorNeverRetriesTest",
         "confirmedCheckpointReadTest",
+        "feedRetryDoesNotExtendPreparationWindowTest",
+        "hostedCollectionCapAppliesAfterQuickSetupTest",
         "mismatchedValidatorCannotReplayTest",
         "mismatchedValidatorReadsLiveTest",
         "prFileServerErrorRecoversTest",
         "prFileServerErrorsStayBoundedTest",
+        "quotaWaitAtAbsoluteDeadlineRefusesTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
         "repeatedSecondaryLimitFailsTest",

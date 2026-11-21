@@ -269,6 +269,13 @@ jobs:
     # The three-hour window expired before the complete census was written.
     timeout-minutes: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && 1440 || 360 }}
     steps:
+      - name: Reserve checked bundle time for hosted main collection
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && inputs.use_published_data != true && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          # The 6-hour hosted job needs time to check and upload the bundle.
+          echo "SLOP_PREPARE_COLLECT_UNTIL_SECONDS=$(( $(date +%s) + 20820 ))" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -516,19 +523,27 @@ jobs:
             leaderboard_origin="https://staging.slop.cash"
           fi
           collect=(bun run leaderboard:generate)
+          hosted_collection_deadline=""
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
             mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
-            export SLOP_DISCUSSION_DEADLINE_MS="$(( ( $(date +%s) + SLOP_COLLECTION_DEADLINE_S ) * 1000 ))"
+            collector_started=$(date +%s)
+            if [ -n "${SLOP_PREPARE_COLLECT_UNTIL_SECONDS:-}" ]; then
+              hosted_collection_deadline=$((collector_started + SLOP_COLLECTION_DEADLINE_S))
+              if [ "$SLOP_PREPARE_COLLECT_UNTIL_SECONDS" -lt "$hosted_collection_deadline" ]; then
+                hosted_collection_deadline=$SLOP_PREPARE_COLLECT_UNTIL_SECONDS
+              fi
+              export SLOP_DISCUSSION_DEADLINE_MS="$((hosted_collection_deadline * 1000))"
+            else
+              export SLOP_DISCUSSION_DEADLINE_MS="$(( (collector_started + SLOP_COLLECTION_DEADLINE_S) * 1000 ))"
+              collect=(timeout --signal=TERM --kill-after=10s "$(( SLOP_COLLECTION_DEADLINE_S + 100 ))" "${collect[@]}")
+            fi
             # Incremental collection: reuse the previous trusted memo when
             # one was restored, and always write this collection's memo.
             if [ -f "$RUNNER_TEMP/restored-collection/collection-memo.json" ]; then
               export SLOP_COLLECTION_MEMO="$RUNNER_TEMP/restored-collection/collection-memo.json"
             fi
             export SLOP_COLLECTION_MEMO_OUT="$RUNNER_TEMP/collection-memo/collection-memo.json"
-            # Reserve time to retain the latest journal of public reads before
-            # the job limit, even when an unrelated live endpoint stalls.
-            collect=(timeout --signal=TERM --kill-after=10s "$(( SLOP_COLLECTION_DEADLINE_S + 100 ))" "${collect[@]}")
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
@@ -537,12 +552,27 @@ jobs:
           # legacy fallback. Every other failure stops the release.
           feed_status=0
           for attempt in 1 2; do
+            attempt_command=("${collect[@]}")
+            if [ -n "$hosted_collection_deadline" ]; then
+              remaining_seconds=$((hosted_collection_deadline - $(date +%s)))
+              if [ "$remaining_seconds" -le 0 ]; then
+                if [ "$feed_status" -eq 75 ]; then
+                  break
+                fi
+                echo "::error::No time remains for live collection before checked bundle preparation."
+                exit 1
+              fi
+              attempt_command=(timeout --signal=TERM --kill-after=10s "$((remaining_seconds + 100))" "${collect[@]}")
+            fi
             feed_status=0
-            "${collect[@]}" || feed_status=$?
+            "${attempt_command[@]}" || feed_status=$?
             if [ "$feed_status" -ne 75 ]; then
               break
             fi
             if [ "$attempt" -eq 1 ]; then
+              if [ -n "$hosted_collection_deadline" ] && [ "$(( $(date +%s) + 60 ))" -ge "$hosted_collection_deadline" ]; then
+                break
+              fi
               echo "::warning::Hosted value feed unavailable; retrying in 60 seconds."
               sleep 60
             fi
