@@ -32,7 +32,7 @@ export const SUBMISSION_FEE_DECIMALS = 6;
 
 /** One plain sentence for the owner's settings page and the project form. */
 export const SUBMISSION_FEE_HINT =
-  "Slopbot reviews an outside contributor's pull request once a refundable fee is deposited. A merge sends the fee back, and so does 14 days without a maintainer decision. A pull request closed without a merge keeps it. Contributors can pay in SLOP at half the price instead.";
+  "Slopbot reviews an outside contributor's pull request once a refundable fee is deposited. A merge sends the fee back, and so does 14 days without a maintainer decision. A pull request closed without a merge keeps it, unless it answers a slop-wanted issue and you do not add slop-keep-fee. Contributors can pay in SLOP at half the price instead.";
 
 const MINOR = /^[1-9][0-9]{0,15}$/u;
 

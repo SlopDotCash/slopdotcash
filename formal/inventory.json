@@ -6306,7 +6306,7 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "4137a071163e5bb254996f5399273190396610520f2a0a05774d45ef7893629b",
+      "sha256": "e244da45e11123837d7b85d8948b9d60fb3dfc2c1d044b351d9d9b379aa73c9b",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
@@ -6314,8 +6314,8 @@
         "formal/models/ui/ui_report_deposit.qnt"
       ],
       "candidateLines": [
-        15, 74, 201, 395, 436, 437, 439, 440, 471, 473, 483, 631, 632, 634, 635,
-        642, 670, 673, 701, 706, 778
+        15, 74, 201, 397, 438, 439, 441, 442, 473, 475, 485, 633, 634, 636, 637,
+        644, 672, 675, 703, 708, 780
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6484,11 +6484,11 @@
     },
     {
       "path": "src/SubmissionFeePage.tsx",
-      "sha256": "f92b9f3cb44ee1ce872c58cbed73834928b47761eee06c0681060304655204ba",
+      "sha256": "cc943a3866ccf230c143867dd4caffacad70993dd04100e28dd1516d14c319d1",
       "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
       "candidateLines": [
-        2, 73, 168, 262, 363, 376, 384, 385, 386, 388, 389, 392, 395, 396, 405,
-        438, 440, 444, 450, 460, 461
+        2, 75, 170, 267, 368, 381, 389, 390, 391, 393, 394, 397, 400, 401, 410,
+        443, 445, 449, 455, 465, 466
       ],
       "review": "mapped-abstraction"
     },
@@ -7793,7 +7793,7 @@
     },
     {
       "path": "src/lib/submission-fee-setting.mjs",
-      "sha256": "cad095dda37d9cc811eac03fa2d9b52168073f35beb25e541fcdf663e4d3a827",
+      "sha256": "d1bdac9393bc4e1b8e311635991625f1cfa9e395894ee23bdf81a5c5b448b437",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
@@ -7813,14 +7813,14 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "0daa31260e05cae5405818d262baedff0fc34c0bda479d9c19807aa8805be60f",
+      "sha256": "4e7f45d568cd1321fffea3442c0f6805a8ae0bed7d3fae7cb94af841ae7c6393",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [73, 95, 355, 366],
+      "candidateLines": [80, 102, 362, 373],
       "review": "mapped-abstraction"
     },
     {
@@ -8177,7 +8177,10 @@
     {
       "path": "src/lib/wanted-label.mjs",
       "sha256": "e521554f79636a415c11673e580e3b38a21885c6a05ab84909287399002c16a2",
-      "models": ["formal/models/api/api_wanted_issues.qnt"],
+      "models": [
+        "formal/models/api/api_wanted_issues.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -9552,17 +9555,17 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "28e422b64af338c8dd14fcccadc84e3127d2137ad206e74591fcf791498a90cf",
+      "sha256": "ccd79432cfd5d39d8bc6293923eff2bdb942982c8a04695e4461965bb9b3fdd8",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
       "candidateLines": [
-        303, 323, 334, 343, 345, 347, 356, 412, 433, 438, 445, 448, 450, 484,
-        485, 487, 488, 499, 505, 530, 539, 540, 571, 575, 675, 708, 716, 724,
-        726, 728, 729, 730, 751, 753, 785, 786, 788, 791, 792, 806, 807, 868,
-        894, 934, 938, 944, 968, 981, 997, 1018, 1041, 1051, 1074, 1078, 1122,
-        1123, 1125, 1150
+        315, 335, 346, 355, 357, 359, 368, 424, 445, 450, 457, 460, 462, 496,
+        497, 499, 500, 511, 517, 542, 551, 552, 583, 587, 687, 720, 728, 736,
+        738, 740, 741, 742, 763, 765, 797, 798, 800, 803, 804, 818, 819, 989,
+        1010, 1037, 1077, 1081, 1087, 1111, 1124, 1140, 1161, 1180, 1201, 1224,
+        1228, 1272, 1273, 1275, 1300
       ],
       "review": "mapped-abstraction"
     },
@@ -17517,12 +17520,13 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "bae14c1adea3bc0a02594a4fcab690a6e1297051f2b742246eb30d0ac3b7a247",
+      "sha256": "9c744efff087ccfb83bd34d1470792f81af1871dc11a168280fd0bc7854d8d50",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
         "src/lib/submission-fee-setting.mjs",
         "src/lib/submission-fee.mjs",
+        "src/lib/wanted-label.mjs",
         "workers/slopbot/index.ts",
         "workers/slopbot/ready-label.ts",
         "workers/slopbot/review-cap.ts",
@@ -17549,6 +17553,9 @@
         "undecidedIsDueBackTest",
         "unpaidIsNeverReadyTest",
         "unpaidMergeHasNothingDueTest",
+        "wantedClosedIsSentBackTest",
+        "wantedMarkedIsKeptTest",
+        "wantedUnreadableWaitsTest",
         "withdrawnPaymentAsksAgainTest"
       ]
     },
