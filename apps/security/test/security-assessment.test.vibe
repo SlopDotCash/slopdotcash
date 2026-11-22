@@ -12,12 +12,13 @@ import { analysisPrompt, analysisPromptRevision, jsonValue } from "../src/analys
 import { privateRoute } from "../src/analysis/route.vibe"
 import { type AssessmentView, analyze, assessQualified, assessmentRead } from "../src/assessment/routes.vibe"
 import { assessmentAt, attempted, caseExclusions, started } from "../src/assessment/store.vibe"
+import { caseRecord } from "../src/cases/rows.vibe"
 import { caseAuthority } from "../src/caseAuthority/snapshot.vibe"
 import { caseStanding } from "../src/intake/rows.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { ReportingPrograms, reportingProgramsLive } from "../src/receipt/program.vibe"
-import { type Answer, type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { type Answer, type World, maintainer, other, pausedExclusion, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 
 service Assessed {
   readonly world: World
@@ -307,6 +308,27 @@ effect function scoped(world: World, revision: number, line: string, createdAt: 
   try promise(() => rows(world, "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, json_set(manifest, '$.securityBounty.scope', json(?)), ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1", revision, JSON.stringify(scopeWith(line)), String(revision).repeat(64), createdAt, project))
 }
 
+// spec/security/program.md receiptTerms: a paused program's published revision in force at receipt is a scope, so its
+// unpaid receipt is scoped and freezes the owner exclusion lines on the case and assessment paths alike.
+effect function unpaidScopeKept(world: World) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-scoped", idempotencyKey: "assessment-case-u-01", origin: "slop", report: reportF } }))
+  if (answer.status !== 201) return try die(new Error(`unpaid report not received: ${answer.status} ${JSON.stringify(answer.body)}`))
+  const received = caseOf(answer)
+  const record = try caseRecord(received.caseId)
+  const terms = record?.model.terms
+  try same({
+    state: record?.row.submission_state,
+    policyRevision: record?.row.policy_revision,
+    terms: terms === undefined ? undefined : { paid: terms.paidTerms, scoped: terms.scoped, excluded: terms.excludedFindings },
+    exclusions: try caseExclusions(received.caseId),
+  }, {
+    state: "verified",
+    policyRevision: 1,
+    terms: { paid: false, scoped: true, excluded: [pausedExclusion.length] },
+    exclusions: { defaults: 10, owner: [pausedExclusion.length] },
+  })
+}
+
 effect function receiptScopeKept(assessed: Assessed.Shape) {
   const { world, fake } = assessed
   try scoped(world, 3, ownerLine, new Date(Date.now() - 1000).toISOString())
@@ -399,6 +421,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const assessed = try Assessed
     provide shellOf(assessed) {
       try receiptScopeKept(assessed)
+    }
+  })
+
+  it.effect('A paused program\'s unpaid receipt is scoped and keeps its owner "does not qualify" lines on the case and in assessment (spec/security/program.md, "Receipt terms come only from the open published revision"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage")', () => effect {
+    const assessed = try Assessed
+    provide shellOf(assessed) {
+      try unpaidScopeKept(assessed.world)
     }
   })
 })

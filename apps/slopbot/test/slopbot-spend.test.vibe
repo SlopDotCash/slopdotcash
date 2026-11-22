@@ -162,7 +162,7 @@ layer(Spend, { excludeTestServices: true, timeout: "480 seconds" })((it) => {
       charges: [{ billed: 0, billable: 0, rule: "review-v2" }],
       private: false,
     })
-  })
+  }, { timeout: 300_000 })
   it.effect('The route runs Surplus Sonnet, Surplus Terra, then Orbio, keeps every unknown cost, stops on a registry change, and a Surplus denial skips Terra, asks Orbio and blocks until the cron resumes it once (spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"; spec/slopbot/budgetBlocks.md, "A due block is sent once while its claim is still the failed current one")', () => effect {
     const area = try Area
     const started = try Clock.currentTimeMillis

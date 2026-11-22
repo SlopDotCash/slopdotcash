@@ -371,7 +371,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows (spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
+  it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows, expired site sessions among them (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
     const local = try begin("/v1/local/start", { audience: "slop-points-web", returnOrigin: "http://127.0.0.1:4466" })
     const badOrigin = try call(`${identity}/v1/local/start`, { json: { audience: "slop-points-web", returnOrigin: "https://slop.cash" } })
     const wrongRoute = try poll("/v1/oauth/poll", local.flow, "slop-points-web")
@@ -385,11 +385,17 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     try sql("INSERT INTO identity_oauth_flows (id, state_hash, poll_capability_hash, audience, status, created_at, expires_at) VALUES (?, ?, ?, 'slop-points-web', 'callback_failed', ?, ?)", "flow_expired_journey_00000000", "a".repeat(64), "b".repeat(64), pastCreated, pastExpired)
     try sql("INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, audience, created_at, expires_at, consumed_at, github_node_id) VALUES (?, '8', 'other', 'private-trace-api', ?, ?, NULL, NULL)", "c".repeat(64), "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:30.000Z")
     try sql("INSERT INTO identity_rate_limits (key_hash, request_count, window_started_at, expires_at) VALUES (?, 3, 1000, 1060)", "d".repeat(64))
+    // The identity Worker's hourly job also ends expired site sessions (identity/maintenance.vibe purgeExpired).
+    for (const [actor, githubId, expiresAt] of [["actor-expired", "31", "2020-01-01T00:00:00.000Z"], ["actor-live", "32", "2099-01-01T00:00:00.000Z"]]) {
+      try sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actor, githubId, `member-${githubId}`, "2026-01-01T00:00:00.000Z")
+      try sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", actor.padEnd(64, "0"), actor, expiresAt)
+    }
     const cron = try (try Identity).scheduled("17 * * * *")
     const remaining = [
       try sql("SELECT count(*) AS count FROM identity_oauth_flows WHERE id IN (?, ?)", "flow_expired_journey_00000000", live.flow.flowId),
       try sql("SELECT count(*) AS count FROM identity_assertions WHERE token_hash = ?", "c".repeat(64)),
       try sql("SELECT count(*) AS count FROM identity_rate_limits WHERE key_hash = ?", "d".repeat(64)),
+      try sql("SELECT actor_id FROM points_sessions ORDER BY actor_id"),
     ]
     const { net, outboundErrors } = try Identity
 
@@ -413,7 +419,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       again: [410, { error: "flow_consumed", message: "Identity flow was already consumed" }],
       assertions: [{ count: 0 }],
       cron: "ok",
-      remaining: [[{ count: 1 }], [{ count: 0 }], [{ count: 0 }]],
+      remaining: [[{ count: 1 }], [{ count: 0 }], [{ count: 0 }], [{ actor_id: "actor-live" }]],
       unexpected: [[], []],
     })
   })

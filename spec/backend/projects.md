@@ -455,10 +455,10 @@ a removal and reinstatement lists the project again from the revision the
 restriction opened on (Slop development `da358d8a9`). History, earned
 Points, private cases and funded obligations are kept.
 A removal or delisting is never restored: the restriction's reinstatement
-leaves such a project exactly as it was, at its revision and its tier.
-Discovered by proof: stated with the Retired tier as its conclusion, the law
-was false for a project whose retirement and tier disagree; every reachable
-project keeps `alwaysRetirementConsistent`, so its unchanged tier is Retired.
+leaves such a project at its revision and its Retired tier.
+Discovered by proof: over all values the law was false for a project whose
+retirement and tier disagree, which no reachable state has; the law now names
+`alwaysRetirementConsistent` as its premise and keeps the Retired conclusion.
 
 ```quint
 type Removal = { authority: AuthorityRead, expectedRevision: int }
@@ -657,7 +657,7 @@ pure def withCommunityRestored(restore: bool, p: Project): Project =
 pure def lawRestorationIsPausedCommunity(p: Project): bool =
   restorable(p) implies (withCommunityRestored(true, p).status == Paused and withCommunityRestored(true, p).tier == Community)
 pure def lawRemovedNeverRestored(p: Project): bool =
-  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == p.tier)
+  (ownerRetired(p) and alwaysRetirementConsistent(p)) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
 pure def stepNoRegistryEventUnretires(before: Project, via: str, after: Project): bool =
   (before.retirement != NotRetired and after.retirement == NotRetired) implies
     (via == "adminRevise" and before.retirement != RestrictionRetired)

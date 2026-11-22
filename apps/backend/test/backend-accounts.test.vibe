@@ -79,6 +79,7 @@ const Backend = areaLayer({
   entry: "worker",
   d1: { SLOP_DB: "slop-private" },
   vars: {
+    PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788",
     ADMIN_GITHUB_IDS: "7",
     PROJECT_MODERATOR_GITHUB_IDS: "",
     SLOP_ENVIRONMENT: "local",
@@ -88,6 +89,9 @@ const Backend = areaLayer({
   },
   services: { SLOP_NOTIFY: notifyFake(notifyWorld) },
   internet: net,
+  // The local tier admits the site only at an allowed loopback origin (accounts/routes/admission.vibe).
+  origin: "http://localhost:8788",
+  identity: { origin: "http://localhost:8790" },
   workers: {
     SLOP_IDENTITY: {
       name: "identity",
@@ -97,6 +101,9 @@ const Backend = areaLayer({
       ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
       vars: {
         SLOP_ENVIRONMENT: "local",
+        // identity/config.vibe: the local tier serves identity only at an enabled loopback origin.
+        IDENTITY_ALLOW_LOOPBACK: "1",
+        IDENTITY_PUBLIC_ORIGIN: "http://localhost:8790",
         GITHUB_APP_CLIENT_ID: github.app.clientId,
         GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
         IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -353,7 +360,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     }, {
       signedOut: [401, "not_signed_in"],
       before: { configured: true, account: null },
-      started: [200, "https://x.com/i/oauth2/authorize", "https://slop.test/api/v1/points/x/callback", "tweet.read users.read", 43, 43],
+      started: [200, "https://x.com/i/oauth2/authorize", "http://localhost:8788/api/v1/points/x/callback", "tweet.read users.read", 43, 43],
       connected: [303, "/points?x=connected", true],
       replayed: [303, "/points?x=failed", true],
       linked: ["123456789012345678901234567890", "hubot_x", 1],

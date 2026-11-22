@@ -50,6 +50,7 @@ function fixture(projectId: string, restricted: boolean): ProjectView {
 const projects: ReadonlyMap<string, ProjectView> = new Map([
   ["intake-fixture", fixture("intake-fixture", false)],
   ["intake-unpaid", fixture("intake-unpaid", false)],
+  ["intake-scoped", fixture("intake-scoped", false)],
   ["intake-full", fixture("intake-full", false)],
   ["intake-closed", fixture("intake-closed", false)],
   ["intake-restricted", fixture("intake-restricted", true)],

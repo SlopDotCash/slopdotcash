@@ -49,6 +49,7 @@ const Disputes = areaLayer({
   entry: "disputes",
   d1: { SLOP_DB: "slop-private" },
   vars: {
+    PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788",
     ADMIN_GITHUB_IDS: moderators,
     PROJECT_MODERATOR_GITHUB_IDS: moderators,
     SLOP_ENVIRONMENT: "local",
@@ -56,6 +57,9 @@ const Disputes = areaLayer({
   },
   services: { SLOPBOT: slopbotFake(triageRequests) },
   internet: net,
+  // The local tier admits the site only at an allowed loopback origin (accounts/routes/admission.vibe).
+  origin: "http://localhost:8788",
+  identity: { origin: "http://localhost:8790" },
   workers: {
     SLOP_IDENTITY: {
       name: "identity",
@@ -65,6 +69,9 @@ const Disputes = areaLayer({
       ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
       vars: {
         SLOP_ENVIRONMENT: "local",
+        // identity/config.vibe: the local tier serves identity only at an enabled loopback origin.
+        IDENTITY_ALLOW_LOOPBACK: "1",
+        IDENTITY_PUBLIC_ORIGIN: "http://localhost:8790",
         GITHUB_APP_CLIENT_ID: github.app.clientId,
         GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
         IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",

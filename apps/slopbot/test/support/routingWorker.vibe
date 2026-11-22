@@ -1,4 +1,6 @@
 // spec/slopbot/routing.md, "Story: Route each item by the published precedence"; spec/slopbot/routing.md, "Story: Limit reviews of a new author without a verified merge"; spec/slopbot/reviewLease.md, "Story: Claim a review and allow only its current owner to finish"
+import { MembersLive, RegistryLive } from "@repo/backend/ports"
+import { RunEvidenceLive } from "@repo/contributor/live"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
@@ -8,6 +10,7 @@ import { settableClock } from "@repo/platform/testing/clock"
 import { worker } from "@repo/platform/worker"
 import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.effect.vibe"
 import { reviews } from "../../gen/slopbot__routing.effect.vibe"
+import { closureEligibility } from "../../src/closure/participation.vibe"
 import { type ReviewTarget, loadContext, reviewKeyOf, reviewRowOf } from "../../src/context/load.vibe"
 import { claimReview, finishReview } from "../../src/lease/store.vibe"
 import type { ReviewRow } from "../../src/lease/writes.vibe"
@@ -57,9 +60,10 @@ effect function routed() {
     const context = try loadContext(target, { observation: registry, projectId: routingProject })
     if (context === undefined) return json({ readable: false })
     const reviewKey = try reviewKeyOf(context, target, "", [])
-    // No Slop run in this world records a pull_request_opened event for any item, so the closure composition finds
-    // no author eligible (spec/slopbot/routing.md); a pull request is reviewed as advice.
-    const decided = try routeItem({ target, context, reviewKey, registry, appUserId, closureEligible: false })
+    // Eligibility comes from the production closure composition (src/closure/participation.vibe): only an author whose
+    // own Slop run recorded pull_request_opened for this exact item is eligible (spec/slopbot/routing.md).
+    const closureEligible = try closureEligibility(target, context)
+    const decided = try routeItem({ target, context, reviewKey, registry, appUserId, closureEligible })
     const claim = ask.claim === undefined || !reviews(decided.route) ? undefined : try claimReview(reviewRowOf(target, context, reviewKey), { token: ask.claim, route: decided.route, history: decided.history })
     return json({
       route: decided.route,
@@ -105,12 +109,13 @@ function members(text: string) {
 }
 
 function services(env: Env) {
-  return Layer.mergeAll(
+  const base = Layer.mergeAll(
     d1(env.SLOPBOT_DB),
     webCrypto,
     Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-routing-test" }), outbound),
     members(env.TEST_MEMBERS),
   )
+  return Layer.provideMerge(Layer.merge(MembersLive, RunEvidenceLive), Layer.provideMerge(RegistryLive, base))
 }
 
 const routes = Layer.mergeAll(HttpRouter.add("POST", "/test/route", routed()), HttpRouter.add("POST", "/test/lease", leased()))
