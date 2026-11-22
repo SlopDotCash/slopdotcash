@@ -113,7 +113,11 @@ authority was misused, so indexing fails closed for investigation. Executors
 never sign a payment for a pending, cancelled, or vetoed binding. A verified successor wallet activates immediately once earlier payment attempts
 are reconciled. A Base bind transaction can be retired only after its revert is finalized
 and its receipt matches the canonical block. The journal keeps that proof
-before a fresh bind can replace it. Pending and ambiguous results remain held.
+before a fresh bind can replace it. The one exception is the executor's
+rotated-authority retirement (see `workers/payment-executor/README.md`): a
+stored binding signed by an authority the factory no longer reports may be
+retired locally by the scheduled run without a finalized receipt, once the
+canonical-receipt check has run first and found none. Pending and ambiguous results remain held.
 
 The payments Worker finds its vaults in the D1 project registry. On every
 run it reads the current revision of each project, validates its escrow
