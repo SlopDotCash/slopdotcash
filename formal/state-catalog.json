@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "b329293fc8d44d209971e6a96c9053de763ee8477b43e5fc1601993530101e3e",
+  "inventorySha256": "998ed884b14bda19a6580dd8fe293fa63cc12f3196ec52f977dfb3b001c00c3d",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -4377,7 +4377,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 162,
+      "line": 163,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -4394,7 +4394,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 225,
+      "line": 226,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4411,7 +4411,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 231,
+      "line": 232,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4428,7 +4428,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 332,
+      "line": 333,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],
@@ -4460,7 +4460,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 29,
+      "line": 34,
       "name": "ConversionState",
       "kind": "string-union",
       "values": [
@@ -4488,7 +4488,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 49,
+      "line": 54,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -4507,7 +4507,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 315,
+      "line": 320,
       "name": "status",
       "kind": "string-union",
       "values": ["locked", "not_converted", "ran"],
