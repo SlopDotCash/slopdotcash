@@ -497,7 +497,8 @@ Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report
 reads require current case authority and an audit record. Contributor trace
-bodies remain unreadable. See PRD sections 8–10.
+bodies remain unreadable, except operator export of a licensed trace under
+contract version 2. See PRD sections 8–10.
 
 ## Private traces
 

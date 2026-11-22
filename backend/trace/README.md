@@ -171,8 +171,8 @@ does not upload an agent trace.
 ### Licensing for pay
 
 Licensing is a separate yes. A contributor turns it on in their Slop account
-setting and can turn it off at any time. While it is on, it covers each trace
-that contributor uploads under this version. A trace uploaded under version 1
+setting and can turn it off at any time. It covers each trace the contributor
+uploads under this version while the setting is on. A trace uploaded under version 1
 is licensed only when the contributor opts that trace in explicitly, one by
 one. Turning the setting off stops every future sale of that contributor's
 traces; copies already sold stay sold.
@@ -194,8 +194,9 @@ Before any trace leaves Slop, Slop scans it for credentials and holds back
 every trace that matches. The scan is not a guarantee. The contributor's own
 exclusions below still apply and remain the primary protection.
 
-Slop may publish counts and rates computed from any trace when they identify no
-person and no trace.
+Slop may publish counts and rates computed from traces uploaded under this
+version, and from version 1 traces their contributor opted in, when they
+identify no person and no trace.
 
 ### Required scope and permitted records
 
@@ -241,8 +242,9 @@ not claim that pattern matching removes every secret.
 ### Storage, access, and retention
 
 The trace body is stored as one immutable, content-addressed object in a
-private R2 bucket. D1 stores its digest, size, media type, terms version, actor
-and run joins, upload progress, and access-audit metadata, but not the body.
+private R2 bucket. D1 stores its digest, size, media type, actor and run
+joins, upload progress, and access-audit metadata, but not the body. It will
+also store the terms version once consent records ship.
 Public GitHub and Slop artifacts contain only safe run metadata, the digest,
 and immutable upload identity.
 
