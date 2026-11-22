@@ -83,7 +83,6 @@ const Backend = areaLayer({
   identity: { origin },
   d1: { SLOP_DB: "slop-private" },
   vars: {
-    PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788",
     ADMIN_GITHUB_IDS: "7",
     PROJECT_MODERATOR_GITHUB_IDS: "",
     SLOP_ENVIRONMENT: "local",
@@ -94,9 +93,6 @@ const Backend = areaLayer({
   },
   services: { SLOP_NOTIFY: notifyFake(notifyWorld) },
   internet: net,
-  // The local tier admits the site only at an allowed loopback origin (accounts/routes/admission.vibe).
-  origin: "http://localhost:8788",
-  identity: { origin: "http://localhost:8790" },
   workers: {
     SLOP_IDENTITY: {
       name: "identity",
