@@ -625,7 +625,7 @@ pure val sampleFrozen: MonthlySettlement = autoFreeze(observeClock(propose(obser
   openMonth(deploy(initial, E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true), 202611), MO::eligible),
   MO::revisionSample), 1796083300), MO::snapshotSample, List(), MO::revisionSample), 1796342400))
 pure val sampleFunded: MonthlySettlement = createObligations(observeClock(observeHead(deposit(sampleFrozen,
-  { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1)), 1796342440), 1796343100), List(0), List(0), List())
+  { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1)), 1796342440), 1796343100), List(0), List())
 pure val sampleAdmitted: MonthlySettlement = admitRoot(sampleFunded, rootSample, blockEvent(2))
 pure val sampleUpgraded: MonthlySettlement = upgradeToRelease(sampleAdmitted, blockEvent(3))
 pure val sValues = Set(initial, sampleFrozen, sampleFunded, sampleAdmitted, materialize(sampleAdmitted, leafBase, blockEvent(3)),
