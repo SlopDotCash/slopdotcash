@@ -30,8 +30,11 @@ import escrow as E from "./escrow"
 import money as M from "./money"
 import allocation as A from "./allocation"
 import payoutExclusions as X from "./payoutExclusions"
-type MonthlySettlement = { month: MO::Monthly, escrow: E::Escrow, headTime: int }
-pure val initial: MonthlySettlement = { month: { ...MO::initial, project: "eliza" }, escrow: E::initial, headTime: 0 }
+import reserveRelease as RR from "./reserveRelease"
+type LeafCursor = { period: int, root: str, leafCount: int, position: int, passed: List[int] }
+type MonthlySettlement = { month: MO::Monthly, escrow: E::Escrow, headTime: int, cursor: LeafCursor }
+pure val noCursor: LeafCursor = { period: 0, root: "", leafCount: 0, position: 0, passed: List() }
+pure val initial: MonthlySettlement = { month: { ...MO::initial, project: "eliza" }, escrow: E::initial, headTime: 0, cursor: noCursor }
 pure def sourceOf(s: MonthlySettlement, actor: int): E::SourceKey = { origin: s.month.project, period: s.month.period, actor: actor }
 pure def canDeploy(s: MonthlySettlement, asset: E::AssetIdentity, mint: E::MintFacts, purpose: E::VaultPurpose, delay: int, cap: M::Amount, turnOn: bool): bool =
   purpose == E::OrdinaryPurpose and E::canDeploy(s.escrow, asset, mint, purpose, delay, cap, turnOn)
@@ -65,9 +68,9 @@ pure def propose(s: MonthlySettlement, snapshot: X::WorkSnapshot, exclusions: Li
   { ...s, month: MO::propose(s.month, snapshot, exclusions, revision) }
 pure def canAutoFreeze(s: MonthlySettlement): bool = MO::canAutoFreeze(s.month)
 pure def autoFreeze(s: MonthlySettlement): MonthlySettlement = { ...s, month: MO::autoFreeze(s.month) }
-pure def canDeposit(s: MonthlySettlement, deposit: E::Deposit, ev: E::ChainEvent): bool = E::canDeposit(s.escrow, deposit, ev)
-pure def deposit(s: MonthlySettlement, deposit: E::Deposit, ev: E::ChainEvent): MonthlySettlement =
-  { ...s, escrow: E::deposit(s.escrow, deposit, ev) }
+pure def canDeposit(s: MonthlySettlement, funds: E::Deposit, ev: E::ChainEvent): bool = E::canDeposit(s.escrow, funds, ev)
+pure def deposit(s: MonthlySettlement, funds: E::Deposit, ev: E::ChainEvent): MonthlySettlement =
+  { ...s, escrow: E::deposit(s.escrow, funds, ev) }
 pure def canSetMonthly(s: MonthlySettlement, cap: M::Amount, turnOn: bool, ev: E::ChainEvent, by: str): bool =
   E::canSetMonthly(s.escrow, cap, turnOn, ev, by)
 pure def setMonthly(s: MonthlySettlement, cap: M::Amount, turnOn: bool, ev: E::ChainEvent, by: str): MonthlySettlement =
@@ -90,6 +93,11 @@ it from the stored copy of those finalized pledges with
 without pledge support; development `backend/payments/monthly.ts`,
 `heldBack`).
 
+Whatever the coordinator passes for earlier unreserved obligations, it and
+the other months' open pledges are never negative, so the vault's finalized free
+balance at a head at most 30 minutes old covers at least every obligation it
+creates; an underfunded notice is recorded only on such a fresh head.
+
 ```quint
 pure def canObserveHead(s: MonthlySettlement, time: int): bool = time > s.headTime and time >= s.escrow.clock
 pure def observeHead(s: MonthlySettlement, time: int): MonthlySettlement = { ...s, headTime: time }
@@ -105,6 +113,11 @@ pure def canNoteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, 
   s.escrow.deployed and MO::canNoteUnderfunded(s.month, observation(s, earlierUnreserved), bans)
 pure def noteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
   { ...s, month: MO::noteUnderfunded(s.month, observation(s, earlierUnreserved), bans) }
+pure def headFresh(s: MonthlySettlement): bool = s.headTime <= s.month.now and s.month.now - s.headTime <= MO::freshnessSeconds
+pure def stepObligationsOnFreshCoveringHead(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =
+  via == "createObligations" implies headFresh(before) and M::compareAmounts(before.escrow.free, MO::obligationTotal(after.month)) >= 0
+pure def stepUnderfundedOnFreshHead(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =
+  via == "noteUnderfunded" implies headFresh(before) and after.month.underfundedNotice
 ```
 
 ### The owner may prepare one funded obligation by hand, and only while no pool gross is pending
@@ -238,6 +251,68 @@ pure def lawCursorWaitsForFinality(cursor: int, index: int, finalizedCommitted: 
     and (not(finalizedCommitted and nonceSettled) implies nextLeafCursor(cursor, index, finalizedCommitted, nonceSettled) == cursor)
 ```
 
+### The executor's cursor passes a leaf only on a matching finalized award, or once the reserve is exhausted
+
+The cursor is journaled per period and admitted tree root (development
+`workers/payment-executor/core.ts` `submitReserve`, cursor key
+`<month key>:<root>:finalized-cursor`; vibestack keeper
+`apps/settlement/src/keeper/monthly.vibe`). It starts at 0, stays within
+the tree's leaf count and moves by exactly one leaf. While the admitted
+month still has a remainder, the executor reads the award under the leaf's
+source: a finalized award with the leaf's actor, gross and fee lets the
+cursor pass that leaf once the sender's journaled nonce for it is finalized;
+a missing award is sent as a leaf transaction and the cursor waits; any other
+award halts the call with "Admitted monthly source conflicts with a funded
+award", and the cursor does not move. When the admitted month's remainder is
+zero, because every leaf was committed or the whole reserve was released, the
+executor passes each remaining leaf on its journaled nonce alone, so a wholly
+released month passes every leaf without an award. Each leaf the cursor
+passes on an award keeps that award: sources are consumed for ever, so the
+cursor is backed by finalized chain state, never by a sent transaction. The
+cursor record keeps the tree root and leaf count it was keyed to and the
+actors of the leaves it passed on an award; every leaf of this month's tree
+carries this month's source key of its actor.
+
+A conflict can never reach the cursor in this composition: while pool gross
+is pending the contract refuses every manual award, and the root is admitted
+only while every unreserved obligation's source is free, so no source of an
+unreserved obligation is consumed while the reserve is pending. The halt is
+the executor's defence if that ever fails; it is stated as a law.
+
+```quint
+pure def admittedMonth(s: MonthlySettlement): E::MonthReserve = E::monthFor(s.escrow, s.month.period)
+pure def leafMatches(s: MonthlySettlement, proof: E::LeafProof): bool =
+  val award = E::awardFor(s.escrow, proof.source)
+  not(E::sourceFree(s.escrow, proof.source)) and award.actor == proof.actor and M::equalAmounts(award.gross, proof.gross)
+    and award.fee == E::feeFor(s.escrow.purpose, proof.gross)
+pure def leafConflicts(s: MonthlySettlement, proof: E::LeafProof): bool =
+  not(E::sourceFree(s.escrow, proof.source)) and not(leafMatches(s, proof))
+pure def cursorAt(s: MonthlySettlement, proof: E::LeafProof): bool =
+  val month = admittedMonth(s)
+  month.period > 0 and proof.period == month.period and proof.root == month.root
+    and M::equalAmounts(proof.rootTotal, month.admittedGross)
+    and (s.cursor.root == "" or (s.cursor.root == month.root and s.cursor.period == month.period))
+    and proof.index == s.cursor.position and proof.index >= 0 and proof.index < month.leafCount
+    and proof.source == sourceOf(s, proof.actor)
+pure def passedCursor(s: MonthlySettlement, proof: E::LeafProof, onAward: bool): LeafCursor =
+  val month = admittedMonth(s)
+  { period: month.period, root: month.root, leafCount: month.leafCount, position: proof.index + 1,
+    passed: if (onAward) s.cursor.passed.append(proof.actor) else s.cursor.passed }
+pure def canAdvanceCursor(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): bool =
+  cursorAt(s, proof) and M::positiveAmount(admittedMonth(s).remaining) and leafMatches(s, proof) and nonceSettled
+pure def advanceCursor(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): MonthlySettlement =
+  { ...s, cursor: passedCursor(s, proof, true) }
+pure def canAdvanceZeroRemaining(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): bool =
+  cursorAt(s, proof) and not(M::positiveAmount(admittedMonth(s).remaining)) and nonceSettled
+pure def advanceZeroRemaining(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): MonthlySettlement =
+  { ...s, cursor: passedCursor(s, proof, false) }
+pure def lawConflictHaltsCursor(s: MonthlySettlement, proof: E::LeafProof, nonceSettled: bool): bool =
+  (leafConflicts(s, proof) and M::positiveAmount(admittedMonth(s).remaining)) implies
+    not(canAdvanceCursor(s, proof, nonceSettled)) and not(canAdvanceZeroRemaining(s, proof, nonceSettled))
+pure def lawCursorWaitsForNonce(s: MonthlySettlement, proof: E::LeafProof): bool =
+  not(canAdvanceCursor(s, proof, false)) and not(canAdvanceZeroRemaining(s, proof, false))
+```
+
 ### The vault keeps its other operations while the month is reserved
 
 Withdrawals of free funds and reserve releases remain available. Whether a
@@ -245,15 +320,56 @@ payment's destination was authorized is decided by the payment ledger
 ([payment investigation](./paymentInvestigation.md)) and the binding version
 by [binding authority](./bindingAuthority.md); wiring those is a composition
 obligation.
+A vault deployed before the reviewed release-capable implementation gains
+reserve release only through its finalized upgrade event, which this
+composition passes through from the [escrow](./escrow.md).
 
 ```quint
 pure def canWithdraw(s: MonthlySettlement, gross: M::Amount, ev: E::ChainEvent, by: str): bool = E::canWithdraw(s.escrow, gross, ev, by)
 pure def withdraw(s: MonthlySettlement, gross: M::Amount, ev: E::ChainEvent, by: str): MonthlySettlement =
   { ...s, escrow: E::withdraw(s.escrow, gross, ev, by) }
+pure def canUpgradeToRelease(s: MonthlySettlement, ev: E::ChainEvent): bool = E::canUpgradeToRelease(s.escrow, ev)
+pure def upgradeToRelease(s: MonthlySettlement, ev: E::ChainEvent): MonthlySettlement =
+  { ...s, escrow: E::upgradeToRelease(s.escrow, ev) }
 pure def canReleaseReserve(s: MonthlySettlement, release: E::ReleaseAuthorization, ev: E::ChainEvent, by: str): bool =
   E::canReleaseReserve(s.escrow, release, ev, by)
 pure def releaseReserve(s: MonthlySettlement, release: E::ReleaseAuthorization, ev: E::ChainEvent, by: str): MonthlySettlement =
   { ...s, escrow: E::releaseReserve(s.escrow, release, ev, by) }
+```
+
+### An approved service release is exactly the release the vault accepts
+
+The [reserve release](./reserveRelease.md) record approves the whole
+untouched remainder of one admitted root. The owner submits the release
+transaction (signer `ReleaseSubmission`, [signer](./signer.md)); the
+current identity authority signs it. When the record's root and reserve are
+the vault's admitted month, its whole remainder and its untouched admitted
+gross, the vault running the release-capable implementation accepts exactly
+that authorization from the owner, and the finalized release that the record
+accepts moves exactly that gross from the pool reserve to free funds. Only the
+owner submits a release, under the current authority's signature.
+
+```quint
+pure def releaseFor(s: MonthlySettlement, approval: RR::ReserveRelease): E::ReleaseAuthorization =
+  { period: s.month.period, expectedRemaining: approval.reserved, releasedGross: approval.reserved, signer: s.escrow.authority }
+pure def lawApprovedReleaseAccepted(s: MonthlySettlement, approval: RR::ReserveRelease, ev: E::ChainEvent): bool =
+  val month = admittedMonth(s)
+  ((approval.phase == RR::Approved or approval.phase == RR::OwnerSigned) and month.period > 0 and month.root == approval.root
+    and M::validAmount(approval.reserved) and M::positiveAmount(approval.reserved)
+    and M::equalAmounts(approval.reserved, month.remaining) and M::equalAmounts(month.remaining, month.admittedGross)
+    and not(M::positiveAmount(month.released))
+    and M::compareAmounts(s.escrow.pending, approval.reserved) >= 0 and M::compareAmounts(s.escrow.committed, approval.reserved) >= 0
+    and E::later(s.escrow, ev) and s.escrow.implementation == E::ReleaseCapable)
+    implies canReleaseReserve(s, releaseFor(s, approval), ev, s.escrow.owner)
+pure def lawFinalizedReleaseMatchesEscrow(s: MonthlySettlement, approval: RR::ReserveRelease, receipt: RR::ReleaseReceipt, ev: E::ChainEvent): bool =
+  val release = releaseFor(s, approval)
+  val after = releaseReserve(s, release, ev, s.escrow.owner)
+  (canReleaseReserve(s, release, ev, s.escrow.owner) and RR::canFinalize(approval, receipt) and receipt.root == admittedMonth(s).root)
+    implies M::equalAmounts(receipt.releasedAmount, approval.reserved) and M::equalAmounts(approval.reserved, admittedMonth(s).remaining)
+      and after.escrow.free == M::addAmounts(s.escrow.free, approval.reserved)
+      and after.escrow.pending == M::subtractAmounts(s.escrow.pending, approval.reserved)
+pure def lawOnlyOwnerSubmitsRelease(s: MonthlySettlement, release: E::ReleaseAuthorization, ev: E::ChainEvent, by: str): bool =
+  canReleaseReserve(s, release, ev, by) implies by == s.escrow.owner and release.signer == s.escrow.authority
 ```
 
 ## Story: The month and the vault always agree
@@ -268,6 +384,40 @@ obligation. The pool reserve of the month never exceeds the gross of its
 still-unreserved obligations, so no obligation is reserved twice by the pool
 and by hand.
 
+The vault holds a monthly reserve only for this month, and only once its
+obligations are funded. While pool gross is pending, no unreserved
+obligation's source is consumed on chain, so every leaf of the admitted root
+is still free when it is committed and no leaf can meet a conflicting award.
+Each monthly leaf award is this month's source key of one of its
+obligations. The executor's cursor stays within its tree, is keyed to the
+admitted root, moves by at most one leaf, and every leaf it passed on an award
+keeps that award; it passes a leaf without an award only once the admitted
+remainder is zero. A wholly released month never holds a monthly leaf award.
+While any of the admitted root is unreserved, its remainder is exactly the
+gross of the month's unreserved obligations, whose sources are all still
+free: the root's leaves are this month's source keys of those obligations,
+one per actor, so no leaf source was consumed before the root and no leaf
+can be stranded. Every monthly leaf award of this month reserved its own
+obligation with the obligation's gross, which is reserved or paid. Before
+the vault is deployed it holds no award, month, withdrawal or deposit, and
+before the month is funded it holds no obligation or ban.
+
+The vault's pending pool gross is exactly the admitted month's remainder,
+since the vault admits only this month. So a proven leaf of an unreserved
+obligation's own source is never stranded while its pool is pending (escrow
+`strandedLeaf`): the root of the month's unreserved obligations is admitted
+only while their sources are free, and the contract refuses every hand award
+while pool gross is pending.
+
+Every rule of the [monthly allocation](./monthly.md) and of the
+[escrow](./escrow.md) also holds of the composition: each event of this
+machine is one of their own events under their own guard, or leaves them as
+they are.
+
+Discovered by the proof: the deposit transition's parameter had the name of
+the transition itself, so the generated proof could not refer to the
+transition; the parameter is now `funds`.
+
 ```quint
 pure def obligationMatches(s: MonthlySettlement, actor: int): bool =
   (obligationOf(s, actor).progress == MO::Reserved implies chainMatches(s, actor))
@@ -281,6 +431,62 @@ pure def alwaysPoolWithinUnreserved(s: MonthlySettlement): bool =
 pure def alwaysChildRules(s: MonthlySettlement): bool =
   MO::alwaysAllocationConserved(s.month) and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysCompletedPaid(s.month)
     and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow)
+pure def alwaysChildLifecycle(s: MonthlySettlement): bool =
+  E::alwaysUndeployedEmpty(s.escrow) and MO::alwaysNoObligationsBeforeFunding(s.month)
+pure def alwaysChildInvariants(s: MonthlySettlement): bool =
+  MO::alwaysAllocationConserved(s.month) and MO::alwaysCapFromRevision(s.month) and MO::alwaysUnproposedEmpty(s.month)
+    and MO::alwaysCutsRecorded(s.month) and MO::alwaysPublicCutsCurrent(s.month) and MO::alwaysAutomaticHonoursCutNotice(s.month)
+    and MO::alwaysFreezeAfterCutNotice(s.month) and MO::alwaysEveryPayableShareAccounted(s.month) and MO::alwaysBannedHadShares(s.month)
+    and MO::alwaysNoObligationsBeforeFunding(s.month) and MO::alwaysCompletedPaid(s.month) and MO::alwaysFrozenRecord(s.month)
+    and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysExclusionsFromRevision(s.month)
+    and E::alwaysGrossConserved(s.escrow) and E::alwaysReservedSplit(s.escrow) and E::alwaysPaidSplit(s.escrow)
+    and E::alwaysFeesConserved(s.escrow) and E::alwaysValidCounters(s.escrow) and E::alwaysWithdrawalFees(s.escrow)
+    and E::alwaysMonths(s.escrow) and E::alwaysBountyVaultHasNoMonths(s.escrow) and E::alwaysUndeployedEmpty(s.escrow)
+    and E::alwaysAwards(s.escrow)
+pure def alwaysAdmittedOnlyWhenFunded(s: MonthlySettlement): bool =
+  s.escrow.months.length() > 0 implies (s.month.phase == MO::Funded or s.month.phase == MO::Completed)
+    and s.escrow.months.every(m => m.period == s.month.period)
+pure def alwaysPoolOnlyWhenAdmitted(s: MonthlySettlement): bool =
+  M::positiveAmount(s.escrow.pending) implies s.escrow.months.length() > 0
+pure def alwaysPoolIsTheMonthRemainder(s: MonthlySettlement): bool =
+  M::equalAmounts(s.escrow.pending, E::monthFor(s.escrow, s.month.period).remaining)
+pure def lawMonthLeafNeverStranded(s: MonthlySettlement, proof: E::LeafProof): bool =
+  (alwaysUnreservedSourcesFreeWhilePooled(s) and M::positiveAmount(s.escrow.pending) and proof.source == sourceOf(s, proof.actor)
+    and obligationOf(s, proof.actor).actor > 0 and obligationOf(s, proof.actor).progress == MO::Created)
+    implies not(E::strandedLeaf(s.escrow, proof))
+pure def alwaysUnreservedSourcesFreeWhilePooled(s: MonthlySettlement): bool =
+  M::positiveAmount(s.escrow.pending) implies
+    MO::obligationActors(s.month).every(actor => obligationOf(s, actor).progress != MO::Created or not(chainHolds(s, actor)))
+pure def alwaysLeafAwardsAreObligations(s: MonthlySettlement): bool =
+  E::awardActorsFor(s.escrow, s.month.project, s.month.period).every(actor =>
+    E::awardFor(s.escrow, sourceOf(s, actor)).origin == E::MonthlyLeaf implies
+      MO::obligationActors(s.month).includes(actor) and chainActor(s, actor) == actor)
+pure def alwaysCursorInRange(s: MonthlySettlement): bool =
+  0 <= s.cursor.position and s.cursor.position <= s.cursor.leafCount and s.cursor.passed.length() <= s.cursor.position
+    and (s.cursor.root == "" implies s.cursor.position == 0 and s.cursor.passed.length() == 0)
+    and (s.cursor.root != "" implies s.cursor.period == s.month.period and s.cursor.root == admittedMonth(s).root
+      and s.cursor.leafCount == admittedMonth(s).leafCount)
+pure def alwaysCursorSourceBacked(s: MonthlySettlement): bool =
+  s.cursor.passed.every(actor => chainHolds(s, actor))
+    and (s.cursor.position > s.cursor.passed.length() implies not(M::positiveAmount(admittedMonth(s).remaining)))
+pure def alwaysReleasedMonthHasNoLeafAward(s: MonthlySettlement): bool =
+  M::positiveAmount(admittedMonth(s).released) implies not(E::hasAwardOf(s.escrow, E::MonthlyLeaf))
+pure def stepCursorMonotoneByOne(before: MonthlySettlement, after: MonthlySettlement): bool =
+  after.cursor.position == before.cursor.position or after.cursor.position == before.cursor.position + 1
+pure def stepRootAdmitsOnlyFreeSources(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =
+  via == "admitRoot" implies MO::obligationActors(before.month).every(actor =>
+    obligationOf(before, actor).progress != MO::Created or not(chainHolds(before, actor)))
+pure def leafAwardReserves(s: MonthlySettlement, actor: int): bool =
+  E::awardFor(s.escrow, sourceOf(s, actor)).origin == E::MonthlyLeaf implies
+    (obligationOf(s, actor).progress == MO::Reserved or obligationOf(s, actor).progress == MO::Paid)
+      and M::equalAmounts(chainGross(s, actor), obligationOf(s, actor).amount)
+pure def alwaysLeafAwardsReserveTheirObligation(s: MonthlySettlement): bool =
+  E::awardActorsFor(s.escrow, s.month.project, s.month.period).every(actor => leafAwardReserves(s, actor))
+pure def alwaysPendingPoolIsExactlyUnreserved(s: MonthlySettlement): bool =
+  M::positiveAmount(admittedMonth(s).remaining) implies M::equalAmounts(admittedMonth(s).remaining, MO::createdTotal(s.month))
+pure def sometimesCursorPassedLeaf(s: MonthlySettlement): bool = s.cursor.passed.length() > 0
+pure def sometimesReleasedMonthPassed(s: MonthlySettlement): bool =
+  s.cursor.position > 0 and s.cursor.passed.length() == 0 and M::positiveAmount(admittedMonth(s).released)
 pure def sometimesManualObligation(s: MonthlySettlement): bool = E::hasAwardOf(s.escrow, E::ManualAward)
 pure def sometimesLeafObligation(s: MonthlySettlement): bool = E::hasAwardOf(s.escrow, E::MonthlyLeaf)
 pure def sometimesMonthReserved(s: MonthlySettlement): bool = s.month.obligations.length() >= 2
@@ -307,18 +513,78 @@ month was funded almost only with the banned recipient left out, whose total
 matches no signed root. A ban of an account without a share joins the bans,
 so two of three funded months keep every recipient and match the signed root.
 
+Discovered by simulation: the coordinator's clock samples ended at 1796342500,
+before the later chain-head samples. A reported head never moves back, so once
+the adapter reported a later head, no clock sample could see the vault
+observation as fresh, and neither the obligations nor the underfunded notice
+could be created; one admitted month was found only after thousands of
+traces. The clock now also reads 1796343100, the last sampled head, as the
+coordinator does when it runs after the chain has advanced, and two more
+times inside the proposal window, since the clock never goes back. The
+1796083300 head still exercises the stale refusal.
+
+Discovered by simulation: two deposits, the root admission, its leaves, a
+release and payments all need later finalized events, and eight sampled
+blocks ran out before the root. The sampled finalized events all lie
+inside the admission window and no later than the last head sample, and a
+single deposit of 12 base units covers the month.
+
+Discovered by simulation: half the months ban actor 2, and no signed root
+fitted their remaining obligations of 4; root "b" with its two leaves and its
+release now covers that month.
+
+Discovered by simulation: the month observes an existing award only after
+the owner commits, by hand, this month's key for the obligation's own actor
+and gross, which is one hand award in twelve, and the coordinator's own
+reservation and the pool root usually closed that obligation first. Hand
+awards are drawn more often, the coordinator's reservation less often, and
+the root, its leaves, the release and the cursor more often, so each of them
+is reached.
+
+Discovered by simulation: the composition did not pass the vault's finalized
+upgrade to the release-capable implementation through, so the release was
+never reachable; the upgrade is now an event of this machine as every other
+escrow event is.
+
+Discovered by simulation: counting, over a few hundred traces, how many
+reached each stage showed that a trace of 20 events almost never reached a
+funded month, and that an admitted root was rarer still. Four things lost
+the traces. The clock jumped past the three-day proposal window before the
+proposal in about half of them, so the clock now reads 21 times spread
+through the window as well as the three times after the cutoff. Each
+finalized event is drawn among the later sampled blocks, so every chain
+event halves the blocks left, and setting the monthly cap, upgrading,
+withdrawing and depositing used them up before the root; the sampled events
+are now 4096 blocks, deposits and monthly settings also carry the refused
+cases of another token, another vault and a zero cap, and every owner call
+is also sent by someone other than the owner, which the vault refuses. A
+hand award outside the month changes the EVM source sequence, so the root
+is also sampled as signed after one such award. Finally the events every
+funded month needs once (deploying, opening, observing the revision,
+proposing, freezing, creating the obligations, the root, its leaves, the
+cursor and the release) were drawn no more often than events that can
+repeat at every step, so each of them is now drawn about ten times as often
+as a repeatable event; events that only a found award enables (paying it and
+observing it reserved, paid or conflicting) and the underfunded notice,
+which only an uncovered fresh head enables, are drawn about six times as
+often, since they waste no step while disabled. The release is drawn a
+little more often than a leaf, since it applies only to an untouched month. In 400 traces of 40 events, a funded month is now
+reached in about half of them, an admitted root in a fifth, and a leaf in
+one in ten. The owner may also turn automatic payment on again, since the
+sampled setting only turned it off.
+
 ```quint
 pure val assetValues = Set(E::baseAsset)
 pure val mintValues = Set(E::cleanMint)
 pure val purposeValues = Set(E::OrdinaryPurpose)
 pure val delayValues = Set(0)
-pure val capValues = Set(List(10))
+pure val capValues = Set(List(10), List(0))
 pure val turnOnValues = Set(true)
 pure val periodValues = Set(202611)
-pure val nowValues = Set(1796083300, 1796342400, 1796342500, 1796343200)
+pure val nowValues = 0.to(20).map(k => 1796083300 + 12000 * k).union(Set(1796342400, 1796342500, 1796343100, 1796343200))
 pure val timeValues = Set(1796083300, 1796342400, 1796342600, 1796343100, 1796343200)
 pure val revisionValues = Set(MO::revisionSample)
-pure val automaticValues = Set(false)
+pure val automaticValues = Set(true, false)
 pure val settingsSequenceValues = Set(1)
 pure val amountValues = Set(List(2))
 pure val expectedSequenceValues = Set(0, 1)
@@ -327,55 +593,78 @@ pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
 pure val earlierUnreservedValues = Set(List(0))
 pure val bansValues = Set(List(), List({ actor: 2, ban: 7 }), List({ actor: 9, ban: 7 }))
-pure val depositValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
-  { vault: "vault", network: E::Base, token: "usdc", amount: List(8) },
-  { vault: "vault", network: E::Base, token: "usdc", amount: List(12) })
-pure val evValues = Set(
-  { block: 1, index: 0, time: 1796342400, transaction: "t1" }, { block: 2, index: 0, time: 1796342450, transaction: "t2" },
-  { block: 3, index: 0, time: 1796342500, transaction: "t3" }, { block: 4, index: 0, time: 1796342550, transaction: "t4" },
-  { block: 5, index: 0, time: 1796342600, transaction: "t5" }, { block: 6, index: 0, time: 1796342650, transaction: "t6" },
-  { block: 7, index: 0, time: 1796342700, transaction: "t7" }, { block: 8, index: 0, time: 1796342750, transaction: "t8" },
-  { block: 9, index: 0, time: 1796342800, transaction: "t9" }, { block: 10, index: 0, time: 1796342850, transaction: "t10" },
-  { block: 11, index: 0, time: 1796342900, transaction: "t11" }, { block: 12, index: 0, time: 1796342950, transaction: "t12" },
-  { block: 13, index: 0, time: 1796343000, transaction: "t13" }, { block: 14, index: 0, time: 1796343050, transaction: "t14" },
-  { block: 15, index: 0, time: 1796343100, transaction: "t15" }, { block: 16, index: 0, time: 1796343150, transaction: "t16" })
+pure val fundsValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(12) },
+  { vault: "vault", network: E::Base, token: "other", amount: List(12) },
+  { vault: "other", network: E::Base, token: "usdc", amount: List(12) })
+pure def blockEvent(b: int): E::ChainEvent = { block: b, index: 0, time: 1796342400 + b / 8, transaction: "t" }
+pure val evValues = 1.to(4096).map(b => blockEvent(b))
 pure val actorValues = Set(1, 2, 3)
-pure val byValues = Set("owner")
+pure val byValues = Set("owner", "anyone")
 pure def monthKey(actor: int): E::SourceKey = { origin: "eliza", period: 202611, actor: actor }
 pure val sourceValues = Set(monthKey(1)).union(Set(monthKey(4)))
 pure val rootSample: E::RootAuthorization = { period: 202611, vault: "vault", network: E::Base, allocationDigest: "a", root: "r",
   wholeGross: List(10), remainingGross: List(10), leafCount: 3, sourceSequence: 0, frozenAt: 0, signer: "attester",
   pledgeAccount: false }
-pure val authorizationValues = Set(rootSample, { ...rootSample, root: "q", remainingGross: List(8), leafCount: 2, sourceSequence: 1 })
+pure val authorizationValues = Set(rootSample, { ...rootSample, root: "q", remainingGross: List(8), leafCount: 2, sourceSequence: 1 },
+  { ...rootSample, root: "b", wholeGross: List(4), remainingGross: List(4), leafCount: 2 }, { ...rootSample, sourceSequence: 1 })
 pure val leafBase: E::LeafProof = { period: 202611, index: 0, root: "r", rootTotal: List(10), source: monthKey(1), actor: 1, gross: List(2) }
 pure val proofValues = Set(leafBase).union(Set({ ...leafBase, index: 1, source: monthKey(2), actor: 2, gross: List(6) }))
   .union(Set({ ...leafBase, index: 2, source: monthKey(3), actor: 3, gross: List(2) }))
   .union(Set({ ...leafBase, root: "q", rootTotal: List(8), index: 0, source: monthKey(2), actor: 2, gross: List(6) }))
   .union(Set({ ...leafBase, root: "q", rootTotal: List(8), index: 1, source: monthKey(3), actor: 3, gross: List(2) }))
+  .union(Set({ ...leafBase, root: "b", rootTotal: List(4) }))
+  .union(Set({ ...leafBase, root: "b", rootTotal: List(4), index: 1, source: monthKey(3), actor: 3, gross: List(2) }))
 pure val grossValues = Set(List(1), List(2))
 pure val destinationValues = Set("w1")
 pure val versionValues = Set(1)
 pure val releaseValues = Set({ period: 202611, expectedRemaining: List(10), releasedGross: List(10), signer: "attester" },
-  { period: 202611, expectedRemaining: List(8), releasedGross: List(8), signer: "attester" })
-pure val weight_materialize = 12
-pure val weight_deposit = 4
-pure val weight_propose = 12
-pure val weight_autoFreeze = 12
-pure val weight_createObligations = 12
-pure val weight_commitObligation = 12
-pure val weight_admitRoot = 12
-pure val weight_observeClock = 4
+  { period: 202611, expectedRemaining: List(8), releasedGross: List(8), signer: "attester" },
+  { period: 202611, expectedRemaining: List(4), releasedGross: List(4), signer: "attester" })
+pure val nonceSettledValues = Set(true, false)
+pure val sampleFrozen: MonthlySettlement = autoFreeze(observeClock(propose(observeClock(observeRevision(observeEligibility(
+  openMonth(deploy(initial, E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true), 202611), MO::eligible),
+  MO::revisionSample), 1796083300), MO::snapshotSample, List(), MO::revisionSample), 1796342400))
+pure val sampleFunded: MonthlySettlement = createObligations(observeClock(observeHead(deposit(sampleFrozen,
+  { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1)), 1796342440), 1796343100), List(0), List(0), List())
+pure val sampleAdmitted: MonthlySettlement = admitRoot(sampleFunded, rootSample, blockEvent(2))
+pure val sampleUpgraded: MonthlySettlement = upgradeToRelease(sampleAdmitted, blockEvent(3))
+pure val sValues = Set(initial, sampleFrozen, sampleFunded, sampleAdmitted, materialize(sampleAdmitted, leafBase, blockEvent(3)),
+  sampleUpgraded, releaseReserve(sampleUpgraded, { period: 202611, expectedRemaining: List(10), releasedGross: List(10), signer: "attester" },
+    blockEvent(4), "owner"))
+pure val onAwardValues = Set(true, false)
+pure val approvalSample: RR::ReserveRelease = { ...RR::initial, phase: RR::OwnerSigned, root: "r", allocationRoot: "r",
+  originalReserve: List(10), reserved: List(10), allocationTotal: List(9), requestRevision: 1, evidenceHeight: 1, observedHeight: 1,
+  signedAttempt: 1, upgradeQualified: true, pinRevision: 1, reviewedImplementation: "v2" }
+pure val approvalValues: Set[RR::ReserveRelease] = Set(approvalSample, { ...approvalSample, phase: RR::Approved, signedAttempt: 0 },
+  { ...approvalSample, root: "q", reserved: List(8), originalReserve: List(8) })
+pure val receiptValues: Set[RR::ReleaseReceipt] = Set({ attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: true, succeeded: true },
+  { attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: false, succeeded: true })
+pure val weight_materialize = 30
+pure val weight_deposit = 6
+pure val weight_propose = 30
+pure val weight_autoFreeze = 30
+pure val weight_createObligations = 30
+pure val weight_commitObligation = 2
+pure val weight_admitRoot = 48
+pure val weight_observeClock = 3
 pure val weight_withdraw = 1
-pure val weight_releaseReserve = 1
-pure val weight_observeHead = 6
-pure val weight_observeRevision = 6
+pure val weight_releaseReserve = 36
+pure val weight_upgradeToRelease = 4
+pure val weight_advanceCursor = 24
+pure val weight_advanceZeroRemaining = 24
+pure val weight_deploy = 18
+pure val weight_openMonth = 30
+pure val weight_observeEligibility = 3
+pure val weight_observeHead = 2
+pure val weight_observeRevision = 30
 pure val weight_commitManualAward = 2
-pure val weight_observeConflict = 4
-pure val weight_observeExistingAward = 4
-pure val weight_payAward = 4
-pure val weight_observePaid = 4
+pure val weight_observeConflict = 12
+pure val weight_observeExistingAward = 12
+pure val weight_payAward = 12
+pure val weight_observePaid = 12
 pure val weight_adjust = 1
 pure val weight_finalize = 1
 pure val weight_observeSettings = 1
 pure val weight_setMonthly = 1
+pure val weight_noteUnderfunded = 12
 ```

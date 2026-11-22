@@ -12,7 +12,7 @@ import { Notices } from "@repo/ports/operations";
 import type { Driver, Options } from "../../gen/settlement__monthlySettlement.conformance.ts";
 import type { Award, Escrow } from "../../gen/settlement__escrow.ts";
 import type { Eligibility, RevisionFact } from "../../gen/settlement__monthly.ts";
-import type { Event, MonthlySettlement } from "../../gen/settlement__monthlySettlement.ts";
+import { type Event, type MonthlySettlement, noCursor } from "../../gen/settlement__monthlySettlement.ts";
 import { fromAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod, isPeriod } from "../../src/kernels/calendar.ts";
 import { type MonthFacts, MonthlyFacts, manifestRelationships, sendMonth } from "../../src/monthly/store.vibe";
@@ -102,7 +102,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: NO_ELIGIBILITY, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), chain: { escrow: initialEscrow(), headTime: 0 }, period: undefined };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), chain: { escrow: initialEscrow(), headTime: 0, cursor: noCursor }, period: undefined };
 };
 
 function initialEscrow(): Escrow {
@@ -178,7 +178,7 @@ const chainStep = async (w: World, event: Event, by: string) => {
   const next = await run(w, observeChain(keyOf(w), event, by, w.chain).pipe(Effect.option));
   if (next._tag === "None") return "refused" as const;
   const before = w.chain;
-  w.chain = { escrow: next.value.escrow, headTime: next.value.headTime };
+  w.chain = { escrow: next.value.escrow, headTime: next.value.headTime, cursor: next.value.cursor };
   if (event.type === "commitObligation") await recordAward(w, event.actor, false);
   if (event.type === "commitManualAward") await recordAward(w, event.source.actor, false);
   if (event.type === "materialize") await recordAward(w, event.proof.actor, false);
@@ -241,13 +241,14 @@ const observed = async (w: World): Promise<MonthlySettlement> => {
   if (w.period === undefined) {
     return view({ month: { project: PROJECT, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0, eligibility: w.facts.eligibility, revision: ZERO_REVISION,
       currentRevision: w.facts.current ?? ZERO_REVISION, cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0,
-      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "" }, escrow: w.chain.escrow, headTime: w.chain.headTime });
+      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "" }, escrow: w.chain.escrow, headTime: w.chain.headTime, cursor: w.chain.cursor ?? noCursor });
   }
   const settlement = await run(w, loadSettlement(keyOf(w)));
   const month = settlement.state.month;
   return view({
     escrow: projected(w.chain.escrow, settlement.place, settlement.state.escrow),
     headTime: w.chain.headTime,
+    cursor: w.chain.cursor ?? noCursor,
     month: {
       ...month,
       underfundedNotice: await noticeSent(w),

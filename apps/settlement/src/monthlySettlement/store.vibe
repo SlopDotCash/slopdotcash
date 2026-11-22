@@ -6,7 +6,7 @@ import { initial as unopenedVault } from "../../gen/settlement__escrow.effect.vi
 import type { BanExclusion } from "../../gen/settlement__monthly.ts"
 import type { Amount } from "../../gen/settlement__money.ts"
 import { otherOpenPledges } from "../../gen/settlement__monthPledges.effect.vibe"
-import { type Event, type MonthlySettlement, apply, decodeState, observation } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { type Event, type LeafCursor, type MonthlySettlement, apply, decodeState, noCursor, observation } from "../../gen/settlement__monthlySettlement.effect.vibe"
 import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { formatPeriod } from "../kernels/calendar.ts"
 import { type Chain, NETWORKS, SOLANA_NATIVE_ASSET, EVM_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
@@ -22,6 +22,7 @@ export interface VaultPlace {
 export interface ChainView {
   readonly escrow: Escrow
   readonly headTime: number
+  readonly cursor?: LeafCursor
 }
 
 export interface Settlement {
@@ -198,7 +199,7 @@ export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
   const place = try placeOf(loaded)
   const vault = try vaultOf(key, loaded, place)
   const counts = place === undefined ? { outstanding: 0, reserved: 0 } : try countsOf(place)
-  const state = try decodeState({ month: loaded.state, escrow: chain?.escrow ?? vault.escrow, headTime: chain?.headTime ?? vault.headTime })
+  const state = try decodeState({ month: loaded.state, escrow: chain?.escrow ?? vault.escrow, headTime: chain?.headTime ?? vault.headTime, cursor: chain?.cursor ?? noCursor })
   const heldBack = try heldBackOf(key, place)
   return {
     key,
