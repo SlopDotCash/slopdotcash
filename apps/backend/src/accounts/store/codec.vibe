@@ -47,6 +47,7 @@ export interface Facts {
   readonly mailAvailable: boolean
   readonly pilot: { readonly githubId: string; readonly version: string } | undefined
   readonly assertion: { readonly githubId: string; readonly login: string; readonly nodeId: string } | undefined
+  readonly ownerSession?: string
 }
 
 export const noFacts: Facts = { xConfigured: false, mailAvailable: false, pilot: undefined, assertion: undefined }
@@ -262,6 +263,7 @@ export function decodeAccounts(now: number, facts: Facts) {
       lastVersion: issued(names, "version"),
       lastUnsubscribe: issued(names, "unsubscribe"),
       inbox: { ...noNotices, enrollments: modelMembers.map((member) => member.email) },
+      ownerSession: facts.ownerSession === undefined ? 0 : intern(names, "github", facts.ownerSession),
     })
     return { state, names, members, flows, preferences, destinations, verifications } satisfies Loaded
   }
