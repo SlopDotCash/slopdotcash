@@ -13,7 +13,9 @@ export interface ReleaseScope {
 export error PlanUnreadable { planId: string }
 
 export function releaseKey(scope: ReleaseScope): string {
-  return `monthly-release-state:${scope.network}:${scope.vault.toLowerCase()}:${scope.period}`
+  // EVM addresses are case-insensitive; a Solana base58 address is case-sensitive and kept exactly.
+  const vault = scope.vault.startsWith("0x") ? scope.vault.toLowerCase() : scope.vault
+  return `monthly-release-state:${scope.network}:${vault}:${scope.period}`
 }
 
 function planKey(planId: string): string {
