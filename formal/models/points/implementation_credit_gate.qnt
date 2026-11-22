@@ -18,6 +18,8 @@ module implementation_credit_gate {
   }
   action selectZeroLineWork(carriesEarlierWork: bool, hasIndependentPaths: bool): bool =
     selectSource(true, false, carriesEarlierWork and not(hasIndependentPaths), false)
+  action selectCommitCensus(rollingFallback: bool, hasCommitRows: bool): bool =
+    selectSource(hasCommitRows, false, rollingFallback and not(hasCommitRows), false)
   action credit = all { s.selected, not(s.fatal), not(s.held),
     not(s.complete and s.duplicate), s' = s.with("credited", true) }
   action retry = s' = s
@@ -36,6 +38,12 @@ module implementation_credit_gate {
     .expect(invariant).then(credit.fail())
   run emptyPromotionKeepsPriorPointsTest = init.then(selectZeroLineWork(true, false))
     .expect(s.retained == 10 and invariant).then(credit.fail())
+  run noCommitRowsHoldFreshCreditTest = init.then(selectCommitCensus(true, false))
+    .expect(s.held and s.retained == 10 and invariant).then(credit.fail())
+  run nonemptyCommitCensusCanScoreTest = init.then(selectCommitCensus(true, true))
+    .then(credit).expect(s.credited and invariant)
+  run noRowsInHistoricalReplayKeepsFallbackTest = init.then(selectCommitCensus(false, false))
+    .then(credit).expect(s.credited and invariant)
   run zeroLineWorkWithIndependentPathsCanScoreTest = init.then(selectZeroLineWork(true, true))
     .then(credit).expect(s.credited and invariant)
   run missingOwnershipIsNotDuplicateProofTest = init.then(selectSource(false, true, false, false))

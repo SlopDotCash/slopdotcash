@@ -206,6 +206,45 @@ test("an unresolved empty acceptance marker holds only new provisional implement
   }
 });
 
+for (const census of ["empty", "missing"] as const) {
+  test(`an ${census} commit census holds a fresh unassessed merge without crediting the opener`, () => {
+    setSystemTime(new Date(AFTER_NOVEMBER));
+    const input = penaltyScoreInput([]);
+    const pull = input.mergedPullRequestOutcomes[1];
+    pull.author = PROJECT_OWNER;
+    input.mergedPullRequests[1].author = PROJECT_OWNER;
+    const before = createLeaderboardSnapshot(input);
+    const empty = emptyPointsJournal(GENERATED_AT);
+    const prior = applyPointsSnapshot(
+      empty,
+      before,
+      "a".repeat(64),
+      before.generatedAt,
+    );
+    expect(
+      prior.revisions.find(({ award }) => award.sourceId === pull.id)?.award
+        .actor.id,
+    ).toBe(PENALIZED_AUTHOR.id);
+
+    pull.commits = census === "empty" ? [] : null;
+    const held = createLeaderboardSnapshot(input);
+    assertLeaderboardSnapshot(held);
+    expect(held.source.counts).toEqual(before.source.counts);
+    expect(held.ledger).toEqual(
+      before.ledger.filter((event) => event.source.id !== pull.id),
+    );
+    expect(
+      held.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === pull.id,
+      ),
+    ).toMatchObject({ status: "incomplete", recordDigest: null });
+    expect(
+      applyPointsSnapshot(prior, held, "b".repeat(64), held.generatedAt)
+        .revisions,
+    ).toEqual(prior.revisions);
+  });
+}
+
 test("an identical native accepted delta requires earlier positive implementation credit", () => {
   setSystemTime(new Date(AFTER_NOVEMBER));
   const input = penaltyScoreInput([]);

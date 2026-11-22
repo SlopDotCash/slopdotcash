@@ -181,6 +181,15 @@ test("ordinary publication still requires the complete target inventory", () => 
   ).toThrow("complete target repository registry for publication");
 });
 
+test("the fresh commit census requirement preserves the historical replay", () => {
+  const { historical } = fixture();
+  const before = createHistoricalLeaderboardSnapshot(historical, scope);
+  historical.mergedPullRequestOutcomes[0].commits = [];
+  const replay = createHistoricalLeaderboardSnapshot(historical, scope);
+  assertHistoricalLeaderboardSnapshot(replay, scope);
+  expect(replay).toEqual(before);
+});
+
 test("a mismatched registry manifest or repository node ID fails closed", () => {
   const { historical } = fixture();
   expect(() =>

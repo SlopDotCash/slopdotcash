@@ -2907,7 +2907,7 @@ export function shareScoreThirds(
 export function createLeaderboardSnapshot(
   input: LeaderboardInput,
 ): LeaderboardSnapshot {
-  return scoreLeaderboardSnapshot(input, TARGET_REPOSITORIES);
+  return scoreLeaderboardSnapshot(input, TARGET_REPOSITORIES, "rolling");
 }
 
 export interface HistoricalLeaderboardScope {
@@ -2991,7 +2991,7 @@ export function createHistoricalLeaderboardSnapshot(
         "Historical joint assessment is outside the pinned repository",
       );
   }
-  return scoreLeaderboardSnapshot(input, [repository]);
+  return scoreLeaderboardSnapshot(input, [repository], "historical");
 }
 
 /** Validate a retained historical replay without admitting it to site publication. */
@@ -3011,14 +3011,18 @@ export function assertHistoricalLeaderboardSnapshot(
     );
 }
 
+type LeaderboardScoringMode = "rolling" | "historical";
+
 function scoreLeaderboardSnapshot(
   input: LeaderboardInput,
   repositories: readonly TargetRepository[],
+  mode: LeaderboardScoringMode,
 ): LeaderboardSnapshot {
   const snapshot = createSnapshotWithReviewCutoff(
     input,
     OUTCOME_FIRST_POLICY_AT,
     repositories,
+    mode,
   );
   // Payment weights only diverge for reviews submitted before the SCR-05
   // production cutoff. Skip the second pass and the basis payload when the
@@ -3031,6 +3035,7 @@ function scoreLeaderboardSnapshot(
         input,
         PAYMENT_REVIEW_POLICY_AT,
         repositories,
+        mode,
       );
       snapshot.paymentReviewBasis = {
         policy: PAYMENT_REVIEW_POLICY,
@@ -3232,6 +3237,7 @@ function createSnapshotWithReviewCutoff(
   input: LeaderboardInput,
   reviewCutoff: string,
   repositories: readonly TargetRepository[],
+  mode: LeaderboardScoringMode,
 ): LeaderboardSnapshot {
   const participationBans = input.participationBans ?? new Map();
   const attributionHeldSourceIds = new Set(
@@ -3873,13 +3879,16 @@ function createSnapshotWithReviewCutoff(
     const acceptanceKey = digest
       ? `${repositoryId.toLowerCase()}\0${digest}`
       : null;
+    // Fresh unassessed rolling credit requires a nonempty commit census.
     // An empty marker can belong to an indirect merge. Exact nonempty
-    // matches require earlier positive credit for that implementation.
-    // Preserve existing awards and reservations until review resolves them.
+    // matches need earlier positive credit. Holds preserve existing awards.
     if (
       v2 &&
       input.valueDecisions !== undefined &&
-      (pullRequest.emptyAcceptanceMarker ||
+      ((mode === "rolling" &&
+        valuePolicyApplies &&
+        !pullRequest.commits?.length) ||
+        pullRequest.emptyAcceptanceMarker ||
         isUnprovedZeroLinePromotion(
           pullRequest.commits ?? [],
           (commit) =>

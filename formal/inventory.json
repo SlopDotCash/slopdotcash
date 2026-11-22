@@ -7114,7 +7114,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "abf4741e6bc4336a4d8a1e108fd549373cc4d74feebea838f4ef13dbb604352b",
+      "sha256": "d7f209d152a17cd6ef1463b83521d77f1494b540be4bfe8f4df1a109ecaf8493",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7133,13 +7133,13 @@
         1347, 1354, 1439, 1473, 1478, 1496, 1593, 2148, 2166, 2238, 2247, 2265,
         2274, 2282, 2304, 2319, 2328, 2336, 2382, 2432, 2482, 2537, 2554, 2555,
         2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2930, 2983,
-        3144, 3244, 3263, 3318, 3494, 3689, 3714, 3763, 3849, 3869, 4021, 4102,
-        4499, 4510, 4544, 4607, 4621, 4944, 5157, 5358, 5471, 5496, 5627, 5636,
-        5641, 5708, 5722, 6485, 6487, 6510, 6514, 6518, 6523, 6669, 6678, 6688,
-        6689, 6747, 6782, 6788, 6808, 6813, 6820, 6828, 6830, 6856, 6859, 6873,
-        6875, 6896, 6898, 6902, 6905, 6910, 7102, 7104, 7363, 7407, 7470, 7471,
-        8350, 8351, 8352, 8353, 8370, 8380, 8391, 8407, 8496, 8567, 8568, 8595,
-        8802
+        3149, 3250, 3269, 3324, 3500, 3695, 3720, 3769, 3855, 3875, 4030, 4111,
+        4508, 4519, 4553, 4616, 4630, 4953, 5166, 5367, 5480, 5505, 5636, 5645,
+        5650, 5717, 5731, 6494, 6496, 6519, 6523, 6527, 6532, 6678, 6687, 6697,
+        6698, 6756, 6791, 6797, 6817, 6822, 6829, 6837, 6839, 6865, 6868, 6882,
+        6884, 6905, 6907, 6911, 6914, 6919, 7111, 7113, 7372, 7416, 7479, 7480,
+        8359, 8360, 8361, 8362, 8379, 8389, 8400, 8416, 8505, 8576, 8577, 8604,
+        8811
       ],
       "review": "mapped-abstraction"
     },
@@ -15872,7 +15872,7 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "edbcf77e2e5db12b91bead74505fc4c0d22c76cbcee3774abcee31fa5d56958b",
+      "sha256": "78f771444858d973ec4a317dd3eaddab4a3828e8a47a39d46b2c3a0ba14effb8",
       "sources": [
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
@@ -15884,6 +15884,9 @@
         "emptyPromotionKeepsPriorPointsTest",
         "heldSourceKeepsPriorPointsTest",
         "missingOwnershipIsNotDuplicateProofTest",
+        "noCommitRowsHoldFreshCreditTest",
+        "noRowsInHistoricalReplayKeepsFallbackTest",
+        "nonemptyCommitCensusCanScoreTest",
         "transportFailureDoesNotBecomeCreditTest",
         "zeroLineWorkWithIndependentPathsCanScoreTest"
       ]

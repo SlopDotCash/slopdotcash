@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "7cf8f755b3a09393c12948a5a4e567669e616aca8533e0d05aa9b69ff4bba448",
+  "inventorySha256": "f1014fe5023aee534d03a4b6a61479a60dd1d8c344b29e8fea0e75c4d28dd767",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3857,7 +3857,29 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 5157,
+      "line": 3014,
+      "name": "LeaderboardScoringMode",
+      "kind": "string-union",
+      "values": ["historical", "rolling"],
+      "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
+        "formal/models/ui/ui_review_pool.qnt",
+        "formal/models/ui/ui_score_ledger.qnt",
+        "formal/models/ui/ui_score_selection.qnt",
+        "formal/models/ui/ui_snapshot_contract.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["historical", "rolling"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/leaderboard.ts",
+      "line": 5166,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
