@@ -7,6 +7,7 @@ import { monthlyFacts } from "./monthly/store.vibe"
 import { monthlyCommitmentRoutes } from "./monthlyCommitment/publication.vibe"
 import { PaymentNetworks } from "./owner/networks.vibe"
 import { ownerRoutes } from "./owner/routes.vibe"
+import { ReservedAwardFeedRoutes } from "./operator/reservedAwards.vibe"
 import { PayeeAudienceLive } from "./payments/audience.vibe"
 import { publicRoutes } from "./public/routes.vibe"
 import { referralRoutes } from "./referrals/routes.vibe"
@@ -18,10 +19,11 @@ const MonthlyFactsLive = Layer.unwrap(effect {
 })
 
 export { DirectRoutesLive, PayeeAudienceLive }
+export { type ReservedAwardFeedVars, reservedAwardFeedAccess } from "./operator/reservedAwards.vibe"
 
 export const settlement = area({
   name: "settlement",
   api,
-  routes: Layer.mergeAll(referralRoutes, ownerRoutes, monthlyCommitmentRoutes, ReconcileBindingRoutes, publicRoutes, monthlyRoutes),
+  routes: Layer.mergeAll(referralRoutes, ownerRoutes, monthlyCommitmentRoutes, ReconcileBindingRoutes, ReservedAwardFeedRoutes, publicRoutes, monthlyRoutes),
   provides: Layer.mergeAll(DirectBountyLive, VaultTotalsLive, MonthlyFactsLive, PayeeAudienceLive),
 })
