@@ -2771,13 +2771,13 @@ function latestSourceUpdate(input: LeaderboardInput): string {
 }
 
 /**
- * Assigns each commit SHA to the earliest merged pull request that lists it,
- * whatever its base branch, so a later consolidation or promotion pull
- * request cannot score the same commits again. Every branch shares credit
- * with the implementation authors of the commits it owns (SCR-04).
+ * Assigns a commit SHA to its earliest listed or verified accepted source,
+ * regardless of the base branch. An accepted squash SHA identifies a
+ * later copy but never supplies new authors or changed lines (SCR-04).
  */
 export function commitCreditOwners(
   outcomes: readonly MergedPullRequestOutcome[],
+  includeAcceptedOrdinaryCommits = false,
 ): Map<string, string> {
   const owners = new Map<string, string>();
   const ordered = sortWithParsedTimes(
@@ -2787,10 +2787,20 @@ export function commitCreditOwners(
       leftTime - rightTime || compareCodeUnits(left.id, right.id),
   );
   for (const pullRequest of ordered) {
-    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const repositoryId = repositoryIdFromUrl(pullRequest.url).toLowerCase();
     if (pullRequest.commits === null) continue;
     for (const commit of pullRequest.commits) {
-      const key = `${repositoryId.toLowerCase()}\0${commit.oid}`;
+      const key = `${repositoryId}\0${commit.oid}`;
+      if (!owners.has(key)) owners.set(key, pullRequest.id);
+    }
+    const accepted = pullRequest.acceptedOrdinaryCommitOid;
+    if (
+      includeAcceptedOrdinaryCommits &&
+      accepted &&
+      pullRequest.commits.every((commit) => commit.parentCount !== undefined) &&
+      pullRequest.commits.some((commit) => commit.parentCount === 1)
+    ) {
+      const key = `${repositoryId}\0${accepted}`;
       if (!owners.has(key)) owners.set(key, pullRequest.id);
     }
   }
@@ -2907,7 +2917,7 @@ export function shareScoreThirds(
 export function createLeaderboardSnapshot(
   input: LeaderboardInput,
 ): LeaderboardSnapshot {
-  return scoreLeaderboardSnapshot(input, TARGET_REPOSITORIES);
+  return scoreLeaderboardSnapshot(input, TARGET_REPOSITORIES, "rolling");
 }
 
 export interface HistoricalLeaderboardScope {
@@ -2991,7 +3001,7 @@ export function createHistoricalLeaderboardSnapshot(
         "Historical joint assessment is outside the pinned repository",
       );
   }
-  return scoreLeaderboardSnapshot(input, [repository]);
+  return scoreLeaderboardSnapshot(input, [repository], "historical");
 }
 
 /** Validate a retained historical replay without admitting it to site publication. */
@@ -3011,14 +3021,18 @@ export function assertHistoricalLeaderboardSnapshot(
     );
 }
 
+type LeaderboardScoringMode = "rolling" | "historical";
+
 function scoreLeaderboardSnapshot(
   input: LeaderboardInput,
   repositories: readonly TargetRepository[],
+  mode: LeaderboardScoringMode,
 ): LeaderboardSnapshot {
   const snapshot = createSnapshotWithReviewCutoff(
     input,
     OUTCOME_FIRST_POLICY_AT,
     repositories,
+    mode,
   );
   // Payment weights only diverge for reviews submitted before the SCR-05
   // production cutoff. Skip the second pass and the basis payload when the
@@ -3031,6 +3045,7 @@ function scoreLeaderboardSnapshot(
         input,
         PAYMENT_REVIEW_POLICY_AT,
         repositories,
+        mode,
       );
       snapshot.paymentReviewBasis = {
         policy: PAYMENT_REVIEW_POLICY,
@@ -3232,6 +3247,7 @@ function createSnapshotWithReviewCutoff(
   input: LeaderboardInput,
   reviewCutoff: string,
   repositories: readonly TargetRepository[],
+  mode: LeaderboardScoringMode,
 ): LeaderboardSnapshot {
   const participationBans = input.participationBans ?? new Map();
   const attributionHeldSourceIds = new Set(
@@ -3501,7 +3517,15 @@ function createSnapshotWithReviewCutoff(
     ...mergedPullRequests,
     ...valueContexts.filter((source) => source.mergedAt !== null),
   ];
-  const commitOwners = commitCreditOwners(mergedPullRequestOutcomes);
+  const commitOwners = commitCreditOwners(
+    mergedPullRequestOutcomes,
+    mode === "rolling",
+  );
+  const previousAcceptedOrdinaryOwners =
+    mode === "rolling" ? input.previousAcceptedOrdinaryOwners : undefined;
+  const fallbackCommitOwners = previousAcceptedOrdinaryOwners?.size
+    ? new Map([...commitOwners, ...previousAcceptedOrdinaryOwners])
+    : commitOwners;
   const outcomeById = new Map(
     mergedPullRequestOutcomes.map((pullRequest) => [
       pullRequest.id,
@@ -3512,13 +3536,14 @@ function createSnapshotWithReviewCutoff(
   // merge credit with (Score v2) or its author alone (Score v1 history).
   const mergeCreditActorsOf = (
     pullRequest: MergedPullRequestOutcome,
+    owners: ReadonlyMap<string, string> = commitOwners,
   ): GitHubActor[] => {
     if (
       parseIsoTime(pullRequest.mergedAt) >= parseIsoTime(SCORE_V2_EFFECTIVE_AT)
     ) {
       return mergeCreditActors(
         pullRequest,
-        commitOwners,
+        owners,
         input.retainedCommitAuthors?.get(pullRequest.id),
       );
     }
@@ -3790,6 +3815,7 @@ function createSnapshotWithReviewCutoff(
     }
   >();
   const implementationHoldSourceIds = new Set<string>();
+  const standaloneReviewSources = new Set<string>();
   const scoredImplementationDigests = new Set(
     input.previousImplementationDigests,
   );
@@ -3821,18 +3847,12 @@ function createSnapshotWithReviewCutoff(
       pullRequest.author && !isBotActor(pullRequest.author)
         ? pullRequest.author
         : null;
-    // Score v1 history credits the pull-request author only.
-    let actors = mergeCreditActorsOf(pullRequest);
-    const lineWeights = v2
-      ? mergeCreditLineWeights(
-          pullRequest,
-          commitOwners,
-          input.retainedCommitAuthors?.get(pullRequest.id),
-        )
-      : null;
+    // Review exclusions keep the full current credit actor census even when
+    // a previous acceptance withholds new provisional implementation credit.
+    const currentActors = mergeCreditActorsOf(pullRequest);
     creditActorIds.set(
       pullRequest.id,
-      new Set(actors.map((actor) => actor.id)),
+      new Set(currentActors.map((actor) => actor.id)),
     );
     if (attributionHeldSourceIds.has(pullRequest.id)) continue;
     // A joint member is scored by its unit, never by a superseded per-PR record.
@@ -3869,22 +3889,41 @@ function createSnapshotWithReviewCutoff(
       !ratification && valueDecision?.status === "assessed"
         ? valueDecision.record
         : null;
+    const implementationOwners =
+      !ratification && !valueRecord && joint?.status !== "assessed"
+        ? fallbackCommitOwners
+        : commitOwners;
+    let actors =
+      implementationOwners === commitOwners
+        ? currentActors
+        : mergeCreditActorsOf(pullRequest, implementationOwners);
+    const lineWeights = v2
+      ? mergeCreditLineWeights(
+          pullRequest,
+          implementationOwners,
+          input.retainedCommitAuthors?.get(pullRequest.id),
+        )
+      : null;
     const digest = implementationDigests?.get(pullRequest.id);
     const acceptanceKey = digest
       ? `${repositoryId.toLowerCase()}\0${digest}`
       : null;
+    // Fresh unassessed rolling credit requires a nonempty commit census.
     // An empty marker can belong to an indirect merge. Exact nonempty
-    // matches require earlier positive credit for that implementation.
-    // Preserve existing awards and reservations until review resolves them.
+    // matches need earlier positive credit. Holds preserve existing awards.
     if (
       v2 &&
       input.valueDecisions !== undefined &&
-      (pullRequest.emptyAcceptanceMarker ||
+      ((mode === "rolling" &&
+        valuePolicyApplies &&
+        !pullRequest.commits?.length) ||
+        pullRequest.emptyAcceptanceMarker ||
         isUnprovedZeroLinePromotion(
           pullRequest.commits ?? [],
           (commit) =>
-            commitOwners.get(`${repositoryId.toLowerCase()}\0${commit.oid}`) ===
-            pullRequest.id,
+            implementationOwners.get(
+              `${repositoryId.toLowerCase()}\0${commit.oid}`,
+            ) === pullRequest.id,
         ) ||
         input.unresolvedImplementationSources?.has(pullRequest.id) ||
         (acceptanceKey !== null &&
@@ -3948,6 +3987,23 @@ function createSnapshotWithReviewCutoff(
         throw new Error(
           "Overlapping accepted commits require joint value assessment",
         );
+      // A standalone assessment does not resolve overlap with a previously
+      // rewarded source. Hold its implementation credit for joint review.
+      if (
+        previousAcceptedOrdinaryOwners?.size &&
+        pullRequest.commits?.some((commit) => {
+          const previousOwner = previousAcceptedOrdinaryOwners.get(
+            `${repositoryId.toLowerCase()}\0${commit.oid}`,
+          );
+          return (
+            previousOwner !== undefined && previousOwner !== pullRequest.id
+          );
+        })
+      ) {
+        implementationHoldSourceIds.add(pullRequest.id);
+        standaloneReviewSources.add(pullRequest.id);
+        continue;
+      }
     }
     if (actors.length === 0) continue;
     const totalThirds =
@@ -5652,14 +5708,15 @@ function createSnapshotWithReviewCutoff(
                 .every(
                   (commit) =>
                     isCreditEligibleCommitAuthor(commit.author) &&
-                    commitOwners.get(
+                    fallbackCommitOwners.get(
                       `${repository.toLowerCase()}\0${commit.oid}`,
                     ) === pull.id,
                 );
             const verifiedActors = completePrimaryAuthors
-              ? mergeCreditActorsOf(pull as MergedPullRequestOutcome).map(
-                  (actor) => actor.id,
-                )
+              ? mergeCreditActorsOf(
+                  pull as MergedPullRequestOutcome,
+                  fallbackCommitOwners,
+                ).map((actor) => actor.id)
               : [];
             const publishedActors = completePrimaryAuthors
               ? publishedLedger
@@ -5729,6 +5786,9 @@ function createSnapshotWithReviewCutoff(
                 !unavailableHeldSourceIds.has(pull.id)
                   ? null
                   : (decision?.latestDigest ?? null),
+              ...(standaloneReviewSources.has(pull.id) && decision?.latestDigest
+                ? { reviewAssessmentDigest: decision.latestDigest }
+                : {}),
               ...(verifiedImplementationActorNodeIds
                 ? { verifiedImplementationActorNodeIds }
                 : {}),
@@ -8348,6 +8408,7 @@ export function assertLeaderboardSnapshot(
       if (
         ![
           "pullRequestId,pullRequestNumber,recordDigest,repository,status",
+          "pullRequestId,pullRequestNumber,recordDigest,repository,reviewAssessmentDigest,status",
           "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
@@ -8390,6 +8451,17 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
+      if (row.reviewAssessmentDigest !== undefined) {
+        if (
+          row.status !== "incomplete" ||
+          row.recordDigest !== null ||
+          typeof row.reviewAssessmentDigest !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(row.reviewAssessmentDigest)
+        )
+          throw new Error(
+            "Review assessment coverage requires a held implementation source",
+          );
+      }
       if (row.implementationAllocation !== undefined) {
         const allocation = assertObject(
           row.implementationAllocation,
@@ -8546,6 +8618,14 @@ export function assertLeaderboardSnapshot(
       return match?.row;
     };
     for (const event of validatedLedger) {
+      if (
+        event.category === "merged-pull-request" &&
+        coverageRows.get(event.source.id)?.row.reviewAssessmentDigest !==
+          undefined
+      )
+        throw new Error(
+          "Held implementation source cannot publish merge credit",
+        );
       if (!event.scoreDecisionSourceId?.startsWith("value:")) continue;
       if (
         snapshot.valuePolicyEffectiveAt !== undefined &&
@@ -8562,14 +8642,15 @@ export function assertLeaderboardSnapshot(
       const row = coverageFor(event.id);
       // A ratification corrects only the implementation score; the
       // ratified source's review value still binds its assessment digest.
-      if (
-        !(
-          row?.status === "assessed" ||
-          (row?.status === "human-ratified" &&
-            event.category === "substantive-review")
-        ) ||
-        `value:${row.recordDigest}` !== event.scoreDecisionSourceId
-      )
+      const reviewEvent = event.category === "substantive-review";
+      const assessedDigest =
+        row?.status === "assessed" ||
+        (row?.status === "human-ratified" && reviewEvent)
+          ? row.recordDigest
+          : reviewEvent
+            ? row?.reviewAssessmentDigest
+            : undefined;
+      if (`value:${assessedDigest}` !== event.scoreDecisionSourceId)
         throw new Error(
           "Value score event is not bound to its assessment coverage",
         );

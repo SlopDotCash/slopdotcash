@@ -12,8 +12,10 @@ import {
   latestPoints,
   OCTOBER_DUPLICATE_RETIREMENT_DECISION,
   OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+  type PointRevision,
   type PointsJournal,
   pointKey,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "../src/lib/points";
 import {
   applyPointsImplementationCorrections,
@@ -156,6 +158,8 @@ export interface HistoricalPointsPacket {
       earlierMergeSha: string;
       mergeSha: string;
       diffSha256: string;
+      /** The later head is the exact earlier accepted merge and adds no members. */
+      carriedAcceptance?: true;
       /** The later squash is empty and its parent already contains the change. */
       emptySquash?: true;
       /** The recorded branch kept the carrier's identical native merge edge. */
@@ -164,6 +168,8 @@ export interface HistoricalPointsPacket {
     /** Complete native commit membership already accepted before this promotion. */
     earlierAcceptanceProof?: {
       commits: { sha: string; sourceId: string }[];
+      /** Earlier GitHub acceptance objects carried as submitted merges. */
+      acceptedMergeEdges?: { sha: string; earlierSourceId: string }[];
       sourceBaseSha: string;
       objects: { sha: string; raw: string }[];
       contextSources: {
@@ -207,6 +213,26 @@ export interface HistoricalPointsPacket {
   }[];
 }
 const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
+export function matchesCarriedAcceptance(
+  source: CorrectionSource,
+  earlier: CorrectionSource,
+  mergeSha: string,
+): boolean {
+  const members = new Set(source.commits.map(({ sha }) => sha));
+  return (
+    source.headSha === mergeSha &&
+    source.commits.length === earlier.commits.length + 1 &&
+    members.size === source.commits.length &&
+    !earlier.commits.some(({ sha }) => sha === mergeSha) &&
+    earlier.commits.every(({ sha }) => members.has(sha)) &&
+    source.commits.some(
+      ({ sha, parentCount, parentShas }) =>
+        sha === mergeSha &&
+        parentCount === 2 &&
+        parentShas?.[1] === earlier.headSha,
+    )
+  );
+}
 function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
@@ -612,9 +638,8 @@ export function reconstructHistoricalPoints(
     (packet.duplicateRetirements ?? []).map((item) => item.sourceId),
   );
   const latestBaseline = latestPoints(baseline);
-  const rewardedAwards = [...latestPoints(result).values()].map(
-    (row) => row.award,
-  );
+  const rewarded = [...latestPoints(result).values()];
+  const rewardedAwards = rewarded.map((row) => row.award);
   const validatedRetirements = new Map<string, string>();
   for (const retirement of packet.duplicateRetirements ?? []) {
     const unitKey = JSON.stringify([
@@ -670,24 +695,31 @@ export function reconstructHistoricalPoints(
     if (identical) {
       const owner = earlier.get(identical.earlierSourceId);
       const sharedMerge = identical.earlierMergeSha === identical.mergeSha;
+      const carried = identical.carriedAcceptance === true;
       check(
         Object.keys(identical).sort().join() ===
-          (identical.emptySquash === true
-            ? "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha"
-            : identical.survivingCarrier === true
-              ? "diffSha256,earlierMergeSha,earlierSourceId,mergeSha,survivingCarrier"
-              : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
+          (carried
+            ? "carriedAcceptance,diffSha256,earlierMergeSha,earlierSourceId,mergeSha"
+            : identical.emptySquash === true
+              ? "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha"
+              : identical.survivingCarrier === true
+                ? "diffSha256,earlierMergeSha,earlierSourceId,mergeSha,survivingCarrier"
+                : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
           /^[a-f0-9]{64}$/u.test(identical.diffSha256) &&
           /^[a-f0-9]{40}$/u.test(identical.earlierMergeSha) &&
           /^[a-f0-9]{40}$/u.test(identical.mergeSha) &&
           earlier.size === 1 &&
           owner &&
           (identical.survivingCarrier !== true || !sharedMerge) &&
-          (sharedMerge
-            ? identical.emptySquash !== true && owner.headSha === source.headSha
-            : source.commits.length === 1 &&
-              source.commits[0].sha === source.headSha &&
-              source.commits[0].parentCount === 1) &&
+          (carried
+            ? !sharedMerge &&
+              matchesCarriedAcceptance(source, owner, identical.earlierMergeSha)
+            : sharedMerge
+              ? identical.emptySquash !== true &&
+                owner.headSha === source.headSha
+              : source.commits.length === 1 &&
+                source.commits[0].sha === source.headSha &&
+                source.commits[0].parentCount === 1) &&
           owner.occurredAt !== null &&
           source.occurredAt !== null &&
           owner.occurredAt < source.occurredAt &&
@@ -706,7 +738,7 @@ export function reconstructHistoricalPoints(
               award.occurredAt === owner.occurredAt &&
               award.category === "merged-pull-request" &&
               award.amount > 0 &&
-              ((!sharedMerge && identical.emptySquash !== true) ||
+              ((!sharedMerge && !carried && identical.emptySquash !== true) ||
                 (latestBaseline.get(award.key)?.award.amount ?? 0) > 0) &&
               award.key ===
                 pointKey(
@@ -718,6 +750,36 @@ export function reconstructHistoricalPoints(
           ),
         "Identical accepted change lacks a verified earlier ordinary pool",
       );
+      if (carried) {
+        const ordinaryForOwner = ({ award }: PointRevision) =>
+          award.projectId === packet.projectId &&
+          award.sourceId === owner.sourceId &&
+          award.category === "merged-pull-request" &&
+          award.key ===
+            pointKey(
+              award.projectId,
+              award.actor.id,
+              award.category,
+              owner.sourceId,
+            );
+        const before = [...latestBaseline.values()].filter(ordinaryForOwner);
+        const after = rewarded.filter(ordinaryForOwner);
+        check(
+          before.length === after.length &&
+            after.every((row) => {
+              const prior = latestBaseline.get(row.award.key);
+              return (
+                prior &&
+                (prior.id === row.id ||
+                  (row.previous === prior.id &&
+                    row.decision?.reason ===
+                      VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION &&
+                    hash(row.award) === hash(prior.award)))
+              );
+            }),
+          "Carried merge changes the retained earlier ordinary pool",
+        );
+      }
     }
     const unchanged = retirement.unchangedPromotion;
     const treeCommits = new Map(
@@ -913,6 +975,7 @@ export function reconstructHistoricalPoints(
     const acceptedCommits = new Map(
       acceptedProof?.commits.map((item) => [item.sha, item.sourceId]),
     );
+    const acceptedMergeEdges = new Set<string>();
     if (acceptedProof) {
       check(
         acceptedCommits.size === acceptedProof.commits.length &&
@@ -1130,6 +1193,56 @@ export function reconstructHistoricalPoints(
           "Earlier acceptance does not cover the exact native commit",
         );
       }
+      for (const { sha, earlierSourceId } of acceptedProof.acceptedMergeEdges ??
+        []) {
+        const origin = earlier.get(earlierSourceId);
+        const context = acceptedProof.contextSources.find(
+          (item) => item.id === earlierSourceId,
+        );
+        const merge = objects.get(sha);
+        const member = source.commits.find((item) => item.sha === sha);
+        const ordinary = packet.corrections.candidates.find(
+          (item) =>
+            item.kind === "pull-request" &&
+            item.projectId === packet.projectId &&
+            item.sourceId === earlierSourceId &&
+            item.sourceIds.length === 1 &&
+            item.sourceIds[0] === earlierSourceId &&
+            item.occurredAt === origin?.occurredAt,
+        );
+        check(
+          !acceptedMergeEdges.has(sha) &&
+            !acceptedCommits.has(sha) &&
+            origin?.occurredAt &&
+            source.occurredAt &&
+            origin.occurredAt < source.occurredAt &&
+            !retiringSources.has(earlierSourceId) &&
+            context?.mergeSha === sha &&
+            merge?.parents.length === 2 &&
+            merge.parents[1] === origin.headSha &&
+            member?.parentCount === 2 &&
+            ordinary &&
+            rewardedAwards.some(
+              (award) =>
+                award.projectId === packet.projectId &&
+                award.category === "merged-pull-request" &&
+                award.sourceId === earlierSourceId &&
+                award.sourceUrl === origin.sourceUrl &&
+                award.occurredAt === origin.occurredAt &&
+                award.workUnitId === ordinary.workUnitId &&
+                award.key ===
+                  pointKey(
+                    award.projectId,
+                    award.actor.id,
+                    "merged-pull-request",
+                    earlierSourceId,
+                  ) &&
+                award.amount > 0,
+            ),
+          "Earlier accepted merge edge is not bound to a retained ordinary award",
+        );
+        acceptedMergeEdges.add(sha);
+      }
     }
     const usedSquashes = new Set<string>();
     const expected: string[] = [];
@@ -1142,7 +1255,8 @@ export function reconstructHistoricalPoints(
           commit.parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)),
         "Duplicate commit identity is incomplete",
       );
-      if (acceptedCommits.has(commit.sha)) continue;
+      if (acceptedCommits.has(commit.sha) || acceptedMergeEdges.has(commit.sha))
+        continue;
       if (commit.parentCount > 1) {
         const resolutionFiles =
           commit.mergeResolution &&

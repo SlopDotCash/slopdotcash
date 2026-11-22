@@ -22,6 +22,20 @@ export type AcceptedImplementationSource = {
   firstParentTreeSha: string;
 };
 
+/** A separate ordinary acceptance can reserve its identity without claiming
+ * authorship or equality with the submitted commit range. */
+export function acceptedOrdinaryCommitOid(
+  source: AcceptedImplementationSource,
+): string | undefined {
+  if (
+    source.mergeParentShas.length === 1 &&
+    source.mergeSha !== source.headSha &&
+    source.mergeTreeSha !== source.firstParentTreeSha
+  )
+    return source.mergeSha;
+  return undefined;
+}
+
 export interface AcceptedImplementationProofs {
   digests: ReadonlyMap<string, string>;
   unavailable: ReadonlySet<string>;

@@ -7,7 +7,9 @@ import {
 } from "../src/lib/implementation-lines";
 import {
   assertLeaderboardSnapshot,
+  commitCreditOwners,
   createLeaderboardSnapshot,
+  repositoryIdFromUrl,
 } from "../src/lib/leaderboard";
 import {
   appendPointAwards,
@@ -100,6 +102,118 @@ test("a second accepted PR containing only previously credited implementation co
   expect(snapshot.source.counts.mergedPullRequests).toBe(
     input.mergedPullRequestOutcomes.length,
   );
+});
+
+test("an earlier squash acceptance cannot score twice or take the original authors' shares", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const [earlier, promotion] = input.mergedPullRequestOutcomes;
+  earlier.baseRefName = "develop";
+  promotion.baseRefName = "staging";
+  earlier.commits = [
+    {
+      oid: "e".repeat(40),
+      author: PENALIZED_AUTHOR,
+      parentCount: 1,
+      additions: 8,
+      deletions: 0,
+    },
+    {
+      oid: "f".repeat(40),
+      author: PROJECT_OWNER,
+      parentCount: 1,
+      additions: 0,
+      deletions: 2,
+    },
+  ];
+  const squash = {
+    oid: "d".repeat(40),
+    author: PROJECT_OWNER,
+    parentCount: 1,
+    additions: 8,
+    deletions: 2,
+  };
+  promotion.commits = [squash];
+  const rows = (id: string) =>
+    createLeaderboardSnapshot(input).ledger.filter(
+      (event) =>
+        event.category === "merged-pull-request" && event.source.id === id,
+    );
+  const earlierCredit = rows(earlier.id);
+  expect(earlierCredit).toHaveLength(2);
+  expect(rows(promotion.id)).toHaveLength(1);
+
+  earlier.acceptedOrdinaryCommitOid = squash.oid;
+  expect(rows(earlier.id)).toEqual(earlierCredit);
+  expect(rows(promotion.id)).toEqual([]);
+
+  promotion.commits.push(
+    {
+      oid: "c".repeat(40),
+      author: PROJECT_OWNER,
+      parentCount: 1,
+      additions: 1,
+      deletions: 1,
+    },
+    {
+      oid: "b".repeat(40),
+      author: PENALIZED_AUTHOR,
+      parentCount: 1,
+      additions: 4,
+      deletions: 4,
+    },
+  );
+  const snapshot = createLeaderboardSnapshot(input);
+  const journal = applyPointsSnapshot(
+    emptyPointsJournal(GENERATED_AT),
+    snapshot,
+    "a".repeat(64),
+    snapshot.generatedAt,
+  );
+  const points = [...latestPoints(journal).values()]
+    .map(({ award }) => award)
+    .filter(
+      (award) =>
+        award.sourceId === promotion.id &&
+        award.category === "merged-pull-request",
+    )
+    .map((award) => [award.actor.id, award.amount])
+    .sort();
+  expect(points).toEqual(
+    [
+      [PENALIZED_AUTHOR.id, 8],
+      [PROJECT_OWNER.id, 2],
+    ].sort(),
+  );
+  expect(rows(earlier.id)).toEqual(earlierCredit);
+});
+
+test("distinct accepted identity needs an earlier complete census in the same repository", () => {
+  const [earlier, later] = penaltyScoreInput([]).mergedPullRequestOutcomes;
+  const squashOid = "d".repeat(40);
+  earlier.acceptedOrdinaryCommitOid = squashOid;
+  earlier.commits = [
+    { oid: "f".repeat(40), author: PENALIZED_AUTHOR, parentCount: 1 },
+  ];
+  later.commits = [{ oid: squashOid, author: PROJECT_OWNER, parentCount: 1 }];
+  const key = `${repositoryIdFromUrl(later.url).toLowerCase()}\0${squashOid}`;
+  expect(commitCreditOwners([earlier, later], true).get(key)).toBe(earlier.id);
+  expect(commitCreditOwners([earlier, later]).get(key)).toBe(later.id);
+  for (const unattested of [
+    { ...earlier, commits: null },
+    { ...earlier, commits: [] },
+    {
+      ...earlier,
+      commits: [{ ...earlier.commits[0], parentCount: undefined }],
+    },
+    { ...earlier, commits: [{ ...earlier.commits[0], parentCount: 2 }] },
+    { ...earlier, url: "https://github.com/eliza-research/thenetwork/pull/1" },
+    { ...earlier, mergedAt: "2026-11-11T00:00:00.000Z" },
+  ]) {
+    expect(commitCreditOwners([unattested, later], true).get(key)).toBe(
+      later.id,
+    );
+  }
 });
 
 test("a promotion cannot earn implementation credit for its empty marker", () => {
@@ -205,6 +319,45 @@ test("an unresolved empty acceptance marker holds only new provisional implement
     delete pull.emptyAcceptanceMarker;
   }
 });
+
+for (const census of ["empty", "missing"] as const) {
+  test(`an ${census} commit census holds a fresh unassessed merge without crediting the opener`, () => {
+    setSystemTime(new Date(AFTER_NOVEMBER));
+    const input = penaltyScoreInput([]);
+    const pull = input.mergedPullRequestOutcomes[1];
+    pull.author = PROJECT_OWNER;
+    input.mergedPullRequests[1].author = PROJECT_OWNER;
+    const before = createLeaderboardSnapshot(input);
+    const empty = emptyPointsJournal(GENERATED_AT);
+    const prior = applyPointsSnapshot(
+      empty,
+      before,
+      "a".repeat(64),
+      before.generatedAt,
+    );
+    expect(
+      prior.revisions.find(({ award }) => award.sourceId === pull.id)?.award
+        .actor.id,
+    ).toBe(PENALIZED_AUTHOR.id);
+
+    pull.commits = census === "empty" ? [] : null;
+    const held = createLeaderboardSnapshot(input);
+    assertLeaderboardSnapshot(held);
+    expect(held.source.counts).toEqual(before.source.counts);
+    expect(held.ledger).toEqual(
+      before.ledger.filter((event) => event.source.id !== pull.id),
+    );
+    expect(
+      held.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === pull.id,
+      ),
+    ).toMatchObject({ status: "incomplete", recordDigest: null });
+    expect(
+      applyPointsSnapshot(prior, held, "b".repeat(64), held.generatedAt)
+        .revisions,
+    ).toEqual(prior.revisions);
+  });
+}
 
 test("an identical native accepted delta requires earlier positive implementation credit", () => {
   setSystemTime(new Date(AFTER_NOVEMBER));

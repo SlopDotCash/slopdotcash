@@ -164,6 +164,8 @@ export interface MergedPullRequestOutcome {
   headRefOid?: string;
   /** A changed single-commit submission whose separate acceptance marker has no tree delta. */
   emptyAcceptanceMarker?: true;
+  /** Nonempty one-parent acceptance emitted by GitHub, used only to recognize copies. */
+  acceptedOrdinaryCommitOid?: string;
   id: string;
   number: number;
   title: string;
@@ -694,6 +696,8 @@ export interface LeaderboardSnapshot {
     pullRequestNumber: number;
     status: string;
     recordDigest: string | null;
+    /** Standalone review assessment when implementation credit is held. */
+    reviewAssessmentDigest?: string;
     /** Complete current primary-commit attribution, independent of valuation. */
     verifiedImplementationActorNodeIds?: string[];
     /** Source-verified allocation; this never changes the PR's value tier. */
@@ -782,6 +786,9 @@ export interface LeaderboardInput {
   acceptedImplementationDigests?: ReadonlyMap<string, string>;
   /** Exact repository and change keys tied to earlier positive ordinary awards. */
   previousImplementationDigests?: ReadonlySet<string>;
+  /** Repository and exact accepted SHA, owned by an earlier positive ordinary
+   * award outside the rolling window. Apply only to unassessed implementation. */
+  previousAcceptedOrdinaryOwners?: ReadonlyMap<string, string>;
   /** An earlier possible match has incomplete native acceptance evidence. */
   unresolvedImplementationSources?: ReadonlySet<string>;
   /** Trusted journal decisions verified against fresh complete source evidence. */

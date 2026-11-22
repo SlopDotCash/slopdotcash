@@ -1201,9 +1201,11 @@ export function applyPointsSnapshot(
       );
       const valueCovered =
         coverage &&
-        ["assessed", "human-ratified", "legacy-policy"].includes(
+        (["assessed", "human-ratified", "legacy-policy"].includes(
           coverage.status,
-        );
+        ) ||
+          (a.category === "substantive-review" &&
+            coverage.reviewAssessmentDigest !== undefined));
       // Reviewed historical replay preserves the earlier pool when this exact
       // source still lacks a complete value assessment. A standalone minimum
       // on the same completion does not retire its previous joint pool.

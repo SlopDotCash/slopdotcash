@@ -93,6 +93,7 @@ import {
 import {
   type AcceptedImplementationProofs,
   type AcceptedImplementationSource,
+  acceptedOrdinaryCommitOid,
   loadAcceptedImplementationProofs,
 } from "./accepted-implementation-digests";
 import {
@@ -2731,22 +2732,31 @@ export function parseSearchReference(
     ),
     commits: parseOutcomeCommits(node.commits, `${path}.commits`),
   };
-  if (
-    commitPage.totalCount === 1 &&
-    !commitPage.pageInfo.hasNextPage &&
-    commitPage.commits.length === 1 &&
-    commitPage.commits[0].oid === commitPage.headRefOid &&
-    commitPage.commits[0].parentCount === 1 &&
-    node.mergeCommit != null
-  ) {
-    const acceptance = readImplementationAcceptance(
-      outcome.id,
-      commitPage.headRefOid,
-      node.mergeCommit,
-      path,
-    );
-    if (acceptance && acceptance !== "ineligible") {
-      if (acceptance.mergeTreeSha !== acceptance.firstParentTreeSha) {
+  const acceptance =
+    node.mergeCommit == null
+      ? null
+      : readImplementationAcceptance(
+          outcome.id,
+          commitPage.headRefOid,
+          node.mergeCommit,
+          path,
+        );
+  if (acceptance && acceptance !== "ineligible") {
+    const changed = acceptance.mergeTreeSha !== acceptance.firstParentTreeSha;
+    const separateOrdinaryCommit =
+      acceptance.mergeParentShas.length === 1 &&
+      acceptance.mergeSha !== commitPage.headRefOid;
+    if (changed && separateOrdinaryCommit && commitPage.totalCount > 0) {
+      outcome.acceptedOrdinaryCommitOid = acceptance.mergeSha;
+    }
+    if (
+      commitPage.totalCount === 1 &&
+      !commitPage.pageInfo.hasNextPage &&
+      commitPage.commits.length === 1 &&
+      commitPage.commits[0].oid === commitPage.headRefOid &&
+      commitPage.commits[0].parentCount === 1
+    ) {
+      if (changed) {
         if (
           typeof node.changedFiles === "number" &&
           Number.isSafeInteger(node.changedFiles) &&
@@ -2758,8 +2768,7 @@ export function parseSearchReference(
           };
       } else if (
         outcome.additions + outcome.deletions > 0 &&
-        acceptance.mergeParentShas.length === 1 &&
-        acceptance.mergeSha !== commitPage.headRefOid
+        separateOrdinaryCommit
       ) {
         outcome.emptyAcceptanceMarker = true;
       }
@@ -4876,18 +4885,36 @@ export function implementationDigestCandidates(
 
 type PreviousImplementationMetadata =
   | PreviousImplementationObservation
-  | { kind: "unresolved"; shape: string };
+  | { kind: "unresolved"; shape: string; headSha: string };
 
 type PreviousImplementationRead = {
   candidates: Map<string, AcceptedImplementationSource[]>;
   unresolvedShapes: Set<string>;
+  acceptedOrdinaryOwners: Map<string, string>;
+  submittedOrdinaryCandidates: {
+    predecessor: AcceptedImplementationPredecessor;
+    source: AcceptedImplementationSource;
+  }[];
+  unresolvedSubmittedOrdinaryOids: Set<string>;
 };
+
+function earlierImplementationPredecessor(
+  candidate: AcceptedImplementationPredecessor,
+  current?: AcceptedImplementationPredecessor,
+): boolean {
+  return (
+    !current ||
+    candidate.mergedAt < current.mergedAt ||
+    (candidate.mergedAt === current.mergedAt && candidate.id < current.id)
+  );
+}
 
 function observePreviousImplementation(
   value: unknown,
   candidate: AcceptedImplementationPredecessor,
   repositoryNodeId: string,
   path: string,
+  collectOrdinaryAcceptances: boolean,
 ): PreviousImplementationMetadata | undefined {
   if (value == null) return undefined;
   const row = asRecord(value, path);
@@ -4917,7 +4944,25 @@ function observePreviousImplementation(
   const count = commits.totalCount;
   if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
     return undefined;
-  if (count > 1 || row.changedFiles === 0) return { kind: "ineligible" };
+  if (row.changedFiles === 0) return { kind: "ineligible" };
+  if (count > 1) {
+    if (!collectOrdinaryAcceptances) return undefined;
+    // The prior positive award and the immutable GitHub acceptance can bind
+    // the exact accepted SHA even though this is not a single-commit diff
+    // candidate. A missing acceptance remains retryable in future collections.
+    if (row.mergeCommit == null || typeof row.headRefOid !== "string")
+      return undefined;
+    const acceptance = readImplementationAcceptance(
+      candidate.id,
+      asFullCommitSha(row.headRefOid, `${path}.headRefOid`),
+      row.mergeCommit,
+      path,
+    );
+    if (acceptance === null) return undefined;
+    if (acceptance !== "ineligible" && acceptedOrdinaryCommitOid(acceptance))
+      return { kind: "accepted-ordinary", source: acceptance };
+    return { kind: "ineligible" };
+  }
   // An empty submission list without a recorded merge leaves no bound shape.
   if (count === 0)
     return row.mergeCommit == null ? undefined : { kind: "ineligible" };
@@ -4956,14 +5001,14 @@ function observePreviousImplementation(
     row.additions,
     row.deletions,
   );
-  if (row.mergeCommit == null) return { kind: "unresolved", shape };
+  if (row.mergeCommit == null) return { kind: "unresolved", shape, headSha };
   const proof = readImplementationAcceptance(
     candidate.id,
     headSha,
     row.mergeCommit,
     path,
   );
-  if (proof === null) return { kind: "unresolved", shape };
+  if (proof === null) return { kind: "unresolved", shape, headSha };
   if (proof === "ineligible") return { kind: "ineligible" };
   if (proof.mergeTreeSha === proof.firstParentTreeSha)
     return { kind: "ineligible" };
@@ -4980,12 +5025,49 @@ export async function readPreviousImplementationSources(
   shapes: ReadonlySet<string>,
   sources: readonly AcceptedImplementationPredecessor[],
   memo?: ImplementationMemo,
+  carriedOrdinaryOids: ReadonlySet<string> = new Set(),
 ): Promise<PreviousImplementationRead> {
   const candidates = new Map<string, AcceptedImplementationSource[]>();
   const unresolvedShapes = new Set<string>();
-  const consider = (observation: PreviousImplementationMetadata) => {
-    if (observation.kind === "ineligible" || !shapes.has(observation.shape))
-      return;
+  const acceptedOrdinarySources = new Map<
+    string,
+    AcceptedImplementationPredecessor
+  >();
+  const submittedOrdinaryCandidates: PreviousImplementationRead["submittedOrdinaryCandidates"] =
+    [];
+  const unresolvedSubmittedOrdinaryOids = new Set<string>();
+  const consider = (
+    observation: PreviousImplementationMetadata,
+    candidate: AcceptedImplementationPredecessor,
+  ) => {
+    if ("source" in observation) {
+      const oid = acceptedOrdinaryCommitOid(observation.source);
+      if (oid && carriedOrdinaryOids.has(oid)) {
+        if (
+          earlierImplementationPredecessor(
+            candidate,
+            acceptedOrdinarySources.get(oid),
+          )
+        )
+          acceptedOrdinarySources.set(oid, candidate);
+      }
+    }
+    // The older one-commit source enters native verification by exact OID.
+    // Its whole-PR file/line shape need not match a later multi-commit carrier.
+    if (
+      observation.kind === "candidate" &&
+      carriedOrdinaryOids.has(observation.source.headSha)
+    )
+      submittedOrdinaryCandidates.push({
+        predecessor: candidate,
+        source: observation.source,
+      });
+    if (
+      observation.kind === "unresolved" &&
+      carriedOrdinaryOids.has(observation.headSha)
+    )
+      unresolvedSubmittedOrdinaryOids.add(observation.headSha);
+    if (!("shape" in observation) || !shapes.has(observation.shape)) return;
     if (observation.kind === "unresolved") {
       unresolvedShapes.add(observation.shape);
       return;
@@ -5025,24 +5107,33 @@ export async function readPreviousImplementationSources(
         candidate,
         repositoryNodeId,
         `previous implementation sources[${index}]`,
+        carriedOrdinaryOids.size > 0,
       );
       if (observation) {
         // Retry missing acceptance evidence in later passes.
         if (observation.kind !== "unresolved")
           memo?.rememberPrevious(repositoryNodeId, candidate, observation);
-        consider(observation);
+        consider(observation, candidate);
       }
     }
   }
   const missing: AcceptedImplementationPredecessor[] = [];
   for (const candidate of sources) {
     const reuse = memo?.previous(repositoryNodeId, candidate);
-    if (reuse) consider(reuse);
+    if (reuse) consider(reuse, candidate);
     else missing.push(candidate);
   }
   for (const batch of chunks(missing, REVIEW_DETAIL_BATCH_SIZE))
     await read(batch);
-  return { candidates, unresolvedShapes };
+  return {
+    candidates,
+    unresolvedShapes,
+    acceptedOrdinaryOwners: new Map(
+      [...acceptedOrdinarySources].map(([oid, source]) => [oid, source.id]),
+    ),
+    submittedOrdinaryCandidates,
+    unresolvedSubmittedOrdinaryOids,
+  };
 }
 
 export async function readImplementationProofs(
@@ -5602,6 +5693,7 @@ async function collectLeaderboardFromGitHub(
     assertHistoricalMergedCensus(historical.audit.sources, dedupedOutcomes);
   const acceptedImplementationDigests = new Map<string, string>();
   const previousImplementationDigests = new Set<string>();
+  const previousAcceptedOrdinaryOwners = new Map<string, string>();
   const unresolvedImplementationSources = new Set<string>();
   if (options.readAcceptedImplementation) {
     let previousJournal: PointsJournal | null | undefined;
@@ -5611,41 +5703,92 @@ async function collectLeaderboardFromGitHub(
       mergedPullRequestReferences,
     } of collections) {
       const current = implementationSourcesByShape(mergedPullRequestReferences);
-      if (current.size === 0) continue;
+      const carriedOrdinaryOids = new Set<string>();
+      if (!historical) {
+        for (const { outcome } of mergedPullRequestReferences) {
+          if (
+            !outcome?.commits?.length ||
+            outcome.commits.some(({ parentCount }) => parentCount === undefined)
+          )
+            continue;
+          for (const { oid, parentCount } of outcome.commits) {
+            if (parentCount === 1) carriedOrdinaryOids.add(oid);
+          }
+        }
+      }
+      if (current.size === 0 && carriedOrdinaryOids.size === 0) continue;
       if (previousJournal === undefined)
         previousJournal =
           (await options.readPreviousImplementationJournal?.()) ?? null;
-      const prior = previousJournal
-        ? await readPreviousImplementationSources(
-            client,
-            preflight.id,
-            new Set(current.keys()),
-            previousPositiveImplementationSources(previousJournal, {
-              repository: repository.id,
-              projectId: repository.projectId,
-              mergedBefore: windowFrom.toISOString(),
-              recordedThrough: now.toISOString(),
-            }),
-            options.implementationMemo,
-          )
-        : {
-            candidates: new Map<string, AcceptedImplementationSource[]>(),
-            unresolvedShapes: new Set<string>(),
-          };
+      const priorSources = previousJournal
+        ? previousPositiveImplementationSources(previousJournal, {
+            repository: repository.id,
+            projectId: repository.projectId,
+            mergedBefore: windowFrom.toISOString(),
+            recordedThrough: now.toISOString(),
+          })
+        : [];
+      const prior = await readPreviousImplementationSources(
+        client,
+        preflight.id,
+        new Set(current.keys()),
+        priorSources,
+        options.implementationMemo,
+        carriedOrdinaryOids,
+      );
       // Past candidates are already bound to latest positive ordinary Points.
       // Lookup equality is always by exact native bytes, never by file counts.
       const present = implementationDigestCandidates(
         mergedPullRequestReferences,
         new Set([...prior.candidates.keys(), ...prior.unresolvedShapes]),
       );
-      const previous = [...prior.candidates.values()].flat();
-      if (present.length === 0) continue;
+      const previous = present.length
+        ? [...prior.candidates.values()].flat()
+        : [];
       const native = await readImplementationProofs(
         options.readAcceptedImplementation,
         { full_name: repository.id, node_id: preflight.id, private: false },
-        [...present, ...previous],
+        dedupeByNodeId([
+          ...present,
+          ...previous,
+          ...prior.submittedOrdinaryCandidates.map(({ source }) => source),
+        ]),
         options.implementationMemo,
       );
+      const priorById = new Map(
+        priorSources.map((source) => [source.id, source]),
+      );
+      const repoKey = repository.id.toLowerCase();
+      for (const [oid, sourceId] of prior.acceptedOrdinaryOwners)
+        previousAcceptedOrdinaryOwners.set(`${repoKey}\0${oid}`, sourceId);
+      for (const { source, predecessor } of prior.submittedOrdinaryCandidates) {
+        if (native.unavailable.has(source.id))
+          prior.unresolvedSubmittedOrdinaryOids.add(source.headSha);
+        if (!native.digests.has(source.id)) continue;
+        const key = `${repoKey}\0${source.headSha}`;
+        const existing = previousAcceptedOrdinaryOwners.get(key);
+        if (
+          earlierImplementationPredecessor(
+            predecessor,
+            existing ? priorById.get(existing) : undefined,
+          )
+        )
+          previousAcceptedOrdinaryOwners.set(key, predecessor.id);
+      }
+      if (prior.unresolvedSubmittedOrdinaryOids.size) {
+        for (const { outcome } of mergedPullRequestReferences) {
+          if (
+            outcome?.commits?.some(
+              ({ oid, parentCount }) =>
+                parentCount === 1 &&
+                prior.unresolvedSubmittedOrdinaryOids.has(oid) &&
+                !previousAcceptedOrdinaryOwners.has(`${repoKey}\0${oid}`),
+            )
+          )
+            unresolvedImplementationSources.add(outcome.id);
+        }
+      }
+      if (present.length === 0) continue;
       const mergedAt = new Map(
         mergedPullRequestReferences.flatMap(({ outcome }) =>
           outcome ? [[outcome.id, outcome.mergedAt] as const] : [],
@@ -5978,6 +6121,7 @@ async function collectLeaderboardFromGitHub(
     ...valueInputs,
     acceptedImplementationDigests,
     previousImplementationDigests,
+    previousAcceptedOrdinaryOwners,
     unresolvedImplementationSources,
     valueContextPullRequests,
     valuePolicy: scoringPolicy,

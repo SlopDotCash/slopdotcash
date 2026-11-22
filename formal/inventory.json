@@ -3839,9 +3839,9 @@
     },
     {
       "path": "scripts/accepted-implementation-digests.ts",
-      "sha256": "d2f85164ae01cb5ac5502a866abdc55129e0c9e54c85f35af203627f56b39af1",
+      "sha256": "cb1033fd275028f05b75ffad9959c7cc721cb1aa97e0e122f6e7e46ed7f1410a",
       "models": ["formal/models/points/accepted_implementation_duplicates.qnt"],
-      "candidateLines": [81, 82, 144],
+      "candidateLines": [95, 96, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -3853,9 +3853,12 @@
     },
     {
       "path": "scripts/accepted-implementation-memo.ts",
-      "sha256": "437a7225299cf299a291b5d89eef141165c81cecb0b2c8470887db12ab6281a3",
-      "models": ["formal/models/points/incremental_collection.qnt"],
-      "candidateLines": [331],
+      "sha256": "0573899f50e20cbf34f628111ea6e481732441a60222676e2487b9ad89b3b221",
+      "models": [
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/incremental_collection.qnt"
+      ],
+      "candidateLines": [342],
       "review": "mapped-abstraction"
     },
     {
@@ -4399,7 +4402,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "3802f1b2dc71822c321a5354ac02bbd515932d3b758482e7cef338bedcc64b9a",
+      "sha256": "ac27ac1532ffa12b5ec07010a400592abeadcf8afc419c6c6167874be56822c2",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4407,22 +4410,23 @@
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        43, 226, 237, 246, 337, 349, 351, 354, 583, 671, 692, 728, 759, 824,
-        871, 899, 990, 1023, 1032, 1044, 1080, 1177, 1373, 1608, 1670, 1678,
-        1736, 1789, 1792, 1985, 1994, 1999, 2006, 2089, 2090, 2256, 2257, 2340,
-        2373, 2401, 2403, 2407, 2417, 2419, 2431, 2441, 2451, 2476, 2479, 2480,
-        2483, 2485, 2510, 2562, 2859, 2862, 3162, 3282, 3403, 3416, 3427, 3428,
-        3615, 3616, 3807, 3823, 3835, 3842, 3868, 3878, 3882, 3886, 3890, 3945,
-        3964, 3991, 4008, 4042, 4043, 4045, 4061, 4078, 4079, 4080, 4089, 4094,
-        4274, 4632, 4654, 4663, 4713, 4748, 4754, 4761, 4830, 4900, 5030, 5151,
-        5349, 5508, 5845, 5855, 5857, 5870, 5903, 5905, 5906, 5910, 5914, 5970,
-        6034, 6087, 6090, 6179, 6227, 6307, 6317, 6324
+        43, 227, 238, 247, 338, 350, 352, 355, 584, 672, 693, 729, 760, 825,
+        872, 900, 991, 1024, 1033, 1045, 1081, 1178, 1374, 1609, 1671, 1679,
+        1737, 1790, 1793, 1986, 1995, 2000, 2007, 2090, 2091, 2257, 2258, 2341,
+        2374, 2402, 2404, 2408, 2418, 2420, 2432, 2442, 2452, 2477, 2480, 2481,
+        2484, 2486, 2511, 2563, 2868, 2871, 3171, 3291, 3412, 3425, 3436, 3437,
+        3624, 3625, 3816, 3832, 3844, 3851, 3877, 3887, 3891, 3895, 3899, 3954,
+        3973, 4000, 4017, 4051, 4052, 4054, 4070, 4087, 4088, 4089, 4098, 4103,
+        4283, 4641, 4663, 4672, 4722, 4757, 4763, 4770, 4839, 4927, 5113, 5242,
+        5440, 5599, 5988, 5998, 6000, 6013, 6046, 6048, 6049, 6053, 6057, 6113,
+        6178, 6231, 6234, 6323, 6371, 6451, 6461, 6468
       ],
       "review": "mapped-abstraction"
     },
@@ -5325,9 +5329,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "f67b6d6eff86035dace3ce41999a1ef3ed813d007f81e99a92c434f62d4877bd",
+      "sha256": "7ca67cf32b560d4844d4d6ebe5c4e158efb0298096fb270754a6f0b51c5043cb",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 497, 742, 977, 978, 979, 982, 1305],
+      "candidateLines": [57, 58, 523, 804, 1040, 1041, 1042, 1045, 1419],
       "review": "mapped-abstraction"
     },
     {
@@ -5405,14 +5409,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "a374b0907a08808b397eb521fcc3968fb6ce119754fe74dc09f690e391a809d3",
+      "sha256": "a11f17f5fe583a201c69690f6443ce7de5e24f2ae472c66b66cdcf90a000b548",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 243, 244, 245, 246, 248, 253, 296, 311, 312, 318, 319, 443, 1286,
-        1306, 1516, 1534, 1541, 1668, 1763, 1914
+        3, 244, 245, 246, 247, 249, 254, 297, 312, 313, 319, 320, 455, 1179,
+        1408, 1428, 1638, 1656, 1663, 1790, 1885, 2036
       ],
       "review": "mapped-abstraction"
     },
@@ -7113,17 +7117,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "1678ef4ad191762acd1ce0ffcf9452abc48906dccbaa234af13a4ca66d0e188a",
+      "sha256": "fd78094044ecbb74b575dfe8d71c4d2931a8f35ddafbc6636381bbc63c222efb",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 279, 301, 349, 381, 439, 500, 508, 515, 555, 664, 695, 800, 827
+        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 807, 834
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "abf4741e6bc4336a4d8a1e108fd549373cc4d74feebea838f4ef13dbb604352b",
+      "sha256": "2c28be092c4a92add9be709dcb339488808731d28ac38ef2775f179ac2c04356",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7141,14 +7145,14 @@
         267, 268, 292, 298, 963, 1026, 1052, 1263, 1325, 1335, 1341, 1343, 1345,
         1347, 1354, 1439, 1473, 1478, 1496, 1593, 2148, 2166, 2238, 2247, 2265,
         2274, 2282, 2304, 2319, 2328, 2336, 2382, 2432, 2482, 2537, 2554, 2555,
-        2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2930, 2983,
-        3144, 3244, 3263, 3318, 3494, 3689, 3714, 3763, 3849, 3869, 4021, 4102,
-        4499, 4510, 4544, 4607, 4621, 4944, 5157, 5358, 5471, 5496, 5627, 5636,
-        5641, 5708, 5722, 6485, 6487, 6510, 6514, 6518, 6523, 6669, 6678, 6688,
-        6689, 6747, 6782, 6788, 6808, 6813, 6820, 6828, 6830, 6856, 6859, 6873,
-        6875, 6896, 6898, 6902, 6905, 6910, 7102, 7104, 7363, 7407, 7470, 7471,
-        8350, 8351, 8352, 8353, 8370, 8380, 8391, 8407, 8496, 8567, 8568, 8595,
-        8802
+        2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2940, 2993,
+        3159, 3260, 3279, 3334, 3510, 3714, 3739, 3788, 3869, 3889, 3893, 4077,
+        4158, 4555, 4566, 4600, 4663, 4677, 5000, 5213, 5414, 5527, 5552, 5683,
+        5692, 5697, 5765, 5779, 6545, 6547, 6570, 6574, 6578, 6583, 6729, 6738,
+        6748, 6749, 6807, 6842, 6848, 6868, 6873, 6880, 6888, 6890, 6916, 6919,
+        6933, 6935, 6956, 6958, 6962, 6965, 6970, 7162, 7164, 7423, 7467, 7530,
+        7531, 8410, 8411, 8412, 8413, 8414, 8431, 8441, 8452, 8456, 8479, 8568,
+        8647, 8648, 8676, 8883
       ],
       "review": "mapped-abstraction"
     },
@@ -7399,9 +7403,10 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "e813e0db33969b21f88e8891a61bc4f357c83125bed2c9f2bfe3171e1535c6cb",
+      "sha256": "2566953af33880f70cfff34211b26ac18c5e8e58cbf4e47da0455c6c4387f06f",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/points/points_journal.qnt",
@@ -7410,7 +7415,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [384, 869, 948, 1205, 1224, 1236, 1243],
+      "candidateLines": [384, 869, 948, 1205, 1226, 1238, 1245],
       "review": "mapped-abstraction"
     },
     {
@@ -15889,18 +15894,33 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "edbcf77e2e5db12b91bead74505fc4c0d22c76cbcee3774abcee31fa5d56958b",
+      "sha256": "92b34f5a3d763f34f7cf50be98c725e53ea1792e3e9e89f6f27043d5cc4f69ff",
       "sources": [
+        "scripts/accepted-implementation-memo.ts",
+        "scripts/generate-leaderboard.ts",
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
         "src/lib/commit-credit.ts",
-        "src/lib/leaderboard.ts"
+        "src/lib/leaderboard.ts",
+        "src/lib/points.ts"
       ],
       "scenarios": [
+        "acceptedSquashDoesNotSuppressIndependentWorkTest",
+        "carriedSquashAcceptanceGetsNoNewCreditTest",
         "completeDuplicateGetsNoNewCreditTest",
         "emptyPromotionKeepsPriorPointsTest",
         "heldSourceKeepsPriorPointsTest",
+        "missingOrCrossRepositorySquashIdentityCanScoreTest",
         "missingOwnershipIsNotDuplicateProofTest",
+        "noCommitRowsHoldFreshCreditTest",
+        "noRowsInHistoricalReplayKeepsFallbackTest",
+        "nonemptyCommitCensusCanScoreTest",
+        "onlyExactEarlierPositiveSquashCanWithholdCreditTest",
+        "previousSquashDoesNotReplaceRatifiedOrIndependentlyAcceptedWorkTest",
+        "previousSubmittedCommitKeepsIndependentAndRatifiedWorkTest",
+        "previousSubmittedCommitRequiresNativeAcceptanceTest",
+        "previouslyRewardedSquashCannotScoreAgainTest",
+        "standaloneAssessmentWithEarlierAcceptanceNeedsJointReviewTest",
         "transportFailureDoesNotBecomeCreditTest",
         "zeroLineWorkWithIndependentPathsCanScoreTest"
       ]
