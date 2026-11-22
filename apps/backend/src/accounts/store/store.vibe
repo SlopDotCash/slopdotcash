@@ -40,7 +40,6 @@ export interface Settled {
   readonly before: Loaded
 }
 
-const sessionSeconds = 3600
 const verificationSeconds = 1800
 const flowSeconds = 600
 const hourSeconds = 3600
@@ -150,6 +149,10 @@ function eventOf(intent: Intent, loaded: Loaded, by: number): Event {
   }
 }
 
+export function openedExpiry(next: Accounts) {
+  return next.sessions.find((session) => session.id === next.lastSession)?.expiresAt ?? 0
+}
+
 effect function writesOf(intent: Intent, event: Event, loaded: Loaded, next: Accounts, by: number, now: number) {
   const at = try isoAt(now * 1000)
   const member = senderMember(loaded, by)
@@ -166,7 +169,7 @@ effect function writesOf(intent: Intent, event: Event, loaded: Loaded, next: Acc
           : sql`UPDATE points_members SET login = ${intent.assertion.login}, public = 1, closed_at = NULL WHERE actor_id = ${subject} AND github_id = ${intent.assertion.githubId}`,
         sql`UPDATE points_x_links SET public = 1 WHERE actor_id = ${subject}`,
         sql`DELETE FROM points_sessions WHERE expires_at <= ${at}`,
-        sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${intent.sessionHash}, ${subject}, ${try isoAt((now + sessionSeconds) * 1000)})`,
+        sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${intent.sessionHash}, ${subject}, ${try isoAt(openedExpiry(next) * 1000)})`,
       ]
     }
     case "signOut": return [sql`DELETE FROM points_sessions WHERE token_hash = ${named(loaded.names, "session", by) ?? ""}`]
