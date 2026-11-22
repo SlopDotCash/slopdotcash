@@ -82,26 +82,29 @@ projection whose head is more than 30 minutes behind the coordinator's clock
 is stale and refused. Earlier periods' unreserved obligations of the same
 vault are a typed input from the coordinator. Every other month's open
 pledge in the same vault is held back from the free balance, because the
-contract never lets one month take another month's pledge: the coordinator
-computes it from the stored pledges with [month pledges](./monthPledges.md)
-`otherOpenPledges` (zero for a vault without pledge support) and passes it
-as a typed input, to the obligations and to the underfunded notice alike
-(development `backend/payments/monthly.ts`, `heldBack`).
+contract never lets one month take another month's pledge. The held-back
+amount is the vault's own open pledges of every other period at that head,
+for the obligations and the underfunded notice alike; the coordinator reads
+it from the stored copy of those finalized pledges with
+[month pledges](./monthPledges.md) `otherOpenPledges` (zero for a vault
+without pledge support; development `backend/payments/monthly.ts`,
+`heldBack`).
 
 ```quint
 pure def canObserveHead(s: MonthlySettlement, time: int): bool = time > s.headTime and time >= s.escrow.clock
 pure def observeHead(s: MonthlySettlement, time: int): MonthlySettlement = { ...s, headTime: time }
-pure def observation(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount): MO::VaultObservation =
-  { observedAt: s.headTime, free: s.escrow.free, earlierUnreserved: earlierUnreserved, otherOpenPledges: otherOpenPledges }
-pure def canCreateObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): bool =
+pure def otherOpenPledges(s: MonthlySettlement): M::Amount = E::otherOpenPledged(s.escrow, s.month.period)
+pure def observation(s: MonthlySettlement, earlierUnreserved: M::Amount): MO::VaultObservation =
+  { observedAt: s.headTime, free: s.escrow.free, earlierUnreserved: earlierUnreserved, otherOpenPledges: otherOpenPledges(s) }
+pure def canCreateObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): bool =
   s.escrow.deployed and s.escrow.purpose == E::OrdinaryPurpose
-    and MO::canCreateObligations(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans)
-pure def createObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
-  { ...s, month: MO::createObligations(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans) }
-pure def canNoteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): bool =
-  s.escrow.deployed and MO::canNoteUnderfunded(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans)
-pure def noteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, otherOpenPledges: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
-  { ...s, month: MO::noteUnderfunded(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans) }
+    and MO::canCreateObligations(s.month, observation(s, earlierUnreserved), bans)
+pure def createObligations(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
+  { ...s, month: MO::createObligations(s.month, observation(s, earlierUnreserved), bans) }
+pure def canNoteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): bool =
+  s.escrow.deployed and MO::canNoteUnderfunded(s.month, observation(s, earlierUnreserved), bans)
+pure def noteUnderfunded(s: MonthlySettlement, earlierUnreserved: M::Amount, bans: List[MO::BanExclusion]): MonthlySettlement =
+  { ...s, month: MO::noteUnderfunded(s.month, observation(s, earlierUnreserved), bans) }
 ```
 
 ### The owner may prepare one funded obligation by hand, and only while no pool gross is pending
@@ -294,6 +297,15 @@ pure def sometimesManualAwardOutsideMonth(s: MonthlySettlement): bool =
 ### Simulation samples
 
 These input sets bound simulation only.
+Discovered by simulation: a proven leaf needs two deposits, a root admission
+and the leaf itself at ever later finalized blocks, so the chain events are
+sixteen blocks fifty seconds apart inside the first window hour, and the
+coordinator clock and head reach the last of them; with eight blocks most
+traces had used the high blocks before admission. A single deposit of twelve
+funds the whole month at once: with only deposits of four and eight, the
+month was funded almost only with the banned recipient left out, whose total
+matches no signed root. A ban of an account without a share joins the bans,
+so two of three funded months keep every recipient and match the signed root.
 
 ```quint
 pure val assetValues = Set(E::baseAsset)
@@ -303,8 +315,8 @@ pure val delayValues = Set(0)
 pure val capValues = Set(List(10))
 pure val turnOnValues = Set(true)
 pure val periodValues = Set(202611)
-pure val nowValues = Set(1796083300, 1796342400, 1796342500)
-pure val timeValues = Set(1796083300, 1796342400, 1796342600, 1796343100)
+pure val nowValues = Set(1796083300, 1796342400, 1796342500, 1796343200)
+pure val timeValues = Set(1796083300, 1796342400, 1796342600, 1796343100, 1796343200)
 pure val revisionValues = Set(MO::revisionSample)
 pure val automaticValues = Set(false)
 pure val settingsSequenceValues = Set(1)
@@ -314,20 +326,26 @@ pure val factValues = Set({ actor: 9, role: MO::ProjectOwner, banned: false, rev
 pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
 pure val earlierUnreservedValues = Set(List(0))
-pure val otherOpenPledgesValues = Set(List(0), List(3))
+pure val bansValues = Set(List(), List({ actor: 2, ban: 7 }), List({ actor: 9, ban: 7 }))
 pure val depositValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
-  { vault: "vault", network: E::Base, token: "usdc", amount: List(8) })
+  { vault: "vault", network: E::Base, token: "usdc", amount: List(8) },
+  { vault: "vault", network: E::Base, token: "usdc", amount: List(12) })
 pure val evValues = Set(
-  { block: 1, index: 0, time: 1796342400, transaction: "t1" }, { block: 2, index: 0, time: 1796342500, transaction: "t2" },
-  { block: 3, index: 0, time: 1796342600, transaction: "t3" }, { block: 4, index: 0, time: 1796342700, transaction: "t4" },
-  { block: 5, index: 0, time: 1796342800, transaction: "t5" }, { block: 6, index: 0, time: 1796342900, transaction: "t6" },
-  { block: 7, index: 0, time: 1796343000, transaction: "t7" }, { block: 8, index: 0, time: 1796343100, transaction: "t8" })
+  { block: 1, index: 0, time: 1796342400, transaction: "t1" }, { block: 2, index: 0, time: 1796342450, transaction: "t2" },
+  { block: 3, index: 0, time: 1796342500, transaction: "t3" }, { block: 4, index: 0, time: 1796342550, transaction: "t4" },
+  { block: 5, index: 0, time: 1796342600, transaction: "t5" }, { block: 6, index: 0, time: 1796342650, transaction: "t6" },
+  { block: 7, index: 0, time: 1796342700, transaction: "t7" }, { block: 8, index: 0, time: 1796342750, transaction: "t8" },
+  { block: 9, index: 0, time: 1796342800, transaction: "t9" }, { block: 10, index: 0, time: 1796342850, transaction: "t10" },
+  { block: 11, index: 0, time: 1796342900, transaction: "t11" }, { block: 12, index: 0, time: 1796342950, transaction: "t12" },
+  { block: 13, index: 0, time: 1796343000, transaction: "t13" }, { block: 14, index: 0, time: 1796343050, transaction: "t14" },
+  { block: 15, index: 0, time: 1796343100, transaction: "t15" }, { block: 16, index: 0, time: 1796343150, transaction: "t16" })
 pure val actorValues = Set(1, 2, 3)
 pure val byValues = Set("owner")
 pure def monthKey(actor: int): E::SourceKey = { origin: "eliza", period: 202611, actor: actor }
 pure val sourceValues = Set(monthKey(1)).union(Set(monthKey(4)))
 pure val rootSample: E::RootAuthorization = { period: 202611, vault: "vault", network: E::Base, allocationDigest: "a", root: "r",
-  wholeGross: List(10), remainingGross: List(10), leafCount: 3, sourceSequence: 0, frozenAt: 0, signer: "attester" }
+  wholeGross: List(10), remainingGross: List(10), leafCount: 3, sourceSequence: 0, frozenAt: 0, signer: "attester",
+  pledgeAccount: false }
 pure val authorizationValues = Set(rootSample, { ...rootSample, root: "q", remainingGross: List(8), leafCount: 2, sourceSequence: 1 })
 pure val leafBase: E::LeafProof = { period: 202611, index: 0, root: "r", rootTotal: List(10), source: monthKey(1), actor: 1, gross: List(2) }
 pure val proofValues = Set(leafBase).union(Set({ ...leafBase, index: 1, source: monthKey(2), actor: 2, gross: List(6) }))
