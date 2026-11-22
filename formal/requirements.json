@@ -1365,6 +1365,12 @@
           "rules": [
             "Story: Take the maintainer share out of the monthly amount"
           ]
+        },
+        {
+          "spec": "spec/settlement/asiNovemberCloseout.md",
+          "rules": [
+            "Story: Close ASI's November pool early from one reviewed import"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -2022,6 +2028,18 @@
           "rules": [
             "Story: Publish a fresh collection without changing a paid month / A candidate holds every new revision that would change a protected project month"
           ]
+        },
+        {
+          "spec": "spec/points/projectionTransport.md",
+          "rules": [
+            "Story: Read the published projection without mistaking a reset for a refusal"
+          ]
+        },
+        {
+          "spec": "spec/settlement/unsafeDestinations.md",
+          "rules": [
+            "Story: Keep accepted cycle files and unsafe-destination evidence on a trusted base"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -2421,6 +2439,18 @@
             "Story: Keep the report text private",
             "Story: Forward to GitHub and bind one verified receipt"
           ]
+        },
+        {
+          "spec": "spec/security/reportDeposit.md",
+          "rules": [
+            "Story: Hold a private report until its refundable deposit is recorded"
+          ]
+        },
+        {
+          "spec": "spec/fees/submissionFeeReportDeposits.md",
+          "rules": [
+            "Story: Take a reporter's deposit only as burned SLOP for the report that asked it"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -2790,6 +2820,12 @@
           "spec": "spec/operations/payoutAudience.md",
           "rules": [
             "Story: A payout exception reaches an account that can sign in"
+          ]
+        },
+        {
+          "spec": "spec/settlement/reservedAwardsFeed.md",
+          "rules": [
+            "Story: Remind contributors whose funded award is still reserved"
           ]
         }
       ],
