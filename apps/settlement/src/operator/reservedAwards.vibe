@@ -1,0 +1,117 @@
+// spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/monthly.md, "A finalized award reserves an obligation and a ledger payment pays it"
+import { isoNow } from "@repo/platform/clock"
+import { timingSafeEqual, utf8 } from "@repo/platform/crypto"
+import { rows, sql } from "@repo/platform/d1"
+import { answered, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { Roles } from "@repo/platform/roles"
+import { type ReservedAward, reservedAwardsRoute } from "../client/operator.vibe"
+import { includeTestnets, testnetFilter } from "../public/records.vibe"
+
+const minimumFeedTokenLength = 32
+
+export interface ReservedAwardFeedVars {
+  readonly OPERATOR_FEED_TOKEN?: string
+}
+
+service ReservedAwardFeedAccess {
+  authorized(header: string | undefined): boolean!!
+}
+
+error ReservedAwardInvalid { githubId: string }
+
+schema ReservedAwardRow {
+  readonly github_user_id: string
+  readonly project_id: string
+  readonly network: string
+  readonly member_login: string | null
+  readonly award_login: string | null
+  readonly wallet_login: string | null
+  readonly project_name: string | null
+  readonly confirmed: number
+  readonly bound: number
+}
+
+export function reservedAwardFeedAccess(token: string | undefined) {
+  const configured = token !== undefined && token.length >= minimumFeedTokenLength
+  const expected = utf8(`Bearer ${configured ? token : "x".repeat(minimumFeedTokenLength)}`)
+  return Layer.succeed(ReservedAwardFeedAccess, {
+    authorized: (header) => succeed(timingSafeEqual(utf8(header ?? ""), expected) && configured),
+  })
+}
+
+effect function readReservedAwards() {
+  const shown = try includeTestnets()
+  const found = try rows(ReservedAwardRow, sql`SELECT o.github_user_id, o.project_id, o.network,
+    (SELECT m.login FROM points_members m WHERE m.github_id = o.github_user_id) AS member_login,
+    (SELECT a.github_login FROM monthly_payment_obligations a
+      WHERE a.project_id = o.project_id AND a.github_user_id = o.github_user_id
+      ORDER BY a.period DESC LIMIT 1) AS award_login,
+    (SELECT c.github_login FROM wallet_claims c
+      WHERE c.github_user_id = o.github_user_id
+      ORDER BY c.created_at DESC LIMIT 1) AS wallet_login,
+    (SELECT json_extract(p.manifest, '$.name') FROM projects p WHERE p.id = o.project_id) AS project_name,
+    (w.id IS NOT NULL) AS confirmed,
+    (w.id IS NOT NULL AND (
+      EXISTS (SELECT 1 FROM payment_binding_authorizations b
+        WHERE b.claim_id = w.id AND b.network = o.network
+          AND lower(b.vault) = lower(o.vault))
+      OR EXISTS (SELECT 1 FROM payment_attempts t
+        JOIN payment_obligations bound ON bound.id = t.obligation_id
+        WHERE t.claim_id = w.id AND t.state <> 'failed'
+          AND bound.github_user_id = o.github_user_id
+          AND bound.network = o.network AND bound.vault = o.vault)
+    )) AS bound
+  FROM payment_obligations o
+  LEFT JOIN (
+    SELECT claim.id, claim.github_user_id, claim.chain
+    FROM effective_payment_wallet_claims claim
+    JOIN payment_wallet_authorizations authorized
+      ON authorized.claim_id = claim.id
+     AND authorized.github_user_id = claim.github_user_id
+  ) w ON w.github_user_id = o.github_user_id AND w.chain = o.chain
+  WHERE o.state = 'reserved'
+    AND NOT EXISTS (SELECT 1 FROM points_members closed
+      WHERE closed.github_id = o.github_user_id AND closed.closed_at IS NOT NULL)
+    ${testnetFilter(sql`o.network`, shown)}
+  ORDER BY o.project_id, length(o.github_user_id), o.github_user_id`)
+  const roles = try Roles
+  const awards = new Map<string, ReservedAward>()
+  for (const row of found) {
+    if (try roles.isTeam(row.github_user_id)) continue
+    const need = row.confirmed !== 1 ? "wallet" as const : row.bound !== 1 ? "authorize" as const : null
+    if (need === null) continue
+    const githubId = Number(row.github_user_id)
+    if (!Number.isSafeInteger(githubId) || githubId <= 0) throw new ReservedAwardInvalid({ githubId: row.github_user_id })
+    const key = `${row.project_id}\n${row.github_user_id}`
+    const existing = awards.get(key)
+    if (existing !== undefined) {
+      if (need === "wallet" && existing.needs !== "wallet") awards.set(key, { ...existing, needs: "wallet" })
+      continue
+    }
+    awards.set(key, {
+      githubId,
+      login: row.member_login ?? row.award_login ?? row.wallet_login,
+      projectId: row.project_id,
+      projectName: row.project_name,
+      network: row.network,
+      needs: need,
+    })
+  }
+  return [...awards.values()]
+}
+
+function notFound() {
+  return json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" })
+}
+
+effect function answer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (!(try (try ReservedAwardFeedAccess).authorized(request.headers.authorization))) return notFound()
+  if (request.method !== "GET" && request.method !== "HEAD") return json({ error: "method_not_allowed" }, 405)
+  const answer = { schema: "slop-reserved-awards-v1" as const, generatedAt: try isoNow(), awards: try readReservedAwards() }
+  const encoded = try orDie(Schema.encodeUnknownEffect(reservedAwardsRoute.answer)(answer))
+  return json(encoded, 200, { "cache-control": cacheControl(reservedAwardsRoute.cache) })
+}
+
+export const ReservedAwardFeedRoutes = HttpRouter.add("*", reservedAwardsRoute.path, answered(answer()))

@@ -1,18 +1,21 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import type { D1Database, ExecutionContext } from "@repo/platform/bindings"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
-import { DeploymentTier, type Tier } from "@repo/platform/config"
+import { DeploymentTier, type Tier, deploymentTier } from "@repo/platform/config"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, DatabaseFailure, type Statement, d1, sql } from "@repo/platform/d1"
-import { Caller, Unauthenticated } from "@repo/platform/http"
+import { Caller, Unauthenticated, json } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { worker } from "@repo/platform/worker"
-import { Request as WebRequest } from "miniflare"
+import { area, pages, worker } from "@repo/platform/worker"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
 import { contributorAllocation, recipientAllocation } from "../src/client/contributorAllocation.vibe"
+import { reservedAwardsRoute } from "../src/client/operator.vibe"
 import { DisclosuresRefused } from "../src/directTransfers/disclosures.vibe"
+import { ReservedAwardFeedRoutes, type ReservedAwardFeedVars, reservedAwardFeedAccess } from "../src/operator/reservedAwards.vibe"
 import { disclosures } from "../src/programs/disclosures.vibe"
 import { publicRoutes } from "../src/public/routes.vibe"
 import { PoolListingLive } from "../src/public/listing.vibe"
@@ -26,12 +29,50 @@ const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 const sepoliaUsdc = "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
 const digest = (seed: string) => seed.repeat(64)
 const context: ExecutionContext = { waitUntil: () => undefined }
+const feedToken = "feed-token-0123456789abcdef0123456789abcdef"
 
 interface Answer {
   readonly status: number
   readonly body: unknown
   readonly cache: string | null
 }
+
+interface OperatorEnv extends ReservedAwardFeedVars {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+  readonly SLOP_ENVIRONMENT?: string
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+}
+
+interface OperatorAnswer {
+  readonly status: number
+  readonly body: unknown
+  readonly text: string
+  readonly headers: ReadonlyArray<readonly [string, string]>
+}
+
+const operatorAssets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("missing", { status: 404 }) as unknown as globalThis.Response) }
+
+const operatorArea = area({ name: "reservedAwards", api: [reservedAwardsRoute], routes: ReservedAwardFeedRoutes, provides: Layer.empty })
+const operatorUnmatched = area({
+  name: "unmatchedApi",
+  api: [],
+  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
+  provides: Layer.empty,
+})
+const operatorSite = pages({
+  areas: [operatorArea, operatorUnmatched],
+  services: (env: OperatorEnv) => Layer.mergeAll(
+    d1(env.SLOP_DB),
+    rolesFrom(env),
+    deploymentTier(env.SLOP_ENVIRONMENT),
+    reservedAwardFeedAccess(env.OPERATOR_FEED_TOKEN),
+    settableClock(now).layer,
+  ),
+  assets: "ASSETS",
+})
+const operatorBaseline = pages({ areas: [operatorUnmatched], services: (_env: OperatorEnv) => Layer.empty, assets: "ASSETS" })
 
 service Public {
   readonly reads: D1Database
@@ -173,6 +214,46 @@ const Started = Layer.effect(Public, effect {
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function operatorAsk(database: D1Database, path: string, options: { readonly token?: string; readonly authorization?: string; readonly method?: string; readonly tier?: Tier; readonly administrators?: string; readonly moderators?: string; readonly baseline?: boolean } = {}) {
+  const headers = options.authorization === undefined ? {} : { authorization: options.authorization }
+  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: options.method ?? "GET", headers })))
+  const env: OperatorEnv = {
+    SLOP_DB: database,
+    ASSETS: operatorAssets,
+    SLOP_ENVIRONMENT: options.tier ?? "production",
+    ADMIN_GITHUB_IDS: options.administrators ?? "",
+    PROJECT_MODERATOR_GITHUB_IDS: options.moderators ?? "",
+    ...(options.token === undefined ? {} : { OPERATOR_FEED_TOKEN: options.token }),
+  }
+  const served = options.baseline === true ? operatorBaseline : operatorSite
+  const response = try promise(() => served.fetch(request as unknown as globalThis.Request, env, context))
+  const text = try promise(() => response.text())
+  const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return { status: response.status, body, text, headers: [...response.headers].sort() } satisfies OperatorAnswer
+}
+
+function feedObligation(id: string, actor: string, project: string, network: "base-mainnet" | "base-sepolia", state: "reserved" | "paid", gross: string, fee: string): Statement {
+  const feedVault = network === "base-mainnet" ? `0x${"f".repeat(40)}` : `0x${"e".repeat(40)}`
+  return obligation(id, project, network, feedVault, network === "base-mainnet" ? usdc : sepoliaUsdc, actor, gross, fee, state, state === "paid" ? `transaction-${id}` : null)
+}
+
+function feedWallet(actor: string, suffix: string, confirmed: boolean): ReadonlyArray<Statement> {
+  const claim = `feed-claim-${suffix}`
+  const challenge = `feed-challenge-${suffix}`
+  const source = suffix.repeat(64).slice(0, 64)
+  const record = `${suffix}${"0".repeat(64)}`.slice(0, 64)
+  return [
+    sql`INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, source_body_sha256, observed_at, record_sha256, created_at, chain)
+      VALUES (${claim}, ${actor}, ${`login-${actor}`}, ${`0x${suffix.repeat(40).slice(0, 40)}`}, 'd1_registry', ${source}, '2026-11-17T00:00:00.000Z', ${record}, '2026-11-17T00:00:00.000Z', 'base')`,
+    ...(confirmed ? [
+      sql`INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at)
+        VALUES (${challenge}, ${claim}, ${actor}, 'feed-message', '2026-11-18T00:00:00.000Z', '2026-11-17T00:00:00.000Z')`,
+      sql`INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature)
+        VALUES (${claim}, ${actor}, '2026-11-17T00:00:00.000Z', ${challenge}, 'feed-signature')`,
+    ] : []),
+  ]
 }
 
 const paidO1 = { id: "base-mainnet:0xt1:0", projectId: "eliza", network: "base-mainnet", chain: "base", contributionMonth: null, assetAddress: usdc, assetDecimals: 6, netBase: "980000", transactionId: "0xt1", indexedAt: "2026-11-10T00:00:00.000Z" }
@@ -363,6 +444,84 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         { usdMicro: "4960000", directMicro: "3000000", vaultUsdMicro: "1960000", directTransfers: 1, vaultPayments: 2, contributors: 1 },
       ],
     })
+  })
+
+  it.effect('An authenticated operator reads only actionable reserved awards and every other caller sees the ordinary unknown API path (spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/monthly.md, "A finalized award reserves an obligation and a ledger payment pays it")', () => effect {
+    const site = try Public
+    const path = "/api/v1/operator/reserved-awards"
+    const bearer = `Bearer ${feedToken}`
+    const unknown = try operatorAsk(site.imports, "/api/v1/operator/no-such-route")
+    const before = try operatorAsk(site.imports, path, { token: feedToken, authorization: bearer, baseline: true })
+    try same(before, unknown)
+    const unauthorized = [
+      try operatorAsk(site.imports, path, { authorization: bearer }),
+      try operatorAsk(site.imports, path, { token: feedToken }),
+      try operatorAsk(site.imports, path, { token: feedToken, authorization: "Bearer wrong" }),
+      try operatorAsk(site.imports, path, { token: feedToken, authorization: `bearer ${feedToken}` }),
+      try operatorAsk(site.imports, path, { token: feedToken, authorization: feedToken }),
+      try operatorAsk(site.imports, path, { token: "s".repeat(31), authorization: `Bearer ${"s".repeat(31)}` }),
+      try operatorAsk(site.imports, path, { authorization: `Bearer ${"x".repeat(32)}` }),
+      try operatorAsk(site.imports, path, { token: feedToken, authorization: "Bearer wrong", method: "POST" }),
+    ]
+    try same(unauthorized, unauthorized.map(() => unknown))
+    const empty = try operatorAsk(site.imports, path, { token: feedToken, authorization: bearer })
+    try same(empty, {
+      status: 200,
+      body: { schema: "slop-reserved-awards-v1", generatedAt: "2026-11-17T12:00:00.000Z", awards: [] },
+      text: '{"schema":"slop-reserved-awards-v1","generatedAt":"2026-11-17T12:00:00.000Z","awards":[]}',
+      headers: empty.headers,
+    })
+    provide d1(site.imports) {
+      try (try D1).batch([
+        sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at)
+          VALUES ('feed', 1, '{"id":"feed","name":"Feed"}', ${"a".repeat(64)}, 'feed fixture', '2026-11-17T00:00:00.000Z')`,
+        sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at)
+          VALUES ('feed', 'active', 1, '{"id":"feed","name":"Feed"}', ${"a".repeat(64)}, '2026-11-17T00:00:00.000Z', '2026-11-17T00:00:00.000Z')`,
+        sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at)
+          VALUES ('test-feed', 1, '{"id":"test-feed","name":"Test Feed"}', ${"b".repeat(64)}, 'feed fixture', '2026-11-17T00:00:00.000Z')`,
+        sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at)
+          VALUES ('test-feed', 'active', 1, '{"id":"test-feed","name":"Test Feed"}', ${"b".repeat(64)}, '2026-11-17T00:00:00.000Z', '2026-11-17T00:00:00.000Z')`,
+        feedObligation("feed-obligation-a", "101", "feed", "base-mainnet", "reserved", "777777771", "1234561"),
+        feedObligation("feed-obligation-b", "101", "feed", "base-mainnet", "reserved", "777777772", "1234562"),
+        feedObligation("feed-obligation-c", "102", "feed", "base-mainnet", "reserved", "777777773", "1234563"),
+        feedObligation("feed-obligation-d", "103", "feed", "base-mainnet", "reserved", "777777774", "1234564"),
+        feedObligation("feed-obligation-e", "104", "feed", "base-mainnet", "reserved", "777777775", "1234565"),
+        feedObligation("feed-obligation-f", "105", "feed", "base-mainnet", "paid", "777777776", "1234566"),
+        feedObligation("feed-obligation-g", "106", "feed", "base-mainnet", "reserved", "777777777", "1234567"),
+        feedObligation("feed-obligation-h", "107", "feed", "base-mainnet", "reserved", "777777778", "1234568"),
+        feedObligation("feed-obligation-i", "108", "test-feed", "base-sepolia", "reserved", "777777779", "1234569"),
+        sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome)
+          VALUES ('feed-actor-101', '101', 'alice', '2026-11-17T00:00:00.000Z', 0, 5)`,
+        sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome, closed_at)
+          VALUES ('feed-actor-106', '106', 'closed', '2026-11-17T00:00:00.000Z', 0, 5, '2026-11-17T01:00:00.000Z')`,
+        ...feedWallet("102", "c", false),
+        ...feedWallet("103", "d", true),
+        ...feedWallet("104", "e", true),
+        sql`INSERT INTO payment_binding_authorizations (claim_id, github_user_id, network, vault, chain_id, expected_version, expires_at, signature, created_at)
+          VALUES ('feed-claim-e', '104', 'base-mainnet', ${`0x${"f".repeat(40)}`}, '8453', '0', '2026-11-18T00:00:00.000Z', 'binding-signature', '2026-11-17T00:00:00.000Z')`,
+      ])
+    }
+    const options = { token: feedToken, authorization: bearer, administrators: "107", moderators: "107" } as const
+    const production = try operatorAsk(site.imports, path, options)
+    const expectedAwards = [
+      { githubId: 101, login: "alice", projectId: "feed", projectName: "Feed", network: "base-mainnet", needs: "wallet" },
+      { githubId: 102, login: "login-102", projectId: "feed", projectName: "Feed", network: "base-mainnet", needs: "wallet" },
+      { githubId: 103, login: "login-103", projectId: "feed", projectName: "Feed", network: "base-mainnet", needs: "authorize" },
+    ]
+    try same(production.body, { schema: "slop-reserved-awards-v1", generatedAt: "2026-11-17T12:00:00.000Z", awards: expectedAwards })
+    const protectedValues = [
+      "777777771", "1234561", `0x${"c".repeat(40)}`, `0x${"f".repeat(40)}`,
+      "feed-obligation-a", "feed-claim-c", "feed-challenge-d", "binding-signature",
+    ]
+    try same(protectedValues.filter((value) => production.text.includes(value)), [])
+    const staging = try operatorAsk(site.imports, path, { ...options, tier: "staging" })
+    try same((staging.body as { awards: ReadonlyArray<{ githubId: number }> }).awards.map((award) => award.githubId), [101, 102, 103, 108])
+    const trailing = try operatorAsk(site.imports, `${path}/`, options)
+    try same(trailing.body, production.body)
+    const head = try operatorAsk(site.imports, path, { ...options, method: "HEAD" })
+    try same([head.status, head.body], [200, null])
+    const post = try operatorAsk(site.imports, path, { ...options, method: "POST" })
+    try same([post.status, post.body], [405, { error: "method_not_allowed" }])
   })
 
   it.effect('A disclosure import is idempotent, and a contradicting disclosure or a README wallet observation it cannot write fails the whole import and writes nothing (spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import")', () => effect {
