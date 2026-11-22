@@ -338,11 +338,14 @@ Discovered by simulation: the guard probes for a single direct-award
 transfer and for a direct-award recovery found no state that allowed them in
 200000 traces of 20 events, and each search ran past its time limit. Only a
 direct award to a payer who still holds the financial role reaches those
-events. Two of the three authority snapshots are later epochs, which cannot
-be followed by the first, so a trace that observed one first never had a
-payer. Two more first-epoch snapshots therefore name a technical member, 6
-or 8, whom no sampled actor plays; they differ from the staff snapshot in
-nothing else the model reads. A case could also record a root cause that no
+events. With only the staff snapshot in the first epoch, two of the three
+sampled authority snapshots were later epochs, which cannot be followed by
+the first, so a trace that observed one first never had a payer. Two more
+first-epoch snapshots therefore name a technical member, 6 or 8, whom no
+sampled actor plays, so three of the five snapshots are first-epoch. That
+member takes no action, but caseRecipients includes every technical member,
+so a case observed under one of these snapshots also saves its case notices
+for actor 6 or 8, and recipientsValid checks that recipient as well. A case could also record a root cause that no
 sampled journal finding matched, so the journal samples pair each case with
 each finding. An observed vault that covers the award sends it to a vault
 reservation instead of the direct rail, so deposits and fund observations
