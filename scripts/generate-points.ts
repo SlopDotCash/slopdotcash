@@ -5,6 +5,7 @@ import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertLeaderboardSnapshot,
+  type LeaderboardSnapshot,
   ledgerWorkUnitId,
   SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
@@ -18,9 +19,11 @@ import {
   awardForScore,
   latestPoints,
   type PointAward,
+  type PointRevision,
   type PointsIndex,
   type PointsJournal,
   type PointsMember,
+  pointKey,
   pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
@@ -93,20 +96,24 @@ async function loadPublishedProjection(
     if (identity === previousIndex) throw mismatch;
     if (!Array.isArray(index.shards) || index.shards.length !== 16)
       throw new Error("Invalid published points index");
-    const parts = await Promise.all(
-      index.shards.map(async (shard, i) => {
-        if (shard.path !== `/data/points/${i.toString(16)}.json`)
-          throw new Error("Invalid published points shard path");
-        return retryPointsTransport(async () => {
-          const response = await fetch(`${origin}${shard.path}`, {
-            signal: AbortSignal.timeout(30000),
-            cache: "no-store",
-          });
-          if (!response.ok)
-            throw new Error("Published points history unavailable");
-          return readBoundedText(response, 8 * 1024 * 1024, "points shard");
-        }, wait);
-      }),
+    const pendingShards = index.shards.map(async (shard, i) => {
+      if (shard.path !== `/data/points/${i.toString(16)}.json`)
+        throw new Error("Invalid published points shard path");
+      return retryPointsTransport(async () => {
+        const response = await fetch(`${origin}${shard.path}`, {
+          signal: AbortSignal.timeout(30000),
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error("Published points history unavailable");
+        return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+      }, wait);
+    });
+    const parts = await Promise.all(pendingShards).catch(
+      async (error: unknown) => {
+        await Promise.allSettled(pendingShards);
+        throw error;
+      },
     );
     try {
       return assemblePoints(index, parts);
@@ -272,7 +279,10 @@ export function retainPublishedHistory(
     ],
   };
 }
-export function pointsSql(journal: PointsJournal): string {
+export function pointsSql(
+  journal: PointsJournal,
+  recordingConditions: readonly string[] = [],
+): string {
   assertPointsJournal(journal);
   const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
   const digest = hash(JSON.stringify(journal));
@@ -316,12 +326,17 @@ export function pointsSql(journal: PointsJournal): string {
     statements.push(
       `INSERT INTO points_coverage_staging(batch_id,sequence,entry) VALUES(${quote(digest)},${sequence},${quote(JSON.stringify(entry))}) ON CONFLICT(batch_id,sequence) DO NOTHING;`,
     );
+  const completeAndAllowed = [
+    `COUNT(*)=${journal.coverage.length}`,
+    `NOT ${changesProtectedAwards}`,
+    ...recordingConditions.map((condition) => `(${condition})`),
+  ].join(" AND ");
   statements.push(
     // Skip the insert before its BEFORE trigger runs. A known older batch is
     // an idempotent replay, not a new candidate with a shorter history.
-    // Missing coverage or a protected award change yields NULL. The NOT NULL
-    // constraint refuses the entire import before any Points become public.
-    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN COUNT(*)=${journal.coverage.length} AND NOT ${changesProtectedAwards} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
+    // A failed condition yields NULL. The NOT NULL constraint refuses the
+    // final insert before any Points become public.
+    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN ${completeAndAllowed} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     // Replayed batches skip the AFTER INSERT triggers that normally clear staging.
     `DELETE FROM points_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     `DELETE FROM points_coverage_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
@@ -590,13 +605,99 @@ export function pointsSummary(
 
 export type { ProtectedPointMonth };
 
+function mergeCoverageKey(
+  snapshotDigest: string,
+  projectId: string,
+  sourceId: string,
+) {
+  return JSON.stringify([snapshotDigest, projectId, sourceId]);
+}
+
+interface ReviewedMergeGroup {
+  key: string;
+  valueSourceId: string;
+  workUnitId: string;
+}
+
+type ReviewedMergeGroups = ReadonlyMap<string, readonly ReviewedMergeGroup[]>;
+
+export function reviewedMergeGroups(
+  snapshots: ReadonlyArray<{
+    snapshot: Pick<LeaderboardSnapshot, "reviewedImplementationUnits">;
+    digest: string;
+  }>,
+): ReviewedMergeGroups {
+  const groups = new Map<string, ReviewedMergeGroup[]>();
+  for (const { snapshot, digest } of snapshots) {
+    for (const row of snapshot.reviewedImplementationUnits ?? []) {
+      const projectId = findHistoricalRepository(row.repository)?.projectId;
+      if (!projectId) continue;
+      groups.set(
+        mergeCoverageKey(digest, projectId, row.pullRequestId),
+        row.units.map(({ recordDigest, workUnitId, groupId }) => ({
+          key: JSON.stringify(["coverage", digest, projectId, groupId]),
+          valueSourceId: `value:${recordDigest}`,
+          workUnitId,
+        })),
+      );
+    }
+  }
+  return groups;
+}
+
+function protectedMergePoolKeys(
+  revision: PointRevision,
+  snapshotDigest: string,
+  reviewedGroups: ReviewedMergeGroups,
+): string[] {
+  const { award, decision } = revision;
+  if (award.category !== "merged-pull-request") return [];
+  const keys: string[] = [];
+  if (award.sourceId)
+    keys.push(JSON.stringify([award.projectId, "pull", award.sourceId]));
+  if (award.workUnitId)
+    keys.push(JSON.stringify([award.projectId, "work-unit", award.workUnitId]));
+  const memberships = reviewedGroups.get(
+    mergeCoverageKey(snapshotDigest, award.projectId, award.sourceId),
+  );
+  // Older snapshots lack exact work-unit membership. Keep the decision bound
+  // to this snapshot and use precise membership when it is available.
+  if (
+    !memberships &&
+    decision &&
+    /^value:[a-f0-9]{64}$/u.test(decision.sourceId)
+  )
+    keys.push(
+      JSON.stringify([
+        award.projectId,
+        "decision",
+        snapshotDigest,
+        decision.sourceId,
+      ]),
+    );
+  if (memberships) {
+    const standalone =
+      award.key ===
+      pointKey(award.projectId, award.actor.id, award.category, award.sourceId);
+    for (const member of memberships) {
+      if (
+        standalone ||
+        (award.workUnitId === member.workUnitId &&
+          decision?.sourceId === member.valueSourceId)
+      ) {
+        keys.push(member.key);
+      }
+    }
+  }
+  return keys;
+}
 /**
  * Operator decision, 20 November 2026 (PRD section 7): the Points of a project
  * month that has a recorded payment are frozen. The atomic import in
  * pointsSql refuses a whole batch that changes one of them, which stopped
- * every fresh collection after the first monthly payments. Hold exactly the
- * candidate revisions that import would refuse, so the rest of the collection
- * can publish. `data/points/protected-months.json` mirrors the private
+ * every fresh collection after the first monthly payments. Keep the complete
+ * correction on hold if it would change a protected award.
+ * `data/points/protected-months.json` mirrors the private
  * settlement tables; a month missing from it still fails closed at import.
  * Operator decision, 21 November 2026: a trusted release also reads the
  * protected months from the site's private route (points-protection-read.ts).
@@ -608,6 +709,7 @@ export function holdProtectedPointAwards(
   known: ReadonlySet<string>,
   months: readonly ProtectedPointMonth[],
   projects: readonly string[] = [],
+  reviewedGroups: ReviewedMergeGroups = new Map(),
 ): { journal: PointsJournal; held: number } {
   if (months.length === 0 && projects.length === 0) return { journal, held: 0 };
   const scopes = new Set(months.map((m) => `${m.projectId}\0${m.period}`));
@@ -634,25 +736,64 @@ export function holdProtectedPointAwards(
         : null,
     ]);
   const byId = new Map(journal.revisions.map((r) => [r.id, r]));
-  const held = new Set<string>();
-  // Revisions are append-only, so a predecessor is always seen first.
+  const successors = new Map<string, string>();
+  const poolKeysByRevision = new Map<string, string[]>();
+  const revisionsByPool = new Map<string, string[]>();
+  const blocked: string[] = [];
   for (const revision of journal.revisions) {
     if (known.has(revision.id)) continue;
-    if (revision.previous !== null && held.has(revision.previous)) {
-      held.add(revision.id);
-      continue;
-    }
+    const previous = revision.previous
+      ? byId.get(revision.previous)
+      : undefined;
+    if (previous) successors.set(previous.id, revision.id);
     if (revision.award.category === "payout-received") continue;
-    const prior =
-      revision.previous !== null && known.has(revision.previous)
-        ? byId.get(revision.previous)
-        : undefined;
+    const prior = previous && known.has(previous.id) ? previous : undefined;
     if (prior && economic(prior.award) === economic(revision.award)) continue;
+
+    const keys = [
+      ...protectedMergePoolKeys(
+        revision,
+        revision.sourceDigest,
+        reviewedGroups,
+      ),
+      ...(previous
+        ? protectedMergePoolKeys(
+            previous,
+            revision.sourceDigest,
+            reviewedGroups,
+          )
+        : []),
+    ];
+    poolKeysByRevision.set(revision.id, keys);
+    for (const key of keys) {
+      const members = revisionsByPool.get(key);
+      if (members) members.push(revision.id);
+      else revisionsByPool.set(key, [revision.id]);
+    }
     if (
       isProtected(revision.award) ||
       (prior !== undefined && isProtected(prior.award))
-    )
-      held.add(revision.id);
+    ) {
+      blocked.push(revision.id);
+    }
+  }
+
+  // A replacement and its retirement must stay together even when the
+  // accepted work spans months or its source or work-unit identity changes.
+  const held = new Set<string>();
+  const visitedPools = new Set<string>();
+  for (let i = 0; i < blocked.length; i++) {
+    const id = blocked[i];
+    if (held.has(id)) continue;
+    held.add(id);
+    const successor = successors.get(id);
+    if (successor) blocked.push(successor);
+    for (const key of poolKeysByRevision.get(id) ?? []) {
+      if (visitedPools.has(key)) continue;
+      visitedPools.add(key);
+      const members = revisionsByPool.get(key);
+      if (members) for (const member of members) blocked.push(member);
+    }
   }
   if (held.size === 0) return { journal, held: 0 };
   return {
@@ -739,6 +880,10 @@ export async function generatePoints(
         options.origin ?? "https://slop.cash",
       )
     : { months: [], projects: [] };
+  const reviewedGroups =
+    protection.months.length || protection.projects.length
+      ? reviewedMergeGroups(snapshots)
+      : new Map();
   let heldRevisions = 0;
   const holdProtected = () => {
     if (!knownRevisions) return;
@@ -747,6 +892,7 @@ export async function generatePoints(
       knownRevisions,
       protection.months,
       protection.projects,
+      reviewedGroups,
     );
     journal = result.journal;
     heldRevisions += result.held;

@@ -1,0 +1,286 @@
+{
+  "recordedAt": "2026-11-20",
+  "source": "GitHub REST API, api.github.com, X-GitHub-Api-Version 2022-11-28",
+  "responses": {
+    "/repos/SlopDotCash/slopdotcash/git/trees/f9c68babeb8ab93d6d343c7c4c56d699d1f6861f": {
+      "sha": "f9c68babeb8ab93d6d343c7c4c56d699d1f6861f",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/f9c68babeb8ab93d6d343c7c4c56d699d1f6861f",
+      "tree": [
+        {
+          "path": "ERC1967",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "7f3f06fdd2818ae507a01ba163b57a30d00fed2d",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/7f3f06fdd2818ae507a01ba163b57a30d00fed2d"
+        },
+        {
+          "path": "Proxy.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "1f9d8ec48a306ec95c145c2fab473625389a9c8f",
+          "size": 2697,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/1f9d8ec48a306ec95c145c2fab473625389a9c8f"
+        },
+        {
+          "path": "beacon",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "03fc0e47a7f7b5bfc03c0ef5ab13ca8d77e6edc9",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/03fc0e47a7f7b5bfc03c0ef5ab13ca8d77e6edc9"
+        },
+        {
+          "path": "utils",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "55e7f2142d8761c7e97f3904ea3d26add67c460d",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/55e7f2142d8761c7e97f3904ea3d26add67c460d"
+        }
+      ],
+      "truncated": false
+    },
+    "/repos/SlopDotCash/slopdotcash/git/trees/f9c68babeb8ab93d6d343c7c4c56d699d1f6861f?recursive=1": {
+      "sha": "f9c68babeb8ab93d6d343c7c4c56d699d1f6861f",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/f9c68babeb8ab93d6d343c7c4c56d699d1f6861f",
+      "tree": [
+        {
+          "path": "ERC1967",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "7f3f06fdd2818ae507a01ba163b57a30d00fed2d",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/7f3f06fdd2818ae507a01ba163b57a30d00fed2d"
+        },
+        {
+          "path": "ERC1967/ERC1967Proxy.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "eb482f6ecac7e3ab4635eb6dee9de748b77246bd",
+          "size": 1718,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/eb482f6ecac7e3ab4635eb6dee9de748b77246bd"
+        },
+        {
+          "path": "ERC1967/ERC1967Utils.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ffa77cc7da89211c1788eaa8cd0ae8f7b7069e29",
+          "size": 6238,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/ffa77cc7da89211c1788eaa8cd0ae8f7b7069e29"
+        },
+        {
+          "path": "Proxy.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "1f9d8ec48a306ec95c145c2fab473625389a9c8f",
+          "size": 2697,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/1f9d8ec48a306ec95c145c2fab473625389a9c8f"
+        },
+        {
+          "path": "beacon",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "03fc0e47a7f7b5bfc03c0ef5ab13ca8d77e6edc9",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/03fc0e47a7f7b5bfc03c0ef5ab13ca8d77e6edc9"
+        },
+        {
+          "path": "beacon/IBeacon.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "f911b15a01bd21545c67a617e7deee967ef7ddb4",
+          "size": 473,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/f911b15a01bd21545c67a617e7deee967ef7ddb4"
+        },
+        {
+          "path": "utils",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "55e7f2142d8761c7e97f3904ea3d26add67c460d",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/55e7f2142d8761c7e97f3904ea3d26add67c460d"
+        },
+        {
+          "path": "utils/Initializable.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "0d05fdb0e134edd9f0705e7270408da7fb277c1e",
+          "size": 9279,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/0d05fdb0e134edd9f0705e7270408da7fb277c1e"
+        },
+        {
+          "path": "utils/UUPSUpgradeable.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "da3eac79de76852fd4baf8434a3198eeb22df263",
+          "size": 6323,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/da3eac79de76852fd4baf8434a3198eeb22df263"
+        }
+      ],
+      "truncated": false
+    },
+    "/repos/SlopDotCash/slopdotcash/git/trees/7f3f06fdd2818ae507a01ba163b57a30d00fed2d": {
+      "sha": "7f3f06fdd2818ae507a01ba163b57a30d00fed2d",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/7f3f06fdd2818ae507a01ba163b57a30d00fed2d",
+      "tree": [
+        {
+          "path": "ERC1967Proxy.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "eb482f6ecac7e3ab4635eb6dee9de748b77246bd",
+          "size": 1718,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/eb482f6ecac7e3ab4635eb6dee9de748b77246bd"
+        },
+        {
+          "path": "ERC1967Utils.sol",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ffa77cc7da89211c1788eaa8cd0ae8f7b7069e29",
+          "size": 6238,
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/blobs/ffa77cc7da89211c1788eaa8cd0ae8f7b7069e29"
+        }
+      ],
+      "truncated": false
+    },
+    "/repos/SlopDotCash/slopdotcash/git/commits/7d4d546dfb692d3b4c9265999d77054749490a10": {
+      "sha": "7d4d546dfb692d3b4c9265999d77054749490a10",
+      "node_id": "C_kwDOTqq9PdoAKDdkNGQ1NDZkZmI2OTJkM2I0YzkyNjU5OTlkNzcwNTQ3NDk0OTBhMTA",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/7d4d546dfb692d3b4c9265999d77054749490a10",
+      "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/7d4d546dfb692d3b4c9265999d77054749490a10",
+      "author": {
+        "name": "DasRasyo",
+        "email": "94050636+DasRasyo@users.noreply.github.com",
+        "date": "2026-11-20T01:40:12Z"
+      },
+      "committer": {
+        "name": "DasRasyo",
+        "email": "94050636+DasRasyo@users.noreply.github.com",
+        "date": "2026-11-20T09:32:55Z"
+      },
+      "tree": {
+        "sha": "7807a98b1e7a64ac613f8dbfa9ddcb198c1d3d51",
+        "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/7807a98b1e7a64ac613f8dbfa9ddcb198c1d3d51"
+      },
+      "message": "fix(slopbot): a fee dry run records no ask past the monthly review cap\n\nIn dry_run, gateSubmissionFee recorded an item row and a `recorded` gate\nfor every pull request the fee applies to, even when the monthly review\ncap would refuse the review. Live asks nothing in that case (PRD section 5:\n\"No fee is asked for a review that the intake cap or the monthly review cap\nwould refuse anyway\"), so the record of what live would ask was wrong, and\nthe stray item row is one the submission-fee Worker judges deposits against\nand the public item read lists as due.\n\nRecord only when `mayAsk` holds, as the live branch already requires. The\nQuint model's dry step follows the same rule and gains a run for it.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+      "parents": [
+        {
+          "sha": "7a6fd3797f631e4fd072584f9b0cd73ff34cdbc3",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/7a6fd3797f631e4fd072584f9b0cd73ff34cdbc3",
+          "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/7a6fd3797f631e4fd072584f9b0cd73ff34cdbc3"
+        }
+      ],
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "/repos/SlopDotCash/slopdotcash/git/commits/8679ad44c251ccc7b13a864af32f28ed6fb64281": {
+      "sha": "8679ad44c251ccc7b13a864af32f28ed6fb64281",
+      "node_id": "C_kwDOTqq9PdoAKDg2NzlhZDQ0YzI1MWNjYzdiMTNhODY0YWYzMmYyOGVkNmZiNjQyODE",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/8679ad44c251ccc7b13a864af32f28ed6fb64281",
+      "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/8679ad44c251ccc7b13a864af32f28ed6fb64281",
+      "author": {
+        "name": "Codex",
+        "email": "codex@localhost",
+        "date": "2026-10-27T08:38:16Z"
+      },
+      "committer": {
+        "name": "Codex",
+        "email": "codex@localhost",
+        "date": "2026-10-27T08:38:16Z"
+      },
+      "tree": {
+        "sha": "74eaedb433dde023bd3f366db52ff241e9dadb4b",
+        "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/74eaedb433dde023bd3f366db52ff241e9dadb4b"
+      },
+      "message": "Use canonical GitHub work identity at award and ledger boundaries",
+      "parents": [
+        {
+          "sha": "e1e542219a35f6c105daa97436de7f208cbfd9c9",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/e1e542219a35f6c105daa97436de7f208cbfd9c9",
+          "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/e1e542219a35f6c105daa97436de7f208cbfd9c9"
+        }
+      ],
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "/repos/SlopDotCash/slopdotcash/git/commits/9ae0f387208be410fa261ca4562774ebeefbdd7b": {
+      "sha": "9ae0f387208be410fa261ca4562774ebeefbdd7b",
+      "node_id": "C_kwDOTqq9PdoAKDlhZTBmMzg3MjA4YmU0MTBmYTI2MWNhNDU2Mjc3NGViZWVmYmRkN2I",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/9ae0f387208be410fa261ca4562774ebeefbdd7b",
+      "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/9ae0f387208be410fa261ca4562774ebeefbdd7b",
+      "author": {
+        "name": "PTH9043",
+        "email": "39455348+PTH9043@users.noreply.github.com",
+        "date": "2026-10-28T05:42:42Z"
+      },
+      "committer": {
+        "name": "x",
+        "email": "x@x",
+        "date": "2026-10-28T06:41:25Z"
+      },
+      "tree": {
+        "sha": "88340ce047674845be1c3c363005f70c266dff74",
+        "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/88340ce047674845be1c3c363005f70c266dff74"
+      },
+      "message": "fix-interrupted-account-ban-feed-classification",
+      "parents": [
+        {
+          "sha": "eea7d81ced628e255458a5909bded81c1e74fb32",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/eea7d81ced628e255458a5909bded81c1e74fb32",
+          "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/eea7d81ced628e255458a5909bded81c1e74fb32"
+        }
+      ],
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "/repos/SlopDotCash/slopdotcash/git/commits/0ae0d85c39cca9861eb74562a3da43565881aea0": {
+      "sha": "0ae0d85c39cca9861eb74562a3da43565881aea0",
+      "node_id": "C_kwDOTqq9PdoAKDBhZTBkODVjMzljY2E5ODYxZWI3NDU2MmEzZGE0MzU2NTg4MWFlYTA",
+      "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/0ae0d85c39cca9861eb74562a3da43565881aea0",
+      "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/0ae0d85c39cca9861eb74562a3da43565881aea0",
+      "author": {
+        "name": "Drew",
+        "email": "202660855+drew-dot-com@users.noreply.github.com",
+        "date": "2026-11-20T15:05:38Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-11-20T15:05:38Z"
+      },
+      "tree": {
+        "sha": "249d5b2ffa4d656efadcdc2ca3f1aca9f7e1d94f",
+        "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/trees/249d5b2ffa4d656efadcdc2ca3f1aca9f7e1d94f"
+      },
+      "message": "Merge pull request #3097 from drew-dot-com/drew/fee-solana-program\n\nAdd the Solana submission deposit program (not deployed)",
+      "parents": [
+        {
+          "sha": "1eec6dbcab62c1debab5303e0b79c2b7b6617bb7",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/1eec6dbcab62c1debab5303e0b79c2b7b6617bb7",
+          "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/1eec6dbcab62c1debab5303e0b79c2b7b6617bb7"
+        },
+        {
+          "sha": "66481f28d13f82997791515d1e18774a7686c5c2",
+          "url": "https://api.github.com/repos/SlopDotCash/slopdotcash/git/commits/66481f28d13f82997791515d1e18774a7686c5c2",
+          "html_url": "https://github.com/SlopDotCash/slopdotcash/commit/66481f28d13f82997791515d1e18774a7686c5c2"
+        }
+      ],
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJrAGHCCRC1aQ7uu5UhlAAAz04QADAaIwU27AAo1aJKyKY6wW/f\ndjrwFQKws+cPPiGzGGnRbp6Z7bluJJO/YGOuPgYrIS8PvJB7Oc0O/xHUaH15ZDGY\n9Z511AkJGqDYIs4w8EISFC5w9ngUPA9zyHHLgSaNxPQxqkXXb30vEcQQ/68pfCJC\nKAmC6f5XQ0RV5E4qop9EOYc3N+BX5UuZjVk47pWEtJb1qDfGj4CxAoexeQb1uaDM\nh2281eOy5VCAz9wxVwUXFCqHouGSJ9CIWzsd6haw1TZjeiGRA/FF8shWLuklj4OK\nNFOjqsK0ZBBKaLQA4f9i6cBkR9NeeyNjG+umZH70tYpsJ3LAtKc8Vpf9HNrhU6Ob\n4PBgC82Zo93BHzbnrMNhfGMV9k+4QWDDLtYxGBhojBz1GiRab8rU005i1NrBuGSK\nqeIHgfW1P/7tP/qHj63yupkBZAKf/NWbrWGxG4nAeJTNd4DoovE+Mrmbt6jSfgJ2\nbLmmRWKw85PEvwtxhcJEE7yRz0ciba+I9dLqIZaDjU7uTNjLa5bkJr+5vlEi1arp\nfg+3GR2lCqgqx0bR0KZFIyhEhHK9qdn/VjXL4elyffEdB/f/3+54GeQ0L/RytWe3\nYMbrt72cluTW3lwPNAD5GYtlCsMggtYEH0tIOstRkNqpqiF22FGlJQsekFarQKvX\nPbP0LD2E9H8tblzomK0z\n=50ye\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 249d5b2ffa4d656efadcdc2ca3f1aca9f7e1d94f\nparent 1eec6dbcab62c1debab5303e0b79c2b7b6617bb7\nparent 66481f28d13f82997791515d1e18774a7686c5c2\nauthor Drew <202660855+drew-dot-com@users.noreply.github.com> 1795187138 -0500\ncommitter GitHub <noreply@github.com> 1795187138 -0500\n\nMerge pull request #3097 from drew-dot-com/drew/fee-solana-program\n\nAdd the Solana submission deposit program (not deployed)",
+        "verified_at": "2026-11-20T15:05:38Z"
+      }
+    }
+  }
+}
