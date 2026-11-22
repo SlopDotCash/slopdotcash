@@ -3193,7 +3193,7 @@ describe("the documents name what exists", () => {
     assert.deepEqual(others, others.map(() => first), "the shards wait for the same integration prerequisites");
   });
 
-  test("Slop's generated UI makes Studio validation respond to root generation while Studio's own fixture and artifact inputs stay isolated", async () => {
+  test("Slop's UI uses root generation, and selftest edits keep the CLI build cached", async () => {
     const root = scratch({ "spec/kit/index.md": "# Kit\n", "packages/kit/package.json": JSON.stringify({ name: "@repo/kit", scripts: Object.fromEntries(["build", "typecheck", "test", "test:browser"].map((task) => [task, "true"])) }) });
     for (const file of (await exec("git", ["ls-files"], project)).stdout.trim().split("\n")) {
       if (fs.lstatSync(path.join(project, file)).isDirectory()) continue;
@@ -3255,7 +3255,7 @@ describe("the documents name what exists", () => {
       lintWaitsFor: vibeDeclared.filter((id) => tasks.get("//#lint:js")!.dependencies.includes(id)),
       devWaitsFor: tasks.get("vibestack-studio#dev")!.dependencies.toSorted(),
       prose: [studio(prose), prose.includes("@repo/app#test")],
-      selftest: [studio(selftest), ["a", "b", "rest"].every((shard) => selftest.includes(`//#selftest:tools:${shard}`))],
+      selftest: [studio(selftest), selftest.includes("//#build"), ["a", "b", "rest"].every((shard) => selftest.includes(`//#selftest:tools:${shard}`))],
       fixture: studio(fixture),
       independentOwner: (await changedBy(() => {
         fs.mkdirSync(path.join(root, "packages/kit/spec"));
@@ -3272,7 +3272,7 @@ describe("the documents name what exists", () => {
       lintWaitsFor: vibeDeclared,
       devWaitsFor: ["@repo/design-system#build", "@repo/ui#build", "vibestack-studio#gen"],
       prose: [["@repo/ui#typecheck", "vibestack-studio#build", "vibestack-studio#test", "vibestack-studio#test:browser", "vibestack-studio#typecheck"], true],
-      selftest: [[], true], fixture: ["vibestack-studio#test"], independentOwner: true, leftovers: [],
+      selftest: [[], false, true], fixture: ["vibestack-studio#test"], independentOwner: true, leftovers: [],
     }, "Slop's shared UI reads the product spec, so tooling and Studio builds have a root generation prerequisite");
   });
 });
