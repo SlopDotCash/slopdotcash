@@ -7700,7 +7700,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "70edf6e631da4f8134e08fb7c0e8be9e2392929e81ea1abb5deac5e957283089",
+      "sha256": "374812601c1f430996ff7e83e23272162c5922f4cee38ceafa77e779be08dcac",
       "module": "fees__conversion",
       "stories": [
         {
@@ -7721,15 +7721,15 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts",
-          "line": 537
+          "line": 539
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults",
-          "line": 757
+          "line": 759
         },
         {
           "heading": "Story: Keep every journal record and its evidence",
-          "line": 809
+          "line": 811
         }
       ],
       "rules": [
@@ -7935,7 +7935,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / Only a finalized receipt of one of the row's own attempts settles it",
-          "line": 539,
+          "line": 541,
           "definitions": [
             "SendReceipt",
             "landedIn",
@@ -7954,7 +7954,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / An unknown send is rebroadcast unchanged; only proven expiry retires it",
-          "line": 604,
+          "line": 606,
           "definitions": [
             "DeadlineEvidence",
             "Coverage",
@@ -7986,7 +7986,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / A same-nonce EVM replacement changes only its fees, in bounded steps",
-          "line": 701,
+          "line": 703,
           "definitions": [
             "NetworkFeeObservation",
             "replacementDeadlineMarginMs",
@@ -8004,7 +8004,7 @@
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults / A claim delivers the accrued amount to the configured fee wallet and shares the native budget",
-          "line": 759,
+          "line": 761,
           "definitions": [
             "VaultClaim",
             "claimAdmitted",
@@ -8015,7 +8015,7 @@
         },
         {
           "heading": "Story: Keep every journal record and its evidence / Rows and reservations are append-only and settled records never change",
-          "line": 811,
+          "line": 813,
           "definitions": [
             "settledState",
             "rowFrozen",
@@ -8063,6 +8063,7 @@
             "weight_addToken",
             "weight_setReplacement",
             "weight_replace",
+            "weight_advanceClock",
             "weight_broadcastFail",
             "weight_expireEvm",
             "weight_settleExpired",
@@ -8096,7 +8097,7 @@
         },
         {
           "target": "../settlement/feeReplacement.md",
-          "line": 714
+          "line": 716
         }
       ]
     },
