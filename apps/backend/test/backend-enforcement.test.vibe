@@ -87,10 +87,25 @@ effect function project(id: string, revisions: ReadonlyArray<{ readonly status: 
   return last.digest
 }
 
+// The vetting service's ban follows its confirmed-malicious assessment: enforcement replay derives the ServiceBan
+// from the completed assessment that the ban record names (security/src/enforcement/replay.vibe).
 effect function vettingBan(id: string, repositoryId: string, digest: string) {
-  try (try Area).sql(
-    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'Confirmed malicious scan result', 'assessment-1', ?, ?, NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, 2, ?, 'revision_appended', '2026-11-02T00:00:00.000Z')",
-    `enf_${id.replaceAll("-", "")}vetting`, id, repositoryId, JSON.stringify([`owner/${id}`]), JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "assessment-1", policyVersion: "1", rule: "confirmed-malicious" }), digest, digest,
+  const area = try Area
+  const assessment = `vet_${id.replaceAll("-", "")}01`
+  const commit = "c".repeat(40)
+  const template = "d".repeat(64)
+  try area.sql(
+    "INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, repository_id, flag_ids) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'member-51', '2026-11-01T12:00:00.000Z', 'Automatic scan of new project content', 'pending', ?, '[]')",
+    assessment, id, digest, "e".repeat(64), commit, template, steward, `owner/${id}`,
+  )
+  const result = JSON.stringify({ assessmentId: assessment, disposition: "malicious", assessed: { commitSha: commit, templateSha256: template } })
+  try area.sql(
+    "UPDATE vetting_assessments SET state = 'malicious', policy_version = '1', result = ?, result_sha256 = ?, signing_key_sha256 = ?, completed_at = '2026-11-02T00:00:00.000Z' WHERE id = ?",
+    result, "f".repeat(64), "c".repeat(64), assessment,
+  )
+  try area.sql(
+    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'Confirmed malicious scan result', ?, ?, ?, NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, 2, ?, 'revision_appended', '2026-11-02T00:00:00.000Z')",
+    `enf_${id.replaceAll("-", "")}vetting`, id, assessment, repositoryId, JSON.stringify([`owner/${id}`]), JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: assessment, policyVersion: "1", rule: "confirmed-malicious" }), digest, digest,
   )
 }
 
@@ -172,6 +187,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     const bannerReinstates = try act(a, "malice-demo", "reinstate_accounts", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
     const independentReinstates = try act(b, "malice-demo", "reinstate_accounts", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
     const afterRelease = try area.request("/api/v1/project-account-bans")
+    const [ban] = try area.sql("SELECT b.enforcement_id FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = 'malice-demo'")
     const stored = try area.sql("SELECT b.github_id, b.github_login, (SELECT COUNT(*) FROM project_account_reinstatements r WHERE r.ban_enforcement_id = b.enforcement_id AND r.github_id = b.github_id) AS released FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = 'malice-demo'")
     try same({
       selfBan: outcome(selfBan),
@@ -185,8 +201,10 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       selfBan: [409, "rejected"],
       decided: [[200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
       publicBans: [200, "public, max-age=0, s-maxage=30", "*", [responsible]],
-      appeals: [[200, null], "banned-account", [409, "rejected"], [{ projectId: "malice-demo", state: "banned", appeal: "requested" }]],
-      reinstated: [[409, "rejected"], [200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
+      // A second appeal while the account's own is open is refused (409 appeal_open), and the moderator who banned
+      // the account cannot release it (403 independent_review_required) (spec/backend/access.md).
+      appeals: [[200, null], "banned-account", [409, "appeal_open"], [{ projectId: "malice-demo", state: "banned", appeal: "requested" }]],
+      reinstated: [[403, "independent_review_required"], [200, null], [{ banEnforcementId: String(ban?.enforcement_id), githubId: responsible, githubLogin: "responsible-41" }]],
       afterRelease: [],
       stored: [{ github_id: responsible, github_login: "responsible-41", released: 1 }],
     })
