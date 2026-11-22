@@ -22,6 +22,8 @@ export interface Credited { readonly award: Award; readonly event: ScoreEvent; r
 export const octoberOriginalContributorDecision =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved."
 export const octoberDuplicateRetirementDecision = "Owner-reviewed duplicate accepted work already rewarded by earlier sources."
+export const verifiedHistoricalAllocationDecision =
+  "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved."
 
 const octoberDecisions = new Set([octoberOriginalContributorDecision, octoberDuplicateRetirementDecision])
 const unassessedCoverage = new Set(["missing", "legacy-policy"])
@@ -594,6 +596,8 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     const prior = merges.get(key) ?? []
     if (held.has(key) || joint.heldSources.has(key) || prior.length === 0) continue
     held.add(key)
+    // The rolling window can omit earlier acceptance established by the historical census.
+    if (prior.some((row) => row.decision?.reason === verifiedHistoricalAllocationDecision)) continue
     const current = snapshotAwards.filter(({ award }) => award.category === "merged-pull-request" && sourceKey(award.projectId, award.sourceId) === key)
     try commit(store, buffer, try reallocateFromCoverage(store, snapshot, digest, recordedAt, row, projectId, prior, current, unavailable))
   }

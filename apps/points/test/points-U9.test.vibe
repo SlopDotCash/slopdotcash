@@ -7,7 +7,7 @@ import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
 import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
-import { applySnapshots, batchOwnedKeys, octoberOriginalContributorDecision } from "../src/journal/snapshot.vibe"
+import { applySnapshots, batchOwnedKeys, octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
 import { historyText, legacyHeldReview, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
 
 const recordedAt = "2026-11-17T06:00:00.000Z"
@@ -108,6 +108,36 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     const relinked = { ...precise, reviewedImplementationUnits: [{ ...membership[0], units: [overlapping, independent] }, membership[1]] }
     try applySnapshots(disjoint, repositories, [{ snapshot: relinked, digest: "3".repeat(64) }], recordedAt)
     try Effect.try(() => assert.deepStrictEqual(disjoint.revisions, prior))
+
+    const fallback = {
+      ...base,
+      window: { ...base.window, from: "2026-10-15T00:00:00.000Z", to: correctedAt },
+      ledger: [{
+        id: `${sourceId}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1,
+        occurredAt, repository,
+        source: { id: sourceId, kind: "pull-request", number: 1, title: "Previously accepted", url: originalRow.award.sourceUrl },
+        reason: "Legacy merge assessment",
+      }],
+      valueAssessmentCoverage: [{
+        pullRequestId: sourceId, pullRequestNumber: 1, repository, status: "legacy-policy", recordDigest: null,
+        implementationAllocation: { rule: "changed-lines-v1", totalScoreThirds: 3, weights: [{ actorNodeId: carrier.id, actorLogin: carrier.login, changedLines: "15" }] },
+      }],
+    }
+    effect function storeWithReason(reason: string) {
+      const body = { ...originalRow, decision: { sourceId, effectiveAt: correctedAt, reason, delta: 30 } }
+      const row = { id: try pointRevisionId(body), ...body }
+      const store = try openStore(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: correctedAt, coverage: [], revisions: [row] })}\n`, null, [])
+      return { row, store }
+    }
+    const { store: accepted, row: historicalRow } = try storeWithReason(verifiedHistoricalAllocationDecision)
+    const { store: ordinary } = try storeWithReason("Previously credited implementation")
+    try applySnapshots(accepted, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    try applySnapshots(ordinary, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    const current = [...ordinary.latest.values()].filter(({ award }) => award.amount > 0)
+    try Effect.try(() => assert.deepStrictEqual({
+      historical: accepted.revisions,
+      ordinary: current.map(({ award }) => [award.actor.login, award.amount]),
+    }, { historical: [historicalRow], ordinary: [[carrier.login, 30]] }))
   })
 
   it.effect('A legacy assessed review can retire while its implementation stays held (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews")', () => effect {
