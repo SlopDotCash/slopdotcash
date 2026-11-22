@@ -2,7 +2,7 @@
 // Sends each event to the compiled slop-escrow program on solana-test-validator 2.1.21. A spec sender signs with its
 // fixture keypair; an event whose transition takes no sender is sent by the funded deployer. The spec's one project is
 // the first one an event creates.
-import { associatedTokenAddress, base58Encode } from "../support/solanaWire.ts";
+import { associatedTokenAddress, base58Encode } from "@repo/platform/chain/solanaWire";
 import type { Driver, Options } from "../../gen/contracts__solanaEscrow.conformance.ts";
 import type { AccountFacts, Event, MintFacts } from "../../gen/contracts__solanaEscrow.ts";
 import type { Leaf } from "../../gen/contracts__ledger.ts";
