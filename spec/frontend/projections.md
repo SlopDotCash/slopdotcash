@@ -600,9 +600,10 @@ pure def lawAllocationRowIsTheViewersOwn(status: R::ReadStatus, allocation: Allo
   allocationWallets: List[AllocationWallet], instant: int): bool =
   val row = allocationRow(status, allocation, viewer, allocationWallets, instant)
   match row { | AllocationShown(x) => viewer > 0 and allocation.recipients.some(r => r.actor == viewer) | _ => true }
+pure def allocationUnavailable(allocationView: AllocationRow): bool = match allocationView { | AllocationUnavailable => true | _ => false }
 pure def lawFailedAllocationReadIsUnavailable(status: R::ReadStatus, allocation: AllocationFile, viewer: int,
   allocationWallets: List[AllocationWallet], instant: int): bool =
-  allocationReadFailed(status) iff allocationRow(status, allocation, viewer, allocationWallets, instant) == AllocationUnavailable
+  allocationReadFailed(status) iff allocationUnavailable(allocationRow(status, allocation, viewer, allocationWallets, instant))
 pure def lawWalletPromptOnlyWhileAwaiting(status: R::ReadStatus, allocation: AllocationFile, viewer: int,
   allocationWallets: List[AllocationWallet], instant: int): bool =
   val row = allocationRow(status, allocation, viewer, allocationWallets, instant)
