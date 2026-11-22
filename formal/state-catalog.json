@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "dbafab79b1074a79f5da4055ad4516fda5eb48ebcc5d4a0dea2f4a6333ce1562",
+  "inventorySha256": "5352ba84d1da884401f711bb68107d8862195c2a07e742e52716681d375aa750",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -5029,7 +5029,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 48,
+      "line": 50,
       "name": "FeeMode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -5042,20 +5042,20 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 178,
+      "line": 181,
       "name": "FeeOutcomeWhy",
       "kind": "string-union",
-      "values": ["closed", "merged", "undecided"],
+      "values": ["closed", "marked", "merged", "undecided", "wanted"],
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "lexicallyUnmentionedValues": ["undecided"],
+      "lexicallyUnmentionedValues": ["marked", "undecided"],
       "review": "candidate-only"
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 301,
+      "line": 313,
       "name": "GateState",
       "kind": "string-union",
       "values": ["asked", "asking", "paid", "recorded", "released"],
@@ -5068,7 +5068,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 827,
+      "line": 847,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],

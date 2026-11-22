@@ -293,10 +293,12 @@ export function HowItWorksPage() {
                 {SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days without a maintainer
                 decision. A pull request closed without a merge for{" "}
                 {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days keeps it: a
-                stablecoin fee goes to Slop and a SLOP fee is burned. An unpaid
-                pull request is never closed for that reason, the fee does not
-                buy a merge and scoring does not read it. Pay only through the
-                page linked in Slopbot&apos;s own comment.
+                stablecoin fee goes to Slop and a SLOP fee is burned. A pull
+                request for an issue labelled slop-wanted is the exception: it
+                is sent back unless a maintainer marks it with slop-keep-fee. An
+                unpaid pull request is never closed for that reason, the fee
+                does not buy a merge and scoring does not read it. Pay only
+                through the page linked in Slopbot&apos;s own comment.
               </p>
             </div>
           </article>
